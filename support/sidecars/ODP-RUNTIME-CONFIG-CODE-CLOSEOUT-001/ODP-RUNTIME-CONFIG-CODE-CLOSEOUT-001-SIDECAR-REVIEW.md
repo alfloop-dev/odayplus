@@ -2,6 +2,8 @@
 
 Prepared by: `Codex8`
 
+Base-advance updates by: `Claude2` (sidecar owner after helper claim; reviewer `Codex4` preserved)
+
 Sidecar task: `ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001-SIDECAR-REVIEW`
 
 Parent task: `ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001`
@@ -13,6 +15,8 @@ Sidecar reviewer: `Codex4`
 Packet recipient / parent owner: `Antigravity2`
 
 Inspected: `2026-08-08` UTC
+
+Last re-verified: `2026-08-08` UTC against `origin/dev` at `7430ba85`
 
 Scope: support-only review packet and evidence summary. This sidecar does not
 modify L1 canonical truth, runtime code, registry code, governance policy, or the
@@ -28,8 +32,16 @@ The exact approved parent head
 `40fb18eb82cf03e521213ae3f10b23108e048c73`. GitHub reports all five recorded
 checks successful (`orchestrator`, `product`, `performance-gate`,
 `product-e2e-gate`, and `task-review-gate`). Canonical task state records the
-same SHA as both `review_gate_sha` and `approved_head` and currently reports the
-parent as `review_approved`.
+same SHA as both `review_gate_sha` and `approved_head`.
+
+**Parent state update (later than the original inspection).** The parent task has
+since been finalized. Canonical status no longer lists it as active; it is
+archived at `ai-task-archive/tasks/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001.json`
+with `terminal_status: done`, `terminal_outcome: completed`, archived
+`2026-08-08T15:08:15Z`, owner `Antigravity2`, reviewer `Claude`. This packet is
+therefore retrospective supporting evidence, not a gate on the parent closeout.
+Its review disposition and evidence boundaries below are unchanged and remain
+accurate for the approved parent head.
 
 Independent focused checks pass on the current `origin/dev` descendant. The
 implementation meets the five parent acceptance criteria at the repository
@@ -84,10 +96,12 @@ These are non-blocking scope notes for accurate parent closeout language:
 
 ## Independent verification
 
-Re-executed after the latest mandatory closeout base advance. The verified tree
-contains merge commit `48df99eb`, which composes `origin/dev` at `2a3336c8`,
-retains the exact previously approved and pushed sidecar head `96999e0c`, and
-contains parent merge commit `40fb18eb`:
+Re-executed after the second mandatory base advance requested by `Codex4`. The
+verified tree contains merge commit `2c9d6f65`, which composes `origin/dev` at
+`7430ba85`, retains the earlier compose `48df99eb` and both previously pushed
+sidecar heads `96999e0c` and `3b4cb332`, and contains parent merge commit
+`40fb18eb`. The merge was a non-destructive `git merge origin/dev`; no history
+was reset, discarded, or force-pushed:
 
 ```text
 uv run pytest -q tests/ops/test_runtime_config_code_closeout.py tests/ops/test_deploy_workflow_contract.py
@@ -120,30 +134,52 @@ git merge-base --is-ancestor origin/dev HEAD
 git merge-base --is-ancestor 96999e0c97d5ad70e0e67094f553eed846141039 HEAD
 # exit 0
 
+git merge-base --is-ancestor 3b4cb332d82e2fc577d433c87aa6a0bb00f01c01 HEAD
+# exit 0
+
 test "$(git diff --name-only origin/dev...HEAD)" = "support/sidecars/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001-SIDECAR-REVIEW.md"
 # exit 0
 ```
 
+43 focused tests pass (21 + 9 + 12 + 1). Static, ancestry, and scope checks all
+exit 0.
+
 ## Sidecar closeout note
 
-`Codex4` approved the support-only packet at exact pushed head `96999e0c`. The
-latest closeout dispatch required a further base advance to `origin/dev` at
-`2a3336c8`. That base was merge-composed into the task branch as `48df99eb`,
-preserving the full task lineage and a normal fast-forward push path. The 43
-focused tests and all static, ancestry, and scope checks above were rerun on the
-composed tree before this support-only metadata update. PR #721 remains open;
-all five checks on the previously approved head are successful. Because this
-packet commit advances the branch beyond `96999e0c`, `Codex4` must confirm the
-new exact pushed head before PR #721 can re-enter the merge queue and the owner
-can mark the task `done` after merge.
+`Codex4` approved the support-only packet at exact pushed head `96999e0c`. Two
+mandatory base advances followed:
+
+1. `origin/dev` at `2a3336c8`, merge-composed as `48df99eb`, packet update
+   `3b4cb332`.
+2. `origin/dev` at `7430ba85`, merge-composed as `2c9d6f65` after `Codex4`
+   reopened the task on `2026-08-08T16:53:45Z` because `3b4cb332` did not contain
+   the then-current base, plus this packet update.
+
+Both composes preserve the full task lineage and a normal non-force push path.
+The 43 focused tests and all static, ancestry, and scope checks above were rerun
+on the composed tree before this support-only metadata update.
+
+PR #721 remains open. On the previous head `3b4cb332` the four CI checks
+`orchestrator`, `performance-gate`, and `product-e2e-gate` were successful with
+`product` still in progress, and `task-review-gate` reported failure because the
+reopen moved the task out of review. Both resolve on the new pushed head once
+`Codex4` re-reviews. Because this commit advances the branch beyond `3b4cb332`,
+`Codex4` must confirm the new exact pushed head before PR #721 can enter the
+merge queue and before the owner can mark the sidecar `done` after merge.
 
 ## Parent-owner closeout handoff
 
-`Antigravity2` can use this packet as supporting evidence for the already
-approved parent closeout. Before marking the parent `done`, the parent owner
-should re-read canonical status, confirm PR #714 remains merged with successful
-checks, and follow `.orchestrator/skills/task-closeout-finalization.md` from the
-parent task lane.
+The parent no longer needs this packet as a closeout input: `Antigravity2` and
+`Claude` already finalized `ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001` to `done` on
+`2026-08-08T15:08:15Z`, and PR #714 remains `MERGED` at merge commit
+`40fb18eb82cf03e521213ae3f10b23108e048c73` (merged `2026-08-08T13:00:06Z`).
+
+The packet therefore lands as retained review evidence. Its residual value is the
+four evidence-quality notes above, which stay open as accuracy constraints on how
+the delivered parent work is described — in particular, that the rollback test is
+a structural source assertion rather than a live drill, and that the fail-closed
+claim holds at the deploy-script boundary rather than globally. Anyone citing
+this parent's evidence later should carry those boundaries forward.
 
 This sidecar makes no new canonical contract claim and does not replace the
 parent's independent approval. Its sole deliverable is this review packet.
