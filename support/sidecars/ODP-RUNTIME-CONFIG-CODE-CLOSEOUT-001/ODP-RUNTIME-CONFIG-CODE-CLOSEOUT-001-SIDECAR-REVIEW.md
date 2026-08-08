@@ -8,7 +8,9 @@ Parent task: `ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001`
 
 Canonical parent owner / reviewer at inspection: `Antigravity2` / `Claude`
 
-Sidecar reviewer / packet recipient: `Antigravity2`
+Sidecar reviewer: `Codex4`
+
+Packet recipient / parent owner: `Antigravity2`
 
 Inspected: `2026-08-08` UTC
 
@@ -82,8 +84,9 @@ These are non-blocking scope notes for accurate parent closeout language:
 
 ## Independent verification
 
-Executed on the sidecar branch at `50dda113`, whose HEAD is the current
-`origin/dev` descendant containing merge commit `40fb18eb`:
+Re-executed after the mandatory base advance on the sidecar branch at
+`053de38d`. That head contains the current `origin/dev` tip, the previously
+approved sidecar lineage at `6c2b01fb`, and parent merge commit `40fb18eb`:
 
 ```text
 uv run pytest -q tests/ops/test_runtime_config_code_closeout.py tests/ops/test_deploy_workflow_contract.py
@@ -109,7 +112,23 @@ git diff --check
 
 git merge-base --is-ancestor f7bd3d9b2d52c5f4eb3864c963379feea6836c90 origin/dev
 # exit 0
+
+git merge-base --is-ancestor origin/dev HEAD
+# exit 0
+
+git merge-base --is-ancestor origin/task/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001-SIDECAR-REVIEW HEAD
+# exit 0
 ```
+
+## Sidecar closeout note
+
+`Codex4` approved the support-only packet at immutable head `6c2b01fb`. The
+closeout dispatch then required another base advance to `origin/dev` at
+`d1c1d66d`. The task commit was rebased onto that base and the approved remote
+task lineage was composed back into the branch, preserving task history and a
+normal fast-forward push path. The verification above was rerun on the composed
+tree before this support-only metadata update. The resulting head requires the
+assigned reviewer's exact-head confirmation before merge and `done`.
 
 ## Parent-owner closeout handoff
 
