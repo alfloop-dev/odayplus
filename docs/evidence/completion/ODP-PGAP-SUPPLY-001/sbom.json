@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-4023d041d0e94ca87901325f9f16691b",
+  "serialNumber": "urn:uuid:sha256-136523f568c8184f77763fcbcaff7225",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-08T07:06:42.774493+00:00",
+    "timestamp": "2026-08-08T10:30:54.399684+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "0ee55b8407d50415c30726fb04d89d54a94188a5"
+        "value": "8585f2b28625a6c10c80e8e9344b698503ad2847"
       },
       {
         "name": "sbom-hash",
-        "value": "4023d041d0e94ca87901325f9f16691b10ba73fe3d8fdf73cbfb9ec09a1a7e6b"
+        "value": "136523f568c8184f77763fcbcaff72252527b2e7c6b34489d53600db271f84f8"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:cd194f62a73112d32a28e1511f72a07b5af6f68f38f4616973131ea3ffda3f5f"
+        "value": "sha256:592e60bb11525286d55e4bdae3bdda43b122517d6a6ed0423d1e0b6b1bbf245f"
       }
     ]
   },
@@ -1064,10 +1064,10 @@
     },
     {
       "name": "@typescript-eslint/typescript-estree/brace-expansion",
-      "version": "5.0.7",
+      "version": "5.0.9",
       "type": "library",
-      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7",
-      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7"
+      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.9",
+      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.9"
     },
     {
       "name": "@typescript-eslint/typescript-estree/minimatch",
@@ -1512,10 +1512,10 @@
     },
     {
       "name": "brace-expansion",
-      "version": "1.1.16",
+      "version": "1.1.18",
       "type": "library",
-      "purl": "pkg:npm/brace-expansion@1.1.16",
-      "bom-ref": "pkg:npm/brace-expansion@1.1.16"
+      "purl": "pkg:npm/brace-expansion@1.1.18",
+      "bom-ref": "pkg:npm/brace-expansion@1.1.18"
     },
     {
       "name": "braces",
@@ -2562,10 +2562,10 @@
     },
     {
       "name": "js-yaml",
-      "version": "4.3.0",
+      "version": "4.3.1",
       "type": "library",
-      "purl": "pkg:npm/js-yaml@4.3.0",
-      "bom-ref": "pkg:npm/js-yaml@4.3.0"
+      "purl": "pkg:npm/js-yaml@4.3.1",
+      "bom-ref": "pkg:npm/js-yaml@4.3.1"
     },
     {
       "name": "json-buffer",
@@ -4221,10 +4221,10 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.55",
+      "version": "3.1.58",
       "type": "library",
-      "purl": "pkg:pypi/gitpython@3.1.55",
-      "bom-ref": "pkg:pypi/gitpython@3.1.55"
+      "purl": "pkg:pypi/gitpython@3.1.58",
+      "bom-ref": "pkg:pypi/gitpython@3.1.58"
     },
     {
       "name": "giturlparse",
