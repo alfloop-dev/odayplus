@@ -36,7 +36,6 @@
     "branch_workflow.promote.promote_pr_label": "See branch_workflow.promote.target_branch.",
     "branch_workflow.promote.auto_merge": "See branch_workflow.promote.target_branch.",
     "branch_workflow.promote.auto_revert_on_red_main_ci": "See branch_workflow.promote.target_branch.",
-    "branch_workflow.task_pr.auto_merge": "No code auto-merges task PRs; merges happen through ReviewBus approval or by hand.",
     "branch_workflow.task_pr.required_status_checks": "Required checks are defined by GitHub branch protection on dev, not from config. The two lists are maintained independently and already differ.",
     "branch_workflow.task_pr.max_open_hours": "Nothing tracks how long a task PR stays open. #588 sat for over a day and #589 for two days with no signal.",
     "branch_workflow.drift_alarms.publish_must_promote_within_minutes": "The publish/release pipeline was never built, so there is no publish branch whose promotion could be timed. Wiring a threshold that cannot fail would read as one being met. The other two thresholds in this block are implemented in .orchestrator/branch_drift_alarms.py.",

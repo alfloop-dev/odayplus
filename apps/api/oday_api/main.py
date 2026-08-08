@@ -1277,6 +1277,13 @@ else:
             ),
         )
 
+        from apps.api.oday_api.routes.feature_flags import create_feature_flags_router
+
+        mount_versioned(
+            api,
+            create_feature_flags_router(audit_log=audit_log),
+        )
+
         api.state.audit_log = audit_log
         api.state.evidence_store = evidence_store
         api.state.operator_intake_repository = operator_intake_repository
