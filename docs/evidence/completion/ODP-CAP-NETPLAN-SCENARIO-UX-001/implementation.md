@@ -13,23 +13,29 @@
 - Hard constraints are **never auto-relaxed**.
 - When no candidate combination satisfies constraints, solver returns `STATUS_INFEASIBLE` with structured `diagnostics`.
 
-### 2. Scenario Version and Hash Binding
+### 2. Scenario Version, Hash Binding & Lifecycle State Machine
 - Updated `ScenarioSolveRecord` in `modules/netplan/domain/planning.py` to include `problem_hash` binding (computed via `compute_solver_problem_hash`).
-- Added `is_stale(scenario)` method to `ScenarioSolveRecord` to check if solver problem hash matches the current scenario's parameters.
-- Added `update_scenario` method to `NetPlanService` in `modules/netplan/application/planning.py` to allow parameter/constraint updates on draft scenarios.
+- Added `is_stale(scenario)` method to `ScenarioSolveRecord` to check if solver problem hash matches the current scenario's parameters (returns `True` if `problem_hash` is missing).
+- Updated `VALID_TRANSITIONS` in `modules/netplan/domain/planning.py` to allow returning to `DRAFT` from `SOLVED` and `INFEASIBLE`.
+- Fixed `update_scenario` in `modules/netplan/application/planning.py`:
+  - Automatically transitions `SOLVED` and `INFEASIBLE` scenarios back to `DRAFT` upon parameter/constraint modification so they can be re-solved cleanly without getting stuck.
+  - Fixed partial option updates: preserved existing stores options when updating `candidate_sites` only and vice versa.
 
-### 3. Structured Diagnostic Fields
-- Rendered and validated all 5 structured diagnostic fields in `InfeasibilityDiagnosis`:
-  1. `violated_constraint`
-  2. `affected_stores`
-  3. `required_relaxation`
-  4. `business_impact`
-  5. `suggested_action`
+### 3. API Route Exposure
+- Added `PUT /netplan/scenarios/{scenario_id}` route with `NetPlanUpdateScenarioPayload` in `apps/api/app/routes/netplan.py` so scenario parameter updates and stale-reset trigger paths are fully exposed to clients.
 
-### 4. Stale-Result Protection
-- Enhanced `NetPlanService.submit_for_approval` and `NetPlanService.decide` to check `solve.is_stale(scenario)`.
-- If scenario parameters or constraints change after solve execution, any attempt to submit or approve the stale result is rejected with `NetPlanApprovalError`.
-- Updated API detail endpoint in `apps/api/app/routes/netplan.py` to include `is_stale` flag in solve detail payload for UI rendering.
+### 4. Frontend & Rebalance UX Integration
+- Updated `apps/web/features/operator/types.ts` to define `NetPlanDiagnostic` and `NetPlanScenarioDetail` with `isStale`, `isInfeasible`, and diagnostic array.
+- Updated `apps/web/features/operator/network/RebalancePanel.tsx` to render:
+  - `isStale` status badge (`過期 / Stale`).
+  - `isInfeasible` status badge (`不可行`).
+  - All 5 structured diagnostic fields: `violated_constraint`, `affected_stores`, `required_relaxation`, `business_impact`, and `suggested_action`.
+- Updated `apps/web/features/operator/networkFindAreas.module.css` with styling for diagnostic boxes, items, code fields, and status badges.
+- Updated `apps/web/features/operator/fixtures.ts` with sample diagnostic data for UI demonstration and test suite assertions.
 
-### 5. Frontend & Rebalance UX Integration
-- `NetworkFindAreasWorkspace.tsx` and `RebalancePanel.tsx` bind NetPlan solver results, alternatives, and infeasibility details cleanly without auto-relaxing constraints or accepting stale results.
+### 5. Verification & Test Suite
+- Delivered backend integration tests in `tests/integration/test_netplan_solver.py`:
+  - `test_update_scenario_lifecycle_restrictions`
+  - `test_update_scenario_resets_solved_and_infeasible_to_draft_and_allows_resolving`
+  - `test_partial_update_scenario_preserves_omitted_stores`
+- Delivered frontend vitest suite in `apps/web/src/app/__tests__/netplanDiagnosticsUx.test.ts` verifying rendering of all 5 diagnostic fields and `isStale` state.

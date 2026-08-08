@@ -1805,3 +1805,61 @@ def test_update_scenario_lifecycle_restrictions() -> None:
     with pytest.raises(ValueError, match="cannot update scenario"):
         service.update_scenario(scenario.scenario_id, scenario_name="invalid update")
 
+
+def test_update_scenario_resets_solved_and_infeasible_to_draft_and_allows_resolving() -> None:
+    service = NetPlanService()
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name="re-solve test",
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=_constraints(),
+        correlation_id="corr-resolve-test",
+    )
+    # Solve initial scenario -> status becomes SOLVED
+    service.solve(scenario.scenario_id)
+    s1 = service.repository.get_scenario(scenario.scenario_id)
+    assert s1.status == NetPlanScenarioStatus.SOLVED
+
+    # Updating parameters resets status to DRAFT
+    updated = service.update_scenario(scenario.scenario_id, scenario_name="re-solve updated name")
+    assert updated.status == NetPlanScenarioStatus.DRAFT
+
+    # Re-solving updated scenario succeeds -> status becomes SOLVED again
+    new_solve = service.solve(scenario.scenario_id)
+    s2 = service.repository.get_scenario(scenario.scenario_id)
+    assert s2.status == NetPlanScenarioStatus.SOLVED
+    assert new_solve.result.solver_status == "optimal"
+
+
+def test_partial_update_scenario_preserves_omitted_stores() -> None:
+    service = NetPlanService()
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name="partial update test",
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=_constraints(),
+        correlation_id="corr-partial-test",
+    )
+    assert len(scenario.options_by_entity) == 4  # 2 stores + 2 candidates
+
+    # Update candidate_sites only (existing_stores=None)
+    updated = service.update_scenario(
+        scenario.scenario_id,
+        candidate_sites=[
+            CandidateSiteInput(
+                candidate_site_id="cand-new-99",
+                expected_gross_margin=1_500_000,
+                open_cost=500_000,
+                risk_score=0.2,
+            )
+        ],
+    )
+    # Existing stores (store-1, store-2) must be preserved!
+    assert "store-1" in updated.options_by_entity
+    assert "store-2" in updated.options_by_entity
+    assert "cand-new-99" in updated.options_by_entity
+

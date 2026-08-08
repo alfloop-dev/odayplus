@@ -28,11 +28,13 @@ from modules.netplan.domain.planning import (
 from modules.netplan.infrastructure.repositories import InMemoryNetPlanRepository
 from solver.netplan import (
     STATUS_INFEASIBLE,
+    ActionOption,
     ManagementApprovalExpectation,
     ManagementApprovalReceiptVerifier,
     ManagementApprovalVerification,
     ManagementBaselineInput,
     NetPlanConstraints,
+    NetworkAction,
     compute_solver_problem_hash,
     solve_network_plan,
     validate_network_plan_solve_result,
@@ -130,9 +132,19 @@ class NetPlanService:
         from dataclasses import replace
 
         scenario = self._require_scenario(scenario_id)
-        if scenario.status not in (NetPlanScenarioStatus.DRAFT, NetPlanScenarioStatus.SOLVED, NetPlanScenarioStatus.INFEASIBLE):
+        if scenario.status not in (
+            NetPlanScenarioStatus.DRAFT,
+            NetPlanScenarioStatus.SOLVED,
+            NetPlanScenarioStatus.INFEASIBLE,
+        ):
             raise ValueError(
                 f"cannot update scenario {scenario_id} in {scenario.status.value} status"
+            )
+        if scenario.status in (NetPlanScenarioStatus.SOLVED, NetPlanScenarioStatus.INFEASIBLE):
+            scenario = scenario.transition(
+                NetPlanScenarioStatus.DRAFT,
+                actor="system",
+                reason="reset to draft on parameter update",
             )
         updated_constraints = scenario.constraints
         if constraints is not None:
@@ -143,10 +155,27 @@ class NetPlanService:
             )
         updated_options = scenario.options_by_entity
         if existing_stores is not None or candidate_sites is not None:
-            updated_options = build_scenario_options(
-                existing_stores=existing_stores if existing_stores is not None else (),
-                candidate_sites=candidate_sites if candidate_sites is not None else (),
-            )
+            new_options: dict[str, tuple[ActionOption, ...]] = {}
+            if existing_stores is not None:
+                new_options.update(
+                    build_scenario_options(existing_stores=existing_stores, candidate_sites=())
+                )
+            else:
+                for entity_id, opts in scenario.options_by_entity.items():
+                    if opts and opts[0].action != NetworkAction.OPEN:
+                        new_options[entity_id] = opts
+
+            if candidate_sites is not None:
+                new_options.update(
+                    build_scenario_options(existing_stores=(), candidate_sites=candidate_sites)
+                )
+            else:
+                for entity_id, opts in scenario.options_by_entity.items():
+                    if opts and opts[0].action == NetworkAction.OPEN:
+                        new_options[entity_id] = opts
+
+            updated_options = new_options
+
         updated = replace(
             scenario,
             scenario_name=scenario_name or scenario.scenario_name,
