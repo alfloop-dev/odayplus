@@ -109,6 +109,7 @@ from provider_permissions import (
 )
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
+    compact_worker_history,
     enqueue_event,
     load_approval_state,
     load_event_queue,
@@ -1559,6 +1560,38 @@ def _git_operation_in_progress(worktree_path: Path) -> bool:
     return False
 
 
+WORKTREE_LEASE_BLOCK_RETENTION_HOURS = 72
+
+
+def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
+    """Forget streaks that nothing has touched for days.
+
+    The counter is durable state, and `_clear_worktree_lease_block` only runs
+    when a task actually leases a worktree. A task that is blocked and then
+    abandoned -- finished, cancelled, renamed -- never reaches that path, so
+    without an expiry its entry would sit in `state.json` forever. Supervisor
+    ticks are minutes apart, so anything untouched for days is also no longer a
+    *consecutive* streak; dropping it restarts the count, which is the honest
+    reading.
+    """
+
+    cutoff = datetime.now(UTC) - timedelta(hours=WORKTREE_LEASE_BLOCK_RETENTION_HOURS)
+    for key, entry in list(bucket.items()):
+        if not isinstance(entry, dict):
+            bucket.pop(key, None)
+            continue
+        # An unparseable timestamp is kept: expiring a streak we cannot date is
+        # the failure mode this whole task exists to remove. A hand-edited entry
+        # can also be naive; read it as UTC rather than raising inside dispatch.
+        last_at = _parse_iso_utc(entry.get("last_at") or entry.get("first_at"))
+        if last_at is None:
+            continue
+        if last_at.tzinfo is None:
+            last_at = last_at.replace(tzinfo=UTC)
+        if last_at < cutoff:
+            bucket.pop(key, None)
+
+
 def _record_worktree_lease_block(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1580,6 +1613,7 @@ def _record_worktree_lease_block(
     """
 
     bucket = state.setdefault("worker_worktree_lease_blocks", {})
+    _prune_worktree_lease_blocks(bucket)
     key = normalize_agent_id(task_id) or task_id
     entry = bucket.get(key)
     if not isinstance(entry, dict) or entry.get("refresh_status") != refresh_status:
@@ -6360,6 +6394,38 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
     return name not in sidecar_only_agent_names(config)
 
 
+AGENT_OPEN_TASK_STATUSES = ("todo", "in_progress", "review", "review_approved", "blocked")
+
+
+def agent_open_task_counts(
+    config: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> dict[str, int]:
+    """Count the open tasks each agent currently owns.
+
+    Reassignment picked the first name off a hardcoded pool, and "Antigravity"
+    is first in that pool and is always viable, so it won. Observed on
+    2026-08-08: Antigravity owned 23 open tasks while Antigravity2 through
+    Antigravity7 held 3, 6, 3, 4, 3 and 4 -- six idle lanes behind one queue.
+    An agent runs one worker at a time (`max_active_workers_per_task: 1`), so
+    concentration translates directly into serialised throughput no matter how
+    high `max_concurrent_workers` is set.
+    """
+
+    status = status if isinstance(status, dict) else load_status(config)
+    open_statuses = {s.lower() for s in AGENT_OPEN_TASK_STATUSES}
+    counts: dict[str, int] = {}
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        if str(task.get("status") or "").lower() not in open_statuses:
+            continue
+        owner = normalize_agent_id(str(task.get("owner") or ""))
+        if owner:
+            counts[owner] = counts.get(owner, 0) + 1
+    return counts
+
+
 def first_viable_agent(
     config: dict[str, Any],
     preferred: list[str],
@@ -6368,9 +6434,12 @@ def first_viable_agent(
     state: dict[str, Any] | None = None,
     task: dict[str, Any] | None = None,
     provider_report: dict[str, Any] | None = None,
+    status: dict[str, Any] | None = None,
+    balance_load: bool = True,
 ) -> str | None:
     known = known_agent_display_names(config)
     seen: set[str] = set()
+    viable: list[str] = []
     for candidate in preferred:
         name = str(candidate or "").strip()
         if not name or name in seen or name in exclude:
@@ -6394,8 +6463,19 @@ def first_viable_agent(
                     continue
             if task is not None and not agent_can_take_task(config, name, task):
                 continue
-            return name
-    return None
+            viable.append(name)
+
+    if not viable:
+        return None
+    if len(viable) == 1 or not balance_load:
+        return viable[0]
+
+    # Every name here already passed the same viability checks, so choosing
+    # among them is free. Take the least loaded and keep the caller's ordering
+    # as the tie-break, which preserves the configured preference whenever the
+    # load is equal.
+    counts = agent_open_task_counts(config, status)
+    return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
 
 
 
@@ -6523,12 +6603,24 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
             },
         )
         return False
-    result = subprocess.run(
-        [sys.executable, str(script), "sync"],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "sync"],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        write_activity_log(
+            config,
+            {
+                "type": "task_reassignment_sync_failed",
+                "message": f"Status sync timed out after {timeout_seconds:g}s.",
+            },
+        )
+        return False
     if result.returncode == 0:
         return True
     write_activity_log(
@@ -6582,13 +6674,28 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     }[reason]
     env = os.environ.copy()
     env["AI_NAME"] = target_agent
-    result = subprocess.run(
-        [sys.executable, str(script), command_name, task_id, message],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), command_name, task_id, message],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": task_id,
+                "target_agent": target_agent,
+                "dispatch_reason": reason,
+                "message": f"Dispatch status sync timed out after {timeout_seconds:g}s.",
+            },
+        )
+        return False
     if result.returncode == 0:
         write_activity_log(
             config,
@@ -6713,7 +6820,13 @@ def persist_task_reassignment(
         if str(new_status).lower() == "todo":
             task.pop("waiting_for", None)
     task["last_update"] = timestamp
-    task["next"] = message
+    task["assignment_note"] = message
+    # Reassignment is coordination metadata, not resolution of an external
+    # gate.  Preserve the actionable blocker text until the task is explicitly
+    # moved out of blocked; otherwise dashboards claim the assignment changed
+    # while hiding the dataset/approval/deployment action still required.
+    if str(task.get("status") or "").lower() != "blocked" or new_status:
+        task["next"] = message
 
     if resolve_open_blockers:
         for blocker in status.get("blockers", []) or []:
@@ -8431,11 +8544,17 @@ def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> 
 
 
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
-    workers = state.get("workers", {})
-    if len(workers) <= max_entries:
-        return
-    ordered = sorted(workers.items(), key=lambda item: item[1].get("last_event_at") or "")
-    state["workers"] = dict(ordered[-max_entries:])
+    compact_worker_history(state, max_entries)
+
+
+def finish_loop_stage_timing(state: dict[str, Any], stage: str, started_at: float) -> None:
+    duration_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
+    supervisor_state = state.setdefault("supervisor", {})
+    timings = supervisor_state.setdefault("last_stage_timings_ms", {})
+    timings[str(stage)] = duration_ms
+    slowest = max(timings.items(), key=lambda item: item[1], default=(None, 0))
+    supervisor_state["slowest_stage"] = slowest[0]
+    supervisor_state["slowest_stage_duration_ms"] = slowest[1]
 
 
 def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -9120,8 +9239,54 @@ def sidecar_statuses() -> set[str]:
     return {"todo", "in_progress", "review", "review_approved", "blocked", "done"}
 
 
-def existing_sidecar_signatures(status: dict[str, Any]) -> set[str]:
+def sidecar_archive_tasks_dir(config: dict[str, Any]) -> Path:
+    """Archive directory the `assign` subprocess will consult.
+
+    `create_sidecar_task` shells out to `scripts/ai_status.py` with the
+    supervisor's own environment and `cwd=<status_file parent>`, so resolve the
+    archive root exactly the way `ai_status.status_root()` does for that child.
+    """
+    raw = str(os.environ.get("ORCH_STATUS_ROOT") or os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    root = Path(os.path.expanduser(raw)).resolve() if raw else config_path(config, "status_file").parent
+    return root / "ai-task-archive" / "tasks"
+
+
+def archived_sidecar_state(config: dict[str, Any]) -> tuple[set[str], set[str]]:
+    """Return (parent:kind signatures, task ids) already held by the archive.
+
+    Sidecar ids are derived deterministically from parent + kind, so an archived
+    sidecar keeps owning its id forever: `ai_status.py assign` refuses to reuse
+    an archived id. Candidate generation must therefore treat archived sidecars
+    as "already exists"; otherwise every wave re-proposes the same dead ids and
+    burns the idle-capacity budget on `sidecar_task_create_failed`.
+    """
     signatures: set[str] = set()
+    task_ids: set[str] = set()
+    archive_dir = sidecar_archive_tasks_dir(config)
+    if not archive_dir.is_dir():
+        return signatures, task_ids
+    for path in sorted(archive_dir.glob("*.json")):
+        snapshot = load_json(path, default=None)
+        if not isinstance(snapshot, dict):
+            continue
+        task = snapshot.get("task")
+        if not isinstance(task, dict):
+            task = {}
+        task_id = str(snapshot.get("task_id") or task.get("id") or "").strip()
+        if task_id:
+            task_ids.add(task_id)
+        parent = str(task.get("helper_parent") or "").strip()
+        kind = str(task.get("helper_kind") or "").strip()
+        if parent and kind:
+            signatures.add(f"{parent}:{kind}")
+    return signatures, task_ids
+
+
+def existing_sidecar_signatures(
+    status: dict[str, Any],
+    archived_signatures: set[str] | None = None,
+) -> set[str]:
+    signatures: set[str] = set(archived_signatures or ())
     for task in status.get("tasks", []) or []:
         if not task_is_sidecar(task):
             continue
@@ -9426,9 +9591,12 @@ def build_catalog_sidecar_candidates(
     status: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
     existing_signatures: set[str],
+    archived_task_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    if archived_task_ids is None:
+        archived_task_ids = archived_sidecar_state(config)[1]
     resolver = TaskResolver(task_map)
     templates = load_sidecar_catalog(config)
     candidates: list[dict[str, Any]] = []
@@ -9462,6 +9630,8 @@ def build_catalog_sidecar_candidates(
             if not reviewer:
                 continue
             sidecar_id = sidecar_task_id(parent_id, kind)
+            if sidecar_id in archived_task_ids:
+                continue
             variables = {
                 "parent_task_id": parent_id,
                 "parent_title": str(parent.get("title") or ""),
@@ -9500,9 +9670,12 @@ def build_dynamic_sidecar_candidates(
     status: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
     existing_signatures: set[str],
+    archived_task_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    if archived_task_ids is None:
+        archived_task_ids = archived_sidecar_state(config)[1]
     resolver = TaskResolver(task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
@@ -9531,6 +9704,8 @@ def build_dynamic_sidecar_candidates(
         if not reviewer:
             continue
         sidecar_id = sidecar_task_id(parent_id, kind)
+        if sidecar_id in archived_task_ids:
+            continue
         title_by_kind = {
             "review_packet": f"Prepare {parent_id} review packet and evidence summary",
             "acceptance_packet": f"Prepare {parent_id} acceptance packet and dependency map",
@@ -9604,13 +9779,18 @@ def create_sidecar_task(
             "TASK_METADATA_JSON": json.dumps(metadata, ensure_ascii=False),
         }
     )
-    result = subprocess.run(
-        [sys.executable, str(script), "assign", sidecar_id, owner, reviewer],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "assign", sidecar_id, owner, reviewer],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"sidecar assignment timed out after {timeout_seconds:g}s"
     if result.returncode != 0:
         return False, result.stderr.strip() or result.stdout.strip() or "unknown error"
     return True, ""
@@ -11555,10 +11735,15 @@ def dispatch_underutilization_sidecars(
         )
         return True
 
-    existing_signatures = existing_sidecar_signatures(status)
-    candidates = build_catalog_sidecar_candidates(config, status, task_map, existing_signatures)
+    archived_signatures, archived_task_ids = archived_sidecar_state(config)
+    existing_signatures = existing_sidecar_signatures(status, archived_signatures=archived_signatures)
+    candidates = build_catalog_sidecar_candidates(
+        config, status, task_map, existing_signatures, archived_task_ids=archived_task_ids
+    )
     if not candidates:
-        candidates = build_dynamic_sidecar_candidates(config, status, task_map, existing_signatures)
+        candidates = build_dynamic_sidecar_candidates(
+            config, status, task_map, existing_signatures, archived_task_ids=archived_task_ids
+        )
     blocked_sidecar_parents = {str(item) for item in rotation.get("sidecar_blocked_parents", []) or [] if str(item).strip()}
     if blocked_sidecar_parents:
         candidates = [candidate for candidate in candidates if str(candidate.get("parent_task_id") or "") not in blocked_sidecar_parents]
@@ -11744,6 +11929,7 @@ def run_once(
     save_runtime_state(config, state)
     changed = False
     try:
+        stage_started = time.monotonic()
         changed = reconcile_runtime_on_boot(config, state) or changed
         if changed:
             save_runtime_state(config, state)
@@ -11753,9 +11939,15 @@ def run_once(
         if pruned:
             changed = True
         provider_report = load_provider_report(config)
+        finish_loop_stage_timing(state, "boot_and_provider", stage_started)
+        boot_and_provider_ms = state.get("supervisor", {}).get("last_stage_timings_ms", {}).get("boot_and_provider")
+
+        stage_started = time.monotonic()
         if watch:
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)
+            if boot_and_provider_ms is not None:
+                state.setdefault("supervisor", {}).setdefault("last_stage_timings_ms", {})["boot_and_provider"] = boot_and_provider_ms
             stamp_supervisor_runtime_state(
                 config,
                 state,
@@ -11769,6 +11961,9 @@ def run_once(
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = refresh_chair_review_state(config, state) or changed
+        finish_loop_stage_timing(state, "scan_coordination_and_poll", stage_started)
+
+        stage_started = time.monotonic()
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
@@ -11788,16 +11983,28 @@ def run_once(
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             changed = process_queue(config, state, provider_report) or changed
+        finish_loop_stage_timing(state, "dispatch_and_queue", stage_started)
+
+        stage_started = time.monotonic()
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
+        finish_loop_stage_timing(state, "post_dispatch_poll", stage_started)
+
+        stage_started = time.monotonic()
         changed = sync_github_bus(config, state) or changed
+        finish_loop_stage_timing(state, "github_bus", stage_started)
         # After the bus sync, so PR state is as fresh as this cycle can make it.
+        stage_started = time.monotonic()
         changed = check_branch_drift(config, state) or changed
+        finish_loop_stage_timing(state, "branch_drift", stage_started)
+
+        stage_started = time.monotonic()
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
         changed = prune_orphan_worktrees(config, state) or changed
         changed = maybe_auto_commit_archive(config, state) or changed
+        finish_loop_stage_timing(state, "retention_and_maintenance", stage_started)
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(

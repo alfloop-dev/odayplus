@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -6107,6 +6107,202 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         )
 
 
+class ArchivedSidecarCandidateTests(unittest.TestCase):
+    """Sidecar ids are deterministic, so an archived sidecar owns its id forever.
+
+    `ai_status.py assign` rejects a reused archived id, so candidate generation
+    that only looks at live tasks re-proposes the same dead ids on every wave.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+        (self.root / "sidecar_catalog.json").write_text('{"templates": []}\n', encoding="utf-8")
+        (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self.archive_dir = self.root / "ai-task-archive" / "tasks"
+        self.archive_dir.mkdir(parents=True)
+        env_patch = mock.patch.dict(
+            os.environ,
+            {"ORCH_STATUS_ROOT": str(self.root), "PANTHEON_STATUS_ROOT": str(self.root)},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "sidecar_catalog": str(self.root / "sidecar_catalog.json"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            },
+            "ready_dispatcher": {"dependency_done_statuses": ["done"]},
+        }
+
+    def write_catalog(self, templates: list[dict[str, Any]]) -> None:
+        (self.root / "sidecar_catalog.json").write_text(
+            json.dumps({"templates": templates}, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+
+    def archive_sidecar(self, sidecar_id: str, *, helper_parent: str, helper_kind: str) -> None:
+        (self.archive_dir / f"{sidecar_id}.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": sidecar_id,
+                    "archived_at": "2026-08-07T00:00:00Z",
+                    "terminal_status": "done",
+                    "terminal_outcome": "completed",
+                    "task": {
+                        "id": sidecar_id,
+                        "status": "done",
+                        "task_class": "sidecar",
+                        "helper_parent": helper_parent,
+                        "helper_kind": helper_kind,
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    def parent_status(self) -> dict[str, Any]:
+        return {
+            "tasks": [
+                {
+                    "id": "APP-001",
+                    "title": "Ship the operator console",
+                    "phase": "Phase 9",
+                    "owner": "Reviewer",
+                    "status": "in_progress",
+                }
+            ]
+        }
+
+    def test_archived_state_reports_signatures_and_ids(self) -> None:
+        self.archive_sidecar("APP-001-SIDECAR-REVIEW", helper_parent="APP-001", helper_kind="review_packet")
+
+        signatures, task_ids = supervisor.archived_sidecar_state(self.config)
+
+        self.assertEqual(signatures, {"APP-001:review_packet"})
+        self.assertEqual(task_ids, {"APP-001-SIDECAR-REVIEW"})
+
+    def test_archived_state_is_empty_when_archive_is_missing(self) -> None:
+        for path in self.archive_dir.iterdir():
+            path.unlink()
+        self.archive_dir.rmdir()
+        (self.root / "ai-task-archive").rmdir()
+
+        self.assertEqual(supervisor.archived_sidecar_state(self.config), (set(), set()))
+
+    def test_existing_signatures_include_archived_signatures(self) -> None:
+        signatures = supervisor.existing_sidecar_signatures(
+            {
+                "tasks": [
+                    {
+                        "id": "APP-002-SIDECAR-ACCEPTANCE",
+                        "task_class": "sidecar",
+                        "helper_parent": "APP-002",
+                        "helper_kind": "acceptance_packet",
+                    }
+                ]
+            },
+            archived_signatures={"APP-001:review_packet"},
+        )
+
+        self.assertEqual(signatures, {"APP-001:review_packet", "APP-002:acceptance_packet"})
+
+    def test_catalog_candidate_is_skipped_when_parent_kind_is_archived(self) -> None:
+        self.write_catalog(
+            [
+                {
+                    "template_id": "phase9_review_packet",
+                    "kind": "review_packet",
+                    "parent_task_ids": ["APP-001"],
+                    "title_template": "Prepare {{parent_task_id}} review packet",
+                    "summary_zh_template": "支援 {{parent_task_id}}。",
+                    "artifact_targets": ["support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"],
+                }
+            ]
+        )
+        status = self.parent_status()
+        task_map = {"APP-001": status["tasks"][0]}
+
+        before = supervisor.build_catalog_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual([item["sidecar_id"] for item in before], ["APP-001-SIDECAR-REVIEW"])
+
+        self.archive_sidecar("APP-001-SIDECAR-REVIEW", helper_parent="APP-001", helper_kind="review_packet")
+
+        after = supervisor.build_catalog_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual(after, [])
+
+    def test_catalog_candidate_is_skipped_when_only_the_archived_id_matches(self) -> None:
+        """Legacy snapshots can lack helper metadata; the id alone must still block."""
+        self.write_catalog(
+            [
+                {
+                    "template_id": "phase9_review_packet",
+                    "kind": "review_packet",
+                    "parent_task_ids": ["APP-001"],
+                    "title_template": "Prepare {{parent_task_id}} review packet",
+                    "summary_zh_template": "支援 {{parent_task_id}}。",
+                    "artifact_targets": ["support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"],
+                }
+            ]
+        )
+        (self.archive_dir / "APP-001-SIDECAR-REVIEW.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": "APP-001-SIDECAR-REVIEW",
+                    "archived_at": "2026-08-07T00:00:00Z",
+                    "task": {"id": "APP-001-SIDECAR-REVIEW", "status": "done"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        status = self.parent_status()
+
+        candidates = supervisor.build_catalog_sidecar_candidates(
+            self.config, status, {"APP-001": status["tasks"][0]}, set()
+        )
+
+        self.assertEqual(candidates, [])
+
+    def test_dynamic_candidate_is_skipped_when_archived(self) -> None:
+        status = self.parent_status()
+        task_map = {"APP-001": status["tasks"][0]}
+
+        before = supervisor.build_dynamic_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual([item["sidecar_id"] for item in before], ["APP-001-SIDECAR-ACCEPTANCE"])
+
+        self.archive_sidecar(
+            "APP-001-SIDECAR-ACCEPTANCE", helper_parent="APP-001", helper_kind="acceptance_packet"
+        )
+
+        after = supervisor.build_dynamic_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual(after, [])
+
+    def test_unrelated_archived_sidecar_does_not_block_a_fresh_candidate(self) -> None:
+        self.archive_sidecar("APP-002-SIDECAR-REVIEW", helper_parent="APP-002", helper_kind="review_packet")
+        status = self.parent_status()
+
+        candidates = supervisor.build_dynamic_sidecar_candidates(
+            self.config, status, {"APP-001": status["tasks"][0]}, set()
+        )
+
+        self.assertEqual([item["sidecar_id"] for item in candidates], ["APP-001-SIDECAR-ACCEPTANCE"])
+
+
 class ChairReviewDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
@@ -8445,6 +8641,63 @@ class WorktreeLeaseBlockEscalationTests(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertEqual([e for e in events if e["type"].endswith("_escalated")], [])
 
+    def test_stale_streaks_expire_instead_of_accumulating_forever(self) -> None:
+        # The bucket is durable now. `_clear_worktree_lease_block` only runs on a
+        # successful lease, so a task blocked and then abandoned would otherwise
+        # keep its entry in state.json permanently.
+        stale = datetime.now(UTC) - timedelta(
+            hours=supervisor.WORKTREE_LEASE_BLOCK_RETENTION_HOURS + 1
+        )
+        fresh = datetime.now(UTC) - timedelta(minutes=5)
+        bucket = {
+            "odp-orch-abandoned-001": {"count": 9, "last_at": supervisor._isoformat_utc(stale)},
+            "odp-orch-live-001": {"count": 2, "last_at": supervisor._isoformat_utc(fresh)},
+            "odp-orch-undated-001": {"count": 1},
+            "odp-orch-garbage-001": "not-a-mapping",
+        }
+
+        supervisor._prune_worktree_lease_blocks(bucket)
+
+        # An entry we cannot date is kept: expiring an undatable streak would
+        # recreate the silent-loss failure this whole guard exists to remove.
+        self.assertEqual(
+            sorted(bucket), ["odp-orch-live-001", "odp-orch-undated-001"]
+        )
+
+    def test_streak_actually_escalates_across_save_and_reload_cycles(self) -> None:
+        # End-to-end proof that the escalation can fire at all. Every previous
+        # tick round-tripped its state through `save_runtime_state`, which
+        # discarded the counter, so the count reset to 1 forever: 372
+        # consecutive blocks over 23h produced zero escalations.
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        root = Path(tmpdir.name)
+        (root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        config: dict = {
+            "worker_runtime": {"lease_block_escalate_after": 3},
+            "paths": {
+                "state_file": str(root / "state.json"),
+                "event_queue": str(root / "event-queue.jsonl"),
+            },
+        }
+        events: list = []
+
+        counts = []
+        for _ in range(5):
+            state = runtime_state.load_runtime_state(config)
+            counts.append(self._record(config, state, events, n=1))
+            runtime_state.save_runtime_state(config, state)
+
+        self.assertEqual(counts, [1, 2, 3, 4, 5])
+        escalations = [e for e in events if e["type"] == "dispatch_blocked_worktree_lease_escalated"]
+        self.assertEqual(len(escalations), 1)
+        self.assertEqual(escalations[0]["consecutive_blocks"], 3)
+        # `escalated` must persist too, or every later tick re-alarms.
+        persisted = json.loads((root / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(
+            persisted["worker_worktree_lease_blocks"]["odp_orch_example_001"]["escalated"]
+        )
+
 
 class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
     """Regression matrix for the clean divergence topology observed on PR #562."""
@@ -9004,6 +9257,44 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
                 "grok": {"display_name": "Grok"},
             },
         }
+
+    def test_reassignment_preserves_blocked_reason_as_next(self) -> None:
+        config = {**self.config, "paths": {"status_file": "ai-status.json"}}
+        status = {
+            "tasks": [
+                {
+                    "id": "BLOCKED-001",
+                    "status": "blocked",
+                    "owner": "Gemini",
+                    "reviewer": "Claude",
+                    "waiting_for": "Human/Ops",
+                    "next": "Await authoritative Human/Ops dataset and attestation.",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+        message = "Auto-reassigned owner from Gemini to Codex."
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_json"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.persist_task_reassignment(
+                config,
+                task_id="BLOCKED-001",
+                new_owner="Codex",
+                new_reviewer="Claude",
+                message=message,
+            )
+
+        self.assertTrue(changed)
+        task = status["tasks"][0]
+        self.assertEqual(task["next"], "Await authoritative Human/Ops dataset and attestation.")
+        self.assertEqual(task["assignment_note"], message)
+        self.assertEqual(task["waiting_for"], "Human/Ops")
 
     def test_sync_preempted_owned_task_returns_in_progress_task_to_todo(self) -> None:
         config = {
@@ -14415,3 +14706,89 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertEqual((leased_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"canonical"}')
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgentLoadBalancingTests(unittest.TestCase):
+    """Reassignment used to hand every task to whoever sorted first.
+
+    `first_viable_agent` returned the first name that passed its checks, and
+    the default candidate pool is a hardcoded list beginning with
+    "Antigravity". That name is always viable, so it always won. Measured on
+    2026-08-08: Antigravity owned 23 open tasks while Antigravity2..7 held
+    3, 6, 3, 4, 3 and 4. Because an agent runs one worker at a time, those 23
+    were a single queue with six idle lanes beside it.
+    """
+
+    CONFIG = {
+        "agents": {
+            "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            "antigravity2": {"display_name": "Antigravity2", "provider": "antigravity2"},
+            "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity3"},
+        }
+    }
+    POOL = ["Antigravity", "Antigravity2", "Antigravity3"]
+
+    @staticmethod
+    def _status(counts: dict[str, int]) -> dict:
+        tasks = []
+        for owner, n in counts.items():
+            tasks.extend({"id": f"T-{owner}-{i}", "status": "in_progress", "owner": owner} for i in range(n))
+        return {"tasks": tasks}
+
+    def test_picks_the_least_loaded_viable_agent(self) -> None:
+        status = self._status({"Antigravity": 23, "Antigravity2": 3, "Antigravity3": 6})
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG, self.POOL, exclude=set(), status=status
+        )
+
+        self.assertEqual(chosen, "Antigravity2")
+
+    def test_preference_order_still_breaks_ties(self) -> None:
+        """Equal load must keep the configured ordering, not shuffle it."""
+
+        status = self._status({"Antigravity": 4, "Antigravity2": 4, "Antigravity3": 4})
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG, self.POOL, exclude=set(), status=status
+        )
+
+        self.assertEqual(chosen, "Antigravity")
+
+    def test_excluded_agents_are_never_chosen_however_idle(self) -> None:
+        status = self._status({"Antigravity": 23, "Antigravity2": 0, "Antigravity3": 6})
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG, self.POOL, exclude={"Antigravity2"}, status=status
+        )
+
+        self.assertEqual(chosen, "Antigravity3")
+
+    def test_single_candidate_viability_check_is_unchanged(self) -> None:
+        """Callers use a one-name list to ask "can this agent take it?".
+
+        That question must not consult load, and must not read the board.
+        """
+
+        with mock.patch.object(supervisor, "load_status", side_effect=AssertionError("must not read the board")):
+            self.assertEqual(
+                supervisor.first_viable_agent(self.CONFIG, ["Antigravity"], exclude=set()),
+                "Antigravity",
+            )
+            self.assertIsNone(
+                supervisor.first_viable_agent(self.CONFIG, ["Antigravity"], exclude={"Antigravity"})
+            )
+
+    def test_open_task_counts_ignore_finished_work(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "a", "status": "in_progress", "owner": "Antigravity"},
+                {"id": "b", "status": "review", "owner": "Antigravity"},
+                {"id": "c", "status": "done", "owner": "Antigravity"},
+                {"id": "d", "status": "archived", "owner": "Antigravity"},
+            ]
+        }
+
+        counts = supervisor.agent_open_task_counts(self.CONFIG, status)
+
+        self.assertEqual(counts.get("antigravity"), 2)

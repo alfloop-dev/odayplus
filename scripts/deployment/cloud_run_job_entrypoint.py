@@ -14,6 +14,7 @@ from typing import Any
 
 from apps.api.server import bootstrap_runtime, build_scheduler, build_worker
 from apps.cli.oday_cli.ops import OpsPlanError, build_migration_run
+from apps.scheduler.oday_scheduler.main import SchedulerTenantConfigurationError
 from shared.jobs.queue import JobRecord, JobStatus
 
 EXIT_FAILED = 1
@@ -26,11 +27,13 @@ def _now() -> str:
 
 
 def _emit_receipt(kind: str, status: str, **details: Any) -> None:
+    from shared.runtime_config import get_release_identity
+
     payload = {
         "schema_version": 1,
         "receipt_kind": kind,
         "status": status,
-        "release_sha": os.environ.get("ODAY_RELEASE_SHA", ""),
+        "release_sha": get_release_identity(),
         "environment": os.environ.get("ODP_DEPLOY_ENV") or os.environ.get("ODAY_ENV", ""),
         "cloud_run_execution": os.environ.get("CLOUD_RUN_EXECUTION", ""),
         "cloud_run_task_index": os.environ.get("CLOUD_RUN_TASK_INDEX", ""),
@@ -153,7 +156,19 @@ def run_scheduler() -> int:
     tracking_queue = TrackingJobQueue(bundle.job_queue)
     scheduler = build_scheduler(replace(bundle, job_queue=tracking_queue))
     before = tracking_queue.count_active_jobs()
-    scheduler.run_once()
+    try:
+        scheduler.run_once()
+    except SchedulerTenantConfigurationError as exc:
+        _emit_receipt(
+            "scheduler",
+            "failed",
+            reason="missing_tenant_configuration",
+            error_class=type(exc).__name__,
+            error=str(exc),
+            active_jobs_before=before,
+            active_jobs_after=before,
+        )
+        return EXIT_FAILED
     after = tracking_queue.count_active_jobs()
 
     if tracking_queue.enqueue_errors:

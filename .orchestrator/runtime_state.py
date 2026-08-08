@@ -45,6 +45,11 @@ def default_state() -> dict[str, Any]:
         "worker_worktrees": {
             "leases": {},
         },
+        # Consecutive worktree-lease block counts per task. This has to be
+        # durable: the escalation it feeds only fires after several *consecutive*
+        # supervisor ticks, so a counter that resets on every save can never
+        # reach its threshold and the alarm never fires at all.
+        "worker_worktree_lease_blocks": {},
         "approvals": {
             "last_reconciled_at": None,
         },
@@ -97,6 +102,9 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
+            "last_stage_timings_ms": {},
+            "slowest_stage": None,
+            "slowest_stage_duration_ms": None,
             "focus_mode": None,
             "mode_status": "idle",
             "mode_switch_requested": None,
@@ -109,6 +117,12 @@ def default_state() -> dict[str, Any]:
             },
         },
     }
+
+
+# Top-level state keys that were deliberately removed from the runtime state
+# contract. Only these are dropped by `migrate_state`; every other key on disk
+# survives, whether or not `default_state()` knows about it.
+RETIRED_STATE_KEYS: frozenset[str] = frozenset()
 
 
 def _nonnegative_cursor_revision(value: Any) -> int:
@@ -124,7 +138,18 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
-    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination", "watchdog"}})
+    # Preserve every top-level key the writer put in state, minus the keys
+    # explicitly retired above. The previous filter kept only keys already
+    # present in `default_state()` plus a hardcoded whitelist, which turned
+    # "added a state key without also editing default_state()" into silent,
+    # total data loss on every single save. That is exactly how
+    # `worker_worktree_lease_blocks` was discarded for the entire life of the
+    # worktree-lease escalation: the counter reset to 1 on each tick, its
+    # threshold of 5 was unreachable, and one task blocked 372 consecutive
+    # times over 23h without a single alarm (2026-08-07 -> 2026-08-08).
+    # Retiring a key is now a deliberate edit to RETIRED_STATE_KEYS, not the
+    # default outcome of forgetting one.
+    state.update({k: v for k, v in raw.items() if k not in RETIRED_STATE_KEYS})
     state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
@@ -157,6 +182,12 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("workers", {})
     state.setdefault("worker_worktrees", {})
     state["worker_worktrees"].setdefault("leases", {})
+    lease_blocks = state.get("worker_worktree_lease_blocks")
+    state["worker_worktree_lease_blocks"] = (
+        {key: entry for key, entry in lease_blocks.items() if isinstance(entry, dict)}
+        if isinstance(lease_blocks, dict)
+        else {}
+    )
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
     state.setdefault("underutilization", {})
@@ -202,6 +233,9 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
+    state["supervisor"].setdefault("last_stage_timings_ms", {})
+    state["supervisor"].setdefault("slowest_stage", None)
+    state["supervisor"].setdefault("slowest_stage_duration_ms", None)
     state["supervisor"].setdefault("focus_mode", None)
     state["supervisor"].setdefault("mode_status", "idle")
     state["supervisor"].setdefault("mode_switch_requested", None)
@@ -362,6 +396,48 @@ QUEUE_STATUS_RANK = {
 }
 
 
+def compact_worker_history(state: dict[str, Any], max_entries: int) -> None:
+    """Bound durable worker history after all concurrent state is merged.
+
+    Compaction before ``save_runtime_state`` is not sufficient: the locked
+    disk/in-memory union deliberately preserves records created by concurrent
+    writers, so terminal records removed by the singleton loop used to be
+    resurrected on every save.  Compacting the merged snapshot under the same
+    transaction lock preserves concurrent active runs while making retention
+    authoritative at the point of persistence.
+    """
+    workers = state.get("workers")
+    if not isinstance(workers, dict):
+        state["workers"] = {}
+        return
+    limit = max(0, int(max_entries))
+    if len(workers) <= limit:
+        return
+
+    active: dict[str, Any] = {}
+    terminal: list[tuple[str, dict[str, Any]]] = []
+    for run_id, worker in workers.items():
+        if not isinstance(worker, dict):
+            continue
+        status = str(worker.get("status") or "").lower()
+        if status in ACTIVE_WORKER_STATUSES:
+            active[run_id] = worker
+        else:
+            terminal.append((run_id, worker))
+
+    # Active runs are never discarded merely to satisfy a history limit.  If
+    # they consume the whole budget, terminal history is temporarily empty.
+    terminal_budget = max(0, limit - len(active))
+    terminal.sort(
+        key=lambda item: (
+            str(item[1].get("last_event_at") or ""),
+            str(item[0]),
+        )
+    )
+    kept_terminal = dict(terminal[-terminal_budget:]) if terminal_budget else {}
+    state["workers"] = {**kept_terminal, **active}
+
+
 def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]) -> dict[str, Any]:
     """Merge one immutable run record without ever reviving a terminal run."""
     disk_status = str(disk_worker.get("status") or "").lower()
@@ -516,6 +592,11 @@ def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
             queued_events = None
         if queued_events is not None:
             _rebuild_queue_records(merged, queued_events)
+
+        compact_worker_history(
+            merged,
+            int(config.get("supervisor", {}).get("max_worker_history", 200)),
+        )
 
         persisted = migrate_state(merged)
         write_json(path, persisted)

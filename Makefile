@@ -65,10 +65,11 @@ api-contract-refresh: bootstrap
 
 node-check:
 	@if [[ -f package-lock.json ]]; then \
-		npm ci; \
-		npm run lint --workspaces --if-present; \
-		npm run typecheck --workspaces --if-present; \
-		npm run build --workspaces --if-present; \
+		npm ci && \
+		npm run lint --workspaces --if-present && \
+		npm run typecheck --workspaces --if-present && \
+		npm run build --workspaces --if-present && \
+		npm run bundle:budget --workspaces --if-present && \
 		npm run test --workspaces --if-present; \
 	else \
 		printf "Skipping Node workspace checks: package-lock.json is not present yet.\n"; \

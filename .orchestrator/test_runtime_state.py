@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import runtime_state
 
@@ -315,6 +316,61 @@ class LoadRuntimeStateTests(unittest.TestCase):
             "started",
         )
 
+    def test_save_does_not_resurrect_trimmed_terminal_worker_history(self) -> None:
+        self.config["supervisor"] = {"max_worker_history": 2}
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        disk_state = runtime_state.default_state()
+        for index in range(5):
+            disk_state["workers"][f"run-{index}"] = {
+                "run_id": f"run-{index}",
+                "status": "completed",
+                "last_event_at": f"2026-08-08T10:0{index}:00Z",
+            }
+        self._write_json(self.root / "state.json", disk_state)
+
+        singleton_state = runtime_state.default_state()
+        singleton_state["workers"] = {
+            "run-3": disk_state["workers"]["run-3"],
+            "run-4": disk_state["workers"]["run-4"],
+        }
+
+        runtime_state.save_runtime_state(self.config, singleton_state)
+        persisted = json.loads((self.root / "state.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(set(persisted["workers"]), {"run-3", "run-4"})
+        self.assertEqual(set(singleton_state["workers"]), {"run-3", "run-4"})
+
+    def test_save_retains_concurrent_active_worker_while_compacting_history(self) -> None:
+        self.config["supervisor"] = {"max_worker_history": 2}
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        disk_state = runtime_state.default_state()
+        disk_state["workers"] = {
+            "run-old": {
+                "run_id": "run-old",
+                "status": "completed",
+                "last_event_at": "2026-08-08T10:00:00Z",
+            },
+            "run-concurrent": {
+                "run_id": "run-concurrent",
+                "status": "running",
+                "last_event_at": "2026-08-08T10:01:00Z",
+            },
+        }
+        self._write_json(self.root / "state.json", disk_state)
+
+        stale_writer = runtime_state.default_state()
+        stale_writer["workers"]["run-new"] = {
+            "run_id": "run-new",
+            "status": "completed",
+            "last_event_at": "2026-08-08T10:02:00Z",
+        }
+
+        runtime_state.save_runtime_state(self.config, stale_writer)
+        persisted = json.loads((self.root / "state.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(set(persisted["workers"]), {"run-concurrent", "run-new"})
+        self.assertEqual(persisted["workers"]["run-concurrent"]["status"], "running")
+
     def test_equal_cursor_revision_prefers_durable_disk_snapshot(self) -> None:
         disk_state = runtime_state.default_state()
         disk_state["ready_dispatcher"] = {
@@ -357,4 +413,108 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(
             merged["ready_dispatcher"]["weighted_cursor_revision"],
             1,
+        )
+
+
+class TopLevelStateKeyPersistenceTests(unittest.TestCase):
+    """`migrate_state` must never discard a top-level key without being told to.
+
+    The old filter kept only keys already in `default_state()` plus a hardcoded
+    whitelist. That made "a writer added a state key and forgot to declare it"
+    indistinguishable from "the feature works": every save appeared to succeed,
+    every read returned the default, and nothing was ever logged. The
+    worktree-lease escalation counter lived in exactly that blind spot and so
+    never fired once.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.config = {
+            "paths": {
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            }
+        }
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+
+    def test_undeclared_top_level_keys_survive_migration(self) -> None:
+        migrated = runtime_state.migrate_state(
+            {
+                "some_future_counter": {"task-a": {"count": 4}},
+                "another_new_key": [1, 2, 3],
+            }
+        )
+
+        self.assertEqual(migrated["some_future_counter"], {"task-a": {"count": 4}})
+        self.assertEqual(migrated["another_new_key"], [1, 2, 3])
+
+    def test_undeclared_top_level_keys_survive_save_and_reload(self) -> None:
+        state = runtime_state.default_state()
+        state["some_future_counter"] = {"task-a": {"count": 4}}
+
+        runtime_state.save_runtime_state(self.config, state)
+
+        # `save_runtime_state` rewrites the caller's live dict from what it
+        # persisted, so a dropped key is lost in memory too -- which is why a
+        # counter incremented once per loop could never climb past 1.
+        self.assertEqual(state["some_future_counter"], {"task-a": {"count": 4}})
+        reloaded = runtime_state.load_runtime_state(self.config)
+        self.assertEqual(reloaded["some_future_counter"], {"task-a": {"count": 4}})
+
+    def test_only_explicitly_retired_keys_are_dropped(self) -> None:
+        with mock.patch.object(
+            runtime_state, "RETIRED_STATE_KEYS", frozenset({"legacy_bucket"})
+        ):
+            migrated = runtime_state.migrate_state(
+                {"legacy_bucket": {"stale": True}, "kept_bucket": {"live": True}}
+            )
+
+        self.assertNotIn("legacy_bucket", migrated)
+        self.assertEqual(migrated["kept_bucket"], {"live": True})
+
+    def test_worktree_lease_blocks_is_declared_default_state(self) -> None:
+        self.assertEqual(
+            runtime_state.default_state()["worker_worktree_lease_blocks"], {}
+        )
+
+    def test_worktree_lease_block_counts_survive_save_and_reload(self) -> None:
+        entry = {
+            "count": 4,
+            "first_at": "2026-08-07T07:51:00Z",
+            "last_at": "2026-08-08T06:52:00Z",
+            "refresh_status": "task_head_mismatch: local=a remote=b",
+            "escalated": False,
+        }
+        state = runtime_state.default_state()
+        state["worker_worktree_lease_blocks"]["odp-orch-example-001"] = entry
+
+        runtime_state.save_runtime_state(self.config, state)
+        reloaded = runtime_state.load_runtime_state(self.config)
+
+        self.assertEqual(
+            state["worker_worktree_lease_blocks"]["odp-orch-example-001"], entry
+        )
+        self.assertEqual(
+            reloaded["worker_worktree_lease_blocks"]["odp-orch-example-001"], entry
+        )
+
+    def test_malformed_worktree_lease_blocks_normalize_instead_of_crashing(self) -> None:
+        self.assertEqual(
+            runtime_state.migrate_state(
+                {"worker_worktree_lease_blocks": "not-a-mapping"}
+            )["worker_worktree_lease_blocks"],
+            {},
+        )
+        self.assertEqual(
+            runtime_state.migrate_state(
+                {
+                    "worker_worktree_lease_blocks": {
+                        "odp-orch-example-001": {"count": 2},
+                        "odp-orch-garbage-001": "junk",
+                    }
+                }
+            )["worker_worktree_lease_blocks"],
+            {"odp-orch-example-001": {"count": 2}},
         )
