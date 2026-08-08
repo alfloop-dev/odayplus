@@ -13,6 +13,7 @@ from modules.opsboard.application.store_ops import (
     StoreOpsPolicyError,
     StoreOpsService,
 )
+from modules.opsboard.domain.r4_dtos import AttachmentUploadRequest
 from shared.audit import InMemoryAuditLog
 
 
@@ -158,6 +159,138 @@ def create_operator_store_ops_router(
                 "store_ops.issue_evidence",
                 service.issue_evidence,
                 issue_id,
+            )
+        except StoreOpsNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        result["correlation_id"] = request.state.correlation_id
+        return result
+
+    @router.get("/issues/{issue_id}/attachments", dependencies=[Depends(read_guard)])
+    def list_issue_attachments(
+        issue_id: str,
+        request: Request,
+        masking_profile: str = Header(default="masked", alias="X-Masking-Profile"),
+        x_roles: str | None = Header(default=None, alias="X-Roles"),
+        x_tenant_id: str | None = Header(default="tenant-a", alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        user_roles = [r.strip() for r in x_roles.split(",")] if x_roles else []
+        try:
+            attachments = call_service(
+                "store_ops.list_attachments",
+                service.list_attachments,
+                issue_id=issue_id,
+                masking_profile=masking_profile,
+                user_roles=user_roles,
+                tenant_id=x_tenant_id,
+            )
+        except StoreOpsNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        return {
+            "issueId": issue_id,
+            "attachments": attachments,
+            "count": len(attachments),
+            "correlation_id": request.state.correlation_id,
+        }
+
+    @router.post(
+        "/issues/{issue_id}/attachments",
+        dependencies=[Depends(write_guard)],
+    )
+    def upload_issue_attachment(
+        issue_id: str,
+        body: AttachmentUploadRequest,
+        request: Request,
+        x_tenant_id: str | None = Header(default="tenant-a", alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        try:
+            attachment = call_service(
+                "store_ops.add_attachment",
+                service.add_attachment,
+                issue_id=issue_id,
+                payload=body.model_dump(exclude_none=True),
+                actor_role_id=body.actorRoleId or "opsLead",
+                actor_name=body.actorName or _actor_name_from_role(body.actorRoleId),
+                tenant_id=x_tenant_id or "tenant-a",
+                correlation_id=request.state.correlation_id,
+            )
+        except StoreOpsNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except StoreOpsPolicyError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        attachment["correlation_id"] = request.state.correlation_id
+        return attachment
+
+    @router.get("/issues/{issue_id}/attachments/{attachment_id}", dependencies=[Depends(read_guard)])
+    def get_issue_attachment(
+        issue_id: str,
+        attachment_id: str,
+        request: Request,
+        masking_profile: str = Header(default="masked", alias="X-Masking-Profile"),
+        x_roles: str | None = Header(default=None, alias="X-Roles"),
+        x_tenant_id: str | None = Header(default="tenant-a", alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        user_roles = [r.strip() for r in x_roles.split(",")] if x_roles else []
+        try:
+            attachment = call_service(
+                "store_ops.get_attachment",
+                service.get_attachment,
+                issue_id=issue_id,
+                attachment_id=attachment_id,
+                masking_profile=masking_profile,
+                user_roles=user_roles,
+                tenant_id=x_tenant_id,
+            )
+        except StoreOpsNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        attachment["correlation_id"] = request.state.correlation_id
+        return attachment
+
+    @router.get("/issues/{issue_id}/attachments/{attachment_id}/download", dependencies=[Depends(read_guard)])
+    def download_issue_attachment(
+        issue_id: str,
+        attachment_id: str,
+        request: Request,
+        masking_profile: str = Header(default="masked", alias="X-Masking-Profile"),
+        x_roles: str | None = Header(default=None, alias="X-Roles"),
+        x_tenant_id: str | None = Header(default="tenant-a", alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        user_roles = [r.strip() for r in x_roles.split(",")] if x_roles else []
+        try:
+            attachment = call_service(
+                "store_ops.download_attachment",
+                service.download_attachment,
+                issue_id=issue_id,
+                attachment_id=attachment_id,
+                masking_profile=masking_profile,
+                user_roles=user_roles,
+                tenant_id=x_tenant_id,
+            )
+        except StoreOpsNotFound as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        attachment["correlation_id"] = request.state.correlation_id
+        return attachment
+
+    @router.delete(
+        "/issues/{issue_id}/attachments/{attachment_id}",
+        dependencies=[Depends(write_guard)],
+    )
+    def delete_issue_attachment(
+        issue_id: str,
+        attachment_id: str,
+        request: Request,
+        actor_role_id: str = Header(default="opsLead", alias="X-Actor-Role-Id"),
+        x_tenant_id: str | None = Header(default="tenant-a", alias="X-Tenant-Id"),
+    ) -> dict[str, Any]:
+        try:
+            result = call_service(
+                "store_ops.delete_attachment",
+                service.delete_attachment,
+                issue_id=issue_id,
+                attachment_id=attachment_id,
+                actor_role_id=actor_role_id,
+                actor_name=_actor_name_from_role(actor_role_id),
+                tenant_id=x_tenant_id or "tenant-a",
+                correlation_id=request.state.correlation_id,
             )
         except StoreOpsNotFound as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
