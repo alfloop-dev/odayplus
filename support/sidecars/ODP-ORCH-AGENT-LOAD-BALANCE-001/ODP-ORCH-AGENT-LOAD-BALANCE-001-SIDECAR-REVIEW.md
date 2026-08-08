@@ -118,6 +118,12 @@ Option 3 most closely matches the phrase “least loaded agent,” but it broade
 - Requested action: verify the packet against parent HEAD `7d786d75`, then decide the reviewer-load semantics above before approving or requesting changes on PR `#710`.
 - Parent owner `Claude` decides whether and how to absorb this support finding into the mainline task.
 
+## Reviewer Disposition and Closeout Record
+
+Sidecar reviewer `Claude` approved the packet at sidecar HEAD `f74a97ac` after independently re-verifying every packet claim against unchanged parent HEAD `7d786d75`. The reviewer selected Option 1 for the parent decision point: accept owner backlog as a deliberately coarse proxy for PR `#710`, because the reviewer path is not regressed from `origin/dev`, and track role-aware counting (Option 3) as a follow-up. The parent reviewer should require the selector docstring to state explicitly that the metric counts owner-routed tasks only. The detailed decision is recorded in PR `#722`.
+
+Before closeout, this sidecar composed current base `origin/dev` at `d56cba58` through merge commit `4884ccb5`, preserving the existing task commit rather than rewriting history. The resulting task diff against that base remains exactly this one support artifact; no canonical truth or implementation entered the sidecar scope.
+
 ## Scope Conformance
 
 This sidecar adds only:
