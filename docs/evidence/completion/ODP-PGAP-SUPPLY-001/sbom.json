@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-9b7f80665e9cb97755b70fd4c16dc7de",
+  "serialNumber": "urn:uuid:sha256-ba52af9cb1798983d735b01b14853b18",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-07T11:35:58.107675+00:00",
+    "timestamp": "2026-08-08T08:53:10.965989+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "4a096af29e69805f8df7f95eeb2965bd459e11bf"
+        "value": "b5403733c5d47f0d87e989969a4c7024fd2fd8ea"
       },
       {
         "name": "sbom-hash",
-        "value": "9b7f80665e9cb97755b70fd4c16dc7de54ea282158d34a088bbdaa2a1fbf65c6"
+        "value": "ba52af9cb1798983d735b01b14853b1841701da31e9fe883ad8752f6d7d4a7fb"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:8824b534eac76590f093f2054741cd12dc27e4c3d019ae63ca9c4fc4fc8b7b67"
+        "value": "sha256:b47327cc0a021d951e01277eaaf8eb0922bbae3ab561352e4d5646b86849f445"
       }
     ]
   },
@@ -2856,10 +2856,10 @@
     },
     {
       "name": "nanoid",
-      "version": "3.3.16",
+      "version": "3.3.18",
       "type": "library",
-      "purl": "pkg:npm/nanoid@3.3.16",
-      "bom-ref": "pkg:npm/nanoid@3.3.16"
+      "purl": "pkg:npm/nanoid@3.3.18",
+      "bom-ref": "pkg:npm/nanoid@3.3.18"
     },
     {
       "name": "napi-postinstall",
@@ -3080,10 +3080,10 @@
     },
     {
       "name": "postcss",
-      "version": "8.5.22",
+      "version": "8.5.26",
       "type": "library",
-      "purl": "pkg:npm/postcss@8.5.22",
-      "bom-ref": "pkg:npm/postcss@8.5.22"
+      "purl": "pkg:npm/postcss@8.5.26",
+      "bom-ref": "pkg:npm/postcss@8.5.26"
     },
     {
       "name": "potpack",
