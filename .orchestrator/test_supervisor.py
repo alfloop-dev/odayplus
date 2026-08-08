@@ -14792,3 +14792,40 @@ class AgentLoadBalancingTests(unittest.TestCase):
         counts = supervisor.agent_open_task_counts(self.CONFIG, status)
 
         self.assertEqual(counts.get("antigravity"), 2)
+
+    def test_open_task_counts_supports_reviewer_role(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "a", "status": "review", "owner": "Claude", "reviewer": "Antigravity2"},
+                {"id": "b", "status": "review", "owner": "Claude", "reviewer": "Antigravity2"},
+                {"id": "c", "status": "done", "owner": "Claude", "reviewer": "Antigravity2"},
+            ]
+        }
+
+        owner_counts = supervisor.agent_open_task_counts(self.CONFIG, status, role="owner")
+        reviewer_counts = supervisor.agent_open_task_counts(self.CONFIG, status, role="reviewer")
+
+        self.assertEqual(owner_counts.get("claude"), 2)
+        self.assertEqual(reviewer_counts.get("antigravity2"), 2)
+        self.assertNotIn("antigravity3", reviewer_counts)
+
+    def test_reviewer_path_balances_reviewer_load(self) -> None:
+        """Reviewer reassignment must count reviewer load, not owner load.
+
+        Reproducer: two review tasks assigned to reviewer Antigravity2 and none to
+        Antigravity3. Owner count for both candidate reviewers is 0. With
+        role="reviewer", first_viable_agent chooses Antigravity3.
+        """
+        status = {
+            "tasks": [
+                {"id": "a", "status": "review", "owner": "Claude", "reviewer": "Antigravity2"},
+                {"id": "b", "status": "review", "owner": "Claude", "reviewer": "Antigravity2"},
+            ]
+        }
+        candidates = ["Antigravity2", "Antigravity3"]
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG, candidates, exclude={"Claude"}, status=status, role="reviewer"
+        )
+
+        self.assertEqual(chosen, "Antigravity3")
