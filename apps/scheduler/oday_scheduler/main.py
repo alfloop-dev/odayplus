@@ -139,7 +139,9 @@ class ODayScheduler:
 
     def export_metrics(self) -> dict[str, Any] | None:
         """Export scheduler metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""
-        sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or "").strip().lower()
+        from shared.runtime_config import get_release_identity
+
+        sha = get_release_identity().lower()
         if sha and len(sha) == 40 and sha != "local":
             try:
                 exporter = ProductionMetricsExporter(release_sha=sha, registry=self.telemetry.metrics)
