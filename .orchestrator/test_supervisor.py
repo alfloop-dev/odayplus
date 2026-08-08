@@ -6107,6 +6107,202 @@ class UnderutilizationSidecarDispatchTests(unittest.TestCase):
         )
 
 
+class ArchivedSidecarCandidateTests(unittest.TestCase):
+    """Sidecar ids are deterministic, so an archived sidecar owns its id forever.
+
+    `ai_status.py assign` rejects a reused archived id, so candidate generation
+    that only looks at live tasks re-proposes the same dead ids on every wave.
+    """
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        (self.root / "ai-status.json").write_text('{"tasks": []}\n', encoding="utf-8")
+        (self.root / "sidecar_catalog.json").write_text('{"templates": []}\n', encoding="utf-8")
+        (self.root / "activity-log.jsonl").write_text("", encoding="utf-8")
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        self.archive_dir = self.root / "ai-task-archive" / "tasks"
+        self.archive_dir.mkdir(parents=True)
+        env_patch = mock.patch.dict(
+            os.environ,
+            {"ORCH_STATUS_ROOT": str(self.root), "PANTHEON_STATUS_ROOT": str(self.root)},
+        )
+        env_patch.start()
+        self.addCleanup(env_patch.stop)
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "status_field": "status",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "paths": {
+                "status_file": str(self.root / "ai-status.json"),
+                "sidecar_catalog": str(self.root / "sidecar_catalog.json"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+            },
+            "ready_dispatcher": {"dependency_done_statuses": ["done"]},
+        }
+
+    def write_catalog(self, templates: list[dict[str, Any]]) -> None:
+        (self.root / "sidecar_catalog.json").write_text(
+            json.dumps({"templates": templates}, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+
+    def archive_sidecar(self, sidecar_id: str, *, helper_parent: str, helper_kind: str) -> None:
+        (self.archive_dir / f"{sidecar_id}.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": sidecar_id,
+                    "archived_at": "2026-08-07T00:00:00Z",
+                    "terminal_status": "done",
+                    "terminal_outcome": "completed",
+                    "task": {
+                        "id": sidecar_id,
+                        "status": "done",
+                        "task_class": "sidecar",
+                        "helper_parent": helper_parent,
+                        "helper_kind": helper_kind,
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    def parent_status(self) -> dict[str, Any]:
+        return {
+            "tasks": [
+                {
+                    "id": "APP-001",
+                    "title": "Ship the operator console",
+                    "phase": "Phase 9",
+                    "owner": "Reviewer",
+                    "status": "in_progress",
+                }
+            ]
+        }
+
+    def test_archived_state_reports_signatures_and_ids(self) -> None:
+        self.archive_sidecar("APP-001-SIDECAR-REVIEW", helper_parent="APP-001", helper_kind="review_packet")
+
+        signatures, task_ids = supervisor.archived_sidecar_state(self.config)
+
+        self.assertEqual(signatures, {"APP-001:review_packet"})
+        self.assertEqual(task_ids, {"APP-001-SIDECAR-REVIEW"})
+
+    def test_archived_state_is_empty_when_archive_is_missing(self) -> None:
+        for path in self.archive_dir.iterdir():
+            path.unlink()
+        self.archive_dir.rmdir()
+        (self.root / "ai-task-archive").rmdir()
+
+        self.assertEqual(supervisor.archived_sidecar_state(self.config), (set(), set()))
+
+    def test_existing_signatures_include_archived_signatures(self) -> None:
+        signatures = supervisor.existing_sidecar_signatures(
+            {
+                "tasks": [
+                    {
+                        "id": "APP-002-SIDECAR-ACCEPTANCE",
+                        "task_class": "sidecar",
+                        "helper_parent": "APP-002",
+                        "helper_kind": "acceptance_packet",
+                    }
+                ]
+            },
+            archived_signatures={"APP-001:review_packet"},
+        )
+
+        self.assertEqual(signatures, {"APP-001:review_packet", "APP-002:acceptance_packet"})
+
+    def test_catalog_candidate_is_skipped_when_parent_kind_is_archived(self) -> None:
+        self.write_catalog(
+            [
+                {
+                    "template_id": "phase9_review_packet",
+                    "kind": "review_packet",
+                    "parent_task_ids": ["APP-001"],
+                    "title_template": "Prepare {{parent_task_id}} review packet",
+                    "summary_zh_template": "支援 {{parent_task_id}}。",
+                    "artifact_targets": ["support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"],
+                }
+            ]
+        )
+        status = self.parent_status()
+        task_map = {"APP-001": status["tasks"][0]}
+
+        before = supervisor.build_catalog_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual([item["sidecar_id"] for item in before], ["APP-001-SIDECAR-REVIEW"])
+
+        self.archive_sidecar("APP-001-SIDECAR-REVIEW", helper_parent="APP-001", helper_kind="review_packet")
+
+        after = supervisor.build_catalog_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual(after, [])
+
+    def test_catalog_candidate_is_skipped_when_only_the_archived_id_matches(self) -> None:
+        """Legacy snapshots can lack helper metadata; the id alone must still block."""
+        self.write_catalog(
+            [
+                {
+                    "template_id": "phase9_review_packet",
+                    "kind": "review_packet",
+                    "parent_task_ids": ["APP-001"],
+                    "title_template": "Prepare {{parent_task_id}} review packet",
+                    "summary_zh_template": "支援 {{parent_task_id}}。",
+                    "artifact_targets": ["support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"],
+                }
+            ]
+        )
+        (self.archive_dir / "APP-001-SIDECAR-REVIEW.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task_id": "APP-001-SIDECAR-REVIEW",
+                    "archived_at": "2026-08-07T00:00:00Z",
+                    "task": {"id": "APP-001-SIDECAR-REVIEW", "status": "done"},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        status = self.parent_status()
+
+        candidates = supervisor.build_catalog_sidecar_candidates(
+            self.config, status, {"APP-001": status["tasks"][0]}, set()
+        )
+
+        self.assertEqual(candidates, [])
+
+    def test_dynamic_candidate_is_skipped_when_archived(self) -> None:
+        status = self.parent_status()
+        task_map = {"APP-001": status["tasks"][0]}
+
+        before = supervisor.build_dynamic_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual([item["sidecar_id"] for item in before], ["APP-001-SIDECAR-ACCEPTANCE"])
+
+        self.archive_sidecar(
+            "APP-001-SIDECAR-ACCEPTANCE", helper_parent="APP-001", helper_kind="acceptance_packet"
+        )
+
+        after = supervisor.build_dynamic_sidecar_candidates(self.config, status, task_map, set())
+        self.assertEqual(after, [])
+
+    def test_unrelated_archived_sidecar_does_not_block_a_fresh_candidate(self) -> None:
+        self.archive_sidecar("APP-002-SIDECAR-REVIEW", helper_parent="APP-002", helper_kind="review_packet")
+        status = self.parent_status()
+
+        candidates = supervisor.build_dynamic_sidecar_candidates(
+            self.config, status, {"APP-001": status["tasks"][0]}, set()
+        )
+
+        self.assertEqual([item["sidecar_id"] for item in candidates], ["APP-001-SIDECAR-ACCEPTANCE"])
+
+
 class ChairReviewDispatchTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmpdir = tempfile.TemporaryDirectory()
