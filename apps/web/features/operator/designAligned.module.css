@@ -1152,7 +1152,7 @@
 
 .bars {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
   gap: 5px;
   height: 90px;
   border-bottom: 1px dashed #c7d1df;
