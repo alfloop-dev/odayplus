@@ -129,4 +129,3 @@ the other reported checks were:
 - Record the new exact head and use `re_review` because the currently approved
   head will no longer match.
 - Merge/finalize only after required CI is green and the new head is approved.
-
