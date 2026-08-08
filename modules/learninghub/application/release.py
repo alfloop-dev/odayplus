@@ -39,6 +39,7 @@ from modules.learninghub.application.monitor import (
 )
 from modules.learninghub.domain import (
     DatasetSnapshot,
+    DqTriageRecord,
     InferenceComparison,
     InferenceComparisonMode,
     InferenceDelta,
@@ -299,6 +300,57 @@ class LearningHubService:
             label_set_id=label_set_id,
         )
         return self.repository.save_dataset_snapshot(snapshot)
+
+    def record_dq_triage(
+        self,
+        *,
+        dataset_snapshot_id: str,
+        action: str,
+        rationale: str,
+        actor: str,
+        correlation_id: str | None = None,
+    ) -> DqTriageRecord:
+        if not dataset_snapshot_id or not dataset_snapshot_id.strip():
+            raise ValueError("dataset_snapshot_id is required")
+        if not action or not action.strip():
+            raise ValueError("action is required for DQ triage")
+        if not rationale or not rationale.strip():
+            raise ValueError("rationale is required for DQ triage")
+        if not actor or not actor.strip():
+            raise ValueError("actor is required for DQ triage")
+
+        snapshot = self.repository.get_dataset_snapshot(dataset_snapshot_id)
+        if snapshot is None:
+            raise ValueError(f"unknown dataset snapshot {dataset_snapshot_id}")
+
+        triage_id = f"dq_triage_{uuid4().hex[:12]}"
+        record = DqTriageRecord(
+            triage_id=triage_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            action=action.strip(),
+            actor=actor.strip(),
+            rationale=rationale.strip(),
+            time=datetime.now(UTC),
+        )
+        saved = self.repository.save_dq_triage(record)
+
+        self.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.dq_triage_recorded.v1",
+                actor=actor,
+                action="record_dq_triage",
+                resource=f"learninghub/dataset-snapshots/{dataset_snapshot_id}/triage",
+                outcome="accepted",
+                correlation_id=correlation_id or f"corr_{triage_id}",
+                metadata={
+                    "triage_id": record.triage_id,
+                    "action": record.action,
+                    "rationale": record.rationale,
+                    "time": record.time.isoformat(),
+                },
+            )
+        )
+        return saved
 
     def validate_candidate(
         self,
