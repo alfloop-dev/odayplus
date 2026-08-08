@@ -1782,7 +1782,7 @@ def test_all_structured_diagnostic_fields_rendered() -> None:
         assert "suggested_action" in diag_dict and diag_dict["suggested_action"]
 
 
-def test_update_scenario_draft_only() -> None:
+def test_update_scenario_lifecycle_restrictions() -> None:
     service = NetPlanService()
     scenario = service.create_scenario(
         tenant_id="tenant-1",
@@ -1797,10 +1797,11 @@ def test_update_scenario_draft_only() -> None:
     updated = service.update_scenario(scenario.scenario_id, scenario_name="updated name")
     assert updated.scenario_name == "updated name"
 
-    # Move to solved
+    # Move to solved and submit for approval
     service.solve(scenario.scenario_id)
+    service.submit_for_approval(scenario.scenario_id)
 
-    # Updating non-draft fails
+    # Updating pending_approval scenario fails
     with pytest.raises(ValueError, match="cannot update scenario"):
         service.update_scenario(scenario.scenario_id, scenario_name="invalid update")
 

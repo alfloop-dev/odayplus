@@ -130,7 +130,7 @@ class NetPlanService:
         from dataclasses import replace
 
         scenario = self._require_scenario(scenario_id)
-        if scenario.status != NetPlanScenarioStatus.DRAFT:
+        if scenario.status not in (NetPlanScenarioStatus.DRAFT, NetPlanScenarioStatus.SOLVED, NetPlanScenarioStatus.INFEASIBLE):
             raise ValueError(
                 f"cannot update scenario {scenario_id} in {scenario.status.value} status"
             )
