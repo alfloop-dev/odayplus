@@ -55,6 +55,8 @@ def complete_env() -> dict[str, str]:
     env["ODAY_RELEASE_SHA"] = EXPECTED_SHA
     env["ODP_FORECAST_ENGINE"] = "statsforecast"
     env["ODP_FORECAST_MODEL"] = "seasonal_naive"
+    env["ODP_SCHEDULED_INGESTION_TENANT_ID"] = "tenant-dev"
+    env["ODP_TENANT_ID"] = "tenant-dev"
     for provider in validator._provider_definitions(ROOT):
         if provider.provider_id not in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
             continue
@@ -170,6 +172,8 @@ def _run_deploy_config_gate(
         "ODP_SCHEDULER_CRON": "0 * * * *",
         "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
         "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": "8",
+        "ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-dev",
+        "ODP_TENANT_ID": "tenant-dev",
     }
     if forecast_engine is not None:
         env["ODP_FORECAST_ENGINE"] = forecast_engine

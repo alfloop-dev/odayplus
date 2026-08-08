@@ -30,6 +30,7 @@
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
+    "external_command_timeout_seconds": 30,
     "auto_refresh_provider_capabilities": true
   },
   "worker_runtime": {

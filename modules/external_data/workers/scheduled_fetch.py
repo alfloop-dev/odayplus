@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -323,6 +323,68 @@ class DurableExternalFetchStateStore:
         if open_until is not None:
             self._store.put(self._circuit_open_until_collection, provider_id, None)
         return None
+
+
+class TenantScopedExternalFetchStateStore:
+    """Tenant-partitioned view over any fetch state store.
+
+    Watermarks, circuit state, and window dedupe are all keyed by
+    ``provider_id`` / ``idempotency_key``, which are identical across tenants
+    running the same schedule. Sharing one store would let tenant B inherit
+    tenant A's watermark (skipping a window it never ingested) and read back
+    tenant A's run. This wrapper namespaces both keys so each tenant sees only
+    its own state, while keeping the single durable backend the deployment
+    already provisions. Keys are un-namespaced on the way out so callers keep
+    seeing plain provider ids.
+    """
+
+    def __init__(self, inner: Any, tenant_id: str) -> None:
+        clean_tid = str(tenant_id).strip()
+        if not clean_tid:
+            raise ValueError("TenantScopedExternalFetchStateStore requires a tenant_id")
+        self._inner = inner
+        self.tenant_id = clean_tid
+        self._prefix = f"tenant:{clean_tid}:"
+
+    def _scope(self, value: str) -> str:
+        return f"{self._prefix}{value}"
+
+    def _unscope(self, value: str) -> str:
+        return value[len(self._prefix):] if value.startswith(self._prefix) else value
+
+    def _unscope_run(self, run: ExternalFetchRun) -> ExternalFetchRun:
+        return replace(
+            run,
+            provider_id=self._unscope(run.provider_id),
+            idempotency_key=self._unscope(run.idempotency_key),
+        )
+
+    def get_run(self, idempotency_key: str) -> ExternalFetchRun | None:
+        found = self._inner.get_run(self._scope(idempotency_key))
+        return self._unscope_run(found) if found is not None else None
+
+    def save_run(self, run: ExternalFetchRun) -> ExternalFetchRun:
+        scoped = replace(
+            run,
+            provider_id=self._scope(run.provider_id),
+            idempotency_key=self._scope(run.idempotency_key),
+        )
+        return self._unscope_run(self._inner.save_run(scoped))
+
+    def last_success_watermark(self, provider_id: str) -> datetime | None:
+        return self._inner.last_success_watermark(self._scope(provider_id))
+
+    def record_failure(
+        self,
+        provider_id: str,
+        *,
+        at: datetime,
+        policy: ExternalFetchResiliencePolicy,
+    ) -> tuple[int, datetime | None]:
+        return self._inner.record_failure(self._scope(provider_id), at=at, policy=policy)
+
+    def circuit_open_until(self, provider_id: str, at: datetime) -> datetime | None:
+        return self._inner.circuit_open_until(self._scope(provider_id), at)
 
 
 class ExternalFetchScheduler:
@@ -729,6 +791,7 @@ __all__ = [
     "ExternalFetchScheduler",
     "InMemoryExternalFetchStateStore",
     "DurableExternalFetchStateStore",
+    "TenantScopedExternalFetchStateStore",
     "SourceFreshnessEvidence",
     "default_external_fetch_provider_factories",
     "freshness_evidence_from_run",
