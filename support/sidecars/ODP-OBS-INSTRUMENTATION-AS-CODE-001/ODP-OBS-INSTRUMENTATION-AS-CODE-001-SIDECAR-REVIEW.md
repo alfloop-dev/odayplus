@@ -145,3 +145,21 @@ The detached verification worktree was removed after execution. Both the parent 
 This file is the sole deliverable of `ODP-OBS-INSTRUMENTATION-AS-CODE-001-SIDECAR-REVIEW`. It is a non-canonical support artifact and does not alter parent acceptance state by itself.
 
 Handoff target: `Codex3` (current assigned sidecar reviewer). `Antigravity4` was the parent owner when the evidence was captured; the current parent owner decides which findings to absorb into `ODP-OBS-INSTRUMENTATION-AS-CODE-001` before returning that parent task to reviewer `Antigravity`.
+
+## Closeout refresh — 2026-08-08
+
+Codex3 approved the support-only packet at pushed HEAD
+`3d2325d739f229eeb88c8a1abf451caafa6f176a`. Before closeout, the task
+branch was history-preservingly composed with current `origin/dev`
+`9282082b4c9679d688ffb55db289159450b8a7ed` by merge commit
+`c78f65c4c0ee05d3d1d74fb75b21cffa2cba81da`. The compose completed without
+conflicts, and the pre-refresh artifact remained byte-identical to the approved
+packet (SHA-256
+`6dac6264cedde6314350c18acca9a6b17ee098a35b4b8905bab07dec59a4adee`).
+
+Closeout verification confirms that `origin/dev` is an ancestor of the task
+HEAD, `origin/dev...HEAD` remains limited to this declared support artifact,
+and `git diff --check` passes. This ancestry refresh does not change any parent
+finding or approve the parent implementation. Because it produces a new exact
+task HEAD, the refreshed packet must be pushed normally and re-approved by
+Codex3 before the task can merge and move to `done`.
