@@ -196,6 +196,8 @@ keys = [
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
+    "ODP_SCHEDULED_INGESTION_TENANT_ID",
+    "ODP_TENANT_ID",
 ]
 provider_config = {
     "listing.partner_feed": (
@@ -222,7 +224,13 @@ selected = {
 }
 for provider_id in sorted(selected):
     keys.extend(provider_config.get(provider_id, ()))
-payload = {key: os.environ[key] for key in keys}
+payload = {key: os.environ[key] for key in keys if key in os.environ}
+if "ODP_SCHEDULED_INGESTION_TENANT_ID" not in payload:
+    payload["ODP_SCHEDULED_INGESTION_TENANT_ID"] = (
+        os.environ.get("ODP_TENANT_ID") or "tenant-dev"
+    )
+if "ODP_TENANT_ID" not in payload:
+    payload["ODP_TENANT_ID"] = payload["ODP_SCHEDULED_INGESTION_TENANT_ID"]
 payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
 payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)

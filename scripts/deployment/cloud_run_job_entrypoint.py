@@ -14,6 +14,7 @@ from typing import Any
 
 from apps.api.server import bootstrap_runtime, build_scheduler, build_worker
 from apps.cli.oday_cli.ops import OpsPlanError, build_migration_run
+from apps.scheduler.oday_scheduler.main import SchedulerTenantConfigurationError
 from shared.jobs.queue import JobRecord, JobStatus
 
 EXIT_FAILED = 1
@@ -153,7 +154,19 @@ def run_scheduler() -> int:
     tracking_queue = TrackingJobQueue(bundle.job_queue)
     scheduler = build_scheduler(replace(bundle, job_queue=tracking_queue))
     before = tracking_queue.count_active_jobs()
-    scheduler.run_once()
+    try:
+        scheduler.run_once()
+    except SchedulerTenantConfigurationError as exc:
+        _emit_receipt(
+            "scheduler",
+            "failed",
+            reason="missing_tenant_configuration",
+            error_class=type(exc).__name__,
+            error=str(exc),
+            active_jobs_before=before,
+            active_jobs_after=before,
+        )
+        return EXIT_FAILED
     after = tracking_queue.count_active_jobs()
 
     if tracking_queue.enqueue_errors:
