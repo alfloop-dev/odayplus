@@ -1,0 +1,9 @@
+Guard: apps/web/scripts/__tests__/cssFlexAlignment.test.mjs
+Run against pre-change file content (git show HEAD:<path>):
+
+  apps/web/features/operator/designAligned.module.css:1155  align-items: end;
+  apps/web/features/operator/networkFindAreas.module.css:1939  align-items: start;
+  apps/web/features/operator/networkFindAreas.module.css:2049  align-items: end;
+  apps/web/features/operator/storeOps.module.css:23  align-items: end;
+
+4 offences before the fix; the same guard reports 0 after.

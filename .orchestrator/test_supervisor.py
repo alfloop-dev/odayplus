@@ -9258,6 +9258,44 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
             },
         }
 
+    def test_reassignment_preserves_blocked_reason_as_next(self) -> None:
+        config = {**self.config, "paths": {"status_file": "ai-status.json"}}
+        status = {
+            "tasks": [
+                {
+                    "id": "BLOCKED-001",
+                    "status": "blocked",
+                    "owner": "Gemini",
+                    "reviewer": "Claude",
+                    "waiting_for": "Human/Ops",
+                    "next": "Await authoritative Human/Ops dataset and attestation.",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+        message = "Auto-reassigned owner from Gemini to Codex."
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_json"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.persist_task_reassignment(
+                config,
+                task_id="BLOCKED-001",
+                new_owner="Codex",
+                new_reviewer="Claude",
+                message=message,
+            )
+
+        self.assertTrue(changed)
+        task = status["tasks"][0]
+        self.assertEqual(task["next"], "Await authoritative Human/Ops dataset and attestation.")
+        self.assertEqual(task["assignment_note"], message)
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+
     def test_sync_preempted_owned_task_returns_in_progress_task_to_todo(self) -> None:
         config = {
             "paths": {"status_file": "ai-status.json"},
