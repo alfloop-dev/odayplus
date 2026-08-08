@@ -33,6 +33,49 @@ class NonRetryableJobError(RuntimeError):
     pass
 
 
+JOB_FEATURE_FLAG_MAP: dict[str, str] = {
+    "priceops.execute": "high_risk.priceops.execute",
+    "priceops_job": "high_risk.priceops.execute",
+    "adlift.approve": "high_risk.adlift.approve",
+    "adlift_job": "high_risk.adlift.approve",
+    "netplan.approve": "high_risk.netplan.approve",
+    "netplan_job": "high_risk.netplan.approve",
+    "model.publish": "high_risk.model.publish",
+    "model_publish_job": "high_risk.model.publish",
+    "sitescore.approve": "high_risk.sitescore.approve",
+    "sitescore_job": "high_risk.sitescore.approve",
+}
+
+
+def resolve_job_feature_flag_key(job_type: str, payload: dict[str, Any] | None = None) -> str | None:
+    """Resolve the feature flag key for a given job type or payload."""
+
+    if payload and "feature_flag" in payload:
+        return str(payload["feature_flag"])
+    return JOB_FEATURE_FLAG_MAP.get(job_type)
+
+
+def check_job_feature_flag(
+    job_type: str, payload: dict[str, Any] | None = None, *, flags: Any = None, on: Any = None
+) -> None:
+    """Enforce feature flag check for job execution per FR-SHARED-004.
+
+    If the mapped feature flag is disabled, raises NonRetryableJobError.
+    """
+
+    flag_key = resolve_job_feature_flag_key(job_type, payload)
+    if flag_key:
+        from shared.auth.feature_flags import default_registry
+
+        reg = flags or default_registry()
+        if not reg.is_enabled(flag_key, on=on):
+            raise NonRetryableJobError(
+                f"Feature flag {flag_key!r} is disabled (kill-switch engaged). "
+                f"Job execution for {job_type!r} refused."
+            )
+
+
+
 @dataclass(frozen=True)
 class JobRequest:
     job_type: str
@@ -99,6 +142,9 @@ class InMemoryJobQueue:
 
     def enqueue(self, request: JobRequest, *, correlation_id: str) -> tuple[JobRecord, bool]:
         with self._reservation_lock:
+            # Enforce kill-switch / feature flag check at enqueue time
+            check_job_feature_flag(request.job_type, request.payload)
+
             if request.idempotency_key:
                 existing_job_id = self._idempotency_index.get(request.idempotency_key)
                 if existing_job_id is not None:
@@ -135,7 +181,20 @@ class InMemoryJobQueue:
                 and record.leased_until < now
             )
             if is_eligible:
+                try:
+                    check_job_feature_flag(record.job_type, record.payload)
+                except NonRetryableJobError as exc:
+                    new_record = dataclasses.replace(
+                        record,
+                        status=JobStatus.FAILED,
+                        leased_until=None,
+                        error_message=str(exc),
+                    )
+                    self._jobs[record.job_id] = new_record
+                    continue
+
                 if record.attempts >= record.max_retries:
+
                     # Move to DLQ (failed status)
                     new_record = dataclasses.replace(
                         record, status=JobStatus.FAILED, leased_until=None

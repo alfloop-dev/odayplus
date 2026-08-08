@@ -144,6 +144,54 @@ class EvidencePurposeResponse(BaseModel):
     correlationId: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Task Attachments (ODP-CAP-TASK-ATTACHMENTS-001 / FR-OPS-002 / FR-SHARED-007)
+# ---------------------------------------------------------------------------
+
+ATTACHMENT_CLASSIFICATIONS = Literal[
+    "site_photo", "lease_scan", "controlled_document", "general"
+]
+ATTACHMENT_SENSITIVITY_LEVELS = Literal["controlled", "restricted", "public"]
+
+
+class AttachmentUploadRequest(ActorIdentity):
+    """Write body for POST /operator/store-ops/issues/{issue_id}/attachments."""
+
+    filename: str
+    fileType: str = "image/jpeg"
+    classification: ATTACHMENT_CLASSIFICATIONS = "site_photo"
+    sensitivityLevel: ATTACHMENT_SENSITIVITY_LEVELS = "controlled"
+    contentBase64: str | None = None
+    note: str | None = None
+
+    @field_validator("filename")
+    @classmethod
+    def filename_non_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("filename must not be empty")
+        return v
+
+
+class AttachmentResponse(BaseModel):
+    """Response DTO for task attachment."""
+
+    id: str
+    issueId: str
+    tenantId: str
+    filename: str
+    fileType: str
+    sizeBytes: int
+    classification: str
+    sensitivityLevel: str
+    uploadedBy: str
+    uploadedAt: str
+    storageUri: str
+    masked: bool
+    maskedReason: str | None = None
+    contentBase64: str | None = None
+
+
 __all__ = [
     "ActorIdentity",
     "ISSUE_ACTION_TYPES",
@@ -155,4 +203,9 @@ __all__ = [
     "ApprovalDecisionResponse",
     "EvidencePurposeRequest",
     "EvidencePurposeResponse",
+    "ATTACHMENT_CLASSIFICATIONS",
+    "ATTACHMENT_SENSITIVITY_LEVELS",
+    "AttachmentUploadRequest",
+    "AttachmentResponse",
 ]
+

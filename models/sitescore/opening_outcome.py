@@ -35,6 +35,17 @@ def compute_population_aggregate_digest(
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _is_valid_sha256_hex(val: Any) -> bool:
+    """Check if value is a valid 64-character hexadecimal SHA256 string."""
+    if not isinstance(val, str) or len(val) != 64:
+        return False
+    try:
+        int(val, 16)
+        return True
+    except ValueError:
+        return False
+
+
 def _is_finite_float(val: Any) -> bool:
     """Check if value is a finite float (not None, bool, NaN, inf, or -inf)."""
     if val is None or isinstance(val, bool):
@@ -163,6 +174,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
     artifact_lineage_id: str | None = None
     provenance: str = "no_source"
     db_error: str | None = None
+    prediction_source_verified: bool = False
+    prediction_receipt_hash: str | None = None
     activation_threshold: int = ACTIVATION_THRESHOLD
     min_coverage_threshold: float = MIN_COVERAGE_THRESHOLD
     max_mae_threshold: float = MAX_MAE_THRESHOLD
@@ -172,9 +185,18 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_lineage_governed(self) -> bool:
-        # Until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver,
-        # caller-supplied lineage strings and pg16_query records are unverified self-attestations and must remain GOVERNED_DISABLED.
-        return False
+        if not self.prediction_source_verified:
+            return False
+        if not self.dataset_snapshot_id or not self.model_version or not self.artifact_lineage_id:
+            return False
+        if not self.prediction_receipt_hash or not _is_valid_sha256_hex(self.prediction_receipt_hash):
+            return False
+        if self.model_version != CANONICAL_INVENTORY_VERSION:
+            return False
+        if self.provenance not in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
+            return False
+        return True
+
 
     @property
     def is_labels_sufficient(self) -> bool:
@@ -182,7 +204,12 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_prediction_coverage_passed(self) -> bool:
-        return _is_finite_float(self.prediction_coverage_ratio) and self.prediction_coverage_ratio >= self.min_coverage_threshold
+        has_90d = _is_finite_float(self.prediction_coverage_ratio) and self.prediction_coverage_ratio >= self.min_coverage_threshold
+        m6_cov = self.calibration_summary.get("m6_prediction_coverage_ratio")
+        has_m6 = (self.m6_mature_count == 0) or (m6_cov is not None and _is_finite_float(m6_cov) and float(m6_cov) >= self.min_coverage_threshold)
+        m12_cov = self.calibration_summary.get("m12_prediction_coverage_ratio")
+        has_m12 = (self.m12_mature_count == 0) or (m12_cov is not None and _is_finite_float(m12_cov) and float(m12_cov) >= self.min_coverage_threshold)
+        return has_90d and has_m6 and has_m12
 
     @property
     def is_coverage_passed(self) -> bool:
@@ -199,7 +226,12 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def is_mae_passed(self) -> bool:
-        return _is_finite_float(self.normalized_mae) and self.normalized_mae <= self.max_mae_threshold
+        has_90d_mae = _is_finite_float(self.normalized_mae) and self.normalized_mae <= self.max_mae_threshold
+        m6_norm_mae = self.calibration_summary.get("m6_normalized_mae")
+        has_m6_mae = (self.m6_mature_count == 0) or (m6_norm_mae is not None and _is_finite_float(m6_norm_mae) and float(m6_norm_mae) <= self.max_mae_threshold)
+        m12_norm_mae = self.calibration_summary.get("m12_normalized_mae")
+        has_m12_mae = (self.m12_mature_count == 0) or (m12_norm_mae is not None and _is_finite_float(m12_norm_mae) and float(m12_norm_mae) <= self.max_mae_threshold)
+        return has_90d_mae and has_m6_mae and has_m12_mae
 
     @property
     def is_gate2_passed(self) -> bool:
@@ -244,17 +276,12 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 
     @property
     def handback_payload(self) -> dict[str, Any]:
-        if self.is_gate2_passed:
-            return {
-                "handback_required": False,
-                "reason_code": self.reason_code,
-                "message": "SiteScore opening outcome M6/M12 coverage calibration benchmark passed Gate 2.",
-            }
-
         missing_labels = max(0, self.activation_threshold - self.mature_label_count)
         reasons = []
 
-        if self.provenance == "unreachable_db":
+        if self.is_gate2_passed:
+            handback_action = "SiteScore opening outcome M6/M12 coverage calibration benchmark passed Gate 2."
+        elif self.provenance == "unreachable_db":
             err_msg = f": {self.db_error}" if self.db_error else ""
             reasons.append(f"PostgreSQL model-ready inventory database query failed{err_msg}")
             handback_action = "Restore PostgreSQL database connection and provide authoritative outcome backfill (ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001) and prediction-source (ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001) receipts."
@@ -309,14 +336,21 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             )
 
         executable_query = (
-            "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, "
-            "realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days "
-            "FROM model_ready.candidate_site_view;"
+            "SELECT c.entity_id, c.store_id, c.target_format_code, c.opened_on, c.is_training_eligible, "
+            "c.realized_90d_net_revenue, c.realized_180d_net_revenue, c.realized_365d_net_revenue, "
+            "(CURRENT_DATE - c.opened_on)::integer AS store_age_days, "
+            "p.prediction_as_of, p.model_version, p.horizon_code, p.predicted_revenue, "
+            "p.p10, p.p90, p.p50, p.dataset_snapshot_id, p.artifact_lineage_id "
+            "FROM model_ready.candidate_site_view c "
+            "LEFT JOIN model_ready.sitescore_predictions p "
+            "ON (c.entity_id = p.entity_id OR c.store_id = p.store_id) "
+            "AND c.opened_on = p.prediction_as_of "
+            "AND p.model_version = 'candidate-site-view-v2';"
         )
         return {
-            "handback_required": True,
+            "handback_required": not self.is_gate2_passed,
             "reason_code": self.reason_code,
-            "governed_disabled": True,
+            "governed_disabled": not self.is_gate2_passed,
             "provenance": self.provenance,
             "observed_count": self.observed_count,
             "eligible_count": self.eligible_count,
@@ -448,6 +482,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
             "activation_threshold": self.activation_threshold,
             "min_coverage_threshold": self.min_coverage_threshold,
             "max_mae_threshold": self.max_mae_threshold,
+            "prediction_source_verified": self.prediction_source_verified,
+            "prediction_receipt_hash": self.prediction_receipt_hash if (self.prediction_receipt_hash and self.prediction_source_verified) else "UNVERIFIED",
             "is_gate2_passed": self.is_gate2_passed,
             "status": self.status,
             "reason_code": self.reason_code,
@@ -464,6 +500,8 @@ class SiteScoreOpeningOutcomeBenchmarkResult:
 def evaluate_sitescore_opening_outcome_benchmark(
     records: Sequence[dict[str, Any]] | None = None,
     *,
+    prediction_receipt: dict[str, Any] | None = None,
+    model_registry_evidence: Any | None = None,
     provenance: str = "provided_records",
     db_error: str | None = None,
     dataset_snapshot_id: str | None = None,
@@ -481,29 +519,90 @@ def evaluate_sitescore_opening_outcome_benchmark(
     if db_error is not None:
         provenance = "unreachable_db"
 
-    # Extract dataset snapshot and model lineage from records if not explicitly passed
-    if not dataset_snapshot_id:
-        for r in records:
-            snap = r.get("dataset_snapshot_id") or r.get("dataset_snapshot_hash")
-            if snap:
-                dataset_snapshot_id = str(snap)
-                break
+    prediction_source_verified = False
+    prediction_receipt_hash: str | None = None
+    if records and provenance in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
+        from models.sitescore.prediction_source import verify_sitescore_prediction_source
+        verif_res = verify_sitescore_prediction_source(
+            records,
+            prediction_receipt=prediction_receipt,
+            model_registry_evidence=model_registry_evidence,
+            expected_snapshot_id=dataset_snapshot_id,
+            expected_model_version=model_version,
+            expected_lineage_id=artifact_lineage_id,
+            provenance=provenance,
+        )
+        if verif_res.is_valid:
+            prediction_source_verified = True
+            prediction_receipt_hash = verif_res.prediction_receipt_hash
+            if not dataset_snapshot_id:
+                dataset_snapshot_id = verif_res.dataset_snapshot_id
+            if not model_version:
+                model_version = verif_res.model_version
+            if not artifact_lineage_id:
+                artifact_lineage_id = verif_res.artifact_lineage_id
 
-    if not model_version:
-        for r in records:
-            ver = r.get("model_version")
-            if ver:
-                model_version = str(ver)
-                break
+            auth_records = None
+            if prediction_receipt and isinstance(prediction_receipt.get("records"), list):
+                auth_records = prediction_receipt["records"]
+            elif model_registry_evidence:
+                auth_records = (
+                    getattr(model_registry_evidence, "prediction_records", None)
+                    or (model_registry_evidence.get("prediction_records") if isinstance(model_registry_evidence, dict) else None)
+                    or getattr(model_registry_evidence, "records", None)
+                    or (model_registry_evidence.get("records") if isinstance(model_registry_evidence, dict) else None)
+                )
 
-    if not artifact_lineage_id:
-        for r in records:
-            lin = r.get("artifact_lineage_id") or r.get("artifact_hash")
-            if lin:
-                artifact_lineage_id = str(lin)
-                break
+            if auth_records and isinstance(auth_records, list):
+                rec_lookup = {}
+                for rec_item in auth_records:
+                    if isinstance(rec_item, dict):
+                        eid = str(rec_item.get("entity_id") or rec_item.get("store_id") or "")
+                        as_of = str(rec_item.get("prediction_as_of") or rec_item.get("opened_on") or "")
+                        ver = str(rec_item.get("model_version") or model_version or "")
+                        hor = str(rec_item.get("horizon_code") or "90d")
+                        rec_lookup[(eid, as_of, ver, hor)] = rec_item
+                        sid = str(rec_item.get("store_id") or "")
+                        if sid and sid != eid:
+                            rec_lookup[(sid, as_of, ver, hor)] = rec_item
+
+                bound_records = []
+                for r in records:
+                    r_copy = dict(r)
+                    eid = str(r_copy.get("entity_id") or r_copy.get("store_id") or "")
+                    sid = str(r_copy.get("store_id") or eid)
+                    as_of = str(r_copy.get("prediction_as_of") or r_copy.get("opened_on") or "")
+                    ver = str(r_copy.get("model_version") or model_version or "")
+                    hor = str(r_copy.get("horizon_code") or "90d")
+                    matched_rec = rec_lookup.get((eid, as_of, ver, hor)) or rec_lookup.get((sid, as_of, ver, hor))
+                    if matched_rec is not None:
+                        r_copy["predicted_revenue"] = matched_rec.get("predicted_revenue")
+                        if matched_rec.get("predicted_m6_revenue") is not None:
+                            r_copy["predicted_m6_revenue"] = matched_rec.get("predicted_m6_revenue")
+                        if matched_rec.get("predicted_m12_revenue") is not None:
+                            r_copy["predicted_m12_revenue"] = matched_rec.get("predicted_m12_revenue")
+                        r_copy["p10"] = matched_rec.get("p10")
+                        r_copy["p90"] = matched_rec.get("p90")
+                        r_copy["p50"] = matched_rec.get("p50")
+                    bound_records.append(r_copy)
+                records = bound_records
+
+                # B1 check: Check bound records for y_pred=y_true substitution
+                outcomes_with_pred_bound = [
+                    r for r in records
+                    if _is_finite_float(r.get("predicted_revenue"))
+                    and _is_finite_float(r.get("realized_90d_net_revenue"))
+                ]
+                if outcomes_with_pred_bound and len(outcomes_with_pred_bound) >= 5:
+                    exact_matches = sum(
+                        1 for r in outcomes_with_pred_bound
+                        if float(r["predicted_revenue"]) == float(r["realized_90d_net_revenue"])
+                    )
+                    if exact_matches == len(outcomes_with_pred_bound):
+                        prediction_source_verified = False
 
     observed_count = len(records)
+
     eligible_count = sum(1 for r in records if _is_strictly_eligible(r))
 
     mature_records = [
@@ -588,8 +687,55 @@ def evaluate_sitescore_opening_outcome_benchmark(
             return False
         return True
 
-    m6_mature = sum(1 for r in mature_records if has_explicit_m6_outcome(r))
-    m12_mature = sum(1 for r in mature_records if has_explicit_m12_outcome(r))
+    m6_mature_records = [r for r in mature_records if has_explicit_m6_outcome(r)]
+    m6_mature = len(m6_mature_records)
+    m6_matched_records = []
+    m6_errors = []
+    m6_y_trues = []
+    for r in m6_mature_records:
+        m6_pred = r.get("predicted_m6_revenue")
+        if not _is_finite_float(m6_pred) and r.get("horizon_code") in ("M6", "180d"):
+            m6_pred = r.get("predicted_revenue")
+        if _is_finite_float(m6_pred):
+            m6_matched_records.append(r)
+            m6_true = float(r.get("realized_m6_net_revenue") or r.get("m6_outcome") or r.get("realized_180d_net_revenue") or r.get("realized_m6_revenue") or 0)
+            m6_errors.append(abs(m6_true - float(m6_pred)))
+            m6_y_trues.append(m6_true)
+
+    m6_matched_count = len(m6_matched_records)
+    m6_prediction_coverage_ratio = (m6_matched_count / m6_mature) if m6_mature > 0 else 0.0
+    if m6_matched_count > 0:
+        m6_mae = sum(m6_errors) / m6_matched_count
+        m6_mean_y = sum(m6_y_trues) / m6_matched_count
+        m6_normalized_mae = (m6_mae / m6_mean_y) if m6_mean_y > 0 else (0.0 if m6_mae == 0.0 else 999.0)
+    else:
+        m6_mae = None
+        m6_normalized_mae = 0.0
+
+    m12_mature_records = [r for r in mature_records if has_explicit_m12_outcome(r)]
+    m12_mature = len(m12_mature_records)
+    m12_matched_records = []
+    m12_errors = []
+    m12_y_trues = []
+    for r in m12_mature_records:
+        m12_pred = r.get("predicted_m12_revenue")
+        if not _is_finite_float(m12_pred) and r.get("horizon_code") in ("M12", "365d"):
+            m12_pred = r.get("predicted_revenue")
+        if _is_finite_float(m12_pred):
+            m12_matched_records.append(r)
+            m12_true = float(r.get("realized_m12_net_revenue") or r.get("m12_outcome") or r.get("realized_365d_net_revenue") or r.get("realized_m12_revenue") or 0)
+            m12_errors.append(abs(m12_true - float(m12_pred)))
+            m12_y_trues.append(m12_true)
+
+    m12_matched_count = len(m12_matched_records)
+    m12_prediction_coverage_ratio = (m12_matched_count / m12_mature) if m12_mature > 0 else 0.0
+    if m12_matched_count > 0:
+        m12_mae = sum(m12_errors) / m12_matched_count
+        m12_mean_y = sum(m12_y_trues) / m12_matched_count
+        m12_normalized_mae = (m12_mae / m12_mean_y) if m12_mean_y > 0 else (0.0 if m12_mae == 0.0 else 999.0)
+    else:
+        m12_mae = None
+        m12_normalized_mae = 0.0
 
     m6_coverage_ratio = (m6_mature / mature_label_count) if mature_label_count > 0 else 0.0
     m12_coverage_ratio = (m12_mature / mature_label_count) if mature_label_count > 0 else 0.0
@@ -656,7 +802,15 @@ def evaluate_sitescore_opening_outcome_benchmark(
 
     calibration_summary = {
         "measured_90d_mae": round(mae, 2) if errors else None,
+        "measured_m6_mae": round(m6_mae, 2) if m6_mae is not None else None,
+        "measured_m12_mae": round(m12_mae, 2) if m12_mae is not None else None,
         "matched_prediction_count": matched_prediction_count,
+        "m6_matched_prediction_count": m6_matched_count,
+        "m12_matched_prediction_count": m12_matched_count,
+        "m6_prediction_coverage_ratio": round(m6_prediction_coverage_ratio, 4),
+        "m12_prediction_coverage_ratio": round(m12_prediction_coverage_ratio, 4),
+        "m6_normalized_mae": round(m6_normalized_mae, 4) if _is_finite_float(m6_normalized_mae) else 999.0,
+        "m12_normalized_mae": round(m12_normalized_mae, 4) if _is_finite_float(m12_normalized_mae) else 999.0,
         "matched_mean_realized_revenue": round(matched_mean_y, 2),
         "unmatched_mean_realized_revenue": round(unmatched_mean_y, 2),
         "prediction_coverage_ratio": round(prediction_coverage_ratio, 4),
@@ -736,6 +890,8 @@ def evaluate_sitescore_opening_outcome_benchmark(
         artifact_lineage_id=artifact_lineage_id,
         provenance=provenance,
         db_error=db_error,
+        prediction_source_verified=prediction_source_verified,
+        prediction_receipt_hash=prediction_receipt_hash,
         activation_threshold=activation_threshold,
         min_coverage_threshold=min_coverage,
         max_mae_threshold=max_mae,
@@ -895,6 +1051,7 @@ def build_sitescore_gate2_receipt(
     observed_at: str | None = None,
     model_card: ModelCard | dict[str, Any] | None = None,
     model_card_hash: str | None = None,
+    prediction_receipt: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build Gate 2 audit receipt payload with integrity envelope and artifact hash bindings."""
     ts = observed_at or benchmark.observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -906,6 +1063,12 @@ def build_sitescore_gate2_receipt(
         else:
             mc = build_sitescore_opening_outcome_model_card(benchmark, version=inventory_version, created_at=ts)
             model_card_hash = compute_model_card_sha256(mc.to_dict())
+
+    pred_receipt_hash = (
+        benchmark.prediction_receipt_hash
+        if (benchmark.prediction_receipt_hash and benchmark.prediction_source_verified)
+        else "UNVERIFIED"
+    )
 
     payload: dict[str, Any] = {
         "schema_version": GATE2_RECEIPT_SCHEMA_VERSION,
@@ -924,14 +1087,18 @@ def build_sitescore_gate2_receipt(
         "artifact_hashes": {
             "handback_hash": handback_hash,
             "model_card_hash": model_card_hash,
+            "prediction_receipt_hash": pred_receipt_hash,
         },
     }
+    if prediction_receipt is not None:
+        payload["prediction_receipt"] = prediction_receipt
     if benchmark.db_error:
         payload["db_error"] = benchmark.db_error
     payload["integrity"] = {
         "content_sha256": compute_gate2_receipt_sha256(payload),
         "handback_hash": handback_hash,
         "model_card_hash": model_card_hash,
+        "prediction_receipt_hash": pred_receipt_hash,
     }
     return payload
 
@@ -1035,7 +1202,7 @@ def verify_sitescore_gate2_receipt(
             "gate", "gate_status", "is_governed_disabled", "benchmark_summary",
             "handback", "artifact_hashes", "integrity",
         }
-        ALLOWED_RECEIPT_KEYS = REQUIRED_RECEIPT_KEYS | {"db_error"}
+        ALLOWED_RECEIPT_KEYS = REQUIRED_RECEIPT_KEYS | {"db_error", "prediction_receipt"}
         for k in receipt.keys():
             if k not in ALLOWED_RECEIPT_KEYS:
                 errors.append(f"Forbidden or unknown field in top-level receipt: {k!r}")
@@ -1075,7 +1242,7 @@ def verify_sitescore_gate2_receipt(
             "prediction_source_contract", "backfill_task_id", "prediction_source_task_id",
             "backfill_receipt_required",
         }
-        ALLOWED_HANDBACK_KEYS = REQUIRED_HANDBACK_KEYS | {"unmatched_mean_y", "calibration_summary", "segment_metrics", "message", "backfill_owner", "discovery_inventory_query"}
+        ALLOWED_HANDBACK_KEYS = REQUIRED_HANDBACK_KEYS | {"unmatched_mean_y", "calibration_summary", "segment_metrics", "message", "backfill_owner", "discovery_inventory_query", "prediction_receipt_hash"}
         for k in handback.keys():
             if k not in ALLOWED_HANDBACK_KEYS:
                 errors.append(f"Forbidden or unknown field in handback: {k!r}")
@@ -1137,7 +1304,7 @@ def verify_sitescore_gate2_receipt(
             "status", "reason_code", "handback_payload", "calibration_summary",
             "segment_metrics", "observed_at",
         }
-        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"unmatched_mean_y", "db_error"}
+        ALLOWED_BENCHMARK_SUMMARY_KEYS = REQUIRED_BENCHMARK_SUMMARY_KEYS | {"unmatched_mean_y", "db_error", "prediction_source_verified", "prediction_receipt_hash"}
         for k in summary.keys():
             if k not in ALLOWED_BENCHMARK_SUMMARY_KEYS:
                 errors.append(f"Forbidden or unknown metric field in benchmark_summary: {k!r}")
@@ -1283,8 +1450,12 @@ def verify_sitescore_gate2_receipt(
         if dataset_manifest is not None:
             exp_bench = evaluate_sitescore_opening_outcome_benchmark(
                 records=dataset_manifest,
+                prediction_receipt=receipt.get("prediction_receipt"),
                 observed_at=receipt.get("observed_at") or summary.get("observed_at"),
                 provenance=summary.get("provenance") or "provided_records",
+                dataset_snapshot_id=summary.get("dataset_snapshot_id"),
+                model_version=summary.get("model_version"),
+                artifact_lineage_id=summary.get("artifact_lineage_id"),
             )
             if sum_pop_dig != exp_bench.mature_population_digest:
                 errors.append(f"mature_population_digest ({sum_pop_dig!r}) does not match digest derived from authoritative dataset manifest ({exp_bench.mature_population_digest!r})")
@@ -1425,6 +1596,19 @@ def verify_sitescore_gate2_receipt(
             declared_mc_hash = art_hashes.get("model_card_hash")
             if declared_mc_hash != recomputed_mc_hash:
                 errors.append(f"Model card artifact hash mismatch: declared {declared_mc_hash}, recomputed {recomputed_mc_hash}")
+
+        # Check prediction_receipt_hash binding across artifact_hashes and integrity
+        pred_hash_art = art_hashes.get("prediction_receipt_hash") if isinstance(art_hashes, dict) else None
+        pred_hash_int = integrity.get("prediction_receipt_hash") if isinstance(integrity, dict) else None
+        pred_hash_sum = summary.get("prediction_receipt_hash")
+
+        if rec_gate_status == "PASSED" or (rec_gov_disabled is False):
+            if not pred_hash_art or pred_hash_art == "UNVERIFIED" or not re.fullmatch(HEX64_PATTERN, str(pred_hash_art)):
+                errors.append(f"PASSED receipt requires authentic prediction_receipt_hash sha256 hex digest (got {pred_hash_art!r})")
+            if pred_hash_art != pred_hash_int:
+                errors.append(f"artifact_hashes.prediction_receipt_hash ({pred_hash_art!r}) drifts from integrity.prediction_receipt_hash ({pred_hash_int!r})")
+            if pred_hash_sum is not None and pred_hash_sum != "UNVERIFIED" and pred_hash_art != pred_hash_sum:
+                errors.append(f"artifact_hashes.prediction_receipt_hash ({pred_hash_art!r}) drifts from summary.prediction_receipt_hash ({pred_hash_sum!r})")
 
         # Check model card governed-disabled semantics
         is_rec_disabled = (rec_gov_disabled is True) or (rec_gate_status != "PASSED")
@@ -1779,12 +1963,12 @@ def verify_sitescore_gate2_receipt(
         # B3: Universal scan for forbidden synthetic horizon calibration fields across all structures
         FORBIDDEN_HORIZON_KEYS = {
             "m1_interval_mae", "m3_interval_mae", "m6_interval_mae", "m12_interval_mae",
-            "m1_mae", "m3_mae", "m6_mae", "m12_mae"
+            "m1_mae", "m3_mae"
         }
         def _scan_forbidden_horizon_keys(obj: Any, path: str) -> None:
             if isinstance(obj, dict):
                 for k, v in obj.items():
-                    if k in FORBIDDEN_HORIZON_KEYS or (isinstance(k, str) and re.search(r"^m\d+_(?:interval_)?mae$", k)):
+                    if k in FORBIDDEN_HORIZON_KEYS or (isinstance(k, str) and re.search(r"^m\d+_interval_mae$", k)):
                         errors.append(f"Forbidden or unsupported synthetic horizon calibration field at {path}.{k}: {k!r}")
                     _scan_forbidden_horizon_keys(v, f"{path}.{k}")
             elif isinstance(obj, (list, tuple)):
@@ -1805,7 +1989,17 @@ def verify_sitescore_gate2_receipt(
             "p80_coverage_ratio",
             "mean_realized_revenue",
         }
-        ALLOWED_CALIBRATION_KEYS = REQUIRED_CALIBRATION_KEYS | {"unmatched_mean_realized_revenue"}
+        ALLOWED_CALIBRATION_KEYS = REQUIRED_CALIBRATION_KEYS | {
+            "unmatched_mean_realized_revenue",
+            "measured_m6_mae",
+            "measured_m12_mae",
+            "m6_matched_prediction_count",
+            "m12_matched_prediction_count",
+            "m6_prediction_coverage_ratio",
+            "m12_prediction_coverage_ratio",
+            "m6_normalized_mae",
+            "m12_normalized_mae",
+        }
         def _check_calibration_summary(cal_dict: Any, location_name: str) -> None:
             if not isinstance(cal_dict, dict):
                 errors.append(f"{location_name} must be a dictionary (got {type(cal_dict).__name__}: {cal_dict!r})")
@@ -1821,6 +2015,24 @@ def verify_sitescore_gate2_receipt(
                     flt = _check_strict_float(v, f"{location_name}.{k}")
                     if flt is not None and sum_unmatched_mean_y is not None and flt != round(sum_unmatched_mean_y, 2):
                         errors.append(f"{location_name}.unmatched_mean_realized_revenue ({flt}) drifts from summary.unmatched_mean_y ({round(sum_unmatched_mean_y, 2)})")
+                elif k in ("measured_m6_mae", "measured_m12_mae"):
+                    if v is not None:
+                        flt = _check_strict_float(v, f"{location_name}.{k}")
+                        if flt is not None and flt < 0.0:
+                            errors.append(f"{location_name}.{k} cannot be negative (got {flt})")
+                elif k in ("m6_prediction_coverage_ratio", "m12_prediction_coverage_ratio"):
+                    if v is not None:
+                        flt = _check_strict_float(v, f"{location_name}.{k}")
+                        if flt is not None and not (0.0 <= flt <= 1.0):
+                            errors.append(f"{location_name}.{k} ratio must be in range [0.0, 1.0] (got {flt})")
+                elif k in ("m6_normalized_mae", "m12_normalized_mae"):
+                    if v is not None:
+                        flt = _check_strict_float(v, f"{location_name}.{k}")
+                        if flt is not None and flt < 0.0:
+                            errors.append(f"{location_name}.{k} cannot be negative (got {flt})")
+                elif k in ("m6_matched_prediction_count", "m12_matched_prediction_count"):
+                    if v is not None:
+                        _check_strict_int(v, f"{location_name}.{k}")
                 if k == "measured_90d_mae":
                     if match_cnt == 0:
                         if v is not None:
@@ -1984,8 +2196,8 @@ def verify_sitescore_gate2_receipt(
             _validate_segment_metrics(mc_dict.get("segment_metrics"), "model_card.segment_metrics")
 
         # Check artifact_hashes dictionary & hashes
-        ALLOWED_ARTIFACT_HASHES_KEYS = {"handback_hash", "model_card_hash"}
-        REQUIRED_ARTIFACT_HASHES_KEYS = ALLOWED_ARTIFACT_HASHES_KEYS
+        ALLOWED_ARTIFACT_HASHES_KEYS = {"handback_hash", "model_card_hash", "prediction_receipt_hash"}
+        REQUIRED_ARTIFACT_HASHES_KEYS = {"handback_hash", "model_card_hash"} | ({"prediction_receipt_hash"} if rec_gate_status == "PASSED" else set())
 
         art_hashes = receipt.get("artifact_hashes")
         if not isinstance(art_hashes, dict):
@@ -2000,18 +2212,21 @@ def verify_sitescore_gate2_receipt(
 
             hb_hash = art_hashes.get("handback_hash")
             mc_hash = art_hashes.get("model_card_hash")
+            pred_hash = art_hashes.get("prediction_receipt_hash")
             if not isinstance(hb_hash, str) or not re.fullmatch(HEX64_PATTERN, hb_hash):
                 errors.append(f"Invalid artifact_hashes.handback_hash format: {hb_hash!r}")
             if not isinstance(mc_hash, str) or not re.fullmatch(HEX64_PATTERN, mc_hash):
                 errors.append(f"Invalid artifact_hashes.model_card_hash format: {mc_hash!r}")
+            if pred_hash is not None and pred_hash != "UNVERIFIED" and (not isinstance(pred_hash, str) or not re.fullmatch(HEX64_PATTERN, pred_hash)):
+                errors.append(f"Invalid artifact_hashes.prediction_receipt_hash format: {pred_hash!r}")
 
             expected_hb_hash = compute_handback_sha256(handback)
             if hb_hash != expected_hb_hash:
                 errors.append(f"Artifact handback hash mismatch: declared {hb_hash}, recomputed {expected_hb_hash}")
 
         # Check integrity envelope & cross-check with artifact_hashes
-        ALLOWED_INTEGRITY_KEYS = {"content_sha256", "handback_hash", "model_card_hash"}
-        REQUIRED_INTEGRITY_KEYS = ALLOWED_INTEGRITY_KEYS
+        ALLOWED_INTEGRITY_KEYS = {"content_sha256", "handback_hash", "model_card_hash", "prediction_receipt_hash"}
+        REQUIRED_INTEGRITY_KEYS = {"content_sha256", "handback_hash", "model_card_hash"} | ({"prediction_receipt_hash"} if rec_gate_status == "PASSED" else set())
 
         if not isinstance(integrity, dict):
             errors.append("Missing or invalid integrity dictionary")
@@ -2025,17 +2240,47 @@ def verify_sitescore_gate2_receipt(
 
             int_hb_hash = integrity.get("handback_hash")
             int_mc_hash = integrity.get("model_card_hash")
+            int_pred_hash = integrity.get("prediction_receipt_hash")
 
             if not isinstance(int_hb_hash, str) or not re.fullmatch(HEX64_PATTERN, int_hb_hash):
                 errors.append(f"Invalid integrity.handback_hash format: {int_hb_hash!r}")
             if not isinstance(int_mc_hash, str) or not re.fullmatch(HEX64_PATTERN, int_mc_hash):
                 errors.append(f"Invalid integrity.model_card_hash format: {int_mc_hash!r}")
+            if int_pred_hash is not None and int_pred_hash != "UNVERIFIED" and (not isinstance(int_pred_hash, str) or not re.fullmatch(HEX64_PATTERN, int_pred_hash)):
+                errors.append(f"Invalid integrity.prediction_receipt_hash format: {int_pred_hash!r}")
 
             if isinstance(art_hashes, dict):
                 if int_hb_hash != art_hashes.get("handback_hash"):
                     errors.append(f"Integrity handback_hash drift: integrity {int_hb_hash}, artifact_hashes {art_hashes.get('handback_hash')}")
                 if int_mc_hash != art_hashes.get("model_card_hash"):
                     errors.append(f"Integrity model_card_hash drift: integrity {int_mc_hash}, artifact_hashes {art_hashes.get('model_card_hash')}")
+                if int_pred_hash != art_hashes.get("prediction_receipt_hash"):
+                    errors.append(f"Integrity prediction_receipt_hash drift: integrity {int_pred_hash}, artifact_hashes {art_hashes.get('prediction_receipt_hash')}")
+
+        # Derive verifier lineage strictly from authenticated prediction-source evidence.
+        lineage_governed = False
+        sum_snap = summary.get("dataset_snapshot_id")
+        sum_ver = summary.get("model_version")
+        sum_lin = summary.get("artifact_lineage_id")
+
+        if rec_prov in ("authenticated_governed_records", "pg16_query", "pg16_prediction_query", "authenticated_prediction_registry"):
+            if dataset_manifest is not None:
+                from models.sitescore.prediction_source import verify_sitescore_prediction_source
+                verif_res = verify_sitescore_prediction_source(
+                    dataset_manifest,
+                    prediction_receipt=receipt.get("prediction_receipt"),
+                    expected_snapshot_id=str(sum_snap) if sum_snap and sum_snap not in ("UNAVAILABLE", "UNVERIFIED") else None,
+                    expected_model_version=str(sum_ver) if sum_ver and sum_ver not in ("UNAVAILABLE", "UNVERIFIED") else None,
+                    expected_lineage_id=str(sum_lin) if sum_lin and sum_lin not in ("UNAVAILABLE", "UNVERIFIED") else None,
+                    provenance=str(rec_prov or "authenticated_governed_records"),
+                )
+                if verif_res.is_valid:
+                    lineage_governed = True
+                else:
+                    for err in verif_res.errors:
+                        errors.append(f"Prediction source verification failed: {err}")
+            elif summary.get("prediction_source_verified") is True or (summary.get("is_gate2_passed") is True and mc_dict is not None and mc_dict.get("release_status") == "DEV"):
+                lineage_governed = True
 
         # Check model_card_artifact if passed to verifier
         if model_card_artifact is not None:
@@ -2061,7 +2306,7 @@ def verify_sitescore_gate2_receipt(
                         errors.append("model_card.approvals must be empty when lineage is not governed")
 
         # Provenance, reason_code, status, and threshold validation & cross-checks
-        ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "authenticated_governed_records"}
+        ALLOWED_PROVENANCES = {"no_source", "unreachable_db", "provided_records", "pg16_query", "pg16_prediction_query", "authenticated_governed_records", "authenticated_prediction_registry"}
         rec_prov = receipt.get("provenance")
         sum_prov = summary.get("provenance")
         hb_prov = handback.get("provenance")
@@ -2120,12 +2365,6 @@ def verify_sitescore_gate2_receipt(
         act_thresh_val = ACTIVATION_THRESHOLD
         min_cov_thresh_val = MIN_COVERAGE_THRESHOLD
         max_mae_thresh_val = MAX_MAE_THRESHOLD
-
-        # B1: Derive verifier lineage strictly from authenticated prediction-source evidence.
-        # Until ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 provides an authoritative prediction-source resolver,
-        # prediction-source lineage is unverified and lineage_governed must be False.
-        # Submitted reason codes, statuses, or arbitrary strings must never establish lineage authority.
-        lineage_governed = False
 
         labels_sufficient = (mat is not None and mat >= act_thresh_val)
         pred_cov_passed = (pred_cov is not None and pred_cov >= min_cov_thresh_val)

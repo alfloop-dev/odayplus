@@ -26,3 +26,8 @@ export type {
   GovernanceDecisionResult,
   EvidencePackageRecord,
 } from "./governanceLoader";
+
+export { ModelReleaseController } from "./ModelReleaseController";
+export type { ModelReleaseControllerProps } from "./ModelReleaseController";
+export * from "./learningHubLoader";
+
