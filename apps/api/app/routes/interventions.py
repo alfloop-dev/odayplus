@@ -270,12 +270,18 @@ else:
             status: str | None = None,
             kind: str | None = None,
         ) -> dict[str, Any]:
-            items = active_workflow.list_cases(
-                store_id=store_id,
-                assigned_to=assigned_to,
-                status=status,
-                kind=kind,
-            )
+            try:
+                items = active_workflow.list_cases(
+                    store_id=store_id,
+                    assigned_to=assigned_to,
+                    status=status,
+                    kind=kind,
+                )
+            except (InterventionError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=str(exc),
+                ) from exc
             return {"items": [i.to_dict() for i in items], "count": len(items)}
 
         @router.get("/{intervention_id}", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])

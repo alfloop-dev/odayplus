@@ -40,13 +40,29 @@
 
 ---
 
+## Reviewer Feedback Remediation & Verification
+
+### Fixes Applied (Round 2 Re-review)
+1. **OpenAPI Artifact & Client Drift Fix**:
+   - Regenerated `packages/openapi-client/openapi.json` via `scripts/openapi/export_openapi.py` (includes `/api/v1/interventions/{id}/assign` and `/unassign` paths and DTO schemas).
+   - Regenerated `packages/openapi-client/src/generated/types.ts` via `scripts/openapi/generate_client.py`.
+   - Verified contract test `tests/contract/test_openapi_artifact_and_client.py` passes completely.
+2. **Inbox Query Input Validation (HTTP 422 vs HTTP 500)**:
+   - Wrapped `active_workflow.list_cases(...)` in `apps/api/app/routes/interventions.py` with `try ... except (InterventionError, ValueError)` block.
+   - Deep links with invalid status/kind values (e.g. `GET /interventions?status=NOT_A_STATUS`) now return a readable HTTP 422 Unprocessable Entity instead of an unhandled HTTP 500 Internal Server Error.
+3. **Negative RBAC & Deep Link Validation Coverage**:
+   - Added negative RBAC tests to `test_api_assignment_rbac_and_inbox_deep_link_filtering` in `tests/integration/test_intervention_workflow.py`, verifying unauthorized callers receive HTTP 403 Forbidden on `/assign` and `/unassign`.
+   - Added negative query filter tests verifying invalid `status` and `kind` parameters return HTTP 422.
+
+---
+
 ## Verification Executed
 
 ```bash
-/home/lupin/oday-plus/.venv/bin/python -m pytest tests/integration/test_intervention_workflow.py tests/integration/test_domain_api_rbac.py
+/tmp/pantheon-round10-clean/.venv/bin/pytest tests/contract/test_openapi_artifact_and_client.py tests/integration/test_intervention_workflow.py
 ```
 Output:
 ```text
-...............
-15 passed in 1.42s
+17 passed in 39.77s (contract tests)
+16 passed in 1.85s (integration tests)
 ```

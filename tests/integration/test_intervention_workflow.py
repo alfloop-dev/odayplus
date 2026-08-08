@@ -35,7 +35,8 @@ from modules.intervention import (
     resolve_evidence_level,
     run_observation_sweep,
 )
-from tests.integration._authz import INTERVENTION_HEADERS
+from shared.auth import Role
+from tests.integration._authz import INTERVENTION_HEADERS, auth_headers
 
 START = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
 END = datetime(2026, 6, 15, 9, 0, tzinfo=UTC)
@@ -902,6 +903,20 @@ def test_api_assignment_rbac_and_inbox_deep_link_filtering() -> None:
     )
     iid = create.json()["intervention_id"]
 
+    # Negative RBAC check: unauthorized caller (without required permission) is rejected with HTTP 403
+    unauth_client = TestClient(create_app(), headers=auth_headers(Role.ANALYST))
+    forbidden_assign = unauth_client.post(
+        f"/interventions/{iid}/assign",
+        json={"assignee": "op-hero", "actor": "supervisor-a"},
+    )
+    assert forbidden_assign.status_code == 403
+
+    forbidden_unassign = unauth_client.post(
+        f"/interventions/{iid}/unassign",
+        json={"actor": "supervisor-a"},
+    )
+    assert forbidden_unassign.status_code == 403
+
     # Assign case
     assign = client.post(
         f"/interventions/{iid}/assign",
@@ -938,6 +953,13 @@ def test_api_assignment_rbac_and_inbox_deep_link_filtering() -> None:
     items = inbox.json()["items"]
     assert len(items) == 1
     assert items[0]["intervention_id"] == iid
+
+    # Invalid query parameters return HTTP 422 instead of 500
+    bad_status = client.get("/interventions", params={"status": "NOT_A_STATUS"})
+    assert bad_status.status_code == 422
+
+    bad_kind = client.get("/interventions", params={"kind": "NOT_A_KIND"})
+    assert bad_kind.status_code == 422
 
     # Unassign case
     unassign = client.post(
