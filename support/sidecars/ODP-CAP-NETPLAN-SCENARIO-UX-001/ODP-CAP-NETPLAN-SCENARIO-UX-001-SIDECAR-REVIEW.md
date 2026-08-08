@@ -4,7 +4,8 @@
 - Parent task: `ODP-CAP-NETPLAN-SCENARIO-UX-001`
 - Parent task title: Complete NetPlan scenario and infeasibility UX
 - Sidecar owner: `Codex3`
-- Assigned sidecar reviewer / parent owner: `Antigravity7`
+- Parent owner / packet handoff target: `Antigravity7`
+- Formal sidecar reviewer: `Codex2`
 - Parent reviewer: `Antigravity6`
 - Evidence captured: `2026-08-08` UTC
 - Parent branch: `task/ODP-CAP-NETPLAN-SCENARIO-UX-001`
@@ -192,4 +193,27 @@ implementation, L1 canonical truth, core contracts, runtime, registry, or
 governance behavior. The parent owner decides whether and how to absorb these
 findings into the main task.
 
-Handoff target: `Antigravity7` (assigned sidecar reviewer and parent owner).
+Handoff target: `Antigravity7` (parent owner).
+
+## Sidecar closeout record
+
+`Codex2` approved this support-only packet at task HEAD `ffb5c6e0` after the
+prior base-compose re-review. The approval does not cover parent PR `#703`,
+whose disposition remains owned by `Antigravity7`.
+
+Before finalization, the sidecar owner fetched the current remote refs and
+composed `origin/dev` into the task branch without rewriting or discarding task
+history. The compose merge is `62288ae6`; it completed without conflicts and
+left this packet as the sole task delta relative to the new base.
+
+Closeout verification:
+
+```bash
+git rev-list --left-right --count origin/dev...HEAD
+git diff --name-only origin/dev...HEAD
+git diff --check origin/dev...HEAD
+```
+
+The sidecar may move to `done` only after sidecar PR `#724` is green and merged
+into `dev`, as required by the recorded reviewer approval and task closeout
+policy.
