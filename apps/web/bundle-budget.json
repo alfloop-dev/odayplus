@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "First Load JS budgets for apps/web, in gzipped kB (kB = 1000 bytes), as",
+    "reported by `next build` and re-derived by scripts/check-bundle-budget.mjs.",
+    "Any route without an entry here must fit defaultFirstLoadJsKb.",
+    "Raising a number is a reviewed change: attach before/after `next build`",
+    "output showing why the route genuinely needs the weight, and prefer",
+    "next/dynamic first. See docs/development/frontend-bundle-budget.md."
+  ],
+  "unit": "gzip-kb",
+  "defaultFirstLoadJsKb": 130,
+  "sharedFirstLoadJsKb": 115,
+  "routes": {
+    "/operator": 300,
+    "/intake/[intakeId]": 300,
+    "/franchisee": 130
+  }
+}
