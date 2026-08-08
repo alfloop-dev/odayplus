@@ -24,8 +24,7 @@ What is not generated, and why
 Response DTOs. Every route is annotated ``-> dict[str, Any]``, so FastAPI infers
 ``additionalProperties: true`` for all 156 success responses -- the artifact
 genuinely carries no response shape to generate from. Those DTOs remain
-hand-written and are quarantined in ``src/handwritten.ts`` with the reason
-recorded there. Declaring ``response_model=`` per route is the fix, but it is
+hand-written and are defined directly in ``src/index.ts``. Declaring ``response_model=`` per route is the fix, but it is
 not a mechanical one: ``response_model`` *filters* the response to the declared
 fields, so an incomplete model silently drops data the console renders. That
 work is tracked as a follow-up and must be done per-route with its tests.
