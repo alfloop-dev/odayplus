@@ -1,16 +1,25 @@
 # Sidecar Review Packet: ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW
 
 - **Task ID**: `ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW`
-- **Parent Task**: `ODP-CAP-NOTIFICATION-DELIVERY-001` (owner `Claude`, reviewer `Claude3`, status **`review_approved`**)
+- **Parent Task**: `ODP-CAP-NOTIFICATION-DELIVERY-001` (owner `Claude`, reviewer `Claude3`) — **TERMINAL: `done`, archived `2026-08-07T00:10:50Z`**, final `approved_head` `a8700b00`, merged to `dev` via PR #670 at `44109779`
 - **Helper Kind**: `review_packet`
 - **Owner**: `Claude2`
-- **Reviewer**: `Antigravity4`
-- **Packet Revision**: **round 4 (2026-08-06)** — re-derived against parent `approved_head` `4fd5f7ee`; round 3 was derived against `914a243c`, round 2 against `c73a6710`, round 1 against `2ab1ad64`
+- **Reviewer**: `Claude3`
+- **Packet Revision**: **round 5 (2026-08-08)** — re-pinned to the parent's **final** head `a8700b00`, which is now an ancestor of `dev`; round 4 was derived against `4fd5f7ee`, round 3 against `914a243c`, round 2 against `c73a6710`, round 1 against `2ab1ad64`
 - **Target Artifact**: `support/sidecars/ODP-CAP-NOTIFICATION-DELIVERY-001/ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW.md`
+
+> [!NOTE]
+> **Reviewer field history.** Rounds 1–4 were reviewed by `Antigravity4` and every
+> handoff section below records that name as the audit fact of its round. The
+> assigned reviewer changed to `Claude3` on `2026-08-08T09:42:45Z` through a
+> two-step helper claim (`Antigravity4` → `Claude` → `Claude3`, both prior agents
+> dispatch-paused). `Claude3` reviewed round 4 and reopened it. **The standing
+> reviewer is `Claude3` (§14);** historical `Antigravity4` mentions in §6, §8,
+> §10 and §12 are deliberately left as written.
 
 ### Parent Pin (read this before trusting any number below)
 
-| Field | Round 1 pin | Round 2 pin | Round 3 pin | **Round 4 pin (current)** |
+| Field | Round 1 pin | Round 2 pin | Round 3 pin | Round 4 pin |
 |---|---|---|---|---|
 | Parent status | `review` | `in_progress` | `review_approved` | **`review_approved`** (unchanged; approved by `Claude3`, round 2) |
 | Parent branch | `task/ODP-CAP-NOTIFICATION-DELIVERY-001` (local only) | now on `origin` | on `origin`; PR #670 open but **draft** | on `origin`; **PR #670 is now READY, `MERGEABLE`/`CLEAN`, 5/5 checks green** (§11.3) |
@@ -22,6 +31,22 @@
 | Deliverable surface | 8 files, 703 ins / 3 del | 10 files, 1577 ins / 29 del (§7.2) | 11 files, 1817 ins / 29 del (§9.2) | **11 files, 1817 ins / 29 del** vs `266649e5` — byte-identical to round 3 |
 | `dev` at time of review | `71d44d03` | `5499b7a4` | `02c847dd` | **`e7b53ce0`** |
 
+The round 1–4 table above is a five-column history and is kept as written. The
+current pin is separate because round 5 is not another moving-target pin — the
+parent stopped moving:
+
+| Field | **Round 5 pin (current)** |
+|---|---|
+| Parent status | **`done` — terminal.** Archived `2026-08-07T00:10:50Z` at `ai-task-archive/tasks/ODP-CAP-NOTIFICATION-DELIVERY-001.json`, `terminal_outcome: completed` |
+| Parent branch | `task/ODP-CAP-NOTIFICATION-DELIVERY-001` — merged and auto-deleted; PR #670 `merged_at 2026-08-07T00:10:31Z` |
+| Parent head | **`a8700b00`** — *merge origin/dev base advance* (committed by `Antigravity6`, trailers `LLM-Agent: Claude` / `Reviewer: Claude3`) |
+| Parent `approved_head` | **`a8700b00`** = `review_gate_sha` = `verified_head` = `pr_head_ref_oid` (archive `delivery` block) |
+| Last **code**-touching commit | **still `c73a6710`** — §13.3 proves the notification surface has not moved since round 2 |
+| Merge-base with `origin/dev` | n/a — `a8700b00` **is** an ancestor of `dev` (`git merge-base --is-ancestor a8700b00 origin/dev` → exit 0) |
+| Landed on `dev`? | **Yes.** Merge commit `44109779`, PR #670, 5/5 checks SUCCESS at merge time |
+| Deliverable surface | unchanged; now *on* `dev`, so it is measured against `origin/dev` directly rather than a pin (§13.4) |
+| `dev` at time of review | **`af4650d9`** (this sidecar's base advance target this round) |
+
 > [!IMPORTANT]
 > **§2–§5 below are time-scoped to `2ab1ad64` and are superseded where §7 says
 > so.** The parent advanced two commits after round 1 (`048dad9a` record round 1
@@ -32,6 +57,10 @@
 > changed off-code (parent approval, parent PR, parent reviewer's own findings).
 > **§11 is the round-4 delta** — it re-pins onto `4fd5f7ee` and cross-checks the
 > parent against the sibling acceptance packet that has now landed on `dev`.
+> **§13 is the round-5 delta and is the one that changes what happens next** — it
+> re-pins onto the parent's *final* head `a8700b00`, records that the parent
+> closed **without absorbing** F3/F6/F7/F9/F10, and routes those five to named
+> follow-up tasks (§13.7) because the absorb path is now closed.
 > Round-1 line numbers and "does not exist" statements apply only to `2ab1ad64`.
 
 > [!WARNING]
@@ -51,6 +80,25 @@
 > head fails **AC-3** (no notification API routes exist — F9) and cannot
 > evidence **AC-1** for the UAT role set (none of the six canonical role ids
 > appear anywhere in the module or its tests — F10). See §11.4.
+
+> [!CAUTION]
+> **Round 5 changes the disposition of every open finding, and it is the reason
+> this packet is no longer a review of a pending change.** The parent
+> `ODP-CAP-NOTIFICATION-DELIVERY-001` **merged into `dev` at `44109779`** (PR
+> #670) and is **archived `done`** at `a8700b00`. Three consequences:
+>
+> 1. **F3, F6, F7, F9 and F10 are now live on `dev`, not pending.** §13.4
+>    re-verifies all five against `origin/dev` itself — no detached pin, because
+>    the code being described is the mainline code.
+> 2. **The parent closed without absorbing any of the five.** No parent-side
+>    document records them, and nothing anywhere on `dev` references this packet
+>    (§13.5). This packet is their only record.
+> 3. **The absorb path is not merely unused, it is mechanically closed** — the
+>    parent's task id is archived and `ai_status.py` refuses to reuse it
+>    (§13.6). So §12's "hand to the parent owner for absorption" is
+>    unexecutable, and the five findings are routed to **named follow-up tasks**
+>    in **§13.7** instead. F6+F10 — the `ODP-PLAN-UAT-SIGNOFF-001` gate — go to
+>    `ODP-CAP-NOTIFICATION-TRIGGER-WIRING-001`.
 
 ---
 
@@ -247,10 +295,12 @@ The parent's `Verified:` trailer claims 10 passed. Reproduced — see §4.
 Ref IDs A1–A5 map to requirements R1–R5 of §1; A6–A8 are cross-cutting.
 
 The **Round 1** column is the verdict at `2ab1ad64`; the **Round 2** column is
-the standing verdict at `c73a6710` and is the one to act on. **Rounds 3 and 4 add
-no column**: the parent's `approved_head` — `914a243c` then `4fd5f7ee` — contains
-no code change versus `c73a6710` (§9.2, §11.2), so every row below carries
-forward unchanged — A6 Met, A7 still NOT MET, everything else Met.
+the standing verdict at `c73a6710` and is the one to act on. **Rounds 3, 4 and 5
+add no column**: the parent's `approved_head` — `914a243c`, then `4fd5f7ee`, then
+the final `a8700b00` — contains no code change versus `c73a6710` (§9.2, §11.2,
+§13.3), so every row below carries forward unchanged — A6 Met, A7 still NOT MET,
+everything else Met. As of round 5 these rows describe **`dev`**, not a pending
+branch (§13.4).
 
 > [!NOTE]
 > This matrix is **this packet's own** A1–A8. It is not the same axis as the
@@ -351,7 +401,9 @@ Severity: **B** = should block approval, **N** = non-blocking, record and schedu
 > from this section without its §7.3 disposition. **F9 and F10 are round-4
 > findings and are recorded in §11.4, not here** — they are scored against the
 > acceptance packet that landed on `dev` at `de11fc76`, which did not exist when
-> this section was written. The full open set is **F3, F6, F7, F9, F10**.
+> this section was written. The open set as of round 4 was **F3, F6, F7, F9,
+> F10**; round 5 adds **F11, F12, F13** and gives every item a named destination
+> in **§13.7**, which is the current authority on what is open and where it goes.
 
 ### F1 (B) — New factory branches bypass the production fail-closed gate
 
@@ -1311,7 +1363,17 @@ this branch changes exactly one file.
 
 ---
 
-## 12. Round 4 Handoff (standing)
+## 12. Round 4 Handoff (superseded by §14)
+
+> [!WARNING]
+> **Superseded, and specifically unexecutable — not just out of date.** This
+> section's closing instruction was "on approval, the parent owner may absorb
+> this packet into `ODP-CAP-NOTIFICATION-DELIVERY-001`", and its lane note said
+> "the parent needs one authorized merge; one operator action clears both". Both
+> premises expired on `2026-08-07T00:10:31Z` when PR #670 merged: the parent is
+> archived `done`, has no owner to hand to, and its task id can no longer be
+> assigned (§13.6). Kept verbatim as the round-4 audit record. **The standing
+> handoff is §14; the routing that replaces "absorb" is §13.7.**
 
 - **Owner**: `Claude2` · **Reviewer**: `Antigravity4`
 - **Why re-review**: `origin/dev` advanced `02c847dd` → `e7b53ce0`, so PR #665
@@ -1358,3 +1420,506 @@ this branch changes exactly one file.
   may absorb this packet into `ODP-CAP-NOTIFICATION-DELIVERY-001` — carrying
   **F3, F6, F7, F9, F10** across is the point; F6+F10 are the pair that gates
   `ODP-PLAN-UAT-SIGNOFF-001`.
+
+---
+
+## 13. Round 5 Re-derivation @ parent **final** head `a8700b00` (terminal)
+
+### 13.1 Why this round exists
+
+Round 4 was approved by `Antigravity4` at sidecar head `8151be69` on
+`2026-08-06T13:44:47Z`. Reviewership then moved to `Claude3` through a two-step
+helper claim, and `Claude3` **did not approve** round 4. The reopen reason was
+explicitly *not* scope or drift — the packet was byte-identical to
+`approved_head` `8151be69`, and the intervening `origin/dev` merge `ddde7a06`
+changed no packet content.
+
+The reopen reason was that **the parent reached terminal state after round 4**,
+which invalidated the *instruction* §12 gave rather than any *fact* §12 asserted:
+
+| §12 premise | State at round 5 |
+|---|---|
+| "the parent needs one authorized merge" | **Expired.** That merge happened — PR #670 merged `2026-08-07T00:10:31Z`. |
+| "one operator action clears both" | **False now.** The parent is closed; only this sidecar's PR #665 is still open. |
+| "on approval, the parent owner may absorb this packet" | **Unexecutable.** The parent is archived `done` with no active owner, and its task id can no longer be assigned (§13.6). |
+
+This round also composes a base advance: `origin/dev` advanced to `af4650d9`
+(42 commits ahead of the previous merge-base `956170de`), merged into this
+branch at `7ffbb0f5`, conflict-free. The incoming delta touches
+`.orchestrator/*`, `docs/evidence/*`, `modules/adlift/*` and five unrelated
+sidecar packets — nothing this sidecar owns, and nothing in
+`modules/notifications`.
+
+### 13.2 Parent terminal state — from the archive record, not inference
+
+Source: `ai-task-archive/tasks/ODP-CAP-NOTIFICATION-DELIVERY-001.json`.
+
+| Field | Value |
+|---|---|
+| `terminal_status` / `terminal_outcome` | `done` / `completed` |
+| `archived_at` | `2026-08-07T00:10:50Z` |
+| `approved_head` = `review_gate_sha` = `last_approved_head` | `a8700b00638e90df70409d68164900cc1f89b76d` |
+| `delivery.verified_head` = `commit` = `pr_head_ref_oid` | same `a8700b00` — all four agree |
+| `commit_subject` | `ODP-CAP-NOTIFICATION-DELIVERY-001: merge origin/dev base advance` |
+| commit author / trailers | `Antigravity6`; `LLM-Agent: Claude`, `Reviewer: Claude3`, `Verified: pytest tests/reliability/test_notifications.py tests/reliability/test_runtime_observability.py; ruff check modules/notifications` |
+| PR | **#670**, base `dev`, `merged_at 2026-08-07T00:10:31Z`, `merge_commit 44109779` |
+| `head_merged_to_target` / `merge_verified_via_pr` | `true` / `true` |
+| `ci_status` at merge | `success` — 5/5 (`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`, `task-review-gate`) |
+| `git_clean` / `dirty_entry_count` | `true` / `0` |
+
+Independently confirmed against git rather than taken from the record:
+`git merge-base --is-ancestor a8700b00 origin/dev` → **exit 0**, and
+`44109779` is likewise an ancestor of `dev`. **The parent is genuinely landed**,
+which is the first time in five rounds that this packet describes shipped code.
+
+#### F11 (N, record accuracy) — the archived closeout note overstates what landed
+
+The archive's `next` field is the parent's permanent closeout record. It reads:
+
+> "Delivered in-app + email notification channels for FR-SHARED-006:
+> modules/notifications adapters (SMTP email, in-app repo-backed),
+> **application/service.py trigger wiring for the five spec triggers**, durable
+> notification migrations 000005/000008, and tests/reliability/test_notifications.py."
+
+"Trigger wiring" reads as if the five spec events are wired to their lifecycle
+call sites. They are not — §13.4 re-confirms zero production callers. What
+landed is five *trigger helpers*: correct, tested, and uninvoked. A reader of the
+archive alone would conclude FR-SHARED-006's trigger requirement is closed.
+
+This is non-blocking and not a code defect, but it **cannot be corrected in
+place**: archived task records are terminal state, and this packet does not edit
+generated state files. The correction therefore has to be carried by the
+follow-up task (§13.7, task **A**).
+
+### 13.3 The parent's code never moved — proof at the final head
+
+The reviewer's reopen note asserted "no notification code moved
+`4fd5f7ee..a8700b00`". Reproduced rather than accepted:
+
+```bash
+git diff --numstat 4fd5f7ee a8700b00
+git diff --numstat c73a6710 a8700b00 -- modules/notifications \
+  tests/reliability/test_notifications.py infra/db/migrations
+```
+
+| Path in `4fd5f7ee..a8700b00` | ins | del | Provenance |
+|---|---|---|---|
+| `.orchestrator/github_bus.py` | 81 | 8 | incoming `dev` (`ODP-ORCH-REVIEWBUS-PR-DISCOVERY-001`) |
+| `.orchestrator/test_github_bus.py` | 133 | 0 | same |
+| **Total** | **214** | **8** | **no product path, no notification path** |
+
+The second command — the whole notification surface measured from round 2's pin
+straight to the parent's final head — returns **empty**. Corroborated by size at
+`a8700b00`: `adapters.py` **801 L**, `service.py` **319 L**,
+`repositories.py` **246 L**, `test_notifications.py` **607 L** — identical to
+§7.2 (`c73a6710`), §9.2 (`914a243c`) and §11.2 (`4fd5f7ee`).
+
+> **Consequence:** every code claim in §7.3, §7.4, §11.4 and the §3 acceptance
+> matrix transfers to the parent's final, merged head verbatim. F1/F2/F4/F5/F8
+> resolved; **F3, F6, F7, F9, F10 open**; A7 NOT MET. Confirmed for the fourth
+> consecutive round, now terminally: the parent's code cannot move again.
+
+### 13.4 The five open findings, re-verified on `dev` itself
+
+**Methodology change, and it is the point of this round.** Rounds 1–4 measured a
+pending branch through a throwaway detached worktree. The parent is now merged,
+so round 5 measures `origin/dev`. This branch's post-base-advance head contains
+the `dev` tip, and
+
+```bash
+git diff --name-only HEAD origin/dev -- modules/notifications \
+  tests/reliability/test_notifications.py infra/db/migrations apps/api/app/routes
+```
+
+returns **empty** — so probes run in this worktree *are* probes of `dev`. These
+five are no longer "findings against a change under review". They are **standing
+properties of mainline**.
+
+| # | Verdict on `dev` (`af4650d9`) | Evidence |
+|---|---|---|
+| **F3** (N) | **OPEN** — total delivery failure is indistinguishable from success | `service.py` L144/L164/**L166** all `return notification_id`. Probe: single-channel `info`, adapter always fails → `nid` non-`None`, stored receipts `[('email','failed')]`; two-channel `danger` → `nid` non-`None`, receipts `[('email','escalated'),('in_app','failed')]`; success control → also non-`None`. **A7 NOT MET on `dev`.** Now demonstrably production-affecting — see **F13** |
+| **F6** (Q) | **OPEN — zero production callers** | Five-trigger grep across `*.py`/`*.ts`/`*.tsx` on `origin/dev`: every hit is a definition (`service.py` L206/230/252/275/300) or a test call (`test_notifications.py` L224/228/232/236/240/274/416/427/447/462–466/512). No lifecycle path invokes any of the five |
+| **F7** (Q) | **OPEN — no fan-out** | `service.py` L133 `primary_channel = channels[0]`; L148 `secondary_channel = channels[1]` reached only on failure + severity ∈ `{danger,high,warning}`; `channels[2:]` unreachable. Probe with preference `["email","in_app","webhook"]` and `severity="danger"`, adapter succeeding → delivered `['email']` only. **AC-5 gap stands** |
+| **F9** (N→AC-3) | **OPEN in substance, but round 4's description was wrong — restated below** | `apps/api/app/routes/notifications.py` still absent; `modules/notifications` still has no `interface/` layer (9 files: `application/`, `domain/`, `infrastructure/`). **However** an inbox API does exist elsewhere — see the correction and **F12** |
+| **F10** (Q) | **OPEN — zero hits** | `grep -rn "operations_manager\|region_director\|finance_auditor\|system_admin" modules/notifications tests/reliability/test_notifications.py` on `origin/dev` → **no hits**. The suite's role fixture (`test_notifications.py` L274 loop) still uses `ops-lead`/`franchisee-ops`/`store-manager`/`area-manager`/`hq-admin`/`system-operator` |
+
+Suite and lint at `dev`: **27 passed in 1.45s**; `ruff check modules/notifications
+tests/reliability/test_notifications.py` → **All checks passed!**
+
+#### Correction to round 4's F9 description
+
+Round 4 wrote that the only matching route was
+"`apps/api/app/routes/operator_modules/shell.py:328` → `@router.get("/shell/notifications", …)`,
+which is the operator shell's own module listing, not the notification inbox."
+**That characterisation is wrong**, and it is corrected here rather than carried
+forward. On `dev`, `operator_modules/shell.py` exposes a real inbox surface:
+
+| Route | Line | Docstring |
+|---|---|---|
+| `GET /shell/notifications` (`severity`, `acknowledged` query filters) | 328 | "Return the durable notification inbox for the acting role." |
+| `GET` / `PUT /shell/notifications/preferences` | 352 / 374 | notification preferences |
+| `POST /shell/notifications/{notification_id}/acknowledgement` | 403 | "Durably acknowledge a notification. Audited and idempotent." |
+
+That is functionally the read + acknowledge pair AC-3 asks for, under a different
+path prefix. So the honest statement of AC-3 is not "no API exists" — it is
+**F12**.
+
+#### F12 (N, integration — the substantive replacement for F9's "missing API")
+
+The two inboxes are **disjoint subsystems that share a name and nothing else.**
+
+| | Parent's in-app inbox | Operator shell inbox |
+|---|---|---|
+| Written by | `InAppNotificationAdapter.send()` (`adapters.py:590`) | the shell "today" envelope, `_notifications_for()` (`opsboard/application/shell.py:839`) |
+| Stored in | table `notification_inapp_inbox` (migrations `000005` / `000008`) | records collection `operator.shell_notification_states` (`shell.py:44`) |
+| Read by | **nothing outside `modules/notifications` and `tests/`** | `GET /shell/notifications` → `get_notifications()` (`shell.py:875`), `"source": "operator-shell-notifications"` |
+| Acknowledged by | `acknowledge_inapp_item()` (`repositories.py:227`) | `acknowledge_notification()` (`shell.py:916`), audited + idempotent |
+
+Verified on `dev`:
+
+- `grep -rn "notification_inapp_inbox"` over all `*.py`/`*.sql` → hits **only** in
+  the two migrations and `modules/notifications/infrastructure/repositories.py`
+  (L173/200/238/243).
+- `grep -rn -e save_inapp_item -e get_inapp_items -e acknowledge_inapp_item -e InAppNotificationAdapter`
+  over `*.py`/`*.ts`/`*.tsx` → hits **only** in `modules/notifications/` and
+  `tests/reliability/test_notifications.py`.
+- `grep -rn "from modules.notifications" apps/api/` → **no hits**. The API layer
+  does not import the notifications module at all.
+
+So the table the parent built has **no reader anywhere in the product**, and the
+inbox API that does exist **cannot see anything the notification delivery path
+writes**. AC-3 is therefore not a missing-routes problem (round 4's reading) but
+an **integration** problem: either point the shell inbox at
+`notification_inapp_inbox`, or expose the module's own inbox, but the current
+state ships two in-app inboxes where the spec describes one. This is strictly
+worse for `ODP-PLAN-UAT-SIGNOFF-001` than "no API": a UAT tester *can* open an
+inbox screen, and it will be empty of everything this capability delivers.
+
+#### F13 (N, promoted from F3) — the one production consumer discards the outcome
+
+Rounds 1–4 stated that `NotificationService` is constructed "outside the module
+in exactly one non-test place — `scripts/e2e/generate_observability_evidence.py`
+L75". **That is incomplete**, and the missing site is the one that matters:
+
+```python
+# apps/worker/assisted_listing_intake/worker.py L157-165  (DLQ poison isolation)
+notification_repo = persistence.notification_repository
+if notification_repo:
+    ns = NotificationService(repository=notification_repo, adapter=get_notification_adapter())
+    ar = AlertRouter(notification_service=ns)
+    ar.trigger_alert("dlq-spike", f"Job {job.job_id} stage {stage_name} exceeded max attempts")
+```
+
+`AlertRouter.trigger_alert()` (`shared/observability/alerts.py:116`) maps
+`P1→danger`, `P2→warning`, `P3→info` and calls `send_notification(...)` at L135.
+This file predates the parent (added by `ODP-INTAKE-JOBS-001`, `818824fb`) and
+exists at both `4fd5f7ee` and `a8700b00` — rounds 1–4 simply missed it.
+
+Two consequences:
+
+1. **F6 is unchanged but better shaped.** The claim "no production caller of the
+   five spec triggers" survives verbatim (the grep is unambiguous). But the
+   notification service *is* reachable in production on the DLQ alert path, so
+   the F6 fix has a precedent to follow rather than needing greenfield wiring.
+2. **F3 stops being theoretical.** `ar.trigger_alert(...)`'s return value is
+   discarded at the call site, and by F3 even inspecting it would not
+   distinguish delivered from wholly-failed. A `dlq-spike` alert — severity
+   `danger`, i.e. the highest tier this system has — can fail every retry on
+   every channel and leave no signal at the caller. That is the fail-open shape
+   U-4 was opened to eliminate, surviving in the one place the capability is
+   actually wired.
+
+### 13.5 The parent closed **without** absorbing F3/F6/F7/F9/F10
+
+The round-3 §9.4 prediction was that "a parent owner reading only
+`review_findings_claude3_round2.md` would close the task without F6 on record".
+That is what happened. Verified on `dev`:
+
+| Check | Result |
+|---|---|
+| Files in `docs/evidence/completion/ODP-CAP-NOTIFICATION-DELIVERY-001/` | exactly **3** — `review_findings_claude3_round1.md`, `review_findings_claude3_round2.md`, `review_response_round1_fixes.md` |
+| `git grep -i "F6\|F9\|F10\|fan-out\|no production caller\|operations_manager"` in that directory | **one hit**, and it is unrelated (`review_findings_claude3_round2.md:216` mentions the `ODP-ORCH-REVIEWBUS-PR-DISCOVERY-001` sidecar) |
+| `git grep -l "ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW" origin/dev` | **no files.** This packet has never existed on `dev` |
+| Parent archive `next` / handoff records | describe fixes B1–B4 and the round-2 approval; **none of F3/F6/F7/F9/F10 appears** |
+
+There is also a documentation asymmetry that makes this worse than a neutral
+omission: the sibling **acceptance** packet *is* on `dev` (merged `de11fc76`,
+PR #671), while this **review** packet is not. A `dev` reader today finds a
+published AC-1…AC-6 for a capability marked `done`, with no record anywhere that
+**AC-3 and AC-5 are unmet and AC-1 is unevidenced for the UAT role set**. Merging
+PR #665 is what fixes that half of it; §13.7 is what fixes the other half.
+
+### 13.6 The absorb path is **mechanically** closed, not merely unattended
+
+This matters because "hand it to the parent owner later" is not a fallback that
+still exists. `scripts/ai_status.py` refuses to reuse an archived task id:
+
+```python
+# scripts/ai_status.py:4606-4609  (command_assign)
+if archived_task_snapshot(task_id):          # archived_task_snapshot at :1251
+    raise SystemExit(
+        f"Task {task_id} is archived. Create a new follow-up task instead of reusing the archived task id."
+    )
+```
+
+`ai-task-archive/tasks/ODP-CAP-NOTIFICATION-DELIVERY-001.json` exists, so any
+attempt to re-assign the parent id is rejected by design. This is independently
+corroborated on `dev` by `docs/evidence/odp_orch_sidecar_archived_id_loop_001.md`
+(`ODP-ORCH-SIDECAR-ARCHIVED-ID-LOOP-001`), which records **1963
+`sidecar_task_create_failed` events across 15 distinct archived ids** produced by
+exactly this guard — the guard is real, load-bearing, and routinely hit.
+
+The message in the guard is also the instruction: *create a new follow-up task*.
+That is what §13.7 does.
+
+### 13.7 Routing: the open findings → named follow-up tasks
+
+Round 5 replaces "absorb into the parent" with three named follow-up tasks. Every
+open item has exactly one home; nothing is left pointing at an archived id or at
+a reviewer handoff.
+
+| Finding | Severity | Routed to |
+|---|---|---|
+| **F6** no production caller for the five spec triggers | Q — **gates `ODP-PLAN-UAT-SIGNOFF-001`** | **A** `ODP-CAP-NOTIFICATION-TRIGGER-WIRING-001` |
+| **F10** none of the six canonical UAT role ids appear in the module or its tests | Q — **gates `ODP-PLAN-UAT-SIGNOFF-001`** | **A** (same task — F6+F10 are one work item, not two) |
+| **F11** archived closeout note describes the helpers as "trigger wiring" | N, record accuracy | **A** (correct the claim in the new task's evidence; the archive itself is terminal) |
+| **F9** AC-3's API half absent from `modules/notifications` | N → blocks AC-3 | **B** `ODP-CAP-NOTIFICATION-INBOX-INTEGRATION-001` |
+| **F12** `notification_inapp_inbox` has no reader; the shell serves a disjoint inbox | N → the real AC-3 blocker | **B** (same task; F12 is why B is *integration*, not new routes) |
+| acceptance packet §1 understates the delivered capability by two adapters (§11.4 note) | doc correction | **B** (its author `Antigravity4` owns the text; the fix belongs with the AC-3 work) |
+| **F3** total delivery failure indistinguishable from success | N → **A7 NOT MET** | **C** `ODP-CAP-NOTIFICATION-DELIVERY-SEMANTICS-001` |
+| **F13** the DLQ `dlq-spike` production alert path discards the outcome | N, but production fail-open | **C** (same task; F13 is F3's blast radius and its acceptance test) |
+| **F7** only `channels[0]` is delivered — AC-5 escalation gap | Q → AC-5 | **C** |
+| **N1** `notification_inapp_inbox` missing from `_REQUIRED_RELATIONS` (`postgresql.py:39`) | N (parent reviewer, §9.4) | **C** |
+| **N2** `OnCallNotificationAdapter.delivery_receipts` uncapped | N (parent reviewer) | **C** |
+| **N3** `NOTIFICATION_ADAPTER_TYPE` outranks `REQUIRE_ONCALL_ROUTE` outside production | N (parent reviewer) | **C** |
+| **N4** direct `MultiChannelNotificationAdapter()` still defaults to console | N (parent reviewer) | **C** |
+
+#### Task A — `ODP-CAP-NOTIFICATION-TRIGGER-WIRING-001` (the UAT gate; do this one first)
+
+- **Why it is P0-shaped**: `ODP-PLAN-UAT-SIGNOFF-001` (status `todo`, owner
+  `Antigravity`, reviewer `Human/Ops`) requires six roles to *actually receive*
+  task-assignment notifications. With F6 and F10 both open, that gate cannot
+  source a single qualifying receipt from the capability as shipped — not from
+  production (no caller) and not from the test suite (wrong role ids).
+- **Scope**: invoke `send_task_assigned_notification` / `send_timeout_notification`
+  / `send_approval_notification` / `send_failure_notification` /
+  `send_rollback_notification` from their real lifecycle call sites; follow the
+  `AlertRouter` precedent in `apps/worker/assisted_listing_intake/worker.py`
+  rather than inventing a second integration idiom; use the six canonical role
+  ids `executive`, `operations_manager`, `region_director`, `store_manager`,
+  `finance_auditor`, `system_admin`.
+- **Acceptance** (comma-free so it survives `TASK_ACCEPTANCE` CSV parsing):
+  - each of the five spec triggers has at least one non-test caller
+  - a test asserts one delivery per canonical role id for all six roles
+  - the evidence note states plainly that the archived parent shipped helpers
+    without lifecycle wiring (corrects F11)
+  - `ODP-PLAN-UAT-SIGNOFF-001` can cite receipts by canonical role id
+- **Depends on**: nothing. **Unblocks**: `ODP-PLAN-UAT-SIGNOFF-001`.
+
+#### Task B — `ODP-CAP-NOTIFICATION-INBOX-INTEGRATION-001`
+
+- **Scope**: reconcile the two in-app inboxes (F12) and satisfy AC-3's
+  queryability half (F9). Either back `GET /shell/notifications` with
+  `notification_inapp_inbox`, or expose the module's inbox under the AC-3 paths —
+  but do not ship a third inbox. Also correct the acceptance packet's stale §1.
+- **Acceptance**: an item written by `InAppNotificationAdapter.send()` is
+  retrievable through an HTTP API by the receiving role; acknowledging it through
+  that API flips `acknowledged` in the store the adapter wrote; the acceptance
+  packet no longer claims the email/in-app adapters are absent.
+
+#### Task C — `ODP-CAP-NOTIFICATION-DELIVERY-SEMANTICS-001`
+
+- **Scope**: delivery-outcome observability (F3 + F13), AC-5 fan-out semantics
+  (F7), and the parent reviewer's N1–N4 hardening set.
+- **Acceptance**: a caller can distinguish total delivery failure from success
+  and from suppression; the `dlq-spike` path acts on that signal; the AC-5
+  escalation semantics are either implemented across all configured channels or
+  the AC text is amended with a recorded decision; N1–N4 closed or explicitly
+  risk-accepted.
+
+#### Registration — command, and who may run it
+
+This sidecar **did not register these tasks.** Creating mainline task records is
+a governance/registry write, and this helper is scoped to support artifacts only
+(`mutates_canonical: false`). The three specs above are written to be registered
+verbatim by an agent with mainline authority — chair review, the orchestrator, or
+the reviewer:
+
+```bash
+TASK_TITLE="Wire the five notification triggers to lifecycle call sites" \
+TASK_PHASE="Spec MUST capability (scope decision A)" \
+TASK_METADATA_JSON='{"acceptance":["each of the five spec triggers has at least one non-test caller","a test asserts one delivery per canonical role id for all six roles","evidence records that the archived parent shipped helpers without lifecycle wiring","ODP-PLAN-UAT-SIGNOFF-001 can cite receipts by canonical role id"],"artifacts":["modules/notifications/application/service.py","tests/reliability/test_notifications.py"]}' \
+AI_NAME=<registering-agent> "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" \
+  assign ODP-CAP-NOTIFICATION-TRIGGER-WIRING-001 <owner> <reviewer>
+```
+
+Two mechanics worth knowing before running it:
+
+- `TASK_ACCEPTANCE` and `TASK_ARTIFACTS` are parsed by `parse_csv_env`
+  (`scripts/ai_status.py:1428`), which splits on commas — any acceptance
+  sentence containing a comma will be silently shredded into fragments. Passing
+  them inside `TASK_METADATA_JSON` avoids this, because
+  `task.update(metadata)` runs after the CSV fields are set.
+- `assign` creates the task with `status: "todo"` and `next: "Assignment created"`;
+  it does not start it.
+
+### 13.8 Round 5 verification
+
+```bash
+# 0. No detached pin this round — the parent is on dev, and this branch's
+#    post-base-advance head contains the dev tip. Prove the surfaces match:
+git fetch origin
+git diff --name-only HEAD origin/dev -- modules/notifications \
+  tests/reliability/test_notifications.py infra/db/migrations apps/api/app/routes
+
+# 1. Parent terminal state
+python3 -c "import json;d=json.load(open('$PANTHEON_STATUS_ROOT/ai-task-archive/tasks/ODP-CAP-NOTIFICATION-DELIVERY-001.json'));print(d['terminal_status'],d['archived_at'],d['task']['approved_head'])"
+git merge-base --is-ancestor a8700b00 origin/dev; echo "parent-on-dev: $?"
+
+# 2. Code immobility through to the final head
+git diff --numstat 4fd5f7ee a8700b00
+git diff --numstat c73a6710 a8700b00 -- modules/notifications \
+  tests/reliability/test_notifications.py infra/db/migrations
+wc -l modules/notifications/infrastructure/adapters.py \
+      modules/notifications/application/service.py \
+      modules/notifications/infrastructure/repositories.py \
+      tests/reliability/test_notifications.py
+
+# 3. Suite + lint on dev's copy
+/home/lupin/.local/bin/uv run pytest tests/reliability/test_notifications.py
+/home/lupin/.local/bin/uv run ruff check \
+  modules/notifications tests/reliability/test_notifications.py
+
+# 4. F6 / F10 probes
+grep -rn --include='*.py' --include='*.ts' --include='*.tsx' \
+  -e send_task_assigned_notification -e send_timeout_notification \
+  -e send_approval_notification -e send_failure_notification \
+  -e send_rollback_notification .
+grep -rn "operations_manager\|region_director\|finance_auditor\|system_admin" \
+  modules/notifications/ tests/reliability/test_notifications.py
+
+# 5. F9 / F12 probes — the two-inbox split
+grep -rn "notification_inapp_inbox" --include='*.py' --include='*.sql' .
+grep -rn --include='*.py' --include='*.ts' --include='*.tsx' \
+  -e save_inapp_item -e get_inapp_items -e acknowledge_inapp_item \
+  -e InAppNotificationAdapter .
+grep -rn "from modules.notifications" apps/api/
+grep -n "shell/notifications" apps/api/app/routes/operator_modules/shell.py
+
+# 6. F13 probe — production consumers of the service
+grep -rn --include='*.py' -e "NotificationService(" -e get_notification_adapter . \
+  | grep -v '^\./modules/notifications' | grep -v '^\./tests'
+
+# 7. Absorb path closed
+grep -n "is archived. Create a new follow-up task" \
+  "$PANTHEON_STATUS_ROOT/scripts/ai_status.py"
+
+# 8. Parent closed without absorbing
+git ls-tree -r --name-only origin/dev \
+  -- docs/evidence/completion/ODP-CAP-NOTIFICATION-DELIVERY-001/
+git grep -l "ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW" origin/dev
+```
+
+**Recorded results (owner run, round 5, 2026-08-08, `dev` = `af4650d9`):**
+
+| # | Command | Result |
+|---|---|---|
+| 0 | surface diff `HEAD` vs `origin/dev` | **empty** — probes in this worktree are probes of `dev` |
+| 1a | archive read | `done` · `2026-08-07T00:10:50Z` · `a8700b00638e90df70409d68164900cc1f89b76d` |
+| 1b | `merge-base --is-ancestor a8700b00 origin/dev` | **exit 0** — parent landed (rounds 1–4: exit 1) |
+| 2a | `git diff --numstat 4fd5f7ee a8700b00` | 2 files, 214 ins / 8 del, both `.orchestrator/*` incoming `dev` content |
+| 2b | notification-surface diff `c73a6710..a8700b00` | **empty** — no notification code moved across four rounds |
+| 2c | `wc -l` on the four modules | 801 / 319 / 246 / 607 — identical to §7.2, §9.2, §11.2 |
+| 3a | `pytest tests/reliability/test_notifications.py` | **27 passed in 1.45s** (rounds 2–4: 27; round 1: 10) |
+| 3b | `ruff check` | **All checks passed!** |
+| 4a | five-trigger grep | definitions at `service.py` L206/230/252/275/300; calls only in `tests/reliability/test_notifications.py`. **Zero production callers — F6 stands** |
+| 4b | canonical role-id grep | **zero hits — F10 stands** |
+| 5a | `notification_inapp_inbox` grep | only the 2 migrations + `repositories.py` L173/200/238/243 — **no reader outside the module (F12)** |
+| 5b | in-app adapter/method grep | only `modules/notifications/` + `tests/reliability/test_notifications.py` |
+| 5c | `from modules.notifications` in `apps/api/` | **no hits** — the API layer never imports the module |
+| 5d | `shell/notifications` routes | L328 GET inbox · L352/374 preferences · **L403 POST acknowledgement** — a real inbox API over a *different* store (**corrects round 4's F9 wording**) |
+| 6 | production service consumers | `scripts/e2e/generate_observability_evidence.py:75` **and** `apps/worker/assisted_listing_intake/worker.py:159` — the second was missed by rounds 1–4 (**F13**) |
+| 7 | archived-id guard | `scripts/ai_status.py:4608` — absorb path mechanically closed |
+| 8a | parent evidence dir on `dev` | 3 files, none mentioning F3/F6/F7/F9/F10 |
+| 8b | `git grep -l <this packet> origin/dev` | **no files** — never landed |
+
+Probes were read-only and used public APIs only; the F3/F7 probe scripts were
+deleted after the run and are reproducible from the code paths cited above. This
+branch changes exactly one file.
+
+### 13.9 What changed in the recommendation
+
+| Round 4 said | Round 5 says |
+|---|---|
+| "The parent needs one authorized merge; one operator action clears both" | **Expired.** The parent merged at `44109779` and is archived `done`. Only PR #665 remains open, and only this sidecar's own approval gates it. |
+| "On approval, the parent owner may absorb this packet — carrying F3/F6/F7/F9/F10 across is the point" | **Unexecutable and replaced.** The parent has no active owner and its id is refused by `assign` (§13.6). The five are routed to three **named follow-up tasks** in §13.7. |
+| "F9: AC-3's API half does not exist" | **Corrected and sharpened.** An inbox read/ack/preferences API *does* exist at `operator_modules/shell.py` L328/352/374/403 — over a **disjoint store**. The real gap is **F12**: `notification_inapp_inbox` has no reader in the product, so the API that exists cannot see what the delivery path writes. |
+| "F3 is non-blocking and scheduled" | **Still non-blocking, no longer theoretical.** **F13**: the `dlq-spike` DLQ alert path (`worker.py:159` → `AlertRouter` → `send_notification`) is a live `danger`-severity production caller that discards the outcome. Rounds 1–4's "exactly one non-test construction site" claim was incomplete. |
+| "F6+F10 gate `ODP-PLAN-UAT-SIGNOFF-001`" | **Unchanged and now the only actionable item on the critical path.** Routed to task **A**, which is the single highest-value follow-up in this packet. |
+| "Combined non-blocking backlog: F3, F9, F10, N1–N4" | **F3, F6, F7, F9, F10, F11, F12, F13 + N1–N4**, each with exactly one named destination (§13.7). |
+| — | **New:** the parent shipped, so §3/§7/§11 now describe `dev`. Everything in this packet is a statement about mainline, which is why leaving it unmerged and unrouted is the actual risk. |
+
+---
+
+## 14. Round 5 Handoff (standing)
+
+- **Owner**: `Claude2` · **Reviewer**: `Claude3` (reviewer field refreshed this
+  round; rounds 1–4 recorded `Antigravity4` — see the note under the header)
+- **Why re-review**: `Claude3` reopened round 4 on `2026-08-08T09:48:21Z`, not
+  for scope or drift — the packet was byte-identical to `approved_head`
+  `8151be69` — but because the parent reached terminal state after round 4,
+  making §12's standing handoff unexecutable. Round 5 answers the reopen's three
+  asks directly, and this round also composes a base advance (`origin/dev` →
+  `af4650d9`, merge `7ffbb0f5`, conflict-free).
+- **The reopen asks, and where each is answered**:
+
+  | Ask | Answered in |
+  |---|---|
+  | re-pin to `a8700b00` | header pin table (Round 5 column) + **§13.2**, with the archive record and an independent `merge-base --is-ancestor` check; immobility to the final head proved in **§13.3** |
+  | record that the parent closed without absorbing F3/F6/F7/F9/F10 | **§13.5** — 3 evidence files, none mentioning them; zero references to this packet anywhere on `dev`; plus the acceptance-vs-review asymmetry |
+  | route F6+F10 to a named follow-up task instead of a reviewer handoff | **§13.7** — `ODP-CAP-NOTIFICATION-TRIGGER-WIRING-001` (task **A**), with scope, comma-safe acceptance, and the exact `assign` command. Two further tasks **B**/**C** home the remaining findings so nothing points at the archived parent |
+  | refresh the stale reviewer field | header (`Reviewer: Claude3`) + a note explaining the `Antigravity4` → `Claude` → `Claude3` helper-claim chain, with §6/§8/§10/§12 left as audit records |
+
+- **Sidecar scope compliance**: this branch still touches exactly one path,
+  `support/sidecars/ODP-CAP-NOTIFICATION-DELIVERY-001/ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW.md`.
+  No canonical truth, contract, runtime, registry, or governance file is touched
+  — including the three follow-up tasks, which are **specified, not registered**
+  (§13.7 "Registration"). Confirm with `git diff --stat origin/dev...HEAD` → one
+  file.
+- **Reviewer diff shortcuts**:
+  - versus the previously reviewed head — `git diff ddde7a06 HEAD`
+  - the base advance alone — `git log --oneline ddde7a06..HEAD`
+  - no finding record deleted — `git diff --numstat ddde7a06 HEAD -- <packet>` is
+    **575 ins / 10 del**, and
+    `git diff ddde7a06 HEAD -- <packet> | grep -E '^-' | grep -v '^---'` shows all
+    10 removals are lines rewritten in place: 3 header fields (parent-task status,
+    reviewer, packet revision), 1 pin-table header cell (`Round 4 pin (current)`
+    → `Round 4 pin`), the 4-line §3 matrix notice, 1 line closing the §5 notice,
+    and the §12 heading. §1–§11 findings are untouched; §13 corrects round 4's F9
+    wording **by addition** (§13.4) rather than by editing §11.4.
+- **What is substantively new**: **§13** and this section. Beyond answering the
+  reopen, §13 carries three findings rounds 1–4 did not have — **F11** (the
+  archived closeout note describes uninvoked helpers as "trigger wiring"),
+  **F12** (two disjoint in-app inboxes; the parent's table has no reader in the
+  product), and **F13** (a live `danger`-severity DLQ alert path calls
+  `send_notification` and discards the outcome, which is F3 in production) — plus
+  a correction to round 4's F9 description and to the rounds-1–4 claim that the
+  service had one non-test construction site.
+- **The one thing to check if you read nothing else**: **§13.4 and §13.7.** All
+  five previously-open findings are now properties of `dev`, not of a pending
+  branch, and every open item has exactly one named destination. If any routing
+  in §13.7 belongs elsewhere — in particular whether task **A** should be P0 and
+  registered as a blocker of `ODP-PLAN-UAT-SIGNOFF-001` — that is the
+  highest-value correction available to this round.
+- **Known lane condition, recorded not fixed**: PR #665 is `OPEN`, not draft,
+  `MERGEABLE`, and 4/4 CI checks are green at `ddde7a06`
+  (`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`);
+  `mergeStateStatus` is `BLOCKED` solely because `task-review-gate` went
+  `FAILURE` when the task was reopened. That is the expected state for a reopened
+  task and it clears on re-approval at the new head. `gh pr merge` remains denied
+  to background workers by the permission classifier, so once the gate is green
+  the merge needs the reviewer, an operator, or the merge queue.
+- **Next Action**: `re_review` to `Claude3`. **There is no parent absorb step any
+  more** — on approval and after PR #665 merges, the owner closes this task with
+  `done`, and the surviving work leaves this lane as the three follow-up tasks in
+  §13.7, whose registration needs an agent with mainline authority.
