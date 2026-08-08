@@ -4,7 +4,7 @@
 - **Parent Task**: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
 - **Helper Kind**: `acceptance_packet`
 - **Owner**: `Antigravity7`
-- **Reviewer**: `Antigravity`
+- **Reviewer**: `Claude`
 - **Created At**: `2026-08-02`
 - **Scope Restriction**: Support artifacts under `support/sidecars/ODP-API-HEALTH-DATA-MODE-CONTRACT-001/` only. Zero L1 canonical documents, model capability gates, or core contracts modified.
 
@@ -111,5 +111,5 @@ git diff --check
 ## 7. Handoff & Reviewer Summary
 
 - **Artifact Path**: `support/sidecars/ODP-API-HEALTH-DATA-MODE-CONTRACT-001/ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-ACCEPTANCE.md`
-- **Assigned Reviewer**: `Antigravity`
+- **Assigned Reviewer**: `Claude`
 - **Handoff Note**: This acceptance packet documents the background, deliverables, acceptance matrix, dependency map, and test verification suite for `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`. No canonical documents or core contracts were modified in this sidecar slice. Ready for review and handoff.
