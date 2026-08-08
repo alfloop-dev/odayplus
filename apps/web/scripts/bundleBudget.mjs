@@ -93,9 +93,31 @@ function gzipKb(distDir, files, readFile) {
  */
 export function measureBuild(distDir, { readFile = readFileSync } = {}) {
   const pages = JSON.parse(readFile(join(distDir, "app-build-manifest.json"), "utf8")).pages;
-  const routePaths = JSON.parse(
-    readFile(join(distDir, "app-path-routes-manifest.json"), "utf8"),
-  );
+  let routePaths = {};
+  try {
+    routePaths = JSON.parse(readFile(join(distDir, "app-path-routes-manifest.json"), "utf8"));
+  } catch {
+    try {
+      const appPaths = JSON.parse(
+        readFile(join(distDir, "server", "app-paths-manifest.json"), "utf8"),
+      );
+      for (const key of Object.keys(appPaths)) {
+        if (key.endsWith("/page")) {
+          routePaths[key] = key.slice(0, -5) || "/";
+        } else if (key.endsWith("/route")) {
+          routePaths[key] = key.slice(0, -6) || "/";
+        }
+      }
+    } catch {
+      for (const key of Object.keys(pages)) {
+        if (key.endsWith("/page")) {
+          routePaths[key] = key.slice(0, -5) || "/";
+        } else if (key.endsWith("/route")) {
+          routePaths[key] = key.slice(0, -6) || "/";
+        }
+      }
+    }
+  }
 
   const routes = Object.keys(pages)
     .filter(isRouteEntry)
