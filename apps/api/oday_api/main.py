@@ -68,14 +68,10 @@ def release_sha_from_environment() -> str:
     and existing Cloud Run revision use ``ODP_RELEASE_COMMIT_SHA``, so runtime
     probes accept it as the first compatibility fallback.
     """
+    from shared.runtime_config import get_release_identity
 
-    return (
-        os.environ.get("ODAY_RELEASE_SHA")
-        or os.environ.get("ODP_RELEASE_COMMIT_SHA")
-        or os.environ.get("GITHUB_SHA")
-        or os.environ.get("COMMIT_SHA")
-        or "local"
-    )
+    return get_release_identity("local")
+
 
 
 def release_version_payload(*, correlation_id: str) -> dict[str, str]:
