@@ -6393,6 +6393,38 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
     return name not in sidecar_only_agent_names(config)
 
 
+AGENT_OPEN_TASK_STATUSES = ("todo", "in_progress", "review", "review_approved", "blocked")
+
+
+def agent_open_task_counts(
+    config: dict[str, Any],
+    status: dict[str, Any] | None = None,
+) -> dict[str, int]:
+    """Count the open tasks each agent currently owns.
+
+    Reassignment picked the first name off a hardcoded pool, and "Antigravity"
+    is first in that pool and is always viable, so it won. Observed on
+    2026-08-08: Antigravity owned 23 open tasks while Antigravity2 through
+    Antigravity7 held 3, 6, 3, 4, 3 and 4 -- six idle lanes behind one queue.
+    An agent runs one worker at a time (`max_active_workers_per_task: 1`), so
+    concentration translates directly into serialised throughput no matter how
+    high `max_concurrent_workers` is set.
+    """
+
+    status = status if isinstance(status, dict) else load_status(config)
+    open_statuses = {s.lower() for s in AGENT_OPEN_TASK_STATUSES}
+    counts: dict[str, int] = {}
+    for task in status.get("tasks", []) or []:
+        if not isinstance(task, dict):
+            continue
+        if str(task.get("status") or "").lower() not in open_statuses:
+            continue
+        owner = normalize_agent_id(str(task.get("owner") or ""))
+        if owner:
+            counts[owner] = counts.get(owner, 0) + 1
+    return counts
+
+
 def first_viable_agent(
     config: dict[str, Any],
     preferred: list[str],
@@ -6401,9 +6433,12 @@ def first_viable_agent(
     state: dict[str, Any] | None = None,
     task: dict[str, Any] | None = None,
     provider_report: dict[str, Any] | None = None,
+    status: dict[str, Any] | None = None,
+    balance_load: bool = True,
 ) -> str | None:
     known = known_agent_display_names(config)
     seen: set[str] = set()
+    viable: list[str] = []
     for candidate in preferred:
         name = str(candidate or "").strip()
         if not name or name in seen or name in exclude:
@@ -6427,8 +6462,19 @@ def first_viable_agent(
                     continue
             if task is not None and not agent_can_take_task(config, name, task):
                 continue
-            return name
-    return None
+            viable.append(name)
+
+    if not viable:
+        return None
+    if len(viable) == 1 or not balance_load:
+        return viable[0]
+
+    # Every name here already passed the same viability checks, so choosing
+    # among them is free. Take the least loaded and keep the caller's ordering
+    # as the tie-break, which preserves the configured preference whenever the
+    # load is equal.
+    counts = agent_open_task_counts(config, status)
+    return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
 
 
 
