@@ -540,6 +540,7 @@
       "codex": {
         "cli": "codex",
         "ask_for_approval": "never",
+        "model": "gpt-5.3-codex-spark",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
       },
