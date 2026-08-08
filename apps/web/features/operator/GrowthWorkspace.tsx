@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@oday-plus/ui";
 import { dataStatusTone } from "@oday-plus/domain-types";
