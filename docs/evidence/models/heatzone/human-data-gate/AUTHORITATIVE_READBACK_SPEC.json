@@ -1,0 +1,42 @@
+{
+  "kind": "heatzone-authoritative-readback-spec",
+  "task_id": "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
+  "gap_id": "GAP-P1-001-DATA",
+  "generated_at": "2026-08-03",
+  "target_view": "model_ready.heatzone_training_view",
+  "contract_version": "heatzone-training-view-v2",
+  "required_join_keys": [
+    "cell_id",
+    "tenant_id",
+    "observation_period",
+    "outcome_observed_at"
+  ],
+  "confidentiality_policy": {
+    "level": "MEDIUM",
+    "masking_required": true,
+    "raw_value_exposure_permitted": false,
+    "allowed_roles": ["data_owner", "expansion_manager", "platform_admin"]
+  },
+  "validation_protocol": [
+    "Verify model_ready.heatzone_training_view exists in Cloud SQL alfaloop-data-project:asia-east1:oday-dev-sql (POSTGRES_16)",
+    "Execute: SELECT COUNT(*) FROM model_ready.heatzone_training_view WHERE is_mature = true AND is_eligible = true AND is_synthetic = false",
+    "Verify count >= 200",
+    "Verify zero duplicate (cell_id, tenant_id, observation_period) tuples",
+    "Verify every is_mature row has a non-null outcome_observed_at",
+    "Verify dataset SHA-256 snapshot hash against the Human/Ops attestation",
+    "Re-run the Gate 1 benchmark and assert evaluated = true",
+    "Assert population_ranking_outperformed = true (model NDCG > 0.5 population density baseline)",
+    "Assert top_k_survey_rate_improved = true (model Top-K survey rate > 0.3 baseline)",
+    "Assert auto_seeded remains false and no synthetic/mock/simulated rows are present",
+    "Assert the new Gate 1 receipt binds immutably to the PG16 model-ready inventory receipt lineage"
+  ],
+  "fail_closed_conditions": [
+    "eligible mature label count < 200",
+    "any synthetic, mock, auto-seeded or simulated row present",
+    "duplicate join keys",
+    "mature row without outcome_observed_at",
+    "model NDCG does not exceed the population density baseline",
+    "Top-K field survey efficiency rate does not improve",
+    "dataset hash does not reconcile with the Human/Ops attestation"
+  ]
+}

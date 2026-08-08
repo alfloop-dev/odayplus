@@ -45,6 +45,11 @@ def default_state() -> dict[str, Any]:
         "worker_worktrees": {
             "leases": {},
         },
+        # Consecutive worktree-lease block counts per task. This has to be
+        # durable: the escalation it feeds only fires after several *consecutive*
+        # supervisor ticks, so a counter that resets on every save can never
+        # reach its threshold and the alarm never fires at all.
+        "worker_worktree_lease_blocks": {},
         "approvals": {
             "last_reconciled_at": None,
         },
@@ -111,6 +116,12 @@ def default_state() -> dict[str, Any]:
     }
 
 
+# Top-level state keys that were deliberately removed from the runtime state
+# contract. Only these are dropped by `migrate_state`; every other key on disk
+# survives, whether or not `default_state()` knows about it.
+RETIRED_STATE_KEYS: frozenset[str] = frozenset()
+
+
 def _nonnegative_cursor_revision(value: Any) -> int:
     if isinstance(value, bool):
         return 0
@@ -124,7 +135,18 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
         return state
-    state.update({k: v for k, v in raw.items() if k in state or k in {"queue", "workers", "approvals", "supervisor", "coordination", "watchdog"}})
+    # Preserve every top-level key the writer put in state, minus the keys
+    # explicitly retired above. The previous filter kept only keys already
+    # present in `default_state()` plus a hardcoded whitelist, which turned
+    # "added a state key without also editing default_state()" into silent,
+    # total data loss on every single save. That is exactly how
+    # `worker_worktree_lease_blocks` was discarded for the entire life of the
+    # worktree-lease escalation: the counter reset to 1 on each tick, its
+    # threshold of 5 was unreachable, and one task blocked 372 consecutive
+    # times over 23h without a single alarm (2026-08-07 -> 2026-08-08).
+    # Retiring a key is now a deliberate edit to RETIRED_STATE_KEYS, not the
+    # default outcome of forgetting one.
+    state.update({k: v for k, v in raw.items() if k not in RETIRED_STATE_KEYS})
     state.setdefault("tasks", {})
     recent_terminal_tasks = state.get("recent_terminal_tasks")
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
@@ -157,6 +179,12 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("workers", {})
     state.setdefault("worker_worktrees", {})
     state["worker_worktrees"].setdefault("leases", {})
+    lease_blocks = state.get("worker_worktree_lease_blocks")
+    state["worker_worktree_lease_blocks"] = (
+        {key: entry for key, entry in lease_blocks.items() if isinstance(entry, dict)}
+        if isinstance(lease_blocks, dict)
+        else {}
+    )
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
     state.setdefault("underutilization", {})

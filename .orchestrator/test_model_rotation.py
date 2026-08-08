@@ -354,6 +354,85 @@ def test_generic_provider_quota_markers_still_classified():
         assert sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"] == "quota_terminal", reason
 
 
+# The verbatim banner captured from the live synthetic assistant message that
+# drove task_failure_streaks["ODP-STORE-OPENING-001:claude"] to count=34.
+CLAUDE_SESSION_LIMIT = "You've hit your session limit \u00b7 resets 5pm (UTC)"
+
+
+def test_claude_session_limit_is_quota_not_terminal():
+    """The extra "session" token made this miss "hit your limit" entirely.
+
+    Misclassifying it as `terminal` skipped BOTH the provider pause path and the
+    environmental-failure exemption, so every retry inside one session-limit
+    window incremented the per-task streak.
+    """
+    result = sv.classify_worker_failure(CFG, {"provider": "claude"}, CLAUDE_SESSION_LIMIT)
+    assert result["kind"] == "quota_terminal"
+    assert sv.should_pause_dispatch_for_failure_kind(result["kind"]) is True
+
+
+def test_claude_session_limit_does_not_increment_task_streak():
+    state: dict = {}
+    kind = sv.classify_worker_failure(CFG, {"provider": "claude"}, CLAUDE_SESSION_LIMIT)["kind"]
+    worker = {"task_id": "ODP-SESSION-LIMIT-TEST", "provider": "claude"}
+    for _ in range(3):
+        count = sv.record_task_failure_streak(state, worker, CLAUDE_SESSION_LIMIT, failure_kind=kind)
+    assert count == 0
+    # A genuine task failure on the same provider still counts.
+    assert sv.record_task_failure_streak(
+        state, worker, "TypeError: undefined is not a function", failure_kind="terminal"
+    ) == 1
+
+
+def test_claude_session_limit_banner_is_provider_scoped():
+    """Only Claude providers may read this text as a quota outage."""
+    assert sv.classify_worker_failure(CFG, {"provider": "codex"}, CLAUDE_SESSION_LIMIT)["kind"] == "terminal"
+    # Provider identified through config rather than the id prefix.
+    cfg = {"providers": {"vendory": {"adapter": "claude_cli"}}}
+    assert sv.classify_worker_failure(cfg, {"provider": "vendory"}, CLAUDE_SESSION_LIMIT)["kind"] == "quota_terminal"
+
+
+def test_claude_session_limit_banner_variants_are_classified():
+    """Real banner forms: the phrase plus its reset continuation."""
+    variants = (
+        CLAUDE_SESSION_LIMIT,  # verbatim, "\u00b7" separator
+        "You've hit your session limit - resets 5pm (UTC)",
+        "You have hit your session limit, resets at 17:00 UTC",
+        "hit your session limit. try again in 2 hours",
+    )
+    for reason in variants:
+        assert sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"] == "quota_terminal", reason
+
+
+def test_exact_trigger_phrase_in_task_output_stays_a_task_failure():
+    """The EXACT banner phrase embedded in application/assertion output.
+
+    Provider scoping cannot separate these from the real banner - a Claude
+    worker reports its own test output too - so the classifier requires the
+    banner's reset continuation. Without that, these genuine task failures were
+    silently converted into quota outages (blocking review finding on #472).
+    """
+    task_failures = (
+        "AssertionError: expected You've hit your session limit banner to be hidden",
+        "FAILED test_copy.py: rendered text You've hit your session limit unexpectedly",
+        "Playwright: locator(\"text=You've hit your session limit\") resolved to 0 elements",
+        "AssertionError: expected the session limit banner to be hidden",
+    )
+    for reason in task_failures:
+        assert sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"] == "terminal", reason
+
+
+def test_exact_trigger_phrase_in_task_output_still_increments_streak():
+    """These are real failures, so the failure-loop guard must keep counting them."""
+    state: dict = {}
+    worker = {"task_id": "ODP-SESSION-PHRASE-TEST", "provider": "claude"}
+    reason = "AssertionError: expected You've hit your session limit banner to be hidden"
+    kind = sv.classify_worker_failure(CFG, {"provider": "claude"}, reason)["kind"]
+    assert kind == "terminal"
+    counts = [sv.record_task_failure_streak(state, worker, reason, failure_kind=kind) for _ in range(3)]
+    assert counts == [1, 2, 3]
+
+
 # --- adapter: dispatch-time pool persistence, argv safety, profile isolation --
 
 

@@ -22,8 +22,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 CHECKER = ROOT / "scripts/e2e/check_release_gate_registry.py"
+PRODUCT_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
 REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 REGISTRY_README = ROOT / "docs/evidence/gates/README.md"
 
@@ -79,6 +82,16 @@ def clear_all_gates(registry: dict[str, Any]) -> None:
 def run_checker(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(CHECKER), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def run_product_gate(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(PRODUCT_GATE), *args],
+        cwd=ROOT,
         capture_output=True,
         text=True,
         check=False,
@@ -425,11 +438,136 @@ def test_cli_expected_sha_mismatch_fails_closed() -> None:
     result = run_checker("--expected-sha", OTHER_SHA)
 
     assert result.returncode == 1
-    assert "--expected-sha" in result.stdout
+    assert "not an ancestor" in result.stdout or "--expected-sha" in result.stdout
+
+
+def test_cli_expected_sha_ancestry_evidence_only_descendant_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_checker_module()
+    candidate_sha = load_committed_registry()["release"]["candidate_sha"]
+    expected_sha = OTHER_SHA
+
+    def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "log" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout="docs/evidence/gates/RELEASE_GATE_REGISTRY.json\n"
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    errors = module.check_candidate_ancestry(candidate_sha, expected_sha, ROOT)
+
+    assert errors == []
+
+
+def test_cli_expected_sha_ancestry_non_evidence_descendant_fails_closed() -> None:
+    module = load_checker_module()
+    dev_ancestor = "eed83c0937f491211247ee3fdb0bdf8d932564fb"
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    errors = module.check_candidate_ancestry(dev_ancestor, head_sha, ROOT)
+
+    assert any("intervening commits touch non-evidence paths" in err for err in errors)
+
+
+def test_cli_expected_sha_ancestry_merge_commit_product_change_fails_closed(
+    tmp_path: Path,
+) -> None:
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "docs" / "evidence").mkdir(parents=True)
+    (repo / "docs" / "evidence" / "init.md").write_text("init\n")
+    (repo / "app.py").write_text("print('v1')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    run_git("checkout", "-b", "branch-a")
+    (repo / "docs" / "evidence" / "a.md").write_text("evidence a\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "branch-a commit")
+
+    run_git("checkout", "master")
+    (repo / "docs" / "evidence" / "b.md").write_text("evidence b\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "branch-b commit")
+
+    run_git("merge", "branch-a", "--no-ff", "-m", "merge commit")
+    (repo / "app.py").write_text("print('v2')\n")
+    run_git("add", "app.py")
+    run_git("commit", "--amend", "--no-edit")
+    merge_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, merge_sha, repo)
+    assert any("intervening commits touch non-evidence paths" in err for err in errors)
+    assert any("app.py" in err for err in errors)
+
+
+def test_cli_expected_sha_ancestry_stale_second_parent_evidence_merge_passes(
+    tmp_path: Path,
+) -> None:
+    module = load_checker_module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "base.txt").write_text("base\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "base commit")
+
+    run_git("checkout", "-b", "stale-task-branch")
+    (repo / "docs" / "evidence" / "completion" / "ODP-OC-R4-006").mkdir(parents=True)
+    (repo / "docs" / "evidence" / "completion" / "ODP-OC-R4-006" / "receipt.json").write_text(
+        '{"status": "ok"}\n'
+    )
+    run_git("add", ".")
+    run_git("commit", "-m", "add evidence on task branch")
+
+    run_git("checkout", "master")
+    (repo / "apps" / "api").mkdir(parents=True)
+    (repo / "apps" / "api" / "server.py").write_text("print('api')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate product change")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    run_git("merge", "stale-task-branch", "--no-ff", "-m", "merge evidence task branch")
+    merge_sha = run_git("rev-parse", "HEAD")
+
+    errors = module.check_candidate_ancestry(candidate_sha, merge_sha, repo)
+    assert errors == []
 
 
 def test_cli_expected_sha_match_passes() -> None:
     result = run_checker("--expected-sha", CANDIDATE_SHA)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_product_gate_accepts_expected_sha() -> None:
+    result = run_product_gate("--dev-merge", "--expected-sha", CANDIDATE_SHA)
 
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -474,3 +612,50 @@ def test_registry_is_documented_and_wired_into_the_release_gate() -> None:
         assert token in release_gate
 
     assert "check_release_gate_registry.py" in makefile
+
+
+def test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed() -> None:
+    dev_merge = run_product_gate("--dev-merge")
+    assert dev_merge.returncode == 0, dev_merge.stdout + dev_merge.stderr
+    assert "dev merge gate static checks passed" in dev_merge.stdout
+
+    production_release = run_product_gate("--require-go")
+    assert production_release.returncode == 1
+    assert "NO-GO" in production_release.stdout
+
+
+def test_ci_and_promotion_workflows_use_separate_gate_modes() -> None:
+    ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    promotion_workflow = (ROOT / ".github/workflows/promote-dev-to-main.yml").read_text(
+        encoding="utf-8"
+    )
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "run: make product-e2e-gate" in ci_workflow
+    assert "run: make product-release-gate" not in ci_workflow
+    assert 'EXPECTED_SHA="${{ github.event.workflow_run.head_sha }}"' in promotion_workflow
+    assert "PROMOTION_SHA" in promotion_workflow
+    assert "Promotion SHA drift detected" in promotion_workflow
+    assert "github.event.workflow_run.head_sha" in promotion_workflow
+    assert "check_product_release_gate.py --dev-merge" in makefile
+    assert "check_product_release_gate.py --require-go" in makefile
+
+
+def test_registry_does_not_report_archived_done_tasks_as_open() -> None:
+    blockers = "\n".join(
+        blocker
+        for gate in load_committed_registry()["gates"]
+        for blocker in gate["blockers"]
+    )
+    for task_id in (
+        "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001",
+        "ODP-PLAN-HEATZONE-OUTCOME-001",
+        "ODP-PLAN-NETPLAN-ACCEPTANCE-001",
+        "ODP-PLAN-OSS-LICENSE-GATE-001",
+        "ODP-PLAN-DEFERRED-OSS-ADR-001",
+        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+        "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
+    ):
+        assert f"{task_id} is open" not in blockers
+    assert "archived done" in blockers
+    assert load_committed_registry()["release"]["decision"] == "no-go"
