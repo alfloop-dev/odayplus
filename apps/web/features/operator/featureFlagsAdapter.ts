@@ -1,7 +1,7 @@
 export type FeatureFlagDto = {
   key: string;
   owner: string;
-  enabled: bool;
+  enabled: boolean;
   readiness: "experimental" | "beta" | "ga" | "deprecated";
   high_risk: boolean;
   expires_on: string | null;
