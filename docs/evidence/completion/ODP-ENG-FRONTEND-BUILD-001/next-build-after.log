@@ -1,0 +1,25 @@
+ ✓ Compiled successfully in 33.0s
+
+Route (app)                                 Size  First Load JS
+┌ ○ /_not-found                            675 B         104 kB
+├ ƒ /api/v1                                139 B         103 kB
+├ ƒ /api/v1/[...path]                      139 B         103 kB
+├ ƒ /auth/callback                         139 B         103 kB
+├ ƒ /auth/logout                           139 B         103 kB
+├ ƒ /auth/session                          139 B         103 kB
+├ ƒ /avm/[...path]                         139 B         103 kB
+├ ƒ /franchisee                          2.78 kB         116 kB
+├ ƒ /intake/[intakeId]                     180 B         273 kB
+├ ƒ /login                                 139 B         103 kB
+└ ƒ /operator                              200 B         273 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/18-ff6a2aec3d6a1486.js        46.3 kB
+  ├ chunks/87c73c54-24122e7b92478d00.js  54.2 kB
+  └ other shared chunks (total)          2.57 kB
+
+
+ƒ Middleware                             35.6 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
