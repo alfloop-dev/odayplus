@@ -4,8 +4,8 @@
 - **Parent Task ID**: `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001`
 - **Helper Kind**: `acceptance_packet`
 - **Task Class**: `sidecar`
-- **Owner**: `Antigravity`
-- **Reviewer / Parent Owner**: `Antigravity2`
+- **Owner**: `Antigravity5`
+- **Reviewer / Parent Owner**: `Claude`
 - **Target Release Claim**: `no-go-until-final-gate-audit`
 - **Phase**: `Orchestrator Control Plane`
 
@@ -23,7 +23,7 @@ This document serves as the sidecar support packet and acceptance specification 
 
 ## 2. Live Rollout & Controlled Publication Requirements
 
-Parent implementation `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` deploys the control plane review-head freeze (PR #505 exact-head freeze) to the live Supervisor root while preserving active worker processes and dirty runtime state.
+Parent implementation `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` deploys the control plane review-head freeze (PR #505 exact-head freeze) to the live Supervisor roots (`/home/lupin/oday-plus-supervisor-runtime-current` for CODE and `/home/lupin/oday-plus-supervisor-live` for DATA) while preserving active worker processes and dirty runtime state.
 
 ### Key Deployment Gates & Verification Criteria
 
@@ -31,12 +31,12 @@ Parent implementation `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` deploys the
 | :--- | :--- | :--- |
 | **1. Fleet Dispatch Documentation** | Create `docs/evidence/fleet_dispatch/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.md` before any live write. | Document committed with execution steps, preflight plan, and rollback procedures. |
 | **2. Source SHA Hash Verification** | Validate exact source SHA256 hashes from PR #505 for `.orchestrator/supervisor.py` and `scripts/ai_status.py`. | `.orchestrator/supervisor.py` SHA: `3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050`<br/>`scripts/ai_status.py` SHA: `bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e` |
-| **3. Preflight State Capture** | Log live Supervisor state prior to modification. | Record `ActiveState`, `SubState`, `MainPID`, `ExecMainStartTimestamp`, `NRestarts`, heartbeat, and active worker list. |
+| **3. Preflight State Capture** | Log live Supervisor state prior to modification using systemd user unit commands (`systemctl --user show pantheon-supervisor`). | Record `ActiveState`, `SubState`, `MainPID` (captured dynamically via `systemctl --user show pantheon-supervisor --property=MainPID`), `ExecMainStartTimestamp`, `NRestarts`, heartbeat, and active worker list. |
 | **4. Backup & Rollback Provisioning** | Create byte-level backups and executable rollback scripts. | Backup binaries stored in `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/backup/` with atomic revert commands. |
-| **5. Atomic Publication** | Publish exact-head files using atomic `os.replace` operations across live target roots. | Zero partial writes or broken sibling imports; destination file hashes match source exactly. |
-| **6. Controlled Single Restart** | Execute exactly one controlled Supervisor restart via SIGTERM / systemd driver. | New live `MainPID` verified; `SubState` running; `NRestarts` unchanged or incremented by exactly 1; fresh heartbeat recorded. |
+| **5. Atomic Publication** | Publish exact-head files using atomic `os.replace` operations across live target roots (CODE root `/home/lupin/oday-plus-supervisor-runtime-current` for supervisor scripts and DATA root `/home/lupin/oday-plus-supervisor-live` for status state). | Zero partial writes or broken sibling imports; destination file hashes match source exactly. |
+| **6. Controlled Single Restart** | Execute exactly one controlled Supervisor restart via `systemctl --user restart pantheon-supervisor.service` / SIGTERM driver. | New live `MainPID` dynamically verified; `SubState` running; `NRestarts` unchanged or incremented by exactly 1; fresh heartbeat recorded. |
 | **7. Fail-Closed Live Probes** | Run B23, B24, N3 live probes using an isolated temporary `PANTHEON_STATUS_ROOT`. | Probes pass without mutating live status files (`ai-status.json`), task archive, or dashboard bundles. |
-| **8. Preserved Disabled Agents** | Maintain `ready_dispatcher.disabled_agents` configuration. | `Claude`, `Claude2`, and `Claude3` remain in disabled agents list. |
+| **8. Preserved Disabled Agents** | Maintain `ready_dispatcher.disabled_agents` configuration. | Reserved `Codex*` lanes (`Codex`..`Codex9`) remain in `disabled_agents` list, while active `Claude` worker lanes remain enabled. |
 
 ---
 
@@ -47,7 +47,7 @@ graph TD
     A["ODP-ORCH-REVIEW-HEAD-FREEZE-001<br/>(Upstream PR #505 Control Plane Fixes)"] --> B["ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001<br/>(Parent Live Rollout Task)"]
     C["PR #505 Source Blobs<br/>(supervisor.py & ai_status.py)"] --> B
     B --> D["support/sidecars/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/<br/>ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001-SIDECAR-ACCEPTANCE.md<br/>(This Acceptance Packet)"]
-    B --> E["Live Supervisor Runtime<br/>(PID 262802 / systemd control plane)"]
+    B --> E["Live Supervisor Runtime<br/>(systemd user unit: pantheon-supervisor.service<br/>CODE: /home/lupin/oday-plus-supervisor-runtime-current<br/>DATA: /home/lupin/oday-plus-supervisor-live)"]
     B --> F["ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001<br/>(Downstream Control Plane Rollout)"]
     B --> G["ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001<br/>(Downstream Live Rollout)"]
 ```
@@ -69,12 +69,12 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
 | Criterion | Rule Description | Fail-Closed Trigger (Must Reject) | Verification & Audit Evidence |
 | :--- | :--- | :--- | :--- |
 | **Criterion A** | **Fleet Dispatch Preflight Rule** | Modifying live files before committing `docs/evidence/fleet_dispatch/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.md`. | Preflight dispatch doc commit receipt timestamp prior to live write. |
-| **Criterion B** | **Source Blob Integrity Rule** | Source file SHA256 mismatch with PR #505 exact-head hashes (`3bb01341...` / `bc1ba0c2...`). | Direct `sha256sum` verification output on source and deployed target files. |
+| **Criterion B** | **Source Blob Integrity Rule** | Source file SHA256 mismatch with PR #505 exact-head hashes (`3bb01341...` / `bc1ba0c2...`), or target files left undefined without publishing to CODE target root (`/home/lupin/oday-plus-supervisor-runtime-current`). | Direct `sha256sum` verification output on source files and deployed target files in CODE root. |
 | **Criterion C** | **Preflight Backup & Atomic Write Rule** | Non-atomic file copying, missing byte backups, or overwriting live files without rollback script. | Preflight backup file existence and `os.replace` invocation log. |
-| **Criterion D** | **Controlled Single Restart Rule** | Uncontrolled process crash, multiple restarts, or failure of live Supervisor to achieve running state. | Systemd journal timestamp, PID transition evidence, and single restart assertion. |
+| **Criterion D** | **Controlled Single Restart Rule** | Uncontrolled process crash, multiple restarts, running `systemctl` commands without `--user` (returning PID 0 inactive dead), or failure of live Supervisor to achieve running state. | Systemd user unit journal timestamp (`journalctl --user -u pantheon-supervisor`), dynamic PID transition evidence via `systemctl --user show pantheon-supervisor --property=MainPID`, and single restart assertion. |
 | **Criterion E** | **Isolated Probe Execution Rule** | Running live probes (B23, B24, N3) against the live status root instead of temporary `PANTHEON_STATUS_ROOT`. | Probe command logs proving `$PANTHEON_STATUS_ROOT` redirection to `/tmp/...`. |
-| **Criterion F** | **Disabled Agents Safety Rule** | Accidentally enabling disabled agent lanes (`Claude`, `Claude2`, `Claude3`) in dispatcher config. | Config inspection receipt showing `ready_dispatcher.disabled_agents` intact. |
-| **Criterion G** | **Independent Review & Non-Mutation Rule** | Modifying Package 10 UI, API logic, cloud resources, or completing closeout without independent `Antigravity5` review. | Independent review approval entry in activity log and clean diff outside control plane evidence. |
+| **Criterion F** | **Disabled Agents Safety Rule** | Accidentally altering disabled agent lanes (`ready_dispatcher.disabled_agents=[Codex..Codex9]`) in dispatcher config or disabling active `Claude` worker lanes. | Config inspection receipt showing `ready_dispatcher.disabled_agents` intact with reserved `Codex*` lanes disabled and active `Claude` lanes running. |
+| **Criterion G** | **Independent Review & Non-Mutation Rule** | Modifying Package 10 UI, API logic, cloud resources, or completing closeout without independent `Claude` review. | Independent review approval entry in activity log and clean diff outside control plane evidence. |
 
 ---
 
@@ -99,8 +99,8 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
 
 ## 6. Handoff & Sign-Off Instructions
 
-- **Assigned Reviewer / Parent Owner**: `Antigravity2`
-- **Sidecar Owner Verification**: `Antigravity` (Sidecar support packet verified; git diff clean; rebased on origin/dev; ready for handoff)
+- **Assigned Reviewer / Parent Owner**: `Claude`
+- **Sidecar Owner Verification**: `Antigravity5` (Sidecar support packet verified; git diff clean; rebased/merged with origin/dev; F1/F2/F3 defects resolved; ready for handoff)
 - **Handoff Instructions**:
   1. Review this acceptance packet for alignment with parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001`.
   2. Verify that live Supervisor rollout evidence satisfies all 7 criteria in Section 4.
