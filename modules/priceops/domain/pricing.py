@@ -80,6 +80,14 @@ class InvalidTransitionError(ValueError):
     """Raised when a plan is moved between states the machine forbids."""
 
 
+class InvalidScenarioError(ValueError):
+    """Raised when a pricing scenario contains invalid parameters or violations."""
+
+
+class UnavailableSimulationResultError(ValueError):
+    """Raised when pricing simulation or solver results are missing or unavailable."""
+
+
 @dataclass(frozen=True)
 class StatusTransition:
     """One row of a plan's ``status_history`` audit trail (§7.1)."""
@@ -302,6 +310,142 @@ class PlanSimulation:
             "expected_gross_margin": self.expected_gross_margin,
             "generated_at": self.generated_at.isoformat(),
         }
+
+
+@dataclass(frozen=True)
+class DecisionWritebackRecord:
+    """Audit record for pricing scenario decision writeback."""
+
+    decision_id: str
+    plan_id: str
+    actor: str
+    decision: str  # "approved" | "rejected" | "scenario_selected"
+    reason: str
+    selected_scenario_id: str | None
+    policy_version: str
+    solver_version: str
+    written_back_at: datetime
+    idempotency_key: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "decision_id": self.decision_id,
+            "plan_id": self.plan_id,
+            "actor": self.actor,
+            "decision": self.decision,
+            "reason": self.reason,
+            "selected_scenario_id": self.selected_scenario_id,
+            "policy_version": self.policy_version,
+            "solver_version": self.solver_version,
+            "written_back_at": self.written_back_at.isoformat(),
+            "idempotency_key": self.idempotency_key,
+        }
+
+
+@dataclass(frozen=True)
+class ItemScenarioSimulation:
+    """Comparison of baseline vs alternative candidate scenario for one item."""
+
+    item_id: str
+    store_id: str
+    machine_type: str
+    baseline_price: float
+    candidate_price: float
+    baseline_simulation: SimulationResult
+    candidate_simulation: SimulationResult
+    expected_demand_change: float
+    expected_revenue_change: float
+    expected_gross_margin_change: float
+    constraint_violations: tuple[ConstraintViolation, ...]
+    is_feasible: bool
+    is_baseline_distinct: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "item_id": self.item_id,
+            "store_id": self.store_id,
+            "machine_type": self.machine_type,
+            "baseline_price": self.baseline_price,
+            "candidate_price": self.candidate_price,
+            "baseline_simulation": self.baseline_simulation.to_dict(),
+            "candidate_simulation": self.candidate_simulation.to_dict(),
+            "expected_demand_change": self.expected_demand_change,
+            "expected_revenue_change": self.expected_revenue_change,
+            "expected_gross_margin_change": self.expected_gross_margin_change,
+            "constraint_violations": [v.to_dict() for v in self.constraint_violations],
+            "is_feasible": self.is_feasible,
+            "is_baseline_distinct": self.is_baseline_distinct,
+        }
+
+
+@dataclass(frozen=True)
+class PlanScenarioSimulation:
+    """Scenario simulation comparing baseline vs candidate pricing across plan items."""
+
+    scenario_id: str
+    plan_id: str
+    generated_at: datetime
+    items: tuple[ItemScenarioSimulation, ...]
+    total_baseline_gross_margin: float
+    total_candidate_gross_margin: float
+    total_expected_incremental_gross_margin: float
+    hard_constraint_violation_count: int
+    is_feasible: bool
+    is_baseline_distinct: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "scenario_id": self.scenario_id,
+            "plan_id": self.plan_id,
+            "generated_at": self.generated_at.isoformat(),
+            "items": [item.to_dict() for item in self.items],
+            "total_baseline_gross_margin": self.total_baseline_gross_margin,
+            "total_candidate_gross_margin": self.total_candidate_gross_margin,
+            "total_expected_incremental_gross_margin": self.total_expected_incremental_gross_margin,
+            "hard_constraint_violation_count": self.hard_constraint_violation_count,
+            "is_feasible": self.is_feasible,
+            "is_baseline_distinct": self.is_baseline_distinct,
+        }
+
+
+def validate_pricing_scenario(
+    item: PricingPlanItem, candidate_price: float | None = None
+) -> list[ConstraintViolation]:
+    """Validate item scenario parameters and check for constraint violations.
+
+    Raises InvalidScenarioError if fundamental item parameters (price, cost, demand, confidence)
+    are physically invalid or out of bounds. Returns a list of ConstraintViolation objects
+    for candidate_price hard/soft constraint checks.
+    """
+    c = item.constraints
+    if c.current_price <= 0:
+        raise InvalidScenarioError(f"invalid current_price {c.current_price}: must be > 0")
+    if c.unit_cost < 0:
+        raise InvalidScenarioError(f"invalid unit_cost {c.unit_cost}: must be >= 0")
+    if item.baseline_demand < 0:
+        raise InvalidScenarioError(f"invalid baseline_demand {item.baseline_demand}: must be >= 0")
+    if not (0.0 <= item.elasticity.confidence <= 1.0):
+        raise InvalidScenarioError(
+            f"invalid elasticity confidence {item.elasticity.confidence}: must be in [0, 1]"
+        )
+    if c.min_price is not None and c.max_price is not None and c.min_price > c.max_price:
+        raise InvalidScenarioError(
+            f"invalid bounds: min_price {c.min_price} > max_price {c.max_price}"
+        )
+    if not (0.0 <= c.margin_floor_ratio <= 1.0):
+        raise InvalidScenarioError(
+            f"invalid margin_floor_ratio {c.margin_floor_ratio}: must be in [0, 1]"
+        )
+    if c.price_ladder_step <= 0:
+        raise InvalidScenarioError(
+            f"invalid price_ladder_step {c.price_ladder_step}: must be > 0"
+        )
+
+    if candidate_price is not None:
+        if candidate_price <= 0:
+            raise InvalidScenarioError(f"invalid candidate_price {candidate_price}: must be > 0")
+        return c.violations(candidate_price)
+    return []
 
 
 @dataclass(frozen=True)
@@ -753,6 +897,7 @@ def build_rollback_plan(
 
 def simulate_item(item: PricingPlanItem) -> SimulationResult:
     """Simulate an item at its *current* price (the plan's baseline view)."""
+    validate_pricing_scenario(item)
     return simulate_price(
         price=item.constraints.current_price,
         baseline_demand=item.baseline_demand,
@@ -760,6 +905,80 @@ def simulate_item(item: PricingPlanItem) -> SimulationResult:
         unit_cost=item.constraints.unit_cost,
         elasticity=item.elasticity.elasticity_value,
         confidence=item.elasticity.confidence,
+    )
+
+
+def simulate_candidate_scenario(
+    plan: PricingPlan,
+    candidate_prices: Mapping[str, float],
+    *,
+    scenario_id: str | None = None,
+    generated_at: datetime | None = None,
+) -> PlanScenarioSimulation:
+    """Simulate candidate scenario prices against plan items and compare with baseline.
+
+    Validates candidate scenario parameters and rejects execution if parameters or prices
+    are invalid. Retains distinct baseline and alternative simulation outputs.
+    """
+    now = generated_at or datetime.now(UTC)
+    scenario_id = scenario_id or f"pricing-scenario-{uuid4()}"
+    item_simulations: list[ItemScenarioSimulation] = []
+    hard_violations_count = 0
+
+    for item in plan.items:
+        candidate_price = candidate_prices.get(item.item_id, item.constraints.current_price)
+        violations = tuple(validate_pricing_scenario(item, candidate_price))
+        hard_violations = tuple(v for v in violations if v.is_hard)
+        hard_violations_count += len(hard_violations)
+
+        baseline_sim = simulate_item(item)
+        candidate_sim = simulate_price(
+            price=candidate_price,
+            baseline_demand=item.baseline_demand,
+            baseline_price=item.constraints.current_price,
+            unit_cost=item.constraints.unit_cost,
+            elasticity=item.elasticity.elasticity_value,
+            confidence=item.elasticity.confidence,
+        )
+
+        demand_change = round(candidate_sim.demand.p50 - baseline_sim.demand.p50, 4)
+        revenue_change = round(candidate_sim.revenue.p50 - baseline_sim.revenue.p50, 4)
+        margin_change = round(candidate_sim.gross_margin.p50 - baseline_sim.gross_margin.p50, 4)
+
+        item_simulations.append(
+            ItemScenarioSimulation(
+                item_id=item.item_id,
+                store_id=item.store_id,
+                machine_type=item.machine_type,
+                baseline_price=item.constraints.current_price,
+                candidate_price=candidate_price,
+                baseline_simulation=baseline_sim,
+                candidate_simulation=candidate_sim,
+                expected_demand_change=demand_change,
+                expected_revenue_change=revenue_change,
+                expected_gross_margin_change=margin_change,
+                constraint_violations=violations,
+                is_feasible=len(hard_violations) == 0,
+                is_baseline_distinct=True,
+            )
+        )
+
+    total_baseline_margin = round(sum(i.baseline_simulation.expected_gross_margin for i in item_simulations), 4)
+    total_candidate_margin = round(sum(i.candidate_simulation.expected_gross_margin for i in item_simulations), 4)
+    total_incremental_margin = round(total_candidate_margin - total_baseline_margin, 4)
+    is_feasible = hard_violations_count == 0
+
+    return PlanScenarioSimulation(
+        scenario_id=scenario_id,
+        plan_id=plan.plan_id,
+        generated_at=now,
+        items=tuple(item_simulations),
+        total_baseline_gross_margin=total_baseline_margin,
+        total_candidate_gross_margin=total_candidate_margin,
+        total_expected_incremental_gross_margin=total_incremental_margin,
+        hard_constraint_violation_count=hard_violations_count,
+        is_feasible=is_feasible,
+        is_baseline_distinct=True,
     )
 
 

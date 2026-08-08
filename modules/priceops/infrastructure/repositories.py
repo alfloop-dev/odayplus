@@ -120,5 +120,32 @@ class InMemoryPriceOpsRepository:
     def get_evaluation(self, plan_id: str) -> PricingEffectEvaluation | None:
         return self._evaluations.get(plan_id)
 
+    def save_decision_writeback(
+        self, decision: DecisionWritebackRecord
+    ) -> DecisionWritebackRecord:
+        if not hasattr(self, "_decision_writebacks"):
+            self._decision_writebacks = {}
+        self._decision_writebacks[decision.decision_id] = decision
+        return decision
+
+    def list_decision_writebacks(self, plan_id: str) -> list[DecisionWritebackRecord]:
+        if not hasattr(self, "_decision_writebacks"):
+            self._decision_writebacks = {}
+        return [d for d in self._decision_writebacks.values() if d.plan_id == plan_id]
+
+    def save_scenario_simulation(
+        self, scenario: PlanScenarioSimulation
+    ) -> PlanScenarioSimulation:
+        if not hasattr(self, "_scenario_simulations"):
+            self._scenario_simulations = {}
+        self._scenario_simulations[scenario.scenario_id] = scenario
+        return scenario
+
+    def get_scenario_simulation(self, scenario_id: str) -> PlanScenarioSimulation | None:
+        if not hasattr(self, "_scenario_simulations"):
+            self._scenario_simulations = {}
+        return self._scenario_simulations.get(scenario_id)
+
 
 __all__ = ["InMemoryPriceOpsRepository"]
+
