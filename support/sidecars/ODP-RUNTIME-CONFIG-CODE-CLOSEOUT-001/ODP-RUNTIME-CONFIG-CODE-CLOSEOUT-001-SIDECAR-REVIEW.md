@@ -84,9 +84,10 @@ These are non-blocking scope notes for accurate parent closeout language:
 
 ## Independent verification
 
-Re-executed after the mandatory base advance on the sidecar branch at
-`053de38d`. That head contains the current `origin/dev` tip, the previously
-approved sidecar lineage at `6c2b01fb`, and parent merge commit `40fb18eb`:
+Re-executed after the mandatory closeout base advance on the sidecar branch at
+`edb58de9`. That composed head contains `origin/dev` at `79c6792c`, the exact
+previously approved and pushed sidecar head `6b8a5d8b`, and parent merge commit
+`40fb18eb`:
 
 ```text
 uv run pytest -q tests/ops/test_runtime_config_code_closeout.py tests/ops/test_deploy_workflow_contract.py
@@ -122,13 +123,17 @@ git merge-base --is-ancestor origin/task/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001-SI
 
 ## Sidecar closeout note
 
-`Codex4` approved the support-only packet at immutable head `6c2b01fb`. The
+`Codex4` approved the support-only packet at exact pushed head `6b8a5d8b`. The
 closeout dispatch then required another base advance to `origin/dev` at
-`d1c1d66d`. The task commit was rebased onto that base and the approved remote
-task lineage was composed back into the branch, preserving task history and a
-normal fast-forward push path. The verification above was rerun on the composed
-tree before this support-only metadata update. The resulting head requires the
-assigned reviewer's exact-head confirmation before merge and `done`.
+`79c6792c`. That base was merge-composed into the task branch as `edb58de9`,
+preserving the full task lineage and a normal fast-forward push path. PR #721
+was already in the merge queue, whose branch protection correctly rejected the
+first push attempt. It was dequeued without closing the PR, and the composed
+head was then pushed normally without force or history replacement. The
+verification above was rerun on the composed tree before this support-only
+metadata update. Because the pushed head advanced beyond the prior approval,
+the resulting packet requires `Codex4`'s exact-head confirmation before PR #721
+can re-enter the merge queue and the task can be marked `done`.
 
 ## Parent-owner closeout handoff
 
