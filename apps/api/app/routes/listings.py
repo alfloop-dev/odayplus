@@ -359,6 +359,37 @@ else:
         rows: list[BatchRowReceipt]
         correlation_id: UuidString
 
+    class XlsxPreviewRequest(BaseModel):
+        file_base64: str
+        custom_mapping: dict[str, str] | None = None
+        scope: ScopeContext | None = None
+
+    class XlsxPreviewResponse(BaseModel):
+        batch_id: str
+        total_rows: int
+        valid_count: int
+        rejected_count: int
+        schema_mapping: dict[str, str]
+        has_formula_or_external_link_warnings: bool
+        warnings: list[str]
+        valid_rows: list[dict[str, Any]]
+        row_errors: list[dict[str, Any]]
+        preview_rows: list[dict[str, Any]]
+
+    class XlsxCommitRequest(BaseModel):
+        batch_id: str | None = None
+        rows: list[dict[str, Any]]
+        scope: ScopeContext
+
+    class XlsxCommitReceipt(BaseModel):
+        batch_id: str
+        committed_at: str
+        accepted_count: int
+        rejected_count: int
+        intake_ids: list[str]
+        correlation_id: str
+        replayed: bool = False
+
     class IntakeSummary(BaseModel):
         intake_id: UuidString
         state: IntakeState
@@ -1709,6 +1740,138 @@ else:
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitIntakeBatch", make)
             response.status_code = code
             return BatchIntakeReceipt(**val)
+
+        @router.post(
+            "/intake-batches/xlsx/preview",
+            operation_id="previewXlsxBatch",
+            response_model=XlsxPreviewResponse,
+            responses=api_error_responses(400, 422),
+        )
+        def preview_xlsx_batch(
+            body: XlsxPreviewRequest,
+            request: Request,
+            tenant_id: str = Depends(require_actor),
+        ) -> XlsxPreviewResponse:
+            from modules.external_data.application.xlsx_import import (
+                XlsxImportError,
+                preview_xlsx_import,
+            )
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            scope_dict = body.scope.model_dump() if body.scope else {"tenant_id": tenant_id}
+            authorize_intake_action(
+                principal,
+                "submit_csv",
+                resource={"scope": scope_dict},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+            try:
+                raw_bytes = base64.b64decode(body.file_base64)
+            except Exception as exc:
+                raise HTTPException(400, f"Invalid base64 encoding: {exc}")
+
+            try:
+                res = preview_xlsx_import(raw_bytes, body.custom_mapping, scope_dict)
+                return XlsxPreviewResponse(**res.to_dict())
+            except XlsxImportError as exc:
+                raise HTTPException(400, f"[{exc.code}] {exc.message}")
+
+        @router.post(
+            "/intake-batches/xlsx/commit",
+            operation_id="commitXlsxBatch",
+            status_code=202,
+            response_model=XlsxCommitReceipt,
+            responses=api_error_responses(400, 409, 422, idempotency_conflict=True),
+        )
+        def commit_xlsx_batch(
+            body: XlsxCommitRequest,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+            key: IdempotencyKeyValue = Header(
+                ..., alias="Idempotency-Key", min_length=16, max_length=128,
+                pattern=r"^[A-Za-z0-9._:-]+$",
+            ),
+        ) -> XlsxCommitReceipt:
+            from modules.external_data.application.xlsx_import import commit_xlsx_import
+            validate_idempotency_key(key)
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            scope_dict = body.scope.model_dump()
+            authorize_intake_action(
+                principal,
+                "submit_csv",
+                resource={"scope": scope_dict},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
+
+            def make() -> tuple[dict[str, Any], int]:
+                receipt = commit_xlsx_import(
+                    rows=body.rows,
+                    batch_id=body.batch_id,
+                    scope=scope_dict,
+                    idempotency_key=key,
+                    actor_id=actor_id,
+                    audit_log=active_audit_log,
+                    correlation_id=correlation_id,
+                )
+                return receipt.to_dict(), 202
+
+            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "commitXlsxBatch", make)
+            response.status_code = code
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
+            return XlsxCommitReceipt(**val)
+
+        @router.get(
+            "/intake-batches/xlsx/errors/{batch_id}/export",
+            operation_id="exportXlsxBatchErrors",
+            responses=api_error_responses(400, 404),
+        )
+        def export_xlsx_batch_errors(
+            batch_id: str,
+            request: Request,
+            export_format: str = Query("csv", alias="format"),
+            tenant_id: str = Depends(require_actor),
+        ) -> Response:
+            from modules.external_data.application.xlsx_import import (
+                _PREVIEW_STORE,
+                export_xlsx_import_errors,
+            )
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "view",
+                resource={"scope": {"tenant_id": tenant_id}},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            preview_res = _PREVIEW_STORE.get(batch_id)
+            row_errors = preview_res.row_errors if preview_res else []
+
+            if export_format not in ("xlsx", "csv", "json"):
+                raise HTTPException(400, f"Unsupported export format: {export_format}")
+
+            bytes_content, mime_type = export_xlsx_import_errors(row_errors, export_format=export_format)  # type: ignore[arg-type]
+            filename = f"{batch_id}-errors.{export_format}"
+            headers = {
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+            return Response(content=bytes_content, media_type=mime_type, headers=headers)
 
         @router.get(
             "/intakes/{intake_id}",
