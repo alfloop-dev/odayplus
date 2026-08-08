@@ -28,11 +28,23 @@ def run_gh_cli(args: list[str], input_data: str | None = None) -> tuple[int, str
     return result.returncode, result.stdout, result.stderr
 
 
+def branch_policy(policy: dict, branch: str) -> dict:
+    # A branch entry under "branches" overlays the top-level policy, so shared
+    # settings stay declared once and only the deltas are per-branch.
+    overrides = policy.get("branches", {})
+    return {**policy, **overrides.get(branch, {})}
+
+
 def build_payload(policy: dict) -> dict:
     # Transform policy.json to standard GitHub API payload format
     payload = {
         "required_status_checks": {
-            "strict": True,
+            # strict means "PR must be up to date with the base before merging".
+            # A branch behind a merge queue must set this false: the queue already
+            # tests each candidate on a ref built from the base plus the queued
+            # PRs, so strict only adds a rebase race the queue exists to remove --
+            # with both on, every PR is stuck BEHIND and nothing can enter.
+            "strict": policy.get("strict", True),
             "contexts": policy.get("required_status_checks", [])
         },
         "enforce_admins": policy.get("enforce_admins", True),
@@ -63,18 +75,17 @@ def main() -> int:
         print(f"Failed to parse policy file: {exc}", file=sys.stderr)
         return 1
 
-    payload = build_payload(policy)
-
     repo = os.environ.get("GITHUB_REPOSITORY", "alfloop-dev/odayplus")
     branches = ["dev", "main"]
 
     print(f"Target repository: {repo}")
-    print("Policy configuration to enforce:")
-    print(json.dumps(payload, indent=2))
 
     has_failures = False
     for branch in branches:
+        payload = build_payload(branch_policy(policy, branch))
         print(f"\n--- Applying protection to branch: {branch} ---")
+        print("Policy configuration to enforce:")
+        print(json.dumps(payload, indent=2))
         ret, stdout, stderr = run_gh_cli(
             ["api", "-X", "PUT", f"repos/{repo}/branches/{branch}/protection", "--input", "-"],
             input_data=json.dumps(payload)
