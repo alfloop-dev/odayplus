@@ -94,6 +94,34 @@ sidecar base. TypeScript checks there could not start because that isolated
 worktree has no `node_modules`; the exact-parent runs above used the shared
 installed TypeScript binary and are the authoritative receipts.
 
+## Sidecar base-advance refresh
+
+Before the renewed reviewer handoff on `2026-08-08`, the sidecar fetched the
+remote and composed its existing packet commit onto current `origin/dev` at
+`50dda113403328a7aa11830e40d037a8ba1c5cb8`. The compose completed without a
+conflict and preserved the original packet commit and reviewed parent SHA.
+
+Post-compose verification:
+
+```bash
+git merge-base --is-ancestor origin/dev HEAD
+# exit 0
+
+git diff --name-status origin/dev...HEAD
+# A support/sidecars/ODP-ENG-OPENAPI-CLIENT-001/ODP-ENG-OPENAPI-CLIENT-001-SIDECAR-REVIEW.md
+
+git diff --check origin/dev...HEAD
+# clean
+
+test "$(git rev-parse task/ODP-ENG-OPENAPI-CLIENT-001)" = \
+  a42cf990507787174fda4534e831137bdcef3aa8
+# exit 0
+```
+
+This refresh verifies the publication base and scope of the sidecar packet. It
+does not replace the exact-parent runtime and contract receipts above, and it
+does not change the parent task or any canonical surface.
+
 ## Generated-versus-hand-written boundary
 
 The reviewer should preserve this distinction when absorbing the packet:
