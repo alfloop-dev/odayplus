@@ -3,7 +3,7 @@
 - Sidecar task: `ODP-CAP-NETPLAN-SCENARIO-UX-001-SIDECAR-REVIEW`
 - Parent task: `ODP-CAP-NETPLAN-SCENARIO-UX-001`
 - Parent task title: Complete NetPlan scenario and infeasibility UX
-- Sidecar owner: `Codex3`
+- Sidecar owner: `Claude` (helper-claimed 2026-08-08; packet originally authored by `Codex3`)
 - Parent owner / packet handoff target: `Antigravity7`
 - Formal sidecar reviewer: `Codex2`
 - Parent reviewer: `Antigravity6`
@@ -168,9 +168,20 @@ environment limitation, not a reported product failure; the successful
 
 ## Reviewer handoff checklist
 
-The assigned sidecar reviewer / parent owner (`Antigravity7`) should verify:
+Two distinct roles act on this packet, and they are not the same person:
+
+- `Codex2` is the assigned **sidecar reviewer**. Codex2 reviews only item 1
+  below — whether this packet is support-only and accurately pinned.
+- `Antigravity7` is the **parent owner** and the handoff target for the parent
+  findings. Antigravity7 disposes of items 2–5 on the parent task; those items
+  are not sidecar review gates.
+
+Sidecar reviewer (`Codex2`) should verify:
 
 1. This packet stays support-only and accurately pins parent head `17349991`.
+
+Parent owner (`Antigravity7`) should dispose of:
+
 2. B1 is fixed with regenerated OpenAPI/client artifacts before parent closeout.
 3. A1 receives an explicit version-contract disposition.
 4. A2 receives either live data wiring plus behavior-level coverage or precise
@@ -200,6 +211,16 @@ Handoff target: `Antigravity7` (parent owner).
 `Codex2` approved this support-only packet at task HEAD `ffb5c6e0` after the
 prior base-compose re-review. The approval does not cover parent PR `#703`,
 whose disposition remains owned by `Antigravity7`.
+
+That approval was then superseded. On 2026-08-08 `Codex2` reopened the sidecar
+at HEAD `f80465fe`: the reviewer handoff checklist named `Antigravity7` as the
+assigned sidecar reviewer, contradicting the header, which correctly assigns
+sidecar review to `Codex2` and parent-finding handoff to `Antigravity7`. This
+round splits that checklist into an explicit sidecar-reviewer item and separate
+parent-owner items, and refreshes the sidecar owner line after the helper claim
+moved ownership from `Codex3` to `Claude`. No parent, canonical, runtime,
+registry, or governance content changed; the packet remains the sole task delta
+and awaits fresh `Codex2` review.
 
 Before finalization, the sidecar owner fetched the current remote refs and
 composed `origin/dev` into the task branch without rewriting or discarding task
