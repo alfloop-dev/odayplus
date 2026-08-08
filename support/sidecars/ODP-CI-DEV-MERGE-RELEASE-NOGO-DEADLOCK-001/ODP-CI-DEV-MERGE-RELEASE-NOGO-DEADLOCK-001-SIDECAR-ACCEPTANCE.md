@@ -7,11 +7,12 @@
 | Sidecar task | `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001-SIDECAR-ACCEPTANCE` |
 | Parent task | `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001` |
 | Helper kind | `acceptance_packet` |
-| Sidecar owner / reviewer | `Codex` / `Antigravity4` |
+| Sidecar owner / reviewer (current) | `Claude` / `Claude2` |
+| Sidecar owner / reviewer (at first delivery) | `Codex` / `Antigravity4` |
 | Current parent owner / reviewer | `Codex` / `Codex9` |
 | Observed parent branch | `task/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001` |
-| Observed parent head | `1a381de9037b712f34ab513e036b62ba7f5d4331` |
-| Parent PR | `#562`, open against `dev` |
+| Observed parent head (2026-08-02; superseded) | `1a381de9037b712f34ab513e036b62ba7f5d4331` |
+| Parent PR | `#562`; open and `DIRTY` when observed, **merged 2026-08-02T14:15:19Z** (see Closeout refresh) |
 | Packet verdict | **Support only; no parent acceptance, merge, or production GO claim** |
 
 This packet is a review aid for separating ordinary task/dev merge CI from
@@ -174,6 +175,9 @@ acceptance.
 
 Reviewer `Antigravity4` reviews this sidecar only for accuracy, completeness,
 and support-only scope. Parent reviewer `Codex9` owns the implementation verdict.
+After the 2026-08-08 reassignment the sidecar review role is held by `Claude2`
+and the sidecar owner role by `Claude`; the parent verdict ownership is
+unchanged by that reassignment. See the Closeout refresh section below.
 
 | Review question | Expected answer |
 |---|---|
@@ -183,6 +187,84 @@ and support-only scope. Parent reviewer `Codex9` owns the implementation verdict
 | May production promotion accept that same `NO-GO`? | No; it requires authentic Gate 0-6 `GO` bound to the exact immutable promotion SHA. |
 | What invalidates the packet's observed-head facts? | Any new head, conflict resolution, base refresh, status/check change, or PR replacement; refresh evidence and re-review. |
 | Who decides whether to absorb this packet? | The parent owner, followed by exact-head acceptance from the parent reviewer. |
+
+## Closeout refresh (2026-08-08 UTC)
+
+This section is added at sidecar closeout. It does not restate a verdict; it
+records which of the packet's dated facts have since been superseded, so a later
+reader does not mistake a 2026-08-02 observation for live state. The packet's
+own invalidation clause required this refresh once the parent head moved.
+
+### 1. The observed-head freeze is superseded
+
+| Fact | 2026-08-02 record | 2026-08-08 verified state |
+|---|---|---|
+| Parent PR `#562` | open against `dev`, merge state `DIRTY`, failing `task-review-gate` | `MERGED` at `2026-08-02T14:15:19Z` |
+| Parent PR head | `1a381de9037b712f34ab513e036b62ba7f5d4331` | `f19611ed6368e9e74f77b8ec6a2fd33367734698` |
+| Merge commit | none | `aff272d3da55967497d2aba0e72d569b9b15ff70` |
+| Position relative to `dev` | not merged | `f19611ed` is an ancestor of `origin/dev` |
+
+`1a381de9` is an ancestor of the merged head `f19611ed`, but
+`git diff --stat 1a381de9 f19611ed` spans 110 files (`+25284 / -1187`). The
+five-commit review range frozen above therefore no longer describes the head
+that actually merged: the parent branch composed a large amount of unrelated
+work before merging.
+
+Consequence for the checklist: rows `A1`-`A3` are historical, not live. `A3` in
+particular asked for a conflict-free `#562` at the reviewed head; the branch was
+instead refreshed and merged at a different head. The `B`, `C`, `D`, and `E`
+rows remain usable as a post-merge audit aid against `f19611ed` or `dev`, but a
+reviewer filling them must cite that head, not `1a381de9`. Nothing in this
+packet is, or ever was, parent acceptance or a production `GO`.
+
+### 2. Parent task record
+
+The parent task id `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001` does not resolve
+in the live canonical status root's active task set or in `ai-task-archive/` as
+read on 2026-08-08. This packet makes no claim about the parent's terminal task
+status; only the PR facts in § 1 are independently verified from Git and GitHub.
+
+### 3. Gate behavior re-observed at `0c36566c`
+
+Re-run at sidecar closeout on the task worktree head
+`0c36566c4bb14b908fa4f896defd5552c1af68e6` (an ancestor of `origin/dev`):
+
+| Command | Exit | Reading |
+|---|---|---|
+| `python3 scripts/e2e/check_release_gate_registry.py` | `0` | Registry is structurally valid and still reports `RELEASE STATE: NO-GO` with `0/7` gates cleared. Honest `NO-GO` truth is preserved, as row `E1` requires. |
+| `python3 scripts/e2e/check_product_release_gate.py --dev-merge` | `1` | Environment prerequisite failure only: `Playwright --list exited 1: Cannot find module '@playwright/test'`. This is the same missing-`npm ci` condition already recorded under Sidecar verification observation, not a gate regression. Re-run after `npm ci --ignore-scripts --no-audit --no-fund` before drawing any conclusion about row `B2`. |
+| `python3 scripts/e2e/check_product_release_gate.py --require-go` | `1` | Expected fail-closed, for two independent reasons: `0/7` gates cleared against release candidate `e496be62c47c45d758681b8a4d3abfae16f1c96d`, and evidence-only ancestry rejecting intervening commits that touch non-evidence paths between that candidate and the current head. |
+
+The non-zero `--require-go` exit is the required negative assertion described in
+the verification ledger, not a failed verification. The ancestry rejection is
+row `D1` behaving as designed: `dev` has advanced well past the recorded release
+candidate, so the candidate binding no longer holds and production authority
+correctly refuses to infer `GO` from a moving branch.
+
+Because the deterministic Playwright E2E leg could not run in this worktree, this
+refresh does **not** re-attest row `B2` or the full focused batch. The earlier
+`4 passed` observation stands only for parent head `1a381de9`.
+
+### 4. Sidecar delivery provenance
+
+| Item | Value |
+|---|---|
+| Content commit | `73681ce9121b0592a5f3990b16122a92102bc522` — this support file only, `+197` lines |
+| First delivery PR | `#568`, head `1600c5d5cd0397b9b3354c373f1758d9731a022e`, merged `2026-08-08T11:32:27Z`, merge commit `af631225ca0bb03ab97b788101d34642ca39227b` |
+| Second delivery PR | `#711`, head `14a656e3c755b354a725138efc194b14ae328d0b`, merged `2026-08-08T12:23:09Z`, merge commit `ba2738a870c6199ae553f38b0fad0b25da75b7c6` |
+
+Both PR heads are `dev`-into-task merge commits stacked on `73681ce9`; neither
+altered the packet content. `git diff 14a656e3..0c36566c -- support/sidecars/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001/`
+is empty, so the artifact that reached `dev` is byte-identical to the reviewed
+one.
+
+### 5. Routing change
+
+Sidecar routing moved from `Codex` / `Antigravity4` to `Claude` / `Claude2` on
+2026-08-08. Commit `73681ce9` carries the pre-reassignment trailers; this
+refresh commit carries the current pair. The reassignment changes accountability
+for closeout only — the packet content authored under the earlier pair stands as
+written, and none of it is disowned or re-attested by this section.
 
 ## Source basis
 
@@ -195,3 +277,13 @@ and support-only scope. Parent reviewer `Codex9` owns the implementation verdict
   `docs/evidence/ci/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001.md` on that head.
 - Task-owned workflow, Makefile, checker, receipt, registry, and regression paths
   in `eed83c0937f491211247ee3fdb0bdf8d932564fb..1a381de9037b712f34ab513e036b62ba7f5d4331`.
+
+Added for the Closeout refresh, all read on 2026-08-08 UTC:
+
+- `gh pr view 562` and `gh pr list --head task/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001-SIDECAR-ACCEPTANCE --state all`
+  for merge state, head SHAs, merge commits, and merge timestamps.
+- `git merge-base --is-ancestor` and `git diff --stat` against `origin/dev` for
+  the ancestry and drift facts in § 1 and § 4.
+- The three gate commands in § 3, run in the sidecar task worktree.
+- Live canonical task state at `$PANTHEON_STATUS_ROOT` for the § 2 parent-task
+  lookup and the § 5 routing change.
