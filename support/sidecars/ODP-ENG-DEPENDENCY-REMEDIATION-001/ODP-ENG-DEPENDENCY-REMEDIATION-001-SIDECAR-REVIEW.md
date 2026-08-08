@@ -2,12 +2,14 @@
 
 - Sidecar task: `ODP-ENG-DEPENDENCY-REMEDIATION-001-SIDECAR-REVIEW`
 - Parent task: `ODP-ENG-DEPENDENCY-REMEDIATION-001`
-- Sidecar owner / reviewer: Codex2 / Claude
+- Sidecar owner / reviewer: Claude2 / Claude (first pass authored by Codex2
+  before the helper re-claim; second pass re-verified by Claude2)
 - Parent owner / reviewer: Claude / CodexCoordinator
 - Review target: PR [#708](https://github.com/alfloop-dev/odayplus/pull/708)
 - Review SHA: `6fa073c0fd428086e8a6bff22bba13b5707e9d47`
 - Remediation anchor: `888b6c077164a3775f6f5b7ef14b72e50662b692`
-- Evidence snapshot: 2026-08-08T13:07:44Z
+- Evidence snapshot: 2026-08-08T13:07:44Z (first pass);
+  2026-08-08T13:22Z (second pass)
 - Scope: support packet only; this document does not change dependency,
   runtime, registry, governance, or canonical truth.
 
@@ -74,6 +76,61 @@ the transitive dependency graph. Making Starlette an explicit requirement
 means the known Starlette issue is included, but this result must not be
 generalized to complete transitive coverage.
 
+## Second-Pass Re-verification (2026-08-08T13:22Z, owner Claude2)
+
+The sidecar was helper-re-claimed after the first pass, so the new owner
+re-checked the packet's load-bearing claims rather than inheriting them. The
+sidecar branch was first base-advanced onto `origin/dev` (12 commits); that
+range touches only frontend-build and API-health sidecar surfaces and has zero
+overlap with the parent's six files, so the review boundary is unaffected.
+
+| Re-check | Method | Result |
+| --- | --- | --- |
+| Review SHA still current | `gh pr view 708 --json headRefOid` | still `6fa073c0`; packet has not gone stale |
+| PR file list still exactly six | `gh pr view 708 --json files` | matches the fixed boundary above |
+| npm versions | `git show 6fa073c0:package-lock.json` | `brace-expansion` `1.1.18` and `5.0.9`, `js-yaml` `4.3.1` |
+| GitPython version | `git show 6fa073c0:uv.lock` | `3.1.58` |
+| provider requirements | `git show 6fa073c0:services/provider-gateway/requirements.txt` | `fastapi==0.138.1`, `starlette>=1.3.1`, `uvicorn[standard]==0.34.0` |
+| manifests untouched | `git diff --name-only ..6fa073c0 -- package.json pyproject.toml apps/web/package.json` | empty; no declared-range change |
+| handback seal | independent SHA-256 over the file content preceding the digest line | exact match to `ed6b3d5b…ad513`; also confirms the seal convention is byte-exact preceding-content, not a stripped variant |
+| npm production audit | `npm audit --omit=dev --audit-level=high` | exit 0, `found 0 vulnerabilities` |
+| `--local` gate coverage | `pip-audit --local -f json` vs the same without `--local` | 0 packages vs 247 — see finding 2 |
+| real Python audit | `uv run --with pip-audit pip-audit -f json` | 247 packages; findings on `cryptography 48.0.1` and `gitpython 3.1.55` |
+| supply-chain gate | `uv run pytest tests/security/test_supply_chain_security_gate.py -q` | 13 passed |
+
+### Residual after merge is quantified, not just named
+
+The non-vacuous audit was run on the sidecar branch, whose base is `dev`
+**without** PR #708. It reports exactly two vulnerable packages:
+
+- `cryptography 48.0.1` — PYSEC-2026-3552 / 3553 / 3554 (3 advisories)
+- `gitpython 3.1.55` — GHSA-3f7w-8rr8-f37f, GHSA-p538-c434-8v24,
+  GHSA-9rj7-rf2p-w77r, GHSA-4gmw-gg2m-w46p, GHSA-hh9p-6wh2-4mfc,
+  GHSA-wvpp-8hx9-p66j, GHSA-jm78-9fvv-mhgr (7 advisories)
+
+PR #708 moves `gitpython` to `3.1.58`, which closes all seven. So the reviewer
+can treat the post-merge Python residual as **exactly the three `cryptography`
+advisories already covered by the sealed handback** — no unnamed remainder is
+hiding behind the vacuous gate. This is the strongest form of finding 1: the
+gap is bounded and fully disclosed, not merely unmeasured.
+
+### The SBOM test is a consistency check, not a remediation check
+
+The 13 supply-chain tests also pass on this branch, where `uv.lock` still
+carries the *pre*-remediation `gitpython 3.1.55`. That is correct behavior —
+the test re-derives the SBOM from whatever lockfiles are live and asserts they
+match — but it means a green run of that suite confirms SBOM/lockfile
+*internal consistency* and must not be read as confirming that the remediation
+itself landed. Version evidence, not the test result, carries that claim.
+
+### Base advance did not move the gate
+
+`dev` advanced the `Makefile` during this task, so the second pass re-checked
+the target. The change is confined to `node-check` (adding
+`npm run bundle:budget` and `&&` chaining); `dependency-audit` and its
+`pip-audit --local` invocation are untouched. Findings 2 and 3 therefore still
+hold against the current base.
+
 ## Review Findings And Residual Decisions
 
 ### 1. Root Python audit is known non-clean
@@ -87,11 +144,18 @@ not approve a statement that the complete production Python audit is clean.
 
 ### 2. The repository Python gate is vacuous today
 
-Both `make dependency-audit` and the supply-chain test use
-`uv run --with pip-audit pip-audit --local`. The parent packet demonstrates
-that this combination sees zero project packages. Removing `--local` is
-prepared but deliberately withheld because it exposes finding 1 and would
-require either a dependency decision or a human-approved, time-bounded waiver.
+Both `make dependency-audit` (`Makefile:48`) and the supply-chain test
+(`tests/security/test_supply_chain_security_gate.py:42`) use
+`uv run --with pip-audit pip-audit --local`. The parent packet asserts this
+combination sees zero project packages; the second pass reproduced it with a
+hard count. `pip-audit --local -f json` reports **0 audited packages**, while
+the same command without `--local` reports **247**. The gate is therefore not
+merely weak — it is fully vacuous on the Python side, and it would keep
+returning green no matter which advisories the project acquired.
+
+Removing `--local` is prepared but deliberately withheld because it exposes
+finding 1 and would require either a dependency decision or a human-approved,
+time-bounded waiver.
 
 ### 3. Service requirements remain outside the normal gate and SBOM
 
@@ -133,6 +197,11 @@ Recommended disposition for Claude:
    slice has evidence for approval. If “production dependency audit remains
    clean” is interpreted literally across Python production dependencies,
    approval should remain blocked pending the human outcome.
+5. Second pass adds a decision-relevant fact for that choice: the unclean
+   remainder is now measured, not merely acknowledged. A non-vacuous audit
+   finds exactly three `cryptography` advisories left once PR #708's GitPython
+   bump lands. A reviewer choosing the narrow reading is therefore accepting a
+   bounded, named, sealed residual rather than an open-ended one.
 
 This packet makes no approval decision for the parent task and introduces no
 canonical implementation change.
