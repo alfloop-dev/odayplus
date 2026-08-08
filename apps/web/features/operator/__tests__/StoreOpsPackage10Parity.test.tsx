@@ -6,6 +6,7 @@ import { DesignStoreOpsWorkspace } from "../DesignAlignedWorkspaces";
 describe("Package 10 Store Ops parity", () => {
   beforeEach(() => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise(() => {})));
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     window.sessionStorage.clear();
   });
@@ -14,6 +15,7 @@ describe("Package 10 Store Ops parity", () => {
     cleanup();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
   });
 
   it("renders the full-store four-light summary and dense three-part workspace", () => {

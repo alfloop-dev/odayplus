@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import threading
 import time
 
 import pytest
@@ -43,7 +44,13 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
     bundle.engine.execute("PRAGMA synchronous=NORMAL")
     bundle.engine.execute("PRAGMA busy_timeout=30000")
     app = create_app(persistence=bundle)
-    client = TestClient(app)
+
+    thread_local = threading.local()
+
+    def get_client() -> TestClient:
+        if not hasattr(thread_local, "client"):
+            thread_local.client = TestClient(app)
+        return thread_local.client
 
     # We will measure latencies under concurrent execution
     latencies = []
@@ -59,6 +66,7 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
         t0 = time.perf_counter()
         correlation_id = f"corr-load-{task_id}"
         idem_key = f"idem-load-{task_id}"
+        client = get_client()
 
         try:
             # Step A: Enqueue Job (Write to DB queue)
@@ -77,7 +85,7 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
                     "Idempotency-Key": idem_key,
                 },
             )
-            assert resp.status_code == 202
+            assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
             job_id = resp.json()["job_id"]
 
             # Step B: Read Job (Read from DB queue)
