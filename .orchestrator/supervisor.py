@@ -109,6 +109,7 @@ from provider_permissions import (
 )
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
+    compact_worker_history,
     enqueue_event,
     load_approval_state,
     load_event_queue,
@@ -6602,12 +6603,24 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
             },
         )
         return False
-    result = subprocess.run(
-        [sys.executable, str(script), "sync"],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "sync"],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        write_activity_log(
+            config,
+            {
+                "type": "task_reassignment_sync_failed",
+                "message": f"Status sync timed out after {timeout_seconds:g}s.",
+            },
+        )
+        return False
     if result.returncode == 0:
         return True
     write_activity_log(
@@ -6661,13 +6674,28 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     }[reason]
     env = os.environ.copy()
     env["AI_NAME"] = target_agent
-    result = subprocess.run(
-        [sys.executable, str(script), command_name, task_id, message],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), command_name, task_id, message],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": task_id,
+                "target_agent": target_agent,
+                "dispatch_reason": reason,
+                "message": f"Dispatch status sync timed out after {timeout_seconds:g}s.",
+            },
+        )
+        return False
     if result.returncode == 0:
         write_activity_log(
             config,
@@ -6792,7 +6820,13 @@ def persist_task_reassignment(
         if str(new_status).lower() == "todo":
             task.pop("waiting_for", None)
     task["last_update"] = timestamp
-    task["next"] = message
+    task["assignment_note"] = message
+    # Reassignment is coordination metadata, not resolution of an external
+    # gate.  Preserve the actionable blocker text until the task is explicitly
+    # moved out of blocked; otherwise dashboards claim the assignment changed
+    # while hiding the dataset/approval/deployment action still required.
+    if str(task.get("status") or "").lower() != "blocked" or new_status:
+        task["next"] = message
 
     if resolve_open_blockers:
         for blocker in status.get("blockers", []) or []:
@@ -8510,11 +8544,17 @@ def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> 
 
 
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
-    workers = state.get("workers", {})
-    if len(workers) <= max_entries:
-        return
-    ordered = sorted(workers.items(), key=lambda item: item[1].get("last_event_at") or "")
-    state["workers"] = dict(ordered[-max_entries:])
+    compact_worker_history(state, max_entries)
+
+
+def finish_loop_stage_timing(state: dict[str, Any], stage: str, started_at: float) -> None:
+    duration_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
+    supervisor_state = state.setdefault("supervisor", {})
+    timings = supervisor_state.setdefault("last_stage_timings_ms", {})
+    timings[str(stage)] = duration_ms
+    slowest = max(timings.items(), key=lambda item: item[1], default=(None, 0))
+    supervisor_state["slowest_stage"] = slowest[0]
+    supervisor_state["slowest_stage_duration_ms"] = slowest[1]
 
 
 def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -9739,13 +9779,18 @@ def create_sidecar_task(
             "TASK_METADATA_JSON": json.dumps(metadata, ensure_ascii=False),
         }
     )
-    result = subprocess.run(
-        [sys.executable, str(script), "assign", sidecar_id, owner, reviewer],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "assign", sidecar_id, owner, reviewer],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"sidecar assignment timed out after {timeout_seconds:g}s"
     if result.returncode != 0:
         return False, result.stderr.strip() or result.stdout.strip() or "unknown error"
     return True, ""
@@ -11884,6 +11929,7 @@ def run_once(
     save_runtime_state(config, state)
     changed = False
     try:
+        stage_started = time.monotonic()
         changed = reconcile_runtime_on_boot(config, state) or changed
         if changed:
             save_runtime_state(config, state)
@@ -11893,9 +11939,15 @@ def run_once(
         if pruned:
             changed = True
         provider_report = load_provider_report(config)
+        finish_loop_stage_timing(state, "boot_and_provider", stage_started)
+        boot_and_provider_ms = state.get("supervisor", {}).get("last_stage_timings_ms", {}).get("boot_and_provider")
+
+        stage_started = time.monotonic()
         if watch:
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)
+            if boot_and_provider_ms is not None:
+                state.setdefault("supervisor", {}).setdefault("last_stage_timings_ms", {})["boot_and_provider"] = boot_and_provider_ms
             stamp_supervisor_runtime_state(
                 config,
                 state,
@@ -11909,6 +11961,9 @@ def run_once(
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = refresh_chair_review_state(config, state) or changed
+        finish_loop_stage_timing(state, "scan_coordination_and_poll", stage_started)
+
+        stage_started = time.monotonic()
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
@@ -11928,16 +11983,28 @@ def run_once(
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             changed = process_queue(config, state, provider_report) or changed
+        finish_loop_stage_timing(state, "dispatch_and_queue", stage_started)
+
+        stage_started = time.monotonic()
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
+        finish_loop_stage_timing(state, "post_dispatch_poll", stage_started)
+
+        stage_started = time.monotonic()
         changed = sync_github_bus(config, state) or changed
+        finish_loop_stage_timing(state, "github_bus", stage_started)
         # After the bus sync, so PR state is as fresh as this cycle can make it.
+        stage_started = time.monotonic()
         changed = check_branch_drift(config, state) or changed
+        finish_loop_stage_timing(state, "branch_drift", stage_started)
+
+        stage_started = time.monotonic()
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
         changed = prune_orphan_worktrees(config, state) or changed
         changed = maybe_auto_commit_archive(config, state) or changed
+        finish_loop_stage_timing(state, "retention_and_maintenance", stage_started)
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(
