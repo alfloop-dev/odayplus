@@ -66,6 +66,12 @@ import {
   operatorHeatZoneToMapZone,
   operatorListingToMapListing,
 } from "./network/heatZoneMapAdapters";
+import { GeocoderSearchPanel } from "./network/geocoder";
+import type { GeocodeAuditEvent } from "./network/geocoder";
+import {
+  canSearchAddress,
+  canSelectGeocodeCandidate,
+} from "./network/geocoder/geocoderPermissions";
 import type {
   CandidateSite as MapCandidateSite,
   HeatZone as MapHeatZone,
@@ -1339,6 +1345,7 @@ export function NetworkFindAreasWorkspace({
           />
         ) : (
           <FindAreasPanel
+            activeRoleId={activeRoleId}
             fixturesAllowed={fixturesAllowed}
             viewModel={viewModel}
             selectedZone={selectedZone}
@@ -1363,6 +1370,7 @@ export function NetworkFindAreasWorkspace({
 }
 
 type FindAreasPanelProps = {
+  activeRoleId: OperatorRoleId;
   fixturesAllowed: boolean;
   viewModel: NetworkFindAreasViewModel;
   selectedZone: NetworkFindAreasZoneViewModel | null;
@@ -1380,6 +1388,7 @@ type FindAreasPanelProps = {
 };
 
 function FindAreasPanel({
+  activeRoleId,
   candidates,
   effectiveLens,
   fixturesAllowed,
@@ -1408,6 +1417,12 @@ function FindAreasPanel({
     [candidates, heatZones],
   );
   const selectedMapZoneId = selectedZone?.id ?? (heatZones[0]?.id ?? "");
+  // The accepted geocode is held here as a receipt rather than written through:
+  // the production geocoder endpoint is not yet wired (see
+  // docs/design/ODAY_PLUS_UNOWNED_CAPABILITY_SCOPE_DECISION_2026-08-03.md
+  // §5, UX-SCR-EXP-001), so this surface shows what WOULD be persisted, with
+  // its audit fields, instead of silently dropping the operator's decision.
+  const [geocodeReceipt, setGeocodeReceipt] = useState<GeocodeAuditEvent | null>(null);
   return (
     <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
@@ -1460,6 +1475,44 @@ function FindAreasPanel({
         </div>
 
         <aside className={styles.trayPanel} aria-label="Recommended find area tray">
+          {/*
+            Address search sits in the tray rather than in .mapPanel: that panel
+            is a fixed-height grid area with overflow:hidden on this screen, so
+            anything stacked above the canvas is clipped.
+          */}
+          <GeocoderSearchPanel
+            actorRoleId={activeRoleId}
+            canSearch={canSearchAddress(activeRoleId)}
+            canSelect={canSelectGeocodeCandidate(activeRoleId)}
+            onAudit={setGeocodeReceipt}
+            onSelect={() => undefined}
+          />
+          {geocodeReceipt ? (
+            <div className={styles.geocodeReceipt} data-testid="find-areas-geocode-receipt" role="status">
+              <strong>
+                {geocodeReceipt.action === "low_confidence_override"
+                  ? "已採用（人工覆核）"
+                  : geocodeReceipt.action === "candidate_selected"
+                    ? "已採用"
+                    : "已記錄為無法定位"}
+              </strong>
+              <span>{geocodeReceipt.addressRaw}</span>
+              {geocodeReceipt.selected ? (
+                <span>
+                  {geocodeReceipt.selected.latitude.toFixed(6)}, {geocodeReceipt.selected.longitude.toFixed(6)} ·
+                  精度 {geocodeReceipt.selected.precision || "未提供"} · 來源 {geocodeReceipt.selected.provider || "未提供"}
+                </span>
+              ) : (
+                <span>未取得座標；後續流程不會有推估位置。</span>
+              )}
+              {geocodeReceipt.flags.length > 0 ? <span>品質旗標 {geocodeReceipt.flags.join("、")}</span> : null}
+              {geocodeReceipt.reviewReason ? <span>覆核理由 {geocodeReceipt.reviewReason}</span> : null}
+              <span>
+                操作者 {geocodeReceipt.actorRoleId} · {geocodeReceipt.occurredAt}
+                {geocodeReceipt.correlationId ? ` · correlation_id ${geocodeReceipt.correlationId}` : ""}
+              </span>
+            </div>
+          ) : null}
           <div className={styles.panelHeader}>
             <h3>Recommended Areas</h3>
             <span>{viewModel.rankedZones.length} ranked</span>
