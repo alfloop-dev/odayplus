@@ -84,10 +84,10 @@ These are non-blocking scope notes for accurate parent closeout language:
 
 ## Independent verification
 
-Re-executed after the mandatory closeout base advance on the sidecar branch at
-`edb58de9`. That composed head contains `origin/dev` at `79c6792c`, the exact
-previously approved and pushed sidecar head `6b8a5d8b`, and parent merge commit
-`40fb18eb`:
+Re-executed after the latest mandatory closeout base advance. The verified tree
+contains merge commit `48df99eb`, which composes `origin/dev` at `2a3336c8`,
+retains the exact previously approved and pushed sidecar head `96999e0c`, and
+contains parent merge commit `40fb18eb`:
 
 ```text
 uv run pytest -q tests/ops/test_runtime_config_code_closeout.py tests/ops/test_deploy_workflow_contract.py
@@ -117,23 +117,25 @@ git merge-base --is-ancestor f7bd3d9b2d52c5f4eb3864c963379feea6836c90 origin/dev
 git merge-base --is-ancestor origin/dev HEAD
 # exit 0
 
-git merge-base --is-ancestor origin/task/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001-SIDECAR-REVIEW HEAD
+git merge-base --is-ancestor 96999e0c97d5ad70e0e67094f553eed846141039 HEAD
+# exit 0
+
+test "$(git diff --name-only origin/dev...HEAD)" = "support/sidecars/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001-SIDECAR-REVIEW.md"
 # exit 0
 ```
 
 ## Sidecar closeout note
 
-`Codex4` approved the support-only packet at exact pushed head `6b8a5d8b`. The
-closeout dispatch then required another base advance to `origin/dev` at
-`79c6792c`. That base was merge-composed into the task branch as `edb58de9`,
-preserving the full task lineage and a normal fast-forward push path. PR #721
-was already in the merge queue, whose branch protection correctly rejected the
-first push attempt. It was dequeued without closing the PR, and the composed
-head was then pushed normally without force or history replacement. The
-verification above was rerun on the composed tree before this support-only
-metadata update. Because the pushed head advanced beyond the prior approval,
-the resulting packet requires `Codex4`'s exact-head confirmation before PR #721
-can re-enter the merge queue and the task can be marked `done`.
+`Codex4` approved the support-only packet at exact pushed head `96999e0c`. The
+latest closeout dispatch required a further base advance to `origin/dev` at
+`2a3336c8`. That base was merge-composed into the task branch as `48df99eb`,
+preserving the full task lineage and a normal fast-forward push path. The 43
+focused tests and all static, ancestry, and scope checks above were rerun on the
+composed tree before this support-only metadata update. PR #721 remains open;
+all five checks on the previously approved head are successful. Because this
+packet commit advances the branch beyond `96999e0c`, `Codex4` must confirm the
+new exact pushed head before PR #721 can re-enter the merge queue and the owner
+can mark the task `done` after merge.
 
 ## Parent-owner closeout handoff
 
