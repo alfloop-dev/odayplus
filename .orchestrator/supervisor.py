@@ -1559,6 +1559,38 @@ def _git_operation_in_progress(worktree_path: Path) -> bool:
     return False
 
 
+WORKTREE_LEASE_BLOCK_RETENTION_HOURS = 72
+
+
+def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
+    """Forget streaks that nothing has touched for days.
+
+    The counter is durable state, and `_clear_worktree_lease_block` only runs
+    when a task actually leases a worktree. A task that is blocked and then
+    abandoned -- finished, cancelled, renamed -- never reaches that path, so
+    without an expiry its entry would sit in `state.json` forever. Supervisor
+    ticks are minutes apart, so anything untouched for days is also no longer a
+    *consecutive* streak; dropping it restarts the count, which is the honest
+    reading.
+    """
+
+    cutoff = datetime.now(UTC) - timedelta(hours=WORKTREE_LEASE_BLOCK_RETENTION_HOURS)
+    for key, entry in list(bucket.items()):
+        if not isinstance(entry, dict):
+            bucket.pop(key, None)
+            continue
+        # An unparseable timestamp is kept: expiring a streak we cannot date is
+        # the failure mode this whole task exists to remove. A hand-edited entry
+        # can also be naive; read it as UTC rather than raising inside dispatch.
+        last_at = _parse_iso_utc(entry.get("last_at") or entry.get("first_at"))
+        if last_at is None:
+            continue
+        if last_at.tzinfo is None:
+            last_at = last_at.replace(tzinfo=UTC)
+        if last_at < cutoff:
+            bucket.pop(key, None)
+
+
 def _record_worktree_lease_block(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1580,6 +1612,7 @@ def _record_worktree_lease_block(
     """
 
     bucket = state.setdefault("worker_worktree_lease_blocks", {})
+    _prune_worktree_lease_blocks(bucket)
     key = normalize_agent_id(task_id) or task_id
     entry = bucket.get(key)
     if not isinstance(entry, dict) or entry.get("refresh_status") != refresh_status:
@@ -9120,8 +9153,54 @@ def sidecar_statuses() -> set[str]:
     return {"todo", "in_progress", "review", "review_approved", "blocked", "done"}
 
 
-def existing_sidecar_signatures(status: dict[str, Any]) -> set[str]:
+def sidecar_archive_tasks_dir(config: dict[str, Any]) -> Path:
+    """Archive directory the `assign` subprocess will consult.
+
+    `create_sidecar_task` shells out to `scripts/ai_status.py` with the
+    supervisor's own environment and `cwd=<status_file parent>`, so resolve the
+    archive root exactly the way `ai_status.status_root()` does for that child.
+    """
+    raw = str(os.environ.get("ORCH_STATUS_ROOT") or os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
+    root = Path(os.path.expanduser(raw)).resolve() if raw else config_path(config, "status_file").parent
+    return root / "ai-task-archive" / "tasks"
+
+
+def archived_sidecar_state(config: dict[str, Any]) -> tuple[set[str], set[str]]:
+    """Return (parent:kind signatures, task ids) already held by the archive.
+
+    Sidecar ids are derived deterministically from parent + kind, so an archived
+    sidecar keeps owning its id forever: `ai_status.py assign` refuses to reuse
+    an archived id. Candidate generation must therefore treat archived sidecars
+    as "already exists"; otherwise every wave re-proposes the same dead ids and
+    burns the idle-capacity budget on `sidecar_task_create_failed`.
+    """
     signatures: set[str] = set()
+    task_ids: set[str] = set()
+    archive_dir = sidecar_archive_tasks_dir(config)
+    if not archive_dir.is_dir():
+        return signatures, task_ids
+    for path in sorted(archive_dir.glob("*.json")):
+        snapshot = load_json(path, default=None)
+        if not isinstance(snapshot, dict):
+            continue
+        task = snapshot.get("task")
+        if not isinstance(task, dict):
+            task = {}
+        task_id = str(snapshot.get("task_id") or task.get("id") or "").strip()
+        if task_id:
+            task_ids.add(task_id)
+        parent = str(task.get("helper_parent") or "").strip()
+        kind = str(task.get("helper_kind") or "").strip()
+        if parent and kind:
+            signatures.add(f"{parent}:{kind}")
+    return signatures, task_ids
+
+
+def existing_sidecar_signatures(
+    status: dict[str, Any],
+    archived_signatures: set[str] | None = None,
+) -> set[str]:
+    signatures: set[str] = set(archived_signatures or ())
     for task in status.get("tasks", []) or []:
         if not task_is_sidecar(task):
             continue
@@ -9426,9 +9505,12 @@ def build_catalog_sidecar_candidates(
     status: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
     existing_signatures: set[str],
+    archived_task_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    if archived_task_ids is None:
+        archived_task_ids = archived_sidecar_state(config)[1]
     resolver = TaskResolver(task_map)
     templates = load_sidecar_catalog(config)
     candidates: list[dict[str, Any]] = []
@@ -9462,6 +9544,8 @@ def build_catalog_sidecar_candidates(
             if not reviewer:
                 continue
             sidecar_id = sidecar_task_id(parent_id, kind)
+            if sidecar_id in archived_task_ids:
+                continue
             variables = {
                 "parent_task_id": parent_id,
                 "parent_title": str(parent.get("title") or ""),
@@ -9500,9 +9584,12 @@ def build_dynamic_sidecar_candidates(
     status: dict[str, Any],
     task_map: dict[str, dict[str, Any]],
     existing_signatures: set[str],
+    archived_task_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     settings = ready_dispatch_settings(config)
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
+    if archived_task_ids is None:
+        archived_task_ids = archived_sidecar_state(config)[1]
     resolver = TaskResolver(task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
@@ -9531,6 +9618,8 @@ def build_dynamic_sidecar_candidates(
         if not reviewer:
             continue
         sidecar_id = sidecar_task_id(parent_id, kind)
+        if sidecar_id in archived_task_ids:
+            continue
         title_by_kind = {
             "review_packet": f"Prepare {parent_id} review packet and evidence summary",
             "acceptance_packet": f"Prepare {parent_id} acceptance packet and dependency map",
@@ -11555,10 +11644,15 @@ def dispatch_underutilization_sidecars(
         )
         return True
 
-    existing_signatures = existing_sidecar_signatures(status)
-    candidates = build_catalog_sidecar_candidates(config, status, task_map, existing_signatures)
+    archived_signatures, archived_task_ids = archived_sidecar_state(config)
+    existing_signatures = existing_sidecar_signatures(status, archived_signatures=archived_signatures)
+    candidates = build_catalog_sidecar_candidates(
+        config, status, task_map, existing_signatures, archived_task_ids=archived_task_ids
+    )
     if not candidates:
-        candidates = build_dynamic_sidecar_candidates(config, status, task_map, existing_signatures)
+        candidates = build_dynamic_sidecar_candidates(
+            config, status, task_map, existing_signatures, archived_task_ids=archived_task_ids
+        )
     blocked_sidecar_parents = {str(item) for item in rotation.get("sidecar_blocked_parents", []) or [] if str(item).strip()}
     if blocked_sidecar_parents:
         candidates = [candidate for candidate in candidates if str(candidate.get("parent_task_id") or "") not in blocked_sidecar_parents]
