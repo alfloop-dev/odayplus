@@ -1929,7 +1929,11 @@ def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back() -> None
     job = JobRecord(
         job_id="job-live-e2e-ingestion",
         job_type=gate.WORKER_PROBE_JOB_TYPE,
-        payload={"provider_id": provider_id, "schedule_id": "live-e2e-gate"},
+        payload={
+            "tenant_id": "tenant-a",
+            "provider_id": provider_id,
+            "schedule_id": "live-e2e-gate",
+        },
         correlation_id="corr-live-e2e-ingestion",
     )
 

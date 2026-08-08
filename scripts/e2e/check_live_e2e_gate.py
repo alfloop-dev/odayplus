@@ -1315,9 +1315,16 @@ def _check_source_data(
 def _enqueue_body(
     config: GateConfig, idempotency_key: str, *, provider_id: str = ""
 ) -> dict[str, Any]:
+    tenant_id = (
+        config.operator_tenant
+        or os.environ.get("ODP_SCHEDULED_INGESTION_TENANT_ID")
+        or os.environ.get("ODP_TENANT_ID")
+        or "tenant-e2e"
+    )
     return {
         "job_type": WORKER_PROBE_JOB_TYPE,
         "payload": {
+            "tenant_id": tenant_id,
             "provider_id": provider_id or config.probe_provider_id,
             "schedule_id": "live-e2e-gate",
         },

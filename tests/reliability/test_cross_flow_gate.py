@@ -85,8 +85,9 @@ def test_service_boundaries_declare_runtime_units() -> None:
     assert {"core-api", "worker", "scheduler"}.issubset(units)
 
 
-def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
+def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypatch) -> None:
     """Acceptance 2-4: migrations + seed + api + worker + scheduler run together."""
+    monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", "tenant-gate")
     fastapi = pytest.importorskip("fastapi")  # noqa: F841
     from fastapi.testclient import TestClient
 

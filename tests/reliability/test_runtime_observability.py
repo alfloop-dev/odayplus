@@ -520,7 +520,7 @@ def test_worker_and_scheduler_export_telemetry() -> None:
     )
 
     worker = ODayWorker(persistence=persistence, telemetry=telemetry)
-    scheduler = ODayScheduler(persistence=persistence, telemetry=telemetry)
+    scheduler = ODayScheduler(persistence=persistence, telemetry=telemetry, tenant_id="tenant-test")
 
     # 1. Run scheduler once to enqueue a job
     scheduler.run_once()
@@ -3597,7 +3597,7 @@ def test_round8_worker_and_scheduler_export_metrics(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("GCP_PROJECT", "alfaloop-data-project")
 
     worker = ODayWorker()
-    scheduler = ODayScheduler()
+    scheduler = ODayScheduler(tenant_id="tenant-test")
 
     # Local export returns None or raises/exports cleanly without AttributeError
     assert hasattr(worker, "export_metrics")
