@@ -160,6 +160,19 @@ CREATE TABLE IF NOT EXISTS odp_runtime.notification_receipts (
 CREATE INDEX IF NOT EXISTS idx_runtime_notification_receipts
     ON odp_runtime.notification_receipts(notification_id);
 
+CREATE TABLE IF NOT EXISTS odp_runtime.notification_inapp_inbox (
+    notification_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    created_at TIMESTAMPTZ NOT NULL,
+    acknowledged SMALLINT NOT NULL DEFAULT 0 CHECK (acknowledged IN (0, 1)),
+    acknowledged_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_runtime_notification_inapp_user
+    ON odp_runtime.notification_inapp_inbox(user_id);
+
 CREATE TABLE IF NOT EXISTS odp_runtime.durable_outbox_events (
     outbox_event_id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
