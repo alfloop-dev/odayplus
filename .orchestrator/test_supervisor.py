@@ -9258,6 +9258,44 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
             },
         }
 
+    def test_reassignment_preserves_blocked_reason_as_next(self) -> None:
+        config = {**self.config, "paths": {"status_file": "ai-status.json"}}
+        status = {
+            "tasks": [
+                {
+                    "id": "BLOCKED-001",
+                    "status": "blocked",
+                    "owner": "Gemini",
+                    "reviewer": "Claude",
+                    "waiting_for": "Human/Ops",
+                    "next": "Await authoritative Human/Ops dataset and attestation.",
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+        message = "Auto-reassigned owner from Gemini to Codex."
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "write_json"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.persist_task_reassignment(
+                config,
+                task_id="BLOCKED-001",
+                new_owner="Codex",
+                new_reviewer="Claude",
+                message=message,
+            )
+
+        self.assertTrue(changed)
+        task = status["tasks"][0]
+        self.assertEqual(task["next"], "Await authoritative Human/Ops dataset and attestation.")
+        self.assertEqual(task["assignment_note"], message)
+        self.assertEqual(task["waiting_for"], "Human/Ops")
+
     def test_sync_preempted_owned_task_returns_in_progress_task_to_todo(self) -> None:
         config = {
             "paths": {"status_file": "ai-status.json"},
@@ -14668,3 +14706,89 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertEqual((leased_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"canonical"}')
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgentLoadBalancingTests(unittest.TestCase):
+    """Reassignment used to hand every task to whoever sorted first.
+
+    `first_viable_agent` returned the first name that passed its checks, and
+    the default candidate pool is a hardcoded list beginning with
+    "Antigravity". That name is always viable, so it always won. Measured on
+    2026-08-08: Antigravity owned 23 open tasks while Antigravity2..7 held
+    3, 6, 3, 4, 3 and 4. Because an agent runs one worker at a time, those 23
+    were a single queue with six idle lanes beside it.
+    """
+
+    CONFIG = {
+        "agents": {
+            "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+            "antigravity2": {"display_name": "Antigravity2", "provider": "antigravity2"},
+            "antigravity3": {"display_name": "Antigravity3", "provider": "antigravity3"},
+        }
+    }
+    POOL = ["Antigravity", "Antigravity2", "Antigravity3"]
+
+    @staticmethod
+    def _status(counts: dict[str, int]) -> dict:
+        tasks = []
+        for owner, n in counts.items():
+            tasks.extend({"id": f"T-{owner}-{i}", "status": "in_progress", "owner": owner} for i in range(n))
+        return {"tasks": tasks}
+
+    def test_picks_the_least_loaded_viable_agent(self) -> None:
+        status = self._status({"Antigravity": 23, "Antigravity2": 3, "Antigravity3": 6})
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG, self.POOL, exclude=set(), status=status
+        )
+
+        self.assertEqual(chosen, "Antigravity2")
+
+    def test_preference_order_still_breaks_ties(self) -> None:
+        """Equal load must keep the configured ordering, not shuffle it."""
+
+        status = self._status({"Antigravity": 4, "Antigravity2": 4, "Antigravity3": 4})
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG, self.POOL, exclude=set(), status=status
+        )
+
+        self.assertEqual(chosen, "Antigravity")
+
+    def test_excluded_agents_are_never_chosen_however_idle(self) -> None:
+        status = self._status({"Antigravity": 23, "Antigravity2": 0, "Antigravity3": 6})
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG, self.POOL, exclude={"Antigravity2"}, status=status
+        )
+
+        self.assertEqual(chosen, "Antigravity3")
+
+    def test_single_candidate_viability_check_is_unchanged(self) -> None:
+        """Callers use a one-name list to ask "can this agent take it?".
+
+        That question must not consult load, and must not read the board.
+        """
+
+        with mock.patch.object(supervisor, "load_status", side_effect=AssertionError("must not read the board")):
+            self.assertEqual(
+                supervisor.first_viable_agent(self.CONFIG, ["Antigravity"], exclude=set()),
+                "Antigravity",
+            )
+            self.assertIsNone(
+                supervisor.first_viable_agent(self.CONFIG, ["Antigravity"], exclude={"Antigravity"})
+            )
+
+    def test_open_task_counts_ignore_finished_work(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "a", "status": "in_progress", "owner": "Antigravity"},
+                {"id": "b", "status": "review", "owner": "Antigravity"},
+                {"id": "c", "status": "done", "owner": "Antigravity"},
+                {"id": "d", "status": "archived", "owner": "Antigravity"},
+            ]
+        }
+
+        counts = supervisor.agent_open_task_counts(self.CONFIG, status)
+
+        self.assertEqual(counts.get("antigravity"), 2)

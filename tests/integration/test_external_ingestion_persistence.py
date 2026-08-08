@@ -210,10 +210,15 @@ def test_scheduled_ingestion_persists_with_scheduled_trigger() -> None:
         interval=timedelta(hours=1),
         freshness_sla=timedelta(hours=24),
     )
-    outcome = service.run_scheduled(spec, scheduled_at=datetime(2026, 6, 28, 9, 0, tzinfo=UTC))
+    outcome = service.run_scheduled(
+        spec,
+        scheduled_at=datetime(2026, 6, 28, 9, 0, tzinfo=UTC),
+        tenant_id="tenant-scheduled",
+    )
 
     assert outcome.created is True
     assert outcome.record.trigger == "scheduled"
+    assert outcome.record.tenant_id == "tenant-scheduled"
     assert store.list_runs()[0].trigger == "scheduled"
 
 
