@@ -3,13 +3,14 @@
 - Sidecar task: `ODP-ENG-OPENAPI-CLIENT-001-SIDECAR-ACCEPTANCE`
 - Parent task: `ODP-ENG-OPENAPI-CLIENT-001`
 - Helper kind: `acceptance_packet`
-- Sidecar owner: `Codex9`
+- Sidecar owner: `Codex2`
 - Assigned sidecar reviewer / parent owner: `Antigravity4`
-- Parent reviewer: `Codex`
-- Evidence captured: `2026-08-08` UTC
+- Parent reviewer: `Claude`
+- Evidence captured and refreshed: `2026-08-08` UTC
 - Parent branch: `task/ODP-ENG-OPENAPI-CLIENT-001`
 - Parent review-gate SHA: `f4ab00f5db50bf15c0aa644c98e7bdc12270250d`
 - Parent merge-base at capture: `07167d47819ff9ad7dc1731b625dfea64c946c99`
+- Sidecar base-advance commit: `bdc63f867d80848bbc5ac0b42b08a2ff77a1834a`
 - Boundary: support packet only; no canonical truth, runtime, registry,
   OpenAPI artifact, generated client, or parent evidence was changed
 
@@ -112,15 +113,46 @@ packages/openapi-client/src/index.ts       scripts/openapi/check_drift.py
 1. Remove the extra blank line at the end of the parent implementation record;
    `git diff --check origin/dev...f4ab00f5` currently reports
    `implementation.md:41: new blank line at EOF`.
-2. Update the verification record header from the superseded
-   `Antigravity` / `Antigravity2` assignment to the live parent assignment,
-   `Antigravity4` / `Codex`.
+2. Update both completion-record headers to the live parent assignment,
+   `Antigravity4` / `Claude`. The implementation record still names `Codex` as
+   reviewer, while the verification record still names the superseded
+   `Antigravity` / `Antigravity2` assignment.
 3. Reword the drift-mismatch evidence in the implementation record. The 17
    tests exercise deterministic freshness and classifier failure cases, but do
    not invoke a deliberately stale generated-output target and assert the CLI
    exit code. Cite the separate sidecar negative probe or add a focused test.
 4. Preserve the generated-versus-hand-written distinction when summarizing
    call-site adoption and typed success paths.
+
+## Renewed exact-parent verification
+
+The sidecar re-ran the focused gates in a temporary detached worktree at the
+exact parent review SHA `f4ab00f5` after fetching current `origin/dev` at
+`a6acec5e`. No parent or canonical file was modified.
+
+| Command | Refreshed receipt |
+| --- | --- |
+| `python3 scripts/openapi/check_drift.py --base-ref origin/dev` | **PASS**; all three stages passed with 0 additive, 0 approved breaking, and 0 unapproved breaking changes |
+| `node ./node_modules/typescript/bin/tsc --noEmit -p packages/openapi-client/tsconfig.json` | **PASS**; exit 0 |
+| `node ./node_modules/typescript/bin/tsc --noEmit -p apps/web/tsconfig.json` | **PASS**; exit 0 |
+| `python3 -m pytest tests/contract/test_openapi_artifact_and_client.py` | **PASS**; `17 passed in 29.55s` |
+| `git diff --check "$(git merge-base origin/dev HEAD)"..HEAD` | **FAIL — RECORD HYGIENE**; `implementation.md:41: new blank line at EOF` |
+
+The detached worktree used the existing shared repository `node_modules` for
+type resolution. An initial run without that link reached the package
+typecheck but could not resolve repo-level `@types/node`; the linked rerun is
+the authoritative zero-exit typecheck receipt. The whitespace failure remains
+the first required parent-owner correction and does not invalidate the runtime
+or contract gates above.
+
+## Sidecar base advance
+
+Before this refresh, the sidecar fetched current `origin/dev`, rebased its
+packet onto that base without conflicts, then composed the previously
+published sidecar commit so the remote history remained intact. The resulting
+commit `bdc63f86` has both current `origin/dev` and the prior remote sidecar HEAD
+as ancestors and was published by a normal fast-forward push. No reset, force
+push, task-history discard, or canonical edit was used.
 
 ## Focused reviewer verification
 
@@ -155,4 +187,4 @@ content and observes a non-zero exit.
   owner.
 - Recommended parent flow: absorb the packet, correct the three evidence
   findings, rerun the focused commands at the new review SHA, and return the
-  parent task to `Codex` for formal review.
+  parent task to `Claude` for formal review.
