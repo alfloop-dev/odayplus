@@ -6,6 +6,12 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  # A merge queue tests each candidate on a temporary ref built from the target
+  # branch plus the queued PRs, and it waits for the *required* checks to report
+  # against that ref. Without this trigger the jobs below never run there, every
+  # queued PR times out and is ejected, and the queue silently blocks all merges.
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   orchestrator:
@@ -34,6 +40,9 @@ jobs:
 
       - name: Lint orchestrator code
         run: uv run ruff check .orchestrator scripts
+
+      - name: Check config wiring
+        run: uv run python scripts/check_config_wiring.py
 
       - name: Test orchestrator code
         run: uv run pytest -m "not requires_live_env" .orchestrator scripts
@@ -209,5 +218,9 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Run product E2E release gate
-        run: make product-release-gate
+      # A reviewed task PR must prove its current source through the complete
+      # deterministic E2E runner. It must not manufacture production release
+      # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
+      # dev -> main promotion separately requires an authentic GO decision.
+      - name: Run product E2E dev merge gate
+        run: make product-e2e-gate

@@ -28,6 +28,7 @@ import {
   normalizeGovernanceEvidencePackages,
   normalizeGovernanceStatusBoard,
 } from "./governance/governanceEnvelope";
+import { FeatureFlagsAdminWorkspace } from "./FeatureFlagsAdminWorkspace";
 import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
 import {
   isSeedDataSource,
@@ -36,8 +37,9 @@ import {
   toUnavailableOperatorStatus,
   type OperatorDataAvailability,
 } from "./operatorDataMode";
+import { ModelReleaseController } from "./governance/ModelReleaseController";
 
-type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard";
+type GovernanceTab = "approvals" | "decisions" | "audit" | "evidencePackage" | "statusBoard" | "featureFlags" | "learningHub";
 
 /**
  * Rendered wherever a governance field is absent or unusable. The row keeps its
@@ -271,6 +273,8 @@ const tabs: Array<{ id: GovernanceTab; label: string }> = [
   { id: "audit", label: "Audit Trail" },
   { id: "evidencePackage", label: "Evidence Package" },
   { id: "statusBoard", label: "系統狀態" },
+  { id: "featureFlags", label: "Feature Flags 功能開關" },
+  { id: "learningHub", label: "模型發布 (Learning Hub)" },
 ];
 
 const baseAuditCategories: GovernanceAuditCategory[] = [
@@ -1514,6 +1518,16 @@ export function GovernanceWorkspace({
             </div>
           </div>
           </div>
+        </section>
+      ) : null}
+
+      {activeTab === "featureFlags" ? (
+        <FeatureFlagsAdminWorkspace />
+      ) : null}
+
+      {activeTab === "learningHub" ? (
+        <section aria-label="Learning Hub model release controller">
+          <ModelReleaseController roleId={roleId} actor="ModelOps Owner" />
         </section>
       ) : null}
 

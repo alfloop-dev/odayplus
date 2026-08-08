@@ -1,0 +1,53 @@
+{
+  "secret_name": "oday-plus-dev-auth-principal-map",
+  "secret_version": "latest",
+  "secret_values_redacted": true,
+  "subject_bindings": {
+    "110296401444439097904": {
+      "roles": [
+        "operations_manager",
+        "model_owner",
+        "data_owner"
+      ],
+      "tenant_id": "tenant-a"
+    },
+    "oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com": {
+      "roles": [
+        "operations_manager",
+        "model_owner",
+        "data_owner"
+      ],
+      "tenant_id": "tenant-a"
+    }
+  },
+  "endpoints_verified": [
+    {
+      "path": "/api/v1/operator/bootstrap",
+      "required_permission": "operator_console:view",
+      "granting_role": "operations_manager",
+      "expected_status": 200,
+      "observed_status": 200
+    },
+    {
+      "path": "/api/v1/learninghub/models",
+      "required_permission": "model:view",
+      "granting_role": "model_owner",
+      "expected_status": 200,
+      "observed_status": 200
+    },
+    {
+      "path": "/api/v1/external-data/ingestion-runs",
+      "required_permission": "integration:view",
+      "granting_role": "data_owner",
+      "expected_status": 200,
+      "observed_status": 200
+    },
+    {
+      "path": "/api/v1/audit/events",
+      "required_permission": "audit:view",
+      "granting_role": "operations_manager,model_owner,data_owner",
+      "expected_status": 200,
+      "observed_status": 200
+    }
+  ]
+}
