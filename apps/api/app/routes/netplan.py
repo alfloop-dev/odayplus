@@ -286,7 +286,13 @@ else:
         solve = service.repository.get_solve(scenario_id)
         execution = service.repository.get_execution(scenario_id)
         outcome = service.repository.get_outcome(scenario_id)
-        payload["solve"] = solve.to_dict() if solve else None
+        if solve:
+            scenario = service.repository.get_scenario(scenario_id)
+            solve_dict = solve.to_dict()
+            solve_dict["is_stale"] = solve.is_stale(scenario) if scenario else False
+            payload["solve"] = solve_dict
+        else:
+            payload["solve"] = None
         payload["approvals"] = [
             approval.to_dict() for approval in service.repository.list_approvals(scenario_id)
         ]

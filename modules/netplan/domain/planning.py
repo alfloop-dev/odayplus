@@ -243,6 +243,18 @@ class ScenarioSolveRecord:
     solved_at: datetime
     alternative_limit: int = 3
     execution_metadata: dict[str, Any] = field(default_factory=dict)
+    problem_hash: str = ""
+
+    def is_stale(self, scenario: NetPlanScenario) -> bool:
+        if not self.problem_hash:
+            return False
+        from solver.netplan import compute_solver_problem_hash
+        current_hash = compute_solver_problem_hash(
+            scenario.options_by_entity,
+            scenario.constraints,
+            alternative_limit=self.alternative_limit,
+        )
+        return self.problem_hash != current_hash
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -251,7 +263,9 @@ class ScenarioSolveRecord:
             "solved_at": self.solved_at.isoformat(),
             "alternative_limit": self.alternative_limit,
             "execution_metadata": self.execution_metadata,
+            "problem_hash": self.problem_hash,
         }
+
 
 
 @dataclass(frozen=True)
