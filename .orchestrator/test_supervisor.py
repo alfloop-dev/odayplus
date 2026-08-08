@@ -9198,6 +9198,89 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(reassigned_to, "Codex2")
         self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Codex2")
 
+    def test_owner_failure_keeps_a_viable_reviewer_however_loaded(self) -> None:
+        """Only the owner failed, so the reviewer must not be rebalanced away.
+
+        Reviewer Claude holds four open reviews and Grok holds none, so
+        reviewer-load balancing would prefer Grok. Claude is still viable and
+        did not fail, so it keeps the review and its accumulated context.
+        """
+        worker = {
+            "task_id": "LP-004",
+            "agent_id": "gemini",
+            "retry_count": 1,
+            "run_id": "gemini-run-3",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "LP-004",
+                    "status": "in_progress",
+                    "owner": "Gemini",
+                    "reviewer": "Claude",
+                },
+                *(
+                    {"id": f"LOAD-{i}", "status": "review", "owner": "Codex", "reviewer": "Claude"}
+                    for i in range(4)
+                ),
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.maybe_reassign_task_after_worker_failure(self.config, worker, "status: 429")
+
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Claude")
+
+    def test_reviewer_replacement_still_balances_reviewer_load(self) -> None:
+        """Preservation applies only while the reviewer is viable.
+
+        Claude is dispatch-disabled, so it cannot keep the review. The
+        replacement is then picked by reviewer load: Codex already holds three
+        open reviews and Codex2 none, so Codex2 takes it despite Codex sorting
+        first in the fallback list.
+        """
+        # setUp rebuilds self.config per test, so narrowing it here is local.
+        self.config["agents"]["codex2"] = {"display_name": "Codex2"}
+        self.config["agents"]["claude"]["enabled"] = False
+        self.config["worker_reassignment"]["owner_fallbacks"]["Gemini"] = ["Grok"]
+        self.config["worker_reassignment"]["reviewer_fallbacks"]["Gemini"] = ["Codex", "Codex2"]
+        worker = {
+            "task_id": "LP-005",
+            "agent_id": "gemini",
+            "retry_count": 1,
+            "run_id": "gemini-run-4",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "LP-005",
+                    "status": "in_progress",
+                    "owner": "Gemini",
+                    "reviewer": "Claude",
+                },
+                *(
+                    {"id": f"REV-{i}", "status": "review", "owner": "Grok", "reviewer": "Codex"}
+                    for i in range(3)
+                ),
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(self.config, worker, "status: 429")
+
+        self.assertEqual(reassigned_to, "Grok")
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Grok")
+        self.assertEqual(kwargs["new_reviewer"], "Codex2")
+
     def test_reassigns_owned_task_to_new_owner_after_repeated_failure(self) -> None:
         worker = {
             "task_id": "LP-003",

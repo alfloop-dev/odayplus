@@ -6965,10 +6965,22 @@ def maybe_reassign_task_after_worker_failure(
         new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task, role="owner")
         if not new_owner or is_human_gate_agent(new_owner):
             return None
-        reviewer_candidates = [reviewer]
-        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task))
-        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
-        new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task, role="reviewer")
+        # Only the owner failed. A reviewer that is still viable keeps the task:
+        # load balancing is for picking a replacement, not a reason to churn a
+        # healthy review assignment and lose the reviewer's accumulated context.
+        new_reviewer = (
+            first_viable_agent(
+                config, [reviewer], exclude={new_owner}, state=state, task=task, balance_load=False
+            )
+            if reviewer
+            else None
+        )
+        if not new_reviewer:
+            reviewer_candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
+            new_reviewer = first_viable_agent(
+                config, reviewer_candidates, exclude={new_owner}, state=state, task=task, role="reviewer"
+            )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
