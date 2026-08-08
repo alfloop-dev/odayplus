@@ -9,7 +9,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -8640,6 +8640,63 @@ class WorktreeLeaseBlockEscalationTests(unittest.TestCase):
 
         self.assertEqual(count, 1)
         self.assertEqual([e for e in events if e["type"].endswith("_escalated")], [])
+
+    def test_stale_streaks_expire_instead_of_accumulating_forever(self) -> None:
+        # The bucket is durable now. `_clear_worktree_lease_block` only runs on a
+        # successful lease, so a task blocked and then abandoned would otherwise
+        # keep its entry in state.json permanently.
+        stale = datetime.now(UTC) - timedelta(
+            hours=supervisor.WORKTREE_LEASE_BLOCK_RETENTION_HOURS + 1
+        )
+        fresh = datetime.now(UTC) - timedelta(minutes=5)
+        bucket = {
+            "odp-orch-abandoned-001": {"count": 9, "last_at": supervisor._isoformat_utc(stale)},
+            "odp-orch-live-001": {"count": 2, "last_at": supervisor._isoformat_utc(fresh)},
+            "odp-orch-undated-001": {"count": 1},
+            "odp-orch-garbage-001": "not-a-mapping",
+        }
+
+        supervisor._prune_worktree_lease_blocks(bucket)
+
+        # An entry we cannot date is kept: expiring an undatable streak would
+        # recreate the silent-loss failure this whole guard exists to remove.
+        self.assertEqual(
+            sorted(bucket), ["odp-orch-live-001", "odp-orch-undated-001"]
+        )
+
+    def test_streak_actually_escalates_across_save_and_reload_cycles(self) -> None:
+        # End-to-end proof that the escalation can fire at all. Every previous
+        # tick round-tripped its state through `save_runtime_state`, which
+        # discarded the counter, so the count reset to 1 forever: 372
+        # consecutive blocks over 23h produced zero escalations.
+        tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(tmpdir.cleanup)
+        root = Path(tmpdir.name)
+        (root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        config: dict = {
+            "worker_runtime": {"lease_block_escalate_after": 3},
+            "paths": {
+                "state_file": str(root / "state.json"),
+                "event_queue": str(root / "event-queue.jsonl"),
+            },
+        }
+        events: list = []
+
+        counts = []
+        for _ in range(5):
+            state = runtime_state.load_runtime_state(config)
+            counts.append(self._record(config, state, events, n=1))
+            runtime_state.save_runtime_state(config, state)
+
+        self.assertEqual(counts, [1, 2, 3, 4, 5])
+        escalations = [e for e in events if e["type"] == "dispatch_blocked_worktree_lease_escalated"]
+        self.assertEqual(len(escalations), 1)
+        self.assertEqual(escalations[0]["consecutive_blocks"], 3)
+        # `escalated` must persist too, or every later tick re-alarms.
+        persisted = json.loads((root / "state.json").read_text(encoding="utf-8"))
+        self.assertTrue(
+            persisted["worker_worktree_lease_blocks"]["odp_orch_example_001"]["escalated"]
+        )
 
 
 class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):

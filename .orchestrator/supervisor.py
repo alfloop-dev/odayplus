@@ -1559,6 +1559,38 @@ def _git_operation_in_progress(worktree_path: Path) -> bool:
     return False
 
 
+WORKTREE_LEASE_BLOCK_RETENTION_HOURS = 72
+
+
+def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
+    """Forget streaks that nothing has touched for days.
+
+    The counter is durable state, and `_clear_worktree_lease_block` only runs
+    when a task actually leases a worktree. A task that is blocked and then
+    abandoned -- finished, cancelled, renamed -- never reaches that path, so
+    without an expiry its entry would sit in `state.json` forever. Supervisor
+    ticks are minutes apart, so anything untouched for days is also no longer a
+    *consecutive* streak; dropping it restarts the count, which is the honest
+    reading.
+    """
+
+    cutoff = datetime.now(UTC) - timedelta(hours=WORKTREE_LEASE_BLOCK_RETENTION_HOURS)
+    for key, entry in list(bucket.items()):
+        if not isinstance(entry, dict):
+            bucket.pop(key, None)
+            continue
+        # An unparseable timestamp is kept: expiring a streak we cannot date is
+        # the failure mode this whole task exists to remove. A hand-edited entry
+        # can also be naive; read it as UTC rather than raising inside dispatch.
+        last_at = _parse_iso_utc(entry.get("last_at") or entry.get("first_at"))
+        if last_at is None:
+            continue
+        if last_at.tzinfo is None:
+            last_at = last_at.replace(tzinfo=UTC)
+        if last_at < cutoff:
+            bucket.pop(key, None)
+
+
 def _record_worktree_lease_block(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1580,6 +1612,7 @@ def _record_worktree_lease_block(
     """
 
     bucket = state.setdefault("worker_worktree_lease_blocks", {})
+    _prune_worktree_lease_blocks(bucket)
     key = normalize_agent_id(task_id) or task_id
     entry = bucket.get(key)
     if not isinstance(entry, dict) or entry.get("refresh_status") != refresh_status:
