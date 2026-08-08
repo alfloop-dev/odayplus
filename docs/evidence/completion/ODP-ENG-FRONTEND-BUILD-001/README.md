@@ -149,3 +149,55 @@ Not run: Playwright E2E (`tests/e2e/operator-network-listings.spec.ts`,
 to this worker. Both already await the element, and the map now mounts one
 client-side chunk load later; the 15s timeout on the primary assertion covers
 that, but a reviewer with a live environment should confirm.
+
+## Base advance after approval (2026-08-08)
+
+The task was approved at `63be0ccf`, but the GitHub merge queue reported PR #709
+as `UNMERGEABLE`: `dev` had advanced 28 commits and
+`ODP-CAP-GEOCODER-SEARCH-001` (`3125e205`) had edited the same file this task
+decomposed. `origin/dev` was merged into the task branch and the one conflict
+resolved; nothing was reset, discarded, or force-pushed.
+
+### Conflict resolution
+
+Single conflict, in the import block of
+`apps/web/features/operator/NetworkFindAreasWorkspace.tsx`. Both sides edited
+the same hunk for unrelated reasons:
+
+- this task replaced `import { HeatZoneMap }` with a type-only import plus the
+  `next/dynamic` wrapper, and added the `heatZoneMapAdapters` import
+- `dev` added the `GeocoderSearchPanel` / `geocoderPermissions` imports
+
+Both were kept. `HeatZoneMap` stays lazily loaded via `next/dynamic`; the
+geocoder imports were taken verbatim from `dev`. The rest of the file merged
+cleanly — `dev`'s `activeRoleId` prop threading and `geocodeReceipt` panel, and
+this task's typed `useMemo` adapters, do not overlap. `networkFindAreas.module.css`
+auto-merged (`.mapLoading` from this task, `.geocodeReceipt` from `dev`).
+
+### Re-verification on the merged tree
+
+```bash
+make node-check   # exit 0
+```
+
+| check | result |
+| --- | --- |
+| `npm run lint` | No ESLint warnings or errors |
+| `npm run typecheck` | clean |
+| `npm run build` | Compiled successfully in 7.9s, 0 warnings |
+| `npm run bundle:budget` | exit 0, all routes within budget |
+| `npm run test` | 41 files, 349 tests passed |
+
+Test counts rose from 37 files / 281 tests to 41 files / 349 tests: the four
+extra files are `dev`'s geocoder suites, not new tests from this task. The
+`ECONNREFUSED 127.0.0.1:3000` lines in that run are expected stderr from
+`geocoderClient.test.ts`, which exercises the transport-failure path.
+
+### Budget impact of the base advance
+
+`/operator` and `/intake/[intakeId]` First Load JS moved 273.1 kB → 280.0 kB
+(+6.9 kB). That is `dev`'s statically imported `GeocoderSearchPanel`, not a
+regression in this task's route splitting; both routes remain under the 300.0 kB
+budget with 20 kB of headroom, and the machine gate passes. Full output:
+`bundle-budget-after-base-advance.txt`. The `bundle-budget-after.*` artifacts are
+left as recorded at approval time.
