@@ -5,7 +5,7 @@
 - Sidecar task: `ODP-ORCH-AGENT-LOAD-BALANCE-001-SIDECAR-REVIEW`
 - Parent task: `ODP-ORCH-AGENT-LOAD-BALANCE-001`
 - Helper kind: `review_packet`
-- Sidecar owner / reviewer: `Codex2` / `Claude`
+- Sidecar owner / current reviewer: `Codex2` / `Claude2`
 - Parent owner / reviewer: `Claude` / `Antigravity2`
 - Parent PR: `#710`
 - Parent branch: `origin/task/ODP-ORCH-AGENT-LOAD-BALANCE-001`
@@ -113,16 +113,18 @@ Option 3 most closely matches the phrase “least loaded agent,” but it broade
 
 ## Handoff
 
-- Sidecar reviewer: `Claude`
+- Sidecar reviewer: `Claude2`
 - Parent reviewer: `Antigravity2`
-- Requested action: verify the packet against parent HEAD `7d786d75`, then decide the reviewer-load semantics above before approving or requesting changes on PR `#710`.
+- Requested action: re-verify that this remains a support-only packet after the mandatory base compose, while retaining the historical reviewer disposition below.
 - Parent owner `Claude` decides whether and how to absorb this support finding into the mainline task.
 
 ## Reviewer Disposition and Closeout Record
 
-Sidecar reviewer `Claude` approved the packet at sidecar HEAD `f74a97ac` after independently re-verifying every packet claim against unchanged parent HEAD `7d786d75`. The reviewer selected Option 1 for the parent decision point: accept owner backlog as a deliberately coarse proxy for PR `#710`, because the reviewer path is not regressed from `origin/dev`, and track role-aware counting (Option 3) as a follow-up. The parent reviewer should require the selector docstring to state explicitly that the metric counts owner-routed tasks only. The detailed decision is recorded in PR `#722`.
+The previous sidecar reviewer, `Claude`, approved the packet at sidecar HEAD `f74a97ac` after independently re-verifying every packet claim against unchanged parent HEAD `7d786d75`. The reviewer selected Option 1 for the parent decision point: accept owner backlog as a deliberately coarse proxy for PR `#710`, because the reviewer path is not regressed from `origin/dev`, and track role-aware counting (Option 3) as a follow-up. The parent reviewer should require the selector docstring to state explicitly that the metric counts owner-routed tasks only. The detailed decision is recorded in merged sidecar PR `#722`, whose reviewed head is `c33fd2b4` and merge commit is `07167d47`.
 
-Before closeout, this sidecar composed current base `origin/dev` at `d56cba58` through merge commit `4884ccb5`, preserving the existing task commit rather than rewriting history. The resulting task diff against that base remains exactly this one support artifact; no canonical truth or implementation entered the sidecar scope.
+For this finalize dispatch, the task owner fetched and composed current base `origin/dev` at `07167d47` through merge commit `dd9a145e`, then pushed normally. This preserves both the approved task history and the newer local task merge instead of resetting, discarding, or force-updating either lineage. Because that required compose advanced the branch beyond the previously approved head, the current assigned reviewer `Claude2` must stamp the new support-only head before owner finalization.
+
+At finalization time, GitHub reports parent PR `#710` as closed without merge. This packet remains historical review evidence and does not claim that the parent runtime change entered `dev`.
 
 ## Scope Conformance
 
