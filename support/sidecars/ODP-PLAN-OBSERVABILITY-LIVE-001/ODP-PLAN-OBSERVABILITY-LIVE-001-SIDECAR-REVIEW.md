@@ -5,10 +5,10 @@
 - Sidecar task: `ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW`
 - Parent task: `ODP-PLAN-OBSERVABILITY-LIVE-001`
 - Helper kind: `review_packet`
-- Sidecar owner / reviewer: `Codex4` / `Codex2`
+- Sidecar owner / reviewer: `Claude2` / `Codex2` (helper re-claim; earlier packet rounds authored by `Codex4`)
 - Parent owner / reviewer: `Antigravity` / `Antigravity2`
 - Snapshot date: `2026-08-08`
-- Packet baseline: `origin/dev` at `07167d47819ff9ad7dc1731b625dfea64c946c99`
+- Packet baseline: `origin/dev` at `a6acec5ec72dd4e4ff220299f28d70039a0b941f` (base advanced from `07167d47819ff9ad7dc1731b625dfea64c946c99`; the task branch composes `origin/dev` by merge, no history rewrite)
 - Immutable implementation PR: `#558`
 - PR head / merge commit: `f6c344972881f1c7a5c9aee37c11869efd56dde2` / `ddded7ed586d68ae2ab42b932289b4c85c051175`
 - Scope boundary: this sidecar changes only this support artifact. It does not change canonical documents, runtime code, CI policy, provider configuration, deployment state, or parent-task truth.
@@ -30,7 +30,7 @@ This packet recommends approval only of the support summary's accuracy and bound
 | API, worker, scheduler, event/DLQ, model, solver, and business metric wiring | PR `#558` changed application exporters and `shared/observability/`; `docs/evidence/metrics_signal_inventory.md` maps metric writers, provider identities, units, and tests. | **Implemented and merged; live provider readback not proven.** |
 | Dashboards, alert definitions, SLO ownership, and runbook links | `infra/monitoring/{dashboards,alerts,slo}.json`, `modules/notifications/`, and `docs/runbooks/observability-and-runbook.md` are present. | **Definitions and validation logic present; provider-side installation/readback not proven.** |
 | Watch-window verifier and negative matrix | `shared/observability/watch_window.py` and `tests/reliability/test_runtime_observability.py` cover release/project binding, values, units, timestamps, coverage, tamper cases, and trust boundaries. | **Local/CI behavior verified.** |
-| Durable live watch-window receipt | `docs/evidence/watch_window_receipt.json` says `status: LOCAL_TEST_ONLY`, `readback_verified: false`, `verified_points_count: 0`, empty observed metric types and points, and a zero provider proof hash. | **Missing; release remains NO-GO.** |
+| Durable live watch-window receipt | `docs/evidence/watch_window_receipt.json` says top-level `status: LOCAL_TEST_ONLY`, `verified_points_count: 0`, empty `observed_metric_types`, `point_timestamps`, and `point_values`, and an all-zero `provider_proof_hash`. Its nested `monitoring_query_execution` block records `readback_verified: false`, `readback_status: LOCAL_TEST_ONLY`, `observed_series_count: 0`, and a `provider_query_response` with an empty `timeSeries`. There is no top-level `readback_verified` field. | **Missing; release remains NO-GO.** |
 | Real on-call route delivery | `docs/evidence/completion/ODP-PGAP-OBS-001/evidence.md` documents a loopback simulation. Its receipt has `status: FAILED`, `http_status: 0`, no provider receipt, and states that the provider trust root is absent. | **Missing; Human/Ops action required.** |
 | Exact-source Product E2E receipt in PR `#558` | At PR head `f6c34497`, the receipt reports tested source `996a9a4b6d60c50671db27d6accfb364591b9091`, 107 Playwright plus 10 Python tests passed, and zero validation errors. | **Historical local/CI evidence only; not live observability proof.** |
 | PR checks | Immutable PR `#558` records successful `orchestrator`, `product`, `performance-gate`, `product-e2e-gate`, and `task-review-gate` checks before merge. | **Merge provenance verified.** |
@@ -65,8 +65,8 @@ The task contract forbids this sidecar from deploying, changing live configurati
 The packet author checked:
 
 ```bash
-AI_NAME=Codex4 "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" show ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW
-AI_NAME=Codex4 "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" show ODP-PLAN-OBSERVABILITY-LIVE-001
+AI_NAME=Claude2 "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" show ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-REVIEW
+AI_NAME=Claude2 "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" show ODP-PLAN-OBSERVABILITY-LIVE-001
 gh pr view 558 --json number,state,headRefOid,baseRefName,mergeCommit,mergedAt,statusCheckRollup,files
 git merge-base --is-ancestor f6c344972881f1c7a5c9aee37c11869efd56dde2 origin/dev
 git merge-base --is-ancestor ddded7ed586d68ae2ab42b932289b4c85c051175 origin/dev
@@ -82,6 +82,23 @@ Focused results on `2026-08-08`:
 - `/home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check shared/observability tests/reliability scripts/deployment modules/notifications scripts/e2e/generate_observability_evidence.py` — `All checks passed!`
 - `git diff --check` — passed.
 - `jq` assertions for the durable `LOCAL_TEST_ONLY` receipt and PR `#558`'s historical 117-test E2E receipt — passed.
+
+### Re-verification after base advance to `a6acec5e` (2026-08-08)
+
+The task branch was composed with the current `origin/dev` tip by merge before this
+round. Every claim above was re-checked against the merged tree:
+
+- `git merge-base --is-ancestor f6c34497... origin/dev` and `... ddded7ed... origin/dev` — both still ancestors, exit `0`.
+- `gh pr view 558 --json number,state,headRefOid,mergeCommit,mergedAt,statusCheckRollup` — `MERGED` into `dev` at `2026-08-02T03:31:52Z`; head `f6c34497...`, merge commit `ddded7ed...`; `orchestrator`, `product`, `performance-gate`, `product-e2e-gate`, `task-review-gate` all `SUCCESS`.
+- `/home/lupin/oday-plus-supervisor-live/.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` — `85` tests, all passed, exit `0`.
+- `/home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check shared/observability tests/reliability scripts/deployment modules/notifications scripts/e2e/generate_observability_evidence.py` — `All checks passed!`
+- `git diff --check` — clean.
+- `jq` on `docs/evidence/watch_window_receipt.json` — still `LOCAL_TEST_ONLY` with `verified_points_count: 0`, empty series, zero provider proof hash, and nested `readback_verified: false`.
+- `docs/evidence/completion/ODP-PGAP-OBS-001/evidence.md` — on-call receipt still `status: FAILED`, `http_status: 0`.
+- Live canonical status writer — parent `ODP-PLAN-OBSERVABILITY-LIVE-001` still `blocked`, `waiting_for: Human/Ops`, `deployment_contract: forbidden`, `release_claim: no-go-until-final-gate-audit`.
+
+The base advance changed only `.github/workflows/ci.yml`, `pyproject.toml`, `uv.lock`,
+and an unrelated SBOM evidence file; none of it alters the observability findings above.
 
 ## Reviewer checklist and handoff
 
