@@ -1524,9 +1524,11 @@ def run_git_command(
             check=False,
             timeout=30,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as err:
         if required:
-            raise SystemExit(failure_message or "git command timed out after 30s")
+            raise SystemExit(
+                failure_message or "git command timed out after 30s"
+            ) from err
         return ""
     if result.returncode != 0:
         if required:
