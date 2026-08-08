@@ -131,13 +131,106 @@ dev 側已涵蓋且更嚴謹。分支唯一新增的是 `remote_branch_head_sha(
 
 ---
 
-## 5. 存取限制（本次盤點的邊界）
+## 5. 線上實況（L1-live）
 
-`L1-live` 未能取得。本機 gcloud 對 `alfaloop-data-project` 的 Cloud Run 為 `PERMISSION_DENIED`：
+gcloud 讀取權限未取得（見第 6 節），但服務端點是公開的，因此改由端點直接查證。
+
+### 5.1 dev 環境落後 1189 個 commit
+
+`GET https://oday-api-7sxbjoeozq-de.a.run.app/platform/version`
+
+```json
+{"status":"ok","service":"oday-api","api_version":"0.1.0","release_sha":"8ec12c02"}
+```
+
+| | |
+|---|---|
+| 線上 commit | `8ec12c02` |
+| 日期 | **2026-07-25 19:16** |
+| 標題 | Merge pull request #360 (`ODP-LISTING-INTAKE-RECONCILE-001`) |
+| 落後 `origin/dev` | **1189 個 commit** |
+
+第 1 節的推論由此證實：`#360` 之後合併進 dev 的所有內容，在 dev 環境上均未生效。
+
+### 5.2 provider 接得通，缺的是資料
+
+`GET /platform/health` → `modes.provider`：
+
+```
+mode=live  configurationValid=true  connectivityHealthy=true  healthy=true  live=true
+```
+
+三個必要 provider 的探針全綠：
+
+| provider | configuration_valid | connectivity_healthy | authentication_accepted | response_valid |
+|---|---|---|---|---|
+| `admin_boundary.official_dataset` | ✓ | ✓ | ✓ | ✓ |
+| `geocode.primary_api` | ✓ | ✓ | ✓ | ✓ |
+| `poi.commercial_api` | ✓ | ✓ | ✓ | ✓ |
+
+**接線、認證、回應格式都正常。** 阻塞不在整合，而在沒有執行過真實 ingestion 把資料落地。
+
+### 5.3 四個模型全部缺 production alias
+
+`modes.models`：`mode=mlflow-production-unverified`、`autoSeeded=false`
+
+| capability | modelName | available | trainable | requiredForPlatformReadiness |
+|---|---|---|---|---|
+| `forecastops` | `forecast_revenue_interval` | **false** | true | **true** |
+| `avm` | `dealroom_avm` | **false** | true | **true** |
+| `sitescore` | `sitescore_propensity` | **false** | true | **true** |
+| `heatzone` | `heatzone_priority` | **false** | true | **true** |
+
+四者的 `reasonCode` 一致為 `PRODUCTION_MODEL_REGISTRY_UNAVAILABLE`，錯誤訊息為 `configured MLflow registry has no production alias`。
+
+**這更正了先前「ForecastOps 是唯一需要訓練資料的模型」的說法。** 四個 capability 都標記為 `requiredForPlatformReadiness=true`，缺一不可。
+
+### 5.4 資料層本身是好的，是被模型綁定拖下水
+
+`modes.data`：
+
+```
+mode=unavailable   liveReady=false
+blockingReasons=["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]
+operatorRepositoryReady=true   persistenceMode=postgresql
+```
+
+`modes.persistence`：`configuredMode=postgresql`、`runtimeMode=postgresql`、`durable=true`、`reachable=true`、`production_persistence_supported=true`
+
+資料庫可達、持久化正常、operator repository 就緒。`data` 降為 `unavailable` 的唯一原因是模型綁定未驗證。
+
+`modes` 另記：`requireLiveData=true`、`deploymentMode=production`。
+
+### 5.5 因果鏈
+
+```
+四個模型缺 production alias
+  → runtime:model_bindings = mlflow-production-unverified
+  → modes.data = unavailable (PRODUCTION_MODEL_BINDINGS_UNVERIFIED)
+  → live E2E 閘門失敗
+  → 部署回滾至 oday-api-00005-gin / oday-web-00008-ws4
+  → dev 環境停留在 2026-07-25 的 8ec12c02
+```
+
+`L2-ci` 佐證：`31248984177` 與 `31186568515` 兩次部署（相隔多個 commit）promote 的是不同的 `*-release-*` revision，回滾目標卻是**同一組** `oday-api-00005-gin=100` / `oday-web-00008-ws4=100`，證明該 revision 自始未被取代。
+
+### 5.6 讀數的效力範圍
+
+`/platform/health` 由線上舊 revision（`8ec12c02`）產生，因此：
+
+- **有效**：MLflow registry、PostgreSQL、provider 連通性等**環境層事實**為共用資源，讀數可信。
+- **需保留**：`requiredForPlatformReadiness` 等**判定邏輯**出自 7/25 的程式碼，現行 dev 的判定範圍可能已不同。
+- 部署閘門另檢查 `data:ingestion_runs: runs=0` 與各 provider 的 `run_exists`，此為健康端點未涵蓋的獨立條件。
+
+---
+
+## 6. 存取限制
+
+本機 gcloud 對 `alfaloop-data-project` 的 Cloud Run 為 `PERMISSION_DENIED`：
 
 - `admin@` / `admin.dep@` / compute SA：已登入但缺 IAM 角色
 - `ajoe734@` / `joe.tsai@` / `ray.tsai@`：憑證過期（重新登入後 `ajoe734@` 仍缺角色）
 - 專案 IAM policy 中僅 `github-deployer@` SA 具 `roles/run.admin`；無任何使用者帳號具 run 角色
 - 模擬該 SA 亦被拒（缺 `roles/iam.serviceAccountTokenCreator`）
 
-因此第 1 節的結論全部建立在 `L2-ci` 執行紀錄上，未經線上直接查證。Cloud Run revision 的實際數量與流量分配未獨立確認。
+因此以下項目未經獨立查證：Cloud Run revision 的實際數量、各 revision 的建立時間、完整流量分配表。第 5 節改以公開端點取得等效事實。
