@@ -28,6 +28,7 @@ returned dependencies are plain callables that still enforce policy and raise
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Mapping
 from datetime import date
 from typing import TYPE_CHECKING
@@ -59,6 +60,8 @@ try:  # pragma: no cover - exercised only when FastAPI is installed
 except ModuleNotFoundError:  # pragma: no cover - lean env
     HTTPException = None  # type: ignore[assignment]
     Request = None  # type: ignore[assignment]
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AuthorizationError(Exception):
@@ -461,9 +464,33 @@ def _record_operator_denial(
     access: AccessRequest,
     decision: Decision,
 ) -> None:
+    """Record a denial without letting the recording decide the response.
+
+    Every caller runs this immediately before _raise_forbidden/_raise_unauthenticated.
+    Uncaught, an audit sink error escapes the guard instead of the 401/403: the
+    caller gets a 500 that says nothing was decided, when in fact access was
+    refused, and the decision reason is lost with it. Reproduced against the
+    live app -- a failing sink turned a decided 403 on
+    GET /operator/network-listings/intake into an unhandled RuntimeError, seen
+    in CI as an intermittently failing e2e (expected 403, received 500).
+
+    The failure stays loud: it is logged with the decision that was being
+    recorded, so a silently unaudited denial is still visible in the API logs.
+    What it can no longer do is convert a refusal into a server fault.
+    """
     from shared.audit.policy import build_security_event
 
-    engine.audit_log.record(build_security_event(access, decision))
+    try:
+        engine.audit_log.record(build_security_event(access, decision))
+    except Exception:
+        _LOGGER.exception(
+            "operator denial audit failed; denial still enforced "
+            "(policy_id=%s reason=%s actor=%s resource=%s)",
+            decision.policy_id,
+            decision.reason,
+            access.principal.subject_id,
+            access.resource.type,
+        )
 
 
 def _operator_scope_decision(

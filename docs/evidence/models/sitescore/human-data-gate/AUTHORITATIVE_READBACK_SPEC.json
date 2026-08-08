@@ -1,0 +1,55 @@
+{
+  "kind": "sitescore-authoritative-readback-spec",
+  "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+  "gap_id": "GAP-P1-002-DATA",
+  "generated_at": "2026-08-03",
+  "target_view": "model_ready.candidate_site_view",
+  "discovery_query_id": "sitescore_opening_outcome_discovery_query_v1",
+  "required_join_keys": [
+    "entity_id",
+    "store_id",
+    "target_format_code",
+    "opened_on"
+  ],
+  "required_outcome_columns": [
+    "realized_90d_net_revenue",
+    "realized_m6_net_revenue",
+    "realized_m12_net_revenue",
+    "interval_lower_bound",
+    "interval_upper_bound",
+    "store_age_days"
+  ],
+  "confidentiality_policy": {
+    "level": "HIGH",
+    "masking_required": true,
+    "raw_value_exposure_permitted": false,
+    "allowed_roles": ["finance_legal", "data_owner", "expansion_manager", "platform_admin"]
+  },
+  "validation_protocol": [
+    "Verify model_ready.candidate_site_view exists in Cloud SQL alfaloop-data-project:asia-east1:oday-dev-sql (POSTGRES_16)",
+    "Execute the official discovery query sitescore_opening_outcome_discovery_query_v1",
+    "Count eligible rows using the canonical definition: is_training_eligible IS True or eligible IS True",
+    "Verify eligible count >= 200",
+    "Verify m6_mature_count > 0 (store_age_days >= 180) and m12_mature_count > 0 (store_age_days >= 365)",
+    "Verify interval_bounds_count > 0 so p80_coverage_ratio and interval_bounds_coverage_ratio are computable",
+    "Verify matched_prediction_count > 0 against governed predictions bound to model/version lineage",
+    "Assert no row satisfies y_pred = y_true (explicit anti-fallback probe)",
+    "Verify population alignment between the prediction source and the outcome population",
+    "Verify dataset snapshot id and SHA-256 against the Human/Ops attestation",
+    "Verify mature_population_digest is populated and reproducible",
+    "Verify named evidence owner and freshness/cutoff are recorded",
+    "Re-run the Gate 2 benchmark and assert measured_90d_mae is a real value, not null",
+    "Confirm ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001 lineage receipt is merged before claiming Gate 2"
+  ],
+  "fail_closed_conditions": [
+    "eligible count < 200",
+    "m6_mature_count = 0 or m12_mature_count = 0",
+    "interval bounds absent",
+    "matched_prediction_count = 0",
+    "any y_pred = y_true fallback detected",
+    "prediction population not aligned with outcome population",
+    "dataset hash or mature population digest unverified",
+    "evidence owner unnamed",
+    "invented model governance fields present"
+  ]
+}

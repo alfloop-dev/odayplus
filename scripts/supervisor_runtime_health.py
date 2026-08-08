@@ -5,6 +5,7 @@ import argparse
 import fcntl
 import json
 import os
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,118 @@ def check(name: str, ok: bool, detail: dict[str, Any] | None = None) -> dict[str
     return {"name": name, "ok": bool(ok), **(detail or {})}
 
 
+# ---------------------------------------------------------------------------
+# Git runtime-freshness helpers
+# ---------------------------------------------------------------------------
+
+_GIT_TIMEOUT = 10  # seconds — enough for a local git operation; fail closed on timeout
+
+
+def _run_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
+    """Run a git sub-command and return (returncode, stdout).
+
+    Raises no exceptions; any subprocess failure returns a non-zero code so
+    that callers treat the result as unsafe (fail closed).
+    """
+    try:
+        result = subprocess.run(
+            ["git"] + args,
+            capture_output=True,
+            text=True,
+            cwd=str(cwd),
+            timeout=_GIT_TIMEOUT,
+        )
+        return result.returncode, result.stdout.strip()
+    except Exception:  # noqa: BLE001
+        return 1, ""
+
+
+def check_git_repo_freshness(
+    repo_root: Path,
+    *,
+    upstream: str = "@{upstream}",
+    max_commits_behind: int = 0,
+) -> dict[str, Any]:
+    """Return a freshness report for the runtime git checkout.
+
+    Checks performed:
+    1. ``runtime_git_not_detached``: HEAD must not be in detached state.
+       A detached HEAD means the checkout is frozen at a specific commit
+       regardless of upstream; the runtime can never auto-advance.
+       Treated as a hard failure (fail closed).
+    2. ``runtime_git_not_behind``: the local branch must not lag behind its
+       upstream tracking branch by more than ``max_commits_behind`` commits.
+       Default is 0 (zero tolerance).
+
+    Any git subprocess error is treated as "unknown / unsafe" and both checks
+    are marked failed (fail closed).
+    """
+    report: dict[str, Any] = {
+        "repo_root": str(repo_root),
+        "upstream": upstream,
+        "max_commits_behind": max_commits_behind,
+        "detached_head": None,
+        "commits_behind": None,
+        "error": None,
+    }
+
+    # --- detached HEAD? ---
+    rc, symbolic = _run_git(["symbolic-ref", "--quiet", "HEAD"], cwd=repo_root)
+    if rc != 0:
+        # git symbolic-ref exits non-zero for detached HEAD *or* for errors;
+        # either case is unsafe — fail closed.
+        report["detached_head"] = True
+        report["error"] = "symbolic-ref failed; detached HEAD or git error"
+        detached_check = check("runtime_git_not_detached", False, report)
+        behind_check = check("runtime_git_not_behind", False, report)
+        return {
+            "checks": [detached_check, behind_check],
+            **report,
+        }
+
+    report["detached_head"] = False
+    report["head_ref"] = symbolic  # e.g. "refs/heads/main"
+
+    # --- commits behind upstream? ---
+    rc2, rev_list_out = _run_git(
+        ["rev-list", "--count", f"HEAD..{upstream}"],
+        cwd=repo_root,
+    )
+    if rc2 != 0:
+        report["error"] = f"rev-list failed (no upstream tracking branch?): {rev_list_out!r}"
+        report["commits_behind"] = None
+        detached_check = check("runtime_git_not_detached", True, report)
+        behind_check = check("runtime_git_not_behind", False, report)
+        return {
+            "checks": [detached_check, behind_check],
+            **report,
+        }
+
+    try:
+        commits_behind = int(rev_list_out)
+    except ValueError:
+        report["error"] = f"rev-list output not an integer: {rev_list_out!r}"
+        report["commits_behind"] = None
+        detached_check = check("runtime_git_not_detached", True, report)
+        behind_check = check("runtime_git_not_behind", False, report)
+        return {
+            "checks": [detached_check, behind_check],
+            **report,
+        }
+
+    report["commits_behind"] = commits_behind
+    detached_check = check("runtime_git_not_detached", True, report)
+    behind_check = check(
+        "runtime_git_not_behind",
+        commits_behind <= max_commits_behind,
+        report,
+    )
+    return {
+        "checks": [detached_check, behind_check],
+        **report,
+    }
+
+
 def evaluate_runtime_health(
     repo_root: Path,
     *,
@@ -106,6 +219,11 @@ def evaluate_runtime_health(
     max_heartbeat_age: float | None = None,
     require_watchdog: bool = False,
     max_watchdog_age: float = 180.0,
+    require_dashboard: bool = False,
+    max_dashboard_age: float | None = None,
+    check_git_freshness: bool = False,
+    git_upstream: str = "@{upstream}",
+    max_commits_behind: int = 0,
 ) -> dict[str, Any]:
     now = (now or datetime.now(UTC)).astimezone(UTC)
     config_path_resolved = config_path_arg or (repo_root / ".orchestrator" / "config.json")
@@ -158,6 +276,52 @@ def evaluate_runtime_health(
         ),
     ]
 
+    status_path = config_path(repo_root, config, "status_file", "ai-status.json")
+    dashboard_path = status_path.parent / "dashboard-bundle.json"
+    dashboard_exists = dashboard_path.is_file()
+    dashboard_payload = load_json(dashboard_path, default=None)
+    dashboard_valid = isinstance(dashboard_payload, dict)
+    dashboard_summary = (
+        dashboard_payload.get("runtime_summary", {})
+        if dashboard_valid and isinstance(dashboard_payload.get("runtime_summary"), dict)
+        else {}
+    )
+    dashboard_generated = parse_utc_timestamp(
+        dashboard_payload.get("generated_at") if dashboard_valid else None
+    )
+    dashboard_age = (now - dashboard_generated).total_seconds() if dashboard_generated is not None else None
+    if max_dashboard_age is None:
+        max_dashboard_age = max(max_heartbeat_age, float(configured_supervisor.get("poll_interval_seconds", 300.0)) * 3.0)
+    dashboard_pid = dashboard_summary.get("supervisor_pid")
+    dashboard_report = {
+        "path": str(dashboard_path),
+        "present": dashboard_exists,
+        "valid": dashboard_valid,
+        "generated_at": dashboard_generated.isoformat().replace("+00:00", "Z") if dashboard_generated else None,
+        "age_seconds": dashboard_age,
+        "max_age_seconds": max_dashboard_age,
+        "supervisor_pid": dashboard_pid,
+        "runtime_state_pid": supervisor.get("pid"),
+        "pid_file_pid": pid,
+    }
+    # Existing dashboard artifacts are always part of health. The explicit flag
+    # additionally makes a missing artifact a failure for dashboard deployments.
+    if dashboard_exists or require_dashboard:
+        checks.extend(
+            [
+                check("dashboard_bundle_present", dashboard_exists, dashboard_report),
+                check("dashboard_bundle_valid", dashboard_valid, dashboard_report),
+                check("dashboard_bundle_fresh", dashboard_age is not None and dashboard_age <= max_dashboard_age, dashboard_report),
+                check(
+                    "dashboard_supervisor_pid_matches",
+                    dashboard_pid is not None
+                    and dashboard_pid == supervisor.get("pid")
+                    and (pid is None or dashboard_pid == pid),
+                    dashboard_report,
+                ),
+            ]
+        )
+
     watchdog_report: dict[str, Any] | None = None
     if require_watchdog:
         watchdog_settings = config.get("watchdog", {}) if isinstance(config.get("watchdog"), dict) else {}
@@ -184,6 +348,15 @@ def evaluate_runtime_health(
             )
         )
 
+    git_freshness_report: dict[str, Any] | None = None
+    if check_git_freshness:
+        git_freshness_report = check_git_repo_freshness(
+            repo_root,
+            upstream=git_upstream,
+            max_commits_behind=max_commits_behind,
+        )
+        checks.extend(git_freshness_report.get("checks", []))
+
     healthy = all(item["ok"] for item in checks)
     return {
         "healthy": healthy,
@@ -201,7 +374,9 @@ def evaluate_runtime_health(
             "lifecycle": supervisor.get("lifecycle"),
             "last_loop_error": supervisor.get("last_loop_error"),
         },
+        "dashboard": dashboard_report,
         "watchdog": watchdog_report,
+        "git_freshness": git_freshness_report,
         "checks": checks,
     }
 
@@ -213,6 +388,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-heartbeat-age", type=float, default=None)
     parser.add_argument("--require-watchdog", action="store_true")
     parser.add_argument("--max-watchdog-age", type=float, default=180.0)
+    parser.add_argument("--require-dashboard", action="store_true")
+    parser.add_argument("--max-dashboard-age", type=float, default=None)
+    parser.add_argument(
+        "--check-git-freshness",
+        action="store_true",
+        help="Add git-checkout freshness checks (detached HEAD and commits-behind).",
+    )
+    parser.add_argument(
+        "--git-upstream",
+        default="@{upstream}",
+        help="Git rev-list upstream ref. Defaults to '@{upstream}'.",
+    )
+    parser.add_argument(
+        "--max-commits-behind",
+        type=int,
+        default=0,
+        help="Maximum allowed commits behind upstream (default 0 = zero tolerance).",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable output.")
     return parser.parse_args()
 
@@ -226,6 +419,11 @@ def main() -> int:
         max_heartbeat_age=args.max_heartbeat_age,
         require_watchdog=args.require_watchdog,
         max_watchdog_age=args.max_watchdog_age,
+        require_dashboard=args.require_dashboard,
+        max_dashboard_age=args.max_dashboard_age,
+        check_git_freshness=args.check_git_freshness,
+        git_upstream=args.git_upstream,
+        max_commits_behind=args.max_commits_behind,
     )
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
