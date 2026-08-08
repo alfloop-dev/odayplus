@@ -1,0 +1,21 @@
+{
+  "api_url": "https://oday-api-7sxbjoeozq-de.a.run.app",
+  "checks": [
+    {
+      "detail": "The read operation timed out",
+      "name": "compatibility:/platform/version:http",
+      "ok": false
+    },
+    {
+      "detail": "The read operation timed out",
+      "name": "compatibility:/platform/health:database",
+      "ok": false
+    }
+  ],
+  "correlation_id": "corr-cloud-run-compat-dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65",
+  "generated_at": "2026-07-28T22:09:10Z",
+  "ok": false,
+  "schema_version": 1,
+  "secret_values_redacted": true,
+  "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"
+}
