@@ -15,10 +15,6 @@ from datetime import UTC, date, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from apps.api.app.routes.adlift import (
-    AdLiftIncrementalityJobPayload,
-    create_adlift_router,
-)
 from apps.api.oday_api.main import create_app
 from modules.adlift.application import AdLiftService
 from modules.adlift.domain.incrementality import (
@@ -29,14 +25,10 @@ from modules.adlift.domain.incrementality import (
     PreTrendStatus,
     Recommendation,
     StoreDayMetric,
-    assign_evidence_level,
-    evaluate_pre_trend,
-    is_causal_evidence,
-    recommend,
     run_incrementality,
 )
 from modules.adlift.infrastructure import InMemoryAdLiftRepository
-from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit import InMemoryAuditLog
 from tests.integration._authz import ADLIFT_HEADERS
 
 GENERATED_AT = datetime(2026, 8, 8, 10, 0, tzinfo=UTC)
