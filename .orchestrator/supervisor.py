@@ -10417,7 +10417,7 @@ def choose_helper_claim_agent(
     return True
 
 
-def reassign_paused_reviewers_to_registered_idle_agents(
+def reassign_blocked_task_roles_to_registered_idle_agents(
     config: dict[str, Any],
     state: dict[str, Any],
     status: dict[str, Any],
@@ -10438,6 +10438,17 @@ def reassign_paused_reviewers_to_registered_idle_agents(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    # A blocked owner strands a task exactly like a blocked reviewer does, but
+    # in the statuses where the owner is the one who has to act: finalize, and
+    # the owned statuses before it. Only the reviewer half was covered, so a
+    # task whose owner ran out of quota simply waited -- observed on
+    # ODP-ORCH-BRANCH-DRIFT-ALARMS-001, stuck 9 hours at review_approved
+    # because its owner's provider was quota-paused and nothing reassigns an
+    # owner. Reviewer claims stay restricted to review_statuses; widening that
+    # side would hand reviews to agents while the reviewer is merely busy.
+    owner_action_statuses = {
+        str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])
+    } | {str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])}
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
@@ -10450,19 +10461,30 @@ def reassign_paused_reviewers_to_registered_idle_agents(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in reserved_tasks:
             continue
-        if str(task.get("status") or "").lower() not in review_statuses:
-            continue
+        task_status = str(task.get("status") or "").lower()
         owner = str(task.get(owner_field) or "").strip()
         reviewer = str(task.get(reviewer_field) or "").strip()
-        if not reviewer or is_human_gate_agent(reviewer):
+
+        # Pick the role that owes this task work in its current status, then
+        # only act if that role cannot be dispatched to.
+        if task_status in review_statuses:
+            claimed_role, claimed_field = "reviewer", reviewer_field
+            claimed_agent, counterpart = reviewer, owner
+        elif task_status in owner_action_statuses:
+            claimed_role, claimed_field = "owner", owner_field
+            claimed_agent, counterpart = owner, reviewer
+        else:
             continue
-        reviewer_block_reason = agent_auto_dispatch_block_reason(
+
+        if not claimed_agent or is_human_gate_agent(claimed_agent):
+            continue
+        claimed_block_reason = agent_auto_dispatch_block_reason(
             config,
             state,
-            normalize_agent_id(reviewer),
+            normalize_agent_id(claimed_agent),
             provider_report,
         )
-        if not reviewer_block_reason:
+        if not claimed_block_reason:
             continue
 
         replacement = ""
@@ -10482,8 +10504,8 @@ def reassign_paused_reviewers_to_registered_idle_agents(
                 or not agent_within_target_workload_for_assignment(
                     status,
                     candidate,
-                    owner_field=reviewer_field,
-                    previous_owner=reviewer,
+                    owner_field=claimed_field,
+                    previous_owner=claimed_agent,
                 )
             ):
                 continue
@@ -10494,20 +10516,20 @@ def reassign_paused_reviewers_to_registered_idle_agents(
             continue
 
         message = (
-            f"Helper-claimed review by {replacement} while reviewer {reviewer} "
-            f"is dispatch-paused: {reviewer_block_reason}"
+            f"Helper-claimed {claimed_role} by {replacement} while {claimed_role} "
+            f"{claimed_agent} is dispatch-paused: {claimed_block_reason}"
         )
         if not persist_task_reassignment(
             config,
             task_id=task_id,
-            new_owner=owner,
-            new_reviewer=replacement,
+            new_owner=replacement if claimed_role == "owner" else counterpart,
+            new_reviewer=counterpart if claimed_role == "owner" else replacement,
             message=message,
             handoff_to=replacement,
-            handoff_from=reviewer,
+            handoff_from=claimed_agent,
         ):
             continue
-        task[reviewer_field] = replacement
+        task[claimed_field] = replacement
         task["next"] = message
         reserved_agents.add(replacement_id)
         reserved_tasks.add(task_id)
@@ -10515,16 +10537,17 @@ def reassign_paused_reviewers_to_registered_idle_agents(
         write_activity_log(
             config,
             {
-                "type": "task_review_helper_claimed",
+                "type": f"task_{claimed_role}_helper_claimed",
                 "task_id": task_id,
                 "message": message,
-                "owner": owner,
-                "from_reviewer": reviewer,
-                "to_reviewer": replacement,
+                "role": claimed_role,
+                "counterpart": counterpart,
+                f"from_{claimed_role}": claimed_agent,
+                f"to_{claimed_role}": replacement,
             },
         )
         console_log(
-            f"review helper claim: task={task_id} from={reviewer} to={replacement}",
+            f"{claimed_role} helper claim: task={task_id} from={claimed_agent} to={replacement}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
 
@@ -10913,7 +10936,7 @@ def dispatch_ready_tasks(
         failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
         failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 
-    if reassign_paused_reviewers_to_registered_idle_agents(
+    if reassign_blocked_task_roles_to_registered_idle_agents(
         config,
         state,
         status,

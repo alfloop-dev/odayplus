@@ -14413,5 +14413,126 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertTrue(leased_path.exists())
             self.assertFalse(os.path.islink(leased_path / "ai-status.json"))
             self.assertEqual((leased_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"canonical"}')
+class BlockedTaskRoleReassignmentTests(unittest.TestCase):
+    """A blocked owner strands a task the same way a blocked reviewer does.
+
+    Only the reviewer half was covered, so a task whose owner had run out of
+    quota just waited: nothing reassigns an owner. Observed on
+    ODP-ORCH-BRANCH-DRIFT-ALARMS-001, stuck 9 hours at review_approved.
+    """
+
+    def _config(self) -> dict:
+        return {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "helper_claim": {"enabled": True, "include_registered_idle_agents": True},
+                "review_statuses": ["review"],
+                "finalize_statuses": ["review_approved"],
+                "owned_statuses": ["in_progress", "todo"],
+                "active_worker_statuses": ["running"],
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+
+    def _state_with_codex_quota_paused(self) -> dict:
+        return {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "2099-01-01T00:00:00Z",
+                        "reason": "Codex usage limit reached",
+                    }
+                }
+            },
+        }
+
+    def _run(self, status: dict) -> mock.Mock:
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(
+                supervisor, "outstanding_delivery_indexes", return_value=(set(), set(), set())
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "console_log"),
+        ):
+            supervisor.reassign_blocked_task_roles_to_registered_idle_agents(
+                self._config(), self._state_with_codex_quota_paused(), status
+            )
+        return persist
+
+    def test_blocked_owner_at_finalize_is_reassigned(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "T-1", "status": "review_approved", "owner": "Codex", "reviewer": "Antigravity"}
+            ]
+        }
+
+        persist = self._run(status)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-1")
+        self.assertNotEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Antigravity")
+        self.assertEqual(kwargs["handoff_from"], "Codex")
+
+    def test_blocked_owner_in_progress_is_reassigned(self) -> None:
+        status = {
+            "tasks": [{"id": "T-2", "status": "in_progress", "owner": "Codex", "reviewer": "Antigravity"}]
+        }
+
+        persist = self._run(status)
+
+        persist.assert_called_once()
+        self.assertNotEqual(persist.call_args.kwargs["new_owner"], "Codex")
+
+    def test_blocked_reviewer_at_review_still_reassigns_the_reviewer(self) -> None:
+        status = {
+            "tasks": [{"id": "T-3", "status": "review", "owner": "Antigravity", "reviewer": "Codex"}]
+        }
+
+        persist = self._run(status)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertNotEqual(kwargs["new_reviewer"], "Codex")
+        self.assertEqual(kwargs["handoff_from"], "Codex")
+
+    def test_healthy_owner_is_left_alone(self) -> None:
+        status = {
+            "tasks": [
+                {"id": "T-4", "status": "review_approved", "owner": "Antigravity", "reviewer": "Claude"}
+            ]
+        }
+
+        self._run(status).assert_not_called()
+
+    def test_blocked_owner_at_review_is_not_reassigned(self) -> None:
+        """At review the reviewer owes the work, so a blocked owner is not the blocker."""
+        status = {
+            "tasks": [{"id": "T-5", "status": "review", "owner": "Codex", "reviewer": "Antigravity"}]
+        }
+
+        self._run(status).assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
