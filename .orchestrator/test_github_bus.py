@@ -1067,5 +1067,252 @@ class PrBackedStatusCoverageTests(unittest.TestCase):
         self.assertEqual(self._sync_and_capture_pr_tasks(tasks), [])
 
 
+class ApprovedTaskAutoMergeTests(unittest.TestCase):
+    """Approval must arm the PR, or a green PR just sits there while dev moves.
+
+    `ai_status.py` has always printed `autoMerge=enabled|disabled`; nothing ever
+    set it. The cost of the gap is re-run CI and a second review of work that
+    already passed, every time dev advances under a parked PR.
+    """
+
+    TASK_ID = "ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
+    BRANCH = "task/ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
+    REPO = "alfloop-dev/odayplus"
+
+    def _config(self, *, auto_merge: bool = True) -> dict:
+        return {
+            "github_bus": {"default_branch": "main"},
+            "branch_workflow": {
+                "enabled": True,
+                "dev_branch": "dev",
+                "task_pr": {"target_branch": "dev", "auto_merge": auto_merge},
+            },
+        }
+
+    def _task(self, status: str = "review_approved") -> dict:
+        return {
+            "id": self.TASK_ID,
+            "title": "ReviewBus auto-merge",
+            "summary_zh": "s",
+            "status": status,
+            "owner": "Claude3",
+            "reviewer": "Antigravity2",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "n",
+        }
+
+    def _bus_state(self, number: int | None = 700) -> dict:
+        return {
+            "tasks": {
+                self.TASK_ID: {
+                    "review_pr": {
+                        "number": number,
+                        "url": f"https://github.com/{self.REPO}/pull/{number}",
+                        "branch": self.BRANCH,
+                        "state": "open",
+                    },
+                    "ops_issue": None,
+                    "auto_merge": None,
+                    "last_review_hash": None,
+                    "last_issue_hash": None,
+                }
+            }
+        }
+
+    def _pr(self, **overrides) -> dict:
+        pr = {
+            "number": 700,
+            "state": "OPEN",
+            "isDraft": True,
+            "autoMergeRequest": None,
+            "baseRefName": "dev",
+            "headRefName": self.BRANCH,
+            "url": f"https://github.com/{self.REPO}/pull/700",
+            "mergeStateStatus": "BLOCKED",
+        }
+        pr.update(overrides)
+        return pr
+
+    def _arm(self, pr: dict | None, *, bus_state: dict | None = None, run_gh_side_effect=None):
+        bus_state = bus_state if bus_state is not None else self._bus_state()
+        with (
+            mock.patch.object(github_bus, "gh_json", return_value=pr),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                side_effect=run_gh_side_effect,
+                return_value=subprocess.CompletedProcess(["gh"], 0, "", ""),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log") as log,
+        ):
+            changed = github_bus.enable_review_pr_auto_merge(
+                self._config(), bus_state, self.REPO, self._task()
+            )
+        entry = bus_state["tasks"][self.TASK_ID]
+        return changed, entry, run_gh, log
+
+    @staticmethod
+    def _gh_calls(run_gh) -> list[list[str]]:
+        return [call.args[0] for call in run_gh.call_args_list]
+
+    def test_draft_pr_is_undrafted_then_armed(self) -> None:
+        """ReviewBus opens its PRs as drafts, and GitHub refuses auto-merge on a draft."""
+
+        changed, entry, run_gh, log = self._arm(self._pr())
+
+        self.assertTrue(changed)
+        calls = self._gh_calls(run_gh)
+        self.assertEqual(calls[0][:2], ["pr", "ready"])
+        self.assertEqual(calls[1][:2], ["pr", "merge"])
+        self.assertIn("--auto", calls[1])
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_enabled")
+
+    def test_ready_pr_is_armed_without_being_touched_first(self) -> None:
+        changed, entry, run_gh, _ = self._arm(self._pr(isDraft=False))
+
+        self.assertTrue(changed)
+        calls = self._gh_calls(run_gh)
+        self.assertEqual([call[:2] for call in calls], [["pr", "merge"]])
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+
+    def test_arming_is_not_repeated_once_github_reports_it(self) -> None:
+        """The bus re-reads every approved PR each poll; a second call must be a no-op."""
+
+        bus_state = self._bus_state()
+        self._arm(self._pr(isDraft=False), bus_state=bus_state)
+        changed, entry, run_gh, log = self._arm(
+            self._pr(isDraft=False, autoMergeRequest={"enabledAt": "2026-08-06T00:00:00Z"}),
+            bus_state=bus_state,
+        )
+
+        self.assertFalse(changed)
+        self.assertEqual(self._gh_calls(run_gh), [])
+        self.assertEqual(log.call_count, 0)
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+
+    def test_pr_against_the_default_branch_is_never_armed(self) -> None:
+        """A stale ReviewBus PR aimed at main must not be handed the merge button."""
+
+        changed, entry, run_gh, log = self._arm(self._pr(baseRefName="main"))
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh), [])
+        self.assertEqual(entry["auto_merge"]["state"], "skipped_wrong_base")
+        self.assertEqual(log.call_args.args[1]["type"], "github_auto_merge_skipped")
+
+    def test_pr_from_another_task_branch_is_never_armed(self) -> None:
+        changed, entry, run_gh, _ = self._arm(self._pr(headRefName="task/ODP-OTHER-002"))
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh), [])
+        self.assertEqual(entry["auto_merge"]["state"], "skipped_branch_mismatch")
+
+    def test_conflicting_pr_is_left_for_a_rebase(self) -> None:
+        changed, entry, run_gh, _ = self._arm(self._pr(mergeStateStatus="DIRTY"))
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh), [])
+        self.assertEqual(entry["auto_merge"]["state"], "skipped_conflicting")
+
+    def test_blocked_and_behind_prs_are_still_armed(self) -> None:
+        """Waiting on checks or on a moved base is what auto-merge exists to absorb."""
+
+        for merge_state in ("BLOCKED", "BEHIND", "UNSTABLE"):
+            with self.subTest(merge_state=merge_state):
+                changed, entry, run_gh, _ = self._arm(self._pr(isDraft=False, mergeStateStatus=merge_state))
+
+                self.assertTrue(changed)
+                self.assertEqual(entry["auto_merge"]["state"], "enabled")
+                self.assertIn("--auto", self._gh_calls(run_gh)[0])
+
+    def test_merged_pr_is_recorded_without_noise(self) -> None:
+        changed, entry, run_gh, log = self._arm(self._pr(state="MERGED"))
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh), [])
+        self.assertEqual(entry["auto_merge"]["state"], "skipped_pr_merged")
+        self.assertEqual(log.call_count, 0)
+
+    def test_missing_pr_number_is_skipped_quietly(self) -> None:
+        _, entry, run_gh, log = self._arm(None, bus_state=self._bus_state(number=None))
+
+        self.assertEqual(self._gh_calls(run_gh), [])
+        self.assertEqual(entry["auto_merge"]["state"], "skipped_no_pr")
+        self.assertEqual(log.call_count, 0)
+
+    def test_gh_failure_is_recorded_once_not_every_poll(self) -> None:
+        bus_state = self._bus_state()
+        failure = github_bus.GitHubBusError("Auto-merge is not allowed for this repository")
+
+        first_changed, entry, _, first_log = self._arm(
+            self._pr(isDraft=False), bus_state=bus_state, run_gh_side_effect=failure
+        )
+        second_changed, entry, _, second_log = self._arm(
+            self._pr(isDraft=False), bus_state=bus_state, run_gh_side_effect=failure
+        )
+
+        self.assertTrue(first_changed)
+        self.assertEqual(first_log.call_args.args[1]["type"], "github_auto_merge_failed")
+        self.assertFalse(second_changed)
+        self.assertEqual(second_log.call_count, 0)
+        self.assertEqual(entry["auto_merge"]["state"], "failed")
+
+    def test_offline_propagates_for_bus_backoff(self) -> None:
+        """Offline is the bus's own signal; swallowing it would hide the outage."""
+
+        with self.assertRaises(github_bus.GitHubBusOffline):
+            self._arm(
+                self._pr(isDraft=False),
+                run_gh_side_effect=github_bus.GitHubBusOffline("no such host"),
+            )
+
+    def _sync_and_capture_armed(self, tasks: list[dict], *, auto_merge: bool = True) -> list[str]:
+        armed: list[str] = []
+        config = self._config(auto_merge=auto_merge)
+        config["github_bus"]["repo"] = self.REPO
+        with (
+            mock.patch.object(github_bus, "upsert_review_pr", return_value=False),
+            mock.patch.object(github_bus, "upsert_ops_issue", return_value=False),
+            mock.patch.object(
+                github_bus,
+                "enable_review_pr_auto_merge",
+                side_effect=lambda c, b, r, t: armed.append(t["id"]) or False,
+            ),
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.sync_outbound(config, {"tasks": {}}, {"tasks": tasks, "blockers": []}, {}, self.REPO)
+        return armed
+
+    def test_sync_outbound_arms_approved_tasks_only(self) -> None:
+        in_review = self._task("review")
+        in_review["id"] = "ODP-STILL-IN-REVIEW-001"
+
+        self.assertEqual(
+            self._sync_and_capture_armed([self._task("review_approved"), in_review]),
+            [self.TASK_ID],
+        )
+
+    def test_sync_outbound_respects_the_config_switch(self) -> None:
+        self.assertEqual(self._sync_and_capture_armed([self._task()], auto_merge=False), [])
+
+    def test_auto_merge_statuses_track_the_finalize_gate(self) -> None:
+        config = {"ready_dispatcher": {"finalize_statuses": ["approved"]}}
+
+        self.assertEqual(github_bus.auto_merge_statuses(config), {"approved"})
+        self.assertEqual(github_bus.auto_merge_statuses({}), {"review_approved"})
+
+    def test_config_switch_reads_branch_workflow_task_pr(self) -> None:
+        self.assertTrue(github_bus.task_pr_auto_merge_enabled(self._config()))
+        self.assertFalse(github_bus.task_pr_auto_merge_enabled(self._config(auto_merge=False)))
+        self.assertFalse(github_bus.task_pr_auto_merge_enabled({}))
+        self.assertFalse(
+            github_bus.task_pr_auto_merge_enabled(
+                {"branch_workflow": {"enabled": False, "task_pr": {"auto_merge": True}}}
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
