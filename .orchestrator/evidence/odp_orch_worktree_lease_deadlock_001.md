@@ -1,0 +1,220 @@
+# ODP-ORCH-WORKTREE-LEASE-DEADLOCK-001 Evidence
+
+Owner: Claude · Reviewer: Antigravity4 · Approved head: `59fd888d` ·
+Merged to `dev` via PR #660 (`7dbe45e9`).
+
+## Incident
+
+On 2026-08-05 the fleet ran no work for roughly eight hours. `active_workers`
+sat at 0 against a non-empty queue while ten tasks were refused a worker
+worktree lease 1713 times. Every refusal appended one activity record and
+returned, so nothing ever escalated: `active_workers=0` with a non-empty queue
+is not itself an alarm condition, and the fleet read as healthy throughout.
+
+Eight of the ten shared one shape. A worker had committed an anchor to its
+`task/<id>` branch and exited before pushing. The fail-closed refresh policy
+calls a branch dispatchable only when its local HEAD exactly matches the remote
+task HEAD, so it correctly refused to reuse that worktree — but the state could
+never resolve on its own, because leasing is what runs the worker that would
+push, and leasing is what was being refused. Each task re-reported ~300 times.
+
+## Scope
+
+- Owned: worker worktree **leasing** — the unpublished-commit deadlock and the
+  visibility of repeated lease blocks.
+- Not changed: the fail-closed verification policy itself
+  (`_refresh_reused_worker_worktree` is untouched), dispatch scheduling, and
+  the review/PR flow.
+- Composed onto `origin/dev` before final verification (`564e3688`,
+  `59fd888d`).
+
+## Delivered behaviour
+
+`_publish_unpublished_task_branch(worktree_path, expected_branch)` —
+fast-forward-publishes a clean task branch whose commits were never pushed.
+This does not relax the policy, it *satisfies* it: publishing converts an
+unverifiable local-only state into the exact `local == remote` state the policy
+already accepts.
+
+| Worktree / branch state | Result |
+| --- | --- |
+| Clean worktree, remote task branch missing | Push creates it; lease re-verifies and proceeds. |
+| Clean worktree, remote HEAD is an ancestor of local HEAD | Fast-forward push; lease re-verifies and proceeds. |
+| Clean worktree, remote HEAD already equals local HEAD | No push (`already published`); falls through unchanged. |
+| Remote holds commits the local branch does not (genuine divergence) | Never published; falls through to escalation for an owner rebase decision. |
+| Dirty tracked/staged worktree | Never published; the pre-existing quarantine/recovery path owns `skipped_dirty_worktree`. |
+| `git status` unreadable, missing local HEAD, or push failure | Not published; reason recorded in `publish_detail`. |
+
+On a successful publish the caller re-runs `_refresh_reused_worker_worktree`
+and emits `worker_worktree_branch_published` with `publish_detail`,
+`refresh_ok`, and `refresh_status`.
+
+`_record_worktree_lease_block(...)` — counts consecutive *identical* blocks per
+task and escalates once past `worker_runtime.lease_block_escalate_after`
+(default 5, floor 2) with a console line and a
+`dispatch_blocked_worktree_lease_escalated` activity record. It escalates
+exactly once per streak, restarts the count when the `refresh_status` reason
+changes, and `_clear_worktree_lease_block` clears the streak on a successful
+lease. This is the part that generalises: the two genuinely diverged tasks
+still cannot be auto-resolved, but they are now visible instead of silently
+retrying forever.
+
+## Regression topology
+
+`WorktreeLeaseBlockEscalationTests` builds real temporary Git repositories and
+linked worktrees:
+
+- `test_publishing_an_unpublished_commit_makes_the_lease_verifiable`
+- `test_publishing_creates_a_task_branch_that_was_never_pushed_at_all`
+- `test_dirty_worktree_is_never_published`
+- `test_genuinely_diverged_branch_is_never_published`
+- `test_repeated_identical_blocks_escalate_exactly_once`
+- `test_blocks_below_the_threshold_stay_quiet`
+- `test_a_different_block_reason_restarts_the_count`
+- `test_a_successful_lease_clears_the_streak`
+
+Because `_refresh_reused_worker_worktree` is unchanged,
+`test_local_and_remote_task_head_mismatch_blocks` and the rest of the
+ODP-ORCH-WORKTREE-BASE-ADVANCE-001 verification matrix keep asserting exactly
+what they asserted before.
+
+## Verification
+
+- Implementation commit `2f2444fd`: full `.orchestrator` suite, 386 tests,
+  including the 8 new tests above.
+- Reviewer re-review at approved head `59fd888d`: 357 supervisor tests passing.
+- Closeout re-verification in the task worktree at `7dbe45e9`
+  (`origin/dev` tip, contains the approved head):
+  `python3 -m pytest .orchestrator/test_supervisor.py -q` → 357 passed, exit 0.
+- Second closeout base advance: `origin/dev` advanced to `0391ca8c` (PR #657,
+  an unrelated sidecar acceptance packet) while PR #662 sat approved, leaving
+  the PR `BEHIND`. Composed as `00d73f5a`; the merge brought in one docs file
+  and touched no runtime surface. Re-verified at `00d73f5a`:
+  `python3 -m pytest .orchestrator/test_supervisor.py` → 357 passed, 129
+  subtests passed, exit 0.
+- Third closeout base advance: `origin/dev` advanced to `42e3b207` (PR #656,
+  another unrelated sidecar acceptance packet) while PR #662 sat approved with
+  all five checks green, again leaving the PR `BEHIND`. Composed as `d1e9cb23`;
+  the merge brought in one docs file
+  (`support/sidecars/ODP-PLAN-ENGINEERING-HARDENING-001/…-SIDECAR-ACCEPTANCE.md`)
+  and touched no runtime surface. Re-verified at `d1e9cb23`:
+  `python3 -m pytest .orchestrator/test_supervisor.py` → 357 passed, 129
+  subtests passed, exit 0.
+- Fourth closeout base advance: `origin/dev` advanced to `e301e274` (PR #650,
+  ODP-ORCH-PROVIDER-LANE-LIVENESS-001) while PR #662 sat approved with all five
+  checks green, again leaving the PR `BEHIND`. Unlike the previous three, this
+  base advance lands on the *same runtime surface* this task changed —
+  `.orchestrator/supervisor.py`, `common.py`, `provider_permissions.py`, and
+  `test_supervisor.py`. Composed as `3400fad5`; the merge applied cleanly with
+  no conflicts and this task's own diff against `origin/dev` is still exactly
+  one added file. Re-verified at `3400fad5` over both touched suites:
+  `python3 -m pytest .orchestrator/test_supervisor.py
+  .orchestrator/test_provider_permissions.py` → 435 passed, 145 subtests
+  passed, exit 0.
+- Fifth closeout base advance: `origin/dev` advanced to `d5a52cb9` (PR #655,
+  ODP-LIVE-RUNTIME-DEV-COMPOSE-001-SIDECAR-ACCEPTANCE) while PR #662 sat
+  approved with all five checks green — including `task-review-gate` stamped
+  `SUCCESS` at the approved head — leaving the PR `BEHIND` again. Composed as
+  `3b8f793f`; the merge brought in one docs file
+  (`support/sidecars/ODP-LIVE-RUNTIME-DEV-COMPOSE-001/...-SIDECAR-ACCEPTANCE.md`)
+  and touched no runtime surface, and this task's diff against `origin/dev` is
+  still exactly one added file. Re-verified at `3b8f793f`:
+  `python3 -m pytest .orchestrator/test_supervisor.py
+  .orchestrator/test_provider_permissions.py` -> 435 passed, 145 subtests
+  passed, exit 0.
+- Sixth closeout base advance: `origin/dev` advanced to `ee9b477e` (PR #653,
+  ODP-ORCH-REBASE-HEAD-LIVENESS-001-SIDECAR-REVIEW) while PR #662 sat approved
+  with all five checks green, leaving the PR `BEHIND` again. Composed as
+  `c285bf4e`; the merge brought in one docs file
+  (`support/sidecars/ODP-ORCH-REBASE-HEAD-LIVENESS-001/...-SIDECAR-REVIEW.md`)
+  and touched no runtime surface, and this task's diff against `origin/dev` is
+  still exactly one added file. Re-verified at `c285bf4e`:
+  `python3 -m pytest .orchestrator/test_supervisor.py
+  .orchestrator/test_provider_permissions.py` -> 435 passed, 145 subtests
+  passed, exit 0.
+
+No live supervisor rollout is claimed by this task; the change ships with `dev`
+through the normal PR path.
+
+## Closeout loop observed on this task's own PR
+
+This task's own closeout has now been blocked six times by the same
+mechanism, which is worth recording because it is adjacent to — but distinct
+from — the deadlock the task fixed.
+
+The delivered fix covers *worker worktree leasing*: a task branch whose commits
+were never pushed. The closeout blocker here is the *review gate*: branch
+protection requires the PR to be up to date with `dev`, so every unrelated
+merge into `dev` puts an approved PR into `BEHIND`. Composing the new base
+moves the task HEAD, which invalidates the recorded `approved_head`, which
+sends the task back through `re_review` — and `dev` can advance again during
+that round trip. Approval throughput on `dev` is the loop's clock, so a task
+whose only remaining content is a docs file can be starved indefinitely by
+merges it has nothing to do with.
+
+The first three round trips were clean auto-merges of unrelated docs files with
+a re-verified test suite. The fourth composed a real runtime change onto the
+same files this task touched, still without conflict, and the re-verification
+widened to cover it — so nothing here is unsound. The cost is latency and
+reviewer cycles, not correctness, but the fourth round trip is the point where
+the starvation stops being free: each additional lap now has a genuine chance
+of landing a conflicting runtime change. A durable fix belongs to the
+review-gate lane rather than this task: either re-approve at the new head
+automatically when the base advance is a fast-forward compose that leaves the
+task's own diff byte-identical, or let auto-merge update the branch without
+resetting `approved_head`. Recorded here as a follow-up candidate; not
+implemented under this task's scope.
+
+Two measurements from the fifth lap are worth handing to that lane:
+
+1. `dev` advances faster than the required checks can re-run. The fourth lap
+   pushed at 05:48 and the slowest required check (`product`) did not report
+   until 06:16; `dev` had already taken PR #655 in the meantime. When base
+   churn is faster than the CI round trip, the up-to-date requirement
+   (`branches/dev/protection` has `required_status_checks.strict = true`) is
+   not just a latency cost — it is a livelock, and no number of laps
+   converges. PR #655's own history in this window (over a dozen consecutive
+   `merge origin/dev base advance` commits) is the same loop seen from the
+   other side.
+2. `ai_status.py` already has the carry-forward hook that would blunt this —
+   `is_evidence_only_advance` via `APPROVAL_EVIDENCE_PATH_PREFIXES` — but that
+   tuple currently lists only `docs/evidence/`. Evidence written under
+   `.orchestrator/evidence/`, which is where this task's note and its sibling
+   `odp_orch_worktree_base_advance_001.md` live, is outside the prefix and so
+   invalidates approval. Widening the prefix would not have saved these five
+   laps (a base-advance merge changes non-evidence paths regardless), but it
+   does mean the existing mitigation silently does not apply to the directory
+   the orchestrator's own tasks actually use.
+
+The sixth lap measured the race precisely, which changes the recommendation.
+`branches/dev/protection` requires four checks with `strict = true`:
+`orchestrator`, `product`, `product-e2e-gate`, `task-review-gate`
+(`performance-gate` is green but not required). On the fifth lap's run
+(`actions/runs/31077101714`) those took 59 s, **22 min 01 s**, and 8 min 34 s
+respectively, and `task-review-gate` was stamped 4 min after the push. So the
+reviewer round trip is *not* the bottleneck — the required `product` check is.
+Measured against `dev`'s first-parent merge cadence over the preceding eight
+merges (03:10, 03:44, 04:07, 04:32, 04:58, 05:24, 05:58, 06:33 UTC; mean gap
+≈ 29 min, min 23.6 min), a lap survives only if no unrelated PR merges during a
+22-minute window drawn from a ~29-minute mean gap. That is roughly a coin flip
+per lap, and it is lost outright whenever the worker cannot push early in the
+gap: the fifth lap pushed at 06:23:17, 24.5 min into a 35-min gap that had
+opened at 05:58:45, and `dev` took PR #653 at 06:33:47 — 10.5 min into a
+22-min check. Approval→owner-wake latency on that lap was 19.5 min (approved
+06:27:09, wake queued 06:46:39), so the controllable variable is how much of
+the gap is still left when the base advance is pushed, and the current dispatch
+path spends most of it before the CI clock even starts.
+
+That makes the second follow-up option the load-bearing one. Widening
+`APPROVAL_EVIDENCE_PATH_PREFIXES` cannot help, because a base-advance merge
+changes whatever paths `dev` changed. What removes the loop is carrying
+approval forward across a *target-branch compose*: if the advance merges the
+delivery target into the task branch and the task's own diff against the new
+merge base is byte-identical to its diff against the old one, then nothing the
+reviewer approved has changed and `task-review-gate` can be re-stamped at the
+new head without a review round trip. The task then never leaves
+`review_approved`, and the owner can push a base advance within seconds of a
+`dev` merge instead of after a full approve→dispatch cycle — which is what
+turns the 22-min-check-vs-29-min-gap race from a coin flip into a win. Still
+recorded as a follow-up candidate for the review-gate lane; not implemented
+under this task's scope.

@@ -53,7 +53,10 @@ from approval_queue import (
     prune_stale_approvals,
     resolve_approval,
 )
+from branch_drift_alarms import check_branch_drift
 from common import (
+    PROVIDER_CLI_FAMILY,
+    PROVIDER_LAUNCHER_MISSING_PATTERN,
     agent_config_for,
     command_exists,
     config_path,
@@ -68,6 +71,7 @@ from common import (
     new_runtime_id,
     normalize_agent_id,
     preserve_github_cli_auth_env,
+    provider_launcher_missing_cli,
     relpath,
     selected_shared_files,
     shell_quote,
@@ -164,6 +168,7 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r"^Error loading config\.toml\b", re.IGNORECASE),
     re.compile(r"^An unexpected critical error occurred", re.IGNORECASE),
     re.compile(r"^(?:Error|error|fatal):", re.IGNORECASE),
+    PROVIDER_LAUNCHER_MISSING_PATTERN,
 )
 WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     re.compile(r"^(?:result|error|audit):\s+Optional\[Dict\[str,\s*Any\]\]\s*=\s*None,?$", re.IGNORECASE),
@@ -1554,6 +1559,132 @@ def _git_operation_in_progress(worktree_path: Path) -> bool:
     return False
 
 
+def _record_worktree_lease_block(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    task_id: str,
+    refresh_status: str,
+    message: str,
+) -> int:
+    """Count consecutive lease blocks and escalate once they stop being noise.
+
+    A single blocked lease is ordinary: the next tick usually clears it. What is
+    not ordinary is the same block repeating unchanged forever. On 2026-08-05 ten
+    tasks were blocked 1713 times over ~8h without one escalation, because each
+    attempt only appended an activity record and returned. `active_workers=0`
+    alongside a non-empty queue is not itself an alarm condition, so the fleet
+    read as healthy the entire time.
+
+    Returns the current consecutive count.
+    """
+
+    bucket = state.setdefault("worker_worktree_lease_blocks", {})
+    key = normalize_agent_id(task_id) or task_id
+    entry = bucket.get(key)
+    if not isinstance(entry, dict) or entry.get("refresh_status") != refresh_status:
+        entry = {"count": 0, "first_at": utc_now(), "refresh_status": refresh_status, "escalated": False}
+    entry["count"] = int(entry.get("count") or 0) + 1
+    entry["last_at"] = utc_now()
+    entry["message"] = message
+    bucket[key] = entry
+
+    threshold = max(2, int(worker_runtime_settings(config).get("lease_block_escalate_after", 5)))
+    if entry["count"] >= threshold and not entry.get("escalated"):
+        entry["escalated"] = True
+        console_log(
+            f"worktree lease blocked repeatedly: task={task_id} count={entry['count']} "
+            f"status={refresh_status} -- dispatch for this task is stuck and needs an owner decision",
+            quiet=SUPERVISOR_LOG_QUIET,
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease_escalated",
+                "task_id": task_id,
+                "message": (
+                    f"Worktree lease has been blocked {entry['count']} consecutive times with "
+                    f"`{refresh_status}`. This will not clear on its own: {message}"
+                ),
+                "refresh_status": refresh_status,
+                "consecutive_blocks": entry["count"],
+                "first_blocked_at": entry.get("first_at"),
+            },
+        )
+    return int(entry["count"])
+
+
+def _clear_worktree_lease_block(state: dict[str, Any], task_id: str) -> None:
+    bucket = state.get("worker_worktree_lease_blocks")
+    if isinstance(bucket, dict):
+        bucket.pop(normalize_agent_id(task_id) or task_id, None)
+
+
+def _publish_unpublished_task_branch(
+    worktree_path: Path,
+    expected_branch: str,
+) -> tuple[bool, str]:
+    """Fast-forward-publish a clean task branch whose commits were never pushed.
+
+    The fail-closed refresh policy calls a branch dispatchable only when its
+    local HEAD exactly matches the remote task HEAD. A worker that commits but
+    exits before pushing leaves a state that can never reach that condition on
+    its own: leasing is what would run the worker that would push, and leasing
+    is exactly what the policy refuses. On 2026-08-05 eight tasks sat in that
+    deadlock for ~8h, each re-reported ~300 times, while the fleet ran no work
+    at all.
+
+    Publishing does not weaken the policy -- it satisfies it, by turning an
+    unverifiable local state into the exact local==remote state the policy
+    already accepts. It is therefore allowed only where that equivalence holds
+    and nothing can be lost:
+
+    * the worktree must be clean, so no unreviewed working-tree state is
+      published as a side effect of dispatch;
+    * the push must be a genuine fast-forward -- either the remote branch does
+      not exist yet, or its HEAD is an ancestor of the local HEAD.
+
+    A genuinely diverged branch (ahead *and* behind) is never published here.
+    That needs a rebase decision only the task owner can make, and the caller
+    escalates it instead.
+
+    Returns (published, detail).
+    """
+
+    dirty_rc, dirty_out = _git_output(worktree_path, "status", "--porcelain")
+    if dirty_rc != 0:
+        return False, "cannot read worktree status"
+    if dirty_out.strip():
+        return False, "worktree is not clean"
+
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    if not local_head:
+        return False, "missing local HEAD"
+
+    remote_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+    if remote_head:
+        if remote_head == local_head:
+            return False, "already published"
+        ancestor_rc, _ = _git_output(
+            worktree_path, "merge-base", "--is-ancestor", remote_head, local_head
+        )
+        if ancestor_rc != 0:
+            # Remote holds commits the local branch does not: a real divergence.
+            return False, f"diverged from remote ({remote_head[:12]})"
+
+    push_proc = subprocess.run(
+        ["git", "push", "origin", f"refs/heads/{expected_branch}:refs/heads/{expected_branch}"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if push_proc.returncode != 0:
+        details = (push_proc.stderr or push_proc.stdout or "").strip().splitlines()
+        return False, f"push failed: {details[0] if details else 'unknown'}"
+    return True, f"published {local_head[:12]}"
+
+
 def _refresh_reused_worker_worktree(
     repo_root: Path,
     worktree_path: Path,
@@ -2330,6 +2461,38 @@ def prepare_worker_workspace(
                                     refresh_status = (
                                         f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
                                     )
+                if not refresh_ok and refresh_status != "skipped_dirty_worktree":
+                    # The clean-but-unpublished deadlock. Publishing is only
+                    # attempted for fast-forwards on a clean worktree; anything
+                    # genuinely diverged falls through to the escalation below.
+                    published, publish_detail = _publish_unpublished_task_branch(worktree_path, branch)
+                    if published:
+                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                            repo_root,
+                            worktree_path,
+                            str(settings.get("base_ref") or "origin/dev"),
+                            branch,
+                        )
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_worktree_branch_published",
+                                "task_id": request.task_id,
+                                "target_agent": target_agent,
+                                "queue_event_id": queue_event_id,
+                                "workspace_branch": branch,
+                                "workspace_path": str(worktree_path),
+                                "publish_detail": publish_detail,
+                                "refresh_ok": refresh_ok,
+                                "refresh_status": refresh_status,
+                            },
+                        )
+                        console_log(
+                            f"worktree branch published: task={request.task_id} branch={branch} "
+                            f"{publish_detail} refresh_ok={refresh_ok}",
+                            quiet=SUPERVISOR_LOG_QUIET,
+                        )
+
                 if not refresh_ok:
                     if refresh_status == "skipped_dirty_worktree":
                         reason = (
@@ -2356,7 +2519,15 @@ def prepare_worker_workspace(
                             "refresh_status": refresh_status,
                         },
                     )
+                    _record_worktree_lease_block(
+                        config,
+                        state,
+                        task_id=str(request.task_id or workspace_task_id),
+                        refresh_status=refresh_status,
+                        message=message,
+                    )
                     return False, message
+                _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
             if refresh_status.startswith("base_advance_rebase_required:"):
                 base_advance_prompt = (
                     "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
@@ -5050,6 +5221,21 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         "service_tier",
     }
 
+    # Checked before anything else: a lane whose CLI will not start cannot
+    # produce an auth, quota or config signal, and retrying it just burns the
+    # queue one sub-second failure at a time.
+    #
+    # The named CLI must belong to this worker's provider family. A codex worker
+    # that shells out to `claude` and reports Claude's launcher error says
+    # nothing about the codex lane, and pausing it for 900s on that basis would
+    # be a self-inflicted outage -- the same reasoning that makes
+    # AGY_QUOTA_SIGNATURE_PATTERN insist on an antigravity provider.
+    missing_cli = provider_launcher_missing_cli(reason)
+    if missing_cli:
+        provider_id = normalize_agent_id(str(provider or ""))
+        expected_family = PROVIDER_CLI_FAMILY.get(missing_cli)
+        if not provider_id or not expected_family or provider_id.startswith(expected_family):
+            return {"kind": "provider_unavailable", "transient": False, "label": "provider CLI missing"}
     if is_github_cli_auth_failure(reason):
         return {"kind": "tool_auth", "transient": False, "label": "tool auth"}
     if "config.toml" in normalized and any(marker in normalized for marker in provider_config_markers):
@@ -5377,6 +5563,7 @@ def provider_guardrail_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("capacity_pause_seconds", 900)
     settings.setdefault("auth_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
     settings.setdefault("provider_config_pause_seconds", int(settings.get("auth_pause_seconds", 900)))
+    settings.setdefault("provider_unavailable_pause_seconds", int(settings.get("auth_pause_seconds", 900)))
     settings.setdefault("quota_terminal_pause_seconds", int(settings.get("capacity_pause_seconds", 900)))
     settings.setdefault("generic_exit_reassign_after", int(worker_reassignment_settings(config).get("after_attempts", 2)))
     return settings
@@ -5481,12 +5668,17 @@ def is_provider_config_failure_kind(kind: str | None) -> bool:
     return str(kind or "").strip().lower() == "provider_config"
 
 
+def is_provider_unavailable_failure_kind(kind: str | None) -> bool:
+    return str(kind or "").strip().lower() == "provider_unavailable"
+
+
 def should_pause_dispatch_for_failure_kind(kind: str | None) -> bool:
     return (
         is_terminal_quota_failure_kind(kind)
         or is_retryable_capacity_failure_kind(kind)
         or is_auth_failure_kind(kind)
         or is_provider_config_failure_kind(kind)
+        or is_provider_unavailable_failure_kind(kind)
     )
 
 
@@ -5537,14 +5729,18 @@ def mark_provider_dispatch_paused(
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
     now = datetime.now(UTC)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
-    if effective_pause_kind in {"auth", "provider_config"}:
+    if effective_pause_kind in {"auth", "provider_config", "provider_unavailable"}:
         if not settings.get("pause_on_auth_failure", True):
             return False
-        pause_seconds_key = (
-            "provider_config_pause_seconds"
-            if effective_pause_kind == "provider_config"
-            else "auth_pause_seconds"
-        )
+        # A missing CLI is an installation fault, not a capacity one, so it must
+        # never feed model rotation -- there is no other pool to rotate onto. The
+        # pause is deliberately finite: reinstalling the binary lets the lane
+        # recover on its own, and if nobody does, it re-pauses and says so again
+        # instead of failing silently forever.
+        pause_seconds_key = {
+            "provider_config": "provider_config_pause_seconds",
+            "provider_unavailable": "provider_unavailable_pause_seconds",
+        }.get(effective_pause_kind, "auth_pause_seconds")
     else:
         if not settings.get("pause_on_capacity_failure", True):
             return False
@@ -5564,7 +5760,13 @@ def mark_provider_dispatch_paused(
     # can rotate models (Gemini <-> Claude/GPT), record the exhausted pool and
     # keep dispatching on the other pool instead of hard-pausing. Only fall
     # through to a real pause when BOTH pools are exhausted.
-    if effective_pause_kind not in {"auth", "provider_config"} and model_rotation.rotation_enabled(config, provider_id):
+    # `provider_unavailable` belongs with auth/provider_config, not with the
+    # capacity kinds: rotation answers "this model pool is exhausted" by moving
+    # to the other pool, but a missing binary means no pool is reachable at all.
+    # Letting it rotate would keep dispatching into the exact sub-second failure
+    # loop this kind exists to stop -- and on the rotation-enabled antigravity
+    # providers that is most of the fleet.
+    if effective_pause_kind not in {"auth", "provider_config", "provider_unavailable"} and model_rotation.rotation_enabled(config, provider_id):
         rotate_cooldown = min(int(pause_seconds), ROTATION_PROBE_COOLDOWN_SECONDS)
         # A real agy quota banner carries an authoritative reset countdown.
         # Persist it across task completion/review/reopen so another alias on
@@ -7979,6 +8181,18 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["status"] = "failed"
                 worker["last_event_at"] = utc_now()
                 worker["last_error"] = GENERIC_WORKER_EXIT_REASON
+                # This branch is reached when a worker died without producing any
+                # recognised failure line. It used to update state and write the
+                # activity log without printing anything, so a lane could fail
+                # every single dispatch and the console would show only the
+                # resulting reassignments. Whatever the cause, an unexplained
+                # exit is worth one line.
+                console_log(
+                    f"worker exited unexplained: provider={worker.get('provider')} "
+                    f"task={worker.get('task_id')} run={worker.get('run_id')} "
+                    f"exit_code={worker.get('exit_code')}",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
                 write_activity_log(
                     config,
                     {
@@ -11578,6 +11792,8 @@ def run_once(
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = sync_github_bus(config, state) or changed
+        # After the bus sync, so PR state is as fresh as this cycle can make it.
+        changed = check_branch_drift(config, state) or changed
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
         changed = prune_orphan_worktrees(config, state) or changed

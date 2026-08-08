@@ -519,6 +519,42 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
 
 
+# Every provider wrapper in `.orchestrator/bin/` reports a missing target with
+# the same sentence: "Codex CLI binary not found at ...", "Antigravity CLI (agy)
+# binary not found under ...", and so on. This is the one output that proves a
+# lane is dead rather than merely unhappy, so it is shared by the worker-failure
+# classifier and the capability probe instead of being spelled twice.
+#
+# Deliberately narrow. An earlier version matched any line-initial
+# "<token> binary not found", which ordinary task output can produce ("protoc
+# binary not found") and which would pause a healthy lane for 900s. Requiring a
+# known CLI name *and* the literal "CLI" keeps it to the wrappers' own wording,
+# mirroring how AGY_QUOTA_SIGNATURE_PATTERN insists on agy's full signature.
+PROVIDER_CLI_NAMES = ("codex", "claude", "antigravity", "copilot", "github", "gemini")
+PROVIDER_LAUNCHER_MISSING_PATTERN = re.compile(
+    r"^(?P<cli>" + "|".join(PROVIDER_CLI_NAMES) + r")\s+CLI\s*(?:\([^)]*\)\s*)?binary not found\b",
+    re.IGNORECASE,
+)
+
+# Which provider family each wrapper belongs to, so a message about someone
+# else's CLI is not read as this worker's lane dying.
+PROVIDER_CLI_FAMILY = {
+    "codex": "codex",
+    "claude": "claude",
+    "antigravity": "antigravity",
+    "gemini": "antigravity",
+    "copilot": "copilot",
+    "github": "copilot",
+}
+
+
+def provider_launcher_missing_cli(text: str | None) -> str | None:
+    """Return the CLI name a wrapper reported as missing, if any."""
+
+    match = PROVIDER_LAUNCHER_MISSING_PATTERN.search((text or "").strip())
+    return match.group("cli").lower() if match else None
+
+
 def command_exists(name: str) -> str | None:
     return shutil.which(name)
 

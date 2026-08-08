@@ -267,6 +267,89 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_detects_missing_provider_cli_from_wrapper_message(self) -> None:
+        """The 2026-08-05 Codex outage: this exact line sat in 194 worker logs.
+
+        It matched no failure pattern, so `detect_worker_failure` returned None
+        and every one of those dispatches was recorded as an unexplained exit
+        with nothing printed. The lane was dead for six hours and the console
+        showed only task reassignments.
+        """
+
+        worker = self._worker_for_log(
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.\n"
+        )
+
+        self.assertEqual(
+            supervisor.detect_worker_failure(worker),
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+        )
+
+    def test_detects_missing_cli_for_every_provider_wrapper(self) -> None:
+        for message in (
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+            "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+            "Claude CLI binary not found under ~/.vscode-server/extensions.",
+            "Copilot CLI binary not found under ~/.local/share/pantheon-orchestrator-tools.",
+            "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools.",
+        ):
+            with self.subTest(message=message):
+                worker = self._worker_for_log(message + "\n")
+                self.assertEqual(supervisor.detect_worker_failure(worker), message)
+
+    def test_a_non_provider_binary_not_found_line_is_not_a_lane_failure(self) -> None:
+        """Ordinary build output must not pause a healthy lane for 900s.
+
+        An earlier pattern matched any line-initial "<token> binary not found",
+        so a toolchain message like "protoc binary not found" read as a dead
+        provider CLI.
+        """
+
+        for line in (
+            "protoc binary not found in PATH",
+            "ffmpeg binary not found",
+            "terraform binary not found under /usr/local/bin",
+        ):
+            with self.subTest(line=line):
+                worker = self._worker_for_log(line + "\n")
+                self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_another_providers_launcher_error_does_not_kill_this_lane(self) -> None:
+        """A codex worker reporting Claude's launcher error says nothing about codex."""
+
+        reason = "Claude CLI binary not found under ~/.vscode-server/extensions."
+
+        own = supervisor.classify_worker_failure({}, {"provider": "claude2"}, reason)
+        other = supervisor.classify_worker_failure({}, {"provider": "codex3"}, reason)
+
+        self.assertEqual(own["kind"], "provider_unavailable")
+        self.assertNotEqual(other["kind"], "provider_unavailable")
+
+    def test_gemini_launcher_error_maps_to_the_antigravity_family(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {},
+            {"provider": "antigravity5"},
+            "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+        )
+        self.assertEqual(failure["kind"], "provider_unavailable")
+
+    def test_missing_cli_wording_inside_task_output_is_not_a_lane_failure(self) -> None:
+        """Ordinary work that mentions the wording must not pause a live lane."""
+
+        worker = self._worker_for_log(
+            "\n".join(
+                [
+                    "codex",
+                    '+    raise RuntimeError("Codex CLI binary not found")',
+                    'assert "CLI binary not found" in caplog.text',
+                    "All tests passed.",
+                ]
+            )
+            + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
     def test_detects_real_model_availability_failure(self) -> None:
         worker = self._worker_for_log('Error: Model "grok-code-fast-1" from --model flag is not available.\n')
 
@@ -691,6 +774,103 @@ class DetectWorkerFailureTests(unittest.TestCase):
     def test_parse_quota_retry_hint_returns_none_when_absent(self) -> None:
         self.assertIsNone(supervisor.parse_quota_retry_hint("Credit balance is too low"))
         self.assertIsNone(supervisor.parse_quota_retry_hint(None))
+
+    def test_missing_provider_cli_classifies_as_provider_unavailable(self) -> None:
+        failure = supervisor.classify_worker_failure(
+            {},
+            {"provider": "codex"},
+            "Codex CLI binary not found at /home/lupin/.npm-global/bin/codex or on PATH.",
+        )
+
+        self.assertEqual(failure["kind"], "provider_unavailable")
+        self.assertFalse(failure["transient"])
+        self.assertTrue(supervisor.should_pause_dispatch_for_failure_kind(failure["kind"]))
+
+    # Rotation-enabled, as the seven antigravity providers in the live config
+    # are. Asserting no-rotation against a provider that cannot rotate passes
+    # whatever the code does, which is how the first version of this test missed
+    # the defect it was written to catch.
+    ROTATING_CONFIG = {
+        "provider_guardrails": {
+            "capacity_pause_seconds": 900,
+            "quota_terminal_pause_seconds": 900,
+        },
+        "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+        "providers": {
+            "antigravity5": {
+                "antigravity": {
+                    "model_rotation": {
+                        "enabled": True,
+                        "primary_model": "",
+                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                    }
+                }
+            }
+        },
+    }
+
+    def test_missing_provider_cli_pauses_dispatch_without_rotating_models(self) -> None:
+        """A dead binary has no second model pool to fall back onto.
+
+        Rotation answers "this model pool is exhausted" by dispatching on the
+        other pool. When the binary itself is gone, neither pool is reachable,
+        so rotating just resumes the sub-second failure loop.
+        """
+
+        state: dict = {}
+        self.assertTrue(
+            supervisor.model_rotation.rotation_enabled(self.ROTATING_CONFIG, "antigravity5"),
+            "fixture must have rotation enabled or this test proves nothing",
+        )
+
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor.model_rotation, "record_exhaustion") as rotate,
+        ):
+            paused = supervisor.mark_provider_dispatch_paused(
+                self.ROTATING_CONFIG,
+                state,
+                "antigravity5",
+                "Antigravity CLI (agy) binary not found under ~/.local/bin or PATH.",
+                task_id="ODP-ORCH-EXAMPLE-001",
+                worker_run_id="agy-run-1",
+                failure_kind="provider_unavailable",
+                pause_kind="provider_unavailable",
+            )
+
+        self.assertTrue(paused)
+        rotate.assert_not_called()
+        entry = state["provider_guardrails"]["dispatch_pauses"]["antigravity5"]
+        self.assertEqual(entry["pause_kind"], "provider_unavailable")
+        # Finite, so reinstalling the CLI brings the lane back without manual
+        # intervention -- and so a lane nobody fixes keeps re-announcing itself.
+        self.assertGreaterEqual(entry["reset_after_seconds"], 60)
+        self.assertTrue(entry["blocked_until"])
+
+    def test_quota_on_the_same_provider_still_rotates(self) -> None:
+        """Guard the other direction: the exclusion must not disable rotation."""
+
+        state: dict = {}
+        with (
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor.model_rotation, "record_exhaustion", return_value={"exhausted_pool": "gemini"}) as rotate,
+        ):
+            supervisor.mark_provider_dispatch_paused(
+                self.ROTATING_CONFIG,
+                state,
+                "antigravity5",
+                "Error: Individual quota reached. Please upgrade your subscription. Resets in 2h21m32s.",
+                task_id="ODP-ORCH-EXAMPLE-001",
+                worker_run_id="agy-run-2",
+                failure_kind="quota_terminal",
+                pause_kind="quota_terminal",
+            )
+
+        rotate.assert_called_once()
+
+    def test_provider_unavailable_pause_seconds_has_a_default(self) -> None:
+        settings = supervisor.provider_guardrail_settings({})
+        self.assertGreaterEqual(int(settings["provider_unavailable_pause_seconds"]), 60)
 
     def test_mark_provider_dispatch_paused_honors_codex_retry_at(self) -> None:
         from datetime import datetime
@@ -4684,6 +4864,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             )
             stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "check_branch_drift", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
             stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
             stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
@@ -4757,6 +4938,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             )
             process_queue = stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=True))
             stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "check_branch_drift", return_value=False))
             stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
             stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
             stack.enter_context(mock.patch.object(supervisor, "prune_orphan_worktrees", return_value=False))
@@ -4868,6 +5050,7 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
                 stack.enter_context(mock.patch.object(supervisor, "dispatch_underutilization_sidecars", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "process_queue", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "sync_github_bus", return_value=False))
+                stack.enter_context(mock.patch.object(supervisor, "check_branch_drift", return_value=False))
                 stack.enter_context(mock.patch.object(supervisor, "trim_worker_history"))
                 stack.enter_context(mock.patch.object(supervisor, "trim_seen_events"))
                 stack.enter_context(mock.patch.object(supervisor, "refresh_dashboard_runtime_artifacts"))
@@ -8199,6 +8382,70 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         self.assertEqual(kind, "real")
 
 
+class WorktreeLeaseBlockEscalationTests(unittest.TestCase):
+    """A block that repeats unchanged forever has to stop reading as noise."""
+
+    def _record(self, config: dict, state: dict, events: list, *, n: int, status: str = "task_head_mismatch: local=a remote=b") -> int:
+        count = 0
+        with mock.patch.object(supervisor, "write_activity_log", side_effect=lambda _c, e: events.append(e)):
+            for _ in range(n):
+                count = supervisor._record_worktree_lease_block(
+                    config,
+                    state,
+                    task_id="ODP-ORCH-EXAMPLE-001",
+                    refresh_status=status,
+                    message="reused worktree ... failed the fail-closed refresh policy",
+                )
+        return count
+
+    def test_repeated_identical_blocks_escalate_exactly_once(self) -> None:
+        config: dict = {"worker_runtime": {"lease_block_escalate_after": 3}}
+        state: dict = {}
+        events: list = []
+
+        count = self._record(config, state, events, n=10)
+
+        self.assertEqual(count, 10)
+        escalations = [e for e in events if e["type"] == "dispatch_blocked_worktree_lease_escalated"]
+        # Once, not ten times: the point is to surface the stall, not to become
+        # a second copy of the noise it is reporting.
+        self.assertEqual(len(escalations), 1)
+        self.assertEqual(escalations[0]["consecutive_blocks"], 3)
+        self.assertEqual(escalations[0]["task_id"], "ODP-ORCH-EXAMPLE-001")
+
+    def test_blocks_below_the_threshold_stay_quiet(self) -> None:
+        config: dict = {"worker_runtime": {"lease_block_escalate_after": 5}}
+        state: dict = {}
+        events: list = []
+
+        self._record(config, state, events, n=4)
+
+        self.assertEqual([e for e in events if e["type"].endswith("_escalated")], [])
+
+    def test_a_different_block_reason_restarts_the_count(self) -> None:
+        config: dict = {"worker_runtime": {"lease_block_escalate_after": 3}}
+        state: dict = {}
+        events: list = []
+
+        self._record(config, state, events, n=2, status="task_head_mismatch: local=a remote=b")
+        count = self._record(config, state, events, n=1, status="unverifiable_refs: remote task branch is missing")
+
+        self.assertEqual(count, 1)
+        self.assertEqual([e for e in events if e["type"].endswith("_escalated")], [])
+
+    def test_a_successful_lease_clears_the_streak(self) -> None:
+        config: dict = {"worker_runtime": {"lease_block_escalate_after": 3}}
+        state: dict = {}
+        events: list = []
+
+        self._record(config, state, events, n=2)
+        supervisor._clear_worktree_lease_block(state, "ODP-ORCH-EXAMPLE-001")
+        count = self._record(config, state, events, n=1)
+
+        self.assertEqual(count, 1)
+        self.assertEqual([e for e in events if e["type"].endswith("_escalated")], [])
+
+
 class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
     """Regression matrix for the clean divergence topology observed on PR #562."""
 
@@ -8328,6 +8575,90 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(status, "skipped_dirty_worktree")
         self.assertEqual(scratch.read_text(encoding="utf-8"), "owner annotation\n")
+
+    def _origin_task_head(self) -> str:
+        result = self._git(self.origin, "rev-parse", self.task_branch, check=False)
+        return result.stdout.strip() if result.returncode == 0 else ""
+
+    def test_publishing_an_unpublished_commit_makes_the_lease_verifiable(self) -> None:
+        """The 2026-08-05 deadlock: a committed-but-unpushed anchor blocks its own task.
+
+        Leasing is what would run the worker that would push, and leasing is
+        exactly what the fail-closed policy refuses. Publishing breaks the cycle
+        by producing the local==remote state the policy already accepts.
+        """
+
+        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
+        self._git(self.worktree, "add", "local-only.txt")
+        self._git(self.worktree, "commit", "-m", "anchor commit that was never pushed")
+        local_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        # Precondition: the policy blocks this, which is what stalls the fleet.
+        blocked_ok, blocked_status = self._refresh()
+        self.assertFalse(blocked_ok)
+        self.assertTrue(blocked_status.startswith("task_head_mismatch:"), blocked_status)
+
+        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
+
+        self.assertTrue(published, detail)
+        self.assertEqual(self._origin_task_head(), local_head)
+        # And the same policy now passes, without its rules having been relaxed.
+        self.assertTrue(self._refresh()[0])
+
+    def test_publishing_creates_a_task_branch_that_was_never_pushed_at_all(self) -> None:
+        self._git(self.origin, "update-ref", "-d", f"refs/heads/{self.task_branch}")
+        self._git(self.worktree, "fetch", "--prune", "origin", check=False)
+        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
+        self._git(self.worktree, "add", "local-only.txt")
+        self._git(self.worktree, "commit", "-m", "anchor on an unpublished branch")
+        local_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
+
+        self.assertTrue(published, detail)
+        self.assertEqual(self._origin_task_head(), local_head)
+
+    def test_dirty_worktree_is_never_published(self) -> None:
+        """Dispatch must not publish working-tree state nobody committed."""
+
+        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
+        self._git(self.worktree, "add", "local-only.txt")
+        self._git(self.worktree, "commit", "-m", "anchor commit")
+        (self.worktree / "scratch.txt").write_text("uncommitted owner note\n", encoding="utf-8")
+        self._git(self.worktree, "add", "scratch.txt")
+        before = self._origin_task_head()
+
+        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
+
+        self.assertFalse(published)
+        self.assertIn("not clean", detail)
+        self.assertEqual(self._origin_task_head(), before)
+
+    def test_genuinely_diverged_branch_is_never_published(self) -> None:
+        """Ahead *and* behind needs a rebase decision, not a push."""
+
+        # Someone else advances the published task branch.
+        sibling = Path(self.tmp.name) / "sibling"
+        self._git(Path(self.tmp.name), "clone", "--branch", self.task_branch, str(self.origin), str(sibling))
+        self._git(sibling, "config", "user.name", "Other Worker")
+        self._git(sibling, "config", "user.email", "other@example.invalid")
+        (sibling / "remote-only.txt").write_text("remote\n", encoding="utf-8")
+        self._git(sibling, "add", "remote-only.txt")
+        self._git(sibling, "commit", "-m", "remote side commit")
+        self._git(sibling, "push", "origin", self.task_branch)
+        remote_head = self._origin_task_head()
+
+        # Meanwhile this worktree commits its own work.
+        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
+        self._git(self.worktree, "add", "local-only.txt")
+        self._git(self.worktree, "commit", "-m", "local side commit")
+        self._git(self.worktree, "fetch", "origin", self.task_branch)
+
+        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
+
+        self.assertFalse(published)
+        self.assertIn("diverged", detail)
+        self.assertEqual(self._origin_task_head(), remote_head)
 
     def test_local_and_remote_task_head_mismatch_blocks(self) -> None:
         (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")

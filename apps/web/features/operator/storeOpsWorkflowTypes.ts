@@ -76,6 +76,26 @@ export type StoreOpsFieldReportPayload = StoreOpsWorkflowPayloadBase & {
   blocker?: string;
 };
 
+export type StoreOpsAttachmentClassification = "site_photo" | "lease_scan" | "controlled_document" | "general";
+export type StoreOpsAttachmentSensitivity = "controlled" | "restricted" | "public";
+
+export type StoreOpsAttachment = {
+  id: string;
+  issueId: string;
+  tenantId: string;
+  filename: string;
+  fileType: string;
+  sizeBytes: number;
+  classification: StoreOpsAttachmentClassification;
+  sensitivityLevel: StoreOpsAttachmentSensitivity;
+  uploadedBy: string;
+  uploadedAt: string;
+  storageUri: string;
+  masked: boolean;
+  maskedReason?: string;
+  contentBase64?: string;
+};
+
 export type StoreOpsOutcomeStatus = "effective" | "ineffective" | "inconclusive";
 export type StoreOpsFollowUpTarget = "storeOps" | "growth" | "network" | "govern";
 
