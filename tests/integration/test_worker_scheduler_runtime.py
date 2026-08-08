@@ -20,11 +20,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from apps.scheduler.oday_scheduler.main import (
-    SCHEDULED_TENANT_ENV_VAR,
-    ODayScheduler,
-    SchedulerTenantConfigurationError,
-)
+from apps.scheduler.oday_scheduler.main import ODayScheduler
 from apps.worker.oday_worker.main import ODayWorker
 from modules.external_data.workers.scheduled_fetch import (
     TenantScopedExternalFetchStateStore,
