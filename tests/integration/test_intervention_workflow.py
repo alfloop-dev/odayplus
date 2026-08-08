@@ -904,7 +904,7 @@ def test_api_assignment_rbac_and_inbox_deep_link_filtering() -> None:
     iid = create.json()["intervention_id"]
 
     # Negative RBAC check: unauthorized caller (without required permission) is rejected with HTTP 403
-    unauth_client = TestClient(create_app(), headers=auth_headers(Role.ANALYST))
+    unauth_client = TestClient(create_app(), headers=auth_headers(Role.AUDITOR))
     forbidden_assign = unauth_client.post(
         f"/interventions/{iid}/assign",
         json={"assignee": "op-hero", "actor": "supervisor-a"},
