@@ -163,3 +163,18 @@ and `git diff --check` passes. This ancestry refresh does not change any parent
 finding or approve the parent implementation. Because it produces a new exact
 task HEAD, the refreshed packet must be pushed normally and re-approved by
 Codex3 before the task can merge and move to `done`.
+
+## Final base advance — 2026-08-08
+
+After `origin/dev` advanced again, Codex fetched the current remote refs and
+history-preservingly composed `origin/dev`
+`7430ba8539ca58f6c19a654ec81b8919a2f28583` into this task branch with merge
+commit `2db1a24fd30c5554763bd699802ebffe15bf5629`. The compose completed without
+conflicts. Verification confirmed that `origin/dev` is now an ancestor of the
+task HEAD, `origin/dev...HEAD` still contains only this support packet as its
+task-owned file, and `git diff --check` passes.
+
+This finalization refresh does not alter the review findings, broaden the
+sidecar boundary, or approve any parent implementation. It advances the exact
+task HEAD, so the branch must be pushed normally and handed back to Codex3 via
+`re_review` before merge and `done`.
