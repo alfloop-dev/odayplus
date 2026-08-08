@@ -102,6 +102,9 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
+            "last_stage_timings_ms": {},
+            "slowest_stage": None,
+            "slowest_stage_duration_ms": None,
             "focus_mode": None,
             "mode_status": "idle",
             "mode_switch_requested": None,
@@ -230,6 +233,9 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
+    state["supervisor"].setdefault("last_stage_timings_ms", {})
+    state["supervisor"].setdefault("slowest_stage", None)
+    state["supervisor"].setdefault("slowest_stage_duration_ms", None)
     state["supervisor"].setdefault("focus_mode", None)
     state["supervisor"].setdefault("mode_status", "idle")
     state["supervisor"].setdefault("mode_switch_requested", None)
@@ -390,6 +396,48 @@ QUEUE_STATUS_RANK = {
 }
 
 
+def compact_worker_history(state: dict[str, Any], max_entries: int) -> None:
+    """Bound durable worker history after all concurrent state is merged.
+
+    Compaction before ``save_runtime_state`` is not sufficient: the locked
+    disk/in-memory union deliberately preserves records created by concurrent
+    writers, so terminal records removed by the singleton loop used to be
+    resurrected on every save.  Compacting the merged snapshot under the same
+    transaction lock preserves concurrent active runs while making retention
+    authoritative at the point of persistence.
+    """
+    workers = state.get("workers")
+    if not isinstance(workers, dict):
+        state["workers"] = {}
+        return
+    limit = max(0, int(max_entries))
+    if len(workers) <= limit:
+        return
+
+    active: dict[str, Any] = {}
+    terminal: list[tuple[str, dict[str, Any]]] = []
+    for run_id, worker in workers.items():
+        if not isinstance(worker, dict):
+            continue
+        status = str(worker.get("status") or "").lower()
+        if status in ACTIVE_WORKER_STATUSES:
+            active[run_id] = worker
+        else:
+            terminal.append((run_id, worker))
+
+    # Active runs are never discarded merely to satisfy a history limit.  If
+    # they consume the whole budget, terminal history is temporarily empty.
+    terminal_budget = max(0, limit - len(active))
+    terminal.sort(
+        key=lambda item: (
+            str(item[1].get("last_event_at") or ""),
+            str(item[0]),
+        )
+    )
+    kept_terminal = dict(terminal[-terminal_budget:]) if terminal_budget else {}
+    state["workers"] = {**kept_terminal, **active}
+
+
 def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]) -> dict[str, Any]:
     """Merge one immutable run record without ever reviving a terminal run."""
     disk_status = str(disk_worker.get("status") or "").lower()
@@ -544,6 +592,11 @@ def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
             queued_events = None
         if queued_events is not None:
             _rebuild_queue_records(merged, queued_events)
+
+        compact_worker_history(
+            merged,
+            int(config.get("supervisor", {}).get("max_worker_history", 200)),
+        )
 
         persisted = migrate_state(merged)
         write_json(path, persisted)

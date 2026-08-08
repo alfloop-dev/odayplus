@@ -158,6 +158,92 @@ class InterventionWorkflow:
         )
         return intervention
 
+    # -- assignment -------------------------------------------------------
+
+    def assign_case(
+        self,
+        intervention_id: str,
+        *,
+        assignee: str,
+        actor: str,
+        role: str | None = None,
+        expected_version: int | None = None,
+        correlation_id: str = "",
+    ) -> Intervention:
+        intervention = self._require(intervention_id)
+        if intervention.is_terminal:
+            raise InterventionError(
+                f"cannot assign terminal intervention in status {intervention.status.value}"
+            )
+        self._check_version(intervention, expected_version)
+        now = datetime.now(UTC)
+        updated = intervention.with_transition(
+            to_status=intervention.status,
+            actor=actor,
+            action="assign",
+            reason=f"assigned to {assignee}" + (f" ({role})" if role else ""),
+            correlation_id=correlation_id,
+            assigned_to=assignee,
+            assigned_at=now,
+            assigned_by=actor,
+            assignment_role=role,
+        )
+        self.repository.save(updated)
+        self._audit(
+            updated,
+            action="assign",
+            outcome="assigned",
+            actor=actor,
+            correlation_id=correlation_id,
+            reason=f"assigned to {assignee}",
+            extra={
+                "assigned_to": assignee,
+                "assigned_by": actor,
+                "assignment_role": role,
+                "version": updated.version,
+            },
+        )
+        return updated
+
+    def unassign_case(
+        self,
+        intervention_id: str,
+        *,
+        actor: str,
+        expected_version: int | None = None,
+        correlation_id: str = "",
+    ) -> Intervention:
+        intervention = self._require(intervention_id)
+        if intervention.is_terminal:
+            raise InterventionError(
+                f"cannot unassign terminal intervention in status {intervention.status.value}"
+            )
+        self._check_version(intervention, expected_version)
+        updated = intervention.with_transition(
+            to_status=intervention.status,
+            actor=actor,
+            action="unassign",
+            reason="unassigned",
+            correlation_id=correlation_id,
+            assigned_to=None,
+            assigned_at=None,
+            assigned_by=None,
+            assignment_role=None,
+        )
+        self.repository.save(updated)
+        self._audit(
+            updated,
+            action="unassign",
+            outcome="unassigned",
+            actor=actor,
+            correlation_id=correlation_id,
+            reason="unassigned",
+            extra={
+                "version": updated.version,
+            },
+        )
+        return updated
+
     # -- eligibility ------------------------------------------------------
 
     def check_eligibility(
@@ -856,7 +942,33 @@ class InterventionWorkflow:
     def list_by_store(self, store_id: str) -> list[Intervention]:
         return self.repository.list_by_store(store_id)
 
+    def list_cases(
+        self,
+        *,
+        store_id: str | None = None,
+        assigned_to: str | None = None,
+        status: InterventionStatus | str | None = None,
+        kind: InterventionKind | str | None = None,
+    ) -> list[Intervention]:
+        items = self.repository.list_by_store(store_id) if store_id else self.repository.list_all()
+        if assigned_to:
+            items = [i for i in items if i.assigned_to == assigned_to]
+        if status:
+            target_status = InterventionStatus(status)
+            items = [i for i in items if i.status == target_status]
+        if kind:
+            target_kind = InterventionKind(kind)
+            items = [i for i in items if i.kind == target_kind]
+        return items
+
     # -- internals --------------------------------------------------------
+
+    @staticmethod
+    def _check_version(intervention: Intervention, expected_version: int | None) -> None:
+        if expected_version is not None and intervention.version != expected_version:
+            raise InterventionError(
+                f"stale update: expected version {expected_version}, current is {intervention.version}"
+            )
 
     def _require(self, intervention_id: str) -> Intervention:
         intervention = self.repository.get(intervention_id)
