@@ -20,8 +20,15 @@ from datetime import date, timedelta
 
 import pytest
 
-from apps.scheduler.oday_scheduler.main import ODayScheduler
+from apps.scheduler.oday_scheduler.main import (
+    SCHEDULED_TENANT_ENV_VAR,
+    ODayScheduler,
+    SchedulerTenantConfigurationError,
+)
 from apps.worker.oday_worker.main import ODayWorker
+from modules.external_data.workers.scheduled_fetch import (
+    TenantScopedExternalFetchStateStore,
+)
 from modules.forecastops import ForecastOpsService, StoreDayObservation
 from modules.forecastops.runtime import ForecastOpsRuntimeConfigurationError
 from modules.forecastops.workers import ForecastOpsForecastWorker
@@ -31,6 +38,15 @@ from shared.jobs.registry import JobRegistry
 
 PROVIDER_ID = "listing.partner_feed"
 TENANT_ID = "tenant-test"
+OTHER_TENANT_ID = "tenant-other"
+
+
+def _tenant_watermark(bundle, tenant_id: str = TENANT_ID):
+    """Watermark as the scheduled path writes it: namespaced per tenant."""
+    scoped = TenantScopedExternalFetchStateStore(
+        bundle.external_fetch_state_store, tenant_id
+    )
+    return scoped.last_success_watermark(PROVIDER_ID)
 
 
 @pytest.fixture
@@ -61,7 +77,7 @@ def _seed_forecast_series(bundle, store_id: str) -> None:
 def test_scheduler_enqueue_then_worker_claim_execute_success() -> None:
     """Scheduler enqueues external-fetch; worker claims, runs it, marks SUCCEEDED."""
     bundle = build_persistence()  # in-memory
-    scheduler = ODayScheduler(persistence=bundle)
+    scheduler = ODayScheduler(persistence=bundle, tenant_id=TENANT_ID)
     worker = ODayWorker(persistence=bundle)
 
     scheduler.run_once()
@@ -74,8 +90,11 @@ def test_scheduler_enqueue_then_worker_claim_execute_success() -> None:
 
     executed = bundle.job_queue.get(job_id)
     assert executed.status == JobStatus.SUCCEEDED
-    # The fetch advanced the durable success watermark for the provider.
-    assert bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID) is not None
+    # The fetch advanced the success watermark for this tenant's provider,
+    # and only for that tenant.
+    assert _tenant_watermark(bundle) is not None
+    assert _tenant_watermark(bundle, OTHER_TENANT_ID) is None
+    assert bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID) is None
 
     # No more queued work -> the next claim is a no-op.
     assert worker.run_once() is False
@@ -224,7 +243,7 @@ def test_worker_retries_three_times_then_dead_letters() -> None:
 def test_scheduler_enqueue_is_idempotent_within_window() -> None:
     """Two scheduler ticks in the same window produce a single external-fetch job."""
     bundle = build_persistence()
-    scheduler = ODayScheduler(persistence=bundle)
+    scheduler = ODayScheduler(persistence=bundle, tenant_id=TENANT_ID)
 
     scheduler.run_once()
     scheduler.run_once()
@@ -254,9 +273,9 @@ def test_durable_watermark_persists_across_restart(db_path) -> None:
     """Success watermark written through the worker survives a process restart."""
     bundle = _durable_bundle(db_path)
     try:
-        ODayScheduler(persistence=bundle).run_once()
+        ODayScheduler(persistence=bundle, tenant_id=TENANT_ID).run_once()
         assert ODayWorker(persistence=bundle).run_once() is True
-        watermark = bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        watermark = _tenant_watermark(bundle)
         assert watermark is not None
     finally:
         bundle.engine.close()
@@ -264,8 +283,10 @@ def test_durable_watermark_persists_across_restart(db_path) -> None:
     # Simulate process restart: new bundle pointed at the same on-disk file.
     reopened = _durable_bundle(db_path)
     try:
-        persisted = reopened.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        persisted = _tenant_watermark(reopened)
         assert persisted is not None
         assert persisted == watermark
+        # A different tenant does not inherit the restored watermark.
+        assert _tenant_watermark(reopened, OTHER_TENANT_ID) is None
     finally:
         reopened.engine.close()
