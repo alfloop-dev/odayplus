@@ -196,7 +196,8 @@ class NetPlanService:
         problem_hash = compute_solver_problem_hash(
             scenario.options_by_entity,
             scenario.constraints,
-            alternative_limit=alternative_limit,
+            100_000.0,
+            alternative_limit,
         )
         solve = self.repository.save_solve(
             ScenarioSolveRecord(

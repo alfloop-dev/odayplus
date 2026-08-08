@@ -245,14 +245,15 @@ class ScenarioSolveRecord:
     execution_metadata: dict[str, Any] = field(default_factory=dict)
     problem_hash: str = ""
 
-    def is_stale(self, scenario: NetPlanScenario) -> bool:
+    def is_stale(self, scenario: NetPlanScenario, risk_penalty: float = 100_000.0) -> bool:
         if not self.problem_hash:
             return False
         from solver.netplan import compute_solver_problem_hash
         current_hash = compute_solver_problem_hash(
             scenario.options_by_entity,
             scenario.constraints,
-            alternative_limit=self.alternative_limit,
+            risk_penalty,
+            self.alternative_limit,
         )
         return self.problem_hash != current_hash
 
