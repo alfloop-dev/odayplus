@@ -157,17 +157,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "5c93b76f76bc49ce",
-    "parent_id": "7f3ae5935e124bac",
+    "span_id": "2acf30d57cee4b9d",
+    "parent_id": "55fb3397972f41dd",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "fe6d1316-c64b-473c-9d45-68f3437075f1",
+    "correlation_id": "f6c1024d-09db-4909-8326-062407ad6147",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.007216,
+    "duration_ms": 0.003509,
     "attributes": {
-      "correlation_id": "fe6d1316-c64b-473c-9d45-68f3437075f1",
+      "correlation_id": "f6c1024d-09db-4909-8326-062407ad6147",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -177,17 +177,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "887de5e926b74b43",
-    "parent_id": "7f3ae5935e124bac",
+    "span_id": "53cb2c2429ff40d3",
+    "parent_id": "55fb3397972f41dd",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "fe6d1316-c64b-473c-9d45-68f3437075f1",
+    "correlation_id": "f6c1024d-09db-4909-8326-062407ad6147",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 17.004607,
+    "duration_ms": 0.104074,
     "attributes": {
-      "correlation_id": "fe6d1316-c64b-473c-9d45-68f3437075f1",
+      "correlation_id": "f6c1024d-09db-4909-8326-062407ad6147",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -197,17 +197,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "7f3ae5935e124bac",
+    "span_id": "55fb3397972f41dd",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "fe6d1316-c64b-473c-9d45-68f3437075f1",
+    "correlation_id": "f6c1024d-09db-4909-8326-062407ad6147",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 17.44027,
+    "duration_ms": 0.175946,
     "attributes": {
-      "correlation_id": "fe6d1316-c64b-473c-9d45-68f3437075f1",
+      "correlation_id": "f6c1024d-09db-4909-8326-062407ad6147",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
