@@ -44,6 +44,12 @@ else:
         require_training_eligible: bool = True
 
 
+    class DqTriagePayload(BaseModel):
+        action: str = Field(min_length=1)
+        rationale: str = Field(min_length=1)
+        actor: str | None = None
+
+
     class ThresholdPayload(BaseModel):
         metric_name: str = Field(min_length=1)
         min_value: float | None = None
@@ -232,6 +238,55 @@ else:
                 {"entity_count": snapshot.entity_count},
             )
             return payload
+
+        @router.post(
+            "/dataset-snapshots/{dataset_snapshot_id}/triage",
+            status_code=status.HTTP_201_CREATED,
+            dependencies=[Depends(require_permission("model", Action.UPDATE, engine=authz_engine))],
+        )
+        def record_dq_triage(
+            dataset_snapshot_id: str, body: DqTriagePayload, request: Request
+        ) -> dict[str, Any]:
+            actor = _trusted_actor(request)
+            if body.actor is not None and body.actor.strip() != actor:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "UNTRUSTED_TRIAGE_ACTOR",
+                        "message": "actor must match the authenticated principal",
+                    },
+                )
+            try:
+                record = service.record_dq_triage(
+                    dataset_snapshot_id=dataset_snapshot_id,
+                    action=body.action,
+                    rationale=body.rationale,
+                    actor=actor,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+            payload = record.to_dict()
+            payload["audit_event_id"] = _record_audit(
+                active_audit_log,
+                request,
+                "learninghub.dq_triage_recorded.v1",
+                actor,
+                "record_dq_triage",
+                f"learninghub/dataset-snapshots/{dataset_snapshot_id}/triage",
+                {"action": body.action, "rationale": body.rationale},
+            )
+            return payload
+
+        @router.get(
+            "/dataset-snapshots/{dataset_snapshot_id}/triage",
+            dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))],
+        )
+        def list_dq_triages(dataset_snapshot_id: str) -> dict[str, Any]:
+            records = active_repository.list_dq_triages(dataset_snapshot_id)
+            return {"items": [r.to_dict() for r in records], "count": len(records)}
 
         @router.post("/models/{model_name}/versions", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_permission("model", Action.CREATE, engine=authz_engine))])
         def register_model_version(
@@ -668,6 +723,7 @@ else:
 
     __all__ = [
         "DatasetSnapshotPayload",
+        "DqTriagePayload",
         "ModelVersionPayload",
         "ReleasePayload",
         "create_learninghub_router",
