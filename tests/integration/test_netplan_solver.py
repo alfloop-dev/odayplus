@@ -1858,8 +1858,8 @@ def test_partial_update_scenario_preserves_omitted_stores() -> None:
             )
         ],
     )
-    # Existing stores (store-1, store-2) must be preserved!
-    assert "store-1" in updated.options_by_entity
-    assert "store-2" in updated.options_by_entity
+    # Existing stores (store-001, store-002) must be preserved!
+    assert "store-001" in updated.options_by_entity
+    assert "store-002" in updated.options_by_entity
     assert "cand-new-99" in updated.options_by_entity
 
