@@ -166,6 +166,21 @@ def reset_platform_metrics():
 
 
 @pytest.fixture(autouse=True)
+def reset_feature_flags():
+    """Reset the global feature flag registry before each test.
+
+    shared.auth.feature_flags.default_registry() returns a process-wide
+    singleton so that enabling a flag through the admin API is visible to the
+    authorization engine and the job queue. That shared truth is what the
+    feature needs in production and what leaks between tests here: one test
+    enabling a high-risk flag would otherwise leave it enabled for every test
+    that runs after it in the same worker.
+    """
+    from shared.auth.feature_flags import reset_global_registry
+    reset_global_registry()
+
+
+@pytest.fixture(autouse=True)
 def patch_synthetic_dns(request, monkeypatch):
     """Ensure any test DNS lookup for synthetic.example resolves successfully.
 

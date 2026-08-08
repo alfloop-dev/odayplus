@@ -305,7 +305,9 @@ describe("Govern workspace admits only governance rows", () => {
     );
 
     const gate = await screen.findByTestId("operator-data-unavailable");
-    expect(gate).toHaveAttribute("data-status", "error");
+    await waitFor(() => {
+      expect(gate).toHaveAttribute("data-status", "error");
+    });
     expect(screen.queryByTestId("governance-workspace")).not.toBeInTheDocument();
     expect(screen.queryByText("SiteScore APR-501 複審")).not.toBeInTheDocument();
   });
