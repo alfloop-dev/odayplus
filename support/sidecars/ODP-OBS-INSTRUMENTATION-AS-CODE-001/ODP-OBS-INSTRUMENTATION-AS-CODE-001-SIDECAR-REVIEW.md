@@ -2,8 +2,9 @@
 
 - Sidecar task: `ODP-OBS-INSTRUMENTATION-AS-CODE-001-SIDECAR-REVIEW`
 - Parent task: `ODP-OBS-INSTRUMENTATION-AS-CODE-001`
-- Sidecar owner: `Codex7`
-- Assigned sidecar reviewer / parent owner: `Antigravity4`
+- Sidecar owner: `Codex`
+- Assigned sidecar reviewer: `Codex3`
+- Parent owner at evidence capture: `Antigravity4`
 - Parent reviewer: `Antigravity`
 - Evidence captured: `2026-08-08T13:33:20Z`
 - Parent branch: `origin/task/ODP-OBS-INSTRUMENTATION-AS-CODE-001`
@@ -143,4 +144,4 @@ The detached verification worktree was removed after execution. Both the parent 
 
 This file is the sole deliverable of `ODP-OBS-INSTRUMENTATION-AS-CODE-001-SIDECAR-REVIEW`. It is a non-canonical support artifact and does not alter parent acceptance state by itself.
 
-Handoff target: `Antigravity4` (assigned sidecar reviewer and parent owner). The parent owner decides which findings to absorb into `ODP-OBS-INSTRUMENTATION-AS-CODE-001` before returning that parent task to reviewer `Antigravity`.
+Handoff target: `Codex3` (current assigned sidecar reviewer). `Antigravity4` was the parent owner when the evidence was captured; the current parent owner decides which findings to absorb into `ODP-OBS-INSTRUMENTATION-AS-CODE-001` before returning that parent task to reviewer `Antigravity`.
