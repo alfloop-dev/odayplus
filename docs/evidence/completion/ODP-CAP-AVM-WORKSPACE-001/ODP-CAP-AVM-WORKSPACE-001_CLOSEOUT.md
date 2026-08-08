@@ -20,10 +20,10 @@ Task `ODP-CAP-AVM-WORKSPACE-001` delivers the AVM (Automated Valuation Model) wo
 ### 1. Governed-Disabled State Is Explicit
 - **Requirement**: `governed-disabled state is explicit`
 - **Implementation**:
-  - `PRODUCTION_MODEL_CONTRACTS["avm"]` in `models/shared_ml/production_runtime.py` explicitly marks `is_governed_disabled = True` with `GovernedDisabledBinding`.
-  - Service metadata endpoints (`/api/v1/operator/models/capabilities`) publish `governedDisabled: true` and `governedDisabledEvidence` payloads.
+  - `PRODUCTION_MODEL_CONTRACTS["avm"]` in `models/shared_ml/production_contracts.py:189` explicitly marks `is_governed_disabled = True` with `GovernedDisabledBinding`.
+  - Readiness details in `apps/api/oday_api/main.py:195-198` publish `governedDisabled: true` and `governedDisabledEvidence` payloads into `readiness details.models.capabilities`.
   - Runtime live gate (`tests/e2e/test_live_e2e_gate.py`) enforces that AVM cannot claim an unapproved production model alias while in `governed_disabled` status.
-- **Verification**: `tests/e2e/test_live_e2e_gate.py` (38 passed).
+- **Verification**: `tests/e2e/test_live_e2e_gate.py` (132 passed).
 
 ### 2. No Unlined Estimate Is Presented As Production Ready
 - **Requirement**: `no unlined estimate is presented as production ready`
@@ -71,15 +71,17 @@ The following test suites were executed to verify the deliverable:
 1. **AVM Module Unit Tests**:
    - `modules/avm/tests/test_avm_production_execution.py`
    - `modules/avm/tests/test_lifelines_liquidity_survival.py`
-   - *Result*: 2 passed.
+   - *Result*: 6 passed (3 unit tests in test_avm_production_execution.py and 3 survival model tests in test_lifelines_liquidity_survival.py).
 
 2. **AVM Valuation & Integration Tests**:
    - `tests/integration/test_avm_valuation.py`
-   - *Result*: 10 passed (including API e2e, durable restart, versioning, RBAC, and audit verification).
+   - *Result*: 4 passed (including API e2e, durable restart, versioning, RBAC, and audit verification).
 
 3. **Live E2E & Governance Gate Tests**:
    - `tests/e2e/test_live_e2e_gate.py`
-   - *Result*: 38 passed (verifying AVM governed-disabled capability bindings and fail-closed checks).
+   - *Result*: 132 passed (verifying AVM governed-disabled capability bindings and fail-closed checks).
+
+- **Total Suite Execution**: 142 passed (exit code 0).
 
 ---
 
