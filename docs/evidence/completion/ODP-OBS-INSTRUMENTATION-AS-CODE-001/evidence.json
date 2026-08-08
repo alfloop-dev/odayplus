@@ -1,0 +1,114 @@
+{
+  "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
+  "timestamp": "2026-08-08T11:25:29.781167+00:00",
+  "release_sha": "ffffffffffffffffffffffffffffffffffffffff",
+  "metrics_categories": [
+    "model",
+    "data",
+    "queue",
+    "job",
+    "latency",
+    "business",
+    "audit",
+    "traffic",
+    "error"
+  ],
+  "metrics_count": 34,
+  "recorded_metrics_series_count": 19,
+  "sensitive_value_redaction_verified": true,
+  "bounded_cardinality_verified": true,
+  "alert_runbook_linkage_count": 11,
+  "alerts": [
+    {
+      "id": "api-availability-drop",
+      "name": "API availability drop",
+      "severity": "P1",
+      "metric": "api_error_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#api-anomaly",
+      "runbook_verified": true
+    },
+    {
+      "id": "forecast-daily-failed",
+      "name": "Forecast daily batch failed",
+      "severity": "P2",
+      "metric": "job_failure_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#forecastops",
+      "runbook_verified": true
+    },
+    {
+      "id": "data-quality-p0-fail",
+      "name": "Data quality P0 fail",
+      "severity": "P2",
+      "metric": "data_quality_score",
+      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
+      "runbook_verified": true
+    },
+    {
+      "id": "dlq-spike",
+      "name": "DLQ spike",
+      "severity": "P2",
+      "metric": "dlq_message_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#job-failure",
+      "runbook_verified": true
+    },
+    {
+      "id": "unauthorized-spike",
+      "name": "Unauthorized spike",
+      "severity": "P2",
+      "metric": "api_error_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "runbook_verified": true
+    },
+    {
+      "id": "audit-write-failure",
+      "name": "Audit write failure",
+      "severity": "P1",
+      "metric": "audit_event_write_failure_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "runbook_verified": true
+    },
+    {
+      "id": "model-drift-high",
+      "name": "Model drift high",
+      "severity": "P2",
+      "metric": "drift_score",
+      "runbook": "docs/runbooks/observability-and-runbook.md#model-release",
+      "runbook_verified": true
+    },
+    {
+      "id": "price-constraint-violation",
+      "name": "Price hard-constraint violation",
+      "severity": "P1",
+      "metric": "price_hard_constraint_violation_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#priceops",
+      "runbook_verified": true
+    },
+    {
+      "id": "data-room-abnormal-download",
+      "name": "Data Room abnormal download",
+      "severity": "P1",
+      "metric": "audit_evidence_export_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "runbook_verified": true
+    },
+    {
+      "id": "solver-repeated-infeasible",
+      "name": "Solver repeated infeasible",
+      "severity": "P3",
+      "metric": "job_failure_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#netplan",
+      "runbook_verified": true
+    },
+    {
+      "id": "external-connector-stale",
+      "name": "External connector stale",
+      "severity": "P3",
+      "metric": "data_freshness_hours",
+      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
+      "runbook_verified": true
+    }
+  ],
+  "trace_spans_count": 3,
+  "dashboards_count": 6,
+  "slos_count": 3
+}
