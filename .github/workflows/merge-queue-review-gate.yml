@@ -1,0 +1,84 @@
+name: Merge queue review gate
+
+# `task-review-gate` is a required check that the assigned reviewer stamps onto
+# a PR's head SHA (see scripts/ai_status.py). A merge queue does not test that
+# SHA: it builds a temporary ref from the target branch plus the queued PRs and
+# waits for the required checks to report against that new SHA. Nobody stamps
+# the gate there, so without this workflow every queued PR would sit until it
+# timed out and was ejected -- a queue that blocks every merge instead of
+# speeding them up.
+#
+# This does not weaken the gate. It re-asserts it: the group is stamped success
+# only when every PR inside it already carries a successful task-review-gate on
+# its own head, which is exactly the reviewer approval the queue would otherwise
+# discard. Any PR without one makes the whole group fail, so it is ejected
+# rather than merged unreviewed.
+#
+# Same token reasoning as promote-dev-to-main.yml: posting a commit status is
+# not restricted by the org policy that forbids GITHUB_TOKEN from creating or
+# approving PRs.
+
+on:
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  review-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.merge_group.head_sha }}
+
+      - name: Re-assert task-review-gate for the queued PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -euo pipefail
+
+          fail() {
+            echo "::error::$1"
+            gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+              -F state=failure \
+              -F context=task-review-gate \
+              -F description="$2" >/dev/null
+            exit 1
+          }
+
+          # The queue ref is documented as
+          #   refs/heads/gh-readonly-queue/<base>/pr-<number>-<base_sha>
+          # and each entry gets its own checks_requested event naming its own
+          # PR, so this identifies exactly the PR being admitted. Deriving PRs
+          # from the group's commits instead does NOT work here: base-advance
+          # merges put one commit into many branches, so
+          # `commits/<sha>/pulls` returns unrelated PRs -- measured against this
+          # repo, one head SHA resolved to four of them -- and requiring all of
+          # their gates would eject a properly approved PR.
+          pr="$(printf '%s' "$HEAD_REF" | sed -n 's#.*/pr-\([0-9][0-9]*\)-[0-9a-f]*$#\1#p')"
+          [ -n "$pr" ] || fail \
+            "Could not read a PR number from merge group ref '${HEAD_REF}'." \
+            "Unrecognised merge queue ref; refusing to stamp"
+
+          pr_head="$(gh pr view "$pr" --json headRefOid --jq '.headRefOid')"
+          state="$(
+            gh api "repos/${GITHUB_REPOSITORY}/commits/${pr_head}/status" \
+              --jq '[.statuses[] | select(.context == "task-review-gate")] | first | .state // "missing"'
+          )"
+          echo "merge group ${HEAD_SHA:0:8} <- PR #${pr} (head ${pr_head:0:8}), task-review-gate=${state}"
+
+          [ "$state" = "success" ] || fail \
+            "PR #${pr} carries task-review-gate=${state} on its head ${pr_head}; it has not been approved by its assigned reviewer." \
+            "PR #${pr} is not reviewer-approved (${state})"
+
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -F state=success \
+            -F context=task-review-gate \
+            -F description="PR #${pr} approved by its assigned reviewer" >/dev/null
