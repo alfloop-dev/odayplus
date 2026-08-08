@@ -27,6 +27,7 @@ from shared.auth import (
     AuthorizationEngine,
     Environment,
     ResourceDescriptor,
+    Role,
 )
 
 NOW = datetime(2026, 7, 11, 12, 0, tzinfo=UTC)
@@ -122,3 +123,145 @@ def test_authentication_and_authorization_share_audit_trail(boundary, engine, au
 
     event_types = {e.event_type for e in audit_log.list_events()}
     assert "security.authentication" in event_types
+
+
+def test_operator_smoke_principal_least_privilege_composite_roles(engine):
+    """ODP-OPERATOR-SMOKE-RBAC-LIVE-001: prove least-privilege composite roles.
+
+    The dedicated smoke principal requires:
+    - operations_manager -> operator_console:view (bootstrap) + audit:view
+    - model_owner        -> model:view (learninghub) + audit:view
+    - data_owner         -> integration:view (ingestion runs) + audit:view
+
+    All 4 required live gate endpoints pass without platform_admin or header bypass.
+    """
+    composite_roles = ["operations_manager", "model_owner", "data_owner"]
+    token = _token(
+        composite_roles,
+        sub="110296401444439097904",
+        email="oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com",
+    )
+
+    config_with_map = AuthBoundaryConfig(
+        issuer=ISSUER,
+        audiences=frozenset({AUDIENCE}),
+        signing_keys={KEY.kid: KEY},
+        principal_mappings={
+            "110296401444439097904": {
+                "roles": composite_roles,
+                "tenant_id": "tenant-a",
+            },
+            "oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com": {
+                "roles": composite_roles,
+                "tenant_id": "tenant-a",
+            },
+        },
+    )
+    mapped_boundary = AuthenticationBoundary(config_with_map)
+    outcome = mapped_boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is True
+    principal = outcome.principal
+    assert principal.roles == frozenset({Role.OPERATIONS_MANAGER, Role.MODEL_OWNER, Role.DATA_OWNER})
+    assert Role.PLATFORM_ADMIN not in principal.roles
+
+    # 1. GET /api/v1/operator/bootstrap -> operator_console:view
+    bootstrap_req = AccessRequest(
+        principal=principal,
+        action=Action.VIEW,
+        resource=ResourceDescriptor(type="operator_console", tenant_id="tenant-a"),
+        environment=Environment(attributes={"correlation_id": "smoke-1"}),
+    )
+    assert engine.authorize(bootstrap_req).allowed is True
+
+    # 2. GET /api/v1/learninghub/models -> model:view
+    model_req = AccessRequest(
+        principal=principal,
+        action=Action.VIEW,
+        resource=ResourceDescriptor(type="model", tenant_id="tenant-a"),
+        environment=Environment(attributes={"correlation_id": "smoke-2"}),
+    )
+    assert engine.authorize(model_req).allowed is True
+
+    # 3. GET /api/v1/external-data/ingestion-runs -> integration:view
+    ingestion_req = AccessRequest(
+        principal=principal,
+        action=Action.VIEW,
+        resource=ResourceDescriptor(type="integration", tenant_id="tenant-a"),
+        environment=Environment(attributes={"correlation_id": "smoke-3"}),
+    )
+    assert engine.authorize(ingestion_req).allowed is True
+
+    # 4. GET /api/v1/audit/events -> audit:view
+    audit_req = AccessRequest(
+        principal=principal,
+        action=Action.VIEW,
+        resource=ResourceDescriptor(type="audit", tenant_id="tenant-a"),
+        environment=Environment(attributes={"correlation_id": "smoke-4"}),
+    )
+    assert engine.authorize(audit_req).allowed is True
+
+
+def test_operator_smoke_principal_single_role_operations_manager_reproduces_403(engine):
+    """ODP-OPERATOR-SMOKE-RBAC-LIVE-001: root-cause reproduction of 403 failure.
+
+    In runs 30745285034 and 30747676117, the smoke principal had only operations_manager.
+    bootstrap & audit pass, but model:view and integration:view fail closed with 403.
+    """
+    token = _token(["operations_manager"], sub="110296401444439097904")
+    config_with_map = AuthBoundaryConfig(
+        issuer=ISSUER,
+        audiences=frozenset({AUDIENCE}),
+        signing_keys={KEY.kid: KEY},
+        principal_mappings={
+            "110296401444439097904": {
+                "roles": ["operations_manager"],
+                "tenant_id": "tenant-a",
+            },
+        },
+    )
+    mapped_boundary = AuthenticationBoundary(config_with_map)
+    outcome = mapped_boundary.authenticate(Credentials(bearer_token=token), now=NOW)
+
+    assert outcome.authenticated is True
+    principal = outcome.principal
+    assert principal.roles == frozenset({Role.OPERATIONS_MANAGER})
+
+    # operator_console:view -> allowed
+    bootstrap_req = AccessRequest(
+        principal=principal,
+        action=Action.VIEW,
+        resource=ResourceDescriptor(type="operator_console", tenant_id="tenant-a"),
+        environment=Environment(attributes={"correlation_id": "smoke-root-1"}),
+    )
+    assert engine.authorize(bootstrap_req).allowed is True
+
+    # model:view -> DENIED (403)
+    model_req = AccessRequest(
+        principal=principal,
+        action=Action.VIEW,
+        resource=ResourceDescriptor(type="model", tenant_id="tenant-a"),
+        environment=Environment(attributes={"correlation_id": "smoke-root-2"}),
+    )
+    assert engine.authorize(model_req).allowed is False
+
+    # integration:view -> DENIED (403)
+    ingestion_req = AccessRequest(
+        principal=principal,
+        action=Action.VIEW,
+        resource=ResourceDescriptor(type="integration", tenant_id="tenant-a"),
+        environment=Environment(attributes={"correlation_id": "smoke-root-3"}),
+    )
+    assert engine.authorize(ingestion_req).allowed is False
+
+
+def test_business_rbac_matrix_operations_manager_remains_unwidened():
+    """ODP-OPERATOR-SMOKE-RBAC-LIVE-001: operations_manager role definition is untouched.
+
+    operations_manager must not globally gain model:view or integration:view.
+    """
+    from shared.auth.rbac import ROLE_PERMISSIONS, Permission
+
+    ops_perms = ROLE_PERMISSIONS[Role.OPERATIONS_MANAGER]
+    assert Permission("model", Action.VIEW) not in ops_perms
+    assert Permission("integration", Action.VIEW) not in ops_perms

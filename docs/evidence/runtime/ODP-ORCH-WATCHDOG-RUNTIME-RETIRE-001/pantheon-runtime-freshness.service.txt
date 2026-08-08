@@ -1,0 +1,27 @@
+[Unit]
+Description=Pantheon supervisor runtime freshness check
+Documentation=file:///home/lupin/oday-plus/docs/runbooks/supervisor-runtime-rollout.md
+After=default.target
+
+[Service]
+Type=oneshot
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=/home/lupin/oday-plus-supervisor-live
+# Merging to dev activates nothing on its own; the runtime checkout must be
+# advanced separately, and on 2026-08-04 it had drifted 126 commits behind
+# without anything noticing.
+# The check script ships at scripts/orchestrator/, not ops/ -- the runbook and
+# this unit were both written against a planned ops/ path ~10h before the
+# implementation landed elsewhere (28adc5dd), so from the day it was installed
+# this unit died on "No such file or directory" and never checked anything.
+# It runs from the oday-plus dev checkout, not from a runtime: a check that
+# lives inside the thing it audits disappears exactly when that thing is stale.
+#
+# Only runtime-current is monitored. The watchdog used to run from a second
+# checkout, oday-plus-supervisor-runtime-945a8366; on 2026-08-04 it was
+# repointed at runtime-current, so both services now share one runtime and one
+# rollout advances both. 945a8366 serves nothing, and leaving it here reported
+# an ever-growing FAIL that no action would ever clear -- which is how a real
+# alarm gets tuned out. Its uncommitted work is preserved under
+# docs/evidence/runtime/ODP-ORCH-WATCHDOG-RUNTIME-RETIRE-001/.
+ExecStart=/usr/bin/python3 /home/lupin/oday-plus/scripts/orchestrator/check_runtime_freshness.py --runtime /home/lupin/oday-plus-supervisor-runtime-current
