@@ -1064,10 +1064,10 @@
     },
     {
       "name": "@typescript-eslint/typescript-estree/brace-expansion",
-      "version": "5.0.7",
+      "version": "5.0.9",
       "type": "library",
-      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7",
-      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7"
+      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.9",
+      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.9"
     },
     {
       "name": "@typescript-eslint/typescript-estree/minimatch",
@@ -1512,10 +1512,10 @@
     },
     {
       "name": "brace-expansion",
-      "version": "1.1.16",
+      "version": "1.1.18",
       "type": "library",
-      "purl": "pkg:npm/brace-expansion@1.1.16",
-      "bom-ref": "pkg:npm/brace-expansion@1.1.16"
+      "purl": "pkg:npm/brace-expansion@1.1.18",
+      "bom-ref": "pkg:npm/brace-expansion@1.1.18"
     },
     {
       "name": "braces",
@@ -2562,10 +2562,10 @@
     },
     {
       "name": "js-yaml",
-      "version": "4.3.0",
+      "version": "4.3.1",
       "type": "library",
-      "purl": "pkg:npm/js-yaml@4.3.0",
-      "bom-ref": "pkg:npm/js-yaml@4.3.0"
+      "purl": "pkg:npm/js-yaml@4.3.1",
+      "bom-ref": "pkg:npm/js-yaml@4.3.1"
     },
     {
       "name": "json-buffer",
@@ -4228,10 +4228,10 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.55",
+      "version": "3.1.58",
       "type": "library",
-      "purl": "pkg:pypi/gitpython@3.1.55",
-      "bom-ref": "pkg:pypi/gitpython@3.1.55"
+      "purl": "pkg:pypi/gitpython@3.1.58",
+      "bom-ref": "pkg:pypi/gitpython@3.1.58"
     },
     {
       "name": "giturlparse",
