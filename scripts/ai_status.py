@@ -1894,11 +1894,42 @@ def status_check_identity(raw_check: dict[str, Any], index: int) -> str:
     return f"{workflow}\x00{name}"
 
 
+# ``gh`` renders an unset GraphQL ``DateTime`` as Go's zero time rather than
+# omitting the field, so "not finished yet" arrives as a timestamp in the year 1.
+ZERO_TIMESTAMP_PREFIXES = ("0001-01-01", "0000-01-01")
+
+
+def is_zero_timestamp(stamp: str) -> bool:
+    """True when a timestamp means "no value", not "a very long time ago"."""
+
+    return stamp.startswith(ZERO_TIMESTAMP_PREFIXES)
+
+
+def status_check_timestamp(raw_check: dict[str, Any]) -> str:
+    """The newest real timestamp on one rollup entry, ignoring zero sentinels.
+
+    An *in-progress* re-run reports ``completedAt: "0001-01-01T00:00:00Z"``.
+    Read literally that sorts below every real timestamp, so an older completed
+    SUCCESS outranks the running re-run that supersedes it: the reader then sees
+    a green check where the truth is "unfinished", and the merged-PR gate passes
+    on a PR whose latest run has not concluded. That is the exact fail-open this
+    collapsing rule exists to avoid, so a sentinel must count as absent and the
+    entry must be ranked by when it actually last did something.
+    """
+
+    stamps = [
+        stamp
+        for field in ("completedAt", "startedAt")
+        if (stamp := str(raw_check.get(field) or "").strip())
+        and not is_zero_timestamp(stamp)
+    ]
+    return max(stamps, default="")
+
+
 def status_check_recency_key(raw_check: dict[str, Any], index: int) -> tuple[str, int]:
     """Order rollup entries newest-last; an entry without timestamps never wins."""
 
-    stamp = str(raw_check.get("completedAt") or raw_check.get("startedAt") or "").strip()
-    return (stamp, index)
+    return (status_check_timestamp(raw_check), index)
 
 
 def latest_status_check_runs(

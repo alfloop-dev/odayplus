@@ -4630,6 +4630,105 @@ class HistoricalClosemergeProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "CI is not green"):
             ai_status.normalized_green_pr_checks({"statusCheckRollup": rollup})
 
+    # -- zero-timestamp sentinel -----------------------------------------
+
+    def rerun_in_progress_over_an_older_success(self) -> list[dict[str, object]]:
+        """The `gh pr view --json statusCheckRollup` shape for a running re-run.
+
+        Verbatim field set, including the two details `gh` emits that a
+        hand-written fixture omits: `conclusion` is the empty string rather than
+        absent, and `completedAt` is Go's zero time rather than absent.
+        """
+
+        return [
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "startedAt": "2026-08-06T22:10:04Z",
+                "completedAt": "2026-08-06T22:19:41Z",
+                "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/1/job/1",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "IN_PROGRESS",
+                "conclusion": "",
+                "startedAt": "2026-08-09T13:02:11Z",
+                "completedAt": "0001-01-01T00:00:00Z",
+                "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/2/job/2",
+            },
+        ]
+
+    def test_a_running_rerun_supersedes_the_success_it_was_started_to_replace(self) -> None:
+        """The zero `completedAt` must not sort the running re-run into the past."""
+
+        latest, superseded = ai_status.latest_status_check_runs(
+            self.rerun_in_progress_over_an_older_success()
+        )
+
+        self.assertEqual([check["status"] for check in latest], ["IN_PROGRESS"])
+        self.assertEqual([check["conclusion"] for check in superseded], ["SUCCESS"])
+
+    def test_an_older_success_cannot_green_a_pr_whose_rerun_is_still_running(self) -> None:
+        """Fail closed: unfinished is not green, however old the passing run is."""
+
+        with self.assertRaisesRegex(SystemExit, r"CI is not green.*pending checks: product"):
+            ai_status.normalized_green_pr_checks(
+                {"statusCheckRollup": self.rerun_in_progress_over_an_older_success()}
+            )
+
+    def test_zero_completed_at_falls_back_to_started_at_not_to_no_timestamp(self) -> None:
+        """A sentinel means "unfinished", so the entry still ranks by its start."""
+
+        self.assertEqual(
+            ai_status.status_check_timestamp(
+                {"startedAt": "2026-08-09T13:02:11Z", "completedAt": "0001-01-01T00:00:00Z"}
+            ),
+            "2026-08-09T13:02:11Z",
+        )
+        self.assertEqual(
+            ai_status.status_check_timestamp(
+                {"startedAt": "0001-01-01T00:00:00Z", "completedAt": "0001-01-01T00:00:00Z"}
+            ),
+            "",
+        )
+
+    def test_a_queued_rerun_with_no_real_timestamp_still_wins_on_rollup_order(self) -> None:
+        """`gh` zeroes both stamps on a queued run; order is then all that is left.
+
+        GitHub appends re-runs, so the later entry is the newer one -- and it is
+        unfinished, which must read as pending rather than as the earlier pass.
+        """
+
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "startedAt": "0001-01-01T00:00:00Z",
+                "completedAt": "0001-01-01T00:00:00Z",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "QUEUED",
+                "conclusion": "",
+                "startedAt": "0001-01-01T00:00:00Z",
+                "completedAt": "0001-01-01T00:00:00Z",
+            },
+        ]
+
+        latest, _ = ai_status.latest_status_check_runs(rollup)
+
+        self.assertEqual([check["status"] for check in latest], ["QUEUED"])
+
     # -- provenance selection --------------------------------------------
 
     def test_dev_merge_is_selected_over_the_later_main_merge(self) -> None:

@@ -69,10 +69,18 @@ at its approved head. Waiting does not bring the worktree back.
   recency-ordered lookup, so callers that only want "some PR for this branch"
   are unaffected.
 - `latest_status_check_runs()` collapses a rollup to the newest run per
-  `(workflow, check)`, ordered by `completedAt`/`startedAt` with rollup order as
+  `(workflow, check)`, ordered by `status_check_timestamp()` with rollup order as
   tie-break. Superseded runs are still written into `delivery["ci_checks"]`
   marked `superseded: true`, so a recovered run is never mistaken for a clean
   one.
+- `status_check_timestamp()` ignores the zero-time sentinel `gh` emits for an
+  unset `DateTime` and ranks each entry by its newest *real* timestamp. Ordering
+  on the raw `completedAt` inverted the intended rule: a re-run that is still
+  running reports `completedAt: "0001-01-01T00:00:00Z"`, which sorts below every
+  real timestamp, so the older completed SUCCESS it was started to replace won
+  the collapse and the PR read green while its newest run had not concluded.
+  That is a fail-open in the direction this reader exists to close, so a
+  sentinel now counts as absent rather than as the year 1.
 - `resolve_task_delivery_checkout()` reports an absent checkout instead of
   raising. `collect_done_delivery_metadata()` then verifies the approved head
   exists as a commit object and proves delivery from merged-PR provenance alone;
@@ -84,7 +92,9 @@ at its approved head. Waiting does not bring the worktree back.
   promotion base, so the diagnosis describes the PR that governs the merge.
 - `latest_checks_by_name()` applies the same newest-run-wins rule, so a task
   whose checks were re-run green is no longer reported as `CI_FAILED` with a
-  remediation telling its owner to rerun them.
+  remediation telling its owner to rerun them. Its `check_timestamp()` discards
+  the same zero-time sentinel; without it the doctor reported `READY` for a PR
+  whose newest run was still in progress.
 
 ## What still fails closed
 
@@ -93,7 +103,9 @@ Nothing here lets an unmerged or head-mismatched task finalize.
 - Two merged PRs matching the same branch, base and head but reporting
   different merge commits are ambiguous provenance and raise.
 - A check whose *newest* run is red or unfinished is still red. Collapsing the
-  rollup applies GitHub's own rule; it does not forgive a current failure.
+  rollup applies GitHub's own rule; it does not forgive a current failure. An
+  unfinished run wins the collapse on its `startedAt`, so re-running a check
+  turns the PR pending rather than leaving the previous pass standing in.
 - With no task checkout, the merged-PR gate is the only remaining evidence, so
   the path refuses to run when that gate is disabled, and refuses when the
   approved head is not present as a commit object. Gates that cannot be
@@ -120,7 +132,7 @@ for reasons the gate should block on.
 ```bash
 python3 -m pytest scripts/test_ai_status.py \
   scripts/orchestrator/ .orchestrator/test_supervisor.py -q
-# 627 passed, 214 subtests passed
+# 634 passed, 214 subtests passed
 
 python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py \
   scripts/orchestrator/finalize_lane_doctor.py \
@@ -129,8 +141,9 @@ python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py \
 ```
 
 Regression coverage added in `scripts/test_ai_status.py`
-(`HistoricalClosemergeProvenanceTests`, 20 cases) and
-`scripts/orchestrator/test_finalize_lane_doctor.py` (4 cases), built from the
-live PR payloads above: stale rollup in both directions, absent and duplicated
-checkouts, ambiguous merge provenance, and every rejection case for candidate
-selection.
+(`HistoricalClosemergeProvenanceTests`, 24 cases) and
+`scripts/orchestrator/test_finalize_lane_doctor.py` (7 cases), built from the
+live PR payloads above: stale rollup in both directions, the zero-`completedAt`
+in-progress re-run in the exact `gh` field shape (`conclusion: ""`, Go zero
+time) against both readers, absent and duplicated checkouts, ambiguous merge
+provenance, and every rejection case for candidate selection.

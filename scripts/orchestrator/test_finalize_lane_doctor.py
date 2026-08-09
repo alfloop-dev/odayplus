@@ -225,6 +225,74 @@ def test_a_check_that_is_still_red_on_its_newest_run_stays_red(tmp_path: Path, m
     assert f["failing_checks"] == ["product"]
 
 
+def rerun_in_progress_over_an_older_success() -> list[dict]:
+    """The `gh pr view --json statusCheckRollup` shape for a running re-run.
+
+    Verbatim field set, including the two details `gh` emits that a hand-written
+    fixture omits: `conclusion` is the empty string rather than absent, and
+    `completedAt` is Go's zero time rather than absent.
+    """
+    return [
+        {
+            "__typename": "CheckRun",
+            "name": "product",
+            "workflowName": "CI",
+            "status": "COMPLETED",
+            "conclusion": "SUCCESS",
+            "startedAt": "2026-08-06T22:10:04Z",
+            "completedAt": "2026-08-06T22:19:41Z",
+        },
+        {
+            "__typename": "CheckRun",
+            "name": "product",
+            "workflowName": "CI",
+            "status": "IN_PROGRESS",
+            "conclusion": "",
+            "startedAt": "2026-08-09T13:02:11Z",
+            "completedAt": "0001-01-01T00:00:00Z",
+        },
+    ]
+
+
+def test_a_running_rerun_supersedes_the_success_it_replaces() -> None:
+    """The zero `completedAt` must not sort the running re-run into the past."""
+    latest = doc.latest_checks_by_name(rerun_in_progress_over_an_older_success())
+
+    assert [c["status"] for c in latest] == ["IN_PROGRESS"]
+
+
+def test_an_older_success_does_not_green_a_pr_whose_rerun_is_still_running(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Fail closed: reporting READY here sends the owner to finalize unfinished CI."""
+    rollup = [
+        *rerun_in_progress_over_an_older_success(),
+        check("orchestrator", "SUCCESS"),
+        check("product-e2e-gate", "SUCCESS"),
+        check("task-review-gate", "SUCCESS"),
+    ]
+    monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: False)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": {"number": 575, "statusCheckRollup": rollup})
+
+    assert doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)["cause"] == doc.CI_PENDING
+
+
+def test_zero_completed_at_falls_back_to_started_at_not_to_no_timestamp() -> None:
+    """A sentinel means "unfinished", so the entry still ranks by its start."""
+    assert (
+        doc.check_timestamp(
+            {"startedAt": "2026-08-09T13:02:11Z", "completedAt": "0001-01-01T00:00:00Z"}
+        )
+        == "2026-08-09T13:02:11Z"
+    )
+    assert (
+        doc.check_timestamp(
+            {"startedAt": "0001-01-01T00:00:00Z", "completedAt": "0001-01-01T00:00:00Z"}
+        )
+        == ""
+    )
+
+
 def test_find_pr_prefers_the_pr_that_targets_the_promotion_base(tmp_path: Path, monkeypatch) -> None:
     """A task branch carries a ReviewBus PR into main and the real one into dev."""
     listed = [

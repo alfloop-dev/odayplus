@@ -133,6 +133,31 @@ def find_pr(branch: str, repo_root: Path, base: str = "") -> dict[str, Any] | No
     return _gh_json(["pr", "view", branch, "--json", PR_JSON_FIELDS], repo_root)
 
 
+# ``gh`` renders an unset GraphQL ``DateTime`` as Go's zero time rather than
+# omitting the field. Kept in step with ``status_check_timestamp`` in
+# scripts/ai_status.py, which collapses the same rollup for the finalize gate.
+ZERO_TIMESTAMP_PREFIXES = ("0001-01-01", "0000-01-01")
+
+
+def check_timestamp(check: dict[str, Any]) -> str:
+    """The newest real timestamp on one rollup entry, ignoring zero sentinels.
+
+    A re-run that is still running reports ``completedAt:
+    "0001-01-01T00:00:00Z"``, which sorts below every real timestamp. Ranking on
+    it picks the older completed run, so the doctor calls a PR green while its
+    newest run is unfinished and sends the owner to finalize a task whose CI has
+    not concluded. Rank on when the run actually last did something instead.
+    """
+
+    stamps = [
+        stamp
+        for field in ("completedAt", "startedAt")
+        if (stamp := str(check.get(field) or "").strip())
+        and not stamp.startswith(ZERO_TIMESTAMP_PREFIXES)
+    ]
+    return max(stamps, default="")
+
+
 def latest_checks_by_name(rollup: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse a rollup to the newest run per check, as branch protection reads it.
 
@@ -149,7 +174,7 @@ def latest_checks_by_name(rollup: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         name = str(check.get("name") or check.get("context") or "")
         identity = f"{check.get('workflowName') or ''}\x00{name}"
-        key = (str(check.get("completedAt") or check.get("startedAt") or ""), index)
+        key = (check_timestamp(check), index)
         if identity not in newest:
             order.append(identity)
             newest[identity] = (key, check)
