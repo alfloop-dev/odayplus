@@ -30,17 +30,24 @@ T00 Fleet state repair
   ├── T10 External-data diagnosis
   │     └── T11 Conditional external-data remediation
   │             └── T30 Exact-SHA deploy and API verification
-  └── T20 Forecast history backfill (parallel; human source gate)
-        └── T21 ForecastOps MLflow release (human approval gate)
-                └── T30 Exact-SHA deploy and API verification
+  ├── T20 Forecast history backfill (parallel; human source gate)
+  │     └── T21 ForecastOps MLflow release (human approval gate)
+  │             └── T30 Exact-SHA deploy and API verification
+  └── T41 Legacy visual retirement, static half (parallel; no T30 wait)
 
 T30 successful public promotion
   ├── T40 Package 10 visual/API parity
-  ├── T41 Legacy visual retirement
+  ├── T41 Legacy visual retirement, runtime half
   └── T42 Live staging proof
-          └── T50 UAT packet and human signoff
-                  └── T60 Final gate audit and release decision
+
+T40 and T41 and T42 all passed
+  └── T50 UAT packet and human signoff
+          └── T60 Final gate audit and release decision
 ```
+
+T41 is the only two-phase task. Its static half depends on T00 alone and must
+not be queued behind T30; only its runtime half waits for public promotion.
+T50 requires all three of T40, T41, and T42, not T42 alone.
 
 T10 may close T11 as `not_required` only when it proves that no code/config
 change is needed and produces authentic persisted runs through the supported
@@ -110,7 +117,13 @@ Acceptance:
 5. Owner/reviewer source manifests match and include this pack, its JSON peer, the gap analysis, page diff, and ZIP manifest.
 6. Supervisor restart is not required unless tracked control-plane bytes differ; any restart has a rollback receipt.
 7. A Package 10 dispatch probe reaches separate owner/reviewer workspaces and reads every source.
-8. Independent exact-state review passes before closeout.
+8. Every `update_existing` task, T20, T21, T30, T42, T50, and T60, carries an
+   explicit writable-path ceiling and forbidden-path set before it is
+   dispatched. This pack declares those only for T00, T10, T11, T40, and T41,
+   so dispatch rule 5 currently has no machine-readable target for the six
+   highest-authority tasks. T00 must supply them; it must not silently widen
+   an existing task's authority while doing so.
+9. Independent exact-state review passes before closeout.
 
 Stop conditions:
 
@@ -295,17 +308,29 @@ Writable paths:
 
 - `docs/evidence/runtime/ODP-P10-LIVE-VISUAL-PARITY-001/**`.
 
+Screen-contract authority (read-only):
+
+`scripts/e2e/check_product_grade_ci_gates.py` is the machine authority for this
+task and must be read before the first screenshot. It fixes
+`EXPECTED_SCREEN_LABEL_COUNT = 40`, the required viewports
+`{390, 1024, 1440}`, `REQUIRED_VISUAL_ROUTES`, and
+`CANONICAL_LABEL_IMPLEMENTATIONS`. The last one records deliberate canonical
+deviations from the archived HTML, for example Package 10's single combined
+transfer/pause dialog being implemented as two focused command dialogs. A
+strict label diff that ignores this map produces false mismatches; the worker
+must not open a remediation task for a documented canonical implementation.
+
 Runtime actions:
 
 - authenticated Playwright/agent-browser verification;
-- desktop, tablet, and mobile screenshots;
+- screenshots at all three required viewports, 390, 1024, and 1440;
 - DOM, layout, overflow, console, network, accessibility, and API correlation;
 - compare all 40 screen/state contracts to the archived Package 10 HTML and page diff.
 
 Acceptance:
 
 1. Inventory all 40 screen contracts with route/workspace/state/viewport/result.
-2. Capture exact-SHA screenshots for required desktop and mobile states.
+2. Capture exact-SHA screenshots for every required state at 390, 1024, and 1440.
 3. No page remains in loading, seed, empty fallback, error, or old shell unless the contract explicitly requires that state.
 4. Every API-bound view names request, response/provenance, tenant, and correlation evidence.
 5. Text, controls, board/grid dimensions, overlays, dialogs, and responsive behavior do not overlap or overflow.
@@ -451,3 +476,72 @@ The program closes only when T00, T10/T11, T20, T21, T30, T40, T41, T42, T50,
 and T60 have terminal evidence-consistent outcomes; all required human
 approvals name the exact release/model/source; and the public runtime satisfies
 the ten release exit criteria in the gap analysis.
+
+## 8. Independent Verification Record
+
+- Verifying task: `ODP-P10-LIVE-GAP-DISPATCH-20260809`
+- Verified pack head: `33049374c81347d110d9432409ebb2a1202b5970` (PR #745)
+- Base compared against: `9e5434cd8a9f798769f4891c3610280a7982a175`
+- Result: `PACK_ACCEPTED_WITH_CORRECTIONS`
+
+### 8.1 Verified against primary evidence
+
+| Claim | Independent check | Result |
+|---|---|---|
+| PR #745 is docs-only | `git diff --stat` base..head is three evidence files, 1358 insertions, zero deletions, no product or workflow path | pass |
+| JSON is well-formed and complete | 11 tasks, no duplicate IDs, all required keys present, all six declared automation classes used and none undefined | pass |
+| Dependency graph is sound | every `depends_on`, `conditional_depends_on`, and `phase_dependencies` edge resolves inside the pack; graph topologically sorts 11/11, so it is acyclic | pass |
+| Markdown and JSON hold the same 11 tasks | order/ID tuples are identical across the JSON array, the section-3 summary table, and the section-4 headers | pass |
+| Deploy Dev run identity | run `31308339896`, head `9e5434cd…`, conclusion `failure`, completed `2026-08-09T10:47:30Z` | pass |
+| Live-gate artifact identity | `cloud-run-dev-validation/live-e2e-gate.json` carries `generated_at=2026-08-09T10:46:11Z` and `correlation_id=corr-live-e2e-9e5434cd8a9f-1786272371`, matching this pack exactly | pass |
+| Candidate failures and passes | all 5 recorded failures and all 8 recorded passes reproduce in the gate's 50 checks (43 ok, 7 failed); `blocking_dependencies` is exactly `external-data`, `mlflow` | pass |
+| `failure_rolled_back` | deploy log shows the gate failing, then traffic restored to `oday-api-00005-gin=100` | pass |
+| `active_deploy_run_at_finalization: null` | the only Deploy Dev run in the window ended `10:47:30Z`, before `prepared_at` `10:49:01Z` | pass |
+| Public release `8ec12c02` | `8ec12c02` is a real commit; `PLATFORM_COMPLETENESS_INVENTORY_2026-07-25.md` records deployed `oday-api` revision `oday-api-00005-gin` at `release_sha=8ec12c02`, which is the exact revision the rollback restored to 100% | pass |
+| 117 retired paths | `ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json` reports `deleted_path_inventory.unique_paths=117` at `verified_head=435c79e3…` with `release_status=no_go` | pass |
+| 40 screen contracts | `scripts/e2e/check_product_grade_ci_gates.py` sets `EXPECTED_SCREEN_LABEL_COUNT = 40` and the count is CI-enforced | pass |
+| Owner and reviewer names | every named actor, including bare `Antigravity` and `Human/Ops`, is a registered agent in the canonical status root | pass |
+| Task identity is unambiguous | the six `update_existing` IDs are all active; the five `create` IDs are absent from both active state and the task archive, so no create duplicates an existing ID | pass |
+| GAP-08 stale-metadata claim | `ODP-P10-DEV-REDEPLOY-VERIFY-001` is `blocked` with a `next` field containing only auto-reassignment text | pass |
+| Conflict register, model-alias row | the gate passes `avm`, `heatzone`, and `sitescore` as `governedDisabled=True` with `no_fabricated_alias`, confirming ForecastOps is the only model blocker | pass |
+
+`/platform/health = 503` is the one claim not reproducible from a committed
+artifact; it is a timestamped `10:19Z` readback taken before this run started.
+Section 6 already forbids using the public payload for current blockers, so the
+claim is correctly scoped, but T30 must re-observe it rather than inherit it.
+
+### 8.2 Corrections applied by this verification
+
+1. The section-2 dependency graph contradicted both the JSON and the section-3
+   entry conditions: it drew T41 under T30, which would have queued T41's
+   static half behind a deploy four tasks away, and it drew T50 as depending on
+   T42 alone rather than on T40, T41, and T42. The graph now matches the JSON.
+2. T00's JSON `writable_paths` omitted `.orchestrator/task-briefs/odp_p10_live_*.md`,
+   which this Markdown declares writable and which T00's own acceptance
+   requires it to generate. Path enforcement reading the JSON peer would have
+   blocked T00's required output. Added.
+3. T40's screen-contract authority was unnamed. `scripts/e2e/check_product_grade_ci_gates.py`
+   holds the label count, `REQUIRED_VISUAL_ROUTES`, `REQUIRED_VISUAL_VIEWPORTS`,
+   and `CANONICAL_LABEL_IMPLEMENTATIONS`. The last records deliberate canonical
+   deviations from the archived HTML, so a strict label diff without it would
+   report false mismatches and, under T40 acceptance 7, open spurious
+   remediation tasks. Added as a read-only source in both peers.
+4. T40 acceptance and GAP-06 required only "desktop and mobile" screenshots,
+   while the enforced gate requires three viewports, `390`, `1024`, and `1440`.
+   A worker could have satisfied the wording literally and still missed `1024`.
+   All three are now named.
+5. Dispatch rule 5 restricts workers to declared writable paths, but only T00,
+   T10, T11, T40, and T41 declare them. T20, T21, T30, T42, T50, and T60 — the
+   tasks that train models, move aliases, and deploy — declared none. Rather
+   than invent ceilings here, T00 acceptance 8 now requires T00 to supply them
+   before those tasks are dispatched.
+
+### 8.3 Open observation, not corrected
+
+The JSON marks all 11 tasks `mutates_canonical: true`, including the read-only
+evidence tasks T10, T40, and T41, whose Markdown entries state no product
+mutation and whose only writable path is one evidence directory. Tracing the
+field through `supervisor.py` shows it is descriptive metadata carried into
+task creation, not a dispatch gate, so this misstates scope without changing
+behaviour. Left for the coordinator to decide, since correcting it changes
+declared task metadata rather than this pack's plan.

@@ -174,7 +174,7 @@ These items do not need to be reimplemented:
 - Historical source: `docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md`.
 - Missing evidence:
   - authenticated screenshots on the exact promoted release;
-  - desktop and mobile dimensions;
+  - all three viewports required by `scripts/e2e/check_product_grade_ci_gates.py`, `390`, `1024`, and `1440`;
   - loading, empty, success, partial, blocked, retryable, permission-limited, and durable-return states;
   - browser console/network errors and API provenance per page;
   - comparison against the archived Package 10 HTML.
@@ -283,7 +283,7 @@ exact release SHA:
 3. Required provider ingestion runs are authentic, non-empty, lineage-complete, and readable through the Operator API.
 4. ForecastOps resolves exactly one approved MLflow `production` alias and inference smoke passes.
 5. Operator bootstrap is authenticated, live, non-placeholder, tenant-correct, and fail-closed for invalid access.
-6. All 40 Package 10 screen contracts pass at required desktop/mobile sizes with screenshots and API correlation.
+6. All 40 Package 10 screen contracts pass at all three required viewports, `390`, `1024`, and `1440`, with screenshots and API correlation.
 7. All 117 retired paths remain absent or redirect to the canonical shell, and no retired implementation is executable.
 8. Accessibility, console, network, audit, rollback, and durable deep-link checks pass.
 9. Independent worker review passes on the exact evidence head.

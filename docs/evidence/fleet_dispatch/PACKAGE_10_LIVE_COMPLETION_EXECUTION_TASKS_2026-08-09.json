@@ -96,7 +96,8 @@
         "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json"
       ],
       "writable_paths": [
-        "docs/evidence/runtime/ODP-P10-LIVE-FLEET-STATE-REPAIR-001/**"
+        "docs/evidence/runtime/ODP-P10-LIVE-FLEET-STATE-REPAIR-001/**",
+        ".orchestrator/task-briefs/odp_p10_live_*.md"
       ],
       "coordination_mutations": [
         "canonical ai-status through scripts/ai-status.sh",
@@ -123,6 +124,7 @@
         "existing task next fields name current run SHA blockers dependencies and resume condition",
         "owner and reviewer source manifests match",
         "historical R3 implementation tasks are not reopened",
+        "every update_existing task T20 T21 T30 T42 T50 and T60 receives an explicit writable path ceiling and forbidden path set without widening existing authority",
         "independent exact-state review passes"
       ],
       "stop_conditions": [
@@ -368,8 +370,26 @@
         "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
         "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
         "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
-        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html"
+        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html",
+        "scripts/e2e/check_product_grade_ci_gates.py"
       ],
+      "screen_contract_authority": {
+        "path": "scripts/e2e/check_product_grade_ci_gates.py",
+        "access": "read_only",
+        "expected_screen_label_count": 40,
+        "required_viewports": [
+          390,
+          1024,
+          1440
+        ],
+        "constants": [
+          "EXPECTED_SCREEN_LABEL_COUNT",
+          "REQUIRED_VISUAL_ROUTES",
+          "REQUIRED_VISUAL_VIEWPORTS",
+          "CANONICAL_LABEL_IMPLEMENTATIONS"
+        ],
+        "note": "CANONICAL_LABEL_IMPLEMENTATIONS records deliberate canonical deviations from the archived HTML; a strict label diff that ignores it yields false mismatches and must not open a remediation task"
+      },
       "writable_paths": [
         "docs/evidence/runtime/ODP-P10-LIVE-VISUAL-PARITY-001/**"
       ],
@@ -392,7 +412,7 @@
       ],
       "acceptance": [
         "all 40 contracts have route workspace state viewport and result",
-        "exact-SHA screenshots exist for required desktop and mobile states",
+        "exact-SHA screenshots exist for every required state at viewports 390 1024 and 1440",
         "no unintended loading seed fallback error or old shell survives",
         "API-bound views have request response provenance tenant and correlation evidence",
         "layout responsive accessibility console and network checks pass",
@@ -600,6 +620,44 @@
       "resolution": "require PG16 plus authenticated API lineage readback"
     }
   ],
+  "independent_verification": {
+    "task_id": "ODP-P10-LIVE-GAP-DISPATCH-20260809",
+    "verified_pack_head": "33049374c81347d110d9432409ebb2a1202b5970",
+    "pull_request": 745,
+    "base_sha": "9e5434cd8a9f798769f4891c3610280a7982a175",
+    "result": "PACK_ACCEPTED_WITH_CORRECTIONS",
+    "verified": [
+      "diff against base is documentation only with no product or workflow path",
+      "json is well formed with 11 tasks no duplicate ids and no undefined automation class",
+      "dependency graph resolves every edge internally and topologically sorts 11 of 11 so it is acyclic",
+      "markdown and json declare the same 11 order and task_id tuples",
+      "deploy run 31308339896 head 9e5434cd conclusion failure completed 2026-08-09T10:47:30Z",
+      "live gate artifact generated_at and correlation_id match this pack exactly",
+      "all 5 candidate failures and all 8 candidate passes reproduce in the gate 50 checks 43 ok 7 failed",
+      "failure_rolled_back confirmed by traffic restoration to oday-api-00005-gin",
+      "active_deploy_run_at_finalization null confirmed by run end preceding prepared_at",
+      "public release 8ec12c02 corroborated by the restored revision and the 2026-07-25 completeness inventory",
+      "117 retired unique paths confirmed at verified_head 435c79e3 with release_status no_go",
+      "40 screen contracts confirmed by CI enforced EXPECTED_SCREEN_LABEL_COUNT",
+      "every named owner and reviewer is a registered canonical agent",
+      "six update_existing ids are active and five create ids are absent from active state and archive",
+      "GAP-08 stale next field claim confirmed on ODP-P10-DEV-REDEPLOY-VERIFY-001",
+      "conflict register model alias row confirmed by governed-disabled avm heatzone and sitescore gate passes"
+    ],
+    "unreproducible_from_committed_artifacts": [
+      "public /platform/health 503 is a 10:19Z readback with no attached artifact; section 6 already scopes it correctly and T30 must re-observe rather than inherit it"
+    ],
+    "corrections_applied": [
+      "section 2 dependency graph now matches the json for T41 static phase and for T50 depending on T40 T41 and T42",
+      "T00 writable_paths now includes the orchestrator task brief path its own acceptance requires",
+      "T40 now names scripts/e2e/check_product_grade_ci_gates.py as read-only screen contract authority including the canonical label equivalence map",
+      "T40 acceptance and GAP-06 now require all three enforced viewports 390 1024 and 1440",
+      "T00 acceptance now requires writable path ceilings for the six update_existing tasks that declared none"
+    ],
+    "open_observations": [
+      "all 11 tasks are marked mutates_canonical true including read-only evidence tasks T10 T40 and T41; traced to descriptive metadata rather than a dispatch gate so it misstates scope without changing behaviour; left to the coordinator"
+    ]
+  },
   "program_exit_criteria": [
     "origin dev API Web image labels and public version agree on one SHA",
     "Deploy Dev succeeds without rollback",
