@@ -52,7 +52,7 @@ def test_cancelled_counts_as_failing() -> None:
 
 
 def test_no_pr_is_detected(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(doc, "find_pr", lambda b, r: None)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": None)
     monkeypatch.setattr(doc, "_git", lambda *a, **k: "abc123\trefs/heads/x")
 
     f = doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)
@@ -63,7 +63,7 @@ def test_no_pr_is_detected(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_no_pr_and_no_branch_is_distinguished(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(doc, "find_pr", lambda b, r: None)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": None)
     monkeypatch.setattr(doc, "_git", lambda *a, **k: "")
 
     f = doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)
@@ -75,7 +75,7 @@ def test_no_pr_and_no_branch_is_distinguished(tmp_path: Path, monkeypatch) -> No
 def test_missing_required_check_is_detected(tmp_path: Path, monkeypatch) -> None:
     # Green, but task-review-gate never reported: structurally unmergeable.
     rollup = [check(n, "SUCCESS") for n in ALL_REQUIRED if n != "task-review-gate"]
-    monkeypatch.setattr(doc, "find_pr", lambda b, r: {"number": 9, "statusCheckRollup": rollup})
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": {"number": 9, "statusCheckRollup": rollup})
 
     f = doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)
 
@@ -86,7 +86,7 @@ def test_missing_required_check_is_detected(tmp_path: Path, monkeypatch) -> None
 def test_missing_check_outranks_green_verdict(tmp_path: Path, monkeypatch) -> None:
     """A PR whose reported checks are all green is still not READY if one is absent."""
     rollup = [check("orchestrator", "SUCCESS")]
-    monkeypatch.setattr(doc, "find_pr", lambda b, r: {"number": 9, "statusCheckRollup": rollup})
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": {"number": 9, "statusCheckRollup": rollup})
 
     f = doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)
 
@@ -95,7 +95,7 @@ def test_missing_check_outranks_green_verdict(tmp_path: Path, monkeypatch) -> No
 
 def test_stale_ci_distinguished_from_real_failure(tmp_path: Path, monkeypatch) -> None:
     rollup = green_rollup()[:-1] + [check("task-review-gate", "SUCCESS"), check("product", "FAILURE")]
-    monkeypatch.setattr(doc, "find_pr", lambda b, r: {"number": 9, "statusCheckRollup": rollup})
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": {"number": 9, "statusCheckRollup": rollup})
 
     monkeypatch.setattr(doc, "branch_is_behind", lambda *a: True)
     assert doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)["cause"] == doc.CI_STALE
@@ -106,7 +106,7 @@ def test_stale_ci_distinguished_from_real_failure(tmp_path: Path, monkeypatch) -
 
 def test_ready_when_all_required_green(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(
-        doc, "find_pr", lambda b, r: {"number": 9, "statusCheckRollup": green_rollup()}
+        doc, "find_pr", lambda b, r, base="": {"number": 9, "statusCheckRollup": green_rollup()}
     )
 
     assert doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)["cause"] == doc.READY
@@ -146,7 +146,7 @@ def test_only_review_approved_tasks_are_scanned(tmp_path: Path, monkeypatch) -> 
         ],
     )
     monkeypatch.setattr(
-        doc, "find_pr", lambda b, r: {"number": 1, "statusCheckRollup": green_rollup()}
+        doc, "find_pr", lambda b, r, base="": {"number": 1, "statusCheckRollup": green_rollup()}
     )
 
     rc = doc.main(["--status", str(p), "--repo", str(tmp_path)])
@@ -156,7 +156,7 @@ def test_only_review_approved_tasks_are_scanned(tmp_path: Path, monkeypatch) -> 
 
 def test_exit_code_signals_stuck_tasks(tmp_path: Path, monkeypatch) -> None:
     p = board(tmp_path, [{"id": "A", "status": "review_approved"}])
-    monkeypatch.setattr(doc, "find_pr", lambda b, r: None)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": None)
     monkeypatch.setattr(doc, "_git", lambda *a, **k: "")
 
     assert doc.main(["--status", str(p), "--repo", str(tmp_path)]) == 1
@@ -170,7 +170,7 @@ def test_already_merged_outranks_no_pr(tmp_path: Path, monkeypatch) -> None:
     the real state.
     """
     monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: True)
-    monkeypatch.setattr(doc, "find_pr", lambda b, r: None)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": None)
 
     f = doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)
 
@@ -190,7 +190,7 @@ def test_already_merged_remediation_closes_task_not_opens_pr() -> None:
 def test_unmerged_branch_still_classified_normally(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: False)
     monkeypatch.setattr(
-        doc, "find_pr", lambda b, r: {"number": 9, "statusCheckRollup": green_rollup()}
+        doc, "find_pr", lambda b, r, base="": {"number": 9, "statusCheckRollup": green_rollup()}
     )
 
     assert doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)["cause"] == doc.READY

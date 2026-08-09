@@ -937,7 +937,11 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
             "artifacts": [],
         }
         with (
-            mock.patch.object(ai_status, "task_delivery_checkout", return_value=(Path("/task"), f"task/{self.TASK_ID}")),
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={"checkout": Path("/task"), "branch": f"task/{self.TASK_ID}", "present": True},
+            ),
             mock.patch.object(ai_status, "run_git_command", return_value="b" * 40),
         ):
             with self.assertRaisesRegex(SystemExit, "task-owned checkout HEAD"):
@@ -966,7 +970,11 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
         }
         with (
             mock.patch.dict(os.environ, disabled, clear=False),
-            mock.patch.object(ai_status, "task_delivery_checkout", return_value=(Path("/task"), f"task/{self.TASK_ID}")),
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={"checkout": Path("/task"), "branch": f"task/{self.TASK_ID}", "present": True},
+            ),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
         ):
             with self.assertRaisesRegex(SystemExit, "task-owned git working tree is dirty"):
@@ -998,7 +1006,11 @@ class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
             return responses[key]
 
         with (
-            mock.patch.object(ai_status, "task_delivery_checkout", return_value=(Path("/task"), f"task/{self.TASK_ID}")),
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={"checkout": Path("/task"), "branch": f"task/{self.TASK_ID}", "present": True},
+            ),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
             mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
             mock.patch.object(ai_status, "git_remote_repository_slug", return_value="attacker/wrong-repo"),

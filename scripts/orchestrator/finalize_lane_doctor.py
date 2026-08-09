@@ -103,11 +103,59 @@ def branch_for(task: dict[str, Any], prefix: str = "task/") -> str:
     return f"{prefix}{task.get('id')}"
 
 
-def find_pr(branch: str, repo_root: Path) -> dict[str, Any] | None:
-    return _gh_json(
-        ["pr", "view", branch, "--json", "number,state,statusCheckRollup,headRefOid"],
+PR_JSON_FIELDS = "number,state,statusCheckRollup,headRefOid,baseRefName"
+
+
+def find_pr(branch: str, repo_root: Path, base: str = "") -> dict[str, Any] | None:
+    """Return the pull request for ``branch`` that targets ``base``.
+
+    ``gh pr view <branch>`` answers with whichever PR was updated most recently.
+    A task branch usually has two -- the ReviewBus one against ``main`` and the
+    real one against ``dev`` -- so that answer is decided by timing rather than
+    by which PR governs the merge. The diagnosis then describes the wrong PR's
+    checks. Listing and filtering on the base makes the choice a fact.
+    """
+
+    candidates = _gh_json(
+        ["pr", "list", "--head", branch, "--state", "all", "--limit", "50", "--json", PR_JSON_FIELDS],
         repo_root,
     )
+    if isinstance(candidates, list):
+        on_base = [
+            pr
+            for pr in candidates
+            if isinstance(pr, dict) and (not base or str(pr.get("baseRefName") or "") == base)
+        ]
+        if on_base:
+            merged = [pr for pr in on_base if str(pr.get("state") or "").upper() == "MERGED"]
+            return (merged or on_base)[0]
+
+    return _gh_json(["pr", "view", branch, "--json", PR_JSON_FIELDS], repo_root)
+
+
+def latest_checks_by_name(rollup: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse a rollup to the newest run per check, as branch protection reads it.
+
+    ``statusCheckRollup`` lists every run recorded against the head commit,
+    including attempts that were later re-run. PR #575 merged into ``dev``
+    carrying a stale ``product`` FAILURE alongside the ``product`` SUCCESS that
+    actually gated it. Counting both makes a mergeable PR look permanently red.
+    """
+
+    newest: dict[str, tuple[tuple[str, int], dict[str, Any]]] = {}
+    order: list[str] = []
+    for index, check in enumerate(rollup or []):
+        if not isinstance(check, dict):
+            continue
+        name = str(check.get("name") or check.get("context") or "")
+        identity = f"{check.get('workflowName') or ''}\x00{name}"
+        key = (str(check.get("completedAt") or check.get("startedAt") or ""), index)
+        if identity not in newest:
+            order.append(identity)
+            newest[identity] = (key, check)
+        elif key >= newest[identity][0]:
+            newest[identity] = (key, check)
+    return [newest[identity][1] for identity in order]
 
 
 def rollup_verdict(rollup: list[dict[str, Any]]) -> tuple[str, list[str], list[str]]:
@@ -116,9 +164,7 @@ def rollup_verdict(rollup: list[dict[str, Any]]) -> tuple[str, list[str], list[s
     failing: list[str] = []
     present: list[str] = []
     pending = False
-    for check in rollup or []:
-        if not isinstance(check, dict):
-            continue
+    for check in latest_checks_by_name(rollup):
         name = str(check.get("name") or check.get("context") or "")
         present.append(name)
         conclusion = str(check.get("conclusion") or "").upper()
@@ -178,7 +224,7 @@ def classify(
             "detail": f"branch is already an ancestor of origin/{base}; the work has landed",
         }
 
-    pr = find_pr(branch, repo_root)
+    pr = find_pr(branch, repo_root, base)
     finding: dict[str, Any] = {
         "task_id": task.get("id"),
         "branch": branch,
