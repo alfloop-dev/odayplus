@@ -5,6 +5,9 @@
   "status": "PREPARED_NO_GO",
   "prepared_at": "2026-08-09T10:49:01Z",
   "base_sha": "9e5434cd8a9f798769f4891c3610280a7982a175",
+  "evidence_refreshed_at": "2026-08-09T12:43Z",
+  "evidence_refresh_task": "ODP-P10-LIVE-GAP-EVIDENCE-REFRESH-20260809",
+  "evidence_base_sha": "4d89bea64ce98753895a16194e320c9a8ea45852",
   "program_owner": "CodexCoordinator",
   "preferred_execution_pools": [
     "Claude",
@@ -17,35 +20,155 @@
     "gap_analysis": "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md"
   },
   "evidence_snapshot": {
-    "last_completed_deploy_run": 31308339896,
-    "last_completed_deploy_sha": "9e5434cd8a9f798769f4891c3610280a7982a175",
+    "last_completed_deploy_run": 31312735093,
+    "last_completed_deploy_sha": "4d89bea64ce98753895a16194e320c9a8ea45852",
     "last_completed_deploy_result": "failure_rolled_back",
-    "live_gate_generated_at": "2026-08-09T10:46:11Z",
-    "live_gate_correlation_id": "corr-live-e2e-9e5434cd8a9f-1786272371",
-    "active_deploy_run_at_finalization": null,
+    "last_completed_deploy_pull_request": 747,
+    "last_completed_deploy_started_at": "2026-08-09T12:13:20Z",
+    "last_completed_deploy_completed_at": "2026-08-09T12:33:49Z",
+    "last_completed_deploy_failed_step": "Build, push, deploy, and verify Cloud Run",
+    "live_gate_generated_at": "2026-08-09T12:32:33Z",
+    "live_gate_correlation_id": "corr-live-e2e-4d89bea64ce9-1786278753",
+    "live_gate_ok": false,
+    "live_gate_total_checks": 50,
+    "live_gate_passed_checks": 43,
+    "live_gate_failed_checks": 7,
+    "superseded_deploy_runs": [
+      {
+        "run_id": 31311664947,
+        "head_sha": "817d53052e23cf867085342fcafa340743e4a7cb",
+        "pull_request": 744,
+        "conclusion": "cancelled",
+        "reason": "superseded by the next dev push",
+        "started_at": "2026-08-09T11:47:34Z",
+        "completed_at": "2026-08-09T12:05:44Z",
+        "live_gate_artifact": null,
+        "citable_as_evidence": false
+      },
+      {
+        "run_id": 31312411417,
+        "head_sha": "188bec5411846fcb7439fb63991daadad7fee60f",
+        "pull_request": 745,
+        "conclusion": "cancelled",
+        "reason": "superseded by the next dev push",
+        "started_at": "2026-08-09T12:05:24Z",
+        "completed_at": "2026-08-09T12:13:41Z",
+        "live_gate_artifact": null,
+        "citable_as_evidence": false
+      }
+    ],
+    "superseded_evidence_snapshot": {
+      "last_completed_deploy_run": 31308339896,
+      "last_completed_deploy_sha": "9e5434cd8a9f798769f4891c3610280a7982a175",
+      "live_gate_correlation_id": "corr-live-e2e-9e5434cd8a9f-1786272371",
+      "note": "prior snapshot retained for audit; blocker set is identical to the refreshed one"
+    },
+    "active_deploy_run_at_refresh": null,
+    "origin_dev_at_refresh": "4d89bea64ce98753895a16194e320c9a8ea45852",
     "public_release_sha": "8ec12c02",
     "public_health_status": 503,
+    "public_readback_source": "cloud-run-migration-compatibility.json",
+    "public_readback_at": "2026-08-09T12:26:28Z",
+    "promotion_behaviour": "candidate promoted to 100% traffic at 12:32:16Z, live gate failed at 12:33:24Z, traffic restored to oday-api-00005-gin=100 and oday-web-00008-ws4=100",
     "candidate_blocking_dependencies": [
       "external-data",
       "mlflow"
     ],
     "candidate_failures": [
-      "data:ingestion_runs:runs=0",
-      "data:admin_boundary.official_dataset:run_exists=false",
-      "data:poi.commercial_api:run_exists=false",
-      "models:registry:versions=0",
-      "models:forecastops:production_alias=0"
+      {
+        "check": "runtime:model_bindings",
+        "dependency": "mlflow",
+        "detail": "mode=mlflow-production-unverified ready=False autoSeeded=False error=forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias"
+      },
+      {
+        "check": "runtime:model_capability:forecastops",
+        "dependency": "mlflow",
+        "detail": "available=False reasonCode=PRODUCTION_MODEL_REGISTRY_UNAVAILABLE"
+      },
+      {
+        "check": "models:registry",
+        "dependency": "mlflow",
+        "detail": "versions=0"
+      },
+      {
+        "check": "models:forecastops:production_alias",
+        "dependency": "mlflow",
+        "detail": "model=forecast_revenue_interval versionsWithProductionAlias=0 (exactly one required)"
+      },
+      {
+        "check": "data:ingestion_runs",
+        "dependency": "external-data",
+        "detail": "runs=0"
+      },
+      {
+        "check": "data:admin_boundary.official_dataset:run_exists",
+        "dependency": "external-data",
+        "detail": "no persisted ingestion run for a required live provider"
+      },
+      {
+        "check": "data:poi.commercial_api:run_exists",
+        "dependency": "external-data",
+        "detail": "no persisted ingestion run for a required live provider"
+      }
     ],
     "candidate_passes": [
-      "wif_authentication",
-      "operator_role_configuration",
-      "anonymous_access_denied",
-      "operator_bootstrap_200",
-      "operator_live_provenance",
-      "provider_connectivity",
-      "worker_enqueue",
-      "worker_terminal_success"
-    ]
+      "config:api_url",
+      "config:web_url",
+      "config:expected_sha",
+      "config:operator_credential",
+      "config:operator_role",
+      "config:required_providers",
+      "config:provider_registry_known",
+      "config:snapshot_providers",
+      "config:worker_probe_provider",
+      "config:expected_deployment",
+      "config:worker_polling",
+      "release:platform_version",
+      "release:no_surrogate_markers",
+      "runtime:readiness",
+      "runtime:persistence",
+      "runtime:provider",
+      "runtime:provider_probe:admin_boundary.official_dataset",
+      "runtime:provider_probe:geocode.primary_api",
+      "runtime:provider_probe:poi.commercial_api",
+      "runtime:model_capability:avm",
+      "runtime:model_capability:heatzone",
+      "runtime:model_capability:sitescore",
+      "runtime:data_origin",
+      "runtime:no_blocking_reasons",
+      "runtime:no_surrogate_markers",
+      "auth:anonymous_denied",
+      "auth:operator_bootstrap",
+      "auth:operator_bootstrap:provenance",
+      "auth:web_operator_requires_login",
+      "models:avm:no_fabricated_alias",
+      "models:heatzone:no_fabricated_alias",
+      "models:sitescore:no_fabricated_alias",
+      "models:no_surrogate_markers",
+      "worker:enqueue",
+      "worker:idempotent_replay",
+      "worker:drain_trigger",
+      "worker:terminal_success",
+      "worker:ingestion_probe:poi.commercial_api",
+      "audit:durable_receipt",
+      "audit:idempotent_replay_receipt",
+      "audit:receipt_integrity",
+      "audit:no_surrogate_markers",
+      "data:no_surrogate_markers"
+    ],
+    "peer_artifacts_ok": [
+      "cloud-run-preflight.json",
+      "cloud-run-smoke.json",
+      "cloud-run-migration-compatibility.json",
+      "cloud-run-jobs/migration-validation.json",
+      "cloud-run-jobs/scheduler-validation.json",
+      "cloud-run-jobs/worker-validation.json"
+    ],
+    "worker_job": {
+      "job_id": "9a03dcdc-2402-4731-b434-7b22ac2c224c",
+      "job_type": "external-fetch",
+      "terminal_status": "succeeded"
+    }
   },
   "automation_classes": {
     "AUTO_NOW": "Supervisor may dispatch immediately after this pack is merged and no runtime conflict is active.",
@@ -125,7 +248,8 @@
         "owner and reviewer source manifests match",
         "historical R3 implementation tasks are not reopened",
         "every update_existing task T20 T21 T30 T42 T50 and T60 receives an explicit writable path ceiling and forbidden path set without widening existing authority",
-        "independent exact-state review passes"
+        "independent exact-state review passes",
+        "mutates_canonical is declared explicitly on all 11 tasks in this json; today 8 declare true and T42 T50 T60 omit the field while read-only evidence tasks T10 T40 T41 declare true against their own markdown entries; T00 sets each value to match declared writable paths using false for read-only evidence tasks and must not widen any task authority to justify a true"
       ],
       "stop_conditions": [
         "active overlapping Deploy Dev mutation",
@@ -645,7 +769,7 @@
       "conflict register model alias row confirmed by governed-disabled avm heatzone and sitescore gate passes"
     ],
     "unreproducible_from_committed_artifacts": [
-      "public /platform/health 503 is a 10:19Z readback with no attached artifact; section 6 already scopes it correctly and T30 must re-observe rather than inherit it"
+      "resolved by evidence refresh 2026-08-09T12:43Z: public /platform/health 503 is now artifact-backed by cloud-run-migration-compatibility.json at 2026-08-09T12:26:28Z in run 31312735093 alongside release_sha 8ec12c02; T30 must still re-observe on its own promoted SHA rather than inherit it"
     ],
     "corrections_applied": [
       "section 2 dependency graph now matches the json for T41 static phase and for T50 depending on T40 T41 and T42",
@@ -655,8 +779,33 @@
       "T00 acceptance now requires writable path ceilings for the six update_existing tasks that declared none"
     ],
     "open_observations": [
-      "all 11 tasks are marked mutates_canonical true including read-only evidence tasks T10 T40 and T41; traced to descriptive metadata rather than a dispatch gate so it misstates scope without changing behaviour; left to the coordinator"
+      "superseded by evidence refresh 2026-08-09T12:43Z: the original wording claimed all 11 tasks are marked mutates_canonical true; the actual field presence is 8 declared true (T00 T10 T11 T20 T21 T30 T40 T41), 3 absent (T42 T50 T60) and 0 declared false; two defects follow, over-broad true on read-only evidence tasks T10 T40 T41 and absent declaration on T42 T50 T60; the field is descriptive metadata in supervisor.py rather than a dispatch gate so neither changes behaviour; normalization is now assigned to T00 acceptance 10"
     ]
+  },
+  "evidence_refresh": {
+    "task_id": "ODP-P10-LIVE-GAP-EVIDENCE-REFRESH-20260809",
+    "refreshed_at": "2026-08-09T12:43Z",
+    "parent_task": "ODP-P10-LIVE-GAP-DISPATCH-20260809",
+    "trigger": "dev merge burst of 2026-08-09 moved origin/dev from 9e5434cd to 4d89bea6 through PRs 744 745 and 747",
+    "changed": [
+      "evidence_snapshot re-anchored to deploy run 31312735093 at 4d89bea6 with its exact live gate identity",
+      "runs 31311664947 and 31312411417 recorded as superseded cancellations with no live gate artifact and not citable as evidence",
+      "candidate_failures and candidate_passes replaced by the exact artifact contents 50 checks 43 passed 7 failed",
+      "public 8ec12c02 and health 503 are now artifact-backed so the prior unreproducible entry is resolved",
+      "section 8.3 mutates_canonical count corrected and normalization assigned to T00 acceptance 10"
+    ],
+    "unchanged": [
+      "the same 11 tasks with the same ids order owners reviewers and automation classes",
+      "every depends_on conditional_depends_on and phase_dependencies edge",
+      "all declared writable and forbidden paths apart from the added T00 acceptance item",
+      "the dependency graph still topologically sorts 11 of 11 so it remains acyclic",
+      "the blocker set which is identical at 4d89bea6 and at 9e5434cd so no gap was opened closed or re-scoped"
+    ],
+    "re_verified": [
+      "origin/dev is 4d89bea6 at refresh time so run 31312735093 is both the latest completed run and the current tip",
+      "ODP-P10-DEV-REDEPLOY-VERIFY-001 is still blocked with stale auto-reassignment next text so the GAP-08 claim holds"
+    ],
+    "no_product_or_workflow_path_modified": true
   },
   "program_exit_criteria": [
     "origin dev API Web image labels and public version agree on one SHA",

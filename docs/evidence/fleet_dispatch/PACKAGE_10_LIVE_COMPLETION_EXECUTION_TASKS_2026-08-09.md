@@ -3,7 +3,9 @@
 - Program ID: `ODP-P10-LIVE-CLOSURE-R1`
 - Status: `PREPARED_NO_GO`
 - Prepared at: `2026-08-09T10:49:01Z`
-- Base SHA: `9e5434cd8a9f798769f4891c3610280a7982a175`
+- Base SHA at preparation: `9e5434cd8a9f798769f4891c3610280a7982a175`
+- Evidence refreshed at: `2026-08-09T12:43Z` by `ODP-P10-LIVE-GAP-EVIDENCE-REFRESH-20260809`
+- Current evidence SHA: `4d89bea64ce98753895a16194e320c9a8ea45852` (Deploy Dev `31312735093`)
 - Program owner: `CodexCoordinator`
 - Preferred execution pools: `Claude`, then `Antigravity`; Codex is fallback/integration only
 - Dispatch authority: this file and its JSON peer after merge to `dev`
@@ -124,6 +126,12 @@ Acceptance:
    highest-authority tasks. T00 must supply them; it must not silently widen
    an existing task's authority while doing so.
 9. Independent exact-state review passes before closeout.
+10. `mutates_canonical` is declared explicitly on all 11 tasks in the JSON
+    peer. Today 8 declare `true` and T42, T50, and T60 omit the field, while
+    the read-only evidence tasks T10, T40, and T41 declare `true` against
+    their own Markdown entries. T00 must set each value to match the task's
+    declared writable paths, using `false` for read-only evidence tasks, and
+    must not widen any task's authority to justify a `true`. See section 8.3.
 
 Stop conditions:
 
@@ -536,12 +544,73 @@ claim is correctly scoped, but T30 must re-observe it rather than inherit it.
    than invent ceilings here, T00 acceptance 8 now requires T00 to supply them
    before those tasks are dispatched.
 
-### 8.3 Open observation, not corrected
+### 8.3 Open observation, assigned to T00
 
-The JSON marks all 11 tasks `mutates_canonical: true`, including the read-only
-evidence tasks T10, T40, and T41, whose Markdown entries state no product
-mutation and whose only writable path is one evidence directory. Tracing the
-field through `supervisor.py` shows it is descriptive metadata carried into
-task creation, not a dispatch gate, so this misstates scope without changing
-behaviour. Left for the coordinator to decide, since correcting it changes
-declared task metadata rather than this pack's plan.
+The original wording of this section said the JSON marks *all 11* tasks
+`mutates_canonical: true`. Re-counting the field in the JSON peer shows that is
+wrong in both directions. Actual field presence:
+
+| `mutates_canonical` | Count | Tasks |
+|---|---:|---|
+| declared `true` | 8 | T00, T10, T11, T20, T21, T30, T40, T41 |
+| field absent | 3 | T42, T50, T60 |
+| declared `false` | 0 | — |
+
+So the pack has two separate defects, not one:
+
+1. **Over-broad `true`.** T10, T40, and T41 are read-only evidence tasks whose
+   Markdown entries state no product mutation and whose only writable path is
+   one evidence directory, yet each declares `true`.
+2. **Absent declaration.** T42, T50, and T60 omit the key entirely, so a
+   consumer reading the JSON peer gets no answer rather than a wrong one. This
+   overlaps the §8.2 correction 5 finding: the same three tasks are among the
+   six that declared no writable-path ceiling.
+
+Tracing the field through `supervisor.py` shows it is descriptive metadata
+carried into task creation, not a dispatch gate, so neither defect changes
+current dispatch behaviour. It does misstate scope for any consumer that reads
+the pack as the authority on which tasks touch canonical state.
+
+Because T00 already owns supplying the missing writable-path ceilings for
+exactly the tasks with the absent-field defect, normalization belongs there
+rather than with the coordinator. T00 acceptance 10 now requires it: set the
+field explicitly on all 11 tasks, `false` for read-only evidence tasks, and do
+not widen any task's declared authority while doing so.
+
+### 8.4 Evidence refresh record
+
+- Refreshing task: `ODP-P10-LIVE-GAP-EVIDENCE-REFRESH-20260809`
+- Refreshed at: `2026-08-09T12:43Z`
+- Trigger: the `dev` merge burst of `2026-08-09` moved `origin/dev` from
+  `9e5434cd` to `4d89bea6` through PRs #744, #745, and #747, so the pack's
+  `evidence_snapshot` no longer named the latest completed Deploy Dev run.
+
+What changed:
+
+1. `evidence_snapshot` now names run `31312735093` at `4d89bea6…`, live gate
+   `generated_at=2026-08-09T12:32:33Z`,
+   `correlation_id=corr-live-e2e-4d89bea64ce9-1786278753`.
+2. Runs `31311664947` (`817d5305…`, PR #744) and `31312411417` (`188bec54…`,
+   PR #745) are recorded as superseded cancellations. Both were cancelled by
+   the next `dev` push and emitted no `cloud-run-dev-validation` artifact, so
+   neither is citable evidence.
+3. `candidate_failures` and `candidate_passes` are replaced by the exact
+   artifact contents: 50 checks, 43 passed, 7 failed, blocking dependencies
+   `external-data` and `mlflow`. All 43 passes are now enumerated instead of
+   the previous 8-item summary.
+4. The public readback `8ec12c02` / `/platform/health 503` is now
+   artifact-backed by `cloud-run-migration-compatibility.json` at `12:26:28Z`,
+   which resolves the §8.1 `unreproducible_from_committed_artifacts` entry.
+   T30 must still re-observe on its own promoted SHA rather than inherit it.
+5. §8.3's `mutates_canonical` count is corrected and assigned to T00.
+
+What did not change: the 11 tasks, their IDs, order, owners, reviewers,
+dependency edges, automation classes, writable and forbidden paths, and the
+dependency graph, which still topologically sorts 11/11. The blocker set at
+`4d89bea6` is identical to the one at `9e5434cd`, so no gap was opened, closed,
+or re-scoped by this refresh; only its exact-SHA anchor moved.
+
+Verification re-run at the refreshed head: `origin/dev` is `4d89bea6…`, so the
+cited run is both the latest completed Deploy Dev run and the current tip;
+`ODP-P10-DEV-REDEPLOY-VERIFY-001` is still `blocked` with the stale
+auto-reassignment `next` text, so the GAP-08 claim still holds.
