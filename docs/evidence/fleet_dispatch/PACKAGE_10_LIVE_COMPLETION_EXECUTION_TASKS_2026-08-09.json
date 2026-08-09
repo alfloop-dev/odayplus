@@ -1,0 +1,615 @@
+{
+  "schema_version": 1,
+  "document_id": "ODP-P10-LIVE-TASKS-20260809",
+  "program_id": "ODP-P10-LIVE-CLOSURE-R1",
+  "status": "PREPARED_NO_GO",
+  "prepared_at": "2026-08-09T10:49:01Z",
+  "base_sha": "9e5434cd8a9f798769f4891c3610280a7982a175",
+  "program_owner": "CodexCoordinator",
+  "preferred_execution_pools": [
+    "Claude",
+    "Antigravity"
+  ],
+  "dispatch_authority": {
+    "requires_merged_to_dev": true,
+    "markdown": "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+    "json": "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json",
+    "gap_analysis": "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md"
+  },
+  "evidence_snapshot": {
+    "last_completed_deploy_run": 31308339896,
+    "last_completed_deploy_sha": "9e5434cd8a9f798769f4891c3610280a7982a175",
+    "last_completed_deploy_result": "failure_rolled_back",
+    "live_gate_generated_at": "2026-08-09T10:46:11Z",
+    "live_gate_correlation_id": "corr-live-e2e-9e5434cd8a9f-1786272371",
+    "active_deploy_run_at_finalization": null,
+    "public_release_sha": "8ec12c02",
+    "public_health_status": 503,
+    "candidate_blocking_dependencies": [
+      "external-data",
+      "mlflow"
+    ],
+    "candidate_failures": [
+      "data:ingestion_runs:runs=0",
+      "data:admin_boundary.official_dataset:run_exists=false",
+      "data:poi.commercial_api:run_exists=false",
+      "models:registry:versions=0",
+      "models:forecastops:production_alias=0"
+    ],
+    "candidate_passes": [
+      "wif_authentication",
+      "operator_role_configuration",
+      "anonymous_access_denied",
+      "operator_bootstrap_200",
+      "operator_live_provenance",
+      "provider_connectivity",
+      "worker_enqueue",
+      "worker_terminal_success"
+    ]
+  },
+  "automation_classes": {
+    "AUTO_NOW": "Supervisor may dispatch immediately after this pack is merged and no runtime conflict is active.",
+    "AUTO_AFTER_DEPENDENCY": "Supervisor may dispatch when every named dependency has a durable terminal pass.",
+    "AUTO_NOW_STATIC_AND_AUTO_AFTER_DEPENDENCY_RUNTIME": "Supervisor may dispatch static verification immediately, while runtime verification waits for the named deployment dependency.",
+    "CONDITIONAL_AUTO_REMEDIATION": "Coordinator creates or activates only after a diagnosis names the exact root cause and scope.",
+    "HYBRID_HUMAN_GATE": "Auto worker performs inventory, validation, ingestion, training, or evidence work, but a named human input or approval is mandatory.",
+    "AUTO_EVIDENCE_PLUS_HUMAN_SIGNOFF": "Auto worker prepares and verifies the packet; accountable Human/Ops records the decision."
+  },
+  "dispatch_rules": [
+    "dispatch only from committed sources merged to dev",
+    "materialize identical source hashes for owner and reviewer",
+    "use distinct owner and reviewer worker runs",
+    "enforce declared writable and forbidden paths",
+    "stop on other-LLM path task runtime alias or deployment overlap",
+    "do not push or merge dev while Deploy Dev is active",
+    "do not infer human approval",
+    "do not direct-write production data",
+    "do not weaken fail-closed gates",
+    "close only with exact-head evidence CI review and canonical status delivery"
+  ],
+  "common_source_docs": [
+    "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+    "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+    "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json",
+    "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+    "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+    "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json"
+  ],
+  "tasks": [
+    {
+      "order": "T00",
+      "task_id": "ODP-P10-LIVE-FLEET-STATE-REPAIR-001",
+      "title": "Repair canonical Package 10 live-closure task truth",
+      "action": "create",
+      "priority": "P0",
+      "automation_class": "AUTO_NOW",
+      "owner": "Claude2",
+      "reviewer": "Antigravity4",
+      "depends_on": [],
+      "mutates_canonical": true,
+      "source_docs": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json",
+        "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+        "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-FLEET-STATE-REPAIR-001/**"
+      ],
+      "coordination_mutations": [
+        "canonical ai-status through scripts/ai-status.sh",
+        "generated task briefs for this program"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        ".github/**",
+        "docs/design/**",
+        "docs_archive/**"
+      ],
+      "runtime_actions": [
+        "create T10 and T41 with exact pack metadata",
+        "update T20 T21 T30 T42 T50 T60 without replacing history",
+        "probe owner and reviewer source materialization",
+        "reconcile duplicate or missing active/archive task identity"
+      ],
+      "acceptance": [
+        "each summarized task has exactly one canonical resolution",
+        "missing provider-ingestion work is restored durably",
+        "existing task next fields name current run SHA blockers dependencies and resume condition",
+        "owner and reviewer source manifests match",
+        "historical R3 implementation tasks are not reopened",
+        "independent exact-state review passes"
+      ],
+      "stop_conditions": [
+        "active overlapping Deploy Dev mutation",
+        "concurrent task mutation by another LLM",
+        "status writer or archive ambiguity",
+        "destructive recovery required"
+      ]
+    },
+    {
+      "order": "T10",
+      "task_id": "ODP-P10-LIVE-EXTDATA-DIAG-001",
+      "title": "Diagnose successful worker probes with zero persisted ingestion runs",
+      "action": "create",
+      "priority": "P0",
+      "automation_class": "AUTO_NOW",
+      "owner": "Antigravity5",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-P10-LIVE-FLEET-STATE-REPAIR-001"
+      ],
+      "mutates_canonical": true,
+      "source_docs": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/ODP_LIVE_E2E_GATE.md",
+        "docs/evidence/fleet_dispatch/ODP-DEPLOY-WORKER-JOB-EXECUTION-001.md",
+        "docs/design/EXTERNAL_PROVIDER_LIVE_REQUIRED_RECONCILIATION.md"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-DIAG-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "scripts/**",
+        "tests/**",
+        ".github/**",
+        ".orchestrator/**",
+        "models/**",
+        "docs/design/**",
+        "docs_archive/**"
+      ],
+      "runtime_actions": [
+        "capture redacted exact-SHA deploy artifacts and Cloud Logging",
+        "resolve worker job execution payload tenant release and correlation identity",
+        "prove API and worker bind the same Secret Manager database reference",
+        "compare PG16 fetch ingestion snapshot watermark audit and job records read-only",
+        "trace deployed ingestion and persistence factory selection",
+        "run supported governed provider ingestion only after identity equality is proven"
+      ],
+      "acceptance": [
+        "one evidence-backed root cause explains worker success and API runs=0",
+        "release tenant schema store correlation and provider identities are proven and redacted",
+        "both required snapshot providers have a disposition",
+        "runtime-only closure yields non-empty succeeded lineage-complete API-readable runs",
+        "code or config need produces exact T11 handoff and no patch in T10",
+        "review proves no direct DB write fake data or secret disclosure"
+      ],
+      "stop_conditions": [
+        "active Deploy Dev run",
+        "runtime data mutation by another worker",
+        "code or configuration edit required",
+        "provider policy or source permission unclear"
+      ]
+    },
+    {
+      "order": "T11",
+      "task_id": "ODP-P10-LIVE-EXTDATA-REMEDIATE-001",
+      "title": "Correct diagnosed external-data persistence or readback defect",
+      "action": "conditional_create",
+      "priority": "P0",
+      "automation_class": "CONDITIONAL_AUTO_REMEDIATION",
+      "owner": "coordinator_selects_Claude2_or_Antigravity5_from_root_cause",
+      "reviewer": "Antigravity6",
+      "depends_on": [
+        "ODP-P10-LIVE-EXTDATA-DIAG-001"
+      ],
+      "creation_condition": "T10 proves code or runtime configuration remediation is required",
+      "mutates_canonical": true,
+      "source_docs": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-DIAG-001/"
+      ],
+      "writable_path_ceiling": [
+        "modules/external_data/application/**",
+        "modules/external_data/workers/**",
+        "shared/infrastructure/persistence/**external_data**",
+        "apps/worker/oday_worker/**",
+        "apps/api/app/routes/external_data.py",
+        "focused tests matching the diagnosed path",
+        "docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-REMEDIATE-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/web/**",
+        "docs/design/**",
+        "docs_archive/**",
+        "models/**",
+        "auth and RBAC surfaces",
+        "deployment workflows unless coordinator amends exact scope"
+      ],
+      "acceptance": [
+        "deterministic regression reproduces worker success with missing API run",
+        "smallest fix makes worker and API share one durable run",
+        "real candidate produces both required provider runs with lineage",
+        "retry idempotency DQ tenant audit and failure classification remain fail closed",
+        "focused integration live-gate Ruff diff and exact-head CI pass",
+        "independent review and rollback evidence pass"
+      ]
+    },
+    {
+      "order": "T20",
+      "task_id": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+      "title": "Backfill authoritative ForecastOps daily history for canonical horizons",
+      "action": "update_existing",
+      "priority": "P0",
+      "automation_class": "HYBRID_HUMAN_GATE",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-P10-LIVE-FLEET-STATE-REPAIR-001"
+      ],
+      "mutates_canonical": true,
+      "auto_worker_actions": [
+        "inventory accessible authoritative sources",
+        "report tenant store date lineage and missing windows",
+        "produce field-complete Human/Ops handback only when needed",
+        "governed backfill from an already authorized immutable source",
+        "verify point-in-time safety and canonical horizon completeness"
+      ],
+      "human_inputs": [
+        "authoritative source and accountable owner when not already accessible",
+        "immutable source boundary or snapshot hash",
+        "permitted use tenant store scope and cutoff",
+        "business-authority discrepancy decisions"
+      ],
+      "forbidden": [
+        "fixture or synthetic history",
+        "duplicated dates or repeated windows",
+        "auto-seed",
+        "immature rows relabeled eligible"
+      ],
+      "acceptance": [
+        "complete 7 14 and 28 day windows per eligible store",
+        "durable before after counts dates hashes eligibility and lineage",
+        "no fabricated or immature production eligibility",
+        "missing human input produces a field-complete handback packet"
+      ]
+    },
+    {
+      "order": "T21",
+      "task_id": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "title": "Release governed ForecastOps production model binding",
+      "action": "update_existing",
+      "priority": "P0",
+      "automation_class": "HYBRID_HUMAN_GATE",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+      ],
+      "mutates_canonical": true,
+      "auto_worker_actions": [
+        "train from authentic eligible history",
+        "run temporal and business evaluation",
+        "create model card lineage rollback and shadow evidence",
+        "register candidate version",
+        "move production alias only after exact-version human approval",
+        "run live inference smoke"
+      ],
+      "human_inputs": [
+        "model and data owner approval for exact registered version",
+        "risk and quality acceptance",
+        "rejection reason when thresholds are not met"
+      ],
+      "forbidden": [
+        "worker self-approval",
+        "invented model version",
+        "empty or fabricated alias",
+        "threshold waiver without authority"
+      ],
+      "acceptance": [
+        "current exact-dev gate defines required active capabilities",
+        "ForecastOps resolves exactly one approved production alias",
+        "alias movement cites durable exact-version human approval",
+        "inference rollback temporal validation and no-auto-seed pass",
+        "other capabilities remain governed-disabled unless authentic current requirements are met"
+      ]
+    },
+    {
+      "order": "T30",
+      "task_id": "ODP-P10-DEV-REDEPLOY-VERIFY-001",
+      "title": "Redeploy dev and prove Package 10 Operator runtime parity",
+      "action": "update_existing",
+      "priority": "P0",
+      "automation_class": "AUTO_AFTER_DEPENDENCY",
+      "owner": "Antigravity3",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-P10-LIVE-EXTDATA-DIAG-001",
+        "ODP-PRODUCTION-MODEL-REGISTRY-001"
+      ],
+      "conditional_depends_on": [
+        {
+          "task_id": "ODP-P10-LIVE-EXTDATA-REMEDIATE-001",
+          "when": "ODP-P10-LIVE-EXTDATA-DIAG-001 proves code or configuration remediation is required"
+        }
+      ],
+      "mutates_canonical": true,
+      "runtime_actions": [
+        "deploy exact current origin/dev SHA without concurrent dev merge",
+        "verify migration worker scheduler smoke and authenticated live E2E",
+        "verify Cloud Run revision labels traffic and public versions",
+        "verify Operator API provider runs and model binding",
+        "preserve rollback and validation artifacts"
+      ],
+      "acceptance": [
+        "Deploy Dev succeeds without rollback",
+        "API Web image revision and public SHA agree",
+        "public health is healthy",
+        "Operator bootstrap is live tenant-correct and fail closed",
+        "provider runs and ForecastOps alias are visible",
+        "failure captures evidence and rollback without product patching"
+      ]
+    },
+    {
+      "order": "T40",
+      "task_id": "ODP-P10-LIVE-VISUAL-PARITY-001",
+      "title": "Verify all Package 10 screens against the promoted canonical HTML",
+      "action": "create",
+      "priority": "P0",
+      "automation_class": "AUTO_AFTER_DEPENDENCY",
+      "owner": "Claude",
+      "reviewer": "Antigravity4",
+      "depends_on": [
+        "ODP-P10-DEV-REDEPLOY-VERIFY-001"
+      ],
+      "mutates_canonical": true,
+      "source_docs": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-VISUAL-PARITY-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "scripts/**",
+        "tests/**",
+        ".github/**",
+        ".orchestrator/**",
+        "docs/design/**",
+        "docs_archive/**"
+      ],
+      "runtime_actions": [
+        "authenticated Playwright or agent-browser verification",
+        "desktop tablet and mobile screenshots",
+        "DOM layout overflow console network accessibility and API correlation",
+        "compare all 40 contracts to archived HTML and page diff"
+      ],
+      "acceptance": [
+        "all 40 contracts have route workspace state viewport and result",
+        "exact-SHA screenshots exist for required desktop and mobile states",
+        "no unintended loading seed fallback error or old shell survives",
+        "API-bound views have request response provenance tenant and correlation evidence",
+        "layout responsive accessibility console and network checks pass",
+        "mismatch opens a separate remediation task and does not weaken assertions"
+      ]
+    },
+    {
+      "order": "T41",
+      "task_id": "ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+      "title": "Reprove 117 retired paths and legacy visuals on current dev and live SHA",
+      "action": "create",
+      "priority": "P0",
+      "automation_class": "AUTO_NOW_STATIC_AND_AUTO_AFTER_DEPENDENCY_RUNTIME",
+      "owner": "Claude2",
+      "reviewer": "Antigravity6",
+      "depends_on": [
+        "ODP-P10-LIVE-FLEET-STATE-REPAIR-001"
+      ],
+      "phase_dependencies": {
+        "static_verification": [
+          "ODP-P10-LIVE-FLEET-STATE-REPAIR-001"
+        ],
+        "runtime_verification": [
+          "ODP-P10-DEV-REDEPLOY-VERIFY-001"
+        ]
+      },
+      "mutates_canonical": true,
+      "source_docs": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
+        "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "scripts/**",
+        "tests/**",
+        ".github/**",
+        ".orchestrator/**",
+        "docs/design/**",
+        "docs_archive/**"
+      ],
+      "acceptance": [
+        "117 unique retired paths are reconstructed from committed ACKs",
+        "current dev has zero executable survivor selector alternate detail old identity retired import or legacy spec resurrection",
+        "final live routes are absent or redirect without serving old code",
+        "runtime chunk and import graphs cannot execute retired implementation",
+        "evidence binds current dev and final public SHA rather than historical head alone"
+      ]
+    },
+    {
+      "order": "T42",
+      "task_id": "ODP-PLAN-LIVE-STAGING-PROOF-001",
+      "title": "Obtain exact-SHA live staging end-to-end proof",
+      "action": "update_existing",
+      "priority": "P0",
+      "automation_class": "AUTO_AFTER_DEPENDENCY",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-P10-DEV-REDEPLOY-VERIFY-001"
+      ],
+      "acceptance": [
+        "consume T30 T40 and T41 exact-SHA evidence",
+        "prove browser API PG16 provider model and response representative flows",
+        "preserve WORM audit correlation and rollback receipts",
+        "exclude fixture mock seed and local-only evidence"
+      ]
+    },
+    {
+      "order": "T50",
+      "task_id": "ODP-PLAN-UAT-SIGNOFF-001",
+      "title": "Complete Package 10 UAT packet and accountable signoff",
+      "action": "update_existing",
+      "priority": "P0",
+      "automation_class": "AUTO_EVIDENCE_PLUS_HUMAN_SIGNOFF",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "depends_on": [
+        "ODP-P10-LIVE-VISUAL-PARITY-001",
+        "ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+        "ODP-PLAN-LIVE-STAGING-PROOF-001"
+      ],
+      "auto_worker_actions": [
+        "prepare exact-SHA UAT checklist",
+        "index screen API data model and retirement evidence",
+        "record deviations risk steps and correlation IDs"
+      ],
+      "human_inputs": [
+        "product and UAT owner approve or reject the exact public SHA with reason"
+      ]
+    },
+    {
+      "order": "T60",
+      "task_id": "ODP-PLAN-FINAL-GATE-AUDIT-001",
+      "title": "Audit final release gates and record release decision",
+      "action": "update_existing",
+      "priority": "P0",
+      "automation_class": "AUTO_EVIDENCE_PLUS_HUMAN_SIGNOFF",
+      "owner": "Antigravity2",
+      "reviewer": "Human/Ops",
+      "depends_on": [
+        "ODP-PLAN-UAT-SIGNOFF-001"
+      ],
+      "auto_worker_actions": [
+        "verify dependency receipts exact SHA model alias source hashes CI rollback security audit and no open P0",
+        "produce final GO or NO-GO recommendation with exceptions"
+      ],
+      "human_inputs": [
+        "accountable release owner final production risk decision"
+      ],
+      "forbidden": [
+        "implicit approval",
+        "gate waiver without organizational authority",
+        "release claim without exact public readback"
+      ]
+    }
+  ],
+  "human_only_boundaries": [
+    {
+      "id": "H01",
+      "name": "authoritative_forecast_history_authority",
+      "required_when": "T20 cannot find an already authorized accessible source",
+      "inputs": [
+        "source system and accountable owner",
+        "immutable snapshot URI hash or governed query boundary",
+        "permitted use and tenant store scope",
+        "date coverage cutoff and exclusions",
+        "attestation timestamp"
+      ]
+    },
+    {
+      "id": "H02",
+      "name": "model_promotion_approval",
+      "required_when": "T21 candidate is registered and evidence is complete",
+      "inputs": [
+        "exact model and version decision",
+        "data snapshot hash and cutoff",
+        "evaluation and business threshold acceptance",
+        "rollback version and monitoring plan"
+      ]
+    },
+    {
+      "id": "H03",
+      "name": "design_and_uat_acceptance",
+      "required_when": "T40 T41 and T42 pass",
+      "inputs": [
+        "exact public SHA approve or reject",
+        "intentional design deviations and rationale"
+      ]
+    },
+    {
+      "id": "H04",
+      "name": "final_release_risk_decision",
+      "required_when": "T60 audit is complete",
+      "inputs": [
+        "GO or NO-GO for exact release SHA",
+        "authorized waiver record if organizational policy permits one"
+      ]
+    },
+    {
+      "id": "H05",
+      "name": "conditional_privileged_operations",
+      "required_when": "IAM legal provider policy destructive repair billing quota or secret policy changes are needed",
+      "inputs": [
+        "explicit scoped authorization and accountable actor"
+      ]
+    }
+  ],
+  "auto_workers_must_never": [
+    "invent synthesize duplicate or relabel authoritative history",
+    "attest data ownership licensing or provider terms without authority",
+    "self-approve model design UAT or release risk",
+    "waive fail-closed deployment security tenant source audit or lineage gates",
+    "direct-insert or rewrite production PG16 data to satisfy a gate",
+    "grant themselves IAM or secret authority",
+    "claim public completion from candidate or historical static evidence"
+  ],
+  "other_llm_conflicts": [
+    {
+      "claim": "external-data only needs one ingestion execution",
+      "conflict": "worker execution passed while durable API readback returned zero",
+      "resolution": "run T10 before deciding runtime-only or T11 remediation"
+    },
+    {
+      "claim": "public rollback health defines current exact-dev model blockers",
+      "conflict": "public 8ec12c02 uses old runtime logic",
+      "resolution": "use exact candidate deploy artifact for current blockers and public payload only for shared environment facts"
+    },
+    {
+      "claim": "historical R3 implementation pack should restart",
+      "conflict": "later code already contains those waves",
+      "resolution": "use historical pack as source authority and dispatch only this live-closure graph"
+    },
+    {
+      "claim": "worker terminal success proves ingestion",
+      "conflict": "API and durable store returned zero runs",
+      "resolution": "require PG16 plus authenticated API lineage readback"
+    }
+  ],
+  "program_exit_criteria": [
+    "origin dev API Web image labels and public version agree on one SHA",
+    "Deploy Dev succeeds without rollback",
+    "required provider runs are authentic non-empty lineage-complete and API-readable",
+    "ForecastOps resolves exactly one approved production alias and inference passes",
+    "Operator bootstrap is live tenant-correct non-placeholder and fail closed",
+    "all 40 Package 10 contracts pass with exact-SHA screenshots and API correlation",
+    "all 117 retired paths remain non-executable or correctly redirected",
+    "accessibility console network audit rollback and durable deep-link checks pass",
+    "independent exact-head review passes",
+    "required human UAT model and release decisions identify exact versions and are durable"
+  ]
+}
