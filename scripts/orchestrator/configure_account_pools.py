@@ -84,7 +84,11 @@ def configure(config: dict[str, Any]) -> dict[str, Any]:
     }
     ready["max_concurrent_workers"] = 10
     ready["max_dispatches_per_tick"] = min(10, max(1, int(ready.get("max_dispatches_per_tick", 10))))
-    config.setdefault("worker_worktrees", {})["recover_clean_diverged_worktrees"] = True
+    worktrees = config.setdefault("worker_worktrees", {})
+    worktrees["recover_clean_diverged_worktrees"] = True
+    # Bound remote worktree preflight so one wedged GitHub HTTPS request cannot
+    # consume the entire supervisor tick.
+    worktrees["git_network_timeout_seconds"] = 20
     return config
 
 
