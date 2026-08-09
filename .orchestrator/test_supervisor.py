@@ -308,8 +308,103 @@ class AccountPoolSchedulingTests(unittest.TestCase):
             self.assertTrue(supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}}, provider_report={}))
         self.assertEqual([event["task_id"] for event in queued], ["HIGH-SECOND"])
 
+    def test_slot_worker_matches_its_logical_owner_not_slot_display_name(self) -> None:
+        config = self._config()
+        config["agents"]["ag_slot_1"]["display_name"] = "ag_slot_1"
+        task_map = {"TASK-1": {"id": "TASK-1", "status": "todo", "owner": "Antigravity", "reviewer": "Codex"}}
+        worker = {
+            "task_id": "TASK-1",
+            "agent_id": "ag_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+        }
+        self.assertTrue(supervisor.worker_matches_current_assignment(config, worker, task_map))
+
+    def test_quota_cooldown_recovers_through_one_canary_then_full_capacity(self) -> None:
+        config = self._config()
+        state: dict[str, Any] = {}
+        worker = {"run_id": "run-1", "task_id": "TASK-1", "logical_agent_id": "antigravity"}
+        past = datetime.now(UTC) - timedelta(seconds=1)
+        with mock.patch.object(supervisor, "write_activity_log"):
+            self.assertTrue(
+                supervisor.mark_account_pool_cooldown(
+                    config,
+                    state,
+                    worker,
+                    "quota exhausted",
+                    failure_kind="quota_terminal",
+                    blocked_until=past,
+                )
+            )
+            self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "antigravity"), 1)
+            self.assertEqual(state["account_pool_runtime"]["antigravity_main"]["state"], "recovering")
+            self.assertTrue(supervisor.record_account_pool_canary_success(config, state, worker))
+            self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "antigravity"), 2)
+            self.assertEqual(state["account_pool_runtime"]["antigravity_main"]["state"], "healthy")
+
+    def test_reviewer_failover_excludes_owner_and_exhausted_pool(self) -> None:
+        config = self._config()
+        config["account_pools"]["codex_pool"] = {"max_concurrent": 1, "state": "healthy"}
+        config["agents"]["codex_reviewer"] = {
+            "id": "codex_reviewer", "display_name": "CodexReviewer", "provider": "codex", "account_pool": "codex_pool"
+        }
+        selected = supervisor.first_viable_agent(
+            config,
+            ["Antigravity2", "CodexReviewer"],
+            exclude={"Antigravity"},
+            state={"workers": {}},
+            task={"id": "TASK-1", "task_class": "implementation"},
+            role="reviewer",
+            exclude_pools={"antigravity_main"},
+        )
+        self.assertEqual(selected, "CodexReviewer")
+
+    def test_quota_failure_fences_sibling_slots_and_hands_off(self) -> None:
+        config = self._config()
+        triggering = {
+            "run_id": "run-1", "task_id": "TASK-1", "logical_agent_id": "antigravity", "status": "running",
+        }
+        sibling = {
+            "run_id": "run-2", "task_id": "TASK-2", "logical_agent_id": "antigravity2", "status": "running",
+        }
+        state = {"workers": {"run-1": triggering, "run-2": sibling}, "queue": {"events": {}}}
+        with (
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value="CodexReviewer") as reassign,
+            mock.patch.object(supervisor, "finalize_queue_event_record"),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertEqual(
+                supervisor.fence_account_pool_workers(config, state, triggering, "quota exhausted"),
+                1,
+            )
+        self.assertEqual(sibling["status"], "reassigned")
+        self.assertEqual(sibling["reassigned_to"], "CodexReviewer")
+        reassign.assert_called_once()
+
 
 class CleanDivergedWorktreeRecoveryTests(unittest.TestCase):
+    def test_ahead_only_branch_is_never_reset_by_divergence_recovery(self) -> None:
+        config = {"ready_dispatcher": {"active_worker_statuses": ["running"]}}
+        with (
+            mock.patch.object(supervisor, "_git_commit_oid", side_effect=["local-head", "remote-head"]),
+            mock.patch.object(
+                supervisor,
+                "_git_output",
+                side_effect=[(0, ""), (1, ""), (0, "")],
+            ) as git_output,
+        ):
+            recovered, detail = supervisor._preserve_and_reset_clean_diverged_worktree(
+                config,
+                {"workers": {}},
+                Path("/nonexistent-worktree"),
+                "TASK-1",
+                "task/TASK-1",
+            )
+        self.assertFalse(recovered)
+        self.assertEqual(detail, "branch is not a genuine local/remote divergence")
+        self.assertEqual(git_output.call_count, 3)
+
     def test_preserves_local_tip_before_resetting_to_remote_task_head(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

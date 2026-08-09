@@ -19,13 +19,9 @@ from typing import Any
 POOL_CONFIG: dict[str, dict[str, Any]] = {
     "antigravity_main": {"state": "healthy", "max_concurrent": 3},
     "claude_main": {"state": "healthy", "max_concurrent": 2},
-    "codex_bjoe": {
-        "state": "exhausted",
-        "max_concurrent": 0,
-        "reason": "known exhausted Codex quota; do not dispatch until an operator enables it",
-    },
+    "codex_bjoe": {"state": "healthy", "max_concurrent": 3},
     "codex_lupin": {"state": "healthy", "max_concurrent": 2},
-    "codex_ajoe": {"state": "healthy", "max_concurrent": 3},
+    "codex_ajoe": {"state": "disabled", "max_concurrent": 0},
 }
 
 
@@ -58,9 +54,9 @@ def configure(config: dict[str, Any]) -> dict[str, Any]:
         "claude_slot_2": ("claude", "claude_main"),
         "codex_lupin_slot_1": ("codex2", "codex_lupin"),
         "codex_lupin_slot_2": ("codex2", "codex_lupin"),
-        "codex_ajoe_slot_1": ("codex", "codex_ajoe"),
-        "codex_ajoe_slot_2": ("codex", "codex_ajoe"),
-        "codex_ajoe_slot_3": ("codex", "codex_ajoe"),
+        "codex_bjoe_slot_1": ("codex", "codex_bjoe"),
+        "codex_bjoe_slot_2": ("codex", "codex_bjoe"),
+        "codex_bjoe_slot_3": ("codex", "codex_bjoe"),
     }
     for slot_id, (provider, pool) in slots.items():
         adapter = "claude_cli" if provider == "claude" else ("codex" if provider.startswith("codex") else "antigravity")
@@ -73,6 +69,8 @@ def configure(config: dict[str, Any]) -> dict[str, Any]:
             "dispatch_slot_for_pool": pool,
             "slot_id": slot_id,
         }
+    for slot_id in ("codex_ajoe_slot_1", "codex_ajoe_slot_2", "codex_ajoe_slot_3"):
+        agents.pop(slot_id, None)
 
     ready = config.setdefault("ready_dispatcher", {})
     active = ready.get("active_worker_statuses", [])
@@ -80,9 +78,9 @@ def configure(config: dict[str, Any]) -> dict[str, Any]:
     ready["max_concurrent_per_quota_group"] = {
         "antigravity_main": 3,
         "claude_main": 2,
-        "codex_bjoe": 0,
+        "codex_bjoe": 3,
         "codex_lupin": 2,
-        "codex_ajoe": 3,
+        "codex_ajoe": 0,
     }
     ready["max_concurrent_workers"] = 10
     ready["max_dispatches_per_tick"] = min(10, max(1, int(ready.get("max_dispatches_per_tick", 10))))
