@@ -49,6 +49,9 @@ COMMENT_MARKER = "<!-- pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
 # remote -> (snapshot_expires_at, refs, last_successful_probe_at), monotonic seconds.
 _REMOTE_BRANCH_SNAPSHOTS: dict[str, tuple[float, frozenset[str], float]] = {}
+# remote -> (snapshot_expires_at, heads_dict, last_successful_probe_at), monotonic seconds.
+_REMOTE_HEAD_SNAPSHOTS: dict[str, tuple[float, dict[str, str], float]] = {}
+
 
 
 class GitHubBusError(RuntimeError):
@@ -310,6 +313,7 @@ def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
 def clear_remote_branch_snapshot_cache() -> None:
     """Clear cached remote refs (primarily for deterministic tests)."""
     _REMOTE_BRANCH_SNAPSHOTS.clear()
+    _REMOTE_HEAD_SNAPSHOTS.clear()
 
 
 def remote_branch_snapshot_ttl_seconds() -> float:
@@ -347,16 +351,23 @@ def parse_remote_head_names(stdout: str) -> frozenset[str]:
     return frozenset(names)
 
 
-def remote_branch_names(remote: str = "origin") -> frozenset[str]:
-    """Read remote heads once per short TTL instead of probing every task branch.
+def parse_remote_heads(stdout: str) -> dict[str, str]:
+    """Extract branch names and commit SHAs from ``git ls-remote --heads`` output."""
+    heads: dict[str, str] = {}
+    for line in stdout.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        sha, ref = parts[0].strip(), parts[1].strip()
+        if ref.startswith("refs/heads/") and sha:
+            heads[ref.removeprefix("refs/heads/")] = sha
+    return heads
 
-    A supervisor tick can inspect dozens of task branches.  Repeating
-    ``git ls-remote`` for each one turns a transient network stall into an
-    O(tasks × timeout) heartbeat delay.  A short-lived snapshot keeps the same
-    per-branch answers while making that delay bounded per remote.
-    """
+
+def remote_branch_heads(remote: str = "origin") -> dict[str, str]:
+    """Read remote heads once per short TTL instead of probing every task branch."""
     now = time.monotonic()
-    cached = _REMOTE_BRANCH_SNAPSHOTS.get(remote)
+    cached = _REMOTE_HEAD_SNAPSHOTS.get(remote)
     if cached and now < cached[0]:
         return cached[1]
     ttl = remote_branch_snapshot_ttl_seconds()
@@ -368,20 +379,23 @@ def remote_branch_names(remote: str = "origin") -> frozenset[str]:
     except subprocess.TimeoutExpired:
         proc = None
     if proc is not None and proc.returncode == 0:
-        refs = parse_remote_head_names(proc.stdout or "")
-        _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, refs, now)
-        return refs
-    # A failed probe says nothing about which branches the remote has. Caching
-    # an empty set would report every published branch as unpublished, and one
-    # such false negative freezes that task for unpublished_branch_recheck_seconds
-    # -- far longer than the outage that caused it. Serve the last good refs for
-    # a bounded window instead, then fail closed as an unprobed remote would.
+        heads = parse_remote_heads(proc.stdout or "")
+        _REMOTE_HEAD_SNAPSHOTS[remote] = (now + ttl, heads, now)
+        _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, frozenset(heads.keys()), now)
+        return heads
     last_success = cached[2] if cached else float("-inf")
-    refs = frozenset()
+    heads = {}
     if cached and now - last_success < remote_branch_snapshot_max_stale_seconds():
-        refs = cached[1]
-    _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, refs, last_success)
-    return refs
+        heads = cached[1]
+    _REMOTE_HEAD_SNAPSHOTS[remote] = (now + ttl, heads, last_success)
+    _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, frozenset(heads.keys()), last_success)
+    return heads
+
+
+def remote_branch_names(remote: str = "origin") -> frozenset[str]:
+    """Read remote head names once per short TTL instead of probing every task branch."""
+    heads = remote_branch_heads(remote)
+    return frozenset(heads.keys())
 
 
 def run_gh_process(

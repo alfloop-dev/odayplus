@@ -9297,6 +9297,80 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertTrue(status.startswith("unverifiable_refs:"), status)
 
 
+class BatchSupervisorRemoteRefSnapshotTests(unittest.TestCase):
+    def setUp(self) -> None:
+        supervisor._clear_remote_head_snapshot_cache()
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.origin = root / "origin.git"
+        seed = root / "seed"
+        self.repo_root = root / "supervisor"
+        self.worktree = root / "worker"
+
+        subprocess.run(["git", "init", "--bare", str(self.origin)], check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "dev", str(seed)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(seed), "config", "user.name", "Supervisor Test"], check=True)
+        subprocess.run(["git", "-C", str(seed), "config", "user.email", "test@example.invalid"], check=True)
+        (seed / "file.txt").write_text("hello\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(seed), "add", "file.txt"], check=True)
+        subprocess.run(["git", "-C", str(seed), "commit", "-m", "init"], check=True)
+        subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(self.origin)], check=True)
+        subprocess.run(["git", "-C", str(seed), "push", "-u", "origin", "dev"], check=True)
+
+        self.task_branch = "task/ODP-BATCH-TEST-001"
+        subprocess.run(["git", "-C", str(seed), "checkout", "-b", self.task_branch], check=True, capture_output=True)
+        (seed / "task.txt").write_text("task\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(seed), "add", "task.txt"], check=True)
+        subprocess.run(["git", "-C", str(seed), "commit", "-m", "task commit"], check=True)
+        subprocess.run(["git", "-C", str(seed), "push", "-u", "origin", self.task_branch], check=True)
+        self.task_head = subprocess.run(["git", "-C", str(seed), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+
+        subprocess.run(["git", "clone", "--branch", "dev", str(self.origin), str(self.repo_root)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.repo_root), "worktree", "add", "-b", self.task_branch, str(self.worktree)], check=True, capture_output=True)
+
+    def tearDown(self) -> None:
+        supervisor._clear_remote_head_snapshot_cache()
+        self.tmp.cleanup()
+
+    def test_remote_head_snapshot_batches_probes(self) -> None:
+        supervisor._clear_remote_head_snapshot_cache()
+        real_run_cmd = supervisor._run_git_network_command
+        ls_remote_calls = []
+
+        def spy_run_cmd(cwd, args, **kwargs):
+            if "ls-remote" in args and "--heads" in args:
+                ls_remote_calls.append(args)
+            return real_run_cmd(cwd, args, **kwargs)
+
+        with mock.patch.object(supervisor, "_run_git_network_command", side_effect=spy_run_cmd):
+            head1, source1 = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, self.task_branch)
+            head2, source2 = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, self.task_branch)
+            ok, status = supervisor._refresh_reused_worker_worktree(self.repo_root, self.worktree, "origin/dev", self.task_branch)
+
+        self.assertEqual(head1, self.task_head)
+        self.assertEqual(head2, self.task_head)
+        self.assertTrue(ok)
+        self.assertEqual(len(ls_remote_calls), 1)
+
+    def test_missing_remote_task_branch_via_snapshot(self) -> None:
+        supervisor._clear_remote_head_snapshot_cache()
+        head, source = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, "task/NON-EXISTENT-BRANCH-999")
+        self.assertIsNone(head)
+        self.assertEqual(source, "unverifiable_refs: remote task branch is missing")
+
+    def test_advertised_head_mismatch_fails_closed(self) -> None:
+        supervisor._clear_remote_head_snapshot_cache()
+        fake_heads = {self.task_branch: "0" * 40}
+        with mock.patch.object(supervisor, "_get_remote_heads_snapshot", return_value=(fake_heads, "ok")):
+            head, source = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, self.task_branch)
+            self.assertIsNone(head)
+            self.assertIn("fetched remote task HEAD does not match advertised HEAD", source)
+
+            ok, status = supervisor._refresh_reused_worker_worktree(self.repo_root, self.worktree, "origin/dev", self.task_branch)
+            self.assertFalse(ok)
+            self.assertIn("fetched remote task HEAD does not match advertised HEAD", status)
+
+
 class WorkerReassignmentTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
