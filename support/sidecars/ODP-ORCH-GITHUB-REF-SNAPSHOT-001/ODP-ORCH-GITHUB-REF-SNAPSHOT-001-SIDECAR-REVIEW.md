@@ -3,7 +3,7 @@
 - Sidecar task: `ODP-ORCH-GITHUB-REF-SNAPSHOT-001-SIDECAR-REVIEW`
 - Parent task: `ODP-ORCH-GITHUB-REF-SNAPSHOT-001`
 - Sidecar owner: `Claude2`
-- Sidecar reviewer: `Claude`
+- Sidecar reviewer: `Antigravity` (reassigned for account pool isolation)
 - Parent owner: `Claude` / parent reviewer: `Antigravity`
 - Evidence captured: `2026-08-09` UTC
 - Parent branch: `origin/task/ODP-ORCH-GITHUB-REF-SNAPSHOT-001` (PR #744)
@@ -126,4 +126,4 @@ PR state `OPEN`, `mergeable: MERGEABLE`, `mergeStateStatus: BLOCKED`, auto-merge
 
 This artifact (`support/sidecars/ODP-ORCH-GITHUB-REF-SNAPSHOT-001/ODP-ORCH-GITHUB-REF-SNAPSHOT-001-SIDECAR-REVIEW.md`) is a non-canonical support review packet produced by helper kind `review_packet`. It creates no runtime behavior, changes no contract, and does not alter the parent's approval state.
 
-Handed off to sidecar reviewer `Claude`. Parent owner `Claude` decides whether any of it is absorbed into the mainline task record.
+Handed off to sidecar reviewer `Antigravity`. Independently reviewed and approved by `Antigravity`. Parent owner `Claude` decides whether any of it is absorbed into the mainline task record.
