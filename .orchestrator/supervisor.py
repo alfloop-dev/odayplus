@@ -98,6 +98,7 @@ from dispatch_policy import (
     is_execution_dispatch_reason,
     normalized_status_set,
     ready_dispatch_settings,
+    task_priority_rank,
 )
 from github_bus import sync_github_bus
 from provider_permissions import (
@@ -871,8 +872,57 @@ def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
 
 
 def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
+    """Return the real account pool for an execution identity.
+
+    `quota_group` was historically provider-scoped, which made aliases such as
+    Antigravity2..7 look like independent accounts.  An explicit agent
+    `account_pool` is authoritative and lets multiple logical roles share one
+    provider account, quota budget, and worker-slot set.
+    """
+    normalized = normalize_agent_id(agent_id or "")
+    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
+    explicit_pool = agent.get("account_pool") or agent.get("quota_group")
+    if explicit_pool:
+        return normalize_agent_id(str(explicit_pool))
     provider_id = agent_provider_id(config, agent_id)
     return provider_dispatch_group_id(config, provider_id or agent_id)
+
+
+def account_pool_settings(config: dict[str, Any], agent_id: str | None) -> tuple[str, dict[str, Any]]:
+    """Return the configured real-account pool for an execution identity.
+
+    Logical names are deliberately not a scheduling resource.  A pool is the
+    credential/account that actually consumes quota; aliases and dispatch slots
+    therefore resolve to the same entry here.
+    """
+    pool_id = agent_quota_group_id(config, agent_id)
+    pools = config.get("account_pools", {}) or {}
+    raw = pools.get(pool_id, {}) if isinstance(pools, dict) else {}
+    return pool_id, raw if isinstance(raw, dict) else {}
+
+
+def account_pool_dispatch_block_reason(config: dict[str, Any], agent_id: str | None) -> str | None:
+    pool_id, pool = account_pool_settings(config, agent_id)
+    if not pool_id:
+        return None
+    if pool and pool.get("enabled") is False:
+        return f"account pool {pool_id} is disabled"
+    state = str(pool.get("state") or "").strip().lower()
+    if state in {"disabled", "exhausted", "cooldown", "paused"}:
+        detail = str(pool.get("reason") or "").strip()
+        return f"account pool {pool_id} is {state}" + (f": {detail}" if detail else "")
+    return None
+
+
+def agent_account_pool_id(config: dict[str, Any], agent_id: str | None) -> str:
+    """Semantic alias used for independence checks and dashboard reporting."""
+    return agent_quota_group_id(config, agent_id)
+
+
+def review_is_independent(config: dict[str, Any], owner: str | None, reviewer: str | None) -> bool:
+    owner_pool = agent_account_pool_id(config, owner)
+    reviewer_pool = agent_account_pool_id(config, reviewer)
+    return bool(owner_pool and reviewer_pool and owner_pool != reviewer_pool)
 
 
 def active_quota_group_counts(
@@ -930,6 +980,12 @@ def quota_group_concurrency_limit(
     settings = settings or ready_dispatch_settings(config)
     raw = settings.get("max_concurrent_per_quota_group")
     group_id = agent_quota_group_id(config, agent_id)
+    _pool_id, pool = account_pool_settings(config, agent_id)
+    if pool.get("max_concurrent") not in (None, ""):
+        try:
+            return max(0, int(pool["max_concurrent"]))
+        except (TypeError, ValueError):
+            pass
     if isinstance(raw, dict):
         provider_id = agent_provider_id(config, agent_id)
         display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
@@ -949,7 +1005,13 @@ def quota_group_concurrency_limit(
 
 
 def agent_is_dispatch_slot(agent: dict[str, Any] | None) -> bool:
-    return bool(isinstance(agent, dict) and str(agent.get("dispatch_slot_for") or "").strip())
+    return bool(
+        isinstance(agent, dict)
+        and (
+            str(agent.get("dispatch_slot_for") or "").strip()
+            or str(agent.get("dispatch_slot_for_pool") or "").strip()
+        )
+    )
 
 
 def logical_worker_slot_ids(config: dict[str, Any], agent_id: str | None) -> list[str]:
@@ -972,6 +1034,15 @@ def logical_worker_slot_ids(config: dict[str, Any], agent_id: str | None) -> lis
         if normalized_slot and normalized_slot not in seen:
             seen.add(normalized_slot)
             slot_ids.append(normalized_slot)
+    account_pool = agent_account_pool_id(config, normalized)
+    if account_pool:
+        for slot_id, slot_agent in agents.items():
+            if normalize_agent_id(str((slot_agent or {}).get("dispatch_slot_for_pool") or "")) != account_pool:
+                continue
+            normalized_slot = normalize_agent_id(slot_id)
+            if normalized_slot and normalized_slot not in seen:
+                seen.add(normalized_slot)
+                slot_ids.append(normalized_slot)
     return slot_ids
 
 
@@ -1717,6 +1788,80 @@ def _publish_unpublished_task_branch(
         details = (push_proc.stderr or push_proc.stdout or "").strip().splitlines()
         return False, f"push failed: {details[0] if details else 'unknown'}"
     return True, f"published {local_head[:12]}"
+
+
+def _preserve_and_reset_clean_diverged_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worktree_path: Path,
+    task_id: str | None,
+    expected_branch: str,
+) -> tuple[bool, str]:
+    """Recover a clean diverged task branch without losing its local history.
+
+    A clean branch that is both ahead of and behind its remote cannot be
+    fast-forwarded or safely pushed.  Keeping it in place permanently blocks
+    the task.  When explicitly enabled, retain the complete local tip under an
+    immutable timestamped preservation ref, then reset the leased branch to
+    the remotely published task head.  The operator can recover the preserved
+    commits later, while dispatch proceeds only from the reviewed remote head.
+    """
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    for worker in (state.get("workers", {}) or {}).values():
+        if str(worker.get("status") or "") not in active_statuses:
+            continue
+        if str(worker.get("task_id") or "") == str(task_id or ""):
+            return False, "active worker still owns this task"
+
+    dirty_rc, dirty_out = _git_output(worktree_path, "status", "--porcelain")
+    if dirty_rc != 0 or dirty_out.strip():
+        return False, "worktree is no longer clean"
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    remote_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+    if not local_head or not remote_head or local_head == remote_head:
+        return False, "missing or unchanged task heads"
+    remote_contains_local_rc, _ = _git_output(
+        worktree_path, "merge-base", "--is-ancestor", local_head, remote_head
+    )
+    if remote_contains_local_rc != 1:
+        return False, "branch is not a genuine local/remote divergence"
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    preserved_ref = f"supervisor-preserved/{_task_id_slug(task_id)}-{stamp}-{uuid.uuid4().hex[:8]}"
+    preserve_proc = subprocess.run(
+        ["git", "branch", preserved_ref, local_head],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if preserve_proc.returncode != 0:
+        details = (preserve_proc.stderr or preserve_proc.stdout or "").strip()
+        return False, f"failed to create preservation ref: {details}"
+    reset_proc = subprocess.run(
+        ["git", "reset", "--hard", remote_head],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if reset_proc.returncode != 0 or _git_commit_oid(worktree_path, "HEAD") != remote_head:
+        details = (reset_proc.stderr or reset_proc.stdout or "").strip()
+        return False, f"preserved {preserved_ref}, but reset verification failed: {details}"
+    write_activity_log(
+        config,
+        {
+            "type": "worker_worktree_clean_divergence_recovered",
+            "task_id": task_id,
+            "workspace_path": str(worktree_path),
+            "workspace_branch": expected_branch,
+            "preserved_ref": preserved_ref,
+            "previous_head": local_head,
+            "remote_head": remote_head,
+            "message": "Clean diverged worktree reset to remote task head after preserving local history.",
+        },
+    )
+    return True, f"clean_divergence_recovered:{preserved_ref}"
 
 
 def _refresh_reused_worker_worktree(
@@ -2495,6 +2640,39 @@ def prepare_worker_workspace(
                                     refresh_status = (
                                         f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
                                     )
+                if (
+                    not refresh_ok
+                    and refresh_status.startswith("task_head_mismatch:")
+                    and bool(settings.get("recover_clean_diverged_worktrees", False))
+                ):
+                    recovered, recovery_detail = _preserve_and_reset_clean_diverged_worktree(
+                        config,
+                        state,
+                        worktree_path,
+                        workspace_task_id,
+                        branch,
+                    )
+                    if recovered:
+                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                            repo_root,
+                            worktree_path,
+                            str(settings.get("base_ref") or "origin/dev"),
+                            branch,
+                        )
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_worktree_clean_divergence_recovery_verified",
+                                "task_id": request.task_id,
+                                "target_agent": target_agent,
+                                "queue_event_id": queue_event_id,
+                                "workspace_branch": branch,
+                                "workspace_path": str(worktree_path),
+                                "recovery_detail": recovery_detail,
+                                "refresh_ok": refresh_ok,
+                                "refresh_status": refresh_status,
+                            },
+                        )
                 if not refresh_ok and refresh_status != "skipped_dirty_worktree":
                     # The clean-but-unpublished deadlock. Publishing is only
                     # attempted for fast-forwards on a clean worktree; anything
@@ -2850,7 +3028,10 @@ def start_worker_for_request(
         "logical_agent_id": logical_agent_id,
         "dispatch_slot_id": dispatch_slot_id or None,
         "dispatch_slot": request.metadata.get("dispatch_slot"),
-        "quota_group": provider_dispatch_group_id(config, request.provider),
+        # Keep the credential/account pool captured at dispatch time.  Looking
+        # it up from `request.provider` here used to split one real account
+        # across aliases and let each alias consume a separate quota budget.
+        "quota_group": agent_quota_group_id(config, agent["id"]),
         "task_id": request.task_id,
         "session_id": result.session_id,
         "mode": result.mode,
@@ -3138,9 +3319,28 @@ def process_queue(
             changed = True
             continue
         if not workspace_ok:
-            record["status"] = "pending"
+            # A failed preflight has not leased a process or a slot.  Leaving it
+            # pending turns one bad worktree into head-of-line blocking for the
+            # complete logical agent/account pool.  Preserve the evidence, mark
+            # this event terminal, and let the ready dispatcher consider the
+            # next task immediately.  A later explicit task state/worktree
+            # change produces a new event signature and can retry safely.
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker workspace preflight blocked: {workspace_message}"
             record["last_wait_reason"] = workspace_message
             record["worktree_lease_blocked_at"] = utc_now()
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_preflight_blocked",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": request.provider,
+                    "queue_event_id": event_id,
+                    "message": record["error"],
+                },
+            )
             changed = True
             continue
         request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
@@ -6494,6 +6694,9 @@ def agent_auto_dispatch_block_reason(
         return "missing target agent"
     if agent_dispatch_paused(config, state, normalized_agent):
         return f"dispatch is paused or disabled for {display_name_for(config, normalized_agent) or normalized_agent}"
+    pool_block_reason = account_pool_dispatch_block_reason(config, normalized_agent)
+    if pool_block_reason:
+        return pool_block_reason
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     quota_limit = quota_group_concurrency_limit(config, normalized_agent, settings)
@@ -10536,7 +10739,11 @@ def agent_dispatch_loads(
         priority = dispatch_reason_priority(reason)
         if priority is None:
             continue
-        agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+        # A pool slot is only an execution resource. Attribute its work to the
+        # logical ownership role so role load balancing remains meaningful when
+        # many aliases share a small slot set.
+        logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
+        agent_name = display_name_for(config, logical_agent_id)
         if not agent_name:
             continue
         loads.setdefault(agent_name, []).append(priority)
@@ -10657,7 +10864,8 @@ def reassign_paused_reviewers_to_registered_idle_agents(
             normalize_agent_id(reviewer),
             provider_report,
         )
-        if not reviewer_block_reason:
+        reviewer_same_pool = not review_is_independent(config, owner, reviewer)
+        if not reviewer_block_reason and not reviewer_same_pool:
             continue
 
         replacement = ""
@@ -10673,6 +10881,7 @@ def reassign_paused_reviewers_to_registered_idle_agents(
                 or agent_is_dispatch_slot(candidate_config)
                 or is_human_gate_agent(candidate)
                 or not agent_can_take_task(config, candidate, task)
+                or not review_is_independent(config, owner, candidate)
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
                 or not agent_within_target_workload_for_assignment(
                     status,
@@ -10688,10 +10897,16 @@ def reassign_paused_reviewers_to_registered_idle_agents(
         if not replacement:
             continue
 
-        message = (
-            f"Helper-claimed review by {replacement} while reviewer {reviewer} "
-            f"is dispatch-paused: {reviewer_block_reason}"
-        )
+        if reviewer_same_pool:
+            message = (
+                f"Reassigned review to {replacement}: {reviewer} shares account pool "
+                f"with owner {owner}, so independent review requires a different pool."
+            )
+        else:
+            message = (
+                f"Helper-claimed review by {replacement} while reviewer {reviewer} "
+                f"is dispatch-paused: {reviewer_block_reason}"
+            )
         if not persist_task_reassignment(
             config,
             task_id=task_id,
@@ -11174,7 +11389,10 @@ def dispatch_ready_tasks(
                 continue
         target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
 
-        candidates: list[tuple[int, int, dict[str, Any], str]] = []
+        # Sort first by the business priority carried by the task (P0..P3),
+        # then by lifecycle action (review/finalize/execute), then stable board
+        # order.  The previous implementation ignored task.priority entirely.
+        candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
         helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
@@ -11210,6 +11428,11 @@ def dispatch_ready_tasks(
                 # edited snapshot reaches the Supervisor. Never spend a worker
                 # slot on an approval that would be an owner self-review.
                 if norm_task_owner == norm_task_reviewer:
+                    continue
+                if not review_is_independent(config, str(task_owner or ""), target_agent):
+                    # The reassignment helper above repairs this when another
+                    # healthy pool is available.  Do not write an event on
+                    # every dispatch tick if all alternate pools are busy.
                     continue
                 reason = "review_ready_dispatch"
                 priority = 0
@@ -11441,12 +11664,12 @@ def dispatch_ready_tasks(
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if event["key"] in pending_event_keys:
                 continue
-            candidates.append((priority, index, task, reason))
+            candidates.append((task_priority_rank(task), priority, index, task, reason))
 
-        candidates.sort(key=lambda item: (item[0], item[1]))
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason in candidates[:per_occurrence_limit]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()

@@ -243,6 +243,122 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude2"), 3)
 
 
+class AccountPoolSchedulingTests(unittest.TestCase):
+    def _config(self) -> dict[str, Any]:
+        return {
+            "account_pools": {
+                "antigravity_main": {"max_concurrent": 2, "state": "healthy"},
+                "codex_exhausted": {"enabled": False, "reason": "known exhausted quota"},
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity", "display_name": "Antigravity", "provider": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "antigravity2": {
+                    "id": "antigravity2", "display_name": "Antigravity2", "provider": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "ag_slot_1": {
+                    "id": "ag_slot_1", "display_name": "Antigravity", "provider": "antigravity",
+                    "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main",
+                },
+                "ag_slot_2": {
+                    "id": "ag_slot_2", "display_name": "Antigravity", "provider": "antigravity",
+                    "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main",
+                },
+                "codex": {
+                    "id": "codex", "display_name": "Codex", "provider": "codex",
+                    "account_pool": "codex_exhausted",
+                },
+            },
+            "providers": {"antigravity": {}, "codex": {}},
+            "ready_dispatcher": {"active_worker_statuses": ["running"]},
+        }
+
+    def test_aliases_share_slots_quota_and_review_independence(self) -> None:
+        config = self._config()
+        self.assertEqual(supervisor.logical_worker_slot_ids(config, "antigravity"), ["ag_slot_1", "ag_slot_2"])
+        self.assertEqual(supervisor.logical_worker_slot_ids(config, "antigravity2"), ["ag_slot_1", "ag_slot_2"])
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "antigravity2"), 2)
+        self.assertEqual(supervisor.quota_group_concurrency_limit(config, "antigravity"), 2)
+        self.assertFalse(supervisor.review_is_independent(config, "Antigravity", "Antigravity2"))
+        self.assertIn(
+            "disabled",
+            supervisor.agent_auto_dispatch_block_reason(config, {"workers": {}}, "codex", {}) or "",
+        )
+
+    def test_priority_precedes_lifecycle_and_board_order(self) -> None:
+        config = {
+            "schema": {"tasks_path": "tasks", "task_id_field": "id", "assignee_field": "owner", "reviewer_field": "reviewer"},
+            "ready_dispatcher": {"enabled": True, "max_dispatches_per_tick": 1, "helper_claim": {"enabled": False}},
+            "agents": {"codex": {"id": "codex", "display_name": "Codex", "provider": "codex"}},
+            "providers": {"codex": {}},
+        }
+        status = {"tasks": [
+            {"id": "LOW-FIRST", "status": "todo", "priority": "P3", "owner": "Codex", "reviewer": "Reviewer", "depends_on": []},
+            {"id": "HIGH-SECOND", "status": "todo", "priority": "P0", "owner": "Codex", "reviewer": "Reviewer", "depends_on": []},
+        ]}
+        queued: list[dict[str, Any]] = []
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", side_effect=lambda _config, event: queued.append(event) or True),
+        ):
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, {"queue": {"events": {}}, "workers": {}}, provider_report={}))
+        self.assertEqual([event["task_id"] for event in queued], ["HIGH-SECOND"])
+
+
+class CleanDivergedWorktreeRecoveryTests(unittest.TestCase):
+    def test_preserves_local_tip_before_resetting_to_remote_task_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            remote = root / "remote.git"
+            repo = root / "repo"
+            peer = root / "peer"
+            subprocess.run(["git", "init", "--bare", str(remote)], capture_output=True, check=True)
+            subprocess.run(["git", "clone", str(remote), str(repo)], capture_output=True, check=True)
+            for directory in (repo,):
+                subprocess.run(["git", "config", "user.name", "Test User"], cwd=directory, check=True)
+                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=directory, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo, capture_output=True, check=True)
+            (repo / "README.md").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=repo, capture_output=True, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=repo, capture_output=True, check=True)
+            branch = "task/CLEAN-DIVERGED-001"
+            subprocess.run(["git", "checkout", "-b", branch], cwd=repo, capture_output=True, check=True)
+            subprocess.run(["git", "push", "origin", branch], cwd=repo, capture_output=True, check=True)
+            (repo / "local.txt").write_text("preserve me\n", encoding="utf-8")
+            subprocess.run(["git", "add", "local.txt"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-m", "local only"], cwd=repo, capture_output=True, check=True)
+            local_head = supervisor._git_commit_oid(repo, "HEAD")
+
+            subprocess.run(["git", "clone", str(remote), str(peer)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Peer"], cwd=peer, check=True)
+            subprocess.run(["git", "config", "user.email", "peer@example.com"], cwd=peer, check=True)
+            subprocess.run(["git", "checkout", branch], cwd=peer, capture_output=True, check=True)
+            (peer / "remote.txt").write_text("published\n", encoding="utf-8")
+            subprocess.run(["git", "add", "remote.txt"], cwd=peer, check=True)
+            subprocess.run(["git", "commit", "-m", "remote only"], cwd=peer, capture_output=True, check=True)
+            subprocess.run(["git", "push", "origin", branch], cwd=peer, capture_output=True, check=True)
+            subprocess.run(["git", "fetch", "origin", branch], cwd=repo, capture_output=True, check=True)
+            remote_head = supervisor._git_commit_oid(repo, f"origin/{branch}")
+
+            config = {
+                "paths": {"status_file": str(repo / "ai-status.json"), "activity_log": str(repo / "activity.jsonl")},
+                "ready_dispatcher": {"active_worker_statuses": ["running"]},
+            }
+            recovered, detail = supervisor._preserve_and_reset_clean_diverged_worktree(
+                config, {}, repo, "CLEAN-DIVERGED-001", branch
+            )
+
+            self.assertTrue(recovered, detail)
+            self.assertEqual(supervisor._git_commit_oid(repo, "HEAD"), remote_head)
+            preserved_ref = detail.split(":", 1)[1]
+            self.assertEqual(supervisor._git_commit_oid(repo, preserved_ref), local_head)
+
+
 class DetectWorkerFailureTests(unittest.TestCase):
     def _worker_for_log(self, content: str) -> dict[str, str]:
         handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
@@ -1833,6 +1949,51 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             if call.args[1].get("type") == "wake_failed"
         ]
         self.assertEqual(failure_events[0]["task_id"], "BAD-001")
+
+    def test_process_queue_preflight_failure_releases_queue_for_next_task(self) -> None:
+        events = [
+            {
+                "event_id": event_id,
+                "task_id": task_id,
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "provider": "codex",
+                "reason": "owned_in_progress_dispatch",
+                "message": "wake",
+            }
+            for event_id, task_id in (("evt-blocked", "BLOCKED-001"), ("evt-ready", "READY-001"))
+        ]
+        tasks = [
+            {"id": event["task_id"], "status": "in_progress", "owner": "Codex", "reviewer": "Reviewer", "depends_on": []}
+            for event in events
+        ]
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        def prepare_workspace(_config, _state, request, **_kwargs):
+            if request.task_id == "BLOCKED-001":
+                return False, "task_head_mismatch: local and remote histories diverged"
+            return True, None
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=events),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
+            mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-ready", {"manual_confirmation_required": False, "auto_delivered": True}),
+            ) as start_worker,
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.process_queue(self.config, state, self.provider_report))
+
+        self.assertEqual(state["queue"]["events"]["evt-blocked"]["status"], "failed")
+        self.assertIn("preflight blocked", state["queue"]["events"]["evt-blocked"]["error"])
+        self.assertEqual(state["queue"]["events"]["evt-ready"]["status"], "started")
+        start_worker.assert_called_once()
 
     def test_process_queue_isolates_request_construction_exception(self) -> None:
         events = [
@@ -5156,7 +5317,9 @@ class SupervisorRuntimeFocusTests(unittest.TestCase):
             self.assertIsNone(supervisor_state["mode_switch_requested"])
             self.assertEqual(supervisor_state["last_mode_switch_at"], "2026-04-18T14:40:00Z")
             self.assertEqual(supervisor_state["mode_occupancy"]["planning"]["running"], 1)
-            self.assertEqual(supervisor_state["mode_occupancy"]["execution"]["pending"], 1)
+            # A manual inbox record with no PID is not an executing worker and
+            # must not make the runtime look occupied.
+            self.assertEqual(supervisor_state["mode_occupancy"]["execution"]["pending"], 0)
 
 
 class DiscussionPlanningDispatchTests(unittest.TestCase):
