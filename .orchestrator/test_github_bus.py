@@ -622,6 +622,86 @@ class GitHubBusProcessTests(unittest.TestCase):
             timeout_seconds=mock.ANY,
         )
 
+    def test_parse_remote_head_names_ignores_malformed_and_non_head_refs(self) -> None:
+        self.assertEqual(
+            github_bus.parse_remote_head_names(
+                "abc\trefs/heads/task/ODP-ONE-001\n"
+                "\n"
+                "def\n"
+                "ghi\trefs/tags/v1.2.3\n"
+                "jkl\trefs/heads/dev\n"
+            ),
+            frozenset({"task/ODP-ONE-001", "dev"}),
+        )
+
+    def _snapshot_probe_failure(
+        self, *, elapsed: float, failure: subprocess.TimeoutExpired | subprocess.CompletedProcess[str]
+    ) -> bool:
+        """Seed a good snapshot at t=0, then re-probe at t=elapsed with a failure."""
+        good = subprocess.CompletedProcess(
+            ["git", "ls-remote"], 0, "abc\trefs/heads/task/ODP-ONE-001\n", ""
+        )
+        kwargs = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+        with (
+            mock.patch.object(github_bus.time, "monotonic", side_effect=[0.0, elapsed]),
+            mock.patch.object(github_bus, "remote_branch_snapshot_ttl_seconds", return_value=30.0),
+            mock.patch.object(github_bus, "remote_branch_snapshot_max_stale_seconds", return_value=300.0),
+            mock.patch.object(github_bus, "git_network_timeout_seconds", return_value=8.0),
+        ):
+            with mock.patch.object(github_bus, "run_git_network_process", return_value=good):
+                self.assertTrue(github_bus.remote_branch_exists("task/ODP-ONE-001"))
+            with mock.patch.object(github_bus, "run_git_network_process", **kwargs):
+                return github_bus.remote_branch_exists("task/ODP-ONE-001")
+
+    def test_failed_probe_serves_last_good_snapshot_instead_of_empty(self) -> None:
+        # A timeout says nothing about the remote's branches. Caching an empty
+        # set would report a published branch as unpublished, which freezes that
+        # task for unpublished_branch_recheck_seconds -- far past the outage.
+        self.assertTrue(
+            self._snapshot_probe_failure(
+                elapsed=100.0,
+                failure=subprocess.TimeoutExpired(cmd=["git", "ls-remote"], timeout=8),
+            )
+        )
+
+    def test_failed_probe_with_nonzero_exit_serves_last_good_snapshot(self) -> None:
+        self.assertTrue(
+            self._snapshot_probe_failure(
+                elapsed=100.0,
+                failure=subprocess.CompletedProcess(["git", "ls-remote"], 128, "", "fatal: remote error"),
+            )
+        )
+
+    def test_failed_probe_past_max_stale_window_fails_closed(self) -> None:
+        self.assertFalse(
+            self._snapshot_probe_failure(
+                elapsed=500.0,
+                failure=subprocess.TimeoutExpired(cmd=["git", "ls-remote"], timeout=8),
+            )
+        )
+
+    def test_first_probe_failure_without_snapshot_fails_closed(self) -> None:
+        proc = subprocess.CompletedProcess(["git", "ls-remote"], 128, "", "fatal: remote error")
+        with mock.patch.object(github_bus, "run_git_network_process", return_value=proc):
+            self.assertFalse(github_bus.remote_branch_exists("task/ODP-ONE-001"))
+
+    def test_snapshot_within_ttl_is_served_without_reloading_config(self) -> None:
+        proc = subprocess.CompletedProcess(
+            ["git", "ls-remote"], 0, "abc\trefs/heads/task/ODP-ONE-001\n", ""
+        )
+        with (
+            mock.patch.object(github_bus.time, "monotonic", side_effect=[0.0, 5.0]),
+            mock.patch.object(
+                github_bus, "remote_branch_snapshot_ttl_seconds", return_value=30.0
+            ) as ttl,
+            mock.patch.object(github_bus, "run_git_network_process", return_value=proc) as probe,
+        ):
+            self.assertTrue(github_bus.remote_branch_exists("task/ODP-ONE-001"))
+            self.assertTrue(github_bus.remote_branch_exists("task/ODP-ONE-001"))
+
+        probe.assert_called_once()
+        ttl.assert_called_once()
+
     def test_run_git_network_process_kills_process_group_on_timeout(self) -> None:
         class FakePopen:
             def __init__(self) -> None:
