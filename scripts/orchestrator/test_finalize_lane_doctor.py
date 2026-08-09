@@ -187,6 +187,64 @@ def test_already_merged_remediation_closes_task_not_opens_pr() -> None:
     assert not any("gh pr create" in line for line in lines)
 
 
+def test_a_rerun_supersedes_the_earlier_failure_of_the_same_check(tmp_path: Path, monkeypatch) -> None:
+    """PR #575 merged into dev carrying a stale `product` FAILURE beside its SUCCESS.
+
+    Branch protection read the newest run and merged. A doctor that counts every
+    run reports the PR as CI_FAILED forever and sends the owner to rerun checks
+    that already passed.
+    """
+    rollup = [
+        {"name": "product", "conclusion": "FAILURE", "completedAt": "2026-08-04T06:31:02Z"},
+        {"name": "product", "conclusion": "SUCCESS", "completedAt": "2026-08-06T22:19:41Z"},
+        check("orchestrator", "SUCCESS"),
+        check("product-e2e-gate", "SUCCESS"),
+        check("task-review-gate", "SUCCESS"),
+    ]
+    monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: False)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": {"number": 575, "statusCheckRollup": rollup})
+
+    assert doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)["cause"] == doc.READY
+
+
+def test_a_check_that_is_still_red_on_its_newest_run_stays_red(tmp_path: Path, monkeypatch) -> None:
+    rollup = [
+        {"name": "product", "conclusion": "SUCCESS", "completedAt": "2026-08-04T06:31:02Z"},
+        {"name": "product", "conclusion": "FAILURE", "completedAt": "2026-08-06T22:19:41Z"},
+        check("orchestrator", "SUCCESS"),
+        check("product-e2e-gate", "SUCCESS"),
+        check("task-review-gate", "SUCCESS"),
+    ]
+    monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: False)
+    monkeypatch.setattr(doc, "branch_is_behind", lambda *a: False)
+    monkeypatch.setattr(doc, "find_pr", lambda b, r, base="": {"number": 575, "statusCheckRollup": rollup})
+
+    f = doc.classify({"id": "T1"}, tmp_path, "dev", ALL_REQUIRED)
+
+    assert f["cause"] == doc.CI_FAILED
+    assert f["failing_checks"] == ["product"]
+
+
+def test_find_pr_prefers_the_pr_that_targets_the_promotion_base(tmp_path: Path, monkeypatch) -> None:
+    """A task branch carries a ReviewBus PR into main and the real one into dev."""
+    listed = [
+        {"number": 617, "state": "MERGED", "baseRefName": "main", "statusCheckRollup": []},
+        {"number": 575, "state": "MERGED", "baseRefName": "dev", "statusCheckRollup": green_rollup()},
+    ]
+    monkeypatch.setattr(doc, "_gh_json", lambda args, cwd: listed if args[1] == "list" else listed[0])
+
+    assert doc.find_pr("task/T1", tmp_path, "dev")["number"] == 575
+
+
+def test_find_pr_falls_back_to_view_when_nothing_targets_the_base(tmp_path: Path, monkeypatch) -> None:
+    viewed = {"number": 617, "state": "MERGED", "baseRefName": "main"}
+    monkeypatch.setattr(
+        doc, "_gh_json", lambda args, cwd: [] if args[1] == "list" else viewed
+    )
+
+    assert doc.find_pr("task/T1", tmp_path, "dev") == viewed
+
+
 def test_unmerged_branch_still_classified_normally(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(doc, "branch_merged_into_base", lambda *a: False)
     monkeypatch.setattr(
