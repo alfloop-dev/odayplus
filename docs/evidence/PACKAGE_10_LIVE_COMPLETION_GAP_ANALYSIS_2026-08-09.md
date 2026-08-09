@@ -3,11 +3,33 @@
 - Document ID: `ODP-P10-LIVE-GAP-20260809`
 - Status: `NO-GO`
 - Prepared at: `2026-08-09T10:49:01Z`
+- Evidence refreshed at: `2026-08-09T12:43Z` by `ODP-P10-LIVE-GAP-EVIDENCE-REFRESH-20260809`
 - Scope: Package 10 Operator runtime, API/data binding, legacy retirement, and live release closure
-- Runtime baseline: `origin/dev@9e5434cd8a9f798769f4891c3610280a7982a175`
-- Latest completed deployment evidence: Deploy Dev run `31308339896` at `9e5434cd8a9f798769f4891c3610280a7982a175` (`failure_rolled_back`)
-- Exact live-gate artifact: generated `2026-08-09T10:46:11Z`, correlation ID `corr-live-e2e-9e5434cd8a9f-1786272371`
-- Public rollback release observed at `2026-08-09T10:19Z`: `8ec12c02`
+- Runtime baseline: `origin/dev@4d89bea64ce98753895a16194e320c9a8ea45852`
+- Latest completed deployment evidence: Deploy Dev run `31312735093` at `4d89bea64ce98753895a16194e320c9a8ea45852` (`failure_rolled_back`)
+- Exact live-gate artifact: generated `2026-08-09T12:32:33Z`, correlation ID `corr-live-e2e-4d89bea64ce9-1786278753`
+- Public rollback release: `8ec12c02`, read back from the deployed `oday-api` at `2026-08-09T12:26:28Z` with `/platform/health` `503` at `12:26:29Z`
+
+### Evidence refresh, dev merge burst of 2026-08-09
+
+This document was first prepared against `9e5434cd`. Between `11:47Z` and
+`12:33Z` the `dev` merge burst started three further Deploy Dev runs. Only the
+last one completed a deployment attempt:
+
+| Run | Head SHA | Merge | Conclusion | Window (UTC) | Standing |
+|---|---|---|---|---|---|
+| `31311664947` | `817d53052e23cf867085342fcafa340743e4a7cb` | PR #744 | `cancelled` | `11:47:34Z` → `12:05:44Z` | superseded by the next `dev` push; no live-gate artifact |
+| `31312411417` | `188bec5411846fcb7439fb63991daadad7fee60f` | PR #745 | `cancelled` | `12:05:24Z` → `12:13:41Z` | superseded by the next `dev` push; no live-gate artifact |
+| `31312735093` | `4d89bea64ce98753895a16194e320c9a8ea45852` | PR #747 | `failure` | `12:13:20Z` → `12:33:49Z` | latest completed run; sole current gate authority |
+
+Both cancellations are supersession by a newer `dev` push, not gate failures.
+Neither produced a `cloud-run-dev-validation` artifact, so neither can be cited
+as evidence for or against any gap. `4d89bea6` is `origin/dev` at refresh time,
+so run `31312735093` is both the latest completed run and the current tip.
+
+Run `31312735093` replaces the earlier `31308339896` at `9e5434cd` as closure
+evidence. The blocker set did not change across that move; only its exact-SHA
+anchor did.
 
 ## 1. Decision
 
@@ -46,6 +68,61 @@ The following are not current closure evidence:
 - a candidate revision that was rolled back;
 - worker `succeeded` status without durable API and PG16 readback.
 
+### 2.1 Exact live-gate result at `4d89bea6`
+
+Source: artifact `cloud-run-dev-validation` (`live-e2e-gate.json`) from run
+`31312735093`. `ok=false`, `schema_version=1`, 50 checks, 43 passed, 7 failed,
+`blocking_dependencies = [external-data, mlflow]`.
+
+The seven blockers, verbatim:
+
+| Check | Dependency | Detail |
+|---|---|---|
+| `runtime:model_bindings` | `mlflow` | `mode=mlflow-production-unverified ready=False autoSeeded=False error=forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias` |
+| `runtime:model_capability:forecastops` | `mlflow` | `available=False reasonCode=PRODUCTION_MODEL_REGISTRY_UNAVAILABLE` |
+| `models:registry` | `mlflow` | `versions=0` |
+| `models:forecastops:production_alias` | `mlflow` | `model=forecast_revenue_interval versionsWithProductionAlias=0 (exactly one required)` |
+| `data:ingestion_runs` | `external-data` | `runs=0` |
+| `data:admin_boundary.official_dataset:run_exists` | `external-data` | `no persisted ingestion run for a required live provider` |
+| `data:poi.commercial_api:run_exists` | `external-data` | `no persisted ingestion run for a required live provider` |
+
+The 43 passes, by dependency group:
+
+| Dependency | Result | Passing checks |
+|---|---|---|
+| `config` | 11/11 | `api_url`, `web_url`, `expected_sha`, `operator_credential`, `operator_role`, `required_providers`, `provider_registry_known`, `snapshot_providers`, `worker_probe_provider`, `expected_deployment`, `worker_polling` |
+| `release` | 1/1 | `release:platform_version` (`expected=actual=4d89bea6…`) |
+| `data-binding` | 6/6 | `no_surrogate_markers` on release, runtime, models, audit, and data, plus `auth:operator_bootstrap:provenance` (`data_mode=live data_source=operator-shell-production surrogatePaths=none`) |
+| `api-runtime` | 2/2 | `runtime:readiness` (`status=ok requireLiveData=True deploymentMode=dev`), `runtime:no_blocking_reasons` |
+| `postgresql` | 2/2 | `runtime:persistence` (`postgresql durable=True reachable=True`), `runtime:data_origin` (`mode=live origin=authoritative operatorReady=True`) |
+| `provider` | 4/4 | `runtime:provider` (`mode=live`), plus authenticated schema-valid probes for `admin_boundary.official_dataset`, `geocode.primary_api`, `poi.commercial_api` |
+| `auth` | 3/3 | `anonymous_denied` (`401`), `operator_bootstrap` (`200`), `web_operator_requires_login` (`307 → /login?returnTo=%2Foperator`) |
+| `worker` | 5/5 | `enqueue` (`202`), `idempotent_replay` (`sameJob=True created=False`), `drain_trigger`, `terminal_success` (`attempts=1`), `ingestion_probe:poi.commercial_api` |
+| `audit` | 3/3 | `durable_receipt`, `idempotent_replay_receipt`, `receipt_integrity` (hash-chained) |
+| `mlflow` | 6/10 | `model_capability` for `avm`, `heatzone`, `sitescore` (all `governedDisabled=True reasonCode=DATA_CONTRACT_NOT_MATURE`), and `no_fabricated_alias` for the same three |
+| `external-data` | 0/3 | none |
+
+Every other report in the same artifact bundle is `ok=true`, so none of them is
+a gate blocker: `cloud-run-preflight.json` (WIF and configuration, `12:17:53Z`),
+`cloud-run-smoke.json` (candidate `12:32:07Z`),
+`cloud-run-migration-compatibility.json` (`12:26:30Z`), and the three
+`cloud-run-jobs/*.json` validations for `migration`, `scheduler`, and `worker`,
+each confirming the exact release SHA in image/env/labels and all four required
+secret env vars bound with no unselected-provider leakage.
+
+Sequence inside the deploy step: candidate deployed at 0% traffic, promoted to
+100% at `12:32:16Z`, live gate run against the promoted release at `12:32:33Z`,
+gate failed at `12:33:24Z`, traffic restored to `oday-api-00005-gin=100` and
+`oday-web-00008-ws4=100`, Cloud Scheduler triggers restored, step exit code `1`.
+The release therefore reached public traffic briefly and was withdrawn by the
+fail-closed gate; it was never a retained promotion.
+
+`cloud-run-migration-compatibility.json` (`12:26:30Z`) supplies an
+artifact-backed public readback: the pre-deploy `oday-api` reported
+`release_sha=8ec12c02` with `/platform/version` `200` and `/platform/health`
+`503`. This closes the one claim the prior verification recorded as not
+reproducible from a committed artifact.
+
 ## 3. Confirmed Complete Foundations
 
 These items do not need to be reimplemented:
@@ -55,7 +132,8 @@ These items do not need to be reimplemented:
 | Canonical Package 10 source archive | ZIP manifest and extracted HTML under `docs_archive/00_source_zips/operator_console/r7-20260720-package-10/` | Workers must continue receiving immutable source hashes |
 | Page-by-page design diff | `docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md` | It is the visual contract, not a live pass |
 | Source-doc materialization | `ODP-ORCH-SOURCE-DOC-MATERIALIZATION-DEV-LIVE-001` was merged and archived | Missing or hash-mismatched sources still fail closed |
-| GCP/WIF deployment authentication | Latest completed Deploy Dev passed WIF preflight and Google Cloud authentication | Authentication success does not imply release success |
+| GCP/WIF deployment authentication | Run `31312735093` passed WIF preflight (`cloud-run-preflight.json`, `ok=true`) and Google Cloud authentication | Authentication success does not imply release success |
+| Cloud Run job release binding | `migration`, `scheduler`, and `worker` job validations in run `31312735093` are all `ok=true` with the exact SHA in image/env/labels and all four required secrets bound | Correct job binding does not imply the job persisted anything |
 | Operator smoke RBAC | `operations_manager,model_owner,data_owner`; anonymous request denied; authenticated bootstrap `200` | The public promoted release is still old |
 | Candidate Operator provenance | Candidate bootstrap reported `data_mode=live`, `data_source=operator-shell-production`, no surrogate path | Must be repeated on the final promoted SHA |
 | Provider connectivity | Admin boundary, geocode, and POI connectivity/auth/schema probes passed | Connectivity does not prove persisted ingestion |
@@ -68,10 +146,11 @@ These items do not need to be reimplemented:
 - Severity: `P0`
 - State: `OPEN`
 - Evidence:
-  - latest completed run `31308339896` failed in `Build, push, deploy, and verify Cloud Run`;
-  - candidate validation reached the live gate and rolled back;
-  - public `/platform/version` reports `8ec12c02`;
-  - public `/platform/health` returns `503`.
+  - latest completed run `31312735093` at `4d89bea6…` failed in `Build, push, deploy, and verify Cloud Run`;
+  - the candidate was promoted to 100% traffic, failed the live gate, and was rolled back to `oday-api-00005-gin` / `oday-web-00008-ws4`;
+  - the two preceding `dev` runs, `31311664947` and `31312411417`, were cancelled as superseded and produced no gate artifact;
+  - public `/platform/version` reports `8ec12c02` (artifact readback `12:26:28Z`);
+  - public `/platform/health` returns `503` (artifact readback `12:26:29Z`).
 - Impact: no Package 10 code or API claim can be called live-complete.
 - Automation class: `AUTO_AFTER_DEPENDENCY`.
 - Auto worker can:
@@ -88,12 +167,19 @@ These items do not need to be reimplemented:
 
 - Severity: `P0`
 - State: `OPEN_DIAGNOSIS_REQUIRED`
-- Evidence from run `31308339896`:
-  - `worker:enqueue` passed;
-  - worker drain and terminal success passed;
+- Evidence from run `31312735093`:
+  - `worker:enqueue` passed (`202`, job `9a03dcdc-2402-4731-b434-7b22ac2c224c`, type `external-fetch`);
+  - `worker:idempotent_replay` passed (`sameJob=True created=False`);
+  - worker drain and terminal success passed (`terminal_status=succeeded`, `attempts=1`);
   - `worker:ingestion_probe:poi.commercial_api` passed;
+  - all three `audit:*` receipt checks passed, so the enqueue is durably recorded;
   - `GET /api/v1/external-data/ingestion-runs` returned `runs=0`;
   - no persisted run existed for `admin_boundary.official_dataset` or `poi.commercial_api`.
+- Refresh note: the worker Cloud Run job validation in the same run reports the
+  exact release SHA and all four required secret env vars bound, including
+  `ODAY_DATABASE_URL`, so the contradiction is not an unbound-credential or
+  stale-image case. The diagnosis in `ODP-P10-LIVE-EXTDATA-DIAG-001` still owns
+  the root cause.
 - Impact: the release cannot prove authentic external data, snapshots, DQ, freshness, or lineage.
 - Automation class: `AUTO_NOW`, followed by `CONDITIONAL_AUTO_REMEDIATION`.
 - Auto worker can:
@@ -136,10 +222,12 @@ These items do not need to be reimplemented:
 - Severity: `P0`
 - State: `BLOCKED_ON_GAP-03_AND_HUMAN_APPROVAL`
 - Existing task: `ODP-PRODUCTION-MODEL-REGISTRY-001`.
-- Exact candidate gate evidence:
+- Exact candidate gate evidence from run `31312735093`:
   - registry `versions=0`;
-  - `forecast_revenue_interval` has zero versions with the `production` alias;
-  - ForecastOps reports `PRODUCTION_MODEL_REGISTRY_UNAVAILABLE`.
+  - `forecast_revenue_interval` has zero versions with the `production` alias, where exactly one is required;
+  - ForecastOps reports `PRODUCTION_MODEL_REGISTRY_UNAVAILABLE`;
+  - `runtime:model_bindings` reports `mode=mlflow-production-unverified ready=False autoSeeded=False`, so nothing was auto-seeded to mask the gap;
+  - `avm`, `heatzone`, and `sitescore` remain `governedDisabled=True` with `no_fabricated_alias` passing, so ForecastOps is the only model blocker.
 - Impact: model binding and platform live readiness fail closed.
 - Automation class: `HYBRID_HUMAN_GATE`.
 - Auto worker can:
@@ -156,10 +244,11 @@ These items do not need to be reimplemented:
 
 - Severity: `P0`
 - State: `PARTIAL`
-- Candidate evidence:
+- Candidate evidence from run `31312735093`:
   - authenticated Operator bootstrap `200`;
-  - anonymous request denied;
-  - live provenance and no surrogate path.
+  - anonymous request denied (`401`);
+  - Web `/operator` requires login (`307 → /login?returnTo=%2Foperator`);
+  - live provenance (`data_mode=live`, `data_source=operator-shell-production`) and no surrogate path on any of the six `data-binding` checks.
 - Missing evidence:
   - the same checks on the final promoted public SHA;
   - durable data readback after provider ingestion and model binding close;
@@ -202,8 +291,8 @@ These items do not need to be reimplemented:
 
 - Severity: `P0_CONTROL_PLANE`
 - State: `OPEN`
-- Evidence:
-  - `ODP-P10-DEV-REDEPLOY-VERIFY-001` is blocked but its `next` field contains only reassignment text, not current runtime blockers;
+- Evidence, re-checked against the live canonical status root at refresh time:
+  - `ODP-P10-DEV-REDEPLOY-VERIFY-001` is still `blocked` with `last_update` `2026-08-05T11:43:03Z` and a `next` field containing only auto-reassignment text, not current runtime blockers;
   - the previously created provider-ingestion task is absent from current canonical active and archive state;
   - the Supervisor process is healthy, but the audit snapshot showed zero active and zero queued workers while actionable work remained;
   - historical Package 10 implementation ledgers still say `NO-GO` for old R3 checkpoints and must not be redispatched as if implementation restarted.
@@ -266,6 +355,8 @@ These items do not need to be reimplemented:
 | Historical R3 implementation pack should be restarted | Current code and later merges already contain those implementation waves | Treat the 7/26 pack as historical source/retirement authority; dispatch only live-closure tasks in the 8/9 pack |
 | A reassignment message is an adequate blocked-task next step | It omits actionable dependency and evidence | Replace it with exact blocker, dependency, run, SHA, and resume condition |
 | Worker terminal success proves ingestion | API and durable store returned zero records | Require durable PG16 plus authenticated API readback and lineage |
+| A cancelled Deploy Dev run is a gate failure or a new blocker | `31311664947` and `31312411417` were superseded by the next `dev` push and emitted no `cloud-run-dev-validation` artifact | Cite only runs that reached the live gate; a cancelled run is neither evidence of failure nor of pass |
+| The dev merge burst changed the Package 10 blocker set | The blocker set at `4d89bea6` is identical to the one at `9e5434cd`: same two dependencies, same seven checks | Re-anchor evidence to the newest exact SHA without reopening or re-scoping any gap |
 
 Any new LLM output that overlaps a writable path, changes a dependency, merges
 `dev`, starts a Deploy Dev run, changes a model alias, or mutates provider data
