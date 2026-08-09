@@ -301,7 +301,13 @@ def branch_has_diff(base: str, branch: str) -> bool:
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
     if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
         return False
-    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
+    try:
+        proc = run_git_network_process(
+            ["ls-remote", "--heads", remote, branch],
+            timeout_seconds=git_network_timeout_seconds(),
+        )
+    except subprocess.TimeoutExpired:
+        return False
     if proc.returncode != 0:
         return False
     return bool((proc.stdout or "").strip())
@@ -342,6 +348,49 @@ def run_gh_process(
         stdout = stdout_handle.read().decode("utf-8", errors="replace")
         stderr = stderr_handle.read().decode("utf-8", errors="replace")
         return subprocess.CompletedProcess([binary, *args], process.returncode or 0, stdout, stderr)
+
+
+def git_network_timeout_seconds() -> float:
+    """Bound remote Git probes so one unavailable remote cannot stall a tick."""
+    try:
+        cfg = load_config()
+        bus = cfg.get("github_bus", {}) or {}
+        value = float(bus.get("git_command_timeout_seconds", bus.get("command_timeout_seconds", 8)))
+    except Exception:
+        value = 8.0
+    return max(1.0, value)
+
+
+def run_git_network_process(
+    args: list[str], *, timeout_seconds: float
+) -> subprocess.CompletedProcess[str]:
+    """Run a remote Git command in its own process group with a hard timeout."""
+    with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
+        process = subprocess.Popen(
+            ["git", *args],
+            cwd=str(ROOT),
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            start_new_session=True,
+        )
+        try:
+            process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            raise exc
+
+        stdout_handle.seek(0)
+        stderr_handle.seek(0)
+        stdout = stdout_handle.read().decode("utf-8", errors="replace")
+        stderr = stderr_handle.read().decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(["git", *args], process.returncode or 0, stdout, stderr)
 
 
 def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.CompletedProcess[str]:

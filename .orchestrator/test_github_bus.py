@@ -588,6 +588,44 @@ class GitHubBusProcessTests(unittest.TestCase):
         killpg.assert_called_once_with(4321, github_bus.signal.SIGKILL)
         self.assertEqual(fake_process.wait_calls, [1.0, 0.2])
 
+    def test_remote_branch_probe_times_out_without_blocking_the_bus(self) -> None:
+        with mock.patch.object(
+            github_bus,
+            "run_git_network_process",
+            side_effect=subprocess.TimeoutExpired(cmd=["git", "ls-remote"], timeout=8),
+        ) as run_git_network_process:
+            self.assertFalse(github_bus.remote_branch_exists("task/ODP-REMOTE-001"))
+
+        self.assertEqual(
+            run_git_network_process.call_args.args[0],
+            ["ls-remote", "--heads", "origin", "task/ODP-REMOTE-001"],
+        )
+
+    def test_run_git_network_process_kills_process_group_on_timeout(self) -> None:
+        class FakePopen:
+            def __init__(self) -> None:
+                self.pid = 5678
+                self.returncode = None
+                self.wait_calls: list[float | None] = []
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.wait_calls.append(timeout)
+                raise subprocess.TimeoutExpired(cmd=["git", "ls-remote"], timeout=timeout)
+
+        fake_process = FakePopen()
+        with (
+            mock.patch.object(github_bus.subprocess, "Popen", return_value=fake_process),
+            mock.patch.object(github_bus.os, "killpg") as killpg,
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                github_bus.run_git_network_process(
+                    ["ls-remote", "--heads", "origin", "task/ODP-REMOTE-001"],
+                    timeout_seconds=1.0,
+                )
+
+        killpg.assert_called_once_with(5678, github_bus.signal.SIGKILL)
+        self.assertEqual(fake_process.wait_calls, [1.0, 0.2])
+
     def test_run_gh_uses_vendored_wrapper_when_system_gh_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
