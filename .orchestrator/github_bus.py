@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,8 @@ from watch_events import render_wakeup_message
 
 COMMENT_MARKER = "<!-- pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
+# remote -> (snapshot_expires_at, refs, last_successful_probe_at), monotonic seconds.
+_REMOTE_BRANCH_SNAPSHOTS: dict[str, tuple[float, frozenset[str], float]] = {}
 
 
 class GitHubBusError(RuntimeError):
@@ -301,16 +304,84 @@ def branch_has_diff(base: str, branch: str) -> bool:
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
     if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
         return False
+    return branch in remote_branch_names(remote)
+
+
+def clear_remote_branch_snapshot_cache() -> None:
+    """Clear cached remote refs (primarily for deterministic tests)."""
+    _REMOTE_BRANCH_SNAPSHOTS.clear()
+
+
+def remote_branch_snapshot_ttl_seconds() -> float:
+    """Return the bounded lifetime for the remote branch snapshot."""
     try:
-        proc = run_git_network_process(
-            ["ls-remote", "--heads", remote, branch],
+        cfg = load_config()
+        bus = cfg.get("github_bus", {}) or {}
+        value = float(bus.get("remote_ref_snapshot_ttl_seconds", 30))
+    except Exception:
+        value = 30.0
+    return max(1.0, value)
+
+
+def remote_branch_snapshot_max_stale_seconds() -> float:
+    """Return how long a failing probe may keep serving the last good snapshot."""
+    try:
+        cfg = load_config()
+        bus = cfg.get("github_bus", {}) or {}
+        value = float(bus.get("remote_ref_snapshot_max_stale_seconds", 300))
+    except Exception:
+        value = 300.0
+    return max(0.0, value)
+
+
+def parse_remote_head_names(stdout: str) -> frozenset[str]:
+    """Extract branch names from ``git ls-remote --heads`` output."""
+    names: set[str] = set()
+    for line in stdout.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        ref = parts[1].strip()
+        if ref.startswith("refs/heads/"):
+            names.add(ref.removeprefix("refs/heads/"))
+    return frozenset(names)
+
+
+def remote_branch_names(remote: str = "origin") -> frozenset[str]:
+    """Read remote heads once per short TTL instead of probing every task branch.
+
+    A supervisor tick can inspect dozens of task branches.  Repeating
+    ``git ls-remote`` for each one turns a transient network stall into an
+    O(tasks × timeout) heartbeat delay.  A short-lived snapshot keeps the same
+    per-branch answers while making that delay bounded per remote.
+    """
+    now = time.monotonic()
+    cached = _REMOTE_BRANCH_SNAPSHOTS.get(remote)
+    if cached and now < cached[0]:
+        return cached[1]
+    ttl = remote_branch_snapshot_ttl_seconds()
+    try:
+        proc: subprocess.CompletedProcess[str] | None = run_git_network_process(
+            ["ls-remote", "--heads", remote],
             timeout_seconds=git_network_timeout_seconds(),
         )
     except subprocess.TimeoutExpired:
-        return False
-    if proc.returncode != 0:
-        return False
-    return bool((proc.stdout or "").strip())
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        refs = parse_remote_head_names(proc.stdout or "")
+        _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, refs, now)
+        return refs
+    # A failed probe says nothing about which branches the remote has. Caching
+    # an empty set would report every published branch as unpublished, and one
+    # such false negative freezes that task for unpublished_branch_recheck_seconds
+    # -- far longer than the outage that caused it. Serve the last good refs for
+    # a bounded window instead, then fail closed as an unprobed remote would.
+    last_success = cached[2] if cached else float("-inf")
+    refs = frozenset()
+    if cached and now - last_success < remote_branch_snapshot_max_stale_seconds():
+        refs = cached[1]
+    _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, refs, last_success)
+    return refs
 
 
 def run_gh_process(

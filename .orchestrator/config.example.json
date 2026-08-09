@@ -272,6 +272,8 @@
   "github_bus": {
     "enabled": true,
     "command_timeout_seconds": 8,
+    "remote_ref_snapshot_ttl_seconds": 30,
+    "remote_ref_snapshot_max_stale_seconds": 300,
     "poll_interval_seconds": 30,
     "repo": null,
     "default_branch": "main",
