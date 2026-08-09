@@ -1,0 +1,50 @@
+{
+  "verification_id": "ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+  "artifact": "negative_control",
+  "purpose": "Prove the static gates discriminate rather than pass vacuously. The identical verifier is run against the parent of the R3A retirement commit, where every retired path still exists.",
+  "verifier": "docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/verify_static_retirement.py",
+  "control_head": "da7da895a5c73fd7c0bd23329c6ceac2e431e8ed",
+  "control_head_relationship": "ded04ac49504a1d948831eb5077625bef415ab50^, i.e. the commit immediately before the ODP-P10-CAN-001-R3A retirement commit recorded in that ACK as commit_sha",
+  "control_setup_note": "Run in a throwaway detached git worktree. The two ACK JSONs were copied in from current dev because they were first committed by ded04ac itself and do not exist at the control SHA. No tracked file in the task worktree was modified.",
+  "result": "fail",
+  "failed_checks": [
+    "executable_pages",
+    "no_surviving_retired_path",
+    "retired_css_selectors_absent",
+    "retired_identity_copy_absent_from_frontend",
+    "retired_intake_alternatives_absent",
+    "canonical_detail_graph_intact",
+    "no_import_edge_into_retired_module",
+    "legacy_e2e_specs_absent"
+  ],
+  "observed_at_control_head": {
+    "executable_pages": { "actual_page_count": 41, "expected_at_dev": 3 },
+    "no_surviving_retired_path": { "surviving_on_disk": 117, "surviving_in_git_tree": 117 },
+    "retired_css_selectors_absent": { "selector_definition_matches": 28, "any_usage_matches": 48 },
+    "retired_identity_copy_absent_from_frontend": { "OpsBoard": 23, "R0 導覽骨架": 1 },
+    "retired_intake_alternatives_absent": {
+      "AssistedIntakeQueuePanel": 3,
+      "IdentityDecisionPanel": 11,
+      "IntakeAssignmentSlaDialog": 2,
+      "IntakeDetailDialog": 6
+    },
+    "canonical_detail_graph_intact": { "children_present": false },
+    "no_import_edge_into_retired_module": { "edges_into_retired_paths": 118, "scanned_files": 315 },
+    "legacy_e2e_specs_absent": { "surviving_specs": 18, "retained_spec_count": 34 }
+  },
+  "checks_that_did_not_discriminate": [
+    {
+      "check": "retired_path_inventory_reconstructed",
+      "reason": "Reads the two ACKs, which are inputs rather than repository state. It is an input-integrity assertion, not a survivor gate."
+    },
+    {
+      "check": "retained_generic_css_present",
+      "reason": "Asserts .odp-select was NOT over-deleted. It is expected to pass on both sides; it guards against over-retirement, not under-retirement."
+    },
+    {
+      "check": "residual_references_are_inert",
+      "reason": "A disclosure and classification check, not a survivor gate. It passed at the control head as well, so it must not be read as independent evidence of retirement. The discriminating gates for executable reachability are no_surviving_retired_path and no_import_edge_into_retired_module."
+    }
+  ],
+  "conclusion": "Eight of the eleven checks flip to fail at the pre-retirement SHA, including both reachability gates. The passing result at dev 8eabc9735653710c1b88dcfe2996eb687b609c2b is therefore a real observation and not an artefact of an over-narrow sweep."
+}
