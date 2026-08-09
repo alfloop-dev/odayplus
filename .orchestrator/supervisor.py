@@ -1676,6 +1676,73 @@ def _git_commit_oid(cwd: Path, ref: str) -> str | None:
     return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
 
 
+_REMOTE_HEAD_SNAPSHOTS: dict[tuple[str, str], tuple[float, dict[str, str], float]] = {}
+
+
+def _clear_remote_head_snapshot_cache() -> None:
+    """Clear cached remote ref heads for supervisor operations."""
+    _REMOTE_HEAD_SNAPSHOTS.clear()
+
+
+def _get_remote_heads_snapshot(
+    cwd: Path,
+    remote: str = "origin",
+    *,
+    network_timeout_seconds: float | None = None,
+    force_refresh: bool = False,
+) -> tuple[dict[str, str] | None, str]:
+    """Fetch remote branch heads snapshot (mapping branch_name -> commit_sha).
+
+    Returns (heads_dict, status_prefix).
+    On success: (heads_dict, "ok").
+    On failure: (None, "fetch_timed_out: ..." or "fetch_failed: ...").
+    """
+    now = time.monotonic()
+    remotes_rc, remote_url = _git_output(cwd, "remote", "get-url", remote)
+    cache_key = (remote_url.strip() if remotes_rc == 0 else str(cwd.resolve()), remote)
+
+    cached = _REMOTE_HEAD_SNAPSHOTS.get(cache_key)
+    ttl = 30.0
+    max_stale = 300.0
+
+    if not force_refresh and cached and now < cached[0]:
+        return cached[1], "ok"
+
+    remote_query, network_error = _run_git_network_command(
+        cwd,
+        ["ls-remote", "--heads", remote],
+        timeout_seconds=network_timeout_seconds,
+    )
+    if network_error:
+        last_success = cached[2] if cached else float("-inf")
+        if cached and now - last_success < max_stale:
+            return cached[1], "ok"
+        return None, f"fetch_timed_out: {network_error}"
+
+    if remote_query is None or remote_query.returncode != 0:
+        last_success = cached[2] if cached else float("-inf")
+        if cached and now - last_success < max_stale:
+            return cached[1], "ok"
+        details = (
+            (remote_query.stderr or remote_query.stdout or "").strip()
+            if remote_query
+            else "unknown network failure"
+        )
+        return None, f"fetch_failed: {details}"
+
+    heads: dict[str, str] = {}
+    for line in (remote_query.stdout or "").splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        sha, ref = parts[0].strip(), parts[1].strip()
+        if ref.startswith("refs/heads/") and sha:
+            heads[ref.removeprefix("refs/heads/")] = sha
+
+    _REMOTE_HEAD_SNAPSHOTS[cache_key] = (now + ttl, heads, now)
+    return heads, "ok"
+
+
 def _fetch_authoritative_task_head(
     repo_root: Path,
     worktree_path: Path,
@@ -1698,21 +1765,18 @@ def _fetch_authoritative_task_head(
             return local_head, "local_only_task_ref"
         return None, "unverifiable_refs: missing local task branch"
 
-    remote_query, network_error = _run_git_network_command(
+    heads_snapshot, snapshot_status = _get_remote_heads_snapshot(
         worktree_path,
-        ["ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
-        timeout_seconds=network_timeout_seconds,
+        "origin",
+        network_timeout_seconds=network_timeout_seconds,
     )
-    if network_error or remote_query is None:
-        return None, f"fetch_timed_out: {network_error or 'unknown network failure'}"
-    if remote_query.returncode == 2:
-        return None, "unverifiable_refs: remote task branch is missing"
-    if remote_query.returncode != 0:
-        details = (remote_query.stderr or remote_query.stdout or "").strip()
-        return None, f"fetch_failed: {details}"
+    if heads_snapshot is None:
+        return None, snapshot_status
 
-    advertised = (remote_query.stdout or "").strip().split()
-    advertised_head = advertised[0] if advertised else ""
+    if branch not in heads_snapshot:
+        return None, "unverifiable_refs: remote task branch is missing"
+
+    advertised_head = heads_snapshot[branch]
     if not re.fullmatch(r"[0-9a-fA-F]{40,64}", advertised_head):
         return None, "unverifiable_refs: invalid advertised remote task HEAD"
 
@@ -1917,6 +1981,7 @@ def _publish_unpublished_task_branch(
     if push_proc.returncode != 0:
         details = (push_proc.stderr or push_proc.stdout or "").strip().splitlines()
         return False, f"push failed: {details[0] if details else 'unknown'}"
+    _clear_remote_head_snapshot_cache()
     return True, f"published {local_head[:12]}"
 
 
@@ -2099,18 +2164,16 @@ def _refresh_reused_worker_worktree(
 
     remote_task_head: str | None = None
     if has_remote_origin:
-        remote_query, network_error = _run_git_network_command(
+        heads_snapshot, snapshot_status = _get_remote_heads_snapshot(
             worktree_path,
-            ["ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
-            timeout_seconds=network_timeout_seconds,
+            "origin",
+            network_timeout_seconds=network_timeout_seconds,
         )
-        if network_error or remote_query is None:
-            return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
-        remote_task_exists = remote_query.returncode == 0
-        if remote_query.returncode not in {0, 2}:
-            details = (remote_query.stderr or remote_query.stdout or "").strip()
-            return False, f"fetch_failed: {details}"
+        if heads_snapshot is None:
+            return False, snapshot_status
+        remote_task_exists = expected_branch in heads_snapshot
         if remote_task_exists:
+            advertised_task_head = heads_snapshot[expected_branch]
             fetch_task_proc, network_error = _run_git_network_command(
                 worktree_path,
                 [
@@ -2129,6 +2192,11 @@ def _refresh_reused_worker_worktree(
             remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
             if not remote_task_head:
                 return False, "unverifiable_refs: missing fetched remote task HEAD"
+            if remote_task_head.lower() != advertised_task_head.lower():
+                return False, (
+                    "unverifiable_refs: fetched remote task HEAD does not match "
+                    f"advertised HEAD ({remote_task_head} != {advertised_task_head})"
+                )
             if local_head != remote_task_head:
                 remote_contains_local_rc, _ = _git_output(
                     worktree_path,
