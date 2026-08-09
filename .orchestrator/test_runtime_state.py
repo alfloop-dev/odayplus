@@ -71,6 +71,32 @@ class LoadRuntimeStateTests(unittest.TestCase):
 
         self.assertIn("claude-live", state["workers"])
 
+    def test_save_does_not_resurrect_reaped_manual_pending_worker(self) -> None:
+        """A stale disk snapshot must not revive a worker trimmed in memory."""
+        self._write_json(
+            self.root / "state.json",
+            {
+                "workers": {
+                    "claude-stale": {
+                        "run_id": "claude-stale",
+                        "task_id": "EXEC-FRONT-TW03-001",
+                        "status": "manual_pending",
+                        "queue_event_id": "evt-missing",
+                    }
+                },
+                "queue": {"events": {}},
+            },
+        )
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+
+        state = runtime_state.default_state()
+        runtime_state.save_runtime_state(self.config, state)
+
+        self.assertNotIn("claude-stale", state["workers"])
+        self.assertNotIn(
+            "claude-stale", runtime_state.load_runtime_state(self.config)["workers"]
+        )
+
     def test_load_runtime_state_adds_chair_rotation_defaults(self) -> None:
         self._write_json(self.root / "state.json", {"workers": {}, "queue": {"events": {}}})
         (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
