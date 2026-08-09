@@ -1333,12 +1333,25 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("worker_worktrees")
     settings = raw if isinstance(raw, dict) else {}
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
+    try:
+        git_network_timeout_seconds = max(
+            1.0,
+            float(
+                settings.get(
+                    "git_network_timeout_seconds",
+                    config.get("supervisor", {}).get("external_command_timeout_seconds", 30),
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        git_network_timeout_seconds = 30.0
     return {
         "enabled": bool(settings.get("enabled", False)),
         "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
         "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
         "reuse_existing": bool(settings.get("reuse_existing", True)),
         "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
+        "git_network_timeout_seconds": git_network_timeout_seconds,
     }
 
 
@@ -1627,6 +1640,36 @@ def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
         return 1, ""
 
 
+def _run_git_network_command(
+    cwd: Path,
+    args: list[str],
+    *,
+    timeout_seconds: float | None,
+) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+    """Run a remote git operation with a bounded wait.
+
+    Worktree preflight runs in the supervisor's critical path.  A wedged
+    HTTPS remote must fail this one lease closed, rather than consuming every
+    scheduler tick and hiding useful capacity behind a stuck subprocess.
+    ``None`` keeps direct unit-test callers backward compatible.
+    """
+    kwargs: dict[str, Any] = {
+        "cwd": cwd,
+        "capture_output": True,
+        "text": True,
+        "check": False,
+    }
+    if timeout_seconds is not None:
+        kwargs["timeout"] = timeout_seconds
+    try:
+        return subprocess.run(["git", *args], **kwargs), None
+    except subprocess.TimeoutExpired:
+        limit = float(timeout_seconds or 0)
+        return None, f"git network command timed out after {limit:g}s"
+    except (OSError, ValueError) as exc:
+        return None, f"git network command could not start: {type(exc).__name__}: {exc}"
+
+
 def _git_commit_oid(cwd: Path, ref: str) -> str | None:
     returncode, output = _git_output(cwd, "rev-parse", "--verify", f"{ref}^{{commit}}")
     oid = output.splitlines()[0].strip() if output else ""
@@ -1637,6 +1680,8 @@ def _fetch_authoritative_task_head(
     repo_root: Path,
     worktree_path: Path,
     branch: str,
+    *,
+    network_timeout_seconds: float | None = None,
 ) -> tuple[str | None, str]:
     """Resolve the immutable commit used for dirty-worktree lease recovery.
 
@@ -1653,13 +1698,13 @@ def _fetch_authoritative_task_head(
             return local_head, "local_only_task_ref"
         return None, "unverifiable_refs: missing local task branch"
 
-    remote_query = subprocess.run(
-        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
+    remote_query, network_error = _run_git_network_command(
+        worktree_path,
+        ["ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
+        timeout_seconds=network_timeout_seconds,
     )
+    if network_error or remote_query is None:
+        return None, f"fetch_timed_out: {network_error or 'unknown network failure'}"
     if remote_query.returncode == 2:
         return None, "unverifiable_refs: remote task branch is missing"
     if remote_query.returncode != 0:
@@ -1671,19 +1716,18 @@ def _fetch_authoritative_task_head(
     if not re.fullmatch(r"[0-9a-fA-F]{40,64}", advertised_head):
         return None, "unverifiable_refs: invalid advertised remote task HEAD"
 
-    fetch_proc = subprocess.run(
+    fetch_proc, network_error = _run_git_network_command(
+        worktree_path,
         [
-            "git",
             "fetch",
             "origin",
             "--quiet",
             f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
         ],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
+        timeout_seconds=network_timeout_seconds,
     )
+    if network_error or fetch_proc is None:
+        return None, f"fetch_timed_out: {network_error or 'unknown network failure'}"
     if fetch_proc.returncode != 0:
         details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
         return None, f"fetch_failed: {details}"
@@ -1961,6 +2005,8 @@ def _refresh_reused_worker_worktree(
     worktree_path: Path,
     base_ref: str,
     expected_branch: str,
+    *,
+    network_timeout_seconds: float | None = None,
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree using a fail-closed three-way policy.
 
@@ -2013,13 +2059,13 @@ def _refresh_reused_worker_worktree(
 
     has_remote_origin = "origin" in _git_output(worktree_path, "remote")[1].splitlines()
     if has_remote_origin:
-        fetch_proc = subprocess.run(
-            ["git", "fetch", "origin", base, "--quiet"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
+        fetch_proc, network_error = _run_git_network_command(
+            worktree_path,
+            ["fetch", "origin", base, "--quiet"],
+            timeout_seconds=network_timeout_seconds,
         )
+        if network_error or fetch_proc is None:
+            return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
         if fetch_proc.returncode != 0:
             details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
             return False, f"fetch_failed: {details}"
@@ -2053,31 +2099,30 @@ def _refresh_reused_worker_worktree(
 
     remote_task_head: str | None = None
     if has_remote_origin:
-        remote_query = subprocess.run(
-            ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
+        remote_query, network_error = _run_git_network_command(
+            worktree_path,
+            ["ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
+            timeout_seconds=network_timeout_seconds,
         )
+        if network_error or remote_query is None:
+            return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
         remote_task_exists = remote_query.returncode == 0
         if remote_query.returncode not in {0, 2}:
             details = (remote_query.stderr or remote_query.stdout or "").strip()
             return False, f"fetch_failed: {details}"
         if remote_task_exists:
-            fetch_task_proc = subprocess.run(
+            fetch_task_proc, network_error = _run_git_network_command(
+                worktree_path,
                 [
-                    "git",
                     "fetch",
                     "origin",
                     "--quiet",
                     f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
                 ],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                check=False,
+                timeout_seconds=network_timeout_seconds,
             )
+            if network_error or fetch_task_proc is None:
+                return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
             if fetch_task_proc.returncode != 0:
                 details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
                 return False, f"fetch_failed: {details}"
@@ -2652,6 +2697,7 @@ def prepare_worker_workspace(
                 worktree_path,
                 str(settings.get("base_ref") or "origin/dev"),
                 branch,
+                network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
             )
             write_activity_log(
                 config,
@@ -2672,6 +2718,7 @@ def prepare_worker_workspace(
                         repo_root,
                         worktree_path,
                         branch,
+                        network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                     )
                     recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
                         config,
@@ -2750,6 +2797,7 @@ def prepare_worker_workspace(
                             worktree_path,
                             str(settings.get("base_ref") or "origin/dev"),
                             branch,
+                            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                         )
                         write_activity_log(
                             config,
@@ -2790,6 +2838,7 @@ def prepare_worker_workspace(
                             worktree_path,
                             str(settings.get("base_ref") or "origin/dev"),
                             branch,
+                            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                         )
                         write_activity_log(
                             config,

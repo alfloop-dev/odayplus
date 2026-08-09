@@ -384,6 +384,20 @@ class AccountPoolSchedulingTests(unittest.TestCase):
 
 
 class CleanDivergedWorktreeRecoveryTests(unittest.TestCase):
+    def test_git_network_timeout_is_bounded_and_reported(self) -> None:
+        with mock.patch.object(
+            supervisor.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(["git", "ls-remote"], timeout=7),
+        ):
+            result, error = supervisor._run_git_network_command(
+                Path("/tmp"),
+                ["ls-remote", "origin"],
+                timeout_seconds=7,
+            )
+        self.assertIsNone(result)
+        self.assertEqual(error, "git network command timed out after 7s")
+
     def test_ahead_only_branch_is_never_reset_by_divergence_recovery(self) -> None:
         config = {"ready_dispatcher": {"active_worker_statuses": ["running"]}}
         with (
