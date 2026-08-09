@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ from watch_events import render_wakeup_message
 
 COMMENT_MARKER = "<!-- pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
+_REMOTE_BRANCH_SNAPSHOTS: dict[str, tuple[float, frozenset[str]]] = {}
 
 
 class GitHubBusError(RuntimeError):
@@ -301,16 +303,55 @@ def branch_has_diff(base: str, branch: str) -> bool:
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
     if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
         return False
+    return branch in remote_branch_names(remote)
+
+
+def clear_remote_branch_snapshot_cache() -> None:
+    """Clear cached remote refs (primarily for deterministic tests)."""
+    _REMOTE_BRANCH_SNAPSHOTS.clear()
+
+
+def remote_branch_snapshot_ttl_seconds() -> float:
+    """Return the bounded lifetime for the remote branch snapshot."""
+    try:
+        cfg = load_config()
+        bus = cfg.get("github_bus", {}) or {}
+        value = float(bus.get("remote_ref_snapshot_ttl_seconds", 30))
+    except Exception:
+        value = 30.0
+    return max(1.0, value)
+
+
+def remote_branch_names(remote: str = "origin") -> frozenset[str]:
+    """Read remote heads once per short TTL instead of probing every task branch.
+
+    A supervisor tick can inspect dozens of task branches.  Repeating
+    ``git ls-remote`` for each one turns a transient network stall into an
+    O(tasks × timeout) heartbeat delay.  A short-lived, fail-closed snapshot
+    keeps the same safety behavior while making that delay bounded per remote.
+    """
+    now = time.monotonic()
+    cached = _REMOTE_BRANCH_SNAPSHOTS.get(remote)
+    if cached and now - cached[0] < remote_branch_snapshot_ttl_seconds():
+        return cached[1]
     try:
         proc = run_git_network_process(
-            ["ls-remote", "--heads", remote, branch],
+            ["ls-remote", "--heads", remote],
             timeout_seconds=git_network_timeout_seconds(),
         )
     except subprocess.TimeoutExpired:
-        return False
-    if proc.returncode != 0:
-        return False
-    return bool((proc.stdout or "").strip())
+        refs: frozenset[str] = frozenset()
+    else:
+        refs = frozenset(
+            ref.removeprefix("refs/heads/")
+            for line in (proc.stdout or "").splitlines()
+            for parts in [line.split(maxsplit=1)]
+            if proc.returncode == 0 and len(parts) == 2
+            for ref in [parts[1].strip()]
+            if ref.startswith("refs/heads/")
+        )
+    _REMOTE_BRANCH_SNAPSHOTS[remote] = (now, refs)
+    return refs
 
 
 def run_gh_process(

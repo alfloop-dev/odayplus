@@ -13,6 +13,7 @@ from github_command_parser import GitHubCommand
 
 class GitHubBusCommandTests(unittest.TestCase):
     def setUp(self) -> None:
+        github_bus.clear_remote_branch_snapshot_cache()
         self.config = {
             "github_bus": {
                 "reviewers": {
@@ -545,6 +546,9 @@ class FindExistingReviewPrTests(unittest.TestCase):
 
 
 class GitHubBusProcessTests(unittest.TestCase):
+    def setUp(self) -> None:
+        github_bus.clear_remote_branch_snapshot_cache()
+
     def test_edit_pull_request_uses_rest_without_projects_classic_graphql(self) -> None:
         with mock.patch.object(github_bus, "run_gh") as run_gh:
             github_bus.edit_pull_request_rest(
@@ -598,7 +602,24 @@ class GitHubBusProcessTests(unittest.TestCase):
 
         self.assertEqual(
             run_git_network_process.call_args.args[0],
-            ["ls-remote", "--heads", "origin", "task/ODP-REMOTE-001"],
+            ["ls-remote", "--heads", "origin"],
+        )
+
+    def test_remote_branch_snapshot_reuses_one_probe_for_multiple_branches(self) -> None:
+        proc = subprocess.CompletedProcess(
+            ["git", "ls-remote"],
+            0,
+            "abc\trefs/heads/task/ODP-ONE-001\ndef\trefs/heads/task/ODP-TWO-001\n",
+            "",
+        )
+        with mock.patch.object(github_bus, "run_git_network_process", return_value=proc) as probe:
+            self.assertTrue(github_bus.remote_branch_exists("task/ODP-ONE-001"))
+            self.assertTrue(github_bus.remote_branch_exists("task/ODP-TWO-001"))
+            self.assertFalse(github_bus.remote_branch_exists("task/ODP-MISSING-001"))
+
+        probe.assert_called_once_with(
+            ["ls-remote", "--heads", "origin"],
+            timeout_seconds=mock.ANY,
         )
 
     def test_run_git_network_process_kills_process_group_on_timeout(self) -> None:
