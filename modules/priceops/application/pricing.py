@@ -10,7 +10,7 @@ repository.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -713,6 +713,7 @@ __all__ = [
     "ApprovalBlockedError",
     "ActivationResult",
     "EvaluationResult",
+    "InvalidScenarioError",
     "MissingRollbackPlanError",
     "PlanNotFoundError",
     "PriceOpsService",

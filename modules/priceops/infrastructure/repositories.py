@@ -12,10 +12,12 @@ from dataclasses import dataclass, field
 
 from modules.priceops.domain.pricing import (
     ApprovalRecord,
+    DecisionWritebackRecord,
     InterventionTreatmentHandoff,
     LabelRegistryEntry,
     ObservationWindow,
     PlanOptimization,
+    PlanScenarioSimulation,
     PlanSimulation,
     PricingEffectEvaluation,
     PricingExecution,
