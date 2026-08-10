@@ -1,17 +1,17 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-08T11:25:29.781167+00:00",
+  "timestamp": "2026-08-10T11:31:58.018125+00:00",
   "release_sha": "ffffffffffffffffffffffffffffffffffffffff",
   "metrics_categories": [
-    "model",
     "data",
     "queue",
-    "job",
-    "latency",
+    "model",
     "business",
-    "audit",
+    "error",
+    "job",
     "traffic",
-    "error"
+    "audit",
+    "latency"
   ],
   "metrics_count": 34,
   "recorded_metrics_series_count": 19,

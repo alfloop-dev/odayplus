@@ -157,17 +157,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "3cded1aca8df4e0c",
-    "parent_id": "7a13c39eecbb42e7",
+    "span_id": "a2ada9a9ed4249fd",
+    "parent_id": "22c5dc1f446b4fea",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "5a65f706-fe2b-4dcc-87ed-7af14212786b",
+    "correlation_id": "ef9bad30-a43b-47e5-8ab1-54d6d9af416c",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.002479,
+    "duration_ms": 0.026779,
     "attributes": {
-      "correlation_id": "5a65f706-fe2b-4dcc-87ed-7af14212786b",
+      "correlation_id": "ef9bad30-a43b-47e5-8ab1-54d6d9af416c",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -177,17 +177,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "6a2b20ecba5c49e8",
-    "parent_id": "7a13c39eecbb42e7",
+    "span_id": "b6cc1b3169ab4e70",
+    "parent_id": "22c5dc1f446b4fea",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "5a65f706-fe2b-4dcc-87ed-7af14212786b",
+    "correlation_id": "ef9bad30-a43b-47e5-8ab1-54d6d9af416c",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.068538,
+    "duration_ms": 0.753425,
     "attributes": {
-      "correlation_id": "5a65f706-fe2b-4dcc-87ed-7af14212786b",
+      "correlation_id": "ef9bad30-a43b-47e5-8ab1-54d6d9af416c",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -197,17 +197,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "7a13c39eecbb42e7",
+    "span_id": "22c5dc1f446b4fea",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "5a65f706-fe2b-4dcc-87ed-7af14212786b",
+    "correlation_id": "ef9bad30-a43b-47e5-8ab1-54d6d9af416c",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.125616,
+    "duration_ms": 3.851865,
     "attributes": {
-      "correlation_id": "5a65f706-fe2b-4dcc-87ed-7af14212786b",
+      "correlation_id": "ef9bad30-a43b-47e5-8ab1-54d6d9af416c",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
