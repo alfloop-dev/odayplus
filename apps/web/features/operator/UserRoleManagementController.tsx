@@ -7,6 +7,13 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import styles from "./governance.module.css";
+import { OperatorDataUnavailableGate } from "./OperatorDataUnavailableGate";
+import {
+  operatorFixturesAllowed,
+  toUnavailableOperatorStatus,
+  type OperatorDataAvailability,
+} from "./operatorDataMode";
+import { operatorSecurityHeaders } from "./operatorSecurityHeaders";
 
 export type UserScope = {
   tenant_id: string;
@@ -46,111 +53,25 @@ export type RoleDefinition = {
   description: string;
 };
 
-const CANONICAL_ROLES: RoleDefinition[] = [
-  { role_id: "operations_manager", label: "營運主管", description: "全域監控、跨域指派與核准" },
-  { role_id: "site_reviewer", label: "選址審核員", description: "SiteScore 評估與選址決策核決" },
-  { role_id: "expansion_user", label: "展店經理", description: "HeatZone、候選點與點位提案" },
-  { role_id: "regional_supervisor", label: "區域督導", description: "區域門市與處置執行" },
-  { role_id: "marketing_manager", label: "行銷經理", description: "AdLift 活動與分群策略" },
-  { role_id: "pricing_manager", label: "定價經理", description: "PriceOps 建議與定價變更" },
+const DEFAULT_CANONICAL_ROLES: RoleDefinition[] = [
   { role_id: "platform_admin", label: "平台維運管理員", description: "系統設定與 Feature Flag 控制" },
-  { role_id: "auditor", label: "PM / 稽核員", description: "模型、決策追蹤與稽核線索" },
+  { role_id: "architecture_owner", label: "架構負責人", description: "系統與 API 架構設計" },
+  { role_id: "data_owner", label: "資料負責人", description: "資料整合與品質控管" },
+  { role_id: "model_owner", label: "模型負責人", description: "ML 模型生命週期與發布" },
+  { role_id: "release_owner", label: "發布負責人", description: "模型發布與 Canary 治理" },
+  { role_id: "expansion_user", label: "展店經理", description: "HeatZone、候選點與點位提案" },
+  { role_id: "site_reviewer", label: "選址審核員", description: "SiteScore 評估與選址決策核決" },
+  { role_id: "operations_manager", label: "營運主管", description: "全域監控、跨域指派與核准" },
+  { role_id: "regional_supervisor", label: "區域督導", description: "區域門市與處置執行" },
+  { role_id: "pricing_manager", label: "定價經理", description: "PriceOps 建議與定價變更" },
+  { role_id: "marketing_manager", label: "行銷經理", description: "AdLift 活動與分群策略" },
+  { role_id: "finance_legal", label: "法務與財務", description: "AVM 估價與合約審查" },
   { role_id: "compliance_officer", label: "合規官", description: "隱私、WORM 簽章與合規處置" },
+  { role_id: "records_manager", label: "紀錄管理員", description: "稽核紀錄與歷史保留" },
+  { role_id: "retention_manager", label: "保留管理員", description: "資料保留與刪除策略" },
   { role_id: "executive", label: "高階主管", description: "NetPlan 策略與高風險決策核准" },
   { role_id: "franchisee", label: "加盟商", description: "加盟單店營運與閱讀導覽" },
-];
-
-const DEFAULT_USERS: UserRecord[] = [
-  {
-    subject_id: "ops-lead",
-    email: "ops-lead@odayplus.com",
-    name: "營運主管",
-    roles: ["operations_manager", "regional_supervisor"],
-    scope: {
-      tenant_id: "tenant-default",
-      brand_ids: ["brand-a", "brand-b"],
-      region_ids: ["region-north", "region-south"],
-      store_ids: [],
-      clearance: "CONFIDENTIAL",
-    },
-    attributes: { department: "Operations", level: "Senior" },
-    status: "active",
-    updated_at: "2026-08-01T00:00:00Z",
-    updated_by: "system-bootstrap",
-    notes: "Default operations lead principal",
-  },
-  {
-    subject_id: "pm-auditor",
-    email: "pm-auditor@odayplus.com",
-    name: "PM / 稽核",
-    roles: ["auditor", "compliance_officer"],
-    scope: {
-      tenant_id: "tenant-default",
-      brand_ids: [],
-      region_ids: [],
-      store_ids: [],
-      clearance: "HIGHLY_RESTRICTED",
-    },
-    attributes: { department: "Audit", level: "Lead" },
-    status: "active",
-    updated_at: "2026-08-01T00:00:00Z",
-    updated_by: "system-bootstrap",
-    notes: "PM & Audit principal",
-  },
-  {
-    subject_id: "marketing-lead",
-    email: "marketing-lead@odayplus.com",
-    name: "行銷經理",
-    roles: ["marketing_manager", "pricing_manager"],
-    scope: {
-      tenant_id: "tenant-default",
-      brand_ids: ["brand-a"],
-      region_ids: [],
-      store_ids: [],
-      clearance: "CONFIDENTIAL",
-    },
-    attributes: { department: "Marketing" },
-    status: "active",
-    updated_at: "2026-08-01T00:00:00Z",
-    updated_by: "system-bootstrap",
-    notes: "Marketing lead principal",
-  },
-  {
-    subject_id: "expansion-lead",
-    email: "expansion-lead@odayplus.com",
-    name: "展店經理",
-    roles: ["expansion_user", "site_reviewer"],
-    scope: {
-      tenant_id: "tenant-default",
-      brand_ids: ["brand-a", "brand-b"],
-      region_ids: ["region-north"],
-      store_ids: [],
-      clearance: "CONFIDENTIAL",
-    },
-    attributes: { department: "Expansion" },
-    status: "active",
-    updated_at: "2026-08-01T00:00:00Z",
-    updated_by: "system-bootstrap",
-    notes: "Expansion & Site reviewer principal",
-  },
-  {
-    subject_id: "platform-admin",
-    email: "admin@odayplus.com",
-    name: "平台維運管理員",
-    roles: ["platform_admin"],
-    scope: {
-      tenant_id: "tenant-default",
-      brand_ids: [],
-      region_ids: [],
-      store_ids: [],
-      clearance: "HIGHLY_RESTRICTED",
-    },
-    attributes: { department: "Platform Ops", super_admin: true },
-    status: "active",
-    updated_at: "2026-08-01T00:00:00Z",
-    updated_by: "system-bootstrap",
-    notes: "Platform super admin",
-  },
+  { role_id: "auditor", label: "PM / 稽核員", description: "模型、決策追蹤與稽核線索" },
 ];
 
 export type UserRoleManagementControllerProps = {
@@ -162,9 +83,14 @@ export function UserRoleManagementController({
   currentRoleId = "operations_manager",
   onUserRoleChange,
 }: UserRoleManagementControllerProps) {
-  const [users, setUsers] = useState<UserRecord[]>(DEFAULT_USERS);
+  const fixturesAllowed = operatorFixturesAllowed();
+  const [users, setUsers] = useState<UserRecord[]>([]);
+  const [rolesList, setRolesList] = useState<RoleDefinition[]>(DEFAULT_CANONICAL_ROLES);
   const [auditLogs, setAuditLogs] = useState<UserRoleAuditRecord[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [apiLoadState, setApiLoadState] = useState<OperatorDataAvailability>(
+    fixturesAllowed ? "fixture" : "loading",
+  );
+  const [apiLoadError, setApiLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedUser, setSelectedUser] = useState<UserRecord | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState<boolean>(false);
@@ -185,26 +111,54 @@ export function UserRoleManagementController({
     setTimeout(() => setToastMessage(null), 4000);
   }, []);
 
-  const fetchUsers = useCallback(async () => {
-    setIsLoading(true);
+  const fetchRoles = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/operator/users");
+      const res = await fetch("/api/v1/operator/users/roles", {
+        headers: operatorSecurityHeaders(currentRoleId),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.roles && Array.isArray(data.roles)) {
+          setRolesList(data.roles);
+        }
+      }
+    } catch {
+      // Keep default canonical roles list
+    }
+  }, [currentRoleId]);
+
+  const fetchUsers = useCallback(async () => {
+    if (!fixturesAllowed) setApiLoadState("loading");
+    setApiLoadError(null);
+    try {
+      const res = await fetch("/api/v1/operator/users", {
+        headers: operatorSecurityHeaders(currentRoleId),
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.users && Array.isArray(data.users)) {
           setUsers(data.users);
+          setApiLoadState("ready");
+          return;
         }
       }
-    } catch {
-      // Fall back to default seeded users
-    } finally {
-      setIsLoading(false);
+      if (!fixturesAllowed) {
+        setApiLoadState("error");
+        setApiLoadError(`User Role API 返回錯誤 (${res.status} ${res.statusText})`);
+      }
+    } catch (err: any) {
+      if (!fixturesAllowed) {
+        setApiLoadState("error");
+        setApiLoadError(`無法連線至 User Role API: ${err.message || err}`);
+      }
     }
-  }, []);
+  }, [currentRoleId, fixturesAllowed]);
 
   const fetchAuditLogs = useCallback(async () => {
     try {
-      const res = await fetch("/api/v1/operator/users/audit-trail");
+      const res = await fetch("/api/v1/operator/users/audit-trail", {
+        headers: operatorSecurityHeaders(currentRoleId),
+      });
       if (res.ok) {
         const data = await res.json();
         if (data.events && Array.isArray(data.events)) {
@@ -212,14 +166,29 @@ export function UserRoleManagementController({
         }
       }
     } catch {
-      // Fallback
+      // Ignored
     }
-  }, []);
+  }, [currentRoleId]);
 
-  useEffect(() => {
+  const loadData = useCallback(() => {
+    fetchRoles();
     fetchUsers();
     fetchAuditLogs();
-  }, [fetchUsers, fetchAuditLogs]);
+  }, [fetchRoles, fetchUsers, fetchAuditLogs]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  if (!fixturesAllowed && apiLoadState !== "ready") {
+    return (
+      <OperatorDataUnavailableGate
+        detail={apiLoadError}
+        onRetry={loadData}
+        status={toUnavailableOperatorStatus(apiLoadState)}
+      />
+    );
+  }
 
   const handleOpenEdit = (user: UserRecord) => {
     setSelectedUser(user);
@@ -266,13 +235,15 @@ export function UserRoleManagementController({
       },
       status: selectedUser.status,
       reason: editReason || "角色權限異動與 Scope 調整",
-      actorName: currentRoleId,
     };
 
     try {
       const res = await fetch("/api/v1/operator/users", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...operatorSecurityHeaders(currentRoleId),
+        },
         body: JSON.stringify(payload),
       });
 
@@ -294,34 +265,15 @@ export function UserRoleManagementController({
         );
         showToast(`已成功更新 ${updatedUser.name || updatedUser.subject_id} 的角色權限，已寫入 Audit Trail`);
         if (onUserRoleChange) onUserRoleChange(updatedUser);
+        setIsEditModalOpen(false);
       } else {
         const errorData = await res.json().catch(() => ({}));
         showToast(`更新失敗：${errorData.detail || res.statusText}`);
       }
-    } catch {
-      // Local optimistic update fallback for offline / test
-      const updatedUser: UserRecord = {
-        ...selectedUser,
-        roles: editRoles,
-        scope: {
-          tenant_id: editTenantId,
-          brand_ids: parsedBrands,
-          region_ids: parsedRegions,
-          store_ids: parsedStores,
-          clearance: editClearance,
-        },
-        updated_at: new Date().toISOString(),
-        updated_by: currentRoleId,
-        notes: editReason || "角色權限異動 (local update)",
-      };
-      setUsers((prev) =>
-        prev.map((u) => (u.subject_id === updatedUser.subject_id ? updatedUser : u))
-      );
-      showToast(`已更新 ${updatedUser.name || updatedUser.subject_id} 的角色權限 (Local)`);
-      if (onUserRoleChange) onUserRoleChange(updatedUser);
+    } catch (err: any) {
+      showToast(`更新失敗：無法連線至 API (${err.message || err})`);
     } finally {
       setIsSubmitting(false);
-      setIsEditModalOpen(false);
       fetchAuditLogs();
     }
   };
@@ -331,11 +283,13 @@ export function UserRoleManagementController({
     try {
       const res = await fetch(`/api/v1/operator/users/${user.subject_id}/status`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...operatorSecurityHeaders(currentRoleId),
+        },
         body: JSON.stringify({
           status: newStatus,
           reason: `切換帳號狀態為 ${newStatus}`,
-          actorName: currentRoleId,
         }),
       });
 
@@ -346,14 +300,12 @@ export function UserRoleManagementController({
           prev.map((u) => (u.subject_id === user.subject_id ? targetUser : u))
         );
         showToast(`已切換帳號 ${user.subject_id} 狀態為：${newStatus}`);
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        showToast(`狀態切換失敗：${errorData.detail || res.statusText}`);
       }
-    } catch {
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.subject_id === user.subject_id ? { ...u, status: newStatus } : u
-        )
-      );
-      showToast(`已切換帳號 ${user.subject_id} 狀態為：${newStatus} (Local)`);
+    } catch (err: any) {
+      showToast(`狀態切換失敗：無法連線至 API (${err.message || err})`);
     }
   };
 
@@ -369,7 +321,7 @@ export function UserRoleManagementController({
   });
 
   const getRoleLabel = (roleId: string): string => {
-    const found = CANONICAL_ROLES.find((r) => r.role_id === roleId);
+    const found = rolesList.find((r) => r.role_id === roleId);
     return found ? found.label : roleId;
   };
 
@@ -635,7 +587,7 @@ export function UserRoleManagementController({
                   指派系統角色 (Canonical Roles)
                 </label>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-                  {CANONICAL_ROLES.map((role) => (
+                  {rolesList.map((role) => (
                     <label
                       key={role.role_id}
                       style={{

@@ -171,21 +171,29 @@ class UserRoleManagementService:
         self,
         *,
         audit_log: InMemoryAuditLog | None = None,
+        initial_state: dict[str, Any] | None = None,
         initial_users: list[dict[str, Any]] | None = None,
+        seed_fixtures: bool = True,
     ) -> None:
         self.audit_log = audit_log or InMemoryAuditLog()
         self._users: dict[str, dict[str, Any]] = {}
 
-        # Load default seed users first
-        for user in DEFAULT_SEED_USERS:
-            self._users[user["subject_id"]] = dict(user)
+        if seed_fixtures:
+            for user in DEFAULT_SEED_USERS:
+                self._users[user["subject_id"]] = dict(user)
 
-        # Apply any initial user overrides/additions
-        if initial_users:
-            for user in initial_users:
+        raw_users = (initial_state or {}).get("users") or initial_users
+        if raw_users:
+            for user in raw_users:
                 sub = user.get("subject_id")
                 if sub:
                     self._users[sub] = dict(user)
+
+    def export_state(self) -> dict[str, Any]:
+        """Export state dictionary for durable persistence."""
+        return {
+            "users": [dict(u) for u in self._users.values()],
+        }
 
     def list_users(self, *, status_filter: str | None = None) -> list[dict[str, Any]]:
         """Return all user role and scope records, optionally filtered by status."""

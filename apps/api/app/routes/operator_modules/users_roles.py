@@ -149,6 +149,8 @@ def create_user_role_sub_router(
     ) -> dict[str, Any]:
         svc = get_svc(request)
         scope_dict = body.scope.model_dump() if body.scope else None
+        server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
+        server_role = getattr(request.state, "operator_role_id", None) or x_operator_role or "platform_admin"
         try:
             user = svc.save_user(
                 subject_id=body.subjectId,
@@ -158,8 +160,8 @@ def create_user_role_sub_router(
                 email=body.email,
                 name=body.name,
                 status=body.status,
-                actor_name=body.actorName or getattr(request.state, "operator_subject_id", "operator"),
-                actor_role=body.actorRole or x_operator_role or getattr(request.state, "operator_role_id", "operations_manager"),
+                actor_name=server_actor,
+                actor_role=server_role,
                 reason=body.reason,
                 correlation_id=getattr(request.state, "correlation_id", None),
             )
@@ -180,11 +182,12 @@ def create_user_role_sub_router(
         request: Request,
     ) -> dict[str, Any]:
         svc = get_svc(request)
+        server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
         try:
             user = svc.set_user_status(
                 subject_id=subject_id,
                 status=body.status,
-                actor_name=body.actorName or getattr(request.state, "operator_subject_id", "operator"),
+                actor_name=server_actor,
                 reason=body.reason,
                 correlation_id=getattr(request.state, "correlation_id", None),
             )

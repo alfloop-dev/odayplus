@@ -9,73 +9,86 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UserRoleManagementController } from "../UserRoleManagementController";
 
 describe("UserRoleManagementController", () => {
+  let fetchMock: any;
+
   beforeEach(() => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockImplementation((url: string) => {
-        if (url.includes("/api/v1/operator/users/audit-trail")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({ events: [], count: 0 }),
-          });
-        }
-        if (url.includes("/api/v1/operator/users")) {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              users: [
-                {
-                  subject_id: "ops-lead",
-                  email: "ops-lead@odayplus.com",
-                  name: "營運主管",
-                  roles: ["operations_manager", "regional_supervisor"],
-                  scope: {
-                    tenant_id: "tenant-default",
-                    brand_ids: ["brand-a"],
-                    region_ids: ["region-north"],
-                    store_ids: [],
-                    clearance: "CONFIDENTIAL",
-                  },
-                  status: "active",
-                },
-                {
-                  subject_id: "pm-auditor",
-                  email: "pm-auditor@odayplus.com",
-                  name: "PM / 稽核",
-                  roles: ["auditor", "compliance_officer"],
-                  scope: {
-                    tenant_id: "tenant-default",
-                    brand_ids: [],
-                    region_ids: [],
-                    store_ids: [],
-                    clearance: "HIGHLY_RESTRICTED",
-                  },
-                  status: "active",
-                },
-                {
-                  subject_id: "marketing-lead",
-                  email: "marketing-lead@odayplus.com",
-                  name: "行銷經理",
-                  roles: ["marketing_manager"],
-                  scope: {
-                    tenant_id: "tenant-default",
-                    brand_ids: [],
-                    region_ids: [],
-                    store_ids: [],
-                    clearance: "CONFIDENTIAL",
-                  },
-                  status: "active",
-                },
-              ],
-            }),
-          });
-        }
+    fetchMock = vi.fn().mockImplementation((url: string, options?: any) => {
+      if (url.includes("/api/v1/operator/users/roles")) {
         return Promise.resolve({
           ok: true,
-          json: async () => ({}),
+          json: async () => ({
+            roles: [
+              { role_id: "operations_manager", label: "營運主管", description: "全域監控" },
+              { role_id: "auditor", label: "PM / 稽核員", description: "稽核" },
+              { role_id: "marketing_manager", label: "行銷經理", description: "AdLift" },
+            ],
+            count: 3,
+          }),
         });
-      })
-    );
+      }
+      if (url.includes("/api/v1/operator/users/audit-trail")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ events: [], count: 0 }),
+        });
+      }
+      if (url.includes("/api/v1/operator/users")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            users: [
+              {
+                subject_id: "ops-lead",
+                email: "ops-lead@odayplus.com",
+                name: "營運主管",
+                roles: ["operations_manager", "regional_supervisor"],
+                scope: {
+                  tenant_id: "tenant-default",
+                  brand_ids: ["brand-a"],
+                  region_ids: ["region-north"],
+                  store_ids: [],
+                  clearance: "CONFIDENTIAL",
+                },
+                status: "active",
+              },
+              {
+                subject_id: "pm-auditor",
+                email: "pm-auditor@odayplus.com",
+                name: "PM / 稽核",
+                roles: ["auditor", "compliance_officer"],
+                scope: {
+                  tenant_id: "tenant-default",
+                  brand_ids: [],
+                  region_ids: [],
+                  store_ids: [],
+                  clearance: "HIGHLY_RESTRICTED",
+                },
+                status: "active",
+              },
+              {
+                subject_id: "marketing-lead",
+                email: "marketing-lead@odayplus.com",
+                name: "行銷經理",
+                roles: ["marketing_manager"],
+                scope: {
+                  tenant_id: "tenant-default",
+                  brand_ids: [],
+                  region_ids: [],
+                  store_ids: [],
+                  clearance: "CONFIDENTIAL",
+                },
+                status: "active",
+              },
+            ],
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({}),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
