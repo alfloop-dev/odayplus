@@ -3,8 +3,8 @@
 ## Task Summary
 - **Task ID**: ODP-CAP-NETPLAN-SCENARIO-UX-001
 - **Title**: Complete NetPlan scenario and infeasibility UX
-- **Owner**: Antigravity7
-- **Reviewer**: Claude2
+- **Owner**: Antigravity
+- **Reviewer**: Claude
 
 ## Changes Made
 
@@ -16,13 +16,15 @@
 ### 2. Scenario Version, Hash Binding & Lifecycle State Machine
 - Updated `ScenarioSolveRecord` in `modules/netplan/domain/planning.py` to include `problem_hash` binding (computed via `compute_solver_problem_hash`).
 - Added `is_stale(scenario)` method to `ScenarioSolveRecord` to check if solver problem hash matches the current scenario's parameters (returns `True` if `problem_hash` is missing).
+- Bound scenario to model version `netplan-network-baseline-v1`.
 - Updated `VALID_TRANSITIONS` in `modules/netplan/domain/planning.py` to allow returning to `DRAFT` from `SOLVED` and `INFEASIBLE`.
 - Fixed `update_scenario` in `modules/netplan/application/planning.py`:
   - Automatically transitions `SOLVED` and `INFEASIBLE` scenarios back to `DRAFT` upon parameter/constraint modification so they can be re-solved cleanly without getting stuck.
   - Fixed partial option updates: preserved existing stores options when updating `candidate_sites` only and vice versa.
 
-### 3. API Route Exposure
+### 3. API Route Exposure & OpenAPI Client Regeneration
 - Added `PUT /netplan/scenarios/{scenario_id}` route with `NetPlanUpdateScenarioPayload` in `apps/api/app/routes/netplan.py` so scenario parameter updates and stale-reset trigger paths are fully exposed to clients.
+- Regenerated OpenAPI artifacts (`packages/openapi-client/openapi.json` and `packages/openapi-client/src/generated/types.ts`) via `make api-contract-refresh`, resolving OpenAPI contract drift.
 
 ### 4. Frontend & Rebalance UX Integration
 - Updated `apps/web/features/operator/types.ts` to define `NetPlanDiagnostic` and `NetPlanScenarioDetail` with `isStale`, `isInfeasible`, and diagnostic array.
@@ -38,4 +40,4 @@
   - `test_update_scenario_lifecycle_restrictions`
   - `test_update_scenario_resets_solved_and_infeasible_to_draft_and_allows_resolving`
   - `test_partial_update_scenario_preserves_omitted_stores`
-- Delivered frontend vitest suite in `apps/web/src/app/__tests__/netplanDiagnosticsUx.test.ts` verifying rendering of all 5 diagnostic fields and `isStale` state.
+- Delivered frontend component Vitest suite in `apps/web/src/app/__tests__/netplanDiagnosticsUx.test.tsx` verifying DOM rendering of all 5 diagnostic fields, stale badge, and infeasible badge via React testing library assertions.

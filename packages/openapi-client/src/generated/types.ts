@@ -849,6 +849,15 @@ export type NetPlanSolvePayload = {
   solved_at?: string | null;
 };
 
+/** NetPlanUpdateScenarioPayload */
+export type NetPlanUpdateScenarioPayload = {
+  candidate_sites?: Record<string, unknown>[] | null;
+  constraints?: Record<string, unknown> | null;
+  existing_stores?: Record<string, unknown>[] | null;
+  planning_horizon?: string | null;
+  scenario_name?: string | null;
+};
+
 /** NetworkListingActorPayload */
 export type NetworkListingActorPayload = {
   actorName?: string | null;
@@ -1531,7 +1540,7 @@ export const API_PATHS = {
   "/api/v1/listings/import-jobs": ["POST"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
-  "/api/v1/netplan/scenarios/{scenario_id}": ["GET"],
+  "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],
   "/api/v1/netplan/scenarios/{scenario_id}/close": ["POST"],
   "/api/v1/netplan/scenarios/{scenario_id}/decide": ["POST"],
   "/api/v1/netplan/scenarios/{scenario_id}/execute": ["POST"],
