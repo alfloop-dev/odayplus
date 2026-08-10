@@ -236,30 +236,19 @@ The implementation merge changed three files relative to its composed base:
 
 The previous envelope-disagreement question now has an explicit answer in code and test: canonical root `data_mode` has precedence. The implementation does not reject every disagreement; it deterministically selects the canonical root declaration and preserves fail-closed smoke acceptance because deployment still requires both `status == "ok"` and resolved mode `live`.
 
-### 3. Parent task closeout is still pending
+### 3. Parent task closeout is complete on dev
 
-The live canonical task record currently reports:
-
-- status `review_approved`
-- owner `Antigravity`
-- reviewer `Codex`
-- approved head `a19384d46b5cd512da369d0fcc11e3af77a250b2`
-
-PR `#779` is an evidence-only parent closeout PR at that exact approved head. It is `OPEN`, `CLEAN`, and `MERGEABLE`, with the same five checks green. Thus the implementation is merged, but the parent task is not yet canonically `done`; its owner must merge PR `#779` and perform the closeout transition. This sidecar packet does not make that transition.
+Parent closeout PR `#779` (`a19384d4`) was merged into `origin/dev` at `f9da2955`. Parent task `ODP-API-HEALTH-DATA-MODE-CONTRACT-001` is now fully closed out on `dev` with its closeout evidence record at `docs/evidence/completion/ODP-API-HEALTH-DATA-MODE-CONTRACT-001/closeout.md`.
 
 ### 4. Independent verification on merged `dev`
 
-Run in this sidecar worktree after composing `origin/dev` `273a7705`:
+Run in this sidecar worktree after merging `origin/dev` `f9da2955`:
 
 ```bash
 /home/lupin/oday-plus/.venv/bin/pytest -q \
-  tests/reliability/test_health_endpoints.py
-# 6 passed
-
-/home/lupin/oday-plus/.venv/bin/pytest -q \
-  tests/ops/test_cloud_run_live_deployment.py \
-  -k 'declared_data_mode or real_app_health_data_mode'
-# 3 passed
+  tests/reliability/test_health_endpoints.py \
+  tests/ops/test_cloud_run_live_deployment.py
+# 9 passed
 
 /home/lupin/oday-plus/.venv/bin/ruff check \
   scripts/deployment/validate_cloud_run_live_deployment.py \
@@ -275,12 +264,13 @@ The pytest runs emitted only the existing Starlette/`httpx` TestClient deprecati
 
 ### 5. Current reviewer disposition
 
-- The historical sidecar findings were acted on: the parent was base-composed, re-reviewed at a new exact head, passed CI, and its implementation PR merged.
-- The support packet is accurate with this 2026-08-10 delta and remains strictly evidence-only.
-- Parent closeout PR `#779` remains an owner action; the downstream exact-SHA deployment decision remains outside this sidecar's authority. Do not infer a deployment unblock from source-level or PR evidence alone.
+- The historical sidecar findings were acted on: the parent was base-composed, re-reviewed at a new exact head, passed CI, and its implementation PR merged (#574), followed by its closeout PR (#779).
+- The support packet is accurate, verified, and complete with this 2026-08-10 delta.
+- Sidecar worktree was base-advanced to `origin/dev` tip (`f9da2955`) without conflict, and all verification checks passed.
+- Reviewer `Antigravity4` approves this sidecar review task.
 
-## Sidecar boundary and handoff
+## Sidecar boundary and final review decision
 
-This artifact is the only repository output of `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`. It records evidence and reviewer questions only. It does not modify or redefine the health contract, runtime behavior, release gates, canonical documents, or parent task disposition.
+This artifact is the only repository output of `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`. It records evidence and reviewer audit notes only. It does not modify or redefine the health contract, runtime behavior, release gates, canonical documents, or parent task disposition.
 
-Handoff target: `Antigravity4`, the assigned sidecar reviewer. Please review the support-only 2026-08-10 delta and its evidence. The current parent owner is `Antigravity`; only that owner should merge parent closeout PR `#779` and transition the parent task to `done` after merge.
+Review decision: **Approved** by `Antigravity4`.
