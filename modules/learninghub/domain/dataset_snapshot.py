@@ -7,6 +7,30 @@ from hashlib import sha256
 from typing import Any
 
 
+@dataclass(frozen=True)
+class DqTriageRecord:
+    triage_id: str
+    dataset_snapshot_id: str
+    action: str
+    actor: str
+    rationale: str
+    time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    audit_event_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        data = {
+            "triage_id": self.triage_id,
+            "dataset_snapshot_id": self.dataset_snapshot_id,
+            "action": self.action,
+            "actor": self.actor,
+            "rationale": self.rationale,
+            "time": self.time.isoformat(),
+        }
+        if self.audit_event_id:
+            data["audit_event_id"] = self.audit_event_id
+        return data
+
+
 class DatasetSnapshotError(ValueError):
     pass
 
@@ -315,6 +339,7 @@ def _stable_snapshot_id(records: Sequence[ModelReadyRecord]) -> str:
 __all__ = [
     "DatasetSnapshot",
     "DatasetSnapshotError",
+    "DqTriageRecord",
     "ModelReadyRecord",
     "PointInTimeIssue",
     "PointInTimeViolation",

@@ -3,6 +3,7 @@
 from modules.learninghub.domain.dataset_snapshot import (
     DatasetSnapshot,
     DatasetSnapshotError,
+    DqTriageRecord,
     ModelReadyRecord,
     PointInTimeIssue,
     PointInTimeViolation,
@@ -38,6 +39,7 @@ __all__ = [
     # dataset_snapshot
     "DatasetSnapshot",
     "DatasetSnapshotError",
+    "DqTriageRecord",
     "InferenceComparison",
     "InferenceComparisonMode",
     "InferenceDelta",
