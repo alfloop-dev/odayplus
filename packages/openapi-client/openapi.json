@@ -439,6 +439,48 @@
         "title": "ApproveFlagPayload",
         "type": "object"
       },
+      "AssignPayload": {
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "assignee": {
+            "minLength": 1,
+            "title": "Assignee",
+            "type": "string"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          }
+        },
+        "required": [
+          "assignee",
+          "actor"
+        ],
+        "title": "AssignPayload",
+        "type": "object"
+      },
       "AssignmentReceipt": {
         "properties": {
           "assignment_id": {
@@ -1454,6 +1496,37 @@
         ],
         "title": "DecisionType",
         "type": "string"
+      },
+      "DqTriagePayload": {
+        "properties": {
+          "action": {
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor"
+          },
+          "rationale": {
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "rationale"
+        ],
+        "title": "DqTriagePayload",
+        "type": "object"
       },
       "EligibilityPayload": {
         "properties": {
@@ -4195,6 +4268,76 @@
         "title": "NetPlanSolvePayload",
         "type": "object"
       },
+      "NetPlanUpdateScenarioPayload": {
+        "properties": {
+          "candidate_sites": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Sites"
+          },
+          "constraints": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Constraints"
+          },
+          "existing_stores": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Stores"
+          },
+          "planning_horizon": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Planning Horizon"
+          },
+          "scenario_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Name"
+          }
+        },
+        "title": "NetPlanUpdateScenarioPayload",
+        "type": "object"
+      },
       "NetworkListingActorPayload": {
         "additionalProperties": true,
         "properties": {
@@ -4633,6 +4776,54 @@
         "title": "PriceOpsApprovalPayload",
         "type": "object"
       },
+      "PriceOpsDecisionWritebackPayload": {
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "decision": {
+            "minLength": 1,
+            "title": "Decision",
+            "type": "string"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "reason": {
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "selected_scenario_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selected Scenario Id"
+          }
+        },
+        "required": [
+          "actor",
+          "decision",
+          "reason"
+        ],
+        "title": "PriceOpsDecisionWritebackPayload",
+        "type": "object"
+      },
       "PriceOpsEvaluationPayload": {
         "properties": {
           "actor": {
@@ -4964,6 +5155,41 @@
           "items"
         ],
         "title": "PriceOpsPlanPayload",
+        "type": "object"
+      },
+      "PriceOpsScenarioSimulationPayload": {
+        "properties": {
+          "actor": {
+            "default": "system",
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "candidate_prices": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Candidate Prices",
+            "type": "object"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "PriceOpsScenarioSimulationPayload",
         "type": "object"
       },
       "PromotionDecisionReceipt": {
@@ -6522,6 +6748,31 @@
         "title": "TransitionReceipt",
         "type": "object"
       },
+      "UnassignPayload": {
+        "properties": {
+          "actor": {
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          }
+        },
+        "required": [
+          "actor"
+        ],
+        "title": "UnassignPayload",
+        "type": "object"
+      },
       "UnmergeRequest": {
         "properties": {
           "original_decision_id": {
@@ -6633,6 +6884,197 @@
           "type"
         ],
         "title": "ValidationError",
+        "type": "object"
+      },
+      "XlsxCommitReceipt": {
+        "properties": {
+          "accepted_count": {
+            "title": "Accepted Count",
+            "type": "integer"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "committed_at": {
+            "title": "Committed At",
+            "type": "string"
+          },
+          "correlation_id": {
+            "title": "Correlation Id",
+            "type": "string"
+          },
+          "intake_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Intake Ids",
+            "type": "array"
+          },
+          "rejected_count": {
+            "title": "Rejected Count",
+            "type": "integer"
+          },
+          "replayed": {
+            "default": false,
+            "title": "Replayed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "batch_id",
+          "committed_at",
+          "accepted_count",
+          "rejected_count",
+          "intake_ids",
+          "correlation_id"
+        ],
+        "title": "XlsxCommitReceipt",
+        "type": "object"
+      },
+      "XlsxCommitRequest": {
+        "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "scope": {
+            "$ref": "#/components/schemas/ScopeContext"
+          }
+        },
+        "required": [
+          "rows",
+          "scope"
+        ],
+        "title": "XlsxCommitRequest",
+        "type": "object"
+      },
+      "XlsxPreviewRequest": {
+        "properties": {
+          "custom_mapping": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Custom Mapping"
+          },
+          "file_base64": {
+            "title": "File Base64",
+            "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScopeContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "file_base64"
+        ],
+        "title": "XlsxPreviewRequest",
+        "type": "object"
+      },
+      "XlsxPreviewResponse": {
+        "properties": {
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "has_formula_or_external_link_warnings": {
+            "title": "Has Formula Or External Link Warnings",
+            "type": "boolean"
+          },
+          "preview_rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Preview Rows",
+            "type": "array"
+          },
+          "rejected_count": {
+            "title": "Rejected Count",
+            "type": "integer"
+          },
+          "row_errors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Row Errors",
+            "type": "array"
+          },
+          "schema_mapping": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Schema Mapping",
+            "type": "object"
+          },
+          "total_rows": {
+            "title": "Total Rows",
+            "type": "integer"
+          },
+          "valid_count": {
+            "title": "Valid Count",
+            "type": "integer"
+          },
+          "valid_rows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Valid Rows",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "batch_id",
+          "total_rows",
+          "valid_count",
+          "rejected_count",
+          "schema_mapping",
+          "has_formula_or_external_link_warnings",
+          "warnings",
+          "valid_rows",
+          "row_errors",
+          "preview_rows"
+        ],
+        "title": "XlsxPreviewResponse",
         "type": "object"
       },
       "apps__api__app__routes__interventions__ConflictCheckPayload": {
@@ -13353,6 +13795,212 @@
         ]
       }
     },
+    "/api/v1/intake-batches/xlsx/commit": {
+      "post": {
+        "operationId": "commitXlsxBatch",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/XlsxCommitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XlsxCommitReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Commit Xlsx Batch",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intake-batches/xlsx/errors/{batch_id}/export": {
+      "get": {
+        "operationId": "exportXlsxBatchErrors",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "csv",
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Export Xlsx Batch Errors",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
+    "/api/v1/intake-batches/xlsx/preview": {
+      "post": {
+        "operationId": "previewXlsxBatch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/XlsxPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/XlsxPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Assisted intake API error"
+          }
+        },
+        "summary": "Preview Xlsx Batch",
+        "tags": [
+          "assisted-listing-intake"
+        ]
+      }
+    },
     "/api/v1/intakes": {
       "get": {
         "operationId": "listIntakes",
@@ -14542,6 +15190,54 @@
               ],
               "title": "Store Id"
             }
+          },
+          {
+            "in": "query",
+            "name": "assigned_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assigned To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
           }
         ],
         "responses": {
@@ -15112,6 +15808,136 @@
           }
         },
         "summary": "Decide",
+        "tags": [
+          "interventions"
+        ]
+      }
+    },
+    "/api/v1/interventions/{intervention_id}/assign": {
+      "post": {
+        "operationId": "assign_case_api_v1_interventions__intervention_id__assign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intervention_id",
+            "required": true,
+            "schema": {
+              "title": "Intervention Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Assign Case Api V1 Interventions  Intervention Id  Assign Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Assign Case",
         "tags": [
           "interventions"
         ]
@@ -16131,6 +16957,136 @@
         ]
       }
     },
+    "/api/v1/interventions/{intervention_id}/unassign": {
+      "post": {
+        "operationId": "unassign_case_api_v1_interventions__intervention_id__unassign_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "intervention_id",
+            "required": true,
+            "schema": {
+              "title": "Intervention Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnassignPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Unassign Case Api V1 Interventions  Intervention Id  Unassign Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Unassign Case",
+        "tags": [
+          "interventions"
+        ]
+      }
+    },
     "/api/v1/jobs": {
       "post": {
         "operationId": "enqueue_job_api_v1_jobs_post",
@@ -16633,6 +17589,222 @@
           }
         },
         "summary": "Register Dataset Snapshot",
+        "tags": [
+          "learninghub"
+        ]
+      }
+    },
+    "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": {
+      "get": {
+        "operationId": "list_dq_triages_api_v1_learninghub_dataset_snapshots__dataset_snapshot_id__triage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dataset_snapshot_id",
+            "required": true,
+            "schema": {
+              "title": "Dataset Snapshot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Dq Triages Api V1 Learninghub Dataset Snapshots  Dataset Snapshot Id  Triage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "List Dq Triages",
+        "tags": [
+          "learninghub"
+        ]
+      },
+      "post": {
+        "operationId": "record_dq_triage_api_v1_learninghub_dataset_snapshots__dataset_snapshot_id__triage_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "dataset_snapshot_id",
+            "required": true,
+            "schema": {
+              "title": "Dataset Snapshot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DqTriagePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Record Dq Triage Api V1 Learninghub Dataset Snapshots  Dataset Snapshot Id  Triage Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Record Dq Triage",
         "tags": [
           "learninghub"
         ]
@@ -18300,6 +19472,118 @@
           }
         },
         "summary": "Get Scenario",
+        "tags": [
+          "netplan"
+        ]
+      },
+      "put": {
+        "operationId": "update_scenario_api_v1_netplan_scenarios__scenario_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scenario_id",
+            "required": true,
+            "schema": {
+              "title": "Scenario Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetPlanUpdateScenarioPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Update Scenario Api V1 Netplan Scenarios  Scenario Id  Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Update Scenario",
         "tags": [
           "netplan"
         ]
@@ -32567,6 +33851,136 @@
         ]
       }
     },
+    "/api/v1/priceops/plans/{plan_id}/decision-writeback": {
+      "post": {
+        "operationId": "decision_writeback_api_v1_priceops_plans__plan_id__decision_writeback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceOpsDecisionWritebackPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Decision Writeback Api V1 Priceops Plans  Plan Id  Decision Writeback Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Decision Writeback",
+        "tags": [
+          "priceops"
+        ]
+      }
+    },
     "/api/v1/priceops/plans/{plan_id}/evaluate": {
       "post": {
         "operationId": "evaluate_api_v1_priceops_plans__plan_id__evaluate_post",
@@ -33212,6 +34626,136 @@
           }
         },
         "summary": "Simulate",
+        "tags": [
+          "priceops"
+        ]
+      }
+    },
+    "/api/v1/priceops/plans/{plan_id}/simulate-scenario": {
+      "post": {
+        "operationId": "simulate_scenario_api_v1_priceops_plans__plan_id__simulate_scenario_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "plan_id",
+            "required": true,
+            "schema": {
+              "title": "Plan Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PriceOpsScenarioSimulationPayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Simulate Scenario Api V1 Priceops Plans  Plan Id  Simulate Scenario Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Missing or invalid identity"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Server-derived authorization denied"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Resource not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflicting state or idempotency replay conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unexpected server error"
+          }
+        },
+        "summary": "Simulate Scenario",
         "tags": [
           "priceops"
         ]

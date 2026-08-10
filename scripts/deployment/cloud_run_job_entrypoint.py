@@ -27,11 +27,13 @@ def _now() -> str:
 
 
 def _emit_receipt(kind: str, status: str, **details: Any) -> None:
+    from shared.runtime_config import get_release_identity
+
     payload = {
         "schema_version": 1,
         "receipt_kind": kind,
         "status": status,
-        "release_sha": os.environ.get("ODAY_RELEASE_SHA", ""),
+        "release_sha": get_release_identity(),
         "environment": os.environ.get("ODP_DEPLOY_ENV") or os.environ.get("ODAY_ENV", ""),
         "cloud_run_execution": os.environ.get("CLOUD_RUN_EXECUTION", ""),
         "cloud_run_task_index": os.environ.get("CLOUD_RUN_TASK_INDEX", ""),

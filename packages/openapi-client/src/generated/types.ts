@@ -104,6 +104,14 @@ export type ApproveFlagPayload = {
   approver: string;
 };
 
+/** AssignPayload */
+export type AssignPayload = {
+  actor: string;
+  assignee: string;
+  expected_version?: number | null;
+  role?: string | null;
+};
+
 /** AssignmentReceipt */
 export type AssignmentReceipt = {
   assignment_id: string;
@@ -303,6 +311,13 @@ export type DecisionStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECU
 
 /** DecisionType */
 export type DecisionType = "CREATE" | "REVISE" | "DUPLICATE" | "QUARANTINE" | "REJECT" | "REOPEN" | "MERGE" | "SPLIT" | "UNMERGE";
+
+/** DqTriagePayload */
+export type DqTriagePayload = {
+  action: string;
+  actor?: string | null;
+  rationale: string;
+};
 
 /** EligibilityPayload */
 export type EligibilityPayload = {
@@ -841,6 +856,15 @@ export type NetPlanSolvePayload = {
   solved_at?: string | null;
 };
 
+/** NetPlanUpdateScenarioPayload */
+export type NetPlanUpdateScenarioPayload = {
+  candidate_sites?: Record<string, unknown>[] | null;
+  constraints?: Record<string, unknown> | null;
+  existing_stores?: Record<string, unknown>[] | null;
+  planning_horizon?: string | null;
+  scenario_name?: string | null;
+};
+
 /** NetworkListingActorPayload */
 export type NetworkListingActorPayload = {
   actorName?: string | null;
@@ -937,6 +961,15 @@ export type PriceOpsApprovalPayload = {
   reason: string;
 };
 
+/** PriceOpsDecisionWritebackPayload */
+export type PriceOpsDecisionWritebackPayload = {
+  actor: string;
+  decision: string;
+  occurred_at?: string | null;
+  reason: string;
+  selected_scenario_id?: string | null;
+};
+
 /** PriceOpsEvaluationPayload */
 export type PriceOpsEvaluationPayload = {
   actor?: string;
@@ -991,6 +1024,14 @@ export type PriceOpsPlanPayload = {
   items: PriceOpsPlanItemPayload[];
   plan_id?: string | null;
   tenant_id: string;
+};
+
+/** PriceOpsScenarioSimulationPayload */
+export type PriceOpsScenarioSimulationPayload = {
+  actor?: string;
+  candidate_prices?: Record<string, number>;
+  occurred_at?: string | null;
+  reason?: string;
 };
 
 /** PromotionDecisionReceipt */
@@ -1297,6 +1338,12 @@ export type TransitionReceipt = {
   version_after: number;
 };
 
+/** UnassignPayload */
+export type UnassignPayload = {
+  actor: string;
+  expected_version?: number | null;
+};
+
 /** UnmergeRequest */
 export type UnmergeRequest = {
   original_decision_id: string;
@@ -1320,6 +1367,45 @@ export type ValidationError = {
   loc: (string | number)[];
   msg: string;
   type: string;
+};
+
+/** XlsxCommitReceipt */
+export type XlsxCommitReceipt = {
+  accepted_count: number;
+  batch_id: string;
+  committed_at: string;
+  correlation_id: string;
+  intake_ids: string[];
+  rejected_count: number;
+  replayed?: boolean;
+};
+
+/** XlsxCommitRequest */
+export type XlsxCommitRequest = {
+  batch_id?: string | null;
+  rows: Record<string, unknown>[];
+  scope: ScopeContext;
+};
+
+/** XlsxPreviewRequest */
+export type XlsxPreviewRequest = {
+  custom_mapping?: Record<string, string> | null;
+  file_base64: string;
+  scope?: ScopeContext | null;
+};
+
+/** XlsxPreviewResponse */
+export type XlsxPreviewResponse = {
+  batch_id: string;
+  has_formula_or_external_link_warnings: boolean;
+  preview_rows: Record<string, unknown>[];
+  rejected_count: number;
+  row_errors: Record<string, unknown>[];
+  schema_mapping: Record<string, string>;
+  total_rows: number;
+  valid_count: number;
+  valid_rows: Record<string, unknown>[];
+  warnings: string[];
 };
 
 /** ConflictCheckPayload */
@@ -1458,6 +1544,9 @@ export const API_PATHS = {
   "/api/v1/identity/split": ["POST"],
   "/api/v1/identity/unmerge": ["POST"],
   "/api/v1/intake-batches": ["POST"],
+  "/api/v1/intake-batches/xlsx/commit": ["POST"],
+  "/api/v1/intake-batches/xlsx/errors/{batch_id}/export": ["GET"],
+  "/api/v1/intake-batches/xlsx/preview": ["POST"],
   "/api/v1/intakes": ["GET"],
   "/api/v1/intakes/url": ["POST"],
   "/api/v1/intakes/{intake_id}": ["GET"],
@@ -1472,6 +1561,7 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}": ["GET"],
   "/api/v1/interventions/{intervention_id}/action": ["POST"],
   "/api/v1/interventions/{intervention_id}/approve": ["POST"],
+  "/api/v1/interventions/{intervention_id}/assign": ["POST"],
   "/api/v1/interventions/{intervention_id}/close": ["POST"],
   "/api/v1/interventions/{intervention_id}/conflict-check": ["POST"],
   "/api/v1/interventions/{intervention_id}/eligibility": ["POST"],
@@ -1480,11 +1570,13 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}/label": ["GET"],
   "/api/v1/interventions/{intervention_id}/outcomes": ["POST"],
   "/api/v1/interventions/{intervention_id}/submit": ["POST"],
+  "/api/v1/interventions/{intervention_id}/unassign": ["POST"],
   "/api/v1/jobs": ["POST"],
   "/api/v1/jobs/{job_id}": ["GET"],
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
+  "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": ["GET", "POST"],
   "/api/v1/learninghub/models": ["GET"],
   "/api/v1/learninghub/models/{model_name}": ["GET"],
   "/api/v1/learninghub/models/{model_name}/evidence": ["GET"],
@@ -1498,7 +1590,7 @@ export const API_PATHS = {
   "/api/v1/listings/import-jobs": ["POST"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
-  "/api/v1/netplan/scenarios/{scenario_id}": ["GET"],
+  "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],
   "/api/v1/netplan/scenarios/{scenario_id}/close": ["POST"],
   "/api/v1/netplan/scenarios/{scenario_id}/decide": ["POST"],
   "/api/v1/netplan/scenarios/{scenario_id}/execute": ["POST"],
@@ -1600,11 +1692,13 @@ export const API_PATHS = {
   "/api/v1/priceops/plans/{plan_id}/activate": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/approve": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/comparison": ["GET"],
+  "/api/v1/priceops/plans/{plan_id}/decision-writeback": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/evaluate": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/observation": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/optimize": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/rollback": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/simulate": ["POST"],
+  "/api/v1/priceops/plans/{plan_id}/simulate-scenario": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/submit": ["POST"],
   "/api/v1/promotion-decisions/{promotion_decision_id}": ["GET"],
   "/api/v1/promotion-decisions/{promotion_decision_id}/actions/review": ["POST"],
