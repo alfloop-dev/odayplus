@@ -11,18 +11,18 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 
 | # | Acceptance Criterion | Verification Method | Status |
 |---|---|---|---|
-| 1 | Required signals have stable names and owners | 34 metrics owned across 6 teams, and the gate is provably able to fail: constructing a metric with an omitted or blank owner raises | **PASSED** |
+| 1 | Required signals have stable names and owners | 35 metrics owned across 6 teams, and the gate is provably able to fail: constructing a metric with an omitted or blank owner raises | **PASSED** |
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **PASSED** |
 | 3 | Cardinality is bounded | Route labels normalized to 469 registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **PASSED** |
-| 4 | Alerts link to runbooks and release identity | All 11 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA`; the binding flag is derived, and reports `False` when the trusted identity rotates | **PASSED** |
-| 5 | Configuration and emission tests are reproducible | 91/91 pytest reliability/observability tests passing dynamically in 41.02s | **PASSED** |
+| 4 | Alerts link to runbooks and release identity | All 12 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA`; the binding flag is derived, and reports `False` when the trusted identity rotates; a page lost to that fail-closed gate is contained and counted rather than pre-empting the caller | **PASSED** |
+| 5 | Configuration and emission tests are reproducible | 96/96 pytest reliability/observability tests passing dynamically in 41.07s | **PASSED** |
 
 ---
 
 ## 2. Telemetry Signal Catalog Overview
 
 ### Categories & Signal Ownership Coverage (`shared/observability/metrics.py`)
-- **Technical & SRE** (`sre-platform` / `sre-messaging`): `api_request_count`, `api_error_count`, `api_latency_ms`, `db_query_latency_ms`, `job_duration_seconds`, `job_failure_count`, `event_consumer_lag`, `dlq_message_count`, `external_connector_failure_count`, `deployment_watch_window_status`
+- **Technical & SRE** (`sre-platform` / `sre-messaging`): `api_request_count`, `api_error_count`, `api_latency_ms`, `db_query_latency_ms`, `job_duration_seconds`, `job_failure_count`, `event_consumer_lag`, `dlq_message_count`, `external_connector_failure_count`, `alert_delivery_failure_count`, `deployment_watch_window_status`
 - **Data & Freshness** (`data-platform`): `data_freshness_hours`, `data_quality_score`, `feature_null_rate`
 - **Model Telemetry** (`ml-platform`): `prediction_count`, `model_error_metric`, `prediction_interval_coverage`, `drift_score`, `model_alias_change_count`
 - **Solver & Business KPIs** (`business-analytics`): `heatzone_topk_adoption_rate`, `listing_dedup_accuracy`, `sitescore_realization_rate`, `forecast_alert_precision`, `intervention_recovery_rate`, `price_hard_constraint_violation_count`, `adlift_incremental_gm`, `avm_interval_coverage`, `netplan_plan_adoption_rate`, `model_adoption_rate`
@@ -65,7 +65,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "forecast-daily-failed",
@@ -76,7 +76,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "data-quality-p0-fail",
@@ -87,7 +87,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "dlq-spike",
@@ -98,7 +98,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "unauthorized-spike",
@@ -109,7 +109,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "audit-write-failure",
@@ -120,7 +120,18 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+  },
+  {
+    "id": "alert-delivery-failure",
+    "name": "Alert delivery failure",
+    "severity": "P1",
+    "metric": "alert_delivery_failure_count",
+    "runbook": "docs/runbooks/observability-and-runbook.md#alert-delivery-failure",
+    "runbook_file_verified": true,
+    "runbook_anchor_verified": true,
+    "release_identity_bound": true,
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "model-drift-high",
@@ -131,7 +142,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "price-constraint-violation",
@@ -142,7 +153,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "data-room-abnormal-download",
@@ -153,7 +164,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "solver-repeated-infeasible",
@@ -164,7 +175,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   },
   {
     "id": "external-connector-stale",
@@ -175,7 +186,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
+    "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
   }
 ]
 ```
@@ -221,8 +232,17 @@ demonstrated nothing. Both now derive from a probe recorded in this run.
 
 | Gate | Was | Is | Probe in this run |
 |---|---|---|---|
-| Metric ownership | `MetricDefinition.owner` defaulted to `"sre-platform"`, so every construction site passed while possibly naming a team that had never agreed to carry the signal | `owner` has no plausible default; `__post_init__` rejects omitted or blank. `MetricsRegistry.register` keeps its own check for definitions restored by unpickling, which bypasses `__init__` | omitted owner rejected: `True`; blank owner rejected: `True`; 34 metrics across ['business-analytics', 'data-platform', 'ml-platform', 'security-audit', 'sre-messaging', 'sre-platform'] |
+| Metric ownership | `MetricDefinition.owner` defaulted to `"sre-platform"`, so every construction site passed while possibly naming a team that had never agreed to carry the signal | `owner` has no plausible default; `__post_init__` rejects omitted or blank. `MetricsRegistry.register` keeps its own check for definitions restored by unpickling, which bypasses `__init__` | omitted owner rejected: `True`; blank owner rejected: `True`; 35 metrics across ['business-analytics', 'data-platform', 'ml-platform', 'security-audit', 'sre-messaging', 'sre-platform'] |
 | Alert release identity | `route_alert` emitted the literal `True`, so this document's own check read back its assumption | derived at emission from the trusted deployed identity; a rotated or cleared SHA downgrades the annotation instead of certifying it | flag reports `False` under rotation: `True`; page still routed: `True` |
+
+| Alert delivery | a caller that pages *while* handling its own failure inherited the fail-closed raise: the DLQ poison-isolation branch lost its dead-letter event when no deployed SHA was bound | `try_trigger_alert` contains router construction and delivery, counts the lost page on `alert_delivery_failure_count`, and returns `None` so the caller's error path completes | unbound identity returns `None` instead of raising: `True`; lost page counted: `[{'alert_id': 'dlq-spike', 'error_class': 'ValueError'}]`; bound identity still delivers: `True`; policy paging on it: `alert-delivery-failure` |
+
+A contained page is not a silent one. The count carries the `alert_id` and the
+`error_class` that suppressed it, `alert-delivery-failure` (P1) pages on any
+sample, and the runbook section of the same name says to triage the incidents
+whose pages were dropped, since they are not re-sent. Containment is scoped to
+callers whose own failure handling would otherwise be pre-empted; a caller whose
+only job is to page still gets the raise.
 
 The release-identity flag downgrades rather than raises. The config-declared
 binding is already gated ahead of it, and past that point suppressing a page
@@ -246,17 +266,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "647e4644a8c8437b",
-    "parent_id": "b82abb3ffb2b4059",
+    "span_id": "e42c746d11f64ffe",
+    "parent_id": "47456bf878234328",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
+    "correlation_id": "02199a37-316d-4058-9e2d-d755ec6905d1",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.002739,
+    "duration_ms": 0.002586,
     "attributes": {
-      "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
+      "correlation_id": "02199a37-316d-4058-9e2d-d755ec6905d1",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -266,17 +286,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "70bd620d69884873",
-    "parent_id": "b82abb3ffb2b4059",
+    "span_id": "d17fcf99d02943e6",
+    "parent_id": "47456bf878234328",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
+    "correlation_id": "02199a37-316d-4058-9e2d-d755ec6905d1",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.120184,
+    "duration_ms": 0.095795,
     "attributes": {
-      "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
+      "correlation_id": "02199a37-316d-4058-9e2d-d755ec6905d1",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -286,17 +306,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "b82abb3ffb2b4059",
+    "span_id": "47456bf878234328",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
+    "correlation_id": "02199a37-316d-4058-9e2d-d755ec6905d1",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.184022,
+    "duration_ms": 0.153467,
     "attributes": {
-      "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
+      "correlation_id": "02199a37-316d-4058-9e2d-d755ec6905d1",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -312,9 +332,9 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 
 ## 6. Test Suite Execution Output
 
-- Source Commit: `30d1d3a57e44f16fe9306d02a05bc159df7db225` (is_test_simulated: False)
+- Source Commit: `a7355d5f3e0f5b8f525d440af5c62f95d25c1659` (is_test_simulated: False)
 - Command: `python3 -m pytest tests/reliability/test_runtime_observability.py`
-- Result: **91 passed in 41.02s** (Exit Code: 0)
+- Result: **96 passed in 41.07s** (Exit Code: 0)
 
 ---
 
