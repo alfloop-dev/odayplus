@@ -4,7 +4,7 @@
 - **Parent Task**: `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001`
 - **Helper Kind**: `review_packet`
 - **Owner**: `Antigravity`
-- **Reviewer**: `Claude3`
+- **Reviewer**: `Claude2`
 - **Status**: `review`
 - **Packet Revision**: Round 2 (2026-08-07) — rewritten to accurately review parent deliverable at approved head `b81f4322` on PR #682
 - **Target Artifact**: `support/sidecars/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW.md`
@@ -15,7 +15,7 @@
 |---|---|
 | Parent Approved Head | `b81f43223dd7bf930c4209875cf6b3f87274c64d` |
 | Parent Review Gate SHA | `b81f43223dd7bf930c4209875cf6b3f87274c64d` |
-| Parent Branch / PR | `task/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` → PR #682 (`OPEN`, `BLOCKED`, not yet merged to `dev`) |
+| Parent Branch / PR | `task/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` → PR #682 (`MERGED` to `dev` at commit `262684d7`; parent task closed as `done`) |
 | Parent Delivering Commits | `66fd4300ebd6ac2dbce11c80631d65641237ead0`, `b81f43223dd7bf930c4209875cf6b3f87274c64d` |
 | Deliverable Surface | 2 files modified (+360 insertions, -18 deletions over `dev`) |
 
@@ -140,8 +140,8 @@ ruff check \
 ## 5. Handoff Note, Recommendation & Residual Risk
 
 ### Recommendations for Parent Task Closeout
-1. **Absorb Recommendation**: Strongly recommend that parent owner (`Claude3`) absorb this sidecar review packet and finalize PR #682.
-2. **Merge Sequence**: Once PR #682 merges into `dev`, parent task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` should be transitioned to `done` via `scripts/ai-status.sh done`.
+1. **Absorb Status**: Parent PR #682 has been successfully absorbed and merged into `dev` (`262684d7`).
+2. **Merge & Completion**: Parent task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` has been transitioned to `done`.
 
 ### Residual Risk & Maintenance Note
 - **Idempotent Preservation**: The backfill tool intentionally never overwrites existing task archive snapshots.
@@ -149,7 +149,7 @@ ruff check \
 
 ### Handoff Details
 - **Sidecar Owner**: `Antigravity`
-- **Assigned Reviewer**: `Claude3`
+- **Assigned Reviewer**: `Claude2`
 - **Sidecar Artifact**: `support/sidecars/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW.md`
-- **State Handoff**: Handoff task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW` to `review` state assigned to `Claude3`.
+- **State Handoff**: Handoff task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW` to `review` state assigned to `Claude2`.
 
