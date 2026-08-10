@@ -6056,3 +6056,57 @@ def test_c1_api_latency_is_recorded_exactly_once_per_request() -> None:
     ]
     assert len(health_requests) == 1
     assert health_requests[0]["value"] == 5
+
+
+def test_c1_middleware_contains_telemetry_failures_of_any_kind() -> None:
+    """A metrics backend that raises on every emission must not break requests.
+
+    Cardinality was one way telemetry could throw; this pins the general
+    property, so a future emission bug degrades the signal rather than the API.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    class ExplodingRegistry(MetricsRegistry):
+        def increment(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+        def observe(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+    exploding = ExplodingRegistry()
+    for m in PLATFORM_METRICS:
+        exploding.register(m)
+
+    client = TestClient(create_app(telemetry=_Telemetry("oday-api", metrics=exploding)))
+    assert client.get("/health").status_code == 200
+    assert client.get("/healthz").status_code == 200
+
+
+def test_c1_containment_survives_a_failing_telemetry_logger() -> None:
+    """Containment must hold even when the fallback log path itself raises."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    class ExplodingRegistry(MetricsRegistry):
+        def increment(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+    telemetry = _Telemetry("oday-api", metrics=ExplodingRegistry())
+    for m in PLATFORM_METRICS:
+        telemetry.metrics.register(m)
+
+    def exploding_sink(record: Any) -> None:
+        raise RuntimeError("log sink unavailable")
+
+    telemetry.logger = StructuredLogger("oday-api", sink=exploding_sink)
+
+    assert TestClient(create_app(telemetry=telemetry)).get("/health").status_code == 200

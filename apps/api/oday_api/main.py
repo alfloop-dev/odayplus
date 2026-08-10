@@ -511,15 +511,21 @@ else:
             for record in records:
                 try:
                     record()
-                except Exception as exc:  # pragma: no cover - defensive containment
-                    telemetry.logger.warning(
-                        "telemetry_emission_failed",
-                        correlation_id=correlation_id,
-                        actor="system",
-                        resource="telemetry",
-                        action="emit",
-                        error_code=type(exc).__name__,
-                    )
+                except Exception as exc:
+                    try:
+                        telemetry.logger.warning(
+                            "telemetry_emission_failed",
+                            correlation_id=correlation_id,
+                            actor="system",
+                            resource="telemetry",
+                            action="emit",
+                            error_code=type(exc).__name__,
+                        )
+                    except Exception:
+                        # The failure report must not become the failure. An
+                        # injected telemetry double may carry no logger, and a
+                        # custom sink can raise on its own.
+                        pass
 
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
@@ -544,6 +550,8 @@ else:
                 # Latency is emitted explicitly below, inside emit_telemetry, so
                 # it is both contained and counted exactly once per request.
                 latency_metric=None,
+                # Live request path: a failing sink must not become a 500.
+                contain_telemetry_errors=True,
             ) as span:
                 if require_live_data and request.url.path not in {
                     "/health",
