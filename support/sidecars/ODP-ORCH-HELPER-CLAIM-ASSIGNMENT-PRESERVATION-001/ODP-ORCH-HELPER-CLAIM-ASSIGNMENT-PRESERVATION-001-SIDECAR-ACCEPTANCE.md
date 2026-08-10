@@ -3,147 +3,197 @@
 - Sidecar task: `ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001-SIDECAR-ACCEPTANCE`
 - Parent task: `ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001`
 - Helper kind: `acceptance_packet`
-- Sidecar owner: Antigravity
+- Current sidecar owner: Codex2
 - Assigned sidecar reviewer: Claude
-- Prepared: `2026-08-02`
-- Refreshed: `2026-08-10`
+- Initially prepared: `2026-08-02`
+- Rebound to merged implementation: `2026-08-10`
 
 ## Scope boundary
 
-This is a support-only acceptance checklist and dependency map. It does not
-change Supervisor behavior, status-writer behavior, task truth, canonical
-documents, runtime configuration, or governance contracts. Antigravity2 owns
-the parent implementation and decides whether to compose this packet into the
-parent review. This packet is neither approval of the parent task nor authority
-to close it.
+This is a support-only acceptance checklist, dependency map, and retrospective
+evidence packet. It does not change Supervisor behavior, status-writer
+behavior, task truth, canonical documents, runtime configuration, registry
+state, or governance contracts. Only this sidecar artifact is changed.
 
-## Frozen parent baseline
+The parent implementation is no longer pending. It was merged into `dev` by
+PR #619 on `2026-08-04`, and the live status writer now reports the parent task
+as unknown (archived rather than active). This packet therefore documents the
+shipped result for sidecar reviewer Claude; it neither reopens the parent nor
+grants authority to approve or close it.
 
-Observed after the sidecar entered `in_progress` on `2026-08-02`:
+## Implementation provenance and phase boundary
 
-- Parent live status: `in_progress`; owner Antigravity2; reviewer Antigravity6.
-- Parent branch: `task/ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001`.
-- Parent branch HEAD: `475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f`, equal to the
-  then-current sidecar base and `origin/dev`.
-- Parent task worktree had no tracked task implementation diff. Its only
-  untracked paths were supervisor-seeded task context files.
-- The baseline helper-claim regression selection passed 13 tests, but those
-  tests encode the behavior under repair: multiple cases expect the previous
-  owner to replace the already designated reviewer.
+### Historical pre-implementation snapshot
 
-This is a pre-implementation contract packet. It must not be read as evidence
-that the parent change already exists. A later parent commit, changed task
-assignment, or changed base requires the reviewer to bind acceptance to the new
-exact parent HEAD and rerun the focused checks.
+When this sidecar first entered `in_progress` on `2026-08-02`, the observed
+base and parent branch HEAD were
+`475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f`. The focused
+`-k 'helper_claim'` selection passed 13 tests. At that point the packet was a
+pre-implementation contract and correctly did not claim the preservation
+change existed.
 
-## Problem statement and invariant
+That snapshot is historical only. It must not be used as the current parent
+acceptance target.
 
-The helper-claim path in `.orchestrator/supervisor.py` currently transfers
-ownership to an eligible helper and computes the new reviewer from the previous
-owner before persisting the reassignment. Repeated helper claims can therefore
-rotate review authority even when the task already names a distinct designated
-reviewer.
+### Shipped parent implementation
 
-The parent change should enforce one narrow invariant:
+This revision binds acceptance to the parent result that is already in this
+branch:
 
-> A helper claim may transfer execution ownership, but it must not silently
-> replace an existing, distinct designated reviewer.
+- implementation commit:
+  `943422cc1158944b5c009447c11b7c31bf47b254`;
+- test cleanup commit:
+  `dd2ddb627d46f15ef42b5792d66be4a3e9fcf880`;
+- merged parent task tip:
+  `67b4f39ecd7410224b5e34dcc3646305260aed4e`;
+- `dev` integration commit / PR #619:
+  `777cceed2cca8a1f538be3dce793f329145fbae1`.
 
-Preservation must remain compatible with the status invariant that owner and
-reviewer are different identities. In particular, the designated reviewer must
-not be selected as helper owner while that reviewer assignment is being
-preserved. Missing or malformed legacy reviewer data must fail closed or use an
-explicitly tested safe fallback; it must not create owner self-review.
+Both parent commits and the PR merge commit are ancestors of the current
+sidecar HEAD. The binding target for shipped behavior is the PR #619 merge
+commit `777cceed2cca8a1f538be3dce793f329145fbae1`, with
+`943422cc1158944b5c009447c11b7c31bf47b254` identifying the exact implementation
+delta.
+
+The helper-claim selection increased from 13 to 15 because the parent
+implementation added exactly these two regressions:
+
+1. `test_dispatcher_helper_claim_preserves_designated_reviewer_when_target_is_not_reviewer`;
+2. `test_dispatcher_helper_claim_replaces_reviewer_when_target_is_reviewer`.
+
+The same parent commit also changed reviewer expectations in four existing
+routes: idle ready work, disabled-owner-lane sidecar work, explicitly allowed
+idle sidecar work, and paused-owner `in_progress` work. The `13 -> 15` delta is
+therefore direct parent-change evidence, not unrelated base-advance noise.
+
+## Shipped invariant and explicit fallback
+
+For every selected helper candidate, current `.orchestrator/supervisor.py`
+computes:
+
+```text
+new_reviewer = designated reviewer
+    when it is present and differs from the helper target;
+otherwise new_reviewer = previous task owner
+```
+
+The ordinary case preserves the existing distinct reviewer while ownership
+moves to the helper. There is one deliberate exception that differs from the
+original packet's proposed contract: a helper candidate equal to the
+designated reviewer is **not rejected**. The claim proceeds, and
+`.orchestrator/supervisor.py:12192-12196` falls back to
+`new_reviewer = task_owner`. This prevents owner self-review while allowing the
+reviewer to become the helper owner. The idle-claim message explicitly says
+that the previous owner becomes reviewer in this case.
 
 ## Dependency map
 
-| Authority or input | Parent consumer | Required result | Fail-closed condition |
+| Authority or input | Shipped consumer | Observed result | Evidence or boundary |
 | --- | --- | --- | --- |
-| Task snapshot `owner` and `reviewer` | `dispatch_ready_tasks` helper-candidate construction | Carry both identities unchanged into the claim decision | Missing task identity, active/pending duplicate, or unsatisfied dependencies still prevents a claim |
-| Existing designated reviewer | `choose_helper_claim_agent` and helper target selection | Candidate helper must be distinct from the reviewer | A reviewer-as-helper candidate is rejected rather than producing identical owner/reviewer or rotating review authority |
-| Eligible helper and previous owner | `persist_task_reassignment` call | Change only owner; preserve the valid reviewer | Persistence failure emits no dispatch event and no success activity |
-| Canonical status writer reload | Persisted-task authority check | Reloaded owner equals helper and reviewer equals the preserved reviewer | Mismatched or unavailable persisted authority must not be represented as a successful reassignment |
-| Persisted owner/reviewer pair | `ready_dispatch_signature` / `build_dispatch_event` | Event key and task payload contain the post-write owner and preserved reviewer | Stale pre-write authority must not sign the event |
-| Reassignment metadata | handoff record, `task_helper_claimed` activity, and operator message | All surfaces name the same helper and preserved reviewer; wording does not claim that the prior owner became reviewer | Contradictory reviewer fields or obsolete operator text fails review |
-| `scripts/ai_status.py` state validation and review handoff | Downstream `handoff`, `approve`, and `done` commands | Independent designated reviewer remains the only valid review target | Identical owner/reviewer continues to be rejected; helper claim must not weaken lifecycle validation |
+| Task snapshot `owner` and `reviewer` | `dispatch_ready_tasks` helper-candidate construction | Carries both identities into selection | Existing dependency, active/pending duplicate, workload-cap, failure-loop, status, and sidecar guards still run before a claim |
+| Existing designated reviewer and helper target | `new_reviewer` calculation | Preserves the reviewer when distinct from target | Dedicated distinct-target regression plus four updated route assertions |
+| Helper target equals designated reviewer | `new_reviewer` calculation | Does not reject target; falls back to previous owner | Dedicated reviewer-target regression expects owner `Codex`, reviewer `Copilot` |
+| Computed owner/reviewer pair | `persist_task_reassignment` | Persists helper owner and computed reviewer together | A false persistence result reaches `continue`, before dispatch/event/activity code |
+| Canonical status reload | Post-persistence authority check | Uses the reloaded task only when owner and reviewer both match the computed pair | Persisted-authority regression verifies the matching path; on mismatch current code retains the computed pair and refreshes `last_update` rather than failing closed |
+| Post-write in-memory task | `build_dispatch_event` | Signs the event with the post-write owner/reviewer pair | Persisted-authority regression verifies owner/reviewer in the event key |
+| Reassignment metadata | status call, task object, activity, and operator message | Uses the same computed reviewer; distinct-target idle wording says reviewer preserved, reviewer-target wording says previous owner becomes reviewer | Activity is emitted only after event queueing succeeds |
+| Owner/reviewer separation | dispatcher guard and status lifecycle | Avoids dispatching an owner-self-review assignment | Focused owner-self-review regression remains green |
 
-### Intended composition boundary
+### Actual composition flow
 
 ```text
 task owner/reviewer snapshot
         |
         v
-helper eligibility ---- reject reviewer-as-helper
+helper eligibility (reviewer is not excluded here)
         |
         v
-persist owner transfer + preserve reviewer
+reviewer distinct from helper? -- yes --> preserve designated reviewer
+        | no
+        v
+fall back reviewer to previous owner
         |
         v
-reload canonical task truth
+persist owner + computed reviewer
         |
         v
-sign dispatch event and activity with the same assignment
+reload matching canonical task when available
         |
         v
-existing owner -> designated reviewer handoff/review lifecycle
+sign event and activity with post-write assignment
 ```
 
-The likely parent change surface is limited to
-`.orchestrator/supervisor.py` and `.orchestrator/test_supervisor.py`. This
-packet does not require a change to generic reassignment policy,
-`scripts/ai_status.py`, helper-sidecar generation, task schemas, configuration,
-or canonical architecture documents.
+The shipped production delta is narrow to the Supervisor helper-claim reviewer
+calculation. Its parent tests live in `.orchestrator/test_supervisor.py`; the
+parent did not change `scripts/ai_status.py`, helper-sidecar generation, task
+schemas, configuration, registry/runtime code, or canonical architecture
+documents.
 
-## Acceptance checklist
+## Settled acceptance checklist
 
-### Assignment preservation
+Checked items below are confirmed against the shipped implementation and the
+current focused replay. Notes explicitly distinguish code inspection from a
+dedicated regression.
 
-- [ ] A `todo` task claimed while its owner handles higher-priority work keeps
-  its pre-claim designated reviewer.
-- [ ] An idle-work helper claim keeps the designated reviewer, and its human-
-  readable message no longer states that the previous owner becomes reviewer.
-- [ ] A paused-owner claim of an `in_progress` task keeps the designated
+### Assignment behavior
+
+- [x] A helper claim preserves a present designated reviewer when that reviewer
+  differs from the helper target.
+- [x] Idle ready-work claims use preserved-reviewer wording in the ordinary
+  distinct-target case.
+- [x] Paused-owner `in_progress` claims preserve a distinct designated
   reviewer.
-- [ ] A helper claim of an allowed sidecar keeps the designated reviewer.
-- [ ] Repeated claims do not rotate the reviewer through the chain of prior
-  owners.
+- [x] Allowed sidecar claims preserve a distinct designated reviewer.
+- [x] A helper target equal to the designated reviewer is accepted and the
+  previous owner becomes reviewer; it is not rejected as the original packet
+  proposed.
+- [x] Repeated claims apply the same conditional rule at each transfer:
+  preserve a reviewer distinct from the new helper, otherwise fall back to the
+  immediately previous owner. No separate multi-claim regression was added.
 
-### Separation and fail-closed behavior
+### Separation and failure handling
 
-- [ ] A helper candidate equal to the designated reviewer is not used for the
-  ownership transfer while preserving that reviewer.
-- [ ] No successful claim can persist or dispatch identical owner and reviewer
-  identities.
-- [ ] Missing or invalid reviewer data has an explicit regression proving the
-  chosen fail-closed behavior; it is not silently converted into self-review.
-- [ ] A failed status persistence operation does not queue a delivery event or
-  write a successful `task_helper_claimed` activity record.
+- [x] The dedicated reviewer-target regression proves the fallback produces
+  distinct owner/reviewer identities for that route.
+- [x] The existing dispatcher owner-self-review regression remains green.
+- [x] Missing/empty reviewer input follows the same previous-owner fallback by
+  code inspection. The parent did not add a dedicated missing-reviewer test.
+- [x] A false `persist_task_reassignment` result exits the claim path before
+  delivery-event queueing or success activity by code inspection. The parent
+  did not add a dedicated persistence-failure test.
+- [x] A canonical reload match must contain both the helper owner and computed
+  reviewer before the reloaded task is adopted.
+- [x] A reload mismatch is not fail-closed in the shipped code: it retains the
+  computed post-write assignment and refreshes `last_update` before event
+  construction. The earlier packet's stronger fail-closed statement is
+  withdrawn.
 
 ### Persisted authority and audit consistency
 
-- [ ] The post-persistence reload check expects both the helper owner and the
-  preserved reviewer.
-- [ ] The dispatch-event key and task payload are derived from the reloaded
-  assignment, not the stale pre-claim snapshot.
-- [ ] `persist_task_reassignment(new_reviewer=...)`, the in-memory task,
-  handoff reconciliation, activity `new_reviewer`, and operator-facing message
-  all agree.
-- [ ] Existing dependency, workload-cap, failure-loop, sidecar eligibility,
-  paused-lane, and owner-priority guards remain intact.
+- [x] The matching canonical reload path supplies both owner and reviewer to
+  the dispatch-event key.
+- [x] `persist_task_reassignment(new_reviewer=...)`, the in-memory task, and
+  `task_helper_claimed.new_reviewer` share the computed value.
+- [x] Operator wording distinguishes reviewer preservation from the
+  reviewer-target fallback for idle claims.
+- [x] Existing dependency, workload-cap, failure-loop, sidecar eligibility,
+  paused-lane, and owner-priority guards remain represented in the 15-test
+  focused selection.
 
 ### Scope conformance
 
-- [ ] Parent production changes remain narrow to Supervisor helper-claim
-  assignment behavior.
-- [ ] Regression updates replace legacy expectations that the prior owner
-  always becomes reviewer; unrelated reassignment tests are not weakened.
-- [ ] `scripts/ai_status.py` continues rejecting owner self-review.
-- [ ] No L1 canonical truth, runtime registry, governance policy, or live state
-  file is changed by this sidecar.
+- [x] Parent production work is narrow to Supervisor helper-claim assignment
+  behavior, with regression changes in `.orchestrator/test_supervisor.py`.
+- [x] Legacy expectations were updated in the affected routes, and two focused
+  regressions describe both branches of the reviewer calculation.
+- [x] `scripts/ai_status.py` was not changed by the parent or this sidecar.
+- [x] This sidecar revision changes only the designated support artifact and no
+  L1 canonical truth, runtime registry, governance policy, Supervisor code, or
+  live state file.
 
 ## Reviewer replay matrix
 
-At the exact parent review HEAD, run at minimum:
+For this rebound packet, replay:
 
 ```bash
 python3 -m pytest .orchestrator/test_supervisor.py -q -k 'helper_claim'
@@ -152,51 +202,36 @@ python3 -m pytest .orchestrator/test_supervisor.py -q \
 git diff --check origin/dev...HEAD
 ```
 
-Then audit the parent diff and confirm that updated tests cover these distinct
-routes rather than only one happy path:
+The review should also confirm:
 
-1. higher-priority owner load (`todo`);
-2. idle claim (`todo`);
-3. owner dispatch pause (`in_progress`);
-4. allowed sidecar claim;
-5. target helper equals designated reviewer;
-6. canonical reload/event-signature authority;
-7. repeated claim with a reviewer already inherited from the original task.
+1. `777cceed2cca8a1f538be3dce793f329145fbae1` is an ancestor of the reviewed
+   sidecar HEAD;
+2. the sidecar diff contains only this packet;
+3. lines 12192-12196 retain the reviewer-target fallback described above;
+4. the packet does not claim that the archived parent still awaits
+   implementation or composition.
 
-For the parent review, record the exact HEAD, test counts, and changed paths.
-Any parent HEAD movement invalidates the result and requires `re_review`.
+## Re-verification record (2026-08-10)
 
-## Sidecar verification record
-
-The preparer ran the baseline helper-claim selection before writing this
-packet:
-
-```text
-python3 -m pytest .orchestrator/test_supervisor.py -q -k 'helper_claim'
-13 passed
-```
-
-That result proves the pre-change test baseline is runnable; it does not prove
-the preservation invariant. The parent reviewer must ensure legacy assertions
-such as `new_reviewer == previous_owner` are replaced or supplemented with the
-preservation and reviewer-as-helper rejection cases above.
-
-## Sidecar base advance (2026-08-10)
-
-Before handoff, sidecar owner `Antigravity` fetched `origin/dev` and merged `origin/dev` tip into `task/ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001-SIDECAR-ACCEPTANCE` without conflicts.
-
-Re-verification execution results on current merged base:
+The current rebound run produced:
 
 ```text
 python3 -m pytest .orchestrator/test_supervisor.py -q -k 'helper_claim'
 15 passed
 
-python3 -m pytest .orchestrator/test_supervisor.py -q -k 'owner_self_review or helper_claim_uses_persisted_authority_for_event_key'
+python3 -m pytest .orchestrator/test_supervisor.py -q \
+  -k 'owner_self_review or helper_claim_uses_persisted_authority_for_event_key'
 2 passed
 ```
 
-No reset, force push, task history discard, or canonical edit was used.
+Both commands exited successfully with the counts shown above. `git diff
+--check` was also clean. Because this sidecar changes only Markdown, the parent
+runtime and test files remain those already integrated by PR #619.
 
 ## Handoff disposition
 
-This packet is updated and re-verified after base advance. It is handed off to `Claude` for sidecar review. Parent implementation, exact-head verification, and composition remain the parent owner's responsibility.
+This packet is rebound to the shipped parent merge, explains the parent-owned
+`13 -> 15` regression delta, settles the checklist against actual behavior,
+and records the reviewer-as-helper fallback rather than the superseded
+rejection proposal. It is handed off to assigned reviewer `Claude` for sidecar
+review. No parent implementation or parent-owner composition action remains.
