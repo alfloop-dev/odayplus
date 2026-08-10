@@ -7,11 +7,11 @@
 | Sidecar task | `ODP-ORCH-GITHUB-REF-SNAPSHOT-001-SIDECAR-ACCEPTANCE` |
 | Parent task | `ODP-ORCH-GITHUB-REF-SNAPSHOT-001` |
 | Helper kind | `acceptance_packet` |
-| Sidecar owner / reviewer | `Codex` / `Claude` |
-| Parent owner / reviewer | `Claude` / `Claude2` |
-| Parent PR | `#744`, head `c99ffc6926fd44f47933a4a3811d8196c33fb380` |
-| Evidence observed at | `2026-08-09` |
-| Packet verdict | Support only; no parent acceptance, merge, rollout, or production claim |
+| Sidecar owner / reviewer | `Claude` / `Antigravity4` (current live pair, helper-claimed 2026-08-10T14:36:09Z) |
+| Parent owner / reviewer | `Claude` / `Antigravity` (`Claude2` was reassigned off parent review: shared account pool with the owner) |
+| Parent PR | `#744`, merged commit `817d53052e23cf867085342fcafa340743e4a7cb` (approved head `209636e9903e363c0f67571c2caceb94f6880d4c`) |
+| Evidence observed at | `2026-08-10` |
+| Packet verdict | Acceptance packet finalized; parent task `ODP-ORCH-GITHUB-REF-SNAPSHOT-001` completed (`done`) |
 
 This packet is a review aid for the parent owner. It records an acceptance
 checklist, dependency map, runtime evidence plan, and composition risks. It
@@ -46,12 +46,11 @@ acceptance consequences explicit.
 
 | Item | Observed state | Consequence |
 |---|---|---|
-| Parent task | `in_progress` | Parent is not accepted or ready for closeout yet. |
-| PR #743, `Bound GitHub bus remote git probes` | Merged into `dev` as `9e5434cd8a9f798769f4891c3610280a7982a175` | Supplies the bounded network-process/timeout behavior that PR #744 composes with. |
-| PR #744 | Open, non-draft, mergeable; 3 files, +69/-6 | Patch is reviewable but not durable on `dev`. |
-| PR #744 CI workflow | Completed successfully (run `31309187208`) | Static CI evidence exists for head `c99ffc69`. |
-| PR #744 `task-review-gate` | `failure` | The parent's “PR all green” condition is not met despite the CI workflow success. |
-| Runtime rollout | No rollout evidence attached to the parent task or PR | Latency reduction and loop health remain unproven in the running supervisor. |
+| Parent task | `done` (archived at 2026-08-09T11:48:38Z) | Parent implementation accepted, merged, and verified. |
+| PR #743, `Bound GitHub bus remote git probes` | Merged into `dev` as `9e5434cd8a9f798769f4891c3610280a7982a175` | Bounded network-process/timeout behavior active on `dev`. |
+| PR #744, `Cache GitHub remote branch refs` | Merged into `dev` as `817d53052e23cf867085342fcafa340743e4a7cb` | Remote ref snapshot caching live on `dev`. |
+| PR #744 CI workflow & checks | All 5 checks green (`SUCCESS`) | Static CI & task review gate verified. |
+| Runtime rollout | `dev` tip includes `817d53052e23cf867085342fcafa340743e4a7cb` | Snapshot code ready for live supervisor refresh. |
 
 Changed files observed on PR #744:
 
@@ -93,6 +92,10 @@ can outlive the new snapshot TTL.
 ## Parent acceptance matrix
 
 Status values below describe evidence on PR head `c99ffc69`, not approval.
+This table is a frozen 2026-08-09 snapshot and is deliberately not rewritten.
+Row `C1` was superseded on 2026-08-09: PR #744 merged and every required check
+reported `SUCCESS` (see “Observed parent state” and the addenda below). Rows
+`C2`–`C4` remain the only genuinely uncaptured items.
 
 | ID | Required proof | Reject or investigate when | Current evidence |
 |---|---|---|---|
@@ -206,15 +209,18 @@ Observed results:
 
 ## Reviewer handoff and absorption constraints
 
-Assigned sidecar reviewer: `Claude`.
+Assigned sidecar reviewer: `Antigravity4`.
+
+Answers below are current as of 2026-08-10 and take precedence over the frozen
+2026-08-09 snapshot tables where the two differ.
 
 | Review question | Expected answer |
 |---|---|
 | Did this sidecar modify L1/canonical truth or parent runtime/config/tests? | No. It adds one support artifact only. |
-| Does the packet claim PR #744 is accepted or deployed? | No. It records the open PR, green CI workflow, red review gate, and missing rollout evidence separately. |
+| Does the packet claim PR #744 is accepted or deployed? | It records PR #744 as **merged and all-green** (merge commit `817d5305`, approved head `209636e9`), and records **deployment separately as unproven**. Merge is not a deployment claim. |
 | What should the parent reviewer examine most closely? | R1's interaction with the existing 300-second unpublished recheck, R2's TTL/timeout relationship, and the missing expiry/per-remote/config-boundary tests. |
-| What blocks the parent's stated acceptance today? | PR #744 is not merged/all-green, and live rollout latency/loop-health evidence has not been captured. |
-| Who decides whether to absorb this packet? | Parent owner `Claude`; parent reviewer `Claude2` retains parent implementation acceptance authority. |
+| What blocks the parent's stated acceptance today? | Nothing. The parent task is `done`, archived 2026-08-09T11:48:38Z. The earlier open-PR / red `task-review-gate` blockers are resolved and survive only as dated snapshots. Uncaptured, but not blocking: the runtime rollout evidence in `C2`–`C4`. |
+| Who decides whether to absorb this packet? | Parent owner `Claude`; parent reviewer `Antigravity` retains parent implementation acceptance authority. |
 
 Before using this packet for parent closeout, refresh all GitHub and runtime
 state in the observed-state table. The dated values above are deliberately a
@@ -274,10 +280,68 @@ mutated or rerun after merge.
 ### Handoff decision
 
 The appropriate repair is disposition and re-review of the evidence, not a
-cross-layer product change. Assigned reviewer `Claude` should confirm that:
+cross-layer product change. The assigned reviewer (now `Antigravity4`) should
+confirm that:
 
 1. this addendum remains support-only;
 2. the historical `performance-gate` failure is non-attributable to PR #746;
 3. the parent task's later merged/done state supersedes this packet's original
    open-PR blockers; and
 4. no product or canonical change should be absorbed from this sidecar.
+
+## Antigravity4 Handoff Addendum — 2026-08-10 (superseded)
+
+Historical record of the handoff prepared while `Antigravity4` was the helper
+owner. Its factual findings still hold; only its routing is stale, because
+`Antigravity3` shares `Antigravity4`'s account pool and was therefore never a
+valid review target. Superseded by the Claude addendum below.
+
+### Handoff Summary & Verification
+1. **Parent Task Completion**: Parent task `ODP-ORCH-GITHUB-REF-SNAPSHOT-001` is confirmed closed and archived as `done`.
+2. **PR #744 Status**: PR #744 was merged into `dev` via merge queue as commit `817d53052e23cf867085342fcafa340743e4a7cb`. All CI checks (`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`, `task-review-gate`) passed (`SUCCESS`).
+3. **Scope Discipline**: This sidecar modified strictly support artifact `support/sidecars/ODP-ORCH-GITHUB-REF-SNAPSHOT-001/ODP-ORCH-GITHUB-REF-SNAPSHOT-001-SIDECAR-ACCEPTANCE.md`. No L1/canonical files or runtime implementations were mutated.
+
+## Claude Handoff Addendum — 2026-08-10 (current)
+
+The sidecar was helper-claimed by owner `Claude` at 2026-08-10T14:36:09Z, and
+the previous owner `Antigravity4` became reviewer. This addendum resolves the
+reopen findings recorded against head `3f1ed8d8`.
+
+### Reopen findings and disposition
+
+| Finding at head `3f1ed8d8` | Disposition in this revision |
+|---|---|
+| “Reviewer handoff and absorption constraints” still answered open-PR / red-gate / not-merged as present-tense blockers, contradicting the same commit's merged and all-green verdict. | Rewritten. The section now states PR #744 as merged and all-green, marks deployment separately as unproven, and declares nothing blocking parent acceptance. It is explicitly dated and declared authoritative over the frozen snapshot tables. |
+| The same table named the parent reviewer `Claude2`, contradicting the identity table and the parent archive. | Corrected to `Antigravity` in both places, with the reason `Claude2` was reassigned (shared account pool with owner `Claude`) recorded in the identity table. |
+| Three conflicting sidecar reviewers appeared (`Antigravity3`, `Claude`, `Antigravity3`), none of them the live reviewer. | All routing now names the single live reviewer `Antigravity4`. The stale `Antigravity3` addendum is retained as a superseded historical record rather than silently rewritten. |
+| The commit trailer named reviewer `Antigravity3`. | This revision commits with the current pair: `LLM-Agent: Claude`, `Reviewer: Antigravity4`. |
+
+Sections that are explicitly date-scoped — the acceptance matrix at head
+`c99ffc69`, the 2026-08-09 verification ledger, and the CI repair disposition —
+are preserved as historical snapshots. The acceptance matrix now carries an
+explicit note that row `C1` was superseded and that `C2`–`C4` are the only
+genuinely uncaptured items.
+
+### Verification for this revision
+
+```text
+AI_NAME=Claude "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" show \
+  ODP-ORCH-GITHUB-REF-SNAPSHOT-001-SIDECAR-ACCEPTANCE
+  => owner Claude, reviewer Antigravity4, status in_progress
+
+AI_NAME=Claude "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" show \
+  ODP-ORCH-GITHUB-REF-SNAPSHOT-001
+  => source archive, terminal_status done, archived_at 2026-08-09T11:48:38Z,
+     owner Claude, reviewer Antigravity, approved_head 209636e9
+
+git diff --stat origin/dev...HEAD
+  => 1 file changed; support artifact only
+```
+
+### Scope statement
+
+This revision changes exactly one support artifact. It does not touch L1 or
+canonical truth, contract truth, `.orchestrator` runtime, registry, or
+governance implementation. No product or test code is modified, so no product
+test suite applies. Handing off to reviewer `Antigravity4`.
+
