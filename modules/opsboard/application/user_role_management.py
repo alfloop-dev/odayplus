@@ -377,11 +377,19 @@ class UserRoleManagementService:
 
         client_tenant = (scope or {}).get("tenant_id")
         if tenant_id:
-            if client_tenant and client_tenant != tenant_id:
+            if (
+                client_tenant
+                and client_tenant != "tenant-default"
+                and client_tenant != tenant_id
+            ):
                 raise UserRolePolicyError(
                     f"Cannot save user scope for tenant '{client_tenant}'; caller is restricted to tenant '{tenant_id}'."
                 )
-            if existing_tenant and existing_tenant != "tenant-default" and existing_tenant != tenant_id:
+            if (
+                existing_tenant
+                and existing_tenant != "tenant-default"
+                and existing_tenant != tenant_id
+            ):
                 raise UserRolePolicyError(
                     f"Cannot modify user belonging to tenant '{existing_tenant}'; caller is restricted to tenant '{tenant_id}'."
                 )

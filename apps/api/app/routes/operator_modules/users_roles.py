@@ -53,7 +53,7 @@ class UserSavePayload(BaseModel):
     name: str | None = None
     roles: list[str] = Field(min_length=1)
     scope: ScopePayload | None = None
-    attributes: dict[str, Any] = Field(default_factory=dict)
+    attributes: dict[str, Any] | None = None
     status: str = "active"
     reason: str = ""
     actorName: str | None = None

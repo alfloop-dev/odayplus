@@ -145,7 +145,7 @@ describe("UserRoleManagementController", () => {
     });
   });
 
-  it("adds new user when clicking add user button", async () => {
+  it("adds new user when clicking add user button with editable subject id", async () => {
     render(<UserRoleManagementController currentRoleId="platform-admin" />);
 
     await screen.findByTestId("user-row-ops-lead");
@@ -154,7 +154,25 @@ describe("UserRoleManagementController", () => {
     fireEvent.click(addBtn);
 
     expect(screen.getByTestId("edit-role-modal")).toBeInTheDocument();
-    expect(screen.getByText(/編輯使用者權限：新使用者/i)).toBeInTheDocument();
+    expect(screen.getByText("新增使用者角色")).toBeInTheDocument();
+
+    const subjectIdInput = screen.getByTestId("edit-subject-id-input");
+    const nameInput = screen.getByTestId("edit-name-input");
+    const emailInput = screen.getByTestId("edit-email-input");
+
+    fireEvent.change(subjectIdInput, { target: { value: "user-new-001" } });
+    fireEvent.change(nameInput, { target: { value: "測試新使用者" } });
+    fireEvent.change(emailInput, { target: { value: "newuser@odayplus.com" } });
+
+    const reasonInput = screen.getByPlaceholderText(/請輸入權限調整原因/i);
+    fireEvent.change(reasonInput, { target: { value: "測試新增使用者權限" } });
+
+    const submitBtn = screen.getByTestId("save-user-roles-submit");
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("edit-role-modal")).not.toBeInTheDocument();
+    });
   });
 
   it("emits X-Operator-Role platform-admin and X-Roles platform_admin headers", async () => {

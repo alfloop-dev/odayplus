@@ -6933,9 +6933,16 @@
             "title": "Actorrole"
           },
           "attributes": {
-            "additionalProperties": true,
-            "title": "Attributes",
-            "type": "object"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Attributes"
           },
           "email": {
             "anyOf": [

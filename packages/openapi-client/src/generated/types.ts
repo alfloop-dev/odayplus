@@ -1376,7 +1376,7 @@ export type UrlIntakeRequest = {
 export type UserSavePayload = {
   actorName?: string | null;
   actorRole?: string | null;
-  attributes?: Record<string, unknown>;
+  attributes?: Record<string, unknown> | null;
   email?: string | null;
   name?: string | null;
   reason?: string;

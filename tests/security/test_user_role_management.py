@@ -405,3 +405,33 @@ def test_shared_audit_log_does_not_corrupt_private_chain() -> None:
     assert reloaded_ver.ok is True, f"Reloaded state audit chain failed verification: {reloaded_ver.issues}"
 
 
+def test_save_user_preserves_abac_attributes_when_attributes_omitted() -> None:
+    """Test D1: ABAC attributes are preserved when attributes parameter is None (omitted)."""
+    service = UserRoleManagementService()
+    ops_lead_before = service.get_user("ops-lead")
+    assert ops_lead_before["attributes"] == {"department": "Operations", "level": "Senior"}
+
+    updated = service.save_user(
+        subject_id="ops-lead",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        attributes=None,
+        reason="Updating roles while preserving ABAC attributes",
+    )
+    assert updated["attributes"] == {"department": "Operations", "level": "Senior"}
+
+
+def test_save_user_allows_tenant_default_seeded_principal_under_tenant_restriction() -> None:
+    """Test D2: Caller restricted to tenant-a can edit seeded principal with tenant-default scope."""
+    service = UserRoleManagementService()
+    updated = service.save_user(
+        subject_id="ops-lead",
+        roles=[Role.OPERATIONS_MANAGER.value, Role.REGIONAL_SUPERVISOR.value],
+        scope={"tenant_id": "tenant-default"},
+        tenant_id="tenant-a",
+        reason="Editing seeded principal under tenant-a console restriction",
+    )
+    assert updated["subject_id"] == "ops-lead"
+    assert updated["scope"]["tenant_id"] == "tenant-default"
+
+
+

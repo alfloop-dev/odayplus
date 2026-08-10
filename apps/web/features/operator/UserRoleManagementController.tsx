@@ -97,12 +97,17 @@ export function UserRoleManagementController({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Edit Form State
+  const [isNewUser, setIsNewUser] = useState<boolean>(false);
+  const [editSubjectId, setEditSubjectId] = useState<string>("");
+  const [editName, setEditName] = useState<string>("");
+  const [editEmail, setEditEmail] = useState<string>("");
   const [editRoles, setEditRoles] = useState<string[]>([]);
   const [editTenantId, setEditTenantId] = useState<string>("tenant-default");
   const [editBrands, setEditBrands] = useState<string>("");
   const [editRegions, setEditRegions] = useState<string>("");
   const [editStores, setEditStores] = useState<string>("");
   const [editClearance, setEditClearance] = useState<string>("CONFIDENTIAL");
+  const [editAttributes, setEditAttributes] = useState<Record<string, any> | undefined>(undefined);
   const [editReason, setEditReason] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -190,14 +195,19 @@ export function UserRoleManagementController({
     );
   }
 
-  const handleOpenEdit = (user: UserRecord) => {
+  const handleOpenEdit = (user: UserRecord, isNew: boolean = false) => {
     setSelectedUser(user);
+    setIsNewUser(isNew);
+    setEditSubjectId(user.subject_id || "");
+    setEditName(user.name || "");
+    setEditEmail(user.email || "");
     setEditRoles(user.roles || []);
     setEditTenantId(user.scope?.tenant_id || "tenant-default");
     setEditBrands((user.scope?.brand_ids || []).join(", "));
     setEditRegions((user.scope?.region_ids || []).join(", "));
     setEditStores((user.scope?.store_ids || []).join(", "));
     setEditClearance(user.scope?.clearance || "CONFIDENTIAL");
+    setEditAttributes(user.attributes);
     setEditReason("");
     setIsEditModalOpen(true);
   };
@@ -211,6 +221,11 @@ export function UserRoleManagementController({
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUser) return;
+    const targetSubjectId = (isNewUser ? editSubjectId : selectedUser.subject_id).trim();
+    if (!targetSubjectId) {
+      showToast("錯誤：使用者 ID 不能為空");
+      return;
+    }
     if (editRoles.length === 0) {
       showToast("錯誤：至少需要指定一個角色權限");
       return;
@@ -222,9 +237,9 @@ export function UserRoleManagementController({
     const parsedStores = editStores.split(",").map((s) => s.trim()).filter(Boolean);
 
     const payload = {
-      subjectId: selectedUser.subject_id,
-      email: selectedUser.email,
-      name: selectedUser.name,
+      subjectId: targetSubjectId,
+      email: editEmail.trim() || undefined,
+      name: editName.trim() || undefined,
       roles: editRoles,
       scope: {
         tenant_id: editTenantId,
@@ -233,8 +248,9 @@ export function UserRoleManagementController({
         store_ids: parsedStores,
         clearance: editClearance,
       },
-      status: selectedUser.status,
-      reason: editReason || "角色權限異動與 Scope 調整",
+      attributes: editAttributes,
+      status: selectedUser.status || "active",
+      reason: editReason || (isNewUser ? "新增使用者與角色權限指派" : "角色權限異動與 Scope 調整"),
     };
 
     try {
@@ -249,8 +265,10 @@ export function UserRoleManagementController({
 
       if (res.ok) {
         const data = await res.json();
-        const updatedUser = data.user || {
-          ...selectedUser,
+        const updatedUser: UserRecord = data.user || {
+          subject_id: targetSubjectId,
+          name: editName.trim() || targetSubjectId,
+          email: editEmail.trim(),
           roles: editRoles,
           scope: {
             tenant_id: editTenantId,
@@ -259,19 +277,26 @@ export function UserRoleManagementController({
             store_ids: parsedStores,
             clearance: editClearance,
           },
+          attributes: editAttributes,
+          status: selectedUser.status || "active",
         };
-        setUsers((prev) =>
-          prev.map((u) => (u.subject_id === updatedUser.subject_id ? updatedUser : u))
-        );
-        showToast(`已成功更新 ${updatedUser.name || updatedUser.subject_id} 的角色權限，已寫入 Audit Trail`);
+        setUsers((prev) => {
+          const exists = prev.some((u) => u.subject_id === updatedUser.subject_id);
+          if (exists) {
+            return prev.map((u) => (u.subject_id === updatedUser.subject_id ? updatedUser : u));
+          }
+          return [updatedUser, ...prev];
+        });
+        fetchUsers();
+        showToast(`已成功${isNewUser ? "新增" : "更新"} ${updatedUser.name || updatedUser.subject_id} 的角色權限，已寫入 Audit Trail`);
         if (onUserRoleChange) onUserRoleChange(updatedUser);
         setIsEditModalOpen(false);
       } else {
         const errorData = await res.json().catch(() => ({}));
-        showToast(`更新失敗：${errorData.detail || res.statusText}`);
+        showToast(`儲存失敗：${errorData.detail || res.statusText}`);
       }
     } catch (err: any) {
-      showToast(`更新失敗：無法連線至 API (${err.message || err})`);
+      showToast(`儲存失敗：無法連線至 API (${err.message || err})`);
     } finally {
       setIsSubmitting(false);
       fetchAuditLogs();
@@ -359,21 +384,23 @@ export function UserRoleManagementController({
         <button
           type="button"
           onClick={() => {
-            const newUser: UserRecord = {
-              subject_id: `user-${Date.now().toString().slice(-4)}`,
-              name: "新使用者",
-              email: "newuser@odayplus.com",
-              roles: ["operations_manager"],
-              scope: {
-                tenant_id: "tenant-default",
-                brand_ids: [],
-                region_ids: [],
-                store_ids: [],
-                clearance: "CONFIDENTIAL",
+            handleOpenEdit(
+              {
+                subject_id: "",
+                name: "",
+                email: "",
+                roles: ["operations_manager"],
+                scope: {
+                  tenant_id: "tenant-default",
+                  brand_ids: [],
+                  region_ids: [],
+                  store_ids: [],
+                  clearance: "CONFIDENTIAL",
+                },
+                status: "active",
               },
-              status: "active",
-            };
-            handleOpenEdit(newUser);
+              true
+            );
           }}
           style={{
             padding: "8px 14px",
@@ -569,7 +596,9 @@ export function UserRoleManagementController({
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
               <h3 style={{ margin: 0, fontSize: "16px", color: "#0f172a" }}>
-                編輯使用者權限：{selectedUser.name || selectedUser.subject_id}
+                {isNewUser
+                  ? "新增使用者角色"
+                  : `編輯使用者權限：${selectedUser.name || selectedUser.subject_id}`}
               </h3>
               <button
                 type="button"
@@ -581,6 +610,56 @@ export function UserRoleManagementController({
             </div>
 
             <form onSubmit={handleSaveUser}>
+              {/* User Principal Details */}
+              <div style={{ marginBottom: "14px" }}>
+                <label style={{ display: "block", fontWeight: 600, fontSize: "13px", marginBottom: "6px" }}>
+                  使用者帳號資訊 (Principal Details)
+                </label>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "10px" }}>
+                  <div>
+                    <label style={{ fontSize: "11px", color: "#475569" }}>使用者 ID (Subject ID)</label>
+                    <input
+                      type="text"
+                      value={editSubjectId}
+                      onChange={(e) => setEditSubjectId(e.target.value)}
+                      disabled={!isNewUser}
+                      placeholder="e.g. user-123"
+                      style={{
+                        width: "100%",
+                        padding: "6px",
+                        fontSize: "12px",
+                        borderRadius: "4px",
+                        border: "1px solid #cbd5e1",
+                        backgroundColor: !isNewUser ? "#f1f5f9" : "#ffffff",
+                      }}
+                      data-testid="edit-subject-id-input"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "11px", color: "#475569" }}>姓名 (Name)</label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      placeholder="e.g. 張營運"
+                      style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                      data-testid="edit-name-input"
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "11px", color: "#475569" }}>Email</label>
+                    <input
+                      type="email"
+                      value={editEmail}
+                      onChange={(e) => setEditEmail(e.target.value)}
+                      placeholder="e.g. user@odayplus.com"
+                      style={{ width: "100%", padding: "6px", fontSize: "12px", borderRadius: "4px", border: "1px solid #cbd5e1" }}
+                      data-testid="edit-email-input"
+                    />
+                  </div>
+                </div>
+              </div>
               {/* Role Selection Checkboxes */}
               <div style={{ marginBottom: "14px" }}>
                 <label style={{ display: "block", fontWeight: 600, fontSize: "13px", marginBottom: "6px" }}>
