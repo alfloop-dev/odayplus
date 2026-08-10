@@ -25,9 +25,13 @@ if str(ROOT) not in sys.path:
 if str(ROOT / "scripts") not in sys.path:
     sys.path.insert(0, str(ROOT / "scripts"))
 
-from check_task_dependency_resolvability import check, load_archive, load_board
+from check_task_dependency_resolvability import check, load_archive
 
-# Explicit migration map from legacy / dangling dependency IDs to canonical task IDs
+# Explicit migration map from legacy / dangling dependency IDs to canonical task IDs.
+# Durable Replacement Provenance:
+# - ODP-PLAN-OSS-LICENSE-GATE-001 -> ODP-PLAN-OSS-LEGAL-POLICY-001:
+#   Legacy OSS license gate task was merged/restructured into canonical legal policy
+#   task ODP-PLAN-OSS-LEGAL-POLICY-001.
 DEPENDENCY_MIGRATION_MAP: dict[str, str] = {
     "ODP-PLAN-OSS-LICENSE-GATE-001": "ODP-PLAN-OSS-LEGAL-POLICY-001",
 }
@@ -35,12 +39,15 @@ DEPENDENCY_MIGRATION_MAP: dict[str, str] = {
 
 def migrate_dependencies(
     tasks: list[dict[str, Any]],
-    migration_map: dict[str, str] = DEPENDENCY_MIGRATION_MAP,
+    migration_map: dict[str, str] | None = None,
 ) -> tuple[int, list[str]]:
     """Migrate task dependencies in place.
 
     Returns (migrated_task_count, migration_log_messages).
     """
+
+    if migration_map is None:
+        migration_map = DEPENDENCY_MIGRATION_MAP
 
     migrated_count = 0
     logs: list[str] = []
@@ -96,6 +103,10 @@ def run_migration(
         print(f"ERROR: status file not found: {status_path}", file=sys.stderr)
         return 1
 
+    if not archive_dir.exists():
+        print(f"ERROR: archive directory not found: {archive_dir}", file=sys.stderr)
+        return 1
+
     try:
         data = json.loads(status_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -112,33 +123,41 @@ def run_migration(
         for log in logs:
             print(f"  - {log}")
 
-    if not dry_run and count > 0:
-        # Import ai_status to perform a canonical sync
-        try:
-            import ai_status
+    # Validate candidate graph BEFORE any mutation or status file update
+    board = {str(t.get("id", "")).strip().upper(): t for t in tasks if t.get("id")}
+    archive = load_archive(archive_dir)
+    failures = check(board, archive)
 
+    if failures:
+        print(
+            f"\nPost-migration resolvability check: {len(failures)} failure(s)",
+            file=sys.stderr,
+        )
+        for failure in failures:
+            print(f"  - {failure}", file=sys.stderr)
+        return 1
+
+    if not dry_run and count > 0:
+        import ai_status
+
+        canonical_status_path = ai_status.STATUS_FILE.resolve()
+        status_path_resolved = status_path.resolve()
+        if status_path_resolved != canonical_status_path:
+            print(
+                f"ERROR: status path mismatch: {status_path_resolved} does not match "
+                f"canonical status file {canonical_status_path}",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
             state = ai_status.load_state()
             state["tasks"] = tasks
             ai_status.sync_all(state)
             print(f"Successfully updated and synced {status_path}")
         except Exception as exc:
-            # Fallback if ai_status import fails
-            status_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-            print(f"Updated {status_path} (fallback raw write: {exc})")
-
-    # Verify resolvability after migration
-    if dry_run:
-        board = {str(t.get("id", "")).strip().upper(): t for t in tasks if t.get("id")}
-    else:
-        board = load_board(status_path)
-    archive = load_archive(archive_dir)
-    failures = check(board, archive)
-
-    if failures:
-        print(f"\nPost-migration resolvability check: {len(failures)} failure(s)")
-        for failure in failures:
-            print(f"  - {failure}")
-        return 1
+            print(f"ERROR: canonical state sync failed: {exc}", file=sys.stderr)
+            return 1
 
     print(
         f"\nPost-migration resolvability check: OK ({len(board)} tasks scanned, 0 failures)"
@@ -177,3 +196,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
