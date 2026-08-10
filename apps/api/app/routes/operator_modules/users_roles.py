@@ -124,7 +124,8 @@ def create_user_role_sub_router(
         subject_id: str | None = None,
     ) -> dict[str, Any]:
         svc = get_svc(request)
-        events = svc.get_audit_trail(subject_id=subject_id)
+        tenant_id = getattr(request.state, "operator_tenant_id", None)
+        events = svc.get_audit_trail(subject_id=subject_id, tenant_id=tenant_id)
         return {
             "events": events,
             "count": len(events),
@@ -145,12 +146,12 @@ def create_user_role_sub_router(
     def save_user(
         body: UserSavePayload,
         request: Request,
-        x_operator_role: str | None = Header(default=None, alias="X-Operator-Role"),
     ) -> dict[str, Any]:
         svc = get_svc(request)
         scope_dict = body.scope.model_dump() if body.scope else None
         server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
-        server_role = getattr(request.state, "operator_role_id", None) or x_operator_role or "platform_admin"
+        server_role = getattr(request.state, "operator_role_id", None) or "platform_admin"
+        partition_tenant = getattr(request.state, "operator_tenant_id", None)
         try:
             user = svc.save_user(
                 subject_id=body.subjectId,
@@ -164,6 +165,7 @@ def create_user_role_sub_router(
                 actor_role=server_role,
                 reason=body.reason,
                 correlation_id=getattr(request.state, "correlation_id", None),
+                tenant_id=partition_tenant,
             )
             return {
                 "user": user,

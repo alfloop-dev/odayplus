@@ -1398,7 +1398,7 @@ export function GovernanceWorkspace({
 
       {activeTab === "userManagement" ? (
         <section aria-label="User and Role Management">
-          <UserRoleManagementController currentRoleId={role} />
+          <UserRoleManagementController currentRoleId={roleId ?? role} />
         </section>
       ) : null}
 

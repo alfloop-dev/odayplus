@@ -189,10 +189,35 @@ class UserRoleManagementService:
                 if sub:
                     self._users[sub] = dict(user)
 
+        raw_events = (initial_state or {}).get("events")
+        if raw_events:
+            for raw_ev in raw_events:
+                if isinstance(raw_ev, dict):
+                    meta = dict(raw_ev.get("metadata") or raw_ev.get("detail") or {})
+                    ev_id = raw_ev.get("event_id") or str(uuid4())
+                    ev_type = raw_ev.get("event_type") or "user_role_management.event"
+                    actor = raw_ev.get("actor") or "system"
+                    action = raw_ev.get("action") or "EVENT"
+                    res = raw_ev.get("resource") or "user"
+                    outcome = raw_ev.get("outcome") or raw_ev.get("result") or "success"
+                    cid = raw_ev.get("correlation_id") or str(uuid4())
+                    ev = AuditEvent(
+                        event_id=ev_id,
+                        event_type=ev_type,
+                        actor=actor,
+                        action=action,
+                        resource=res,
+                        outcome=outcome,
+                        correlation_id=cid,
+                        metadata=meta,
+                    )
+                    self.audit_log.record(ev)
+
     def export_state(self) -> dict[str, Any]:
         """Export state dictionary for durable persistence."""
         return {
             "users": [dict(u) for u in self._users.values()],
+            "events": [e.to_dict() for e in self.audit_log.list_events()],
         }
 
     def list_users(self, *, status_filter: str | None = None) -> list[dict[str, Any]]:
@@ -236,6 +261,7 @@ class UserRoleManagementService:
         actor_role: str | None = None,
         reason: str = "",
         correlation_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """Create or update a user's roles, scope axes, and attributes with audit trail."""
         subject_id = subject_id.strip()
@@ -263,8 +289,15 @@ class UserRoleManagementService:
         existing = self._users.get(subject_id)
         before_state = dict(existing) if existing else None
 
+        client_tenant = (scope or {}).get("tenant_id")
+        if tenant_id and client_tenant and client_tenant != tenant_id:
+            raise UserRolePolicyError(
+                f"Cannot save user scope for tenant '{client_tenant}'; caller is restricted to tenant '{tenant_id}'."
+            )
+        resolved_tenant = client_tenant or tenant_id or "tenant-default"
+
         updated_scope = {
-            "tenant_id": (scope or {}).get("tenant_id", "tenant-default"),
+            "tenant_id": resolved_tenant,
             "brand_ids": list((scope or {}).get("brand_ids", [])),
             "region_ids": list((scope or {}).get("region_ids", [])),
             "store_ids": list((scope or {}).get("store_ids", [])),
@@ -304,6 +337,7 @@ class UserRoleManagementService:
                 correlation_id=cid,
                 metadata={
                     "subject_id": subject_id,
+                    "tenant_id": resolved_tenant,
                     "roles_before": before_state.get("roles") if before_state else None,
                     "roles_after": validated_roles,
                     "scope_before": before_state.get("scope") if before_state else None,
@@ -336,6 +370,8 @@ class UserRoleManagementService:
         user["updated_by"] = actor_name or "system"
         self._users[subject_id] = user
 
+        user_tenant = (user.get("scope") or {}).get("tenant_id", "tenant-default")
+
         cid = correlation_id or str(uuid4())
         self.audit_log.record(
             AuditEvent(
@@ -347,6 +383,7 @@ class UserRoleManagementService:
                 correlation_id=cid,
                 metadata={
                     "subject_id": subject_id,
+                    "tenant_id": user_tenant,
                     "status": status,
                     "reason": reason,
                 },
@@ -354,13 +391,20 @@ class UserRoleManagementService:
         )
         return dict(user)
 
-    def get_audit_trail(self, *, subject_id: str | None = None) -> list[dict[str, Any]]:
+    def get_audit_trail(
+        self,
+        *,
+        subject_id: str | None = None,
+        tenant_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return audit trail events recorded by user role management."""
         events: list[dict[str, Any]] = []
-        for event in self.audit_log.list_events():
+        for event in self.audit_log.list_events(tenant_id=tenant_id):
             if event.event_type.startswith("user_role_management."):
                 meta = dict(event.metadata or {})
                 if subject_id and meta.get("subject_id") != subject_id:
+                    continue
+                if tenant_id and meta.get("tenant_id") and meta.get("tenant_id") != tenant_id:
                     continue
                 events.append(
                     {

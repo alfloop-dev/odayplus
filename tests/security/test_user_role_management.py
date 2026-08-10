@@ -43,12 +43,56 @@ def test_user_role_service_defaults_and_queries() -> None:
 
 def test_user_role_service_export_state() -> None:
     service = UserRoleManagementService()
+    service.save_user(
+        subject_id="ops-lead",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        reason="Testing state export",
+    )
     state = service.export_state()
     assert "users" in state
+    assert "events" in state
     assert len(state["users"]) >= 5
+    assert len(state["events"]) >= 1
 
     reloaded = UserRoleManagementService(initial_state=state, seed_fixtures=False)
     assert len(reloaded.list_users()) == len(state["users"])
+    assert len(reloaded.get_audit_trail()) == len(state["events"])
+
+
+def test_user_role_service_tenant_isolation_and_filtering() -> None:
+    service = UserRoleManagementService()
+    # Save user with tenant-a
+    service.save_user(
+        subject_id="user-a",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-a"},
+        tenant_id="tenant-a",
+        reason="Tenant A assignment",
+    )
+    # Rejects cross-tenant scope modification
+    with pytest.raises(UserRolePolicyError, match="restricted to tenant 'tenant-a'"):
+        service.save_user(
+            subject_id="user-a",
+            roles=[Role.OPERATIONS_MANAGER.value],
+            scope={"tenant_id": "tenant-b"},
+            tenant_id="tenant-a",
+            reason="Cross tenant attempt",
+        )
+
+    # Save user with tenant-b
+    service.save_user(
+        subject_id="user-b",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-b"},
+        tenant_id="tenant-b",
+        reason="Tenant B assignment",
+    )
+
+    # get_audit_trail with tenant_id filters correctly
+    events_a = service.get_audit_trail(tenant_id="tenant-a")
+    assert all(e["metadata"].get("tenant_id") == "tenant-a" for e in events_a)
+    assert any(e["metadata"].get("subject_id") == "user-a" for e in events_a)
+    assert not any(e["metadata"].get("subject_id") == "user-b" for e in events_a)
 
 
 def test_user_role_service_save_user_and_audit_event() -> None:

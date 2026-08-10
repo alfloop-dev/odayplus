@@ -80,7 +80,7 @@ export type UserRoleManagementControllerProps = {
 };
 
 export function UserRoleManagementController({
-  currentRoleId = "operations_manager",
+  currentRoleId = "platform-admin",
   onUserRoleChange,
 }: UserRoleManagementControllerProps) {
   const fixturesAllowed = operatorFixturesAllowed();

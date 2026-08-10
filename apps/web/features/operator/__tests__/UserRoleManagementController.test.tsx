@@ -97,7 +97,7 @@ describe("UserRoleManagementController", () => {
   });
 
   it("renders user table with default users and role badges", async () => {
-    render(<UserRoleManagementController currentRoleId="operations_manager" />);
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
 
     expect(screen.getByTestId("user-role-management-controller")).toBeInTheDocument();
     expect(screen.getByText("User & Role 自助管理與異動稽核")).toBeInTheDocument();
@@ -108,7 +108,7 @@ describe("UserRoleManagementController", () => {
   });
 
   it("filters user rows by search query", async () => {
-    render(<UserRoleManagementController currentRoleId="operations_manager" />);
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
 
     await screen.findByTestId("user-row-ops-lead");
 
@@ -123,7 +123,7 @@ describe("UserRoleManagementController", () => {
     const handleRoleChange = vi.fn();
     render(
       <UserRoleManagementController
-        currentRoleId="operations_manager"
+        currentRoleId="platform-admin"
         onUserRoleChange={handleRoleChange}
       />
     );
@@ -146,7 +146,7 @@ describe("UserRoleManagementController", () => {
   });
 
   it("adds new user when clicking add user button", async () => {
-    render(<UserRoleManagementController currentRoleId="operations_manager" />);
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
 
     await screen.findByTestId("user-row-ops-lead");
 
@@ -155,5 +155,20 @@ describe("UserRoleManagementController", () => {
 
     expect(screen.getByTestId("edit-role-modal")).toBeInTheDocument();
     expect(screen.getByText(/編輯使用者權限：新使用者/i)).toBeInTheDocument();
+  });
+
+  it("emits X-Operator-Role platform-admin and X-Roles platform_admin headers", async () => {
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
+    await screen.findByTestId("user-row-ops-lead");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/operator/users"),
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          "X-Operator-Role": "platform-admin",
+          "X-Roles": "platform_admin",
+        }),
+      })
+    );
   });
 });
