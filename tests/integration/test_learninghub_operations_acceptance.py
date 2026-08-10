@@ -5,13 +5,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from apps.api.app.routes.learninghub import create_learninghub_router
-from models.shared_ml import (
-    MetricThreshold,
-    ModelAlias,
-    ModelCardApproval,
-    ModelStage,
-    ModelVersion,
-)
 from modules.learninghub import (
     InMemoryLearningHubRepository,
     LearningHubError,
@@ -29,8 +22,8 @@ from shared.infrastructure.persistence import (
 from tests.integration._authz import auth_headers
 from tests.integration._learninghub_fixtures import (
     dataset_rows as _rows,
-    model_card as _model_card,
-    model_version as _model_version,
+)
+from tests.integration._learninghub_fixtures import (
     prepare_candidate as _prepare_candidate,
 )
 
@@ -119,12 +112,6 @@ def test_dq_triage_durable_restart_persistence(tmp_path) -> None:
 
 def test_empty_registry_never_fabricates_a_model() -> None:
     repository = InMemoryLearningHubRepository()
-    audit_log = InMemoryAuditLog()
-    service = LearningHubService(
-        repository=repository,
-        registry=MlflowRegistryAdapter(repository),
-        audit_log=audit_log,
-    )
 
     # Listing models when empty returns 0 items, no mock models
     all_versions = repository.list_all_model_versions()
