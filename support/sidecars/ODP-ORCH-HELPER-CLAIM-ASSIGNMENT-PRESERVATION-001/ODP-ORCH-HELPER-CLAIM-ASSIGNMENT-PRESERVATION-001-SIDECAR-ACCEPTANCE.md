@@ -253,6 +253,17 @@ task commit while making `origin/dev` an ancestor and leaves the branch
 eligible for a normal fast-forward push. No reset, force push, task-history
 discard, or overwrite was used.
 
+### Final owned-finalize base advance (2026-08-10)
+
+For the subsequent `owned_finalize_dispatch`, the owner fetched both the task
+ref and `origin/dev` again. The published task ref still matched approved HEAD
+`e41b011ba875f845947590efc8665a9d0efd3c6f`, while current `origin/dev` had
+advanced to `db32d08feee2ccead51fbf2a835f2ee7e6257385` and was not yet an
+ancestor. The owner composed that base with the conflict-free merge commit
+`e1e3784cc928cb58f69f79cfb36c8ed1f55a0331`. This retains the complete
+published task lineage, requires only a normal fast-forward push, and leaves
+the task-owned diff against `origin/dev` limited to this support artifact.
+
 ## Handoff disposition
 
 This packet is rebound to the shipped parent merge, explains the parent-owned
