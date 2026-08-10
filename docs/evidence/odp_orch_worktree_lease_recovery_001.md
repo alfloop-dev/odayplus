@@ -72,6 +72,14 @@ following 15-second poll interval. This avoided restarting the supervisor or
 interrupting its active workers. The persisted post-loop state at
 `2026-08-10T00:04:38Z` again had no affected lease-block key.
 
+The next full supervisor loop started at `2026-08-10T00:04:50Z` from that
+clean state and completed at `2026-08-10T00:07:20Z`. The block key remained
+absent after its save. During this loop, the normal dispatch path reused the
+rebuilt worktree for reviewer Codex2 (`evt-20260810T000511Z-d491af5a`,
+`last_used_at=2026-08-10T00:06:45Z`). This is the end-to-end lease proof: the
+supervisor did not merely lose the old alarm record; it successfully leased
+the exact-remote-head worktree on a real queued review dispatch.
+
 ## Scope boundary
 
 This operation did not change the affected task's content or human gates. It
