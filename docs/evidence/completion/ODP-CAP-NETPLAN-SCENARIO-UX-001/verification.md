@@ -13,6 +13,7 @@ uv run pytest modules/netplan tests/integration/test_netplan_solver.py -q
   - 1 additive operation (`PUT /api/v1/netplan/scenarios/{scenario_id}`), 0 unapproved breaking changes
 - Total Python test cases passed: 108 passed.
 - Key scenarios verified:
+  - `test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`: verified that `solve_netplan` emits `isStale`, `isInfeasible`, and `diagnostics` in `netPlanScenarios` rows in canonical operator API.
   - `test_stale_solve_result_cannot_be_submitted_or_approved`: verified that modifying scenario constraints after solve marks the solve stale and blocks submit/decide with `NetPlanApprovalError`.
   - `test_all_structured_diagnostic_fields_rendered`: verified all 5 diagnostic fields (`violated_constraint`, `affected_stores`, `required_relaxation`, `business_impact`, `suggested_action`) are populated and non-empty.
   - `test_update_scenario_lifecycle_restrictions`: verified `update_scenario` restricts updates on `pending_approval` scenarios.

@@ -27,6 +27,9 @@
 - Regenerated OpenAPI artifacts (`packages/openapi-client/openapi.json` and `packages/openapi-client/src/generated/types.ts`) via `make api-contract-refresh`, resolving OpenAPI contract drift.
 
 ### 4. Frontend & Rebalance UX Integration
+- Updated `modules/opsboard/application/network_rebalance.py`:
+  - `solve_netplan` now calculates `is_stale`, `is_infeasible`, and extracts `diagnostics` from solver output to populate `isStale`, `isInfeasible`, and `diagnostics` on every scenario plan row returned to `RebalancePanel`.
+  - Added default `isStale: False`, `isInfeasible: False`, `diagnostics: []` to `_seed_scenarios()`.
 - Updated `apps/web/features/operator/types.ts` to define `NetPlanDiagnostic` and `NetPlanScenarioDetail` with `isStale`, `isInfeasible`, and diagnostic array.
 - Updated `apps/web/features/operator/network/RebalancePanel.tsx` to render:
   - `isStale` status badge (`過期 / Stale`).

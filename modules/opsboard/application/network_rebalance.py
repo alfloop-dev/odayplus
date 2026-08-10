@@ -117,6 +117,9 @@ def _seed_scenarios() -> list[dict[str, Any]]:
             "risk": "中",
             "time": "即刻起 90 天",
             "isSystemRecommendation": False,
+            "isStale": False,
+            "isInfeasible": False,
+            "diagnostics": [],
             "rationale": "保留原址但需重新配置設備、在地行銷與 90 天營運觀察。",
         },
         {
@@ -131,6 +134,9 @@ def _seed_scenarios() -> list[dict[str, Any]]:
             "risk": "中高",
             "time": "Q3–Q4 執行",
             "isSystemRecommendation": True,
+            "isStale": False,
+            "isInfeasible": False,
+            "diagnostics": [],
             "rationale": "Move 方案在需求缺口與租金帶權衡下最高分，但仍需 Govern 雙簽核。",
         },
         {
@@ -145,6 +151,9 @@ def _seed_scenarios() -> list[dict[str, Any]]:
             "risk": "低",
             "time": "60 天內",
             "isSystemRecommendation": False,
+            "isStale": False,
+            "isInfeasible": False,
+            "diagnostics": [],
             "rationale": "止損風險最低，但會留下商圈需求缺口與設備調度成本。",
         },
     ]
@@ -559,6 +568,9 @@ class NetworkRebalanceService:
                 reason="Operator network rebalance canonical solve",
             )
             result_payload = solve.result.to_dict()
+            is_stale = solve.is_stale(scenario)
+            is_infeasible = result_payload.get("infeasible", False) or (result_payload.get("solver_status") == "infeasible")
+            diagnostics = result_payload.get("diagnostics", [])
             plan_rows = [
                 {
                     "id": scenario.scenario_id,
@@ -575,6 +587,9 @@ class NetworkRebalanceService:
                     "solverStatus": result_payload["solver_status"],
                     "solverVersion": result_payload["solver_version"],
                     "evidenceIds": [scenario.scenario_id],
+                    "isStale": is_stale,
+                    "isInfeasible": is_infeasible,
+                    "diagnostics": diagnostics,
                 }
             ]
             for index, alternative in enumerate(
@@ -597,6 +612,9 @@ class NetworkRebalanceService:
                         "solverStatus": result_payload["solver_status"],
                         "solverVersion": result_payload["solver_version"],
                         "evidenceIds": [scenario.scenario_id],
+                        "isStale": is_stale,
+                        "isInfeasible": False,
+                        "diagnostics": [],
                     }
                 )
             store["status"] = "netplanreview"
