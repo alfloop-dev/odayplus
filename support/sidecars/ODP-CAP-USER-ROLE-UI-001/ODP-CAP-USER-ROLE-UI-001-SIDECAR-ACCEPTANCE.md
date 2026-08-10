@@ -34,10 +34,10 @@ This is a sidecar support artifact. It does not modify L1 canonical truth, platf
 
 Legend: ✅ Met (符合並具備完整實作與測試覆蓋) · ⚠️ Met with bounded scope · ❌ Not met.
 
-### 1.1 `FR-SHARED-003`: Multi-Role & 7-Axis Scope Constraint Assignment
+### 1.1 `FR-OPS-003`: Multi-Role & 7-Axis Scope Constraint Assignment
 - [x] **7-Axis Scope Support**: 包含 `tenant_id`、`brand_ids`、`region_ids`、`store_ids`、`assigned_area_ids`、`heat_zone_ids` 及 `clearance` 7 軸範圍限制。
 - [x] **Implementation Anchor**: `UserRoleManagementService.save_user()` (`modules/opsboard/application/user_role_management.py:335`) 與 REST Payload DTO `UserSavePayload` (`apps/api/app/routes/operator_modules/users_roles.py:46`)。
-- [x] **Test Anchor**: `tests/security/test_user_role_management.py` (15 項 Pytest 安全測試)，包含 `test_user_role_service_save_user_and_audit_event` 驗證完整範圍資料更新，`test_save_user_preserves_abac_attributes_when_attributes_omitted` 驗證 ABAC 屬性保留，`test_user_role_service_status_toggle_caller_partition_tenant` 驗證 E1 partition key 解耦，以及 `test_user_role_service_invalid_role_policy_error` 驗證非合法 Canonical Role 觸發 `UserRolePolicyError` 拒絕。
+- [x] **Test Anchor**: `tests/security/test_user_role_management.py` (15 項 Pytest 安全測試)，包含 `test_user_role_service_save_user_and_audit_event` 驗證完整範圍資料更新，`test_save_user_preserves_abac_attributes_when_attributes_omitted` 驗證 ABAC 屬性保留，`test_set_user_status_tenant_guard_and_audit_partition` 驗證 E1 partition key 解耦，以及 `test_user_role_service_invalid_role_policy_error` 驗證非合法 Canonical Role 觸發 `UserRolePolicyError` 拒絕。
 
 **Verdict: ✅ Accepted.** 實作與 15 項單元測試完整覆蓋規範之 7 軸範圍與角色驗證。
 
@@ -45,7 +45,7 @@ Legend: ✅ Met (符合並具備完整實作與測試覆蓋) · ⚠️ Met with 
 - [x] **Admin UI Controller**: 實作 `UserRoleManagementController.tsx` (`apps/web/features/operator/UserRoleManagementController.tsx`)，提供用戶清單、動態 Role Badge 標籤、7 軸範圍輸入表單、帳號啟用/停用開關及實時 Audit Trail 檢視器。
 - [x] **Governance Shell Integration & Accessibility**: 於 `GovernanceWorkspace.tsx` 將 `UserRoleManagementController` 嵌入主頁面 Navigation Tab (`users-roles`)，並補齊 `role="button"`、`tabIndex={0}` 與 Enter/Space 鍵盤事件處理解決 M3 鍵盤可達性。
 - [x] **Implementation Anchor**: `apps/web/features/operator/UserRoleManagementController.tsx` & `apps/web/features/operator/GovernanceWorkspace.tsx:1401`。
-- [x] **Test Anchor**: `apps/web/features/operator/__tests__/UserRoleManagementController.test.tsx` (13 項 Vitest 前端測試涵蓋元件渲染、編輯表單互動、ABAC attributes 保留 D1 與 admin-typed subject ID 傳送 D3)。
+- [x] **Test Anchor**: `apps/web/features/operator/__tests__/UserRoleManagementController.test.tsx` (13 項 Vitest 前端測試，執行時需設定 cwd `apps/web` 或以 `npm --workspace=apps/web run test -- UserRoleManagementController GovernanceWorkspace` 執行，涵蓋元件渲染、編輯表單互動、ABAC attributes 保留 D1 與 admin-typed subject ID 傳送 D3)。
 
 **Verdict: ✅ Accepted.** 前端介面完整整合並通過 Vitest 單元與整合測試驗證。
 
@@ -53,14 +53,14 @@ Legend: ✅ Met (符合並具備完整實作與測試覆蓋) · ⚠️ Met with 
 - [x] **Audit Event Generation & Partition Key Decoupling**: 用戶資料新增/變更或狀態切換時，自動產生 `USER_UPDATED` 或 `USER_STATUS_UPDATED` 稽核紀錄。在 `1e1fd205` 中將 Audit partition key 與 scope tenant 解耦 (`metadata.tenant_id = caller tenant`)，使預設流程下的 Audit Trail 不再因 scope tenant 隔離而隱形。
 - [x] **Server-Side Identity Derivation & Event Identity Keying**: API 端點改自 `request.state.operator_subject_id` 取用經過身份認證之 Actor ID，不受 Client 傳入之 `actorName` 影響。M4 中 `get_audit_trail` 回傳 `event_id`，前端 UI Row 改以 `event_id` 作為 Key 進行渲染。
 - [x] **Implementation Anchor**: `UserRoleManagementService.get_audit_trail()` (`modules/opsboard/application/user_role_management.py:494`)、`shared/audit/events.py` (`append_verbatim()` M2) & API 路由處理 `apps/api/app/routes/operator_modules/users_roles.py:156` (save_user) / `195` (set_status)。
-- [x] **Test Anchor**: `tests/security/test_user_role_management.py::test_operator_router_rbac_guards_and_audit_actor` 明確斷言自 Request Header `x-subject-id` 衍生 Actor 名稱，`test_router_save_user_default_flow_audit_trail_visible_to_caller` 驗證 E1 稽核軌跡可見性。
+- [x] **Test Anchor**: `tests/security/test_user_role_management.py::test_operator_router_rbac_guards_and_audit_actor` 明確斷言自 Request Header `x-subject-id` 衍生 Actor 名稱，`test_operator_router_ui_shaped_flow_leaves_visible_audit_trail` 驗證 E1 稽核軌跡可見性。
 
 **Verdict: ✅ Accepted.** 稽核軌跡不可變性、身份防偽造與租戶隔離查詢控制項已完備。
 
 ### 1.4 Account Lifecycle Management (Status Toggle)
 - [x] **State Preservation**: 支援用戶狀態開關（`active` vs `disabled`），停用帳號時保留歷史角色與範圍設定及 Audit Event，不進行物理刪除。
 - [x] **Implementation Anchor**: `UserRoleManagementService.set_user_status()` (`modules/opsboard/application/user_role_management.py:454`) & API `POST /operator/users/{subject_id}/status` (`apps/api/app/routes/operator_modules/users_roles.py:188`)。
-- [x] **Test Anchor**: `tests/security/test_user_role_management.py::test_user_role_service_status_toggle` & `test_user_role_service_status_toggle_caller_partition_tenant` 驗證狀態開關與 Audit 事件紀錄。
+- [x] **Test Anchor**: `tests/security/test_user_role_management.py::test_user_role_service_status_toggle` & `test_set_user_status_tenant_guard_and_audit_partition` 驗證狀態開關與 Audit 事件紀錄。
 
 **Verdict: ✅ Accepted.** 帳號生命週期控管符合標準規範。
 
@@ -159,7 +159,7 @@ flowchart TD
    - Pytest 安全性整合測試套件：`python3 -m pytest tests/security/test_user_role_management.py`（15 passed）
    - Pytest OpenAPI 契約與客戶端測試：`python3 -m pytest tests/contract/test_openapi_artifact_and_client.py`（17 passed）
    - Pytest 效能與 Soak 測試：`python3 -m pytest tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution`（1 passed）
-   - Vitest 前端組件測試：`npx vitest UserRoleManagementController GovernanceWorkspace`（13 passed: 7 passed + 6 passed）
+   - Vitest 前端組件測試：`npm --workspace=apps/web run test -- UserRoleManagementController GovernanceWorkspace` 或在 `apps/web` 目錄執行 `npx vitest UserRoleManagementController GovernanceWorkspace`（13 passed: 7 passed + 6 passed；在 root 目錄直接執行 `npx vitest` 會因缺少 Vite JSX context 導致 0 tests 並報錯）
    - OpenAPI Schema 漂移檢查：`python3 scripts/openapi/check_drift.py`（PASS）
 
 ---
@@ -174,4 +174,5 @@ flowchart TD
   - `git log 3f2afe373bc7af94ec306f24e007a8e197e1fd87..4394276841f47b5a7f1a3b8688fa97ca88b0cb42 --oneline`: Analyzed full evolution diff from 3f2afe37 to HEAD.
   - `git show --stat 4394276841f47b5a7f1a3b8688fa97ca88b0cb42`: Inspected commit metadata and verification trailers.
   - `git show 4394276841f47b5a7f1a3b8688fa97ca88b0cb42:tests/security/test_user_role_management.py`: Verified 15 test cases present in parent security test suite.
+  - `npm --workspace=apps/web run test -- UserRoleManagementController GovernanceWorkspace`: Verified Vitest reproducible execution from `apps/web` context.
 - **Scope Compliance**: 僅建立與更新支援性文檔 `support/sidecars/ODP-CAP-USER-ROLE-UI-001/ODP-CAP-USER-ROLE-UI-001-SIDECAR-ACCEPTANCE.md`，完全未修改 L1 Canonical Truth 或 Parent Runtime/Registry/Governance 核心程式。
