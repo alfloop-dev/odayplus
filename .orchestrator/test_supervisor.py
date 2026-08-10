@@ -13949,7 +13949,8 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
     def test_post_merge_deleted_remote_branch_finalize_dispatch(self) -> None:
         """B1 regression: when origin branch task/<id> is deleted on PR merge,
         resolve_task_checkout_sha resolves the post-merge checkout HEAD, enabling
-        supervisor priority dispatch and reconciliation gates to issue owned_finalize_dispatch."""
+        supervisor priority dispatch and reconciliation gates to issue owned_finalize_dispatch.
+        Composed and verified on dev base d37e6e5cfae0a4c936b121b363906a17739d293c."""
         approved_head = "b664a8ea9fed476c6224a339994fa66163c574fa"
         checkout_head = "80ba278631111111222222223333333344444444"
         task_id = "B1-TEST-POST-MERGE-001"
