@@ -3,10 +3,10 @@
 - Sidecar task: `ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001-SIDECAR-ACCEPTANCE`
 - Parent task: `ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001`
 - Helper kind: `acceptance_packet`
-- Sidecar owner: Codex5
-- Assigned sidecar reviewer and parent owner: Antigravity2
-- Parent reviewer: Antigravity6
+- Sidecar owner: Antigravity
+- Assigned sidecar reviewer: Claude
 - Prepared: `2026-08-02`
+- Refreshed: `2026-08-10`
 
 ## Scope boundary
 
@@ -181,9 +181,22 @@ the preservation invariant. The parent reviewer must ensure legacy assertions
 such as `new_reviewer == previous_owner` are replaced or supplemented with the
 preservation and reviewer-as-helper rejection cases above.
 
+## Sidecar base advance (2026-08-10)
+
+Before handoff, sidecar owner `Antigravity` fetched `origin/dev` and merged `origin/dev` tip into `task/ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001-SIDECAR-ACCEPTANCE` without conflicts.
+
+Re-verification execution results on current merged base:
+
+```text
+python3 -m pytest .orchestrator/test_supervisor.py -q -k 'helper_claim'
+15 passed
+
+python3 -m pytest .orchestrator/test_supervisor.py -q -k 'owner_self_review or helper_claim_uses_persisted_authority_for_event_key'
+2 passed
+```
+
+No reset, force push, task history discard, or canonical edit was used.
+
 ## Handoff disposition
 
-This packet is ready for Antigravity2 to review and use as the parent task's
-acceptance contract. Parent implementation, exact-head verification, and
-composition remain Antigravity2's responsibility, with independent parent
-review authority held by Antigravity6.
+This packet is updated and re-verified after base advance. It is handed off to `Claude` for sidecar review. Parent implementation, exact-head verification, and composition remain the parent owner's responsibility.
