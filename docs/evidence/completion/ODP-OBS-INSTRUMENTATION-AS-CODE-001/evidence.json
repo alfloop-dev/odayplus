@@ -1,6 +1,6 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-10T14:35:42.880880+00:00",
+  "timestamp": "2026-08-10T14:35:57.521279+00:00",
   "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151",
   "is_test_simulated": false,
   "overall_status": "PASSED",
@@ -189,6 +189,6 @@
     "target": "tests/reliability/test_runtime_observability.py",
     "passed_tests": 78,
     "exit_code": 0,
-    "duration_seconds": 14.84
+    "duration_seconds": 15.55
   }
 }

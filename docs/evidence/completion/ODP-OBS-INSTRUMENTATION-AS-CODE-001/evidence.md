@@ -15,7 +15,7 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **PASSED** |
 | 3 | Cardinality is bounded | Enforced label typing, finite category enums, fail-closed undeclared label & max cardinality rejection | **PASSED** |
 | 4 | Alerts link to runbooks and release identity | Verified all 11 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **PASSED** |
-| 5 | Configuration and emission tests are reproducible | 78/78 pytest reliability/observability tests passing dynamically in 14.84s | **PASSED** |
+| 5 | Configuration and emission tests are reproducible | 78/78 pytest reliability/observability tests passing dynamically in 15.55s | **PASSED** |
 
 ---
 
@@ -189,17 +189,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "89e8166195be478b",
-    "parent_id": "016faed1f4ad4f6d",
+    "span_id": "c3201949b61b4d1f",
+    "parent_id": "aa81e65b02714677",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "cb7e6464-1e0e-4341-a66b-768df872f8fd",
+    "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.002944,
+    "duration_ms": 0.004666,
     "attributes": {
-      "correlation_id": "cb7e6464-1e0e-4341-a66b-768df872f8fd",
+      "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -209,17 +209,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "81136d3ab3354215",
-    "parent_id": "016faed1f4ad4f6d",
+    "span_id": "e8b685f222a04f36",
+    "parent_id": "aa81e65b02714677",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "cb7e6464-1e0e-4341-a66b-768df872f8fd",
+    "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.092413,
+    "duration_ms": 0.126993,
     "attributes": {
-      "correlation_id": "cb7e6464-1e0e-4341-a66b-768df872f8fd",
+      "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -229,17 +229,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "016faed1f4ad4f6d",
+    "span_id": "aa81e65b02714677",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "cb7e6464-1e0e-4341-a66b-768df872f8fd",
+    "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.142651,
+    "duration_ms": 0.199113,
     "attributes": {
-      "correlation_id": "cb7e6464-1e0e-4341-a66b-768df872f8fd",
+      "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -257,7 +257,7 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 
 - Source Commit: `0c219f0542db89d69aaa7e2396974b2b9ff1e151` (is_test_simulated: False)
 - Command: `python3 -m pytest tests/reliability/test_runtime_observability.py`
-- Result: **78 passed in 14.84s** (Exit Code: 0)
+- Result: **78 passed in 15.55s** (Exit Code: 0)
 
 ---
 
