@@ -312,6 +312,13 @@ export type DecisionStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECU
 /** DecisionType */
 export type DecisionType = "CREATE" | "REVISE" | "DUPLICATE" | "QUARANTINE" | "REJECT" | "REOPEN" | "MERGE" | "SPLIT" | "UNMERGE";
 
+/** DqTriagePayload */
+export type DqTriagePayload = {
+  action: string;
+  actor?: string | null;
+  rationale: string;
+};
+
 /** EligibilityPayload */
 export type EligibilityPayload = {
   actor: string;
@@ -945,6 +952,15 @@ export type PriceOpsApprovalPayload = {
   reason: string;
 };
 
+/** PriceOpsDecisionWritebackPayload */
+export type PriceOpsDecisionWritebackPayload = {
+  actor: string;
+  decision: string;
+  occurred_at?: string | null;
+  reason: string;
+  selected_scenario_id?: string | null;
+};
+
 /** PriceOpsEvaluationPayload */
 export type PriceOpsEvaluationPayload = {
   actor?: string;
@@ -999,6 +1015,14 @@ export type PriceOpsPlanPayload = {
   items: PriceOpsPlanItemPayload[];
   plan_id?: string | null;
   tenant_id: string;
+};
+
+/** PriceOpsScenarioSimulationPayload */
+export type PriceOpsScenarioSimulationPayload = {
+  actor?: string;
+  candidate_prices?: Record<string, number>;
+  occurred_at?: string | null;
+  reason?: string;
 };
 
 /** PromotionDecisionReceipt */
@@ -1543,6 +1567,7 @@ export const API_PATHS = {
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
+  "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": ["GET", "POST"],
   "/api/v1/learninghub/models": ["GET"],
   "/api/v1/learninghub/models/{model_name}": ["GET"],
   "/api/v1/learninghub/models/{model_name}/evidence": ["GET"],
@@ -1658,11 +1683,13 @@ export const API_PATHS = {
   "/api/v1/priceops/plans/{plan_id}/activate": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/approve": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/comparison": ["GET"],
+  "/api/v1/priceops/plans/{plan_id}/decision-writeback": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/evaluate": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/observation": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/optimize": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/rollback": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/simulate": ["POST"],
+  "/api/v1/priceops/plans/{plan_id}/simulate-scenario": ["POST"],
   "/api/v1/priceops/plans/{plan_id}/submit": ["POST"],
   "/api/v1/promotion-decisions/{promotion_decision_id}": ["GET"],
   "/api/v1/promotion-decisions/{promotion_decision_id}/actions/review": ["POST"],

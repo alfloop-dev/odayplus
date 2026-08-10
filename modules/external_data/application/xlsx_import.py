@@ -201,7 +201,7 @@ def _safe_xml_fromstring(data: bytes, part_name: str) -> ET.Element:
             "UNSAFE_XML",
             f"XML part '{part_name}' declares a DTD or entity; refused before parsing",
         )
-    return ET.fromstring(data)
+    return ET.fromstring(data)  # nosec B314
 
 
 def _column_index(cell_ref: str) -> int | None:
