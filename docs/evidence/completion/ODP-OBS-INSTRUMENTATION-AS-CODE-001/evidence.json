@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-10T16:10:42.707447+00:00",
-  "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970",
+  "timestamp": "2026-08-10T16:19:22.086309+00:00",
+  "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a",
   "is_test_simulated": false,
   "overall_status": "PASSED",
   "metrics_categories": [
@@ -100,7 +100,7 @@
   "release_identity_flag_detail": {
     "flag_is_derived_not_literal": true,
     "page_still_routed_when_downgraded": true,
-    "release_sha_reported_when_downgraded": "df02052936d8c15188c308c8d40e87f4fd40b970"
+    "release_sha_reported_when_downgraded": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
   },
   "alert_runbook_linkage_count": 11,
   "alerts": [
@@ -113,7 +113,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "forecast-daily-failed",
@@ -124,7 +124,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "data-quality-p0-fail",
@@ -135,7 +135,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "dlq-spike",
@@ -146,7 +146,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "unauthorized-spike",
@@ -157,7 +157,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "audit-write-failure",
@@ -168,7 +168,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "model-drift-high",
@@ -179,7 +179,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "price-constraint-violation",
@@ -190,7 +190,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "data-room-abnormal-download",
@@ -201,7 +201,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "solver-repeated-infeasible",
@@ -212,7 +212,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     },
     {
       "id": "external-connector-stale",
@@ -223,7 +223,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
+      "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
     }
   ],
   "trace_spans_count": 3,
@@ -233,6 +233,6 @@
     "target": "tests/reliability/test_runtime_observability.py",
     "passed_tests": 91,
     "exit_code": 0,
-    "duration_seconds": 43.14
+    "duration_seconds": 41.61
   }
 }
