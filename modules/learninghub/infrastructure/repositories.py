@@ -21,6 +21,7 @@ from models.shared_ml import (
 from models.shared_ml.validation import ValidationRun
 from modules.learninghub.domain import (
     DatasetSnapshot,
+    DqTriageRecord,
     InferenceComparison,
     MonitoringEvaluation,
     RetrainingRequest,
@@ -196,11 +197,16 @@ class LearningHubRepository(Protocol):
     def list_inference_comparisons(
         self, model_name: str | None = None
     ) -> list[InferenceComparison]: ...
+    def save_dq_triage(self, record: DqTriageRecord) -> DqTriageRecord: ...
+    def list_dq_triages(
+        self, dataset_snapshot_id: str | None = None
+    ) -> list[DqTriageRecord]: ...
 
 
 @dataclass
 class InMemoryLearningHubRepository:
     _datasets: dict[str, DatasetSnapshot] = field(default_factory=dict)
+    _dq_triages: dict[str, DqTriageRecord] = field(default_factory=dict)
     _model_versions: dict[tuple[str, str], ModelVersion] = field(default_factory=dict)
     _model_cards: dict[tuple[str, str], ModelCard] = field(default_factory=dict)
     _validation_runs: dict[str, ValidationRun] = field(default_factory=dict)
@@ -225,6 +231,16 @@ class InMemoryLearningHubRepository:
 
     def get_dataset_snapshot(self, dataset_snapshot_id: str) -> DatasetSnapshot | None:
         return self._datasets.get(dataset_snapshot_id)
+
+    def save_dq_triage(self, record: DqTriageRecord) -> DqTriageRecord:
+        self._dq_triages[record.triage_id] = record
+        return record
+
+    def list_dq_triages(self, dataset_snapshot_id: str | None = None) -> list[DqTriageRecord]:
+        records = list(self._dq_triages.values())
+        if dataset_snapshot_id is not None:
+            records = [r for r in records if r.dataset_snapshot_id == dataset_snapshot_id]
+        return sorted(records, key=lambda r: r.time, reverse=True)
 
     def save_model_version(self, model_version: ModelVersion) -> ModelVersion:
         self._model_versions[(model_version.model_name, model_version.version)] = model_version
