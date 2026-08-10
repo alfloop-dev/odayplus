@@ -454,6 +454,11 @@ def test_rebalance_invokes_avm_and_netplan_oss_and_persists_results(
         assert completed.json()["store"]["avm"]["reportId"].startswith("avm-report-")
         assert solved.status_code == 200, solved.text
         assert solved.json()["store"]["netPlanJob"]["id"] == scenario_id
+        solved_scenarios = solved.json()["store"]["netPlanScenarios"]
+        assert len(solved_scenarios) > 0
+        assert "isStale" in solved_scenarios[0]
+        assert "isInfeasible" in solved_scenarios[0]
+        assert "diagnostics" in solved_scenarios[0]
         durable_solve = harness.netplan("tenant-a").get_solve(scenario_id)
         assert durable_solve is not None
         assert durable_solve.result.solver_version == "netplan-ortools-cp-sat-v2"
