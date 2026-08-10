@@ -11011,7 +11011,10 @@ def requeue_task_for_ci_repair(
         (item for item in status.get("tasks", []) or [] if str(item.get("id") or "") == task_id),
         None,
     )
-    if not isinstance(task, dict) or task_is_human_gate(task) or task_is_sidecar(task):
+    # Sidecars are still real worker tasks.  They may be support-only, but a
+    # failed CI check must return them to their owner just like mainline work;
+    # only human gates and explicitly non-dispatchable tasks stay fail-closed.
+    if not isinstance(task, dict) or task_is_human_gate(task) or bool(task.get("non_dispatchable")):
         return False
     if str(task.get("status") or "").lower() != "review_approved":
         return False

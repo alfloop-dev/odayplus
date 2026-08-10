@@ -9336,6 +9336,40 @@ class AutomaticRecoveryTests(unittest.TestCase):
             self.assertEqual(saved["status"], "in_progress")
             self.assertNotIn("approved_head", saved)
 
+    def test_ci_failure_requeues_sidecar_owner_too(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            status = {
+                "tasks": [
+                    {
+                        "id": "AUTO-CI-SIDECAR-001",
+                        "status": "review_approved",
+                        "owner": "Antigravity",
+                        "reviewer": "Claude",
+                        "task_class": "sidecar",
+                        "approved_head": "b" * 40,
+                    }
+                ]
+            }
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+            config = dict(self.config)
+            config["paths"] = {"status_file": str(status_path)}
+            with (
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor.requeue_task_for_ci_repair(
+                        config,
+                        "AUTO-CI-SIDECAR-001",
+                        message="CI failed; sidecar owner repair queued.",
+                        clear_approval=True,
+                    )
+                )
+            saved = json.loads(status_path.read_text(encoding="utf-8"))["tasks"][0]
+            self.assertEqual(saved["status"], "in_progress")
+            self.assertNotIn("approved_head", saved)
+
 
 class WorkerPreemptionSyncTests(unittest.TestCase):
     def setUp(self) -> None:
