@@ -241,11 +241,25 @@ After the base refresh, `origin/dev` is an ancestor of the task HEAD and the
 three reviewer replay commands above remain green. The task-owned diff against
 the refreshed merge base contains only this acceptance packet.
 
+### Closeout base advance (2026-08-10)
+
+Immediately before owner closeout, the task owner fetched the latest remote
+refs and rebased the three task commits onto `origin/dev` commit
+`100c92d8fc5eacf37a7b1facddcee5839bdf7c03`. Because the published task ref
+still retained the pre-rebase lineage, the owner then composed that remote
+lineage into the rebased branch with merge commit
+`7fd4cb179949562aedb14b92bf445f2273e79e99`. This preserves every published
+task commit while making `origin/dev` an ancestor and leaves the branch
+eligible for a normal fast-forward push. No reset, force push, task-history
+discard, or overwrite was used.
+
 ## Handoff disposition
 
 This packet is rebound to the shipped parent merge, explains the parent-owned
 `13 -> 15` regression delta, settles the checklist against actual behavior,
 and records the reviewer-as-helper fallback rather than the superseded
-rejection proposal. It is handed off to assigned reviewer `Antigravity` for
-sidecar review. No parent implementation or parent-owner composition action
-remains.
+rejection proposal. Assigned reviewer `Antigravity` approved the packet for
+closeout on `2026-08-10` after confirming the 15 helper-claim tests, the two
+owner-self-review/persisted-authority tests, a clean diff check, and isolation
+to this support artifact. No parent implementation or parent-owner composition
+action remains.
