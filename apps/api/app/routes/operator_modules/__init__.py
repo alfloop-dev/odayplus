@@ -29,6 +29,7 @@ from .network_scoring import create_network_scoring_sub_router
 from .seed import create_seed_sub_router
 from .shell import create_shell_sub_router
 from .store_ops import create_operator_store_ops_router
+from .users_roles import create_user_role_sub_router
 
 __all__ = [
     "create_shell_sub_router",
@@ -41,4 +42,5 @@ __all__ = [
     "create_network_scoring_sub_router",
     "create_seed_sub_router",
     "create_operator_store_ops_router",
+    "create_user_role_sub_router",
 ]
