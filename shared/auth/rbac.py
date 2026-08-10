@@ -82,7 +82,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.ARCHITECTURE_OWNER: frozenset(_grant("audit", Action.VIEW)),
     Role.DATA_OWNER: frozenset(
         _grant("integration", Action.VIEW, Action.CREATE, Action.UPDATE)
-        | _grant("data_quality", Action.VIEW, Action.OVERRIDE)
+        | _grant("data_quality", Action.VIEW, Action.UPDATE, Action.OVERRIDE)
         | _grant("audit", Action.VIEW)
     ),
     Role.MODEL_OWNER: frozenset(
@@ -171,6 +171,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("audit", Action.VIEW, Action.EXPORT)
         | _grant("model", Action.VIEW)
         | _grant("decision", Action.VIEW)
+        | _grant("data_quality", Action.VIEW)
     ),
 }
 

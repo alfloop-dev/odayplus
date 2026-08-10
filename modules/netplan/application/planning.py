@@ -28,11 +28,13 @@ from modules.netplan.domain.planning import (
 from modules.netplan.infrastructure.repositories import InMemoryNetPlanRepository
 from solver.netplan import (
     STATUS_INFEASIBLE,
+    ActionOption,
     ManagementApprovalExpectation,
     ManagementApprovalReceiptVerifier,
     ManagementApprovalVerification,
     ManagementBaselineInput,
     NetPlanConstraints,
+    NetworkAction,
     compute_solver_problem_hash,
     solve_network_plan,
     validate_network_plan_solve_result,
@@ -117,6 +119,72 @@ class NetPlanService:
         )
         return self.repository.save_scenario(scenario)
 
+    def update_scenario(
+        self,
+        scenario_id: str,
+        *,
+        scenario_name: str | None = None,
+        planning_horizon: str | None = None,
+        constraints: NetPlanConstraints | Mapping[str, Any] | None = None,
+        existing_stores: Sequence[ExistingStoreInput | Mapping[str, Any]] | None = None,
+        candidate_sites: Sequence[CandidateSiteInput | Mapping[str, Any]] | None = None,
+    ) -> NetPlanScenario:
+        from dataclasses import replace
+
+        scenario = self._require_scenario(scenario_id)
+        if scenario.status not in (
+            NetPlanScenarioStatus.DRAFT,
+            NetPlanScenarioStatus.SOLVED,
+            NetPlanScenarioStatus.INFEASIBLE,
+        ):
+            raise ValueError(
+                f"cannot update scenario {scenario_id} in {scenario.status.value} status"
+            )
+        if scenario.status in (NetPlanScenarioStatus.SOLVED, NetPlanScenarioStatus.INFEASIBLE):
+            scenario = scenario.transition(
+                NetPlanScenarioStatus.DRAFT,
+                actor="system",
+                reason="reset to draft on parameter update",
+            )
+        updated_constraints = scenario.constraints
+        if constraints is not None:
+            updated_constraints = (
+                constraints
+                if isinstance(constraints, NetPlanConstraints)
+                else NetPlanConstraints.from_mapping(constraints)
+            )
+        updated_options = scenario.options_by_entity
+        if existing_stores is not None or candidate_sites is not None:
+            new_options: dict[str, tuple[ActionOption, ...]] = {}
+            if existing_stores is not None:
+                new_options.update(
+                    build_scenario_options(existing_stores=existing_stores, candidate_sites=())
+                )
+            else:
+                for entity_id, opts in scenario.options_by_entity.items():
+                    if opts and opts[0].action != NetworkAction.OPEN:
+                        new_options[entity_id] = opts
+
+            if candidate_sites is not None:
+                new_options.update(
+                    build_scenario_options(existing_stores=(), candidate_sites=candidate_sites)
+                )
+            else:
+                for entity_id, opts in scenario.options_by_entity.items():
+                    if opts and opts[0].action == NetworkAction.OPEN:
+                        new_options[entity_id] = opts
+
+            updated_options = new_options
+
+        updated = replace(
+            scenario,
+            scenario_name=scenario_name or scenario.scenario_name,
+            planning_horizon=planning_horizon or scenario.planning_horizon,
+            constraints=updated_constraints,
+            options_by_entity=updated_options,
+        )
+        return self.repository.save_scenario(updated)
+
     def solve(
         self,
         scenario_id: str,
@@ -154,6 +222,12 @@ class NetPlanService:
             reason=reason,
             occurred_at=now,
         )
+        problem_hash = compute_solver_problem_hash(
+            scenario.options_by_entity,
+            scenario.constraints,
+            100_000.0,
+            alternative_limit,
+        )
         solve = self.repository.save_solve(
             ScenarioSolveRecord(
                 scenario_id=scenario.scenario_id,
@@ -161,6 +235,7 @@ class NetPlanService:
                 solved_at=now,
                 alternative_limit=alternative_limit,
                 execution_metadata=execution_metadata,
+                problem_hash=problem_hash,
             )
         )
         self.repository.save_scenario(transitioned)
@@ -175,6 +250,11 @@ class NetPlanService:
         occurred_at: datetime | None = None,
     ) -> NetPlanScenario:
         scenario = self._require_scenario(scenario_id)
+        solve = self.repository.get_solve(scenario_id)
+        if solve is not None and solve.is_stale(scenario):
+            raise NetPlanApprovalError(
+                "stale solve result cannot be submitted for approval: scenario parameters have changed since last solve"
+            )
         return self._advance(
             scenario,
             NetPlanScenarioStatus.PENDING_APPROVAL,
@@ -203,6 +283,10 @@ class NetPlanService:
         verification_violations: tuple[str, ...] = ()
         if normalized == "approved":
             solve = self._require_solve(scenario_id)
+            if solve.is_stale(scenario):
+                raise NetPlanApprovalError(
+                    "stale solve result cannot be approved: scenario parameters have changed since last solve"
+                )
             verification = self._verify_authoritative_solve(
                 scenario,
                 solve,
