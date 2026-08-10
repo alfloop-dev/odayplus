@@ -150,6 +150,23 @@ This repair changes only the support packet and reviewer handoff metadata. It
 does not modify the performance workflow, load-balancing implementation, tests,
 registry, status truth, or any canonical contract.
 
+### Current re-review refresh
+
+Before changing or handing off this packet again, the owner fetched the remote
+refs and composed current `origin/dev` head `f9da2955` into the unchanged remote
+task head `c47f7550`. Merge commit `c52df597` preserves both histories and leaves
+the task diff against `origin/dev` confined to this support packet. No reset,
+history rewrite, force-push, or parent implementation change was used.
+
+For PR `#781` at pre-compose head `c47f7550`, GitHub reports successful
+`orchestrator`, `performance-gate`, and `product-e2e-gate` jobs. The `product`
+job was still running when this evidence was captured. The failed
+`task-review-gate` reflects the orchestrator moving the task back to
+`in_progress` for CI repair; it is a review-state gate, not evidence of a
+sidecar-content, parent-runtime, or performance regression. This refreshed
+support-only head therefore requires a new `Codex` review stamp after normal
+push.
+
 ## Reviewer Disposition and Closeout Record
 
 The previous sidecar reviewer, `Claude`, approved the packet at sidecar HEAD `f74a97ac` after independently re-verifying every packet claim against unchanged parent HEAD `7d786d75`. The reviewer selected Option 1 for the parent decision point: accept owner backlog as a deliberately coarse proxy for PR `#710`, because the reviewer path is not regressed from `origin/dev`, and track role-aware counting (Option 3) as a follow-up. The parent reviewer should require the selector docstring to state explicitly that the metric counts owner-routed tasks only. The detailed decision is recorded in merged sidecar PR `#722`, whose reviewed head is `c33fd2b4` and merge commit is `07167d47`.
