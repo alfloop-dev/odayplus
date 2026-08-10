@@ -4,8 +4,10 @@
 - **Parent Task ID**: `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001`
 - **Helper Kind**: `acceptance_packet`
 - **Task Class**: `sidecar`
-- **Owner**: `Antigravity5`
-- **Reviewer / Parent Owner**: `Claude`
+- **Sidecar Owner**: `Antigravity`
+- **Sidecar Reviewer**: `Codex2`
+- **Parent Task Owner**: `Antigravity`
+- **Parent Task Reviewer**: `Claude`
 - **Target Release Claim**: `no-go-until-final-gate-audit`
 - **Phase**: `Orchestrator Control Plane`
 
@@ -36,7 +38,7 @@ Parent implementation `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` deploys the
 | **5. Atomic Publication** | Publish exact-head files using atomic `os.replace` operations across live target roots (CODE root `/home/lupin/oday-plus-supervisor-runtime-current` for supervisor scripts and DATA root `/home/lupin/oday-plus-supervisor-live` for status state). | Zero partial writes or broken sibling imports; destination file hashes match source exactly. |
 | **6. Controlled Single Restart** | Execute exactly one controlled Supervisor restart via `systemctl --user restart pantheon-supervisor.service` / SIGTERM driver. | New live `MainPID` dynamically verified; `SubState` running; `NRestarts` unchanged or incremented by exactly 1; fresh heartbeat recorded. |
 | **7. Fail-Closed Live Probes** | Run B23, B24, N3 live probes using an isolated temporary `PANTHEON_STATUS_ROOT`. | Probes pass without mutating live status files (`ai-status.json`), task archive, or dashboard bundles. |
-| **8. Preserved Disabled Agents** | Maintain `ready_dispatcher.disabled_agents` configuration. | Reserved `Codex*` lanes (`Codex`..`Codex9`) remain in `disabled_agents` list, while active `Claude` worker lanes remain enabled. |
+| **8. Preserved Disabled Agents** | Maintain `ready_dispatcher.disabled_agents` configuration. | Ensure `Claude`, `Claude2`, and `Claude3` worker lanes remain in `ready_dispatcher.disabled_agents` to prevent dispatcher collision, while active `Antigravity` worker lanes execute rollout safety gates. |
 
 ---
 
@@ -73,8 +75,8 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
 | **Criterion C** | **Preflight Backup & Atomic Write Rule** | Non-atomic file copying, missing byte backups, or overwriting live files without rollback script. | Preflight backup file existence and `os.replace` invocation log. |
 | **Criterion D** | **Controlled Single Restart Rule** | Uncontrolled process crash, multiple restarts, running `systemctl` commands without `--user` (returning PID 0 inactive dead), or failure of live Supervisor to achieve running state. | Systemd user unit journal timestamp (`journalctl --user -u pantheon-supervisor`), dynamic PID transition evidence via `systemctl --user show pantheon-supervisor --property=MainPID`, and single restart assertion. |
 | **Criterion E** | **Isolated Probe Execution Rule** | Running live probes (B23, B24, N3) against the live status root instead of temporary `PANTHEON_STATUS_ROOT`. | Probe command logs proving `$PANTHEON_STATUS_ROOT` redirection to `/tmp/...`. |
-| **Criterion F** | **Disabled Agents Safety Rule** | Accidentally altering disabled agent lanes (`ready_dispatcher.disabled_agents=[Codex..Codex9]`) in dispatcher config or disabling active `Claude` worker lanes. | Config inspection receipt showing `ready_dispatcher.disabled_agents` intact with reserved `Codex*` lanes disabled and active `Claude` lanes running. |
-| **Criterion G** | **Independent Review & Non-Mutation Rule** | Modifying Package 10 UI, API logic, cloud resources, or completing closeout without independent `Claude` review. | Independent review approval entry in activity log and clean diff outside control plane evidence. |
+| **Criterion F** | **Disabled Agents Safety Rule** | Failing to maintain `Claude`, `Claude2`, and `Claude3` in `ready_dispatcher.disabled_agents` during rollout, or illegally altering disabled agent lanes in dispatcher config. | Config inspection receipt showing `ready_dispatcher.disabled_agents` intact with `Claude`, `Claude2`, and `Claude3` disabled. |
+| **Criterion G** | **Independent Review & Non-Mutation Rule** | Modifying Package 10 UI, API logic, cloud resources, or completing closeout without independent `Antigravity5` review of hashes, transcript, probes, and rollback evidence. | Independent `Antigravity5` review approval entry of hashes, transcript, probes, and rollback evidence in activity log and clean diff outside control plane evidence. |
 
 ---
 
@@ -99,9 +101,13 @@ Parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001` must satisfy all fail
 
 ## 6. Handoff & Sign-Off Instructions
 
-- **Assigned Reviewer / Parent Owner**: `Claude`
-- **Sidecar Owner Verification**: `Antigravity5` (Sidecar support packet verified; git diff clean; rebased/merged with origin/dev; F1/F2/F3 defects resolved; ready for handoff)
+- **Sidecar Task Owner**: `Antigravity`
+- **Sidecar Task Reviewer**: `Codex2`
+- **Parent Task Owner**: `Antigravity`
+- **Parent Task Reviewer**: `Claude`
+- **Sidecar Owner Verification**: `Antigravity` (Sidecar support packet updated to align with live parent acceptance gates; role definitions, disabled agents policy [Claude, Claude2, Claude3 disabled], and independent Antigravity5 verification criteria corrected; git diff clean; ready for handoff to Codex2)
 - **Handoff Instructions**:
   1. Review this acceptance packet for alignment with parent task `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001`.
   2. Verify that live Supervisor rollout evidence satisfies all 7 criteria in Section 4.
-  3. Keep this support packet linked as the authoritative acceptance reference for parent rollout closeout.
+  3. Confirm that safety gates (Claude, Claude2, Claude3 in disabled_agents) and independent Antigravity5 review requirements match parent acceptance criteria.
+  4. Keep this support packet linked as the authoritative acceptance reference for parent rollout closeout.
