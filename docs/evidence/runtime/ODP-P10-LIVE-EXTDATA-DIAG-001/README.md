@@ -334,3 +334,8 @@ tenant, so this split cannot be reintroduced by an environment variable.
 - `worker-validation-run-31316767710.json` — worker Cloud Run Job smoke receipt
   for the same run (`ok=true`, release SHA bound, provider selection, secret
   bindings by name).
+- `ci-repair-2026-08-10.md` — CI repair record for the 2026-08-10
+  `ci_repair_requeued` events. The red `performance-gate` was an unrelated
+  wall-clock SLO flake in `assisted_listing_intake`, repaired by re-running the
+  job on the unchanged commit; carries a T11 flake-stabilisation item kept
+  separate from the §7 handoff.
