@@ -2,18 +2,19 @@
 
 - Sidecar task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`
 - Parent task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
-- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh)
+- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` (current)
 - Assigned sidecar reviewer: `Antigravity4`
-- Parent owner (current): `Antigravity4`
+- Parent owner: `Antigravity4` (2026-08-05 refresh) → `Antigravity` (current)
+- Parent reviewer (current): `Codex`
 - Parent reviewer at capture time: `Antigravity7`
 - Evidence captured: `2026-08-02` UTC
-- Evidence refreshed: `2026-08-05` UTC — see § Review delta 2026-08-05
+- Evidence refreshed: `2026-08-05` and `2026-08-10` UTC — the 2026-08-10 delta is current
 - Parent branch: `origin/task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
 - Exact reviewed parent HEAD: `6b4d56e892b5d4886db932a4acaf20b192a23538`
 - Parent PR: `#574` (`dev` <- `task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`)
 - Scope: review and evidence only; no parent implementation or canonical truth changed
 
-## Executive disposition
+## Executive disposition (2026-08-02 capture)
 
 The focused health data-mode contract is supported by direct endpoint, validator, and real-app composition evidence at parent HEAD `6b4d56e8`. The focused tests and lint checks pass, and the diff retains the deployment smoke requirement that both health endpoints report `status == "ok"` and a resolved data mode of exactly `live`.
 
@@ -90,7 +91,7 @@ The live task state records `last_approved_head=def980ae9c38c0e6e76722f30812ae07
 3. **Envelope disagreement is not explicitly tested.** `_declared_data_mode` uses first non-empty candidate precedence, with root `data_mode` ahead of nested declarations. Current API producers derive both from the same runtime value, and the real-app tests prove agreement for live/unavailable cases. If the intended contract requires rejection whenever duplicate declarations disagree, the parent needs a separate consistency assertion and negative test; this packet does not silently assume that policy.
 4. **A deploy rerun is still required.** These source-level checks address the prior missing-mode failure, but only an exact-SHA Cloud Run candidate smoke can prove the deployed payload and validator compose in the target environment.
 
-## Recommended reviewer disposition
+## Recommended reviewer disposition (2026-08-02 capture)
 
 - The focused implementation can be evaluated on its own merits at `6b4d56e8`; no contract-local failing test was found in this review.
 - Keep the parent task in review until the exact head is stamped and PR `#574` is no longer blocked by the evidence-ancestry checks.
@@ -195,8 +196,91 @@ Both runs emitted only the existing Starlette/`httpx` TestClient deprecation war
 
 On `2026-08-05T11:43:38Z` the parent's reviewer was auto-reassigned `Codex` → `Claude` because `Codex` is a sidecar-only lane, and the parent owner is now `Antigravity4`. `Claude` also owns this sidecar packet. Flagging the overlap so the parent lane can decide whether a different reviewer should stamp the post-base-advance head; this packet takes no position on the parent's disposition.
 
+## Review delta 2026-08-10 (current)
+
+This section supersedes the operational conclusions in the dated captures above. Those sections remain intact as an audit trail; they must not be used as the current parent disposition.
+
+Refresh reference points:
+
+- Sidecar base: `origin/dev` at `273a7705b7233511679b705b8281d689a2a82758`.
+- Sidecar base composition: the task branch was rebased onto that `origin/dev` tip, then merge commit `f10d39e0` composed the pre-rebase remote task lineage back into the branch. The remote task head remains an ancestor, the branch is zero commits behind `origin/dev`, and no force-push is required.
+- Parent implementation head: `231be861628c83f420e3789448a3c989e5e8d310`.
+- Parent implementation PR: `#574`, merged at `2026-08-10T11:54:26Z` as `4b1ff51f5a72c5f5d3462d81576ede914a9c5ea0`.
+- Parent closeout PR: `#779`, open at `a19384d46b5cd512da369d0fcc11e3af77a250b2` when this refresh was captured.
+
+### 1. The 2026-08-05 merge blocker is resolved
+
+The parent owner composed the current base while preserving the original task lineage and resolved the overlapping test conflict. PR `#574` is now merged. Its final required checks were all successful:
+
+| Check | Final result |
+| --- | --- |
+| `orchestrator` | Success |
+| `product` | Success |
+| `performance-gate` | Success |
+| `product-e2e-gate` | Success |
+| `task-review-gate` | Success |
+
+The earlier `CONFLICTING` / `DIRTY` state, stale failing checks, and recommendation to base-advance are therefore historical and no longer actionable.
+
+### 2. Merged scope and contract outcome
+
+The implementation merge changed three files relative to its composed base:
+
+| File | Merged outcome |
+| --- | --- |
+| `scripts/deployment/validate_cloud_run_live_deployment.py` | Resolves canonical root `data_mode` first, then nested health/readiness and Operator envelopes, with legacy `details` / `dependencies` / root binding-mode fallbacks retained. |
+| `tests/ops/test_cloud_run_live_deployment.py` | Covers all supported envelopes, canonical-root precedence when declarations conflict, and real-app `live`, `unavailable`, and `fixture` behavior. |
+| `tests/reliability/test_health_endpoints.py` | Retains truthful fixture-mode assertions on the existing endpoint tests. |
+
+`apps/api/oday_api/main.py` was not part of the final parent merge because the producer-side top-level field had already landed independently, as recorded in the 2026-08-05 delta. The final parent contribution is therefore validator compatibility and regression hardening plus focused test evidence.
+
+The previous envelope-disagreement question now has an explicit answer in code and test: canonical root `data_mode` has precedence. The implementation does not reject every disagreement; it deterministically selects the canonical root declaration and preserves fail-closed smoke acceptance because deployment still requires both `status == "ok"` and resolved mode `live`.
+
+### 3. Parent task closeout is still pending
+
+The live canonical task record currently reports:
+
+- status `review_approved`
+- owner `Antigravity`
+- reviewer `Codex`
+- approved head `a19384d46b5cd512da369d0fcc11e3af77a250b2`
+
+PR `#779` is an evidence-only parent closeout PR at that exact approved head. It is `OPEN`, `CLEAN`, and `MERGEABLE`, with the same five checks green. Thus the implementation is merged, but the parent task is not yet canonically `done`; its owner must merge PR `#779` and perform the closeout transition. This sidecar packet does not make that transition.
+
+### 4. Independent verification on merged `dev`
+
+Run in this sidecar worktree after composing `origin/dev` `273a7705`:
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  tests/reliability/test_health_endpoints.py
+# 6 passed
+
+/home/lupin/oday-plus/.venv/bin/pytest -q \
+  tests/ops/test_cloud_run_live_deployment.py \
+  -k 'declared_data_mode or real_app_health_data_mode'
+# 3 passed
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  scripts/deployment/validate_cloud_run_live_deployment.py \
+  tests/ops/test_cloud_run_live_deployment.py \
+  tests/reliability/test_health_endpoints.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+The pytest runs emitted only the existing Starlette/`httpx` TestClient deprecation warning.
+
+### 5. Current reviewer disposition
+
+- The historical sidecar findings were acted on: the parent was base-composed, re-reviewed at a new exact head, passed CI, and its implementation PR merged.
+- The support packet is accurate with this 2026-08-10 delta and remains strictly evidence-only.
+- Parent closeout PR `#779` remains an owner action; the downstream exact-SHA deployment decision remains outside this sidecar's authority. Do not infer a deployment unblock from source-level or PR evidence alone.
+
 ## Sidecar boundary and handoff
 
 This artifact is the only repository output of `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`. It records evidence and reviewer questions only. It does not modify or redefine the health contract, runtime behavior, release gates, canonical documents, or parent task disposition.
 
-Handoff target: `Antigravity4`, who is both the assigned sidecar reviewer and the current parent owner. The parent lane should decide whether to incorporate these findings into the parent review exchange, and in particular whether to act on § 2 (base advance invalidates the current approval) and § 4 (the remaining parent change is hardening, not outage repair).
+Handoff target: `Antigravity4`, the assigned sidecar reviewer. Please review the support-only 2026-08-10 delta and its evidence. The current parent owner is `Antigravity`; only that owner should merge parent closeout PR `#779` and transition the parent task to `done` after merge.
