@@ -1,8 +1,9 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-10T13:58:02.277364+00:00",
-  "release_sha": "d5cc9f93ae0148e23b46fab104551d531edcd50d",
+  "timestamp": "2026-08-10T14:08:04.380128+00:00",
+  "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11",
   "is_test_simulated": false,
+  "overall_status": "PASSED",
   "metrics_categories": [
     "audit",
     "business",
@@ -67,7 +68,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#api-anomaly",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "forecast-daily-failed",
@@ -77,7 +79,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#forecastops",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "data-quality-p0-fail",
@@ -87,7 +90,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "dlq-spike",
@@ -97,7 +101,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#job-failure",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "unauthorized-spike",
@@ -107,7 +112,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "audit-write-failure",
@@ -117,7 +123,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "model-drift-high",
@@ -127,7 +134,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#model-release",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "price-constraint-violation",
@@ -137,7 +145,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#priceops",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "data-room-abnormal-download",
@@ -147,7 +156,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "solver-repeated-infeasible",
@@ -157,7 +167,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#netplan",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     },
     {
       "id": "external-connector-stale",
@@ -167,7 +178,8 @@
       "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
-      "release_identity_bound": true
+      "release_identity_bound": true,
+      "release_sha": "ad528d375b1523babe3bf25d9c997410d09e7c11"
     }
   ],
   "trace_spans_count": 3,
@@ -175,8 +187,8 @@
   "slos_count": 3,
   "test_suite_execution": {
     "target": "tests/reliability/test_runtime_observability.py",
-    "passed_tests": 74,
+    "passed_tests": 76,
     "exit_code": 0,
-    "duration_seconds": 15.43
+    "duration_seconds": 14.9
   }
 }

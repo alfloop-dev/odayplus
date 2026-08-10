@@ -712,7 +712,7 @@ def test_oncall_adapter_non_2xx_route_fails(monkeypatch: Any) -> None:
     assert receipt["status"] == "FAILED"
 
 
-def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
+def test_unconfigured_route_fails_closed(tmp_path: Path, monkeypatch: Any) -> None:
     from modules.notifications import (
         InMemoryNotificationRepository,
         NotificationService,
@@ -720,6 +720,7 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
     )
     from shared.observability.alerts import AlertRouter
 
+    monkeypatch.setenv("RELEASE_SHA", "a" * 40)
     repo = InMemoryNotificationRepository()
 
     def mock_200_transport(url: str, payload: dict) -> tuple[int, str]:
@@ -752,6 +753,76 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
     }
     with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
         router.route_alert("audit-write-failure")  # audit-write-failure is P1
+
+
+def test_alert_release_identity_contract_and_propagation(monkeypatch: Any) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    valid_sha = "f" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+    service.set_preferences("ops-lead", ["webhook"])
+
+    router = AlertRouter(notification_service=service)
+    routed = router.route_alert("audit-write-failure")
+    assert routed["release_sha"] == valid_sha
+    assert routed["release_identity_bound"] is True
+
+    nid = router.trigger_alert("audit-write-failure", "Test details")
+    assert nid is not None
+    receipts = [r for r in adapter.delivery_receipts if r.get("notification_id") == nid]
+    assert len(receipts) >= 1
+    assert f"Release SHA: {valid_sha}" in receipts[0]["detail"]
+
+
+
+
+
+
+def test_alert_release_identity_mutation_fails_closed(monkeypatch: Any) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+
+    router = AlertRouter(notification_service=service, release_sha=None)
+
+    # 1. Routing without release_sha fails closed
+    with pytest.raises(
+        ValueError, match="Release identity contract violation: release_sha is unbound or invalid"
+    ):
+        router.route_alert("audit-write-failure")
+
+    # 2. Mutating config to remove release_identity fails closed
+    router.config.pop("release_identity", None)
+    with pytest.raises(
+        ValueError, match="Alert release identity configuration is missing or unbound"
+    ):
+        router.validate_routing_config()
+
+    # 3. Mutating bound=False fails closed
+    router.config["release_identity"] = {"enabled": True, "bound": False}
+    with pytest.raises(
+        ValueError, match="Alert release identity configuration is missing or unbound"
+    ):
+        router.validate_routing_config()
+
 
 
 def test_release_sha_dashboard_traceability_and_watch_window_receipt(

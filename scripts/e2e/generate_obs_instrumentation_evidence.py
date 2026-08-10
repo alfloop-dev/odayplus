@@ -158,6 +158,9 @@ def main() -> None:
     assert redacted_log_record["extra"]["safe_param"] == "solver_v1"
 
     # 4. Alert Runbook Anchors & Exporter Release-SHA Binding Verification
+    from modules.notifications import InMemoryNotificationRepository, NotificationService, OnCallNotificationAdapter
+    from shared.observability.alerts import AlertRouter
+
     exporter = ProductionMetricsExporter(release_sha=git_sha, registry=reg, gcp_project="pantheon-test-proj")
     assert exporter.release_sha == git_sha
 
@@ -166,9 +169,19 @@ def main() -> None:
     dashboards_data = json.loads((monitoring_dir / "dashboards.json").read_text(encoding="utf-8"))
     slo_data = json.loads((monitoring_dir / "slo.json").read_text(encoding="utf-8"))
 
+    dummy_repo = InMemoryNotificationRepository()
+    dummy_service = NotificationService(
+        repository=dummy_repo,
+        adapter=OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok")),
+    )
+    router = AlertRouter(notification_service=dummy_service, release_sha=git_sha)
+
     alerts_summary = []
     all_anchors_valid = True
+    alert_release_identity_verified = True
+
     for alert in alerts_data.get("alerts", []):
+        alert_id = alert.get("id")
         runbook_path = alert.get("runbook", "")
         file_part, anchor = runbook_path.split("#") if "#" in runbook_path else (runbook_path, None)
         full_runbook = Path(repo_root) / file_part
@@ -185,16 +198,39 @@ def main() -> None:
         if not (runbook_exists and anchor_verified):
             all_anchors_valid = False
 
+        routed = router.route_alert(alert_id, release_sha=git_sha)
+        bound = (routed.get("release_identity_bound") is True) and (routed.get("release_sha") == git_sha)
+        if not bound:
+            alert_release_identity_verified = False
+
         alerts_summary.append({
-            "id": alert.get("id"),
+            "id": alert_id,
             "name": alert.get("name"),
             "severity": alert.get("severity"),
             "metric": alert.get("metric"),
             "runbook": runbook_path,
             "runbook_file_verified": runbook_exists,
             "runbook_anchor_verified": anchor_verified,
-            "release_identity_bound": True,
+            "release_identity_bound": bound,
+            "release_sha": routed.get("release_sha"),
         })
+
+    # Mutation test: unbound/missing release_sha must fail closed with ValueError
+    unbound_router = AlertRouter(notification_service=dummy_service, release_sha=None)
+    old_env_sha = os.environ.pop("RELEASE_SHA", None)
+    old_env_trusted = os.environ.pop("TRUSTED_DEPLOYED_RELEASE_SHA", None)
+    try:
+        try:
+            unbound_router.route_alert("api-availability-drop", release_sha=None)
+            alert_release_identity_verified = False
+        except ValueError:
+            # Expected fail closed
+            pass
+    finally:
+        if old_env_sha:
+            os.environ["RELEASE_SHA"] = old_env_sha
+        if old_env_trusted:
+            os.environ["TRUSTED_DEPLOYED_RELEASE_SHA"] = old_env_trusted
 
     # 5. End-to-End Tracing Verification
     telemetry = Telemetry("oday-obs-verifier", logger=logger, metrics=reg)
@@ -232,6 +268,24 @@ def main() -> None:
     if match:
         passed_count = int(match.group(1))
 
+    # Derive verification outcomes dynamically
+    sensitive_redaction_verified = True
+    ac1_status = "PASSED" if signal_ownership_verified else "FAILED"
+    ac2_status = "PASSED" if sensitive_redaction_verified else "FAILED"
+    ac3_status = "PASSED" if bounded_cardinality_verified else "FAILED"
+    ac4_status = "PASSED" if (all_anchors_valid and alert_release_identity_verified) else "FAILED"
+    ac5_status = "PASSED" if (pytest_res.returncode == 0 and passed_count > 0) else "FAILED"
+
+    overall_passed = all([
+        signal_ownership_verified,
+        sensitive_redaction_verified,
+        bounded_cardinality_verified,
+        all_anchors_valid,
+        alert_release_identity_verified,
+        pytest_res.returncode == 0,
+        passed_count > 0,
+    ])
+
     # 7. Output Directory & Evidence Materialization
     out_dir = Path(repo_root) / "docs" / "evidence" / "completion" / "ODP-OBS-INSTRUMENTATION-AS-CODE-001"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -243,15 +297,16 @@ def main() -> None:
         "timestamp": datetime.now(UTC).isoformat(),
         "release_sha": git_sha,
         "is_test_simulated": is_test_simulated,
+        "overall_status": "PASSED" if overall_passed else "FAILED",
         "metrics_categories": categories_list,
         "metrics_count": len(PLATFORM_METRICS),
         "recorded_metrics_series_count": sum(len(v) for v in metrics_snapshot.values()),
         "signal_ownership_verified": signal_ownership_verified,
         "ownership_matrix": ownership_matrix,
-        "sensitive_value_redaction_verified": True,
+        "sensitive_value_redaction_verified": sensitive_redaction_verified,
         "bounded_cardinality_verified": bounded_cardinality_verified,
         "alert_runbook_anchors_verified": all_anchors_valid,
-        "alert_release_identity_verified": True,
+        "alert_release_identity_verified": alert_release_identity_verified,
         "alert_runbook_linkage_count": len(alerts_summary),
         "alerts": alerts_summary,
         "trace_spans_count": len(exported_spans),
@@ -272,7 +327,7 @@ def main() -> None:
 ## Executive Summary
 This document provides empirical runtime evidence for task **ODP-OBS-INSTRUMENTATION-AS-CODE-001**: *Implement observability instrumentation and configuration as code*.
 
-The implementation decouples API, worker, DLQ, model, solver, business KPI telemetry, dashboards, alerts, SLOs, and runbooks into fully reproducible configuration and code without requiring live provider or on-call acknowledgements.
+The implementation decouples API, worker, DLQ, model, solver, business KPI telemetry, dashboards, alerts, SLOs, and runbooks into fully reproducible configuration and code without requiring live provider or on-call acknowledgements. Overall status: **{"PASSED" if overall_passed else "FAILED"}**.
 
 ---
 
@@ -280,11 +335,11 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 
 | # | Acceptance Criterion | Verification Method | Status |
 |---|---|---|---|
-| 1 | Required signals have stable names and owners | Verified 100% metric ownership across SRE, Data, Model, Business KPI, Audit | **PASSED** |
-| 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **PASSED** |
-| 3 | Cardinality is bounded | Enforced label typing, finite category enums, fail-closed undeclared label & max cardinality rejection | **PASSED** |
-| 4 | Alerts link to runbooks and release identity | Verified all {len(alerts_summary)} alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **PASSED** |
-| 5 | Configuration and emission tests are reproducible | {passed_count}/{passed_count} pytest reliability/observability tests passing dynamically in {duration_s}s | **PASSED** |
+| 1 | Required signals have stable names and owners | Verified 100% metric ownership across SRE, Data, Model, Business KPI, Audit | **{ac1_status}** |
+| 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **{ac2_status}** |
+| 3 | Cardinality is bounded | Enforced label typing, finite category enums, fail-closed undeclared label & max cardinality rejection | **{ac3_status}** |
+| 4 | Alerts link to runbooks and release identity | Verified all {len(alerts_summary)} alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **{ac4_status}** |
+| 5 | Configuration and emission tests are reproducible | {passed_count}/{passed_count} pytest reliability/observability tests passing dynamically in {duration_s}s | **{ac5_status}** |
 
 ---
 
@@ -362,6 +417,11 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     (out_dir / "evidence.md").write_text(evidence_md, encoding="utf-8")
     print(f"Evidence successfully generated at: {out_dir / 'evidence.md'}")
 
+    if not overall_passed:
+        print(f"ERROR: Evidence verification failed closed (overall_status=FAILED).", file=sys.stderr)
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
+

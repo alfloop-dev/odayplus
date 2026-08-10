@@ -10,14 +10,15 @@ from modules.notifications.application.service import NotificationService
 class AlertRouter:
     """Routes alerts defined in alerts.json to notification service destinations.
 
-    Handles severity mapping, receiver/channel routing, and triggers escalation
-    if appropriate via NotificationService.
+    Handles severity mapping, receiver/channel routing, release identity contract binding,
+    and triggers escalation if appropriate via NotificationService.
     """
 
     def __init__(
         self,
         notification_service: NotificationService,
         alerts_cfg_path: str | None = None,
+        release_sha: str | None = None,
     ) -> None:
         self.notification_service = notification_service
         if alerts_cfg_path is None:
@@ -25,6 +26,11 @@ class AlertRouter:
             base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             alerts_cfg_path = os.path.join(base_dir, "infra/monitoring", "alerts.json")
         self.alerts_cfg_path = alerts_cfg_path
+        self.release_sha = (
+            release_sha
+            or os.getenv("RELEASE_SHA")
+            or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
+        )
         self._load_config()
 
     def _load_config(self) -> None:
@@ -36,16 +42,20 @@ class AlertRouter:
         self.validate_routing_config()
 
     def validate_routing_config(self) -> None:
-        """Validates that alert routing configuration is present and fail-closed.
+        """Validates that alert routing configuration and release identity contract are present and fail-closed.
 
         If routing or default_receiver is missing/empty, or an alert severity is unmapped,
-        a ValueError is raised to fail closed.
+        or release_identity is missing/unbound, a ValueError is raised to fail closed.
         """
         if not self.alerts_cfg_path or not os.path.exists(self.alerts_cfg_path):
             raise ValueError(f"Alert configuration file missing or not found at '{self.alerts_cfg_path}'. Fail-closed gate enforced.")
 
         if not hasattr(self, "config") or not isinstance(self.config, dict):
             raise ValueError("Alert configuration is invalid. Fail-closed gate enforced.")
+
+        release_identity = self.config.get("release_identity")
+        if not release_identity or not isinstance(release_identity, dict) or not release_identity.get("bound"):
+            raise ValueError("Alert release identity configuration is missing or unbound. Fail-closed gate enforced.")
 
         routing = self.config.get("routing")
         if not routing or not isinstance(routing, dict):
@@ -73,16 +83,29 @@ class AlertRouter:
                     f"On-call route for alert '{alert_id}' (severity '{severity}') is unconfigured. Fail-closed gate enforced."
                 )
 
+    def resolve_release_sha(self, release_sha: str | None = None) -> str:
+        sha = (
+            release_sha
+            or self.release_sha
+            or os.getenv("RELEASE_SHA")
+            or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
+        )
+        if not sha or not isinstance(sha, str) or not sha.strip():
+            raise ValueError("Release identity contract violation: release_sha is unbound or invalid. Fail-closed gate enforced.")
+        return sha.strip()
+
     def get_alert_definition(self, alert_id: str) -> dict[str, Any] | None:
         for alert in self.config.get("alerts", []):
-            if alert["id"] == alert_id:
+            if alert.get("id") == alert_id:
                 return alert
         return None
 
-    def route_alert(self, alert_id: str) -> dict[str, Any]:
+    def route_alert(self, alert_id: str, release_sha: str | None = None) -> dict[str, Any]:
         alert = self.get_alert_definition(alert_id)
         if not alert:
             raise ValueError(f"Alert ID {alert_id} not found in configuration.")
+
+        eff_sha = self.resolve_release_sha(release_sha)
 
         severity = alert.get("severity", "P3")
         routing = self.config.get("routing", {})
@@ -111,10 +134,14 @@ class AlertRouter:
             "condition": alert.get("condition"),
             "runbook": alert.get("runbook"),
             "receiver": receiver,
+            "release_sha": eff_sha,
+            "release_identity_bound": True,
         }
 
-    def trigger_alert(self, alert_id: str, context_details: str) -> str | None:
-        routed = self.route_alert(alert_id)
+    def trigger_alert(
+        self, alert_id: str, context_details: str, release_sha: str | None = None
+    ) -> str | None:
+        routed = self.route_alert(alert_id, release_sha=release_sha)
 
         # Map P1/P2/P3 to notifications severity
         sev_map = {
@@ -127,6 +154,7 @@ class AlertRouter:
         title = f"ALERT: [{routed['severity']}] {routed['name']}"
         detail = (
             f"Alert ID: {routed['alert_id']}\n"
+            f"Release SHA: {routed['release_sha']}\n"
             f"Condition: {routed['condition']}\n"
             f"Runbook: {routed['runbook']}\n"
             f"Details: {context_details}"
@@ -137,5 +165,6 @@ class AlertRouter:
             title=title,
             detail=detail,
             severity=mapped_severity,
-            dedup_key=f"{alert_id}:{context_details[:30]}",
+            dedup_key=f"{alert_id}:{routed['release_sha'][:8]}:{context_details[:30]}",
         )
+

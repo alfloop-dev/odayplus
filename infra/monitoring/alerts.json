@@ -2,6 +2,12 @@
   "$schema": "https://oday.plus/schemas/monitoring/alerts.v1.json",
   "source_baseline": "ODP-SD-11 §9 (Alert Rules), ODP-SD-10 §11 (Incident 分級)",
   "description": "Cloud Monitoring alert policies. Each rule names the metric it watches (PLATFORM_METRICS), a severity, and the runbook that owns the response.",
+  "release_identity": {
+    "enabled": true,
+    "bound": true,
+    "label_key": "release_sha",
+    "exact_sha_binding": "${RELEASE_SHA}"
+  },
   "alerts": [
     {
       "id": "api-availability-drop",
@@ -10,7 +16,8 @@
       "metric": "api_error_count",
       "condition": "5xx rate over rolling 5m exceeds SLO error budget burn, or api_latency_ms P95 > SLO",
       "secondary_metric": "api_latency_ms",
-      "runbook": "docs/runbooks/observability-and-runbook.md#api-anomaly"
+      "runbook": "docs/runbooks/observability-and-runbook.md#api-anomaly",
+      "release_identity_bound": true
     },
     {
       "id": "forecast-daily-failed",
@@ -18,7 +25,8 @@
       "severity": "P2",
       "metric": "job_failure_count",
       "condition": "forecast-batch-score job not succeeded before daily cutoff",
-      "runbook": "docs/runbooks/observability-and-runbook.md#forecastops"
+      "runbook": "docs/runbooks/observability-and-runbook.md#forecastops",
+      "release_identity_bound": true
     },
     {
       "id": "data-quality-p0-fail",
@@ -26,7 +34,8 @@
       "severity": "P2",
       "metric": "data_quality_score",
       "condition": "P0 view data_quality_score below pass threshold",
-      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness"
+      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
+      "release_identity_bound": true
     },
     {
       "id": "dlq-spike",
@@ -34,7 +43,8 @@
       "severity": "P2",
       "metric": "dlq_message_count",
       "condition": "critical topic dlq_message_count exceeds threshold",
-      "runbook": "docs/runbooks/observability-and-runbook.md#job-failure"
+      "runbook": "docs/runbooks/observability-and-runbook.md#job-failure",
+      "release_identity_bound": true
     },
     {
       "id": "unauthorized-spike",
@@ -42,7 +52,8 @@
       "severity": "P2",
       "metric": "api_error_count",
       "condition": "401/403 rate rises abnormally",
-      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure"
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "release_identity_bound": true
     },
     {
       "id": "audit-write-failure",
@@ -51,7 +62,8 @@
       "metric": "audit_event_write_failure_count",
       "condition": "any audit_event_write_failure_count for high-risk action or export in production",
       "secondary_metric": "audit_event_replay_count",
-      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure"
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "release_identity_bound": true
     },
     {
       "id": "model-drift-high",
@@ -59,7 +71,8 @@
       "severity": "P2",
       "metric": "drift_score",
       "condition": "drift_score above model release policy threshold",
-      "runbook": "docs/runbooks/observability-and-runbook.md#model-release"
+      "runbook": "docs/runbooks/observability-and-runbook.md#model-release",
+      "release_identity_bound": true
     },
     {
       "id": "price-constraint-violation",
@@ -67,7 +80,8 @@
       "severity": "P1",
       "metric": "price_hard_constraint_violation_count",
       "condition": "any executed plan violates a hard constraint",
-      "runbook": "docs/runbooks/observability-and-runbook.md#priceops"
+      "runbook": "docs/runbooks/observability-and-runbook.md#priceops",
+      "release_identity_bound": true
     },
     {
       "id": "data-room-abnormal-download",
@@ -75,7 +89,8 @@
       "severity": "P1",
       "metric": "audit_evidence_export_count",
       "condition": "high-volume or unauthorized export attempts in a short window",
-      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure"
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "release_identity_bound": true
     },
     {
       "id": "solver-repeated-infeasible",
@@ -83,7 +98,8 @@
       "severity": "P3",
       "metric": "job_failure_count",
       "condition": "same scenario returns infeasible consecutively",
-      "runbook": "docs/runbooks/observability-and-runbook.md#netplan"
+      "runbook": "docs/runbooks/observability-and-runbook.md#netplan",
+      "release_identity_bound": true
     },
     {
       "id": "external-connector-stale",
@@ -92,7 +108,8 @@
       "metric": "data_freshness_hours",
       "condition": "external source exceeds freshness SLA",
       "secondary_metric": "external_connector_failure_count",
-      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness"
+      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
+      "release_identity_bound": true
     }
   ],
   "routing": {
