@@ -407,7 +407,7 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 |---|---|---|---|
 | 1 | Required signals have stable names and owners | Verified 100% metric ownership across SRE, Data, Model, Business KPI, Audit | **{ac1_status}** |
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **{ac2_status}** |
-| 3 | Cardinality is bounded | Enforced label typing, finite category enums, fail-closed undeclared label & max cardinality rejection | **{ac3_status}** |
+| 3 | Cardinality is bounded | Route labels normalized to {route_resolver.template_count} registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **{ac3_status}** |
 | 4 | Alerts link to runbooks and release identity | Verified all {len(alerts_summary)} alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **{ac4_status}** |
 | 5 | Configuration and emission tests are reproducible | {passed_count}/{passed_count} pytest reliability/observability tests passing dynamically in {duration_s}s | **{ac5_status}** |
 
@@ -451,6 +451,38 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
 ```json
 {json.dumps(alerts_summary, indent=2)}
 ```
+
+---
+
+## 4b. Bounded Cardinality Design (C1 regression cover)
+
+The `route` label is the **registered route template**, never the raw request
+path. Labelling with `request.url.path` made every `/jobs/<uuid>` its own
+series; under the performance gate that exhausted the series budget and the
+registry's `ValueError` escaped into the request path (52/150 request failures
+at commit `54b749e0`). Two independent layers now hold the bound:
+
+| Layer | Mechanism | Evidence |
+|---|---|---|
+| 1. Normalize at the source | `shared/observability/routes.py` resolves a concrete path to its route template | {route_resolver.template_count} templates registered; 200 distinct job ids collapse to `{sorted(route_labels)}`; unrouted paths share `{UNMATCHED_ROUTE_TEMPLATE}` |
+| 2. Shed, do not raise | `CardinalityPolicy.SHED` (production default) folds overflow into one reserved `__overflow__` series per metric and counts it | 50 distinct label values against a budget of 2 -> {shed_reg.series_count("dlq_message_count")} series retained, {shed_report["shed_emissions"].get("dlq_message_count", 0)} emissions shed, 0 raised |
+| Fail-closed retained | `CardinalityPolicy.REJECT` for config/evidence validation | overflow still raises `ValueError` |
+
+Declared per-metric budgets (`MetricDefinition.max_series`), sized above the
+current route table so a routine route addition does not start shedding:
+
+- `api_request_count` (service x route x status): {default_registry().series_budget("api_request_count")}
+- `api_error_count` (service x route x status): {default_registry().series_budget("api_error_count")}
+- `api_latency_ms` (service x route): {default_registry().series_budget("api_latency_ms")}
+
+Shedding is observable rather than silent: `MetricsRegistry.overflow_report()`
+exposes per-metric shed counts and the reserved series is marked
+`cardinality_overflow` in `snapshot()`, so a non-zero count is alertable and
+points at the instrumentation site that needs a bounded label.
+
+The API middleware additionally contains telemetry exceptions: instrumentation
+is a side channel and a metric rejection must degrade the signal, not the
+response the caller is waiting on.
 
 ---
 

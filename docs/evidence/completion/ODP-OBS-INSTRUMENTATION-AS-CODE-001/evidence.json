@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-10T14:35:57.521279+00:00",
-  "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151",
+  "timestamp": "2026-08-10T14:59:07.043147+00:00",
+  "release_sha": "615b1942653f5e99af1738e07099ac81908116c4",
   "is_test_simulated": false,
   "overall_status": "PASSED",
   "metrics_categories": [
@@ -56,6 +56,31 @@
   },
   "sensitive_value_redaction_verified": true,
   "bounded_cardinality_verified": true,
+  "bounded_cardinality_detail": {
+    "undeclared_label_rejected": true,
+    "reject_policy_fails_closed": true,
+    "shed_policy_caller_survives_overflow": true,
+    "shed_policy_bound_held": true,
+    "shed_policy_overflow_report": {
+      "policy": "shed",
+      "max_series_per_metric": 2,
+      "overflow_label_value": "__overflow__",
+      "shed_emissions": {
+        "dlq_message_count": 48
+      },
+      "shed_emissions_total": 48,
+      "metrics_with_shedding": [
+        "dlq_message_count"
+      ]
+    },
+    "http_route_label_normalized": true,
+    "registered_route_templates": 459,
+    "route_label_for_200_distinct_job_ids": [
+      "/jobs/{job_id}"
+    ],
+    "api_request_count_series_budget": 2000,
+    "api_latency_ms_series_budget": 1000
+  },
   "alert_runbook_anchors_verified": true,
   "alert_release_identity_verified": true,
   "alert_runbook_linkage_count": 11,
@@ -69,7 +94,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "forecast-daily-failed",
@@ -80,7 +105,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "data-quality-p0-fail",
@@ -91,7 +116,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "dlq-spike",
@@ -102,7 +127,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "unauthorized-spike",
@@ -113,7 +138,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "audit-write-failure",
@@ -124,7 +149,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "model-drift-high",
@@ -135,7 +160,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "price-constraint-violation",
@@ -146,7 +171,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "data-room-abnormal-download",
@@ -157,7 +182,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "solver-repeated-infeasible",
@@ -168,7 +193,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     },
     {
       "id": "external-connector-stale",
@@ -179,7 +204,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
     }
   ],
   "trace_spans_count": 3,
@@ -187,8 +212,8 @@
   "slos_count": 3,
   "test_suite_execution": {
     "target": "tests/reliability/test_runtime_observability.py",
-    "passed_tests": 78,
+    "passed_tests": 84,
     "exit_code": 0,
-    "duration_seconds": 15.55
+    "duration_seconds": 39.7
   }
 }

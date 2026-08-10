@@ -13,9 +13,9 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 |---|---|---|---|
 | 1 | Required signals have stable names and owners | Verified 100% metric ownership across SRE, Data, Model, Business KPI, Audit | **PASSED** |
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **PASSED** |
-| 3 | Cardinality is bounded | Enforced label typing, finite category enums, fail-closed undeclared label & max cardinality rejection | **PASSED** |
+| 3 | Cardinality is bounded | Route labels normalized to 459 registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **PASSED** |
 | 4 | Alerts link to runbooks and release identity | Verified all 11 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **PASSED** |
-| 5 | Configuration and emission tests are reproducible | 78/78 pytest reliability/observability tests passing dynamically in 15.55s | **PASSED** |
+| 5 | Configuration and emission tests are reproducible | 84/84 pytest reliability/observability tests passing dynamically in 39.7s | **PASSED** |
 
 ---
 
@@ -65,7 +65,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "forecast-daily-failed",
@@ -76,7 +76,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "data-quality-p0-fail",
@@ -87,7 +87,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "dlq-spike",
@@ -98,7 +98,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "unauthorized-spike",
@@ -109,7 +109,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "audit-write-failure",
@@ -120,7 +120,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "model-drift-high",
@@ -131,7 +131,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "price-constraint-violation",
@@ -142,7 +142,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "data-room-abnormal-download",
@@ -153,7 +153,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "solver-repeated-infeasible",
@@ -164,7 +164,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   },
   {
     "id": "external-connector-stale",
@@ -175,10 +175,42 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "0c219f0542db89d69aaa7e2396974b2b9ff1e151"
+    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
   }
 ]
 ```
+
+---
+
+## 4b. Bounded Cardinality Design (C1 regression cover)
+
+The `route` label is the **registered route template**, never the raw request
+path. Labelling with `request.url.path` made every `/jobs/<uuid>` its own
+series; under the performance gate that exhausted the series budget and the
+registry's `ValueError` escaped into the request path (52/150 request failures
+at commit `54b749e0`). Two independent layers now hold the bound:
+
+| Layer | Mechanism | Evidence |
+|---|---|---|
+| 1. Normalize at the source | `shared/observability/routes.py` resolves a concrete path to its route template | 459 templates registered; 200 distinct job ids collapse to `['/jobs/{job_id}']`; unrouted paths share `__unmatched__` |
+| 2. Shed, do not raise | `CardinalityPolicy.SHED` (production default) folds overflow into one reserved `__overflow__` series per metric and counts it | 50 distinct label values against a budget of 2 -> 3 series retained, 48 emissions shed, 0 raised |
+| Fail-closed retained | `CardinalityPolicy.REJECT` for config/evidence validation | overflow still raises `ValueError` |
+
+Declared per-metric budgets (`MetricDefinition.max_series`), sized above the
+current route table so a routine route addition does not start shedding:
+
+- `api_request_count` (service x route x status): 2000
+- `api_error_count` (service x route x status): 2000
+- `api_latency_ms` (service x route): 1000
+
+Shedding is observable rather than silent: `MetricsRegistry.overflow_report()`
+exposes per-metric shed counts and the reserved series is marked
+`cardinality_overflow` in `snapshot()`, so a non-zero count is alertable and
+points at the instrumentation site that needs a bounded label.
+
+The API middleware additionally contains telemetry exceptions: instrumentation
+is a side channel and a metric rejection must degrade the signal, not the
+response the caller is waiting on.
 
 ---
 
@@ -189,17 +221,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "c3201949b61b4d1f",
-    "parent_id": "aa81e65b02714677",
+    "span_id": "0c4bcffdf24842e3",
+    "parent_id": "946374eacc394eaf",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
+    "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.004666,
+    "duration_ms": 0.003222,
     "attributes": {
-      "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
+      "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -209,17 +241,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "e8b685f222a04f36",
-    "parent_id": "aa81e65b02714677",
+    "span_id": "d696229090c54db9",
+    "parent_id": "946374eacc394eaf",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
+    "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.126993,
+    "duration_ms": 0.150956,
     "attributes": {
-      "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
+      "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -229,17 +261,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "aa81e65b02714677",
+    "span_id": "946374eacc394eaf",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
+    "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.199113,
+    "duration_ms": 0.231594,
     "attributes": {
-      "correlation_id": "551ebefe-2daf-4f8e-b765-7d8d6c6a4e35",
+      "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -255,9 +287,9 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 
 ## 6. Test Suite Execution Output
 
-- Source Commit: `0c219f0542db89d69aaa7e2396974b2b9ff1e151` (is_test_simulated: False)
+- Source Commit: `615b1942653f5e99af1738e07099ac81908116c4` (is_test_simulated: False)
 - Command: `python3 -m pytest tests/reliability/test_runtime_observability.py`
-- Result: **78 passed in 15.55s** (Exit Code: 0)
+- Result: **84 passed in 39.7s** (Exit Code: 0)
 
 ---
 
