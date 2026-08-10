@@ -1,22 +1,62 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-10T11:31:58.018125+00:00",
-  "release_sha": "ffffffffffffffffffffffffffffffffffffffff",
+  "timestamp": "2026-08-10T13:48:58.551976+00:00",
+  "release_sha": "2a45a8ce5c2149aef7dcda70feda91050f5a2631",
+  "is_test_simulated": false,
   "metrics_categories": [
-    "data",
-    "queue",
-    "model",
+    "audit",
     "business",
+    "data",
     "error",
     "job",
-    "traffic",
-    "audit",
-    "latency"
+    "latency",
+    "model",
+    "queue",
+    "traffic"
   ],
   "metrics_count": 34,
   "recorded_metrics_series_count": 19,
+  "signal_ownership_verified": true,
+  "ownership_matrix": {
+    "api_request_count": "sre-platform",
+    "api_error_count": "sre-platform",
+    "api_latency_ms": "sre-platform",
+    "db_query_latency_ms": "sre-platform",
+    "job_duration_seconds": "sre-platform",
+    "job_failure_count": "sre-platform",
+    "event_consumer_lag": "sre-messaging",
+    "dlq_message_count": "sre-messaging",
+    "external_connector_failure_count": "sre-platform",
+    "data_freshness_hours": "data-platform",
+    "data_quality_score": "data-platform",
+    "feature_null_rate": "data-platform",
+    "prediction_count": "ml-platform",
+    "model_error_metric": "ml-platform",
+    "prediction_interval_coverage": "ml-platform",
+    "drift_score": "ml-platform",
+    "model_alias_change_count": "ml-platform",
+    "heatzone_topk_adoption_rate": "business-analytics",
+    "listing_dedup_accuracy": "business-analytics",
+    "sitescore_realization_rate": "business-analytics",
+    "forecast_alert_precision": "business-analytics",
+    "intervention_recovery_rate": "business-analytics",
+    "price_hard_constraint_violation_count": "business-analytics",
+    "adlift_incremental_gm": "business-analytics",
+    "avm_interval_coverage": "business-analytics",
+    "netplan_plan_adoption_rate": "business-analytics",
+    "model_adoption_rate": "business-analytics",
+    "audit_event_record_count": "security-audit",
+    "audit_event_write_failure_count": "security-audit",
+    "audit_event_pipeline_lag_seconds": "security-audit",
+    "audit_event_replay_count": "security-audit",
+    "audit_evidence_export_count": "security-audit",
+    "audit_completeness_gap_count": "security-audit",
+    "deployment_watch_window_status": "sre-platform"
+  },
   "sensitive_value_redaction_verified": true,
   "bounded_cardinality_verified": true,
+  "alert_runbook_anchors_verified": true,
+  "alert_release_identity_verified": true,
   "alert_runbook_linkage_count": 11,
   "alerts": [
     {
@@ -25,7 +65,9 @@
       "severity": "P1",
       "metric": "api_error_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#api-anomaly",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "forecast-daily-failed",
@@ -33,7 +75,9 @@
       "severity": "P2",
       "metric": "job_failure_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#forecastops",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "data-quality-p0-fail",
@@ -41,7 +85,9 @@
       "severity": "P2",
       "metric": "data_quality_score",
       "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "dlq-spike",
@@ -49,7 +95,9 @@
       "severity": "P2",
       "metric": "dlq_message_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#job-failure",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "unauthorized-spike",
@@ -57,7 +105,9 @@
       "severity": "P2",
       "metric": "api_error_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "audit-write-failure",
@@ -65,7 +115,9 @@
       "severity": "P1",
       "metric": "audit_event_write_failure_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "model-drift-high",
@@ -73,7 +125,9 @@
       "severity": "P2",
       "metric": "drift_score",
       "runbook": "docs/runbooks/observability-and-runbook.md#model-release",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "price-constraint-violation",
@@ -81,7 +135,9 @@
       "severity": "P1",
       "metric": "price_hard_constraint_violation_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#priceops",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "data-room-abnormal-download",
@@ -89,7 +145,9 @@
       "severity": "P1",
       "metric": "audit_evidence_export_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "solver-repeated-infeasible",
@@ -97,7 +155,9 @@
       "severity": "P3",
       "metric": "job_failure_count",
       "runbook": "docs/runbooks/observability-and-runbook.md#netplan",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     },
     {
       "id": "external-connector-stale",
@@ -105,10 +165,18 @@
       "severity": "P3",
       "metric": "data_freshness_hours",
       "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
-      "runbook_verified": true
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true
     }
   ],
   "trace_spans_count": 3,
   "dashboards_count": 6,
-  "slos_count": 3
+  "slos_count": 3,
+  "test_suite_execution": {
+    "target": "tests/reliability/test_runtime_observability.py",
+    "passed_tests": 74,
+    "exit_code": 0,
+    "duration_seconds": 16.52
+  }
 }

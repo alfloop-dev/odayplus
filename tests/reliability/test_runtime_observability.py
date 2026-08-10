@@ -5611,3 +5611,67 @@ def test_b39_arbitrary_secret_and_mock_transport_cannot_mint_watch_passed(tmp_pa
 
     # Clean environment
     os.environ.pop("MONITORING_PROVIDER_SECRET", None)
+
+
+def test_b40_metrics_registry_enforces_undeclared_labels_and_cardinality_bounds() -> None:
+    """B40 Test: Verify fail-closed enforcement of declared label names and max series cardinality."""
+    reg = MetricsRegistry(max_series_per_metric=5)
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    # 1. Undeclared label key must raise ValueError
+    with pytest.raises(ValueError, match="undeclared label key"):
+        reg.increment(
+            "api_request_count",
+            labels={"service": "api", "route": "/jobs", "status": "200", "unbounded_user_id": "user-123"},
+        )
+
+    # 2. Exceeding max series per metric must raise ValueError
+    for i in range(5):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
+
+    with pytest.raises(ValueError, match="exceeded maximum allowed series cardinality threshold"):
+        reg.set("dlq_message_count", 99.0, labels={"topic": "topic-overflow"})
+
+
+def test_b41_metric_definitions_require_auditable_ownership() -> None:
+    """B41 Test: Verify all platform metrics have valid non-empty owner fields."""
+    for m in PLATFORM_METRICS:
+        assert m.owner and isinstance(m.owner, str) and len(m.owner.strip()) > 0, f"Metric {m.name} missing owner"
+
+    # Attempting to register a metric with no owner must raise ValueError
+    from shared.observability.metrics import MetricCategory, MetricDefinition, MetricType
+    invalid_metric = MetricDefinition(
+        "unowned_metric", MetricType.COUNTER, MetricCategory.TRAFFIC, "Unowned test metric", owner=""
+    )
+    reg = MetricsRegistry()
+    with pytest.raises(ValueError, match="must have a valid non-empty owner"):
+        reg.register(invalid_metric)
+
+
+def test_b42_alerts_runbook_anchors_and_headings_are_valid() -> None:
+    """B42 Test: Verify all alerts in alerts.json point to valid runbook files and valid markdown section anchors."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    alerts_path = root / "infra" / "monitoring" / "alerts.json"
+    alerts_data = json.loads(alerts_path.read_text(encoding="utf-8"))
+
+    def header_to_slug(header_text: str) -> str:
+        clean = re.sub(r"[^\w\s-]", "", header_text.lower().strip())
+        return re.sub(r"[\s_]+", "-", clean)
+
+    for alert in alerts_data.get("alerts", []):
+        runbook = alert.get("runbook")
+        assert runbook and isinstance(runbook, str), f"Alert {alert['id']} missing runbook"
+        file_part, anchor = runbook.split("#") if "#" in runbook else (runbook, None)
+        runbook_file = root / file_part
+        assert runbook_file.exists(), f"Alert {alert['id']} runbook file '{file_part}' does not exist"
+
+        if anchor:
+            content = runbook_file.read_text(encoding="utf-8")
+            header_lines = [line.lstrip("#").strip() for line in content.splitlines() if line.startswith("#")]
+            slugs = {header_to_slug(h) for h in header_lines if h}
+            assert anchor in slugs, f"Alert {alert['id']} anchor #{anchor} not found in {file_part}. Found anchors: {sorted(slugs)}"
+

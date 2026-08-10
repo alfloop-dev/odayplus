@@ -49,6 +49,7 @@ class MetricDefinition:
     unit: str = ""
     min_value: float | None = None
     max_value: float | None = None
+    owner: str = "sre-platform"
 
 
 def _label_key(labels: Mapping[str, str] | None) -> tuple[tuple[str, str], ...]:
@@ -91,11 +92,17 @@ class _Series:
 class MetricsRegistry:
     """Holds metric definitions and their per-label-set series."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_series_per_metric: int = 100) -> None:
         self._definitions: dict[str, MetricDefinition] = {}
         self._series: dict[tuple[str, tuple[tuple[str, str], ...]], _Series] = {}
+        self.max_series_per_metric = max_series_per_metric
 
     def register(self, definition: MetricDefinition) -> MetricDefinition:
+        if not definition.owner or not str(definition.owner).strip():
+            raise ValueError(
+                f"metric {definition.name!r} must have a valid non-empty owner. Fail-closed gate enforced."
+            )
+
         existing = self._definitions.get(definition.name)
         if existing is not None and existing != definition:
             raise ValueError(
@@ -112,9 +119,23 @@ class MetricsRegistry:
 
     def _resolve(self, name: str, labels: Mapping[str, str] | None) -> _Series:
         definition = self.definition(name)
+        if labels:
+            undeclared = set(labels.keys()) - set(definition.labels)
+            if undeclared:
+                raise ValueError(
+                    f"Metric {name!r} received undeclared label key(s) {sorted(undeclared)}. "
+                    f"Declared allowed labels: {definition.labels}. Fail-closed label validation enforced."
+                )
         key = (name, _label_key(labels))
         series = self._series.get(key)
         if series is None:
+            current_series_count = sum(1 for k in self._series if k[0] == name)
+            if current_series_count >= self.max_series_per_metric:
+                raise ValueError(
+                    f"Metric {name!r} exceeded maximum allowed series cardinality threshold "
+                    f"({self.max_series_per_metric}). High-cardinality label explosion rejected. "
+                    f"Fail-closed gate enforced."
+                )
             series = _Series(definition=definition)
             self._series[key] = series
         return series
@@ -233,52 +254,52 @@ Cat = MetricCategory
 PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     # §5.1 Technical
     MetricDefinition(
-        "api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status"), min_value=0.0
+        "api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status"), min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status"), min_value=0.0
+        "api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status"), min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms", min_value=0.0
+        "api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms", min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms", min_value=0.0
+        "db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms", min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s", min_value=0.0
+        "job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s", min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class"), min_value=0.0
+        "job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class"), min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription"), min_value=0.0
+        "event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription"), min_value=0.0, owner="sre-messaging"
     ),
-    MetricDefinition("dlq_message_count", G, Cat.QUEUE, "Dead-letter queue depth", ("topic",), min_value=0.0),
+    MetricDefinition("dlq_message_count", G, Cat.QUEUE, "Dead-letter queue depth", ("topic",), min_value=0.0, owner="sre-messaging"),
     MetricDefinition(
-        "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",), min_value=0.0
+        "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",), min_value=0.0, owner="sre-platform"
     ),
     # §5.2 Data / Model
     MetricDefinition(
-        "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h", min_value=0.0
+        "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h", min_value=0.0, owner="data-platform"
     ),
-    MetricDefinition("data_quality_score", G, Cat.DATA, "Data quality score", ("dataset", "run"), min_value=0.0, max_value=1.0),
-    MetricDefinition("feature_null_rate", G, Cat.DATA, "Feature null rate", ("feature", "view"), min_value=0.0, max_value=1.0),
-    MetricDefinition("prediction_count", C, Cat.MODEL, "Prediction volume", ("model", "module"), min_value=0.0),
+    MetricDefinition("data_quality_score", G, Cat.DATA, "Data quality score", ("dataset", "run"), min_value=0.0, max_value=1.0, owner="data-platform"),
+    MetricDefinition("feature_null_rate", G, Cat.DATA, "Feature null rate", ("feature", "view"), min_value=0.0, max_value=1.0, owner="data-platform"),
+    MetricDefinition("prediction_count", C, Cat.MODEL, "Prediction volume", ("model", "module"), min_value=0.0, owner="ml-platform"),
     MetricDefinition(
-        "model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment"), min_value=0.0
+        "model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment"), min_value=0.0, owner="ml-platform"
     ),
     MetricDefinition(
-        "prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon"), min_value=0.0, max_value=1.0
+        "prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon"), min_value=0.0, max_value=1.0, owner="ml-platform"
     ),
-    MetricDefinition("drift_score", G, Cat.MODEL, "Feature/model drift", ("feature", "model"), min_value=0.0),
+    MetricDefinition("drift_score", G, Cat.MODEL, "Feature/model drift", ("feature", "model"), min_value=0.0, owner="ml-platform"),
     MetricDefinition(
-        "model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",), min_value=0.0
+        "model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",), min_value=0.0, owner="ml-platform"
     ),
     # §5.3 Business KPIs
     MetricDefinition(
-        "heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption", min_value=0.0, max_value=1.0
+        "heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption", min_value=0.0, max_value=1.0, owner="business-analytics"
     ),
-    MetricDefinition("listing_dedup_accuracy", G, Cat.BUSINESS, "Listing dedup accuracy", min_value=0.0, max_value=1.0),
+    MetricDefinition("listing_dedup_accuracy", G, Cat.BUSINESS, "Listing dedup accuracy", min_value=0.0, max_value=1.0, owner="business-analytics"),
     MetricDefinition(
         "sitescore_realization_rate",
         G,
@@ -287,6 +308,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("horizon",),
         min_value=0.0,
         max_value=1.0,
+        owner="business-analytics",
     ),
     MetricDefinition(
         "forecast_alert_precision",
@@ -296,6 +318,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("metric",),
         min_value=0.0,
         max_value=1.0,
+        owner="business-analytics",
     ),
     MetricDefinition(
         "intervention_recovery_rate",
@@ -305,19 +328,20 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("window",),
         min_value=0.0,
         max_value=1.0,
+        owner="business-analytics",
     ),
     MetricDefinition(
-        "price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations", min_value=0.0
+        "price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations", min_value=0.0, owner="business-analytics"
     ),
     MetricDefinition(
-        "adlift_incremental_gm", G, Cat.BUSINESS, "AdLift incremental GM / iROMI", ("metric",)
+        "adlift_incremental_gm", G, Cat.BUSINESS, "AdLift incremental GM / iROMI", ("metric",), owner="business-analytics"
     ),
-    MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage", min_value=0.0, max_value=1.0),
+    MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage", min_value=0.0, max_value=1.0, owner="business-analytics"),
     MetricDefinition(
-        "netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome", min_value=0.0, max_value=1.0
+        "netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome", min_value=0.0, max_value=1.0, owner="business-analytics"
     ),
     MetricDefinition(
-        "model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",), min_value=0.0, max_value=1.0
+        "model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",), min_value=0.0, max_value=1.0, owner="business-analytics"
     ),
     # §7 / §10 Audit trail and evidence export
     MetricDefinition(
@@ -327,6 +351,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         "Audit events durably recorded",
         ("event_type", "action", "result"),
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
         "audit_event_write_failure_count",
@@ -335,6 +360,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         "Audit event write failures",
         ("event_type", "action", "error_class"),
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
         "audit_event_pipeline_lag_seconds",
@@ -344,12 +370,13 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("sink", "event_type"),
         "s",
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
-        "audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",), min_value=0.0
+        "audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",), min_value=0.0, owner="security-audit"
     ),
     MetricDefinition(
-        "audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result"), min_value=0.0
+        "audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result"), min_value=0.0, owner="security-audit"
     ),
     MetricDefinition(
         "audit_completeness_gap_count",
@@ -358,6 +385,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         "Missing required audit timeline events",
         ("rule", "resource", "missing_event_type"),
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
         "deployment_watch_window_status",
@@ -367,6 +395,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("release_sha", "status"),
         min_value=0.0,
         max_value=1.0,
+        owner="sre-platform",
     ),
 )
 
