@@ -4,7 +4,7 @@
 - Parent task: `ODP-ORCH-HELPER-CLAIM-ASSIGNMENT-PRESERVATION-001`
 - Helper kind: `acceptance_packet`
 - Current sidecar owner: Codex2
-- Assigned sidecar reviewer: Claude
+- Assigned sidecar reviewer: Antigravity
 - Initially prepared: `2026-08-02`
 - Rebound to merged implementation: `2026-08-10`
 
@@ -18,8 +18,8 @@ state, or governance contracts. Only this sidecar artifact is changed.
 The parent implementation is no longer pending. It was merged into `dev` by
 PR #619 on `2026-08-04`, and the live status writer now reports the parent task
 as unknown (archived rather than active). This packet therefore documents the
-shipped result for sidecar reviewer Claude; it neither reopens the parent nor
-grants authority to approve or close it.
+shipped result for sidecar reviewer Antigravity; it neither reopens the parent
+nor grants authority to approve or close it.
 
 ## Implementation provenance and phase boundary
 
@@ -228,10 +228,24 @@ Both commands exited successfully with the counts shown above. `git diff
 --check` was also clean. Because this sidecar changes only Markdown, the parent
 runtime and test files remain those already integrated by PR #619.
 
+## Base-refresh record (2026-08-10)
+
+Before this revision was edited or handed off, the task owner fetched `origin`
+and composed current `origin/dev` commit
+`3c46b55fc0af8ee856218444ce9f979b3a58391a` into the existing task history.
+The conflict-free merge produced
+`42adb21e4162fd4193661476fbd7a3124577936d` and was published with a normal
+push; no task commit was reset, discarded, force-pushed, or overwritten.
+
+After the base refresh, `origin/dev` is an ancestor of the task HEAD and the
+three reviewer replay commands above remain green. The task-owned diff against
+the refreshed merge base contains only this acceptance packet.
+
 ## Handoff disposition
 
 This packet is rebound to the shipped parent merge, explains the parent-owned
 `13 -> 15` regression delta, settles the checklist against actual behavior,
 and records the reviewer-as-helper fallback rather than the superseded
-rejection proposal. It is handed off to assigned reviewer `Claude` for sidecar
-review. No parent implementation or parent-owner composition action remains.
+rejection proposal. It is handed off to assigned reviewer `Antigravity` for
+sidecar review. No parent implementation or parent-owner composition action
+remains.
