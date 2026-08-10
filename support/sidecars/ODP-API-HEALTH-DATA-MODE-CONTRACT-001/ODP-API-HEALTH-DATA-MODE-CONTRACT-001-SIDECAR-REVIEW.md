@@ -2,7 +2,7 @@
 
 - Sidecar task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`
 - Parent task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
-- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` (current)
+- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` → `Antigravity5` (2026-08-10 current)
 - Assigned sidecar reviewer: `Antigravity4`
 - Parent owner: `Antigravity4` (2026-08-05 refresh) → `Antigravity` (current)
 - Parent reviewer (current): `Codex`
