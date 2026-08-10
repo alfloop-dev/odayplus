@@ -34,6 +34,7 @@ from modules.external_data.workers.scheduled_fetch import (
     ExternalFetchJobSpec,
     ExternalFetchResiliencePolicy,
     ExternalFetchScheduler,
+    TenantScopedExternalFetchStateStore,
     default_external_fetch_provider_factories,
 )
 from shared.audit import AuditEvent, InMemoryAuditLog
@@ -42,6 +43,49 @@ DEFAULT_FRESHNESS_SLA = timedelta(hours=24)
 DEFAULT_INTERVAL = timedelta(hours=1)
 
 ProviderFactory = Callable[[], Any]
+
+#: Environment variable naming the tenant every *scheduled* ingest runs as.
+SCHEDULED_TENANT_ENV_VAR = "ODP_SCHEDULED_INGESTION_TENANT_ID"
+
+
+class ScheduledIngestionTenantError(RuntimeError):
+    """Fail-closed: a scheduled ingest arrived without a tenant scope.
+
+    The manual/API path resolves its tenant from a verified principal. The
+    scheduled path has no principal, so an empty ``tenant_id`` here means the
+    deployment never configured one — persisting the run under the unscoped
+    default would silently mix a real tenant's canonical data into the shared
+    store.
+    """
+
+    code = "scheduled_ingestion_tenant_missing"
+
+
+class CrossTenantIngestionRunError(RuntimeError):
+    """Fail-closed: a persisted run belonging to another tenant was reachable.
+
+    Window and API idempotency keys are not tenant-qualified, so on a store
+    shared by more than one tenant a replay lookup can surface a foreign run.
+    Returning it would leak another tenant's canonical counts, lineage, and
+    snapshot ids, so the lookup is refused instead.
+    """
+
+    code = "cross_tenant_ingestion_run"
+
+    def __init__(self, *, expected_tenant_id: str, record_tenant_id: str, run_id: str) -> None:
+        self.expected_tenant_id = expected_tenant_id
+        self.record_tenant_id = record_tenant_id
+        self.run_id = run_id
+        super().__init__(
+            "Ingestion run belongs to a different tenant "
+            f"(run_id={run_id}, record_tenant_id={record_tenant_id or '<unscoped>'}, "
+            f"requested_tenant_id={expected_tenant_id or '<unscoped>'}, code={self.code})"
+        )
+
+
+def _clean_tenant_id(tenant_id: Any) -> str:
+    return str(tenant_id).strip() if tenant_id else ""
+
 
 @dataclass(frozen=True)
 class IngestionOutcome:
@@ -84,7 +128,7 @@ class ExternalIngestionService:
             self._get_scheduler_and_captures("")
 
     def _resolve_store(self, tenant_id: str = "") -> Any:
-        clean_tid = str(tenant_id).strip() if tenant_id else ""
+        clean_tid = _clean_tenant_id(tenant_id)
         if clean_tid and self.ingestion_run_store_for_tenant is not None:
             scoped = self.ingestion_run_store_for_tenant(clean_tid)
             if scoped is None:
@@ -92,19 +136,34 @@ class ExternalIngestionService:
             return scoped
         return self.store
 
+    @staticmethod
+    def _seed_scheduler_state(
+        scheduler: ExternalFetchScheduler, target_store: Any, clean_tid: str
+    ) -> None:
+        """Re-seed watermark/idempotency from *this tenant's* persisted runs only.
+
+        A store shared by several tenants would otherwise hand tenant B the
+        watermark and window dedupe of tenant A, which is cross-tenant run
+        visibility through the back door.
+        """
+        if not hasattr(target_store, "list_runs"):
+            return
+        for record in target_store.list_runs():
+            if _clean_tenant_id(getattr(record, "tenant_id", "")) != clean_tid:
+                continue
+            scheduler.state_store.save_run(record.to_external_fetch_run())
+
     def _get_scheduler_and_captures(
         self, tenant_id: str = "", target_store: Any | None = None
     ) -> tuple[ExternalFetchScheduler, dict[str, Any]]:
-        clean_tid = str(tenant_id).strip() if tenant_id else ""
+        clean_tid = _clean_tenant_id(tenant_id)
         if target_store is None:
             target_store = self._resolve_store(clean_tid)
 
         if clean_tid in self._tenant_schedulers:
             scheduler = self._tenant_schedulers[clean_tid]
             captures = self._tenant_captures[clean_tid]
-            if hasattr(target_store, "list_runs"):
-                for record in target_store.list_runs():
-                    scheduler.state_store.save_run(record.to_external_fetch_run())
+            self._seed_scheduler_state(scheduler, target_store, clean_tid)
             return scheduler, captures
 
         if target_store is None:
@@ -136,11 +195,18 @@ class ExternalIngestionService:
             for provider_id, factory in base_factories.items()
         }
 
-        state_store = (
-            self.initial_state_store
-            if (clean_tid == "" and self.initial_state_store is not None)
-            else None
-        )
+        # The deployment provisions one fetch-state backend. Unscoped callers
+        # use it directly; a tenant gets a namespaced view of the *same* backend
+        # so its watermark and circuit state stay durable without ever being
+        # readable as another tenant's.
+        if self.initial_state_store is None:
+            state_store = None
+        elif clean_tid == "":
+            state_store = self.initial_state_store
+        else:
+            state_store = TenantScopedExternalFetchStateStore(
+                self.initial_state_store, clean_tid
+            )
 
         scheduler = ExternalFetchScheduler(
             state_store=state_store,
@@ -149,9 +215,7 @@ class ExternalIngestionService:
             env=self.env,
         )
 
-        if hasattr(target_store, "list_runs"):
-            for record in target_store.list_runs():
-                scheduler.state_store.save_run(record.to_external_fetch_run())
+        self._seed_scheduler_state(scheduler, target_store, clean_tid)
 
         self._tenant_schedulers[clean_tid] = scheduler
         self._tenant_captures[clean_tid] = captures
@@ -190,12 +254,15 @@ class ExternalIngestionService:
         tenant_id: str = "",
     ) -> IngestionOutcome:
         sla = freshness_sla or self.freshness_sla
-        target_store = self._resolve_store(tenant_id)
+        clean_tid = _clean_tenant_id(tenant_id)
+        target_store = self._resolve_store(clean_tid)
 
         # Route-level idempotency: an ``Idempotency-Key`` replay never re-runs
         # the provider and is recorded as ``idempotent_replay``.
         if api_idempotency_key:
-            existing = target_store.get_by_api_key(api_idempotency_key)
+            existing = self._assert_same_tenant(
+                target_store.get_by_api_key(api_idempotency_key), clean_tid
+            )
             if existing is not None:
                 return self._replay(
                     existing,
@@ -211,7 +278,7 @@ class ExternalIngestionService:
             interval=interval or self.default_interval,
             freshness_sla=sla,
         )
-        scheduler, captures = self._get_scheduler_and_captures(tenant_id, target_store=target_store)
+        scheduler, captures = self._get_scheduler_and_captures(clean_tid, target_store=target_store)
         captures.pop(provider_id, None)
         run = scheduler.run_once(
             spec,
@@ -223,7 +290,9 @@ class ExternalIngestionService:
 
         # Window idempotency: the scheduler already deduped this window, so the
         # persisted run for that window is the authoritative replay target.
-        existing = target_store.get_by_window_key(run.idempotency_key)
+        existing = self._assert_same_tenant(
+            target_store.get_by_window_key(run.idempotency_key), clean_tid
+        )
         if existing is not None:
             if api_idempotency_key:
                 target_store.link_api_key(api_idempotency_key, existing.run_id)
@@ -241,7 +310,7 @@ class ExternalIngestionService:
             freshness_sla=sla,
             trigger=trigger,
             api_idempotency_key=api_idempotency_key,
-            tenant_id=tenant_id,
+            tenant_id=clean_tid,
         )
         saved = target_store.save(record)
         from shared.observability.metrics import record_data_signal
@@ -272,8 +341,25 @@ class ExternalIngestionService:
         scheduled_at: datetime | None = None,
         actor: str = "scheduler",
         correlation_id: str | None = None,
+        tenant_id: str = "",
     ) -> IngestionOutcome:
-        """Scheduled entry point: persists exactly like the manual path."""
+        """Scheduled entry point: persists exactly like the manual path.
+
+        ``tenant_id`` is mandatory here even though :meth:`ingest` tolerates an
+        empty one for the legacy unscoped in-process store: a schedule carries
+        no principal to fall back on, so an empty tenant is a deployment
+        misconfiguration, not a default.
+        """
+
+        clean_tid = _clean_tenant_id(tenant_id)
+        if not clean_tid:
+            raise ScheduledIngestionTenantError(
+                "Scheduled ingestion requires an explicit tenant scope for "
+                f"provider '{spec.provider_id}' (schedule '{spec.schedule_id}'). "
+                f"Set {SCHEDULED_TENANT_ENV_VAR} on the scheduler deployment, or "
+                "pass tenant_id= explicitly; scheduled runs are never persisted "
+                f"under the unscoped default (code={ScheduledIngestionTenantError.code})"
+            )
 
         return self.ingest(
             provider_id=spec.provider_id,
@@ -284,9 +370,25 @@ class ExternalIngestionService:
             freshness_sla=spec.freshness_sla,
             scheduled_at=scheduled_at,
             correlation_id=correlation_id,
+            tenant_id=clean_tid,
         )
 
     # -- internals --------------------------------------------------------
+
+    @staticmethod
+    def _assert_same_tenant(
+        record: IngestionRunRecord | None, clean_tid: str
+    ) -> IngestionRunRecord | None:
+        """Refuse a replay lookup that resolved to another tenant's run."""
+        if record is None:
+            return None
+        if _clean_tenant_id(record.tenant_id) != clean_tid:
+            raise CrossTenantIngestionRunError(
+                expected_tenant_id=clean_tid,
+                record_tenant_id=_clean_tenant_id(record.tenant_id),
+                run_id=record.run_id,
+            )
+        return record
 
     def _replay(
         self,
@@ -325,6 +427,7 @@ class ExternalIngestionService:
                 correlation_id=correlation_id,
                 job_id=record.run_id,
                 metadata={
+                    "tenant_id": record.tenant_id,
                     "trigger": record.trigger,
                     "api_idempotency_key": api_idempotency_key or record.api_idempotency_key,
                     "data_status": record.data_status,
@@ -357,15 +460,15 @@ class ExternalIngestionService:
         if not self._tenant_schedulers:
             self._get_scheduler_and_captures("")
         for clean_tid, scheduler in list(self._tenant_schedulers.items()):
-            target_store = self._resolve_store(clean_tid)
-            if hasattr(target_store, "list_runs"):
-                for record in target_store.list_runs():
-                    scheduler.state_store.save_run(record.to_external_fetch_run())
+            self._seed_scheduler_state(scheduler, self._resolve_store(clean_tid), clean_tid)
 
 
 __all__ = [
     "DEFAULT_FRESHNESS_SLA",
     "DEFAULT_INTERVAL",
+    "SCHEDULED_TENANT_ENV_VAR",
+    "CrossTenantIngestionRunError",
     "ExternalIngestionService",
     "IngestionOutcome",
+    "ScheduledIngestionTenantError",
 ]

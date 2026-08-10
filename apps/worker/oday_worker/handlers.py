@@ -99,6 +99,7 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
     from datetime import timedelta
 
     from modules.external_data.application.ingestion_service import (
+        SCHEDULED_TENANT_ENV_VAR,
         ExternalIngestionService,
     )
     from modules.external_data.workers.scheduled_fetch import (
@@ -110,9 +111,21 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
     provider_id = job.payload.get("provider_id", "listing.partner_feed")
     schedule_id = job.payload.get("schedule_id", "hourly-listing")
     freshness_sla_hours = job.payload.get("freshness_sla_hours", 6)
+    tenant_id = str(job.payload.get("tenant_id") or "").strip()
+    if not tenant_id:
+        # A schedule has no principal to fall back on, so an untenanted payload
+        # is a scheduler misconfiguration that no retry can fix. Dead-letter it
+        # rather than persist canonical data under the unscoped default.
+        raise NonRetryableJobError(
+            "External fetch job payload missing tenant scope for provider "
+            f"'{provider_id}' (schedule '{schedule_id}'): set "
+            f"{SCHEDULED_TENANT_ENV_VAR} on the scheduler deployment so the "
+            "enqueued payload carries tenant_id"
+        )
 
     service = ExternalIngestionService(
         store=persistence.ingestion_run_store,
+        ingestion_run_store_for_tenant=_tenant_ingestion_store_resolver(persistence),
         state_store=persistence.external_fetch_state_store,
         audit_log=persistence.audit_log,
     )
@@ -125,6 +138,7 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
         spec,
         scheduled_at=datetime.now(UTC),
         correlation_id=job.correlation_id,
+        tenant_id=tenant_id,
     )
     record = outcome.record
     if record.status != "FAILED":
@@ -152,6 +166,20 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
         f"External fetch failed for {provider_id}: "
         f"{record.message or 'no provider message'}"
     )
+
+
+def _tenant_ingestion_store_resolver(persistence: PersistenceBundle) -> Any | None:
+    """Tenant-scoped ingestion-run store factory, when the backend supports one.
+
+    Mirrors the API wiring (``apps/api/oday_api/main.py``): only a durable
+    bundle can hand out a physically scoped store. On the in-memory bundle the
+    single shared store is used, and isolation is carried by the run record's
+    ``tenant_id`` plus the service's cross-tenant replay guard.
+    """
+    scoped = getattr(persistence, "ingestion_run_store_for_tenant", None)
+    if scoped is None or not getattr(persistence, "is_durable", False):
+        return None
+    return scoped
 
 
 def _external_fetch_reason_code(record: Any) -> str:
