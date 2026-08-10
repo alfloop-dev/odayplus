@@ -14,6 +14,9 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+
+COMMAND_TIMEOUT_SECONDS = 8.0
 from zoneinfo import ZoneInfo
 
 try:
@@ -1515,13 +1518,19 @@ def run_git_command(
     required: bool = True,
     failure_message: str | None = None,
 ) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd or ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd or ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        if required:
+            raise SystemExit(f"git command timed out after {COMMAND_TIMEOUT_SECONDS:.0f}s: {' '.join(args)}") from exc
+        return ""
     if result.returncode != 0:
         if required:
             detail = result.stderr.strip() or result.stdout.strip() or "git command failed"
@@ -1531,13 +1540,17 @@ def run_git_command(
 
 
 def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=cwd or ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["git", *args],
+            cwd=cwd or ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return result.returncode == 0
 
 
@@ -1553,13 +1566,17 @@ def get_gh_executable() -> str:
 
 
 def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str, Any] | None:
-    result = subprocess.run(
-        [get_gh_executable(), *args],
-        cwd=cwd or ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [get_gh_executable(), *args],
+            cwd=cwd or ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if result.returncode != 0 or not result.stdout.strip():
         return None
     try:
@@ -1643,6 +1660,7 @@ def pull_request_status_for_branch(
             capture_output=True,
             text=True,
             check=False,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
         if list_result.returncode == 0 and list_result.stdout.strip():
             payload = json.loads(list_result.stdout)
