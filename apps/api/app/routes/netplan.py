@@ -36,6 +36,14 @@ else:
         created_at: str | None = None
 
 
+    class NetPlanUpdateScenarioPayload(BaseModel):
+        scenario_name: str | None = None
+        planning_horizon: str | None = None
+        constraints: dict[str, Any] | None = None
+        existing_stores: list[dict[str, Any]] | None = None
+        candidate_sites: list[dict[str, Any]] | None = None
+
+
     class NetPlanActorPayload(BaseModel):
         actor: str = Field(default="system", min_length=1)
         reason: str = ""
@@ -146,6 +154,37 @@ else:
                 action="create_scenario",
                 resource=f"netplan/scenarios/{scenario.scenario_id}",
                 outcome="created",
+                metadata={"tenant_id": scenario.tenant_id},
+            )
+            return payload
+
+        @router.put("/scenarios/{scenario_id}", dependencies=[Depends(require_permission("netplan", Action.CREATE, engine=authz_engine))])
+        def update_scenario(scenario_id: str, body: NetPlanUpdateScenarioPayload, request: Request) -> dict[str, Any]:
+            try:
+                scenario = service.update_scenario(
+                    scenario_id,
+                    scenario_name=body.scenario_name,
+                    planning_horizon=body.planning_horizon,
+                    constraints=NetPlanConstraints.from_mapping(body.constraints) if body.constraints is not None else None,
+                    existing_stores=body.existing_stores,
+                    candidate_sites=body.candidate_sites,
+                )
+            except (NetPlanNotFoundError, ValueError) as exc:
+                status_code = (
+                    status.HTTP_404_NOT_FOUND
+                    if isinstance(exc, NetPlanNotFoundError)
+                    else status.HTTP_422_UNPROCESSABLE_ENTITY
+                )
+                raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+            payload = scenario.to_dict()
+            payload["audit_event_id"] = _record_audit(
+                active_audit_log,
+                request,
+                event_type="netplan.scenario_updated.v1",
+                actor="system",
+                action="update_scenario",
+                resource=f"netplan/scenarios/{scenario.scenario_id}",
+                outcome="updated",
                 metadata={"tenant_id": scenario.tenant_id},
             )
             return payload
@@ -286,7 +325,13 @@ else:
         solve = service.repository.get_solve(scenario_id)
         execution = service.repository.get_execution(scenario_id)
         outcome = service.repository.get_outcome(scenario_id)
-        payload["solve"] = solve.to_dict() if solve else None
+        if solve:
+            scenario = service.repository.get_scenario(scenario_id)
+            solve_dict = solve.to_dict()
+            solve_dict["is_stale"] = solve.is_stale(scenario) if scenario else False
+            payload["solve"] = solve_dict
+        else:
+            payload["solve"] = None
         payload["approvals"] = [
             approval.to_dict() for approval in service.repository.list_approvals(scenario_id)
         ]
@@ -366,5 +411,6 @@ else:
     __all__ = [
         "NetPlanDecisionPayload",
         "NetPlanScenarioPayload",
+        "NetPlanUpdateScenarioPayload",
         "create_netplan_router",
     ]
