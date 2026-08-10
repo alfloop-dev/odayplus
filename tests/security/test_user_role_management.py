@@ -369,3 +369,39 @@ def test_save_user_existing_tenant_guard() -> None:
             reason="Unauthorized cross tenant edit attempt",
         )
 
+
+def test_shared_audit_log_does_not_corrupt_private_chain() -> None:
+    """Test B3: Recording audit event to a pre-populated shared audit log does not corrupt private audit chain."""
+    shared_log = InMemoryAuditLog()
+    # Seed shared_log with 5 pre-existing events so sequence/previous_hash differ
+    for i in range(5):
+        from shared.audit import AuditEvent
+        shared_log.record(
+            AuditEvent(
+                event_type="system.boot",
+                actor="system",
+                action="BOOT",
+                resource="server",
+                outcome="success",
+                correlation_id=f"cid-boot-{i}",
+            )
+        )
+
+    service = UserRoleManagementService(audit_log=shared_log, seed_fixtures=False)
+    service.save_user(
+        subject_id="user-isolated",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        reason="Testing shared log isolation",
+    )
+
+    # Verify private audit log hash chain
+    private_ver = service.audit_log.verify_chain()
+    assert private_ver.ok is True, f"Private audit chain failed verification: {private_ver.issues}"
+
+    # Verify export_state has valid chain upon reload
+    state = service.export_state()
+    reloaded = UserRoleManagementService(initial_state=state, seed_fixtures=False)
+    reloaded_ver = reloaded.audit_log.verify_chain()
+    assert reloaded_ver.ok is True, f"Reloaded state audit chain failed verification: {reloaded_ver.issues}"
+
+

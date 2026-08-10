@@ -1160,11 +1160,17 @@ def create_operator_router(
     )
 
     # Users & Roles — Self-service role assignment, scope axes, and audit logging (ODP-CAP-USER-ROLE-UI-001)
+    from apps.api.app.routes.operator_modules.live_service import (
+        DurableTenantServiceResolver,
+    )
     from apps.api.app.routes.operator_modules.users_roles import (
         create_user_role_sub_router,
     )
     from modules.opsboard.application.user_role_management import (
         UserRoleManagementService,
+    )
+    from shared.infrastructure.persistence.operator_domains import (
+        DurableOperatorDomainStateRepository,
     )
 
     user_role_state_repo_fallback = (

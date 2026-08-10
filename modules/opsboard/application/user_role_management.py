@@ -281,9 +281,21 @@ class UserRoleManagementService:
                         self.audit_log.record(ev)
 
     def _record_audit_event(self, event: AuditEvent) -> AuditEvent:
-        recorded = self.audit_log.record(event)
         if self._shared_audit_log is not None and self._shared_audit_log is not self.audit_log:
-            self._shared_audit_log.record(event)
+            shared_event = AuditEvent(
+                event_id=event.event_id,
+                event_type=event.event_type,
+                actor=event.actor,
+                action=event.action,
+                resource=event.resource,
+                outcome=event.outcome,
+                correlation_id=event.correlation_id,
+                job_id=event.job_id,
+                metadata=dict(event.metadata),
+                occurred_at=event.occurred_at,
+            )
+            self._shared_audit_log.record(shared_event)
+        recorded = self.audit_log.record(event)
         return recorded
 
     def export_state(self) -> dict[str, Any]:

@@ -1211,6 +1211,18 @@ export type ScopeContext = {
   tenant_id: string;
 };
 
+/** Scope constraint parameters on Tenant, Brand, Region, Store, etc. */
+export type ScopePayload = {
+  assigned_area_ids?: string[];
+  brand_ids?: string[];
+  clearance?: string;
+  heat_zone_ids?: string[];
+  modules?: string[];
+  region_ids?: string[];
+  store_ids?: string[];
+  tenant_id?: string;
+};
+
 /** SegmentMetricPayload */
 export type SegmentMetricPayload = {
   metrics: Record<string, number>;
@@ -1349,6 +1361,27 @@ export type UrlIntakeRequest = {
   owner_subject_id?: string | null;
   purpose?: string;
   scope: ScopeContext;
+};
+
+/** POST /operator/users — payload for user role & scope assignment. */
+export type UserSavePayload = {
+  actorName?: string | null;
+  actorRole?: string | null;
+  attributes?: Record<string, unknown>;
+  email?: string | null;
+  name?: string | null;
+  reason?: string;
+  roles: string[];
+  scope?: ScopePayload | null;
+  status?: string;
+  subjectId: string;
+};
+
+/** POST /operator/users/{subject_id}/status — payload for status change. */
+export type UserStatusPayload = {
+  actorName?: string | null;
+  reason?: string;
+  status: string;
 };
 
 /** ValidationError */
@@ -1631,6 +1664,11 @@ export const API_PATHS = {
   "/api/v1/operator/store-ops/issues/{issue_id}/{action_type}": ["POST"],
   "/api/v1/operator/store-ops/summary": ["GET"],
   "/api/v1/operator/today": ["GET"],
+  "/api/v1/operator/users": ["GET", "POST"],
+  "/api/v1/operator/users/audit-trail": ["GET"],
+  "/api/v1/operator/users/roles": ["GET"],
+  "/api/v1/operator/users/{subject_id}": ["GET"],
+  "/api/v1/operator/users/{subject_id}/status": ["POST"],
   "/api/v1/platform/dashboards/provisioned": ["GET"],
   "/api/v1/platform/metrics/export": ["GET"],
   "/api/v1/platform/observability": ["GET"],
