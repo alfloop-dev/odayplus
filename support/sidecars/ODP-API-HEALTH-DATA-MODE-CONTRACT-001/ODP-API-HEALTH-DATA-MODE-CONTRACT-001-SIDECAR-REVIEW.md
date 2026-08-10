@@ -3,7 +3,7 @@
 - Sidecar task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`
 - Parent task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
 - Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` → `Antigravity5` (2026-08-10 current)
-- Assigned sidecar reviewer: `Antigravity4`
+- Assigned sidecar reviewer: `Codex2` (reassigned 2026-08-10 for account-pool independence)
 - Parent owner: `Antigravity4` (2026-08-05 refresh) → `Antigravity` (current)
 - Parent reviewer (current): `Codex`
 - Parent reviewer at capture time: `Antigravity7`
@@ -267,10 +267,36 @@ The pytest runs emitted only the existing Starlette/`httpx` TestClient deprecati
 - The historical sidecar findings were acted on: the parent was base-composed, re-reviewed at a new exact head, passed CI, and its implementation PR merged (#574), followed by its closeout PR (#779).
 - The support packet is accurate, verified, and complete with this 2026-08-10 delta.
 - Sidecar worktree was base-advanced to `origin/dev` tip (`f9da2955`) without conflict, and all verification checks passed.
-- Reviewer `Antigravity4` approves this sidecar review task.
+- Reviewer `Antigravity4` recorded an approval before the orchestrator reassigned review for account-pool independence. That approval is historical and is superseded by the independent review below.
+
+### 6. Independent reviewer reassignment check (2026-08-10)
+
+The orchestrator reassigned this task from `Antigravity4` to `Codex2` because `Antigravity4` shares an account pool with owner `Antigravity5`. `Codex2` independently reviewed the packet after composing current `origin/dev` (`da5fe95f381f8b58a4dffcfb4090d8d82997fa56`) into the task branch at pre-note review head `c479e8b6719d9e95dae81e9bb7adb11b8905a169`. The merge preserved task history, introduced no conflict, and was pushed normally.
+
+The parent implementation merge (`4b1ff51f5a72c5f5d3462d81576ede914a9c5ea0`) and closeout evidence commit (`7471d42f`) are both ancestors of current `origin/dev`. The deployed-validator contract still has canonical root `data_mode` precedence, supported-envelope coverage, and real-app coverage for `live`, `unavailable`, and `fixture` behavior.
+
+Independent verification on the base-composed task head:
+
+```bash
+python3 -m pytest -q \
+  tests/reliability/test_health_endpoints.py \
+  tests/ops/test_cloud_run_live_deployment.py
+# passed; existing Starlette/httpx deprecation warning only
+
+python3 -m ruff check \
+  scripts/deployment/validate_cloud_run_live_deployment.py \
+  tests/ops/test_cloud_run_live_deployment.py \
+  tests/reliability/test_health_endpoints.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+No canonical truth, runtime, registry, governance, or parent-task implementation is changed by this review note. Reviewer `Codex2` finds no blocking issue and approves the sidecar support packet. The exact approved task-branch head is frozen by the canonical `approve` status transition after this note is committed and pushed.
 
 ## Sidecar boundary and final review decision
 
 This artifact is the only repository output of `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`. It records evidence and reviewer audit notes only. It does not modify or redefine the health contract, runtime behavior, release gates, canonical documents, or parent task disposition.
 
-Review decision: **Approved** by `Antigravity4`.
+Review decision: **Approved** by assigned independent reviewer `Codex2`.
