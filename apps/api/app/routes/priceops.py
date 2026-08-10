@@ -35,7 +35,12 @@ else:
         PlanNotFoundError,
         PriceOpsService,
     )
-    from modules.priceops.domain import PriceConstraints, PricingPlanItem
+    from modules.priceops.domain import (
+        InvalidScenarioError,
+        PriceConstraints,
+        PricingPlanItem,
+        UnavailableSimulationResultError,
+    )
     from modules.priceops.infrastructure import InMemoryPriceOpsRepository
     from modules.priceops.infrastructure.oss_optimizer import PriceOpsProductionOptimizer
     from modules.priceops.workers.optimizer_worker import (
@@ -81,6 +86,21 @@ else:
     class PriceOpsActorPayload(BaseModel):
         actor: str = Field(default="system", min_length=1)
         reason: str = ""
+        occurred_at: str | None = None
+
+
+    class PriceOpsScenarioSimulationPayload(BaseModel):
+        candidate_prices: dict[str, float] = Field(default_factory=dict)
+        actor: str = Field(default="system", min_length=1)
+        reason: str = ""
+        occurred_at: str | None = None
+
+
+    class PriceOpsDecisionWritebackPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        decision: str = Field(min_length=1)
+        reason: str = Field(min_length=1)
+        selected_scenario_id: str | None = None
         occurred_at: str | None = None
 
 
@@ -409,6 +429,60 @@ else:
                 request,
                 "priceops.simulated.v1",
                 "simulate",
+                plan_id,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
+                idempotency_key=idempotency_key,
+                body=body,
+            )
+
+        @router.post("/plans/{plan_id}/simulate-scenario", dependencies=[Depends(require_permission("priceops", Action.EXECUTE, engine=authz_engine))])
+        def simulate_scenario(
+            plan_id: str,
+            body: PriceOpsScenarioSimulationPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
+            return _run(
+                lambda: service.simulate_scenario(
+                    plan_id,
+                    candidate_prices=body.candidate_prices,
+                    actor=body.actor,
+                    reason=body.reason or "candidate scenario simulation",
+                    generated_at=_parse_time(body.occurred_at),
+                ),
+                active_audit_log,
+                request,
+                "priceops.scenario_simulated.v1",
+                "simulate_scenario",
+                plan_id,
+                command_store=command_store(request),
+                tenant_id=tenant_id(request),
+                idempotency_key=idempotency_key,
+                body=body,
+            )
+
+        @router.post("/plans/{plan_id}/decision-writeback", dependencies=[Depends(require_permission("priceops", Action.APPROVE, engine=authz_engine))])
+        def decision_writeback(
+            plan_id: str,
+            body: PriceOpsDecisionWritebackPayload,
+            request: Request,
+            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+        ) -> dict[str, Any]:
+            return _run(
+                lambda: service.writeback_decision(
+                    plan_id,
+                    actor=body.actor,
+                    decision=body.decision,
+                    reason=body.reason,
+                    selected_scenario_id=body.selected_scenario_id,
+                    occurred_at=_parse_time(body.occurred_at),
+                    idempotency_key=idempotency_key,
+                ),
+                active_audit_log,
+                request,
+                "priceops.decision_written_back.v1",
+                body.decision,
                 plan_id,
                 command_store=command_store(request),
                 tenant_id=tenant_id(request),
@@ -763,6 +837,14 @@ else:
                 result = action()
             except PlanNotFoundError as exc:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            except InvalidScenarioError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+                ) from exc
+            except UnavailableSimulationResultError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
             except (ApprovalBlockedError, MissingRollbackPlanError, ValueError, RuntimeError) as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
