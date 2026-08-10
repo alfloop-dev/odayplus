@@ -284,7 +284,7 @@ def branch_head_sha(branch: str) -> str | None:
     return None
 
 
-def branch_has_diff(base: str, branch: str) -> bool:
+def branch_has_diff(base: str, branch: str, expected_head_sha: str | None = None) -> bool | None:
     if not base or not branch or base == "HEAD" or branch == "HEAD":
         return False
     # Keep base and head in the same namespace. Mixing a local base with a
@@ -295,31 +295,29 @@ def branch_has_diff(base: str, branch: str) -> bool:
         (base, branch),
     ]
     for base_ref, branch_ref in ref_pairs:
+        if expected_head_sha:
+            head_proc = run_command(["git", "rev-parse", branch_ref], cwd=ROOT)
+            resolved_head_sha = (head_proc.stdout or "").strip().lower()
+            if head_proc.returncode != 0 or resolved_head_sha != expected_head_sha.lower():
+                continue
         proc = run_command(["git", "rev-list", "--count", f"{base_ref}..{branch_ref}"], cwd=ROOT)
         if proc.returncode == 0:
             try:
                 return int((proc.stdout or "0").strip() or "0") > 0
             except ValueError:
                 pass
-    return False
+    # A published branch may not have been fetched into this checkout. That is
+    # different from a resolved comparison with zero commits: callers must not
+    # persist skipped_no_commits merely because the exact origin object is not
+    # available locally.
+    return None
 
 
 def remote_branch_head_sha(branch: str, remote: str = "origin") -> str | None:
     if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
         return None
     heads = remote_branch_heads(remote)
-    if branch in heads:
-        return heads[branch]
-    remote_ref = f"refs/heads/{branch}"
-    proc = run_command(["git", "ls-remote", "--heads", remote, remote_ref], cwd=ROOT)
-    if proc.returncode == 0 and proc.stdout:
-        for line in proc.stdout.splitlines():
-            fields = line.split()
-            if len(fields) == 2 and fields[1] == remote_ref:
-                sha = fields[0].lower()
-                if re.fullmatch(r"[0-9a-f]{40,64}", sha):
-                    return sha
-    return None
+    return heads.get(branch)
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
@@ -1077,7 +1075,8 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     if entry.get("last_review_hash") == pr_hash and pr_ref:
         return False
 
-    if not branch_has_diff(base, head_sha):
+    has_diff = branch_has_diff(base, branch, expected_head_sha=head_sha)
+    if has_diff is False:
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
             "url": (pr_ref or {}).get("url"),
