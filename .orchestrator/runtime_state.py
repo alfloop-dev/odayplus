@@ -102,6 +102,9 @@ def default_state() -> dict[str, Any]:
             "last_loop_finished_at": None,
             "last_loop_duration_ms": None,
             "last_loop_error": None,
+            "last_stage_timings_ms": {},
+            "slowest_stage": None,
+            "slowest_stage_duration_ms": None,
             "focus_mode": None,
             "mode_status": "idle",
             "mode_switch_requested": None,
@@ -230,6 +233,9 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("last_loop_finished_at", None)
     state["supervisor"].setdefault("last_loop_duration_ms", None)
     state["supervisor"].setdefault("last_loop_error", None)
+    state["supervisor"].setdefault("last_stage_timings_ms", {})
+    state["supervisor"].setdefault("slowest_stage", None)
+    state["supervisor"].setdefault("slowest_stage_duration_ms", None)
     state["supervisor"].setdefault("focus_mode", None)
     state["supervisor"].setdefault("mode_status", "idle")
     state["supervisor"].setdefault("mode_switch_requested", None)
@@ -288,6 +294,58 @@ def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, 
         record["processed_at"] = latest.get("last_event_at")
 
 
+def _pending_approval_run_ids(config: dict[str, Any]) -> set[str]:
+    """Return approval anchors without letting a missing optional file block state GC."""
+    try:
+        return {
+            str(item.get("worker_run_id") or "")
+            for item in load_approval_state(config).get("pending", [])
+            if item.get("worker_run_id")
+        }
+    except KeyError:
+        return set()
+
+
+def prune_orphaned_active_workers(
+    state: dict[str, Any], *, pending_approval_runs: set[str] | None = None
+) -> None:
+    """Remove active-looking records whose durable coordination anchors are gone.
+
+    This must run after every locked disk/memory merge as well as on load.  A
+    merge deliberately preserves records written by another process, but an
+    orphaned active record is not concurrent work: its queue event (and, for
+    approval workers, its approval item) no longer exists.  Without this
+    second pass a stale disk snapshot can resurrect a record the singleton
+    supervisor already reaped.
+    """
+    valid_pending_event_ids = set(state.setdefault("queue", {}).setdefault("events", {}))
+    workers = state.setdefault("workers", {})
+    pending_approval_runs = pending_approval_runs or set()
+
+    stale_manual_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if isinstance(worker, dict)
+        and worker.get("status") == "manual_pending"
+        and worker.get("queue_event_id") not in valid_pending_event_ids
+    ]
+    for run_id in stale_manual_workers:
+        workers.pop(run_id, None)
+
+    # Approval-gated workers without a surviving queue event or pending
+    # approval are likewise stale runtime leftovers.
+    stale_approval_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if isinstance(worker, dict)
+        and worker.get("status") in {"waiting_approval", "suspended_approval"}
+        and worker.get("queue_event_id") not in valid_pending_event_ids
+        and str(run_id) not in pending_approval_runs
+    ]
+    for run_id in stale_approval_workers:
+        workers.pop(run_id, None)
+
+
 
 
 def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | None = None) -> None:
@@ -320,37 +378,10 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     queued_events = load_jsonl(config_path(config, "event_queue"))
     _rebuild_queue_records(state, queued_events)
 
-    valid_pending_event_ids = set(state.setdefault("queue", {}).setdefault("events", {}))
-    workers = state.setdefault("workers", {})
-    stale_manual_workers = [
-        run_id
-        for run_id, worker in workers.items()
-        if worker.get("status") == "manual_pending" and worker.get("queue_event_id") not in valid_pending_event_ids
-    ]
-    for run_id in stale_manual_workers:
-        workers.pop(run_id, None)
-
-    try:
-        pending_approval_runs = {
-            str(item.get("worker_run_id") or "")
-            for item in load_approval_state(config).get("pending", [])
-            if item.get("worker_run_id")
-        }
-    except KeyError:
-        pending_approval_runs = set()
-    # Approval-gated workers without a surviving queue event or pending approval
-    # are stale runtime leftovers. Once both coordination anchors are gone,
-    # keeping them around only causes dashboards and health checks to report
-    # ghost workers.
-    stale_approval_workers = [
-        run_id
-        for run_id, worker in workers.items()
-        if worker.get("status") in {"waiting_approval", "suspended_approval"}
-        and worker.get("queue_event_id") not in valid_pending_event_ids
-        and str(run_id) not in pending_approval_runs
-    ]
-    for run_id in stale_approval_workers:
-        workers.pop(run_id, None)
+    prune_orphaned_active_workers(
+        state,
+        pending_approval_runs=_pending_approval_run_ids(config),
+    )
 
     prune_worker_records(state)
     return state
@@ -388,6 +419,48 @@ QUEUE_STATUS_RANK = {
     "done": 3,
     "cancelled": 3,
 }
+
+
+def compact_worker_history(state: dict[str, Any], max_entries: int) -> None:
+    """Bound durable worker history after all concurrent state is merged.
+
+    Compaction before ``save_runtime_state`` is not sufficient: the locked
+    disk/in-memory union deliberately preserves records created by concurrent
+    writers, so terminal records removed by the singleton loop used to be
+    resurrected on every save.  Compacting the merged snapshot under the same
+    transaction lock preserves concurrent active runs while making retention
+    authoritative at the point of persistence.
+    """
+    workers = state.get("workers")
+    if not isinstance(workers, dict):
+        state["workers"] = {}
+        return
+    limit = max(0, int(max_entries))
+    if len(workers) <= limit:
+        return
+
+    active: dict[str, Any] = {}
+    terminal: list[tuple[str, dict[str, Any]]] = []
+    for run_id, worker in workers.items():
+        if not isinstance(worker, dict):
+            continue
+        status = str(worker.get("status") or "").lower()
+        if status in ACTIVE_WORKER_STATUSES:
+            active[run_id] = worker
+        else:
+            terminal.append((run_id, worker))
+
+    # Active runs are never discarded merely to satisfy a history limit.  If
+    # they consume the whole budget, terminal history is temporarily empty.
+    terminal_budget = max(0, limit - len(active))
+    terminal.sort(
+        key=lambda item: (
+            str(item[1].get("last_event_at") or ""),
+            str(item[0]),
+        )
+    )
+    kept_terminal = dict(terminal[-terminal_budget:]) if terminal_budget else {}
+    state["workers"] = {**kept_terminal, **active}
 
 
 def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]) -> dict[str, Any]:
@@ -544,6 +617,18 @@ def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
             queued_events = None
         if queued_events is not None:
             _rebuild_queue_records(merged, queued_events)
+            # Re-apply the same authoritative-anchor pruning after the locked
+            # union.  Otherwise a stale record present only on disk can be
+            # reintroduced between `load_runtime_state` and this save.
+            prune_orphaned_active_workers(
+                merged,
+                pending_approval_runs=_pending_approval_run_ids(config),
+            )
+
+        compact_worker_history(
+            merged,
+            int(config.get("supervisor", {}).get("max_worker_history", 200)),
+        )
 
         persisted = migrate_state(merged)
         write_json(path, persisted)

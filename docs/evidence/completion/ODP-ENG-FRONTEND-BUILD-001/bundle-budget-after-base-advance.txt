@@ -1,0 +1,20 @@
+> @oday-plus/web@0.1.0 bundle:budget
+> node scripts/check-bundle-budget.mjs
+
+First Load JS budget (gzip, kB = 1000 bytes)
+
+route                           first load      budget  status
+/operator                         280.0 kB    300.0 kB  ok
+/intake/[intakeId]                280.0 kB    300.0 kB  ok
+/franchisee                       116.5 kB    130.0 kB  ok
+/_not-found                       104.0 kB    130.0 kB  ok (default)
+/api/v1/[...path]                 103.5 kB    130.0 kB  ok (default)
+/api/v1                           103.5 kB    130.0 kB  ok (default)
+/auth/callback                    103.5 kB    130.0 kB  ok (default)
+/auth/session                     103.5 kB    130.0 kB  ok (default)
+/avm/[...path]                    103.5 kB    130.0 kB  ok (default)
+/login                            103.5 kB    130.0 kB  ok (default)
+/auth/logout                      103.5 kB    130.0 kB  ok (default)
+
+shared by all: 103.3 kB
+
