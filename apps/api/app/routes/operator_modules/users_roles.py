@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from apps.api.app.routes.operator_modules.live_service import resolve_service
@@ -124,7 +124,11 @@ def create_user_role_sub_router(
         subject_id: str | None = None,
     ) -> dict[str, Any]:
         svc = get_svc(request)
-        tenant_id = getattr(request.state, "operator_tenant_id", None)
+        tenant_id = (
+            getattr(request.state, "operator_tenant_id", None)
+            or getattr(request.state, "tenant_id", None)
+            or request.headers.get("x-tenant-id")
+        )
         events = svc.get_audit_trail(subject_id=subject_id, tenant_id=tenant_id)
         return {
             "events": events,
@@ -151,7 +155,11 @@ def create_user_role_sub_router(
         scope_dict = body.scope.model_dump() if body.scope else None
         server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
         server_role = getattr(request.state, "operator_role_id", None) or "platform_admin"
-        partition_tenant = getattr(request.state, "operator_tenant_id", None)
+        partition_tenant = (
+            getattr(request.state, "operator_tenant_id", None)
+            or getattr(request.state, "tenant_id", None)
+            or request.headers.get("x-tenant-id")
+        )
         try:
             user = svc.save_user(
                 subject_id=body.subjectId,

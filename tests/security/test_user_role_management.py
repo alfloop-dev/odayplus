@@ -10,6 +10,8 @@ Tests:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -233,3 +235,137 @@ def test_operator_router_rbac_guards_and_audit_actor() -> None:
         json={"status": "disabled", "reason": "Unauthorized attempt"},
     )
     assert res.status_code == 403
+
+
+def test_durable_audit_trail_isolation_and_no_exponential_growth(tmp_path: Path) -> None:
+    """Test F1: Multiple saves do not exponentially grow event count or leak cross-tenant events."""
+    from apps.api.app.routes.operator_modules.live_service import DurableTenantServiceResolver
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.operator_domains import (
+        DurableOperatorDomainStateRepository,
+    )
+
+    doc_store = SqliteDocumentStore(SqliteEngine(tmp_path / "test.db"))
+    repo = DurableOperatorDomainStateRepository(doc_store, "users-roles")
+    shared_log = InMemoryAuditLog()
+
+    resolver = DurableTenantServiceResolver(
+        repo,
+        factory=lambda state, tenant_id: UserRoleManagementService(
+            audit_log=shared_log,
+            initial_state=state,
+            seed_fixtures=False,
+        ),
+        exporter=lambda service: service.export_state(),
+        mutating_methods={"save_user", "set_user_status"},
+    )
+
+    class DummyState:
+        def __init__(self, tenant_id: str):
+            self.operator_tenant_id = tenant_id
+
+    class DummyReq:
+        def __init__(self, tenant_id: str):
+            self.state = DummyState(tenant_id)
+
+    proxy_a = resolver(DummyReq("tenant-a"))
+    proxy_b = resolver(DummyReq("tenant-b"))
+
+    # Perform 4 saves for tenant-a
+    for i in range(4):
+        proxy_a.save_user(
+            subject_id="user-a",
+            roles=[Role.OPERATIONS_MANAGER.value],
+            scope={"tenant_id": "tenant-a"},
+            tenant_id="tenant-a",
+            reason=f"Tenant A save {i+1}",
+        )
+
+    # Perform 2 saves for tenant-b
+    for i in range(2):
+        proxy_b.save_user(
+            subject_id="user-b",
+            roles=[Role.AUDITOR.value],
+            scope={"tenant_id": "tenant-b"},
+            tenant_id="tenant-b",
+            reason=f"Tenant B save {i+1}",
+        )
+
+    events_a = proxy_a.get_audit_trail(tenant_id="tenant-a")
+    assert len(events_a) == 4, f"Expected exactly 4 events for tenant-a, got {len(events_a)}"
+
+    events_b = proxy_b.get_audit_trail(tenant_id="tenant-b")
+    assert len(events_b) == 2, f"Expected exactly 2 events for tenant-b, got {len(events_b)}"
+
+    # Check state document for tenant-a directly from repo
+    state_a = repo.load("tenant-a")
+    assert len(state_a.get("events", [])) == 4
+
+
+def test_durable_audit_trail_timestamp_and_integrity_preservation() -> None:
+    """Test F2 & F3: occurred_at and integrity hash chain are preserved across state reload."""
+    from datetime import UTC, datetime, timedelta
+
+    from shared.audit import AuditEvent
+
+    service = UserRoleManagementService(seed_fixtures=False)
+    past_time = datetime.now(UTC) - timedelta(hours=2)
+
+    # Record initial event with explicit past timestamp and job_id
+    ev1 = AuditEvent(
+        event_type="user_role_management.user_created",
+        actor="admin",
+        action="USER_CREATED",
+        resource="user:ops-lead",
+        outcome="success",
+        correlation_id="cid-123",
+        job_id="job-456",
+        metadata={"tenant_id": "tenant-a", "subject_id": "ops-lead"},
+        occurred_at=past_time,
+    )
+    service._record_audit_event(ev1)
+
+    state = service.export_state()
+    assert len(state["events"]) == 1
+
+    # Reload service from exported state
+    reloaded = UserRoleManagementService(initial_state=state, seed_fixtures=False)
+
+    # Check F2: occurred_at is preserved
+    reloaded_events = reloaded.audit_log.list_events()
+    assert len(reloaded_events) == 1
+    assert reloaded_events[0].occurred_at == past_time
+    assert reloaded_events[0].job_id == "job-456"
+
+    # Check F3: chain verification succeeds on valid state
+    chain_ver = reloaded.audit_log.verify_chain()
+    assert chain_ver.ok is True
+
+    # Tamper with state by modifying metadata or deleting an event
+    tampered_state = service.export_state()
+    tampered_state["events"][0]["metadata"]["subject_id"] = "tampered-user"
+    tampered_service = UserRoleManagementService(initial_state=tampered_state, seed_fixtures=False)
+    tampered_ver = tampered_service.audit_log.verify_chain()
+    assert tampered_ver.ok is False, "Expected hash chain verification to fail for tampered event metadata"
+
+
+def test_save_user_existing_tenant_guard() -> None:
+    """Test Minor 2: Tenant guard prevents modifying a user that belongs to another tenant."""
+    service = UserRoleManagementService()
+    service.save_user(
+        subject_id="tenant-a-user",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-a"},
+        tenant_id="tenant-a",
+        reason="Create user in tenant A",
+    )
+
+    with pytest.raises(UserRolePolicyError, match="restricted to tenant 'tenant-b'"):
+        service.save_user(
+            subject_id="tenant-a-user",
+            roles=[Role.PLATFORM_ADMIN.value],
+            tenant_id="tenant-b",
+            reason="Unauthorized cross tenant edit attempt",
+        )
+

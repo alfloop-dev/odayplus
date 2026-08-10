@@ -14,6 +14,12 @@ from typing import Any
 from uuid import uuid4
 
 from shared.audit import AuditEvent, InMemoryAuditLog
+from shared.audit.integrity import (
+    DEFAULT_AUDIT_INTEGRITY_KEY_ID,
+    DEFAULT_AUDIT_SIGNATURE_ALG,
+    DEFAULT_AUDIT_SIGNATURE_VERSION,
+    DEFAULT_AUDIT_WORM_SINK_ID,
+)
 from shared.auth import DataClassification, Role
 
 
@@ -175,7 +181,8 @@ class UserRoleManagementService:
         initial_users: list[dict[str, Any]] | None = None,
         seed_fixtures: bool = True,
     ) -> None:
-        self.audit_log = audit_log or InMemoryAuditLog()
+        self.audit_log = InMemoryAuditLog()
+        self._shared_audit_log = audit_log
         self._users: dict[str, dict[str, Any]] = {}
 
         if seed_fixtures:
@@ -201,6 +208,54 @@ class UserRoleManagementService:
                     res = raw_ev.get("resource") or "user"
                     outcome = raw_ev.get("outcome") or raw_ev.get("result") or "success"
                     cid = raw_ev.get("correlation_id") or str(uuid4())
+                    job_id = raw_ev.get("job_id")
+
+                    occ_raw = raw_ev.get("occurred_at") or raw_ev.get("timestamp")
+                    if occ_raw:
+                        try:
+                            occurred_at = datetime.fromisoformat(str(occ_raw))
+                        except Exception:
+                            occurred_at = datetime.now(UTC)
+                    else:
+                        occurred_at = datetime.now(UTC)
+
+                    integrity = raw_ev.get("integrity") or {}
+                    seq = (
+                        integrity.get("sequence")
+                        if "sequence" in integrity
+                        else raw_ev.get("sequence")
+                    )
+                    prev_hash = (
+                        integrity.get("previous_hash")
+                        if "previous_hash" in integrity
+                        else raw_ev.get("previous_hash")
+                    )
+                    ev_hash = (
+                        integrity.get("event_hash")
+                        if "event_hash" in integrity
+                        else raw_ev.get("event_hash")
+                    )
+                    sig_key_id = (
+                        integrity.get("signature_key_id")
+                        or raw_ev.get("signature_key_id")
+                        or DEFAULT_AUDIT_INTEGRITY_KEY_ID
+                    )
+                    sig_ver = (
+                        integrity.get("signature_version")
+                        or raw_ev.get("signature_version")
+                        or DEFAULT_AUDIT_SIGNATURE_VERSION
+                    )
+                    sig_alg = (
+                        integrity.get("signature_alg")
+                        or raw_ev.get("signature_alg")
+                        or DEFAULT_AUDIT_SIGNATURE_ALG
+                    )
+                    worm_sink_id = (
+                        integrity.get("worm_sink_id")
+                        or raw_ev.get("worm_sink_id")
+                        or DEFAULT_AUDIT_WORM_SINK_ID
+                    )
+
                     ev = AuditEvent(
                         event_id=ev_id,
                         event_type=ev_type,
@@ -209,9 +264,27 @@ class UserRoleManagementService:
                         resource=res,
                         outcome=outcome,
                         correlation_id=cid,
+                        job_id=job_id,
                         metadata=meta,
+                        occurred_at=occurred_at,
+                        sequence=seq,
+                        previous_hash=prev_hash,
+                        event_hash=ev_hash,
+                        signature_key_id=sig_key_id,
+                        signature_version=sig_ver,
+                        signature_alg=sig_alg,
+                        worm_sink_id=worm_sink_id,
                     )
-                    self.audit_log.record(ev)
+                    if seq is not None and ev_hash is not None:
+                        self.audit_log._events.append(ev)
+                    else:
+                        self.audit_log.record(ev)
+
+    def _record_audit_event(self, event: AuditEvent) -> AuditEvent:
+        recorded = self.audit_log.record(event)
+        if self._shared_audit_log is not None and self._shared_audit_log is not self.audit_log:
+            self._shared_audit_log.record(event)
+        return recorded
 
     def export_state(self) -> dict[str, Any]:
         """Export state dictionary for durable persistence."""
@@ -288,13 +361,20 @@ class UserRoleManagementService:
 
         existing = self._users.get(subject_id)
         before_state = dict(existing) if existing else None
+        existing_tenant = (existing.get("scope") or {}).get("tenant_id") if existing else None
 
         client_tenant = (scope or {}).get("tenant_id")
-        if tenant_id and client_tenant and client_tenant != tenant_id:
-            raise UserRolePolicyError(
-                f"Cannot save user scope for tenant '{client_tenant}'; caller is restricted to tenant '{tenant_id}'."
-            )
-        resolved_tenant = client_tenant or tenant_id or "tenant-default"
+        if tenant_id:
+            if client_tenant and client_tenant != tenant_id:
+                raise UserRolePolicyError(
+                    f"Cannot save user scope for tenant '{client_tenant}'; caller is restricted to tenant '{tenant_id}'."
+                )
+            if existing_tenant and existing_tenant != "tenant-default" and existing_tenant != tenant_id:
+                raise UserRolePolicyError(
+                    f"Cannot modify user belonging to tenant '{existing_tenant}'; caller is restricted to tenant '{tenant_id}'."
+                )
+
+        resolved_tenant = client_tenant or tenant_id or existing_tenant or "tenant-default"
 
         updated_scope = {
             "tenant_id": resolved_tenant,
@@ -327,7 +407,7 @@ class UserRoleManagementService:
         # Audit Event logging
         action_name = "USER_UPDATED" if existing else "USER_CREATED"
         cid = correlation_id or str(uuid4())
-        self.audit_log.record(
+        self._record_audit_event(
             AuditEvent(
                 event_type=f"user_role_management.{action_name.lower()}",
                 actor=actor,
@@ -373,7 +453,7 @@ class UserRoleManagementService:
         user_tenant = (user.get("scope") or {}).get("tenant_id", "tenant-default")
 
         cid = correlation_id or str(uuid4())
-        self.audit_log.record(
+        self._record_audit_event(
             AuditEvent(
                 event_type="user_role_management.status_updated",
                 actor=actor_name or "system",
@@ -403,8 +483,6 @@ class UserRoleManagementService:
             if event.event_type.startswith("user_role_management."):
                 meta = dict(event.metadata or {})
                 if subject_id and meta.get("subject_id") != subject_id:
-                    continue
-                if tenant_id and meta.get("tenant_id") and meta.get("tenant_id") != tenant_id:
                     continue
                 events.append(
                     {
