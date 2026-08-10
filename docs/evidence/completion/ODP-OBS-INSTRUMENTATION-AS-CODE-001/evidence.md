@@ -15,7 +15,7 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **PASSED** |
 | 3 | Cardinality is bounded | Route labels normalized to 459 registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **PASSED** |
 | 4 | Alerts link to runbooks and release identity | Verified all 11 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **PASSED** |
-| 5 | Configuration and emission tests are reproducible | 84/84 pytest reliability/observability tests passing dynamically in 39.7s | **PASSED** |
+| 5 | Configuration and emission tests are reproducible | 86/86 pytest reliability/observability tests passing dynamically in 69.35s | **PASSED** |
 
 ---
 
@@ -65,7 +65,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "forecast-daily-failed",
@@ -76,7 +76,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "data-quality-p0-fail",
@@ -87,7 +87,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "dlq-spike",
@@ -98,7 +98,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "unauthorized-spike",
@@ -109,7 +109,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "audit-write-failure",
@@ -120,7 +120,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "model-drift-high",
@@ -131,7 +131,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "price-constraint-violation",
@@ -142,7 +142,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "data-room-abnormal-download",
@@ -153,7 +153,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "solver-repeated-infeasible",
@@ -164,7 +164,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   },
   {
     "id": "external-connector-stale",
@@ -175,7 +175,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
   }
 ]
 ```
@@ -221,17 +221,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "0c4bcffdf24842e3",
-    "parent_id": "946374eacc394eaf",
+    "span_id": "3c10e2bf1ecf45b6",
+    "parent_id": "a91873aa43f040f1",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
+    "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.003222,
+    "duration_ms": 0.002987,
     "attributes": {
-      "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
+      "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -241,17 +241,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "d696229090c54db9",
-    "parent_id": "946374eacc394eaf",
+    "span_id": "66cadb6920eb445c",
+    "parent_id": "a91873aa43f040f1",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
+    "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.150956,
+    "duration_ms": 0.122932,
     "attributes": {
-      "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
+      "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -261,17 +261,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "946374eacc394eaf",
+    "span_id": "a91873aa43f040f1",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
+    "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.231594,
+    "duration_ms": 0.183638,
     "attributes": {
-      "correlation_id": "c95b96e4-6ca7-431a-aa08-43aad7852848",
+      "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -287,9 +287,9 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 
 ## 6. Test Suite Execution Output
 
-- Source Commit: `615b1942653f5e99af1738e07099ac81908116c4` (is_test_simulated: False)
+- Source Commit: `7efca5ce86be68bf8a222c9ffb2641131bc49609` (is_test_simulated: False)
 - Command: `python3 -m pytest tests/reliability/test_runtime_observability.py`
-- Result: **84 passed in 39.7s** (Exit Code: 0)
+- Result: **86 passed in 69.35s** (Exit Code: 0)
 
 ---
 

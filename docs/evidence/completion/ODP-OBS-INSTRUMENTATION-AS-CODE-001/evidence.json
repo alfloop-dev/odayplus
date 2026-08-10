@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-10T14:59:07.043147+00:00",
-  "release_sha": "615b1942653f5e99af1738e07099ac81908116c4",
+  "timestamp": "2026-08-10T15:16:37.364656+00:00",
+  "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609",
   "is_test_simulated": false,
   "overall_status": "PASSED",
   "metrics_categories": [
@@ -94,7 +94,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "forecast-daily-failed",
@@ -105,7 +105,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "data-quality-p0-fail",
@@ -116,7 +116,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "dlq-spike",
@@ -127,7 +127,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "unauthorized-spike",
@@ -138,7 +138,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "audit-write-failure",
@@ -149,7 +149,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "model-drift-high",
@@ -160,7 +160,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "price-constraint-violation",
@@ -171,7 +171,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "data-room-abnormal-download",
@@ -182,7 +182,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "solver-repeated-infeasible",
@@ -193,7 +193,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     },
     {
       "id": "external-connector-stale",
@@ -204,7 +204,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "615b1942653f5e99af1738e07099ac81908116c4"
+      "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
     }
   ],
   "trace_spans_count": 3,
@@ -212,8 +212,8 @@
   "slos_count": 3,
   "test_suite_execution": {
     "target": "tests/reliability/test_runtime_observability.py",
-    "passed_tests": 84,
+    "passed_tests": 86,
     "exit_code": 0,
-    "duration_seconds": 39.7
+    "duration_seconds": 69.35
   }
 }
