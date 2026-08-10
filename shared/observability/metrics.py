@@ -384,6 +384,15 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     MetricDefinition(
         "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",), min_value=0.0, owner="sre-platform"
     ),
+    MetricDefinition(
+        "alert_delivery_failure_count",
+        C,
+        Cat.ERROR,
+        "Alerts that could not be routed or delivered (a lost page)",
+        ("alert_id", "error_class"),
+        min_value=0.0,
+        owner="sre-platform",
+    ),
     # §5.2 Data / Model
     MetricDefinition(
         "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h", min_value=0.0, owner="data-platform"

@@ -6278,3 +6278,137 @@ def test_c1_containment_survives_a_failing_telemetry_logger() -> None:
     telemetry.logger = StructuredLogger("oday-api", sink=exploding_sink)
 
     assert TestClient(create_app(telemetry=telemetry)).get("/health").status_code == 200
+
+
+# --- C2: alert delivery must not pre-empt the caller's own error handling ----
+#
+# Regression cover for the CI break at ce0a3a70: the strict release-identity
+# contract added by this task made AlertRouter fail closed, and the DLQ
+# poison-isolation branch in apps/worker/assisted_listing_intake/worker.py pages
+# from inside its own failure handler. With no deployed RELEASE_SHA bound the
+# raise escaped *before* the job.dead_lettered outbox event was written, so a
+# misconfigured alerting stack silently changed how a poison job was handled
+# (tests/reliability/test_assisted_listing_intake_jobs.py, 2 failures).
+#
+# The contract stays fail-closed. Callers that page while handling a failure go
+# through try_trigger_alert, which loses the page loudly -- contained, counted
+# on alert_delivery_failure_count, and alerted on by the alert-delivery-failure
+# policy -- instead of replacing the failure being handled.
+
+
+def _c2_notification_service() -> Any:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+
+    return NotificationService(
+        repository=InMemoryNotificationRepository(),
+        adapter=OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok")),
+    )
+
+
+def _c2_registry() -> MetricsRegistry:
+    registry = MetricsRegistry()
+    for definition in PLATFORM_METRICS:
+        registry.register(definition)
+    return registry
+
+
+def _c2_delivery_failures(registry: MetricsRegistry) -> list[dict[str, Any]]:
+    return registry.snapshot().get("alert_delivery_failure_count", [])
+
+
+def test_c2_unbound_release_identity_is_contained_and_counted(monkeypatch: Any) -> None:
+    """No trusted deployed SHA: the page is lost, the caller is not."""
+    from shared.observability import try_trigger_alert
+
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+    registry = _c2_registry()
+
+    result = try_trigger_alert(
+        _c2_notification_service(),
+        "dlq-spike",
+        "Job job-1 stage CHECKING_IDENTITY exceeded max attempts",
+        registry=registry,
+    )
+
+    assert result is None
+    failures = _c2_delivery_failures(registry)
+    assert len(failures) == 1
+    assert failures[0]["value"] == 1.0
+    assert failures[0]["labels"] == {"alert_id": "dlq-spike", "error_class": "ValueError"}
+
+
+def test_c2_missing_alert_config_is_contained_at_construction(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Router construction validates the whole routing table, so it raises too."""
+    from shared.observability import try_trigger_alert
+
+    monkeypatch.setenv("RELEASE_SHA", "b" * 40)
+    registry = _c2_registry()
+
+    result = try_trigger_alert(
+        _c2_notification_service(),
+        "dlq-spike",
+        "detail",
+        alerts_cfg_path=str(tmp_path / "no_such_alerts.json"),
+        registry=registry,
+    )
+
+    assert result is None
+    assert _c2_delivery_failures(registry)[0]["labels"]["error_class"] == "ValueError"
+
+
+def test_c2_containment_does_not_suppress_a_deliverable_page(monkeypatch: Any) -> None:
+    """The guard must not swallow success: a bound identity still pages."""
+    from shared.observability import try_trigger_alert
+
+    valid_sha = "d" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    registry = _c2_registry()
+    service = _c2_notification_service()
+    service.set_preferences("oncall-engineer", ["webhook"])
+
+    result = try_trigger_alert(
+        service,
+        "dlq-spike",
+        "Job job-2 stage CHECKING_IDENTITY exceeded max attempts",
+        registry=registry,
+    )
+
+    assert result is not None
+    assert _c2_delivery_failures(registry) == []
+
+
+def test_c2_failure_recording_cannot_become_the_failure(monkeypatch: Any) -> None:
+    """The counter runs inside the caller's error handling; it must not raise."""
+    from shared.observability import try_trigger_alert
+
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+
+    class ExplodingRegistry(MetricsRegistry):
+        def increment(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+    assert (
+        try_trigger_alert(
+            _c2_notification_service(), "dlq-spike", "detail", registry=ExplodingRegistry()
+        )
+        is None
+    )
+
+
+def test_c2_dlq_poison_isolation_pages_through_the_contained_path() -> None:
+    """The worker's DLQ branch must not reintroduce the raw fail-closed call."""
+    import inspect
+
+    from apps.worker.assisted_listing_intake import worker as intake_worker
+
+    source = inspect.getsource(intake_worker)
+    assert "try_trigger_alert(" in source
+    assert "AlertRouter(" not in source

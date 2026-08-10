@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any
@@ -8,6 +9,11 @@ from typing import Any
 from modules.notifications.application.service import NotificationService
 
 _FULL_SHA_REGEX = re.compile(r"^[0-9a-fA-F]{40}$")
+
+# Counts pages that were routed but never delivered. See try_trigger_alert.
+ALERT_DELIVERY_FAILURE_METRIC = "alert_delivery_failure_count"
+
+_logger = logging.getLogger(__name__)
 
 
 def is_valid_full_sha(sha: str | None) -> bool:
@@ -290,3 +296,72 @@ class AlertRouter:
             severity=mapped_severity,
             dedup_key=f"{alert_id}:{routed['release_sha'][:8]}:{context_details[:30]}",
         )
+
+
+def _record_alert_delivery_failure(
+    alert_id: str, exc: BaseException, registry: Any | None = None
+) -> None:
+    """Count and log a lost page.
+
+    Runs inside the caller's own failure handling, so it must not raise: the
+    failure report must not become the failure.
+    """
+    try:
+        # Imported here, not at module scope: shared.observability.metrics and
+        # .watch_window already import each other, and this module is the first
+        # one the package __init__ pulls in.
+        from shared.observability.metrics import default_registry
+
+        reg = registry if registry is not None else default_registry()
+        reg.increment(
+            ALERT_DELIVERY_FAILURE_METRIC,
+            labels={"alert_id": str(alert_id), "error_class": type(exc).__name__},
+        )
+    except Exception:
+        pass
+    try:
+        _logger.error(
+            "alert_delivery_failed alert_id=%s error_class=%s detail=%s",
+            alert_id,
+            type(exc).__name__,
+            exc,
+        )
+    except Exception:
+        pass
+
+
+def try_trigger_alert(
+    notification_service: NotificationService,
+    alert_id: str,
+    context_details: str,
+    *,
+    release_sha: str | None = None,
+    alerts_cfg_path: str | None = None,
+    registry: Any | None = None,
+) -> str | None:
+    """Route an alert from a terminal error path, containing delivery failures.
+
+    ``AlertRouter`` is deliberately fail-closed: a missing config, an unmapped
+    severity, or an unbound release identity raises rather than paging with
+    untrusted provenance. That contract is right for a caller whose only job is
+    to page, and wrong for one that pages *while* handling a failure of its own
+    -- the DLQ poison-isolation branch raises before the dead-letter event is
+    written, so a misconfigured alerting stack silently changes how a poison
+    job is handled. Losing the page is bad; losing the dead-letter is worse.
+
+    Router construction is inside the guard, not just the trigger: config
+    loading validates the whole routing table and raises there too.
+
+    On failure this records ``alert_delivery_failure_count`` and returns None,
+    so the page is lost loudly and countably rather than silently.
+    """
+    try:
+        router = AlertRouter(
+            notification_service=notification_service,
+            alerts_cfg_path=alerts_cfg_path,
+            release_sha=release_sha,
+        )
+        return router.trigger_alert(alert_id, context_details, release_sha=release_sha)
+    except Exception as exc:
+        _record_alert_delivery_failure(alert_id, exc, registry)
+        return None

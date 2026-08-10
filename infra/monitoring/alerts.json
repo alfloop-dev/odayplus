@@ -66,6 +66,15 @@
       "release_identity_bound": true
     },
     {
+      "id": "alert-delivery-failure",
+      "name": "Alert delivery failure",
+      "severity": "P1",
+      "metric": "alert_delivery_failure_count",
+      "condition": "any alert_delivery_failure_count sample in production: a page was raised and never delivered",
+      "runbook": "docs/runbooks/observability-and-runbook.md#alert-delivery-failure",
+      "release_identity_bound": true
+    },
+    {
       "id": "model-drift-high",
       "name": "Model drift high",
       "severity": "P2",

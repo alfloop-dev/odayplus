@@ -349,6 +349,71 @@ def main() -> None:
     ):
         alert_release_identity_verified = False
 
+    # 4c. Fail-closed routing must not pre-empt a caller that is already
+    # handling a failure. The DLQ poison-isolation branch pages from inside its
+    # own error handler, so with no deployed SHA bound the fail-closed raise
+    # escaped before the dead-letter event was written. try_trigger_alert
+    # contains the delivery failure and counts it instead.
+    from shared.observability.alerts import ALERT_DELIVERY_FAILURE_METRIC, try_trigger_alert
+
+    containment_reg = MetricsRegistry()
+    for m in PLATFORM_METRICS:
+        containment_reg.register(m)
+
+    containment_service = NotificationService(
+        repository=InMemoryNotificationRepository(),
+        adapter=OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok")),
+    )
+    containment_service.set_preferences("oncall-engineer", ["webhook"])
+
+    old_env_sha = os.environ.pop("RELEASE_SHA", None)
+    old_env_trusted = os.environ.pop("TRUSTED_DEPLOYED_RELEASE_SHA", None)
+    try:
+        unbound_delivery = try_trigger_alert(
+            containment_service,
+            "dlq-spike",
+            "poison job isolated at stage CHECKING_IDENTITY",
+            registry=containment_reg,
+        )
+    finally:
+        if old_env_sha:
+            os.environ["RELEASE_SHA"] = old_env_sha
+        if old_env_trusted:
+            os.environ["TRUSTED_DEPLOYED_RELEASE_SHA"] = old_env_trusted
+
+    lost_page_series = containment_reg.snapshot().get(ALERT_DELIVERY_FAILURE_METRIC, [])
+    bound_delivery = try_trigger_alert(
+        containment_service,
+        "dlq-spike",
+        "poison job isolated at stage CHECKING_IDENTITY",
+        release_sha=git_sha,
+        registry=containment_reg,
+    )
+
+    alert_delivery_containment_detail = {
+        "unbound_identity_returns_none_instead_of_raising": unbound_delivery is None,
+        "lost_page_counted_on": ALERT_DELIVERY_FAILURE_METRIC,
+        "lost_page_series": lost_page_series,
+        "bound_identity_still_delivers": bound_delivery is not None,
+        "delivery_failure_alert_policy": next(
+            (
+                a["id"]
+                for a in alerts_data.get("alerts", [])
+                if a.get("metric") == ALERT_DELIVERY_FAILURE_METRIC
+            ),
+            None,
+        ),
+    }
+    alert_delivery_containment_verified = bool(
+        alert_delivery_containment_detail["unbound_identity_returns_none_instead_of_raising"]
+        and alert_delivery_containment_detail["bound_identity_still_delivers"]
+        and len(lost_page_series) == 1
+        and lost_page_series[0]["value"] == 1.0
+        and lost_page_series[0]["labels"]
+        == {"alert_id": "dlq-spike", "error_class": "ValueError"}
+        and alert_delivery_containment_detail["delivery_failure_alert_policy"]
+    )
+
     # 5. End-to-End Tracing Verification
     telemetry = Telemetry("oday-obs-verifier", logger=logger, metrics=reg)
     ctx = TraceContext(
@@ -390,7 +455,15 @@ def main() -> None:
     ac1_status = "PASSED" if signal_ownership_verified else "FAILED"
     ac2_status = "PASSED" if sensitive_redaction_verified else "FAILED"
     ac3_status = "PASSED" if bounded_cardinality_verified else "FAILED"
-    ac4_status = "PASSED" if (all_anchors_valid and alert_release_identity_verified) else "FAILED"
+    ac4_status = (
+        "PASSED"
+        if (
+            all_anchors_valid
+            and alert_release_identity_verified
+            and alert_delivery_containment_verified
+        )
+        else "FAILED"
+    )
     ac5_status = "PASSED" if (pytest_res.returncode == 0 and passed_count > 0) else "FAILED"
 
     overall_passed = all([
@@ -399,6 +472,7 @@ def main() -> None:
         bounded_cardinality_verified,
         all_anchors_valid,
         alert_release_identity_verified,
+        alert_delivery_containment_verified,
         pytest_res.returncode == 0,
         passed_count > 0,
     ])
@@ -438,6 +512,8 @@ def main() -> None:
         "alert_runbook_anchors_verified": all_anchors_valid,
         "alert_release_identity_verified": alert_release_identity_verified,
         "release_identity_flag_detail": release_identity_flag_detail,
+        "alert_delivery_containment_verified": alert_delivery_containment_verified,
+        "alert_delivery_containment_detail": alert_delivery_containment_detail,
         "alert_runbook_linkage_count": len(alerts_summary),
         "alerts": alerts_summary,
         "trace_spans_count": len(exported_spans),
@@ -469,7 +545,7 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 | 1 | Required signals have stable names and owners | {len(ownership_matrix)} metrics owned across {len(ownership_gate_detail["distinct_owning_teams"])} teams, and the gate is provably able to fail: constructing a metric with an omitted or blank owner raises | **{ac1_status}** |
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **{ac2_status}** |
 | 3 | Cardinality is bounded | Route labels normalized to {route_resolver.template_count} registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **{ac3_status}** |
-| 4 | Alerts link to runbooks and release identity | All {len(alerts_summary)} alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA`; the binding flag is derived, and reports `False` when the trusted identity rotates | **{ac4_status}** |
+| 4 | Alerts link to runbooks and release identity | All {len(alerts_summary)} alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA`; the binding flag is derived, and reports `False` when the trusted identity rotates; a page lost to that fail-closed gate is contained and counted rather than pre-empting the caller | **{ac4_status}** |
 | 5 | Configuration and emission tests are reproducible | {passed_count}/{passed_count} pytest reliability/observability tests passing dynamically in {duration_s}s | **{ac5_status}** |
 
 ---
@@ -477,7 +553,7 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 ## 2. Telemetry Signal Catalog Overview
 
 ### Categories & Signal Ownership Coverage (`shared/observability/metrics.py`)
-- **Technical & SRE** (`sre-platform` / `sre-messaging`): `api_request_count`, `api_error_count`, `api_latency_ms`, `db_query_latency_ms`, `job_duration_seconds`, `job_failure_count`, `event_consumer_lag`, `dlq_message_count`, `external_connector_failure_count`, `deployment_watch_window_status`
+- **Technical & SRE** (`sre-platform` / `sre-messaging`): `api_request_count`, `api_error_count`, `api_latency_ms`, `db_query_latency_ms`, `job_duration_seconds`, `job_failure_count`, `event_consumer_lag`, `dlq_message_count`, `external_connector_failure_count`, `alert_delivery_failure_count`, `deployment_watch_window_status`
 - **Data & Freshness** (`data-platform`): `data_freshness_hours`, `data_quality_score`, `feature_null_rate`
 - **Model Telemetry** (`ml-platform`): `prediction_count`, `model_error_metric`, `prediction_interval_coverage`, `drift_score`, `model_alias_change_count`
 - **Solver & Business KPIs** (`business-analytics`): `heatzone_topk_adoption_rate`, `listing_dedup_accuracy`, `sitescore_realization_rate`, `forecast_alert_precision`, `intervention_recovery_rate`, `price_hard_constraint_violation_count`, `adlift_incremental_gm`, `avm_interval_coverage`, `netplan_plan_adoption_rate`, `model_adoption_rate`
@@ -556,6 +632,15 @@ demonstrated nothing. Both now derive from a probe recorded in this run.
 |---|---|---|---|
 | Metric ownership | `MetricDefinition.owner` defaulted to `"sre-platform"`, so every construction site passed while possibly naming a team that had never agreed to carry the signal | `owner` has no plausible default; `__post_init__` rejects omitted or blank. `MetricsRegistry.register` keeps its own check for definitions restored by unpickling, which bypasses `__init__` | omitted owner rejected: `{ownership_gate_detail["omitted_owner_rejected"]}`; blank owner rejected: `{ownership_gate_detail["blank_owner_rejected"]}`; {len(ownership_matrix)} metrics across {ownership_gate_detail["distinct_owning_teams"]} |
 | Alert release identity | `route_alert` emitted the literal `True`, so this document's own check read back its assumption | derived at emission from the trusted deployed identity; a rotated or cleared SHA downgrades the annotation instead of certifying it | flag reports `False` under rotation: `{release_identity_flag_detail["flag_is_derived_not_literal"]}`; page still routed: `{release_identity_flag_detail["page_still_routed_when_downgraded"]}` |
+
+| Alert delivery | a caller that pages *while* handling its own failure inherited the fail-closed raise: the DLQ poison-isolation branch lost its dead-letter event when no deployed SHA was bound | `try_trigger_alert` contains router construction and delivery, counts the lost page on `alert_delivery_failure_count`, and returns `None` so the caller's error path completes | unbound identity returns `None` instead of raising: `{alert_delivery_containment_detail["unbound_identity_returns_none_instead_of_raising"]}`; lost page counted: `{[s["labels"] for s in lost_page_series]}`; bound identity still delivers: `{alert_delivery_containment_detail["bound_identity_still_delivers"]}`; policy paging on it: `{alert_delivery_containment_detail["delivery_failure_alert_policy"]}` |
+
+A contained page is not a silent one. The count carries the `alert_id` and the
+`error_class` that suppressed it, `alert-delivery-failure` (P1) pages on any
+sample, and the runbook section of the same name says to triage the incidents
+whose pages were dropped, since they are not re-sent. Containment is scoped to
+callers whose own failure handling would otherwise be pre-empted; a caller whose
+only job is to page still gets the raise.
 
 The release-identity flag downgrades rather than raises. The config-declared
 binding is already gated ahead of it, and past that point suppressing a page
