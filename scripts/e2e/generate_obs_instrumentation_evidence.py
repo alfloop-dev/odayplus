@@ -194,7 +194,7 @@ def main() -> None:
             anchor_verified = anchor in slugs
         elif runbook_exists and not anchor:
             anchor_verified = True
-        
+
         if not (runbook_exists and anchor_verified):
             all_anchors_valid = False
 
@@ -215,7 +215,23 @@ def main() -> None:
             "release_sha": routed.get("release_sha"),
         })
 
-    # Mutation test: unbound/missing release_sha must fail closed with ValueError
+    # Mutation test: malformed SHA, mismatched SHA, or unbound release_sha must fail closed with ValueError
+    # 1. Malformed SHA caller input fails closed
+    try:
+        router.route_alert("api-availability-drop", release_sha="not-a-sha")
+        alert_release_identity_verified = False
+    except ValueError:
+        pass
+
+    # 2. Mismatched caller-supplied SHA fails closed
+    mismatched_sha = "0" * 40 if git_sha != "0" * 40 else "1" * 40
+    try:
+        router.route_alert("api-availability-drop", release_sha=mismatched_sha)
+        alert_release_identity_verified = False
+    except ValueError:
+        pass
+
+    # 3. Unbound router with no environment or instance SHA fails closed
     unbound_router = AlertRouter(notification_service=dummy_service, release_sha=None)
     old_env_sha = os.environ.pop("RELEASE_SHA", None)
     old_env_trusted = os.environ.pop("TRUSTED_DEPLOYED_RELEASE_SHA", None)
@@ -424,4 +440,3 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 
 if __name__ == "__main__":
     main()
-

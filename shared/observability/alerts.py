@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 from modules.notifications.application.service import NotificationService
+
+_FULL_SHA_REGEX = re.compile(r"^[0-9a-fA-F]{40}$")
+
+
+def is_valid_full_sha(sha: str | None) -> bool:
+    """Returns True iff sha is a valid 40-character hexadecimal git commit SHA."""
+    if not sha or not isinstance(sha, str):
+        return False
+    return bool(_FULL_SHA_REGEX.match(sha.strip()))
 
 
 class AlertRouter:
@@ -31,6 +41,8 @@ class AlertRouter:
             or os.getenv("RELEASE_SHA")
             or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
         )
+        if self.release_sha:
+            self.release_sha = self.release_sha.strip()
         self._load_config()
 
     def _load_config(self) -> None:
@@ -41,11 +53,32 @@ class AlertRouter:
             self.config = json.load(f)
         self.validate_routing_config()
 
+    def get_trusted_release_sha(self) -> str | None:
+        """Resolves the trusted deployed or configured release SHA from instance attribute, environment, or config."""
+        sha = (
+            self.release_sha
+            or os.getenv("RELEASE_SHA")
+            or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
+        )
+        if not sha and hasattr(self, "config") and isinstance(self.config, dict):
+            rel_id = self.config.get("release_identity", {})
+            if isinstance(rel_id, dict):
+                exact = rel_id.get("exact_sha_binding")
+                if exact and isinstance(exact, str):
+                    expanded = os.path.expandvars(exact)
+                    if expanded and not expanded.startswith("$"):
+                        sha = expanded
+        if sha and isinstance(sha, str):
+            sha = sha.strip()
+            if is_valid_full_sha(sha):
+                return sha
+        return None
+
     def validate_routing_config(self) -> None:
         """Validates that alert routing configuration and release identity contract are present and fail-closed.
 
         If routing or default_receiver is missing/empty, or an alert severity is unmapped,
-        or release_identity is missing/unbound, a ValueError is raised to fail closed.
+        or release_identity is missing/unbound/invalid, a ValueError is raised to fail closed.
         """
         if not self.alerts_cfg_path or not os.path.exists(self.alerts_cfg_path):
             raise ValueError(f"Alert configuration file missing or not found at '{self.alerts_cfg_path}'. Fail-closed gate enforced.")
@@ -56,6 +89,25 @@ class AlertRouter:
         release_identity = self.config.get("release_identity")
         if not release_identity or not isinstance(release_identity, dict) or not release_identity.get("bound"):
             raise ValueError("Alert release identity configuration is missing or unbound. Fail-closed gate enforced.")
+
+        if not release_identity.get("enabled"):
+            raise ValueError("Alert release identity configuration is not enabled. Fail-closed gate enforced.")
+
+        if not release_identity.get("label_key"):
+            raise ValueError("Alert release identity configuration missing label_key. Fail-closed gate enforced.")
+
+        if "exact_sha_binding" not in release_identity:
+            raise ValueError("Alert release identity configuration missing exact_sha_binding. Fail-closed gate enforced.")
+
+        exact_binding = release_identity.get("exact_sha_binding")
+        if isinstance(exact_binding, str):
+            expanded_binding = os.path.expandvars(exact_binding)
+            if not expanded_binding.startswith("$") and is_valid_full_sha(expanded_binding):
+                trusted = self.get_trusted_release_sha()
+                if trusted and trusted.lower() != expanded_binding.lower():
+                    raise ValueError(
+                        f"Configured exact_sha_binding '{expanded_binding}' does not match trusted deployed release SHA '{trusted}'. Fail-closed gate enforced."
+                    )
 
         routing = self.config.get("routing")
         if not routing or not isinstance(routing, dict):
@@ -83,16 +135,41 @@ class AlertRouter:
                     f"On-call route for alert '{alert_id}' (severity '{severity}') is unconfigured. Fail-closed gate enforced."
                 )
 
+            if release_identity.get("bound") and not alert.get("release_identity_bound"):
+                raise ValueError(
+                    f"Alert '{alert_id}' release_identity_bound is missing or false. Fail-closed gate enforced."
+                )
+
     def resolve_release_sha(self, release_sha: str | None = None) -> str:
-        sha = (
-            release_sha
-            or self.release_sha
-            or os.getenv("RELEASE_SHA")
-            or os.getenv("TRUSTED_DEPLOYED_RELEASE_SHA")
-        )
-        if not sha or not isinstance(sha, str) or not sha.strip():
-            raise ValueError("Release identity contract violation: release_sha is unbound or invalid. Fail-closed gate enforced.")
-        return sha.strip()
+        """Resolves and strictly validates the release SHA identity.
+
+        Ensures full 40-char hex SHA formatting, prevents untrusted caller overrides,
+        and enforces equality with the trusted deployed/configured identity.
+        """
+        trusted_sha = self.get_trusted_release_sha()
+
+        if release_sha is not None:
+            candidate_sha = release_sha.strip() if isinstance(release_sha, str) else ""
+            if not is_valid_full_sha(candidate_sha):
+                raise ValueError(
+                    f"Release identity contract violation: release_sha '{release_sha}' is not a valid 40-character hex SHA. Fail-closed gate enforced."
+                )
+            if not trusted_sha:
+                raise ValueError(
+                    "Release identity contract violation: router has no trusted deployed release SHA bound. Caller cannot supply untrusted release identity override. Fail-closed gate enforced."
+                )
+            if candidate_sha.lower() != trusted_sha.lower():
+                raise ValueError(
+                    f"Release identity contract violation: caller-supplied release SHA '{candidate_sha}' does not match trusted deployed release SHA '{trusted_sha}'. Fail-closed gate enforced."
+                )
+            return candidate_sha
+
+        if not trusted_sha or not is_valid_full_sha(trusted_sha):
+            raise ValueError(
+                "Release identity contract violation: release_sha is unbound or invalid. Fail-closed gate enforced."
+            )
+
+        return trusted_sha
 
     def get_alert_definition(self, alert_id: str) -> dict[str, Any] | None:
         for alert in self.config.get("alerts", []):
@@ -106,6 +183,11 @@ class AlertRouter:
             raise ValueError(f"Alert ID {alert_id} not found in configuration.")
 
         eff_sha = self.resolve_release_sha(release_sha)
+
+        if alert.get("release_identity_bound") is not True:
+            raise ValueError(
+                f"Alert '{alert_id}' release_identity_bound is not True in config. Fail-closed gate enforced."
+            )
 
         severity = alert.get("severity", "P3")
         routing = self.config.get("routing", {})
@@ -167,4 +249,3 @@ class AlertRouter:
             severity=mapped_severity,
             dedup_key=f"{alert_id}:{routed['release_sha'][:8]}:{context_details[:30]}",
         )
-

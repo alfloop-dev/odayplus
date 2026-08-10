@@ -824,6 +824,62 @@ def test_alert_release_identity_mutation_fails_closed(monkeypatch: Any) -> None:
         router.validate_routing_config()
 
 
+def test_alert_router_strict_sha_validation_and_caller_override_rejection(
+    monkeypatch: Any,
+) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    trusted_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", trusted_sha)
+    router = AlertRouter(notification_service=service)
+
+    # 1. Malformed SHA inputs fail closed with ValueError
+    malformed_inputs = ["not-a-sha", "12345", "a" * 39, "a" * 41, "g" * 40, ""]
+    for bad_sha in malformed_inputs:
+        with pytest.raises(ValueError, match="is not a valid 40-character hex SHA"):
+            router.resolve_release_sha(bad_sha)
+        with pytest.raises(ValueError, match="is not a valid 40-character hex SHA"):
+            router.route_alert("audit-write-failure", release_sha=bad_sha)
+
+    # 2. Caller input overriding router/deployed SHA fails closed with ValueError
+    mismatched_sha = "b" * 40
+    with pytest.raises(ValueError, match="does not match trusted deployed release SHA"):
+        router.resolve_release_sha(mismatched_sha)
+    with pytest.raises(ValueError, match="does not match trusted deployed release SHA"):
+        router.route_alert("audit-write-failure", release_sha=mismatched_sha)
+
+    # 3. Unbound router rejects caller-supplied SHA override
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+    unbound_router = AlertRouter(notification_service=service, release_sha=None)
+    with pytest.raises(ValueError, match="router has no trusted deployed release SHA bound"):
+        unbound_router.resolve_release_sha("a" * 40)
+
+    # 4. Valid matching caller-supplied SHA succeeds
+    bound_router = AlertRouter(notification_service=service, release_sha=trusted_sha)
+    assert bound_router.resolve_release_sha(trusted_sha) == trusted_sha
+    routed = bound_router.route_alert("audit-write-failure", release_sha=trusted_sha)
+    assert routed["release_sha"] == trusted_sha
+
+    # 5. Config validation for exact_sha_binding and per-alert release_identity_bound
+    bound_router.config["release_identity"]["exact_sha_binding"] = "c" * 40
+    with pytest.raises(ValueError, match="does not match trusted deployed release SHA"):
+        bound_router.validate_routing_config()
+
+    bound_router.config["release_identity"]["exact_sha_binding"] = "${RELEASE_SHA}"
+    bound_router.config["alerts"][0]["release_identity_bound"] = False
+    with pytest.raises(ValueError, match="release_identity_bound is missing or false"):
+        bound_router.validate_routing_config()
+
 
 def test_release_sha_dashboard_traceability_and_watch_window_receipt(
     tmp_path: Path, monkeypatch: Any
@@ -5745,4 +5801,3 @@ def test_b42_alerts_runbook_anchors_and_headings_are_valid() -> None:
             header_lines = [line.lstrip("#").strip() for line in content.splitlines() if line.startswith("#")]
             slugs = {header_to_slug(h) for h in header_lines if h}
             assert anchor in slugs, f"Alert {alert['id']} anchor #{anchor} not found in {file_part}. Found anchors: {sorted(slugs)}"
-
