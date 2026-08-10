@@ -5,13 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from check_task_dependency_resolvability import check, load_archive, load_board
-from migrate_task_dependency_graph import (
-    DEPENDENCY_MIGRATION_MAP,
-    migrate_dependencies,
-    run_migration,
-)
+from migrate_task_dependency_graph import migrate_dependencies
 
 
 def write_board(tmp_path: Path, tasks: list[dict]) -> Path:
