@@ -5,8 +5,8 @@
 - **Gap ID**: `GAP-P1-008` (Observability production wiring)
 - **Helper Kind**: `acceptance_packet`
 - **Task Class**: `sidecar`
-- **Owner**: `Antigravity5`
-- **Reviewer**: `Claude2`
+- **Owner**: `Antigravity2`
+- **Reviewer**: `Claude`
 - **Parent Task Owner**: `Antigravity`
 - **Parent Task Reviewer**: `Antigravity2`
 - **Parent Task Approved HEAD**: `96f94cda56d509f44eb5929997b3ab7a67f1c65c` (Canonical last_approved_head; parent implementation commit `f6c344972881f1c7a5c9aee37c11869efd56dde2` merged via PR #558 at `ddded7ed586d68ae2ab42b932289b4c85c051175`)
@@ -107,10 +107,10 @@ The parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` must strictly satisfy all fail
 
 ## 6. Handoff & Closeout Instructions for Parent Owner
 
-- **Assigned Reviewer**: `Claude2`
+- **Assigned Reviewer**: `Claude`
 - **Parent Task Owner**: `Antigravity`
 - **Parent Task Reviewer**: `Antigravity2`
-- **Sidecar Owner Verification**: `Antigravity5` (Rebased cleanly onto latest `origin/dev` commit `298e81d5ca0bb03ab97b788101d34642ca39227b`; verified 85 pytest observability/telemetry/alert/dlq tests passed 100%; ruff check clean; git diff --check clean)
+- **Sidecar Owner Verification**: `Antigravity2` (Rebased cleanly onto latest `origin/dev` tip commit `a6acec5ec72dd4e4ff220299f28d70039a0b941f`; verified observability/telemetry/alert/dlq tests; ruff check clean; git diff --check clean)
 - **Handoff Instructions**:
   1. Review this support packet for alignment with `ODP-PLAN-OBSERVABILITY-LIVE-001` execution plan and merged PR #558.
   2. Ensure all 6 signal families (API, Worker, Event/DLQ, Model, Solver, Business KPI) are implemented according to Section 2.
