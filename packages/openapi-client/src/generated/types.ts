@@ -104,6 +104,14 @@ export type ApproveFlagPayload = {
   approver: string;
 };
 
+/** AssignPayload */
+export type AssignPayload = {
+  actor: string;
+  assignee: string;
+  expected_version?: number | null;
+  role?: string | null;
+};
+
 /** AssignmentReceipt */
 export type AssignmentReceipt = {
   assignment_id: string;
@@ -1297,6 +1305,12 @@ export type TransitionReceipt = {
   version_after: number;
 };
 
+/** UnassignPayload */
+export type UnassignPayload = {
+  actor: string;
+  expected_version?: number | null;
+};
+
 /** UnmergeRequest */
 export type UnmergeRequest = {
   original_decision_id: string;
@@ -1472,6 +1486,7 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}": ["GET"],
   "/api/v1/interventions/{intervention_id}/action": ["POST"],
   "/api/v1/interventions/{intervention_id}/approve": ["POST"],
+  "/api/v1/interventions/{intervention_id}/assign": ["POST"],
   "/api/v1/interventions/{intervention_id}/close": ["POST"],
   "/api/v1/interventions/{intervention_id}/conflict-check": ["POST"],
   "/api/v1/interventions/{intervention_id}/eligibility": ["POST"],
@@ -1480,6 +1495,7 @@ export const API_PATHS = {
   "/api/v1/interventions/{intervention_id}/label": ["GET"],
   "/api/v1/interventions/{intervention_id}/outcomes": ["POST"],
   "/api/v1/interventions/{intervention_id}/submit": ["POST"],
+  "/api/v1/interventions/{intervention_id}/unassign": ["POST"],
   "/api/v1/jobs": ["POST"],
   "/api/v1/jobs/{job_id}": ["GET"],
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
