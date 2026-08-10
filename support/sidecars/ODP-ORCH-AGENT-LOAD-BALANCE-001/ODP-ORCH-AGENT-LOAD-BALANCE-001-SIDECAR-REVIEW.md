@@ -5,12 +5,13 @@
 - Sidecar task: `ODP-ORCH-AGENT-LOAD-BALANCE-001-SIDECAR-REVIEW`
 - Parent task: `ODP-ORCH-AGENT-LOAD-BALANCE-001`
 - Helper kind: `review_packet`
-- Sidecar owner / current reviewer: `Codex2` / `Claude2`
+- Sidecar owner / current reviewer: `Codex2` / `Codex`
 - Parent owner / reviewer: `Claude` / `Antigravity2`
 - Parent PR: `#710`
 - Parent branch: `origin/task/ODP-ORCH-AGENT-LOAD-BALANCE-001`
 - Exact reviewed parent HEAD: `7d786d752c4fa1b9e2c1232d1457aca8e52161e8`
 - Evidence captured: `2026-08-08T13:22:50Z`
+- CI repair evidence refreshed: `2026-08-10`
 - Scope: support artifact and reviewer handoff only; no canonical truth, supervisor implementation, registry, config, or governance file is changed by this sidecar.
 
 ## Executive Disposition
@@ -113,16 +114,47 @@ Option 3 most closely matches the phrase “least loaded agent,” but it broade
 
 ## Handoff
 
-- Sidecar reviewer: `Claude2`
+- Sidecar reviewer: `Codex`
 - Parent reviewer: `Antigravity2`
-- Requested action: re-verify that this remains a support-only packet after the mandatory base compose, while retaining the historical reviewer disposition below.
+- Requested action: re-verify that this remains a support-only packet after the
+  CI repair refresh, while retaining the historical reviewer disposition below.
 - Parent owner `Claude` decides whether and how to absorb this support finding into the mainline task.
+
+## CI Repair and Re-review Evidence
+
+The orchestrator cleared the earlier approval and requeued this sidecar on
+2026-08-10 because merged PR `#726` had a failed `performance-gate` at approved
+head `f97083d7`. That run does not show a sidecar-content failure:
+
+- `orchestrator`, `product`, and `product-e2e-gate` passed.
+- The performance artifact contains successful attempt 1 and attempt 2 reports:
+  P95 `0.661s` and `0.481s`, respectively, against the unchanged `3.0s` budget,
+  with 150/150 successful requests and zero failures in each attempt.
+- No attempt 3 report was produced before the job exited. The retained GitHub
+  evidence exposes only exit code 1, so this packet does not assert an unproven
+  root cause or relabel the incomplete run as a product regression.
+
+The refreshed branch starts at current `origin/dev` head `273a7705`. Both CI
+runs attached to that exact commit (`31385506416` and `31386770455`) report a
+successful `performance-gate`. Independent local execution of the same marked
+test in three separate processes also passed three times, with P95 values
+`1.405s`, `1.343s`, and `1.430s`; every run completed 150/150 requests with
+zero failures under the `3.0s` budget:
+
+```text
+uv run pytest -q -m performance tests/performance  # run three times
+3 passed each run; performance report passed=true each run
+```
+
+This repair changes only the support packet and reviewer handoff metadata. It
+does not modify the performance workflow, load-balancing implementation, tests,
+registry, status truth, or any canonical contract.
 
 ## Reviewer Disposition and Closeout Record
 
 The previous sidecar reviewer, `Claude`, approved the packet at sidecar HEAD `f74a97ac` after independently re-verifying every packet claim against unchanged parent HEAD `7d786d75`. The reviewer selected Option 1 for the parent decision point: accept owner backlog as a deliberately coarse proxy for PR `#710`, because the reviewer path is not regressed from `origin/dev`, and track role-aware counting (Option 3) as a follow-up. The parent reviewer should require the selector docstring to state explicitly that the metric counts owner-routed tasks only. The detailed decision is recorded in merged sidecar PR `#722`, whose reviewed head is `c33fd2b4` and merge commit is `07167d47`.
 
-For this finalize dispatch, the task owner fetched and composed current base `origin/dev` at `07167d47` through merge commit `dd9a145e`, then pushed normally. This preserves both the approved task history and the newer local task merge instead of resetting, discarding, or force-updating either lineage. Because that required compose advanced the branch beyond the previously approved head, the current assigned reviewer `Claude2` must stamp the new support-only head before owner finalization.
+For this finalize dispatch, the task owner fetched and composed current base `origin/dev` at `07167d47` through merge commit `dd9a145e`, then pushed normally. This preserves both the approved task history and the newer local task merge instead of resetting, discarding, or force-updating either lineage. Because that required compose advanced the branch beyond the previously approved head, the then-assigned reviewer `Claude2` was required to stamp the new support-only head before owner finalization. PR `#726` subsequently merged at approved head `f97083d7`; the 2026-08-10 CI repair requeue cleared that approval and assigned the refreshed packet to `Codex` for a new review stamp.
 
 At finalization time, GitHub reports parent PR `#710` as closed without merge. This packet remains historical review evidence and does not claim that the parent runtime change entered `dev`.
 
