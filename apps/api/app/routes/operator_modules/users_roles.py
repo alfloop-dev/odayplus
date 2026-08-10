@@ -193,6 +193,11 @@ def create_user_role_sub_router(
     ) -> dict[str, Any]:
         svc = get_svc(request)
         server_actor = getattr(request.state, "operator_subject_id", None) or "operator"
+        partition_tenant = (
+            getattr(request.state, "operator_tenant_id", None)
+            or getattr(request.state, "tenant_id", None)
+            or request.headers.get("x-tenant-id")
+        )
         try:
             user = svc.set_user_status(
                 subject_id=subject_id,
@@ -200,6 +205,7 @@ def create_user_role_sub_router(
                 actor_name=server_actor,
                 reason=body.reason,
                 correlation_id=getattr(request.state, "correlation_id", None),
+                tenant_id=partition_tenant,
             )
             return {
                 "user": user,

@@ -395,6 +395,10 @@ class UserRoleManagementService:
                 )
 
         resolved_tenant = client_tenant or tenant_id or existing_tenant or "tenant-default"
+        # Audit events are partitioned by the caller's tenant, not by the record's
+        # scope tenant. A tenant-restricted caller editing a `tenant-default`
+        # seeded principal must still see the event in its own audit trail.
+        audit_tenant = tenant_id or resolved_tenant
 
         updated_scope = {
             "tenant_id": resolved_tenant,
@@ -437,7 +441,8 @@ class UserRoleManagementService:
                 correlation_id=cid,
                 metadata={
                     "subject_id": subject_id,
-                    "tenant_id": resolved_tenant,
+                    "tenant_id": audit_tenant,
+                    "scope_tenant_id": resolved_tenant,
                     "roles_before": before_state.get("roles") if before_state else None,
                     "roles_after": validated_roles,
                     "scope_before": before_state.get("scope") if before_state else None,
@@ -459,18 +464,31 @@ class UserRoleManagementService:
         actor_name: str | None = None,
         reason: str = "",
         correlation_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> dict[str, Any]:
         """Activate or deactivate a user account."""
         user = self.get_user(subject_id)
         if status not in {"active", "disabled"}:
             raise UserRolePolicyError("Status must be 'active' or 'disabled'")
 
+        user_tenant = (user.get("scope") or {}).get("tenant_id", "tenant-default")
+        if (
+            tenant_id
+            and user_tenant
+            and user_tenant != "tenant-default"
+            and user_tenant != tenant_id
+        ):
+            raise UserRolePolicyError(
+                f"Cannot modify user belonging to tenant '{user_tenant}'; caller is restricted to tenant '{tenant_id}'."
+            )
+
         user["status"] = status
         user["updated_at"] = datetime.now(UTC).isoformat()
         user["updated_by"] = actor_name or "system"
         self._users[subject_id] = user
 
-        user_tenant = (user.get("scope") or {}).get("tenant_id", "tenant-default")
+        # Same partitioning rule as save_user: the caller's tenant owns the event.
+        audit_tenant = tenant_id or user_tenant
 
         cid = correlation_id or str(uuid4())
         self._record_audit_event(
@@ -483,7 +501,8 @@ class UserRoleManagementService:
                 correlation_id=cid,
                 metadata={
                     "subject_id": subject_id,
-                    "tenant_id": user_tenant,
+                    "tenant_id": audit_tenant,
+                    "scope_tenant_id": user_tenant,
                     "status": status,
                     "reason": reason,
                 },

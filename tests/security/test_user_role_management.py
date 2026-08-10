@@ -432,6 +432,109 @@ def test_save_user_allows_tenant_default_seeded_principal_under_tenant_restricti
     )
     assert updated["subject_id"] == "ops-lead"
     assert updated["scope"]["tenant_id"] == "tenant-default"
+    # E1: the event must be partitioned by the caller's tenant, not the scope tenant.
+    events = service.get_audit_trail(tenant_id="tenant-a")
+    assert [e["metadata"]["subject_id"] for e in events] == ["ops-lead"]
+    assert events[0]["metadata"]["scope_tenant_id"] == "tenant-default"
 
 
+def test_set_user_status_tenant_guard_and_audit_partition() -> None:
+    """Test E1: set_user_status honours the caller tenant for guard and audit key."""
+    service = UserRoleManagementService()
+    service.save_user(
+        subject_id="tenant-a-user",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-a"},
+        tenant_id="tenant-a",
+        reason="Create user in tenant A",
+    )
+
+    with pytest.raises(UserRolePolicyError, match="restricted to tenant 'tenant-b'"):
+        service.set_user_status(
+            subject_id="tenant-a-user",
+            status="disabled",
+            tenant_id="tenant-b",
+            reason="Cross tenant status toggle attempt",
+        )
+
+    # Toggling a tenant-default seeded principal as a tenant-a caller is allowed
+    # and lands in tenant-a's audit partition.
+    service.set_user_status(
+        subject_id="marketing-lead",
+        status="disabled",
+        tenant_id="tenant-a",
+        reason="Disable seeded principal from tenant-a console",
+    )
+    events = service.get_audit_trail(subject_id="marketing-lead", tenant_id="tenant-a")
+    assert len(events) == 1
+    assert events[0]["action"] == "USER_STATUS_UPDATED"
+    assert events[0]["metadata"]["scope_tenant_id"] == "tenant-default"
+
+
+def test_operator_router_ui_shaped_flow_leaves_visible_audit_trail() -> None:
+    """Test E1: the default UI create + status-toggle flow must be auditable end-to-end.
+
+    The UI posts scope.tenant_id='tenant-default' (the useState default in
+    UserRoleManagementController) while the console caller is restricted to
+    its own tenant. Both writes must show up in GET /operator/users/audit-trail.
+    """
+    router = create_operator_router(audit_log=InMemoryAuditLog())
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    client = TestClient(app)
+
+    admin_headers = {
+        "x-subject-id": "platform-admin-user",
+        "x-roles": "platform_admin",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "platform-admin",
+    }
+
+    res = client.post(
+        "/api/v1/operator/users",
+        headers=admin_headers,
+        json={
+            "subjectId": "new-ui-user",
+            "email": "new-ui-user@odayplus.com",
+            "name": "UI 建立的使用者",
+            "roles": ["operations_manager"],
+            "scope": {
+                "tenant_id": "tenant-default",
+                "brand_ids": [],
+                "region_ids": [],
+                "store_ids": [],
+                "clearance": "CONFIDENTIAL",
+            },
+            "reason": "Created from operator console",
+        },
+    )
+    assert res.status_code == 200, res.text
+
+    listed = client.get("/api/v1/operator/users", headers=admin_headers).json()
+    assert any(u["subject_id"] == "new-ui-user" for u in listed["users"])
+
+    audit = client.get(
+        "/api/v1/operator/users/audit-trail?subject_id=new-ui-user",
+        headers=admin_headers,
+    ).json()
+    assert audit["count"] == 1, f"create left no visible audit record: {audit}"
+    assert audit["events"][0]["action"] == "USER_CREATED"
+
+    res = client.post(
+        "/api/v1/operator/users/new-ui-user/status",
+        headers=admin_headers,
+        json={"status": "disabled", "reason": "Disabled from operator console"},
+    )
+    assert res.status_code == 200, res.text
+
+    audit = client.get(
+        "/api/v1/operator/users/audit-trail?subject_id=new-ui-user",
+        headers=admin_headers,
+    ).json()
+    assert audit["count"] == 2, f"status toggle left no visible audit record: {audit}"
+    assert [e["action"] for e in audit["events"]] == [
+        "USER_CREATED",
+        "USER_STATUS_UPDATED",
+    ]
 
