@@ -1,7 +1,9 @@
 # ODP-ORCH-WORKTREE-LEASE-RECOVERY-001 Evidence
 
-Owner: Codex  
-Reviewer: Antigravity4  
+Owner: Codex
+
+Reviewer: Antigravity4
+
 Affected task: `ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-ACCEPTANCE`
 
 ## Incident baseline
@@ -47,7 +49,7 @@ workspace_branch=task/ODP-PLAN-OBSERVABILITY-LIVE-001-SIDECAR-ACCEPTANCE
 workspace_head=666088fa0d70ee223e9d8dbe1b34a7e7ca269acc
 remote_head=666088fa0d70ee223e9d8dbe1b34a7e7ca269acc
 refresh_status=base_advance_rebase_required:local=666088fa0d70ee223e9d8dbe1b34a7e7ca269acc,base=93190a2e6a61b7f13ac0762873d131f425256f21
-last_used_at=2026-08-10T00:00:21Z
+last_used_at=2026-08-10T00:04:38Z
 ```
 
 `base_advance_rebase_required` is a successful, dispatchable refresh result;
@@ -61,6 +63,14 @@ runtime-state transaction lock. The persisted
 `worker_worktree_lease_blocks` mapping no longer contains
 `odp_plan_observability_live_001_sidecar_acceptance`, and the lease record now
 points to the rebuilt exact-head worktree above.
+
+The first manual clear overlapped a supervisor loop that had loaded its state
+before the recovery. That loop completed at `2026-08-10T00:04:34Z` and wrote
+its older 297-count snapshot once more. The recovery waited for that loop to
+finish, repeated the exact-head preflight, and cleared the streak during the
+following 15-second poll interval. This avoided restarting the supervisor or
+interrupting its active workers. The persisted post-loop state at
+`2026-08-10T00:04:38Z` again had no affected lease-block key.
 
 ## Scope boundary
 
