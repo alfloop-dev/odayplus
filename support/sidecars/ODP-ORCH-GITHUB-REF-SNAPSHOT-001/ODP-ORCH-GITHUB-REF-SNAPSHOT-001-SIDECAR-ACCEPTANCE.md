@@ -219,3 +219,65 @@ Assigned sidecar reviewer: `Claude`.
 Before using this packet for parent closeout, refresh all GitHub and runtime
 state in the observed-state table. The dated values above are deliberately a
 snapshot, not durable operational truth.
+
+## CI repair disposition — 2026-08-10
+
+This section records the evidence gathered after the orchestrator requeued the
+sidecar for PR #746's red CI context. It supplements rather than rewrites the
+dated 2026-08-09 observations above.
+
+### Attribution and delivery state
+
+- PR #746 changed only this support artifact and merged into `dev` on
+  2026-08-09 as `ebfe128e9d79061c8490331e096ebcf94eb2787d`; its approved head was
+  `71fb1ef761b6630f81ed972e78c7241c1855a1f8`.
+- The failing GitHub Actions context was `performance-gate` in run
+  `31312811122`, job `93243162437`. The recorded failing assertion was
+  `tests/performance/assisted_listing_intake/test_capacity.py::test_approved_capacity_and_slo_are_measured`
+  for the `url_submission_receipt_error_budget` product SLO.
+- Reviewer evidence on PR #746 established that the same performance gate was
+  green at both merge parents and the contemporaneous `dev` tip. Because the
+  sidecar diff contains no product or test code, changing runtime, capacity,
+  SLO, or CI implementation here would violate the helper boundary and would
+  not be a causal repair.
+- The run's downloadable load/soak report independently passed: 150 successes,
+  zero failures, P95 `0.6071436959999943s` against a `3.0s` target. This narrows
+  the old red job to the assisted-listing capacity/error-budget measurement,
+  not the load/soak budget and not this Markdown packet.
+- The parent task is now archived as `done`: PR #744 merged into `dev` as
+  `817d53052e23cf867085342fcafa340743e4a7cb` after its approved head
+  `209636e9903e363c0f67571c2caceb94f6880d4c` passed the parent task's checks.
+
+### Requeue verification
+
+The sidecar owner re-ran the previously failing capacity module on the current
+task worktree based on `origin/dev`:
+
+```text
+uv run pytest -m performance \
+  tests/performance/assisted_listing_intake/test_capacity.py -q
+result: 2 passed
+
+for capacity_attempt in 1 2 3; do
+  uv run pytest -m performance \
+    tests/performance/assisted_listing_intake/test_capacity.py::test_approved_capacity_and_slo_are_measured -q
+done
+result: 1 passed on each of 3 consecutive attempts
+```
+
+CI log inspection used the GitHub Actions run/job identifiers above. The old
+job's text log was no longer returned by `gh`, so the exact failure label comes
+from the durable PR reviewer record; the downloadable run artifact supplied
+the load/soak measurements. No claim is made that an old failed check was
+mutated or rerun after merge.
+
+### Handoff decision
+
+The appropriate repair is disposition and re-review of the evidence, not a
+cross-layer product change. Assigned reviewer `Claude` should confirm that:
+
+1. this addendum remains support-only;
+2. the historical `performance-gate` failure is non-attributable to PR #746;
+3. the parent task's later merged/done state supersedes this packet's original
+   open-PR blockers; and
+4. no product or canonical change should be absorbed from this sidecar.
