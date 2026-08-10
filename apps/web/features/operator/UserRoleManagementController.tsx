@@ -37,6 +37,7 @@ export type UserRecord = {
 };
 
 export type UserRoleAuditRecord = {
+  event_id?: string;
   event_type: string;
   action: string;
   actor: string;
@@ -536,7 +537,7 @@ export function UserRoleManagementController({
           ) : (
             auditLogs.map((log, idx) => (
               <div
-                key={idx}
+                key={log.event_id || `${log.correlation_id || "no-cid"}:${log.timestamp}:${idx}`}
                 style={{
                   display: "flex",
                   flexDirection: "column",

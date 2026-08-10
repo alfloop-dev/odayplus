@@ -1490,7 +1490,15 @@ export function GovernanceWorkspace({
             <div
               className={styles.statusCard}
               data-testid="governance-users-card"
+              role="button"
+              tabIndex={0}
               onClick={() => setActiveTab("userManagement")}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+                  event.preventDefault();
+                  setActiveTab("userManagement");
+                }
+              }}
               style={{ cursor: "pointer" }}
               title="點擊前往 Users 角色與權限自助管理"
             >

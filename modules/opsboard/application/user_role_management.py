@@ -276,7 +276,7 @@ class UserRoleManagementService:
                         worm_sink_id=worm_sink_id,
                     )
                     if seq is not None and ev_hash is not None:
-                        self.audit_log._events.append(ev)
+                        self.audit_log.append_verbatim(ev)
                     else:
                         self.audit_log.record(ev)
 
@@ -525,6 +525,7 @@ class UserRoleManagementService:
                     continue
                 events.append(
                     {
+                        "event_id": event.event_id,
                         "event_type": event.event_type,
                         "action": event.action,
                         "actor": event.actor,

@@ -8,6 +8,63 @@ import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UserRoleManagementController } from "../UserRoleManagementController";
 
+/**
+ * Stateful fetch stub that mirrors the real service semantics the controller
+ * has to satisfy: POST upserts by `subjectId`, an omitted `attributes` key
+ * preserves the stored value (see `save_user`), and the subsequent list
+ * refetch is what the table renders from.
+ */
+function stubStatefulFetch(initialUsers: any[]) {
+  const serverUsers: any[] = initialUsers.map((u) => ({ ...u }));
+  const posted: any[] = [];
+
+  const mock = vi.fn().mockImplementation((url: string, options?: any) => {
+    if (url.includes("/api/v1/operator/users/roles")) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          roles: [{ role_id: "operations_manager", label: "營運主管", description: "全域監控" }],
+          count: 1,
+        }),
+      });
+    }
+    if (url.includes("/api/v1/operator/users/audit-trail")) {
+      return Promise.resolve({ ok: true, json: async () => ({ events: [], count: 0 }) });
+    }
+    if (url.includes("/api/v1/operator/users") && options?.method === "POST") {
+      const body = JSON.parse(options.body);
+      posted.push(body);
+      const existing = serverUsers.find((u) => u.subject_id === body.subjectId);
+      const saved = {
+        subject_id: body.subjectId,
+        email: body.email,
+        name: body.name,
+        roles: body.roles,
+        scope: body.scope,
+        attributes:
+          body.attributes === undefined ? existing?.attributes ?? {} : body.attributes,
+        status: body.status || "active",
+      };
+      if (existing) {
+        Object.assign(existing, saved);
+      } else {
+        serverUsers.unshift(saved);
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ user: { ...saved } }) });
+    }
+    if (url.includes("/api/v1/operator/users")) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ users: serverUsers.map((u) => ({ ...u })) }),
+      });
+    }
+    return Promise.resolve({ ok: true, json: async () => ({}) });
+  });
+
+  vi.stubGlobal("fetch", mock);
+  return { serverUsers, posted, mock };
+}
+
 describe("UserRoleManagementController", () => {
   let fetchMock: any;
 
@@ -173,6 +230,88 @@ describe("UserRoleManagementController", () => {
     await waitFor(() => {
       expect(screen.queryByTestId("edit-role-modal")).not.toBeInTheDocument();
     });
+  });
+
+  it("keeps ABAC attributes when saving an existing user through the edit modal", async () => {
+    const { serverUsers, posted } = stubStatefulFetch([
+      {
+        subject_id: "ops-lead",
+        email: "ops-lead@odayplus.com",
+        name: "營運主管",
+        roles: ["operations_manager"],
+        scope: {
+          tenant_id: "tenant-default",
+          brand_ids: ["brand-a"],
+          region_ids: [],
+          store_ids: [],
+          clearance: "CONFIDENTIAL",
+        },
+        attributes: { department: "Ops", level: "Senior" },
+        status: "active",
+      },
+    ]);
+
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
+
+    fireEvent.click(await screen.findByTestId("edit-user-ops-lead"));
+    fireEvent.change(screen.getByPlaceholderText(/請輸入權限調整原因/i), {
+      target: { value: "調整 Scope" },
+    });
+    fireEvent.click(screen.getByTestId("save-user-roles-submit"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("edit-role-modal")).not.toBeInTheDocument();
+    });
+
+    expect(posted).toHaveLength(1);
+    expect(posted[0].attributes).toEqual({ department: "Ops", level: "Senior" });
+    expect(serverUsers[0].attributes).toEqual({ department: "Ops", level: "Senior" });
+  });
+
+  it("renders the newly created user row after a successful create", async () => {
+    const { posted } = stubStatefulFetch([
+      {
+        subject_id: "ops-lead",
+        email: "ops-lead@odayplus.com",
+        name: "營運主管",
+        roles: ["operations_manager"],
+        scope: {
+          tenant_id: "tenant-default",
+          brand_ids: [],
+          region_ids: [],
+          store_ids: [],
+          clearance: "CONFIDENTIAL",
+        },
+        status: "active",
+      },
+    ]);
+
+    render(<UserRoleManagementController currentRoleId="platform-admin" />);
+
+    await screen.findByTestId("user-row-ops-lead");
+    fireEvent.click(screen.getByTestId("add-user-button"));
+
+    fireEvent.change(screen.getByTestId("edit-subject-id-input"), {
+      target: { value: "idp|new-operator" },
+    });
+    fireEvent.change(screen.getByTestId("edit-name-input"), { target: { value: "新營運人員" } });
+    fireEvent.change(screen.getByTestId("edit-email-input"), {
+      target: { value: "new-operator@odayplus.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(/請輸入權限調整原因/i), {
+      target: { value: "新增營運人員" },
+    });
+    fireEvent.click(screen.getByTestId("save-user-roles-submit"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("edit-role-modal")).not.toBeInTheDocument();
+    });
+
+    // The admin-typed subject id is what gets persisted, not a generated one.
+    expect(posted[0].subjectId).toBe("idp|new-operator");
+
+    expect(await screen.findByTestId("user-row-idp|new-operator")).toBeInTheDocument();
+    expect(screen.getByTestId("user-row-ops-lead")).toBeInTheDocument();
   });
 
   it("emits X-Operator-Role platform-admin and X-Roles platform_admin headers", async () => {
