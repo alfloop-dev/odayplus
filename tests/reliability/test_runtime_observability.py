@@ -871,6 +871,10 @@ def test_alert_router_strict_sha_validation_and_caller_override_rejection(
     assert routed["release_sha"] == trusted_sha
 
     # 5. Config validation for exact_sha_binding and per-alert release_identity_bound
+    bound_router.config["release_identity"]["exact_sha_binding"] = "not-a-full-sha"
+    with pytest.raises(ValueError, match="is not a valid 40-character hex SHA or placeholder"):
+        bound_router.validate_routing_config()
+
     bound_router.config["release_identity"]["exact_sha_binding"] = "c" * 40
     with pytest.raises(ValueError, match="does not match trusted deployed release SHA"):
         bound_router.validate_routing_config()
@@ -879,6 +883,33 @@ def test_alert_router_strict_sha_validation_and_caller_override_rejection(
     bound_router.config["alerts"][0]["release_identity_bound"] = False
     with pytest.raises(ValueError, match="release_identity_bound is missing or false"):
         bound_router.validate_routing_config()
+
+
+def test_validate_routing_config_rejects_malformed_exact_sha_binding(monkeypatch: Any) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    trusted_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", trusted_sha)
+    router = AlertRouter(notification_service=service)
+
+    # 1. Malformed non-placeholder exact_sha_binding (e.g. 'not-a-full-sha') fails closed
+    router.config["release_identity"]["exact_sha_binding"] = "not-a-full-sha"
+    with pytest.raises(ValueError, match="is not a valid 40-character hex SHA or placeholder"):
+        router.validate_routing_config()
+
+    # 2. Non-string exact_sha_binding fails closed
+    router.config["release_identity"]["exact_sha_binding"] = 12345
+    with pytest.raises(ValueError, match="exact_sha_binding must be a string"):
+        router.validate_routing_config()
 
 
 def test_release_sha_dashboard_traceability_and_watch_window_receipt(

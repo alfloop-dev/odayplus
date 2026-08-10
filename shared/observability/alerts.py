@@ -100,14 +100,20 @@ class AlertRouter:
             raise ValueError("Alert release identity configuration missing exact_sha_binding. Fail-closed gate enforced.")
 
         exact_binding = release_identity.get("exact_sha_binding")
-        if isinstance(exact_binding, str):
-            expanded_binding = os.path.expandvars(exact_binding)
-            if not expanded_binding.startswith("$") and is_valid_full_sha(expanded_binding):
-                trusted = self.get_trusted_release_sha()
-                if trusted and trusted.lower() != expanded_binding.lower():
-                    raise ValueError(
-                        f"Configured exact_sha_binding '{expanded_binding}' does not match trusted deployed release SHA '{trusted}'. Fail-closed gate enforced."
-                    )
+        if not isinstance(exact_binding, str):
+            raise ValueError("Alert release identity exact_sha_binding must be a string. Fail-closed gate enforced.")
+
+        expanded_binding = os.path.expandvars(exact_binding).strip()
+        if not expanded_binding.startswith("$"):
+            if not is_valid_full_sha(expanded_binding):
+                raise ValueError(
+                    f"Configured exact_sha_binding '{exact_binding}' is not a valid 40-character hex SHA or placeholder. Fail-closed gate enforced."
+                )
+            trusted = self.get_trusted_release_sha()
+            if trusted and trusted.lower() != expanded_binding.lower():
+                raise ValueError(
+                    f"Configured exact_sha_binding '{expanded_binding}' does not match trusted deployed release SHA '{trusted}'. Fail-closed gate enforced."
+                )
 
         routing = self.config.get("routing")
         if not routing or not isinstance(routing, dict):
