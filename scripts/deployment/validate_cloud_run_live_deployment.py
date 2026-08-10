@@ -1670,25 +1670,32 @@ def _declared_data_mode(payload: Mapping[str, Any]) -> str:
     """
     modes = payload.get("modes") if isinstance(payload.get("modes"), Mapping) else {}
     details = payload.get("details") if isinstance(payload.get("details"), Mapping) else {}
+    dependencies = (
+        payload.get("dependencies")
+        if isinstance(payload.get("dependencies"), Mapping)
+        else {}
+    )
     modes_data = modes.get("data") if isinstance(modes.get("data"), Mapping) else {}
     details_data = details.get("data") if isinstance(details.get("data"), Mapping) else {}
     meta = payload.get("meta") if isinstance(payload.get("meta"), Mapping) else {}
 
-    candidates = (
+    canonical_candidates = (
         payload.get("data_mode"),
         payload.get("dataMode"),
         modes_data.get("mode"),
         details_data.get("mode"),
-        details.get("data_mode"),
-        details.get("dataMode"),
         meta.get("dataMode"),
         meta.get("data_mode"),
-        payload.get("binding_mode"),
-        payload.get("bindingMode"),
     )
-    for candidate in candidates:
+    for candidate in canonical_candidates:
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip().lower()
+
+    for container in (details, dependencies, payload):
+        for key in ("data_mode", "dataMode", "binding_mode", "bindingMode"):
+            candidate = container.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip().lower()
     return ""
 
 

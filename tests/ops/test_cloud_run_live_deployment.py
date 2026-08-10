@@ -5256,8 +5256,21 @@ def test_declared_data_mode_handles_all_envelope_shapes() -> None:
     assert validator._declared_data_mode({"dataMode": "live"}) == "live"
     assert validator._declared_data_mode({"details": {"data_mode": "live"}}) == "live"
     assert validator._declared_data_mode({"meta": {"dataMode": "live"}}) == "live"
+    assert validator._declared_data_mode({"dependencies": {"data_mode": "live"}}) == "live"
+    assert validator._declared_data_mode({"details": {"bindingMode": "live"}}) == "live"
+    assert validator._declared_data_mode({"binding_mode": "live"}) == "live"
     assert validator._declared_data_mode({}) == ""
     assert validator._declared_data_mode({"status": "ok"}) == ""
+
+
+def test_declared_data_mode_prefers_canonical_root_contract() -> None:
+    payload = {
+        "data_mode": "fixture",
+        "modes": {"data": {"mode": "live"}},
+        "details": {"binding_mode": "live"},
+    }
+
+    assert validator._declared_data_mode(payload) == "fixture"
 
 
 def test_real_app_health_data_mode_matches_unchanged_deploy_validator(
