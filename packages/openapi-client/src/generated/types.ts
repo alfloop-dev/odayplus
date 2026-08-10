@@ -1369,6 +1369,45 @@ export type ValidationError = {
   type: string;
 };
 
+/** XlsxCommitReceipt */
+export type XlsxCommitReceipt = {
+  accepted_count: number;
+  batch_id: string;
+  committed_at: string;
+  correlation_id: string;
+  intake_ids: string[];
+  rejected_count: number;
+  replayed?: boolean;
+};
+
+/** XlsxCommitRequest */
+export type XlsxCommitRequest = {
+  batch_id?: string | null;
+  rows: Record<string, unknown>[];
+  scope: ScopeContext;
+};
+
+/** XlsxPreviewRequest */
+export type XlsxPreviewRequest = {
+  custom_mapping?: Record<string, string> | null;
+  file_base64: string;
+  scope?: ScopeContext | null;
+};
+
+/** XlsxPreviewResponse */
+export type XlsxPreviewResponse = {
+  batch_id: string;
+  has_formula_or_external_link_warnings: boolean;
+  preview_rows: Record<string, unknown>[];
+  rejected_count: number;
+  row_errors: Record<string, unknown>[];
+  schema_mapping: Record<string, string>;
+  total_rows: number;
+  valid_count: number;
+  valid_rows: Record<string, unknown>[];
+  warnings: string[];
+};
+
 /** ConflictCheckPayload */
 export type apps__api__app__routes__interventions__ConflictCheckPayload = {
   actor: string;
@@ -1505,6 +1544,9 @@ export const API_PATHS = {
   "/api/v1/identity/split": ["POST"],
   "/api/v1/identity/unmerge": ["POST"],
   "/api/v1/intake-batches": ["POST"],
+  "/api/v1/intake-batches/xlsx/commit": ["POST"],
+  "/api/v1/intake-batches/xlsx/errors/{batch_id}/export": ["GET"],
+  "/api/v1/intake-batches/xlsx/preview": ["POST"],
   "/api/v1/intakes": ["GET"],
   "/api/v1/intakes/url": ["POST"],
   "/api/v1/intakes/{intake_id}": ["GET"],
