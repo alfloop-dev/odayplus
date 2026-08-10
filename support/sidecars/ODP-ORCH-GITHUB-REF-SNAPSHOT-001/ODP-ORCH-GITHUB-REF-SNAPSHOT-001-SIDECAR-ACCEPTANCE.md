@@ -7,11 +7,11 @@
 | Sidecar task | `ODP-ORCH-GITHUB-REF-SNAPSHOT-001-SIDECAR-ACCEPTANCE` |
 | Parent task | `ODP-ORCH-GITHUB-REF-SNAPSHOT-001` |
 | Helper kind | `acceptance_packet` |
-| Sidecar owner / reviewer | `Codex` / `Claude` |
-| Parent owner / reviewer | `Claude` / `Claude2` |
-| Parent PR | `#744`, head `c99ffc6926fd44f47933a4a3811d8196c33fb380` |
-| Evidence observed at | `2026-08-09` |
-| Packet verdict | Support only; no parent acceptance, merge, rollout, or production claim |
+| Sidecar owner / reviewer | `Antigravity4` / `Antigravity3` |
+| Parent owner / reviewer | `Claude` / `Antigravity` |
+| Parent PR | `#744`, merged commit `817d53052e23cf867085342fcafa340743e4a7cb` (approved head `209636e9903e363c0f67571c2caceb94f6880d4c`) |
+| Evidence observed at | `2026-08-10` |
+| Packet verdict | Acceptance packet finalized; parent task `ODP-ORCH-GITHUB-REF-SNAPSHOT-001` completed (`done`) |
 
 This packet is a review aid for the parent owner. It records an acceptance
 checklist, dependency map, runtime evidence plan, and composition risks. It
@@ -46,12 +46,11 @@ acceptance consequences explicit.
 
 | Item | Observed state | Consequence |
 |---|---|---|
-| Parent task | `in_progress` | Parent is not accepted or ready for closeout yet. |
-| PR #743, `Bound GitHub bus remote git probes` | Merged into `dev` as `9e5434cd8a9f798769f4891c3610280a7982a175` | Supplies the bounded network-process/timeout behavior that PR #744 composes with. |
-| PR #744 | Open, non-draft, mergeable; 3 files, +69/-6 | Patch is reviewable but not durable on `dev`. |
-| PR #744 CI workflow | Completed successfully (run `31309187208`) | Static CI evidence exists for head `c99ffc69`. |
-| PR #744 `task-review-gate` | `failure` | The parent's “PR all green” condition is not met despite the CI workflow success. |
-| Runtime rollout | No rollout evidence attached to the parent task or PR | Latency reduction and loop health remain unproven in the running supervisor. |
+| Parent task | `done` (archived at 2026-08-09T11:48:38Z) | Parent implementation accepted, merged, and verified. |
+| PR #743, `Bound GitHub bus remote git probes` | Merged into `dev` as `9e5434cd8a9f798769f4891c3610280a7982a175` | Bounded network-process/timeout behavior active on `dev`. |
+| PR #744, `Cache GitHub remote branch refs` | Merged into `dev` as `817d53052e23cf867085342fcafa340743e4a7cb` | Remote ref snapshot caching live on `dev`. |
+| PR #744 CI workflow & checks | All 5 checks green (`SUCCESS`) | Static CI & task review gate verified. |
+| Runtime rollout | `dev` tip includes `817d53052e23cf867085342fcafa340743e4a7cb` | Snapshot code ready for live supervisor refresh. |
 
 Changed files observed on PR #744:
 
@@ -281,3 +280,14 @@ cross-layer product change. Assigned reviewer `Claude` should confirm that:
 3. the parent task's later merged/done state supersedes this packet's original
    open-PR blockers; and
 4. no product or canonical change should be absorbed from this sidecar.
+
+## Antigravity4 Handoff and Sidecar Closeout Addendum — 2026-08-10
+
+This section records the final sidecar review handoff after re-dispatch to helper owner `Antigravity4` with reviewer `Antigravity3`.
+
+### Handoff Summary & Verification
+1. **Parent Task Completion**: Parent task `ODP-ORCH-GITHUB-REF-SNAPSHOT-001` is confirmed closed and archived as `done`.
+2. **PR #744 Status**: PR #744 was merged into `dev` via merge queue as commit `817d53052e23cf867085342fcafa340743e4a7cb`. All CI checks (`orchestrator`, `product`, `performance-gate`, `product-e2e-gate`, `task-review-gate`) passed (`SUCCESS`).
+3. **Scope Discipline**: This sidecar modified strictly support artifact `support/sidecars/ODP-ORCH-GITHUB-REF-SNAPSHOT-001/ODP-ORCH-GITHUB-REF-SNAPSHOT-001-SIDECAR-ACCEPTANCE.md`. No L1/canonical files or runtime implementations were mutated.
+4. **Action**: Handing off to reviewer `Antigravity3` for final review.
+
