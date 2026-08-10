@@ -70,11 +70,22 @@ class MetricDefinition:
     unit: str = ""
     min_value: float | None = None
     max_value: float | None = None
-    owner: str = "sre-platform"
+    # No plausible-looking default. ``sre-platform`` (the catalog's most common
+    # team) made the ownership gate decorative: a new signal silently inherited
+    # an owner that had never agreed to page for it, and the gate could not
+    # fail. Empty is the only honest default, and __post_init__ rejects it, so
+    # an unowned metric cannot be constructed at all.
+    owner: str = ""
     # Per-metric series budget. Defaults to the registry-wide bound; set it
     # explicitly when a signal's label domain is legitimately larger than the
     # default (for example ``route`` spanning the whole HTTP route table).
     max_series: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.owner or not self.owner.strip():
+            raise ValueError(
+                f"metric {self.name!r} must declare a non-empty owner. Fail-closed gate enforced."
+            )
 
 
 def _label_key(labels: Mapping[str, str] | None) -> tuple[tuple[str, str], ...]:
@@ -135,6 +146,10 @@ class MetricsRegistry:
         self._shed_counts: dict[str, int] = {}
 
     def register(self, definition: MetricDefinition) -> MetricDefinition:
+        # Second line, not redundant with MetricDefinition.__post_init__:
+        # unpickling a dataclass restores state through __setstate__ without
+        # calling __init__, so a definition that crosses a process boundary
+        # never re-runs construction-time validation.
         if not definition.owner or not str(definition.owner).strip():
             raise ValueError(
                 f"metric {definition.name!r} must have a valid non-empty owner. Fail-closed gate enforced."

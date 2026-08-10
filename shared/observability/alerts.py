@@ -234,6 +234,21 @@ class AlertRouter:
                 f"On-call route for alert '{alert_id}' (severity '{severity}') is unconfigured. Fail-closed gate enforced."
             )
 
+        # Re-derived, not a literal. A hard-coded ``True`` made every consumer
+        # -- including the completion evidence generator -- read back its own
+        # assumption, so the field could never report anything but success.
+        # Deriving it from the trusted identity as it stands at emission time
+        # means a rotated or cleared deployed SHA downgrades the claim.
+        #
+        # This downgrades rather than raises: the config-declared binding is
+        # already gated above, and past that point suppressing a page because
+        # its provenance annotation weakened is strictly worse than delivering
+        # the page with an honest annotation.
+        trusted_now = self.get_trusted_release_sha()
+        release_identity_bound = bool(
+            trusted_now and eff_sha.lower() == trusted_now.lower()
+        )
+
         return {
             "alert_id": alert_id,
             "name": alert.get("name"),
@@ -243,7 +258,7 @@ class AlertRouter:
             "runbook": alert.get("runbook"),
             "receiver": receiver,
             "release_sha": eff_sha,
-            "release_identity_bound": True,
+            "release_identity_bound": release_identity_bound,
         }
 
     def trigger_alert(

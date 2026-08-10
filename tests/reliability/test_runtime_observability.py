@@ -782,6 +782,52 @@ def test_alert_release_identity_contract_and_propagation(monkeypatch: Any) -> No
     assert f"Release SHA: {valid_sha}" in receipts[0]["detail"]
 
 
+def test_alert_release_identity_bound_flag_is_derived_not_asserted(monkeypatch: Any) -> None:
+    """The routed ``release_identity_bound`` must be able to report False.
+
+    It used to be the literal ``True``, so every consumer -- including the
+    completion evidence generator, which reads it back as proof that alerts
+    carry release identity -- was reading its own assumption. A flag that
+    cannot fail proves nothing, so pin the failing direction: when the trusted
+    deployed identity rotates out from under an already-resolved SHA, the
+    annotation downgrades while the page still routes.
+    """
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    resolved_sha = "f" * 40
+    rotated_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", resolved_sha)
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+    service.set_preferences("ops-lead", ["webhook"])
+
+    router = AlertRouter(notification_service=service)
+
+    # Rotate the deployed identity between SHA resolution and payload emission.
+    calls = {"n": 0}
+    real_trusted = router.get_trusted_release_sha
+
+    def rotating_trusted() -> str | None:
+        calls["n"] += 1
+        return real_trusted() if calls["n"] == 1 else rotated_sha
+
+    router.get_trusted_release_sha = rotating_trusted  # type: ignore[method-assign]
+
+    routed = router.route_alert("audit-write-failure")
+
+    # The page is still routed and still names the SHA it resolved against...
+    assert routed["receiver"]
+    assert routed["release_sha"] == resolved_sha
+    # ...but no longer claims that SHA is the bound deployed identity.
+    assert routed["release_identity_bound"] is False
+
+
 
 
 
@@ -2972,7 +3018,11 @@ def test_round7_export_receipt_canonical_integrity_and_value_mutation() -> None:
 
         reg.register(
             MetricDefinition(
-                "adlift_incremental_gm", MetricType.GAUGE, MetricCategory.BUSINESS, "AdLift GM"
+                "adlift_incremental_gm",
+                MetricType.GAUGE,
+                MetricCategory.BUSINESS,
+                "AdLift GM",
+                owner="business-analytics",
             )
         )
         reg.set("adlift_incremental_gm", val)
@@ -5818,13 +5868,131 @@ def test_b41_metric_definitions_require_auditable_ownership() -> None:
         assert m.owner and isinstance(m.owner, str) and len(m.owner.strip()) > 0, f"Metric {m.name} missing owner"
 
     # Attempting to register a metric with no owner must raise ValueError
-    from shared.observability.metrics import MetricCategory, MetricDefinition, MetricType
-    invalid_metric = MetricDefinition(
-        "unowned_metric", MetricType.COUNTER, MetricCategory.TRAFFIC, "Unowned test metric", owner=""
-    )
+    invalid_metric = _build_unowned_definition("unowned_metric")
     reg = MetricsRegistry()
     with pytest.raises(ValueError, match="must have a valid non-empty owner"):
         reg.register(invalid_metric)
+
+
+def _build_unowned_definition(name: str) -> Any:
+    """Construct an ownerless definition the only way that still works.
+
+    ``MetricDefinition.__post_init__`` rejects a blank owner, so this bypasses
+    ``__init__`` exactly the way ``pickle`` does when a definition crosses a
+    process boundary. That is the path ``MetricsRegistry.register``'s own owner
+    check exists to cover, so the check stays exercised rather than dead.
+    """
+    from shared.observability.metrics import MetricCategory, MetricDefinition, MetricType
+
+    definition = object.__new__(MetricDefinition)
+    definition.__dict__.update(
+        name=name,
+        type=MetricType.COUNTER,
+        category=MetricCategory.TRAFFIC,
+        description="Unowned test metric",
+        labels=(),
+        unit="",
+        min_value=None,
+        max_value=None,
+        owner="",
+        max_series=None,
+    )
+    return definition
+
+
+@pytest.mark.parametrize("blank_owner", ["", "   ", "\t\n"])
+def test_b41a_metric_definition_rejects_blank_owner_at_construction(blank_owner: str) -> None:
+    """An unowned metric must be unbuildable, not merely unregistrable.
+
+    ``owner`` previously defaulted to ``sre-platform``. Every construction site
+    that omitted it therefore passed the ownership gate while naming a team
+    that had never agreed to carry the signal -- ``auth.attempts_total`` in
+    ``modules/opsboard/auth/boundary.py`` was a live instance. The gate can
+    only be real if omitting the field fails.
+    """
+    from shared.observability.metrics import MetricCategory, MetricDefinition, MetricType
+
+    with pytest.raises(ValueError, match="must declare a non-empty owner"):
+        MetricDefinition(
+            "blank_owner_metric",
+            MetricType.COUNTER,
+            MetricCategory.TRAFFIC,
+            "Blank owner test metric",
+            owner=blank_owner,
+        )
+
+    # Omitting `owner` entirely is the case the old default silently absorbed.
+    with pytest.raises(ValueError, match="must declare a non-empty owner"):
+        MetricDefinition(
+            "defaulted_owner_metric",
+            MetricType.COUNTER,
+            MetricCategory.TRAFFIC,
+            "Defaulted owner test metric",
+        )
+
+
+def test_b41b_every_metric_definition_in_the_repo_declares_an_owner() -> None:
+    """No construction site anywhere may rely on an implicit owner.
+
+    Scanning the source rather than the imported objects catches a site in a
+    module this suite never imports, which is how the auth boundary's metric
+    stayed ownerless.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    skip_parts = {".git", ".venv", "venv", "node_modules", "__pycache__"}
+    offenders: list[str] = []
+
+    def negative_probe_ranges(tree: ast.AST) -> list[tuple[int, int]]:
+        """Line ranges where an ownerless construction is the point of the code.
+
+        Exempting by expected-failure context rather than by file keeps the
+        scan honest: a real site cannot hide by living in a test module, and
+        this suite's own `pytest.raises` cases and the evidence generator's
+        `except ValueError` probes are recognised for what they are.
+        """
+        ranges: list[tuple[int, int]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try) and any(
+                isinstance(h.type, ast.Name) and h.type.id == "ValueError"
+                for h in node.handlers
+            ):
+                ranges.append((node.lineno, node.end_lineno or node.lineno))
+            elif isinstance(node, ast.With):
+                for item in node.items:
+                    call = item.context_expr
+                    if (
+                        isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "raises"
+                    ):
+                        ranges.append((node.lineno, node.end_lineno or node.lineno))
+        return ranges
+
+    for path in root.rglob("*.py"):
+        if skip_parts.intersection(path.parts):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        exempt = negative_probe_ranges(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if called != "MetricDefinition":
+                continue
+            if any(kw.arg == "owner" for kw in node.keywords):
+                continue
+            if any(start <= node.lineno <= end for start, end in exempt):
+                continue
+            offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+
+    assert not offenders, f"MetricDefinition sites without an explicit owner: {offenders}"
 
 
 def test_b42_alerts_runbook_anchors_and_headings_are_valid() -> None:

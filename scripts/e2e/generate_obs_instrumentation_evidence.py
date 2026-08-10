@@ -16,6 +16,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 # Self-bootstrap repo root onto sys.path
 repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
@@ -28,7 +29,9 @@ from shared.observability.metrics import (
     PLATFORM_METRICS,
     CardinalityPolicy,
     MetricCategory,
+    MetricDefinition,
     MetricsRegistry,
+    MetricType,
     ProductionMetricsExporter,
     default_registry,
     record_business_kpi_signal,
@@ -73,6 +76,36 @@ def main() -> None:
         assert m.owner and isinstance(m.owner, str) and len(m.owner.strip()) > 0, f"Metric {m.name} missing owner"
         ownership_matrix[m.name] = m.owner
     signal_ownership_verified = len(ownership_matrix) == len(PLATFORM_METRICS)
+
+    # 1b. The ownership gate must be capable of failing. A populated matrix
+    # only proved every metric had *some* owner string; while `owner` carried
+    # a default of "sre-platform" that was true by construction, and a new
+    # signal silently inherited a team that had never agreed to page for it.
+    # Record the two negative probes rather than the conclusion.
+    ownership_gate_detail: dict[str, Any] = {}
+    try:
+        MetricDefinition(
+            "evidence_probe_unowned", MetricType.COUNTER, MetricCategory.TRAFFIC, "probe"
+        )
+        ownership_gate_detail["omitted_owner_rejected"] = False
+    except ValueError as exc:
+        ownership_gate_detail["omitted_owner_rejected"] = True
+        ownership_gate_detail["omitted_owner_error"] = str(exc)
+
+    try:
+        MetricDefinition(
+            "evidence_probe_blank", MetricType.COUNTER, MetricCategory.TRAFFIC, "probe", owner="  "
+        )
+        ownership_gate_detail["blank_owner_rejected"] = False
+    except ValueError:
+        ownership_gate_detail["blank_owner_rejected"] = True
+
+    ownership_gate_detail["distinct_owning_teams"] = sorted(set(ownership_matrix.values()))
+    ownership_gate_detail["metrics_owned"] = len(ownership_matrix)
+    signal_ownership_verified = signal_ownership_verified and bool(
+        ownership_gate_detail["omitted_owner_rejected"]
+        and ownership_gate_detail["blank_owner_rejected"]
+    )
 
     # 2. Verify Bounded Cardinality & Fail-Closed Label Enforcement
     reg = default_registry()
@@ -290,6 +323,32 @@ def main() -> None:
         if old_env_trusted:
             os.environ["TRUSTED_DEPLOYED_RELEASE_SHA"] = old_env_trusted
 
+    # 4b. The routed `release_identity_bound` flag must be capable of reporting
+    # False. It was previously the literal `True`, so the check at line ~277
+    # was reading back its own assumption. Rotate the trusted deployed identity
+    # between resolution and emission and record that the flag downgrades while
+    # the page still routes.
+    probe_router = AlertRouter(notification_service=dummy_service, release_sha=git_sha)
+    _probe_calls = {"n": 0}
+    _real_trusted = probe_router.get_trusted_release_sha
+
+    def _rotating_trusted() -> str | None:
+        _probe_calls["n"] += 1
+        return _real_trusted() if _probe_calls["n"] == 1 else "a" * 40
+
+    probe_router.get_trusted_release_sha = _rotating_trusted  # type: ignore[method-assign]
+    rotated = probe_router.route_alert("api-availability-drop")
+    release_identity_flag_detail = {
+        "flag_is_derived_not_literal": rotated.get("release_identity_bound") is False,
+        "page_still_routed_when_downgraded": bool(rotated.get("receiver")),
+        "release_sha_reported_when_downgraded": rotated.get("release_sha"),
+    }
+    if not (
+        release_identity_flag_detail["flag_is_derived_not_literal"]
+        and release_identity_flag_detail["page_still_routed_when_downgraded"]
+    ):
+        alert_release_identity_verified = False
+
     # 5. End-to-End Tracing Verification
     telemetry = Telemetry("oday-obs-verifier", logger=logger, metrics=reg)
     ctx = TraceContext(
@@ -360,6 +419,7 @@ def main() -> None:
         "metrics_count": len(PLATFORM_METRICS),
         "recorded_metrics_series_count": sum(len(v) for v in metrics_snapshot.values()),
         "signal_ownership_verified": signal_ownership_verified,
+        "ownership_gate_detail": ownership_gate_detail,
         "ownership_matrix": ownership_matrix,
         "sensitive_value_redaction_verified": sensitive_redaction_verified,
         "bounded_cardinality_verified": bounded_cardinality_verified,
@@ -377,6 +437,7 @@ def main() -> None:
         },
         "alert_runbook_anchors_verified": all_anchors_valid,
         "alert_release_identity_verified": alert_release_identity_verified,
+        "release_identity_flag_detail": release_identity_flag_detail,
         "alert_runbook_linkage_count": len(alerts_summary),
         "alerts": alerts_summary,
         "trace_spans_count": len(exported_spans),
@@ -405,10 +466,10 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 
 | # | Acceptance Criterion | Verification Method | Status |
 |---|---|---|---|
-| 1 | Required signals have stable names and owners | Verified 100% metric ownership across SRE, Data, Model, Business KPI, Audit | **{ac1_status}** |
+| 1 | Required signals have stable names and owners | {len(ownership_matrix)} metrics owned across {len(ownership_gate_detail["distinct_owning_teams"])} teams, and the gate is provably able to fail: constructing a metric with an omitted or blank owner raises | **{ac1_status}** |
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **{ac2_status}** |
 | 3 | Cardinality is bounded | Route labels normalized to {route_resolver.template_count} registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **{ac3_status}** |
-| 4 | Alerts link to runbooks and release identity | Verified all {len(alerts_summary)} alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **{ac4_status}** |
+| 4 | Alerts link to runbooks and release identity | All {len(alerts_summary)} alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA`; the binding flag is derived, and reports `False` when the trusted identity rotates | **{ac4_status}** |
 | 5 | Configuration and emission tests are reproducible | {passed_count}/{passed_count} pytest reliability/observability tests passing dynamically in {duration_s}s | **{ac5_status}** |
 
 ---
@@ -483,6 +544,31 @@ points at the instrumentation site that needs a bounded label.
 The API middleware additionally contains telemetry exceptions: instrumentation
 is a side channel and a metric rejection must degrade the signal, not the
 response the caller is waiting on.
+
+---
+
+## 4c. Gates That Can Actually Fail (R1 / R2 cover)
+
+Two acceptance signals were previously true by construction, so passing them
+demonstrated nothing. Both now derive from a probe recorded in this run.
+
+| Gate | Was | Is | Probe in this run |
+|---|---|---|---|
+| Metric ownership | `MetricDefinition.owner` defaulted to `"sre-platform"`, so every construction site passed while possibly naming a team that had never agreed to carry the signal | `owner` has no plausible default; `__post_init__` rejects omitted or blank. `MetricsRegistry.register` keeps its own check for definitions restored by unpickling, which bypasses `__init__` | omitted owner rejected: `{ownership_gate_detail["omitted_owner_rejected"]}`; blank owner rejected: `{ownership_gate_detail["blank_owner_rejected"]}`; {len(ownership_matrix)} metrics across {ownership_gate_detail["distinct_owning_teams"]} |
+| Alert release identity | `route_alert` emitted the literal `True`, so this document's own check read back its assumption | derived at emission from the trusted deployed identity; a rotated or cleared SHA downgrades the annotation instead of certifying it | flag reports `False` under rotation: `{release_identity_flag_detail["flag_is_derived_not_literal"]}`; page still routed: `{release_identity_flag_detail["page_still_routed_when_downgraded"]}` |
+
+The release-identity flag downgrades rather than raises. The config-declared
+binding is already gated ahead of it, and past that point suppressing a page
+because its provenance annotation weakened is worse than delivering the page
+with an honest annotation. This is the same rule the middleware follows: an
+instrumentation fault degrades the signal, never the delivery.
+
+Live consequence of making the ownership gate real:
+`auth.attempts_total` in `modules/opsboard/auth/boundary.py` declared no owner
+and had been silently inheriting `sre-platform`. It is now explicitly owned by
+`security-audit`, and `test_b41b_every_metric_definition_in_the_repo_declares_an_owner`
+scans the source tree so a future site in a module this suite never imports
+cannot repeat it.
 
 ---
 

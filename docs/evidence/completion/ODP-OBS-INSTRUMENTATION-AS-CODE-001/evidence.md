@@ -11,11 +11,11 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 
 | # | Acceptance Criterion | Verification Method | Status |
 |---|---|---|---|
-| 1 | Required signals have stable names and owners | Verified 100% metric ownership across SRE, Data, Model, Business KPI, Audit | **PASSED** |
+| 1 | Required signals have stable names and owners | 34 metrics owned across 6 teams, and the gate is provably able to fail: constructing a metric with an omitted or blank owner raises | **PASSED** |
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **PASSED** |
-| 3 | Cardinality is bounded | Route labels normalized to 459 registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **PASSED** |
-| 4 | Alerts link to runbooks and release identity | Verified all 11 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA` | **PASSED** |
-| 5 | Configuration and emission tests are reproducible | 86/86 pytest reliability/observability tests passing dynamically in 69.35s | **PASSED** |
+| 3 | Cardinality is bounded | Route labels normalized to 469 registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **PASSED** |
+| 4 | Alerts link to runbooks and release identity | All 11 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA`; the binding flag is derived, and reports `False` when the trusted identity rotates | **PASSED** |
+| 5 | Configuration and emission tests are reproducible | 91/91 pytest reliability/observability tests passing dynamically in 43.14s | **PASSED** |
 
 ---
 
@@ -65,7 +65,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "forecast-daily-failed",
@@ -76,7 +76,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "data-quality-p0-fail",
@@ -87,7 +87,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "dlq-spike",
@@ -98,7 +98,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "unauthorized-spike",
@@ -109,7 +109,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "audit-write-failure",
@@ -120,7 +120,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "model-drift-high",
@@ -131,7 +131,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "price-constraint-violation",
@@ -142,7 +142,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "data-room-abnormal-download",
@@ -153,7 +153,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "solver-repeated-infeasible",
@@ -164,7 +164,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   },
   {
     "id": "external-connector-stale",
@@ -175,7 +175,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "7efca5ce86be68bf8a222c9ffb2641131bc49609"
+    "release_sha": "df02052936d8c15188c308c8d40e87f4fd40b970"
   }
 ]
 ```
@@ -192,7 +192,7 @@ at commit `54b749e0`). Two independent layers now hold the bound:
 
 | Layer | Mechanism | Evidence |
 |---|---|---|
-| 1. Normalize at the source | `shared/observability/routes.py` resolves a concrete path to its route template | 459 templates registered; 200 distinct job ids collapse to `['/jobs/{job_id}']`; unrouted paths share `__unmatched__` |
+| 1. Normalize at the source | `shared/observability/routes.py` resolves a concrete path to its route template | 469 templates registered; 200 distinct job ids collapse to `['/jobs/{job_id}']`; unrouted paths share `__unmatched__` |
 | 2. Shed, do not raise | `CardinalityPolicy.SHED` (production default) folds overflow into one reserved `__overflow__` series per metric and counts it | 50 distinct label values against a budget of 2 -> 3 series retained, 48 emissions shed, 0 raised |
 | Fail-closed retained | `CardinalityPolicy.REJECT` for config/evidence validation | overflow still raises `ValueError` |
 
@@ -214,6 +214,31 @@ response the caller is waiting on.
 
 ---
 
+## 4c. Gates That Can Actually Fail (R1 / R2 cover)
+
+Two acceptance signals were previously true by construction, so passing them
+demonstrated nothing. Both now derive from a probe recorded in this run.
+
+| Gate | Was | Is | Probe in this run |
+|---|---|---|---|
+| Metric ownership | `MetricDefinition.owner` defaulted to `"sre-platform"`, so every construction site passed while possibly naming a team that had never agreed to carry the signal | `owner` has no plausible default; `__post_init__` rejects omitted or blank. `MetricsRegistry.register` keeps its own check for definitions restored by unpickling, which bypasses `__init__` | omitted owner rejected: `True`; blank owner rejected: `True`; 34 metrics across ['business-analytics', 'data-platform', 'ml-platform', 'security-audit', 'sre-messaging', 'sre-platform'] |
+| Alert release identity | `route_alert` emitted the literal `True`, so this document's own check read back its assumption | derived at emission from the trusted deployed identity; a rotated or cleared SHA downgrades the annotation instead of certifying it | flag reports `False` under rotation: `True`; page still routed: `True` |
+
+The release-identity flag downgrades rather than raises. The config-declared
+binding is already gated ahead of it, and past that point suppressing a page
+because its provenance annotation weakened is worse than delivering the page
+with an honest annotation. This is the same rule the middleware follows: an
+instrumentation fault degrades the signal, never the delivery.
+
+Live consequence of making the ownership gate real:
+`auth.attempts_total` in `modules/opsboard/auth/boundary.py` declared no owner
+and had been silently inheriting `sre-platform`. It is now explicitly owned by
+`security-audit`, and `test_b41b_every_metric_definition_in_the_repo_declares_an_owner`
+scans the source tree so a future site in a module this suite never imports
+cannot repeat it.
+
+---
+
 ## 5. Correlated Trace Flow Simulation
 
 Exported end-to-end trace spans linking API, worker, model, and solver execution:
@@ -221,17 +246,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "3c10e2bf1ecf45b6",
-    "parent_id": "a91873aa43f040f1",
+    "span_id": "8e1a037bce394c10",
+    "parent_id": "ccf0f1faa0f14e12",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
+    "correlation_id": "a4f09164-2060-4cc4-b032-77ae4393787e",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.002987,
+    "duration_ms": 0.002284,
     "attributes": {
-      "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
+      "correlation_id": "a4f09164-2060-4cc4-b032-77ae4393787e",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -241,17 +266,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "66cadb6920eb445c",
-    "parent_id": "a91873aa43f040f1",
+    "span_id": "671a2fb5570d41d4",
+    "parent_id": "ccf0f1faa0f14e12",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
+    "correlation_id": "a4f09164-2060-4cc4-b032-77ae4393787e",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.122932,
+    "duration_ms": 0.113375,
     "attributes": {
-      "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
+      "correlation_id": "a4f09164-2060-4cc4-b032-77ae4393787e",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -261,17 +286,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "a91873aa43f040f1",
+    "span_id": "ccf0f1faa0f14e12",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
+    "correlation_id": "a4f09164-2060-4cc4-b032-77ae4393787e",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.183638,
+    "duration_ms": 0.172522,
     "attributes": {
-      "correlation_id": "13228151-7cec-4b08-a2d5-fe51e7930238",
+      "correlation_id": "a4f09164-2060-4cc4-b032-77ae4393787e",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -287,9 +312,9 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 
 ## 6. Test Suite Execution Output
 
-- Source Commit: `7efca5ce86be68bf8a222c9ffb2641131bc49609` (is_test_simulated: False)
+- Source Commit: `df02052936d8c15188c308c8d40e87f4fd40b970` (is_test_simulated: False)
 - Command: `python3 -m pytest tests/reliability/test_runtime_observability.py`
-- Result: **86 passed in 69.35s** (Exit Code: 0)
+- Result: **91 passed in 43.14s** (Exit Code: 0)
 
 ---
 
