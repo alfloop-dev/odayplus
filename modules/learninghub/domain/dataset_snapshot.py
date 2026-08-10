@@ -15,9 +15,10 @@ class DqTriageRecord:
     actor: str
     rationale: str
     time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    audit_event_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "triage_id": self.triage_id,
             "dataset_snapshot_id": self.dataset_snapshot_id,
             "action": self.action,
@@ -25,6 +26,9 @@ class DqTriageRecord:
             "rationale": self.rationale,
             "time": self.time.isoformat(),
         }
+        if self.audit_event_id:
+            data["audit_event_id"] = self.audit_event_id
+        return data
 
 
 class DatasetSnapshotError(ValueError):

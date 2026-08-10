@@ -324,32 +324,33 @@ class LearningHubService:
             raise ValueError(f"unknown dataset snapshot {dataset_snapshot_id}")
 
         triage_id = f"dq_triage_{uuid4().hex[:12]}"
+        triage_time = datetime.now(UTC)
+        event = self.audit_log.record(
+            AuditEvent(
+                event_type="learninghub.dq_triage_recorded.v1",
+                actor=actor.strip(),
+                action="record_dq_triage",
+                resource=f"learninghub/dataset-snapshots/{dataset_snapshot_id}/triage",
+                outcome="accepted",
+                correlation_id=correlation_id or f"corr_{triage_id}",
+                metadata={
+                    "triage_id": triage_id,
+                    "action": action.strip(),
+                    "rationale": rationale.strip(),
+                    "time": triage_time.isoformat(),
+                },
+            )
+        )
         record = DqTriageRecord(
             triage_id=triage_id,
             dataset_snapshot_id=dataset_snapshot_id,
             action=action.strip(),
             actor=actor.strip(),
             rationale=rationale.strip(),
-            time=datetime.now(UTC),
+            time=triage_time,
+            audit_event_id=event.event_id,
         )
         saved = self.repository.save_dq_triage(record)
-
-        self.audit_log.record(
-            AuditEvent(
-                event_type="learninghub.dq_triage_recorded.v1",
-                actor=actor,
-                action="record_dq_triage",
-                resource=f"learninghub/dataset-snapshots/{dataset_snapshot_id}/triage",
-                outcome="accepted",
-                correlation_id=correlation_id or f"corr_{triage_id}",
-                metadata={
-                    "triage_id": record.triage_id,
-                    "action": record.action,
-                    "rationale": record.rationale,
-                    "time": record.time.isoformat(),
-                },
-            )
-        )
         return saved
 
     def validate_candidate(

@@ -242,7 +242,7 @@ else:
         @router.post(
             "/dataset-snapshots/{dataset_snapshot_id}/triage",
             status_code=status.HTTP_201_CREATED,
-            dependencies=[Depends(require_permission("model", Action.UPDATE, engine=authz_engine))],
+            dependencies=[Depends(require_permission("data_quality", Action.UPDATE, engine=authz_engine))],
         )
         def record_dq_triage(
             dataset_snapshot_id: str, body: DqTriagePayload, request: Request
@@ -262,27 +262,18 @@ else:
                     action=body.action,
                     rationale=body.rationale,
                     actor=actor,
+                    correlation_id=getattr(request.state, "correlation_id", None),
                 )
             except ValueError as exc:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=str(exc),
                 ) from exc
-            payload = record.to_dict()
-            payload["audit_event_id"] = _record_audit(
-                active_audit_log,
-                request,
-                "learninghub.dq_triage_recorded.v1",
-                actor,
-                "record_dq_triage",
-                f"learninghub/dataset-snapshots/{dataset_snapshot_id}/triage",
-                {"action": body.action, "rationale": body.rationale},
-            )
-            return payload
+            return record.to_dict()
 
         @router.get(
             "/dataset-snapshots/{dataset_snapshot_id}/triage",
-            dependencies=[Depends(require_permission("model", Action.VIEW, engine=authz_engine))],
+            dependencies=[Depends(require_permission("data_quality", Action.VIEW, engine=authz_engine))],
         )
         def list_dq_triages(dataset_snapshot_id: str) -> dict[str, Any]:
             records = active_repository.list_dq_triages(dataset_snapshot_id)
