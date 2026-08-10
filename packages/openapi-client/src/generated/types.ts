@@ -312,6 +312,13 @@ export type DecisionStatus = "PENDING_REVIEW" | "APPROVED" | "REJECTED" | "EXECU
 /** DecisionType */
 export type DecisionType = "CREATE" | "REVISE" | "DUPLICATE" | "QUARANTINE" | "REJECT" | "REOPEN" | "MERGE" | "SPLIT" | "UNMERGE";
 
+/** DqTriagePayload */
+export type DqTriagePayload = {
+  action: string;
+  actor?: string | null;
+  rationale: string;
+};
+
 /** EligibilityPayload */
 export type EligibilityPayload = {
   actor: string;
@@ -1501,6 +1508,7 @@ export const API_PATHS = {
   "/api/v1/jobs/{job_id}/receipt": ["GET"],
   "/api/v1/jobs/{job_id}/retry": ["POST"],
   "/api/v1/learninghub/dataset-snapshots": ["POST"],
+  "/api/v1/learninghub/dataset-snapshots/{dataset_snapshot_id}/triage": ["GET", "POST"],
   "/api/v1/learninghub/models": ["GET"],
   "/api/v1/learninghub/models/{model_name}": ["GET"],
   "/api/v1/learninghub/models/{model_name}/evidence": ["GET"],

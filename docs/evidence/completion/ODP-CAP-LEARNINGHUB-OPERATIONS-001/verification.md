@@ -31,10 +31,25 @@ python3 -m pytest -k learninghub -v
 ```
 Result: 12 passed, 173 deselected.
 
+### 4. OpenAPI Contract Gate & Client Generation
+Commands:
+```bash
+python3 scripts/openapi/export_openapi.py
+python3 scripts/openapi/generate_client.py
+python3 scripts/openapi/check_drift.py --base-ref origin/dev
+```
+Result: PASS (OpenAPI artifact updated with 225 paths, generated client updated, 0 unapproved breaking changes).
+
+### 5. Git Diff & Whitespace Check
+Command:
+```bash
+git diff --check origin/dev
+```
+Result: PASS (0 whitespace errors or trailing newline at EOF issues).
+
 ### Acceptance Criteria Checklist
 - [x] DQ actions persist actor time and rationale
 - [x] model operations are role gated
 - [x] empty registry never fabricates a model
 - [x] unsupported promotion fails closed
 - [x] lifecycle and permission tests are delivered
-
