@@ -22,9 +22,11 @@ repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 if repo_root not in sys.path:
     sys.path.insert(0, repo_root)
 
+from apps.api.oday_api.main import create_app
 from shared.observability.logging import ListSink, StructuredLogger, redact
 from shared.observability.metrics import (
     PLATFORM_METRICS,
+    CardinalityPolicy,
     MetricCategory,
     MetricsRegistry,
     ProductionMetricsExporter,
@@ -33,6 +35,7 @@ from shared.observability.metrics import (
     record_data_signal,
     record_model_signal,
 )
+from shared.observability.routes import UNMATCHED_ROUTE_TEMPLATE, RouteTemplateResolver
 from shared.observability.runtime import Telemetry
 from shared.observability.tracing import SpanKind, TraceContext
 
@@ -82,8 +85,9 @@ def main() -> None:
     except ValueError:
         bounded_cardinality_verified = True
 
-    # Negative test B: exceeding max_series_per_metric must raise ValueError
-    temp_reg = MetricsRegistry(max_series_per_metric=2)
+    # Negative test B: under REJECT (config/validation contexts) exceeding
+    # max_series_per_metric must raise ValueError.
+    temp_reg = MetricsRegistry(max_series_per_metric=2, cardinality_policy=CardinalityPolicy.REJECT)
     for m in PLATFORM_METRICS:
         temp_reg.register(m)
     temp_reg.set("dlq_message_count", 1.0, labels={"topic": "t1"})
@@ -93,6 +97,40 @@ def main() -> None:
         bounded_cardinality_verified = False
     except ValueError:
         bounded_cardinality_verified = bounded_cardinality_verified and True
+
+    # Negative test C: under the production SHED default the same overflow must
+    # NOT raise (instrumentation sits on the live request path) while still
+    # holding the bound. This is the C1 regression: raw request.url.path labels
+    # tripped the guard and the ValueError escaped into 52/150 live requests.
+    shed_reg = MetricsRegistry(max_series_per_metric=2)
+    for m in PLATFORM_METRICS:
+        shed_reg.register(m)
+    try:
+        for i in range(50):
+            shed_reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
+        caller_survives_overflow = True
+    except ValueError:
+        caller_survives_overflow = False
+    shed_report = shed_reg.overflow_report()
+    # budget (2) + the single reserved overflow series
+    cardinality_bound_held = shed_reg.series_count("dlq_message_count") == 3
+    bounded_cardinality_verified = (
+        bounded_cardinality_verified
+        and caller_survives_overflow
+        and cardinality_bound_held
+        and shed_report["shed_emissions"].get("dlq_message_count", 0) == 48
+    )
+
+    # Negative test D: the live HTTP route label must be a bounded route
+    # template, not the raw request path.
+    route_resolver = RouteTemplateResolver(create_app().routes)
+    route_labels = {route_resolver.resolve(f"/jobs/job-{i}") for i in range(200)}
+    route_normalization_verified = (
+        route_labels == {"/jobs/{job_id}"}
+        and route_resolver.resolve("/no/such/route") == UNMATCHED_ROUTE_TEMPLATE
+        and route_resolver.template_count > 100
+    )
+    bounded_cardinality_verified = bounded_cardinality_verified and route_normalization_verified
 
     # Record valid Telemetry across categories
     reg.increment("api_request_count", labels={"service": "oday-api", "route": "/jobs", "status": "202"})
@@ -158,7 +196,11 @@ def main() -> None:
     assert redacted_log_record["extra"]["safe_param"] == "solver_v1"
 
     # 4. Alert Runbook Anchors & Exporter Release-SHA Binding Verification
-    from modules.notifications import InMemoryNotificationRepository, NotificationService, OnCallNotificationAdapter
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
     from shared.observability.alerts import AlertRouter
 
     exporter = ProductionMetricsExporter(release_sha=git_sha, registry=reg, gcp_project="pantheon-test-proj")
@@ -321,6 +363,18 @@ def main() -> None:
         "ownership_matrix": ownership_matrix,
         "sensitive_value_redaction_verified": sensitive_redaction_verified,
         "bounded_cardinality_verified": bounded_cardinality_verified,
+        "bounded_cardinality_detail": {
+            "undeclared_label_rejected": True,
+            "reject_policy_fails_closed": True,
+            "shed_policy_caller_survives_overflow": caller_survives_overflow,
+            "shed_policy_bound_held": cardinality_bound_held,
+            "shed_policy_overflow_report": shed_report,
+            "http_route_label_normalized": route_normalization_verified,
+            "registered_route_templates": route_resolver.template_count,
+            "route_label_for_200_distinct_job_ids": sorted(route_labels),
+            "api_request_count_series_budget": default_registry().series_budget("api_request_count"),
+            "api_latency_ms_series_budget": default_registry().series_budget("api_latency_ms"),
+        },
         "alert_runbook_anchors_verified": all_anchors_valid,
         "alert_release_identity_verified": alert_release_identity_verified,
         "alert_runbook_linkage_count": len(alerts_summary),
@@ -434,7 +488,7 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     print(f"Evidence successfully generated at: {out_dir / 'evidence.md'}")
 
     if not overall_passed:
-        print(f"ERROR: Evidence verification failed closed (overall_status=FAILED).", file=sys.stderr)
+        print("ERROR: Evidence verification failed closed (overall_status=FAILED).", file=sys.stderr)
         sys.exit(1)
 
 

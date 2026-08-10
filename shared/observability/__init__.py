@@ -36,7 +36,9 @@ from shared.observability.logging import (
     stream_sink,
 )
 from shared.observability.metrics import (
+    OVERFLOW_LABEL_VALUE,
     PLATFORM_METRICS,
+    CardinalityPolicy,
     MetricCategory,
     MetricDefinition,
     MetricsRegistry,
@@ -44,6 +46,11 @@ from shared.observability.metrics import (
     ProductionMetricsExporter,
     default_registry,
     render_dashboard_provisioning,
+)
+from shared.observability.routes import (
+    UNMATCHED_ROUTE_TEMPLATE,
+    RouteTemplateResolver,
+    compile_route_template,
 )
 from shared.observability.runtime import Telemetry
 from shared.observability.tracing import (
@@ -80,6 +87,11 @@ __all__ = [
     "StructuredLogRecord",
     "redact",
     "stream_sink",
+    "CardinalityPolicy",
+    "OVERFLOW_LABEL_VALUE",
+    "RouteTemplateResolver",
+    "UNMATCHED_ROUTE_TEMPLATE",
+    "compile_route_template",
     "MetricCategory",
     "MetricDefinition",
     "MetricsRegistry",

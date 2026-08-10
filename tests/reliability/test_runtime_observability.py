@@ -5787,18 +5787,24 @@ def test_b39_arbitrary_secret_and_mock_transport_cannot_mint_watch_passed(tmp_pa
 
 def test_b40_metrics_registry_enforces_undeclared_labels_and_cardinality_bounds() -> None:
     """B40 Test: Verify fail-closed enforcement of declared label names and max series cardinality."""
-    reg = MetricsRegistry(max_series_per_metric=5)
+    from shared.observability.metrics import CardinalityPolicy
+
+    reg = MetricsRegistry(max_series_per_metric=5, cardinality_policy=CardinalityPolicy.REJECT)
     for m in PLATFORM_METRICS:
         reg.register(m)
 
-    # 1. Undeclared label key must raise ValueError
+    # 1. Undeclared label key must raise ValueError. This stays fail-closed under
+    #    every policy: an undeclared key is a coding defect, not a data value.
     with pytest.raises(ValueError, match="undeclared label key"):
         reg.increment(
             "api_request_count",
             labels={"service": "api", "route": "/jobs", "status": "200", "unbounded_user_id": "user-123"},
         )
 
-    # 2. Exceeding max series per metric must raise ValueError
+    # 2. Under REJECT, exceeding max series per metric must raise ValueError.
+    #    The production default is SHED (see test_c1_registry_sheds_overflow_*),
+    #    which bounds cardinality identically but degrades the metric instead of
+    #    the live request that emitted it.
     for i in range(5):
         reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
 
@@ -5846,3 +5852,207 @@ def test_b42_alerts_runbook_anchors_and_headings_are_valid() -> None:
             header_lines = [line.lstrip("#").strip() for line in content.splitlines() if line.startswith("#")]
             slugs = {header_to_slug(h) for h in header_lines if h}
             assert anchor in slugs, f"Alert {alert['id']} anchor #{anchor} not found in {file_part}. Found anchors: {sorted(slugs)}"
+
+
+# --- C1: bounded route cardinality must not break instrumented callers -------
+#
+# Regression cover for the reopen at 54b749e0: the API middleware labelled
+# api_request_count with the raw request.url.path, so 150 concurrent /jobs/{id}
+# reads minted 150 series, tripped the registry cardinality guard, and the
+# resulting ValueError escaped into the request path (52/150 request failures in
+# tests/performance/test_load_and_soak.py). The fix has two independent layers,
+# and each is pinned below: normalize the label at the source, and make overflow
+# shed instead of raising at the instrumented caller.
+
+
+def test_c1_route_label_is_normalized_to_bounded_templates() -> None:
+    """Layer 1: dynamic path segments collapse to their registered template."""
+    from shared.observability.routes import (
+        UNMATCHED_ROUTE_TEMPLATE,
+        RouteTemplateResolver,
+        compile_route_template,
+    )
+
+    resolver = RouteTemplateResolver(
+        [
+            _FakeRoute("/health"),
+            _FakeRoute("/jobs"),
+            _FakeRoute("/jobs/{job_id}"),
+            _FakeRoute("/files/{rest:path}"),
+        ]
+    )
+
+    # Distinct ids must not produce distinct label values.
+    labels = {resolver.resolve(f"/jobs/{i:08d}-uuid-{i}") for i in range(500)}
+    assert labels == {"/jobs/{job_id}"}
+
+    assert resolver.resolve("/jobs") == "/jobs"
+    assert resolver.resolve("/health") == "/health"
+    assert resolver.resolve("/files/a/b/c.txt") == "/files/{rest:path}"
+    # Unrouted paths (scanners, 404 probes) share one reserved bucket.
+    assert resolver.resolve("/definitely/not/a/route") == UNMATCHED_ROUTE_TEMPLATE
+    assert resolver.resolve("") == UNMATCHED_ROUTE_TEMPLATE
+
+    # The compiled template must not match a longer path by prefix.
+    pattern = compile_route_template("/jobs/{job_id}")
+    assert pattern.match("/jobs/abc")
+    assert not pattern.match("/jobs/abc/extra")
+
+
+class _FakeRoute:
+    """Minimal duck-type of a router route for resolver unit tests."""
+
+    def __init__(self, path: str) -> None:
+        self.path_format = path
+
+
+def test_c1_registry_sheds_overflow_without_failing_the_caller() -> None:
+    """Layer 2: past the budget, emission is shed and counted, never raised."""
+    from shared.observability.metrics import (
+        OVERFLOW_LABEL_VALUE,
+        CardinalityPolicy,
+        MetricsRegistry,
+    )
+
+    reg = MetricsRegistry(max_series_per_metric=5)
+    assert reg.cardinality_policy is CardinalityPolicy.SHED
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    for i in range(5):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
+
+    # 200 further distinct label values: none may raise.
+    for i in range(200):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"overflow-{i}"})
+
+    # Cardinality stays bounded at budget + the single reserved overflow series.
+    assert reg.series_count("dlq_message_count") == 6
+
+    report = reg.overflow_report()
+    assert report["policy"] == "shed"
+    assert report["shed_emissions"]["dlq_message_count"] == 200
+    assert report["metrics_with_shedding"] == ["dlq_message_count"]
+
+    overflow_entries = [
+        entry
+        for entry in reg.snapshot()["dlq_message_count"]
+        if entry.get("cardinality_overflow")
+    ]
+    assert len(overflow_entries) == 1
+    assert overflow_entries[0]["labels"] == {"topic": OVERFLOW_LABEL_VALUE}
+    assert overflow_entries[0]["shed_emissions"] == 200
+
+
+def test_c1_reject_policy_still_fails_closed_for_config_validation() -> None:
+    """Config/evidence contexts keep the fail-closed behaviour."""
+    from shared.observability.metrics import CardinalityPolicy, MetricsRegistry
+
+    reg = MetricsRegistry(max_series_per_metric=5, cardinality_policy=CardinalityPolicy.REJECT)
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+    for i in range(5):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
+
+    with pytest.raises(ValueError, match="exceeded maximum allowed series cardinality threshold"):
+        reg.set("dlq_message_count", 99.0, labels={"topic": "topic-overflow"})
+
+
+def test_c1_http_metrics_declare_a_budget_covering_the_route_table() -> None:
+    """The declared budgets must actually fit the app's route table."""
+    from shared.observability.metrics import MetricsRegistry
+    from shared.observability.routes import RouteTemplateResolver
+
+    pytest.importorskip("fastapi")
+    from apps.api.oday_api.main import create_app
+
+    resolver = RouteTemplateResolver(create_app().routes)
+    template_count = resolver.template_count
+    assert template_count > 100, "route table lookup regressed to a near-empty set"
+
+    reg = MetricsRegistry()
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    # route-only signal: one series per template plus the unmatched bucket.
+    assert reg.series_budget("api_latency_ms") > template_count + 1
+    # route x status signals need headroom for the status dimension.
+    assert reg.series_budget("api_request_count") > template_count + 1
+    assert reg.series_budget("api_error_count") > template_count + 1
+
+
+def test_c1_instrumented_api_caller_survives_past_the_cardinality_cap() -> None:
+    """End-to-end: requests keep succeeding past the budget, telemetry degrades.
+
+    Drives the real middleware through a registry whose budget is deliberately
+    tiny, so every request after the first few is in overflow territory. Before
+    the fix this raised ValueError out of the middleware and returned 500s.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    tiny = MetricsRegistry(max_series_per_metric=2)
+    for m in PLATFORM_METRICS:
+        tiny.register(m)
+
+    app = create_app(telemetry=_Telemetry("oday-api", metrics=tiny))
+    client = TestClient(app)
+
+    statuses = []
+    for i in range(60):
+        # Distinct dynamic ids + unrouted paths: both would be unbounded labels.
+        statuses.append(client.get(f"/jobs/job-{i}-{'x' * 12}").status_code)
+        statuses.append(client.get(f"/not-a-route/{i}").status_code)
+
+    # No request may fail because of instrumentation.
+    assert 500 not in statuses, f"instrumentation broke the request path: {sorted(set(statuses))}"
+
+    # Cardinality stayed bounded: budget (2) + reserved overflow series.
+    for name in ("api_request_count", "api_latency_ms"):
+        assert tiny.series_count(name) <= 3, f"{name} exceeded its bound: {tiny.snapshot()[name]}"
+
+    # And the route labels that were recorded are templates, not raw paths.
+    recorded_routes = {
+        entry["labels"].get("route") for entry in tiny.snapshot()["api_request_count"]
+    }
+    assert not any(
+        route and route.startswith("/jobs/job-") for route in recorded_routes
+    ), f"raw path leaked into the route label: {recorded_routes}"
+
+
+def test_c1_api_latency_is_recorded_exactly_once_per_request() -> None:
+    """The middleware must not double-count latency (operation + explicit emit)."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    reg = MetricsRegistry()
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    client = TestClient(create_app(telemetry=_Telemetry("oday-api", metrics=reg)))
+    for _ in range(5):
+        assert client.get("/health").status_code == 200
+
+    health_latency = [
+        entry
+        for entry in reg.snapshot()["api_latency_ms"]
+        if entry["labels"].get("route") == "/health"
+    ]
+    assert len(health_latency) == 1
+    assert health_latency[0]["count"] == 5
+
+    health_requests = [
+        entry
+        for entry in reg.snapshot()["api_request_count"]
+        if entry["labels"].get("route") == "/health"
+    ]
+    assert len(health_requests) == 1
+    assert health_requests[0]["value"] == 5
