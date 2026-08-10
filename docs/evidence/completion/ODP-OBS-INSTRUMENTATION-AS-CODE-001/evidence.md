@@ -15,7 +15,7 @@ The implementation decouples API, worker, DLQ, model, solver, business KPI telem
 | 2 | Sensitive values are excluded | Verified recursive `StructuredLogger` redaction of passwords, tokens, API keys | **PASSED** |
 | 3 | Cardinality is bounded | Route labels normalized to 469 registered templates; declared per-metric budgets; overflow shed into a reserved series without failing the emitting caller; undeclared labels rejected fail-closed | **PASSED** |
 | 4 | Alerts link to runbooks and release identity | All 11 alert definitions link to valid Markdown runbooks & anchors under `docs/runbooks/` and bind to exact `RELEASE_SHA`; the binding flag is derived, and reports `False` when the trusted identity rotates | **PASSED** |
-| 5 | Configuration and emission tests are reproducible | 91/91 pytest reliability/observability tests passing dynamically in 41.61s | **PASSED** |
+| 5 | Configuration and emission tests are reproducible | 91/91 pytest reliability/observability tests passing dynamically in 41.02s | **PASSED** |
 
 ---
 
@@ -65,7 +65,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "forecast-daily-failed",
@@ -76,7 +76,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "data-quality-p0-fail",
@@ -87,7 +87,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "dlq-spike",
@@ -98,7 +98,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "unauthorized-spike",
@@ -109,7 +109,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "audit-write-failure",
@@ -120,7 +120,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "model-drift-high",
@@ -131,7 +131,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "price-constraint-violation",
@@ -142,7 +142,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "data-room-abnormal-download",
@@ -153,7 +153,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "solver-repeated-infeasible",
@@ -164,7 +164,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   },
   {
     "id": "external-connector-stale",
@@ -175,7 +175,7 @@ All alert definitions in `infra/monitoring/alerts.json` strictly map to valid ru
     "runbook_file_verified": true,
     "runbook_anchor_verified": true,
     "release_identity_bound": true,
-    "release_sha": "25ee41a44c4f87750ec5c6b887d2f5e82755212a"
+    "release_sha": "30d1d3a57e44f16fe9306d02a05bc159df7db225"
   }
 ]
 ```
@@ -246,17 +246,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 ```json
 [
   {
-    "span_id": "7167e65c7baa4fd6",
-    "parent_id": "b2d59ab1ff8a40b6",
+    "span_id": "647e4644a8c8437b",
+    "parent_id": "b82abb3ffb2b4059",
     "name": "model-solver-evaluate",
     "kind": "model",
-    "correlation_id": "1214e172-0c7b-4163-ad8e-571f273cea3a",
+    "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.002369,
+    "duration_ms": 0.002739,
     "attributes": {
-      "correlation_id": "1214e172-0c7b-4163-ad8e-571f273cea3a",
+      "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -266,17 +266,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "7cf261b7f8b94054",
-    "parent_id": "b2d59ab1ff8a40b6",
+    "span_id": "70bd620d69884873",
+    "parent_id": "b82abb3ffb2b4059",
     "name": "worker-solver-execute",
     "kind": "worker",
-    "correlation_id": "1214e172-0c7b-4163-ad8e-571f273cea3a",
+    "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.138235,
+    "duration_ms": 0.120184,
     "attributes": {
-      "correlation_id": "1214e172-0c7b-4163-ad8e-571f273cea3a",
+      "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -286,17 +286,17 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
     }
   },
   {
-    "span_id": "b2d59ab1ff8a40b6",
+    "span_id": "b82abb3ffb2b4059",
     "parent_id": null,
     "name": "api-solver-submit",
     "kind": "api",
-    "correlation_id": "1214e172-0c7b-4163-ad8e-571f273cea3a",
+    "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
     "actor_id": "obs-user",
     "status": "ok",
     "error_code": null,
-    "duration_ms": 0.200581,
+    "duration_ms": 0.184022,
     "attributes": {
-      "correlation_id": "1214e172-0c7b-4163-ad8e-571f273cea3a",
+      "correlation_id": "4b6b7bb3-a08f-4c37-a10e-50bba78e393b",
       "request_id": "req-obs-100",
       "job_id": "job-obs-200",
       "actor_id": "obs-user",
@@ -312,9 +312,9 @@ Exported end-to-end trace spans linking API, worker, model, and solver execution
 
 ## 6. Test Suite Execution Output
 
-- Source Commit: `25ee41a44c4f87750ec5c6b887d2f5e82755212a` (is_test_simulated: False)
+- Source Commit: `30d1d3a57e44f16fe9306d02a05bc159df7db225` (is_test_simulated: False)
 - Command: `python3 -m pytest tests/reliability/test_runtime_observability.py`
-- Result: **91 passed in 41.61s** (Exit Code: 0)
+- Result: **91 passed in 41.02s** (Exit Code: 0)
 
 ---
 
