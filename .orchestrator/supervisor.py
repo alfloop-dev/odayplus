@@ -11023,6 +11023,7 @@ def requeue_task_for_ci_repair(
     task["next"] = message
     task.pop("ci_pending_since_ts", None)
     task.pop("ci_pending_since", None)
+    task["ci_repair_last_requeued_ts"] = datetime.now(UTC).timestamp()
     if clear_approval:
         task.pop("approved_head", None)
     write_json(config_path(config, "status_file"), status)
@@ -11362,12 +11363,21 @@ def dispatch_ready_tasks(
                         write_json(status_path, status)
                     elif now_ts - float(start_ts) > 1800:
                         approved_key = str(approved_head or "")
-                        if task.get("ci_repair_requeued_head") != approved_key:
+                        last_requeued_ts = task.get("ci_repair_last_requeued_ts")
+                        try:
+                            retry_due = (
+                                last_requeued_ts is None
+                                or now_ts - float(last_requeued_ts) >= 1800
+                            )
+                        except (TypeError, ValueError):
+                            retry_due = True
+                        if task.get("ci_repair_requeued_head") != approved_key or retry_due:
                             msg = (
                                 f"CI status for task {task_id} has been pending for over 30 minutes; "
                                 "owner requeued to refresh CI automatically."
                             )
                             task["ci_repair_requeued_head"] = approved_key
+                            task["ci_repair_last_requeued_ts"] = now_ts
                             status_path = config_path(config, "status_file")
                             write_json(status_path, status)
                             if requeue_task_for_ci_repair(
