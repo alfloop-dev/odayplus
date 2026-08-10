@@ -911,6 +911,20 @@ def test_validate_routing_config_rejects_malformed_exact_sha_binding(monkeypatch
     with pytest.raises(ValueError, match="exact_sha_binding must be a string"):
         router.validate_routing_config()
 
+    # 3. Unsupported / malformed placeholders fail closed even when RELEASE_SHA is present
+    malformed_placeholders = [
+        "$TYPO_RELEASE_SHA",
+        "${TYPO_RELEASE_SHA}",
+        "$",
+        "$$",
+        "$RELEASE_SHA",
+        "${RELEASE_SHA_TYPO}",
+    ]
+    for bad_placeholder in malformed_placeholders:
+        router.config["release_identity"]["exact_sha_binding"] = bad_placeholder
+        with pytest.raises(ValueError, match="is not a valid 40-character hex SHA or placeholder"):
+            router.validate_routing_config()
+
 
 def test_release_sha_dashboard_traceability_and_watch_window_receipt(
     tmp_path: Path, monkeypatch: Any

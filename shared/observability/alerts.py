@@ -65,9 +65,13 @@ class AlertRouter:
             if isinstance(rel_id, dict):
                 exact = rel_id.get("exact_sha_binding")
                 if exact and isinstance(exact, str):
-                    expanded = os.path.expandvars(exact)
-                    if expanded and not expanded.startswith("$"):
-                        sha = expanded
+                    exact_clean = exact.strip()
+                    if exact_clean == "${RELEASE_SHA}":
+                        expanded = os.path.expandvars(exact_clean)
+                        if expanded and not expanded.startswith("$"):
+                            sha = expanded
+                    elif "$" not in exact_clean and is_valid_full_sha(exact_clean):
+                        sha = exact_clean
         if sha and isinstance(sha, str):
             sha = sha.strip()
             if is_valid_full_sha(sha):
@@ -103,16 +107,32 @@ class AlertRouter:
         if not isinstance(exact_binding, str):
             raise ValueError("Alert release identity exact_sha_binding must be a string. Fail-closed gate enforced.")
 
-        expanded_binding = os.path.expandvars(exact_binding).strip()
-        if not expanded_binding.startswith("$"):
-            if not is_valid_full_sha(expanded_binding):
+        exact_clean = exact_binding.strip()
+        if "$" in exact_clean or exact_clean.startswith("$"):
+            if exact_clean != "${RELEASE_SHA}":
+                raise ValueError(
+                    f"Configured exact_sha_binding '{exact_binding}' is not a valid 40-character hex SHA or placeholder. Fail-closed gate enforced."
+                )
+            expanded_binding = os.path.expandvars(exact_clean).strip()
+            if expanded_binding != "${RELEASE_SHA}":
+                if not is_valid_full_sha(expanded_binding):
+                    raise ValueError(
+                        f"Configured exact_sha_binding '{exact_binding}' is not a valid 40-character hex SHA or placeholder. Fail-closed gate enforced."
+                    )
+                trusted = self.get_trusted_release_sha()
+                if trusted and trusted.lower() != expanded_binding.lower():
+                    raise ValueError(
+                        f"Configured exact_sha_binding '{expanded_binding}' does not match trusted deployed release SHA '{trusted}'. Fail-closed gate enforced."
+                    )
+        else:
+            if not is_valid_full_sha(exact_clean):
                 raise ValueError(
                     f"Configured exact_sha_binding '{exact_binding}' is not a valid 40-character hex SHA or placeholder. Fail-closed gate enforced."
                 )
             trusted = self.get_trusted_release_sha()
-            if trusted and trusted.lower() != expanded_binding.lower():
+            if trusted and trusted.lower() != exact_clean.lower():
                 raise ValueError(
-                    f"Configured exact_sha_binding '{expanded_binding}' does not match trusted deployed release SHA '{trusted}'. Fail-closed gate enforced."
+                    f"Configured exact_sha_binding '{exact_clean}' does not match trusted deployed release SHA '{trusted}'. Fail-closed gate enforced."
                 )
 
         routing = self.config.get("routing")
