@@ -1,7 +1,7 @@
 {
   "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
-  "timestamp": "2026-08-10T14:19:56.725465+00:00",
-  "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54",
+  "timestamp": "2026-08-10T14:20:20.246610+00:00",
+  "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788",
   "is_test_simulated": false,
   "overall_status": "PASSED",
   "metrics_categories": [
@@ -69,7 +69,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "forecast-daily-failed",
@@ -80,7 +80,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "data-quality-p0-fail",
@@ -91,7 +91,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "dlq-spike",
@@ -102,7 +102,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "unauthorized-spike",
@@ -113,7 +113,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "audit-write-failure",
@@ -124,7 +124,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "model-drift-high",
@@ -135,7 +135,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "price-constraint-violation",
@@ -146,7 +146,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "data-room-abnormal-download",
@@ -157,7 +157,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "solver-repeated-infeasible",
@@ -168,7 +168,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     },
     {
       "id": "external-connector-stale",
@@ -179,7 +179,7 @@
       "runbook_file_verified": true,
       "runbook_anchor_verified": true,
       "release_identity_bound": true,
-      "release_sha": "ccf0bac077b00177b03f372d269f00c00a42fe54"
+      "release_sha": "3182f0a05b39200e4ab1fa623fcfb795588de788"
     }
   ],
   "trace_spans_count": 3,
@@ -189,6 +189,6 @@
     "target": "tests/reliability/test_runtime_observability.py",
     "passed_tests": 77,
     "exit_code": 0,
-    "duration_seconds": 17.76
+    "duration_seconds": 17.79
   }
 }
