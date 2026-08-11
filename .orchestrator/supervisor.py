@@ -9956,6 +9956,8 @@ def task_assignment_integrity_issues(
     if str(task.get("status") or "").strip().lower() not in AGENT_OPEN_TASK_STATUSES:
         return []
     issues: list[str] = []
+    if str(task.get("priority") or "").strip().upper() not in {"P0", "P1", "P2", "P3"}:
+        issues.append("priority_missing_or_invalid")
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
     owner_reason = task_actor_assignment_block_reason(config, state, task, owner)
@@ -9984,6 +9986,43 @@ def task_assignment_integrity_issues(
         if waiting_reason:
             issues.append(f"waiting_for_unavailable:{waiting_reason}")
     return issues
+
+
+def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Backfill durable scheduling metadata omitted by legacy task writers."""
+    paths = config.get("paths") or {}
+    if not paths.get("status_file") or not paths.get("activity_log"):
+        return False
+    tasks = status.get("tasks", []) or []
+    task_map = {str(task.get("id") or ""): task for task in tasks if task.get("id")}
+    changed = False
+    timestamp = utc_now()
+    for task in tasks:
+        if str(task.get("status") or "").strip().lower() not in AGENT_OPEN_TASK_STATUSES:
+            continue
+        if str(task.get("priority") or "").strip().upper() in {"P0", "P1", "P2", "P3"}:
+            continue
+        task_id = str(task.get("id") or "").strip()
+        parent_id = str(task.get("helper_parent") or "").strip()
+        if not parent_id and "-SIDECAR-" in task_id:
+            parent_id = task_id.split("-SIDECAR-", 1)[0]
+        parent = task_map.get(parent_id, {})
+        priority = normalized_business_priority(parent.get("priority"), default="P2")
+        task["priority"] = priority
+        task["last_update"] = timestamp
+        write_activity_log(
+            config,
+            {
+                "type": "task_metadata_integrity_repaired",
+                "task_id": task_id,
+                "message": f"Backfilled required business priority as {priority}.",
+            },
+        )
+        changed = True
+    if changed:
+        write_json(config_path(config, "status_file"), status)
+        sync_status_pipeline(config)
+    return changed
 
 
 def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, Any]) -> bool:
@@ -10016,6 +10055,14 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         else:
             task["status"] = "in_progress"
             task.pop("waiting_for", None)
+            if task_is_sidecar(task) and task.get("depends_on"):
+                # A legacy sidecar that already reached review has completed
+                # its support artifact. Its parent/human-gate references are
+                # context, not prerequisites for publishing that artifact.
+                # Preserve them for traceability without letting the owner
+                # closeout dispatch deadlock behind the parent it supports.
+                task["review_submission_context_dependencies"] = list(task.get("depends_on") or [])
+                task["depends_on"] = []
             message = (
                 "Review state repaired: no verified remote task PR was recorded. The owner must publish via "
                 "scripts/git/task_finalize.sh before review can be dispatched."
@@ -10273,6 +10320,11 @@ def task_phase_priority(task: dict[str, Any], task_map: dict[str, dict[str, Any]
     if status == "blocked":
         return 5
     return 9
+
+
+def normalized_business_priority(value: Any, default: str = "P2") -> str:
+    priority = str(value or "").strip().upper()
+    return priority if priority in {"P0", "P1", "P2", "P3"} else default
 
 
 def dynamic_sidecar_kind(task: dict[str, Any]) -> str | None:
@@ -10607,6 +10659,7 @@ def build_catalog_sidecar_candidates(
                     "reviewer": reviewer,
                     "mutates_canonical": bool(template.get("mutates_canonical", False)),
                     "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                    "business_priority": normalized_business_priority(parent.get("priority")),
                 }
             )
     return candidates
@@ -10678,6 +10731,7 @@ def build_dynamic_sidecar_candidates(
                 "reviewer": reviewer,
                 "mutates_canonical": False,
                 "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                "business_priority": normalized_business_priority(parent.get("priority")),
             }
         )
     return candidates
@@ -10697,6 +10751,7 @@ def create_sidecar_task(
     helper_parent: str,
     helper_kind: str,
     mutates_canonical: bool,
+    priority: str,
 ) -> tuple[bool, str]:
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     metadata = {
@@ -10706,6 +10761,7 @@ def create_sidecar_task(
         "helper_kind": helper_kind,
         "mutates_canonical": mutates_canonical,
         "auto_created_by": "supervisor-underutilization",
+        "priority": normalized_business_priority(priority),
     }
     env = os.environ.copy()
     env.update(
@@ -12033,6 +12089,9 @@ def dispatch_ready_tasks(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
 
+    metadata_repaired = repair_open_task_metadata(config, status)
+    if metadata_repaired:
+        status = load_status(config)
     review_states_repaired = repair_unsubmitted_review_tasks(config, status)
     if review_states_repaired:
         status = load_status(config)
@@ -12059,7 +12118,7 @@ def dispatch_ready_tasks(
     failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
-    changed = review_states_repaired
+    changed = metadata_repaired or review_states_repaired
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
@@ -12829,6 +12888,7 @@ def dispatch_underutilization_sidecars(
             helper_parent=str(candidate["parent_task_id"]),
             helper_kind=str(candidate["kind"]),
             mutates_canonical=bool(candidate.get("mutates_canonical", False)),
+            priority=str(candidate.get("business_priority") or "P2"),
         )
         if not ok:
             write_activity_log(

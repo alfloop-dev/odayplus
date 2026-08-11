@@ -421,6 +421,25 @@ class AccountPoolSchedulingTests(unittest.TestCase):
             )
         self.assertEqual(persist.call_args.kwargs["new_waiting_for"], "Antigravity")
 
+    def test_metadata_repair_inherits_sidecar_priority_and_defaults_legacy_task(self) -> None:
+        config = self._config()
+        config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}
+        status = {
+            "tasks": [
+                {"id": "PARENT", "status": "blocked", "priority": "P1"},
+                {"id": "PARENT-SIDECAR-ACCEPTANCE", "status": "todo", "task_class": "sidecar"},
+                {"id": "LEGACY", "status": "todo"},
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "write_json"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.repair_open_task_metadata(config, status))
+        self.assertEqual(status["tasks"][1]["priority"], "P1")
+        self.assertEqual(status["tasks"][2]["priority"], "P2")
+
     def test_false_review_repair_blocks_human_gate_and_returns_sidecar_to_owner(self) -> None:
         config = self._config()
         config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}
@@ -439,6 +458,7 @@ class AccountPoolSchedulingTests(unittest.TestCase):
                     "owner": "Antigravity",
                     "reviewer": "Human/Ops",
                     "task_class": "sidecar",
+                    "depends_on": ["PARENT-HUMAN-GATE"],
                 },
             ],
             "handoffs": [],
@@ -452,6 +472,11 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         self.assertEqual(status["tasks"][0]["status"], "blocked")
         self.assertEqual(status["tasks"][0]["waiting_for"], "Human/Ops")
         self.assertEqual(status["tasks"][1]["status"], "in_progress")
+        self.assertEqual(status["tasks"][1]["depends_on"], [])
+        self.assertEqual(
+            status["tasks"][1]["review_submission_context_dependencies"],
+            ["PARENT-HUMAN-GATE"],
+        )
 
     def test_quota_failure_fences_sibling_slots_and_hands_off(self) -> None:
         config = self._config()
@@ -3077,6 +3102,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 {
                     "id": "INVALID-SELF-REVIEW",
                     "status": "review",
+                    "priority": "P1",
                     "owner": "Codex",
                     "reviewer": "Codex",
                     "depends_on": [],
@@ -7052,6 +7078,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 {
                     "id": "T-REVIEW",
                     "status": "review",
+                    "priority": "P1",
                     "owner": "Codex",
                     "reviewer": "Codex2",
                     "review_submission": {
@@ -10419,6 +10446,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             task = {
                 "id": "ODP-TASKOUTPUT-LIVE",
                 "status": "in_progress",
+                "priority": "P1",
                 "owner": "Claude",
                 "reviewer": "Codex",
                 "depends_on": [],
@@ -11529,6 +11557,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 "owner": "Antigravity4",
                 "reviewer": "Claude",
                 "status": "review_approved",
+                "priority": "P1",
                 "approved_head": approved,
             }
 
@@ -11595,6 +11624,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 "owner": "Antigravity4",
                 "reviewer": "Claude",
                 "status": "review_approved",
+                "priority": "P1",
                 "approved_head": approved,
             }
             task.update(extra)
@@ -11981,6 +12011,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "owner": "Antigravity4",
             "reviewer": "Claude",
             "status": "review_approved",
+            "priority": "P1",
         }
 
     def test_dispatch_priority_fails_closed_when_approved_head_is_absent(self) -> None:
@@ -12395,6 +12426,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "owner": "Antigravity4",
             "reviewer": "Claude",
             "status": "review_approved",
+            "priority": "P1",
             "approved_head": approved,
             "ci_pending_since_ts": datetime.now(UTC).timestamp() - 4000,
         }
@@ -12889,6 +12921,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                     {
                         "id": "ODP-CONC-001",
                         "status": "todo",
+                        "priority": "P1",
                         "owner": "Antigravity4",
                         "reviewer": "Codex",
                     }
@@ -12933,6 +12966,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                     {
                         "id": "ODP-CONC-001",
                         "status": "in_progress",
+                        "priority": "P1",
                         "owner": "Antigravity4",
                         "reviewer": "Codex6",
                     }

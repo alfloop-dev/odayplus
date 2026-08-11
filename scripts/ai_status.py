@@ -2785,6 +2785,7 @@ def task_metadata_from_env() -> dict[str, Any]:
         "helper_parent": os.environ.get("TASK_HELPER_PARENT", "").strip() or None,
         "helper_kind": os.environ.get("TASK_HELPER_KIND", "").strip() or None,
         "auto_created_by": os.environ.get("TASK_AUTO_CREATED_BY", "").strip() or None,
+        "priority": os.environ.get("TASK_PRIORITY", "").strip().upper() or None,
     }
     for key, value in explicit_fields.items():
         if value is not None:
@@ -4929,10 +4930,20 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    task = get_task(state, task_id)
+    if task is None:
+        priority = str(metadata.get("priority") or "P2").strip().upper()
+        if priority not in {"P0", "P1", "P2", "P3"}:
+            raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
+        metadata["priority"] = priority
+    elif "priority" in metadata:
+        priority = str(metadata.get("priority") or "").strip().upper()
+        if priority not in {"P0", "P1", "P2", "P3"}:
+            raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
+        metadata["priority"] = priority
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
 
-    task = get_task(state, task_id)
     timestamp = iso_now()
     if task is None:
         if archived_task_snapshot(task_id):

@@ -1269,6 +1269,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_AUTO_GENERATED": "true",
             "TASK_MUTATES_CANONICAL": "false",
             "TASK_AUTO_CREATED_BY": "supervisor-underutilization",
+            "TASK_PRIORITY": "P1",
         }
         with (
             mock.patch.dict(os.environ, env, clear=False),
@@ -1290,6 +1291,7 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(task["helper_kind"], "bff_handoff_packet")
         self.assertFalse(task["mutates_canonical"])
         self.assertEqual(task["auto_created_by"], "supervisor-underutilization")
+        self.assertEqual(task["priority"], "P1")
         self.assertEqual(task["depends_on"], ["PER-001"])
 
     def test_display_task_title_marks_sidecar_parent(self) -> None:
