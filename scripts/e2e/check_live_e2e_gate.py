@@ -1315,19 +1315,27 @@ def _check_source_data(
 def _enqueue_body(
     config: GateConfig, idempotency_key: str, *, provider_id: str = ""
 ) -> dict[str, Any]:
-    tenant_id = (
-        config.operator_tenant
-        or os.environ.get("ODP_SCHEDULED_INGESTION_TENANT_ID")
-        or os.environ.get("ODP_TENANT_ID")
-        or "tenant-e2e"
-    )
+    """Build the probe enqueue body.
+
+    The tenant is deliberately *not* guessed from the deployment environment.
+    A probe that writes under one tenant while the gate reads back under the
+    operator credential's own tenant is invisible: the worker reports success
+    and ``data:*`` reports zero runs, which is exactly the split diagnosed in
+    ODP-P10-LIVE-EXTDATA-DIAG-001. ``POST /api/v1/jobs`` now binds the
+    ingestion tenant to the authenticated principal, so omitting the field
+    makes the probe write wherever this same credential reads. An explicit
+    ``--operator-tenant`` is still sent, so a stale override fails loudly with
+    ``TENANT_SCOPE_MISMATCH`` instead of silently writing somewhere unreadable.
+    """
+    payload: dict[str, Any] = {
+        "provider_id": provider_id or config.probe_provider_id,
+        "schedule_id": "live-e2e-gate",
+    }
+    if config.operator_tenant:
+        payload["tenant_id"] = config.operator_tenant
     return {
         "job_type": WORKER_PROBE_JOB_TYPE,
-        "payload": {
-            "tenant_id": tenant_id,
-            "provider_id": provider_id or config.probe_provider_id,
-            "schedule_id": "live-e2e-gate",
-        },
+        "payload": payload,
         "idempotency_key": idempotency_key,
     }
 

@@ -832,6 +832,54 @@ else:
                 )
             return active_tenant_id
 
+        def external_fetch_job_tenant(request: Request) -> str:
+            """Resolve the tenant that owns an ``external-fetch`` enqueue.
+
+            Canonical ingestion is persisted into a *renamed*, tenant-scoped
+            collection, so whatever tenant rides on the job payload decides
+            which partition the worker writes to. Trusting the caller for that
+            value let any ``integration:create`` principal direct canonical
+            ingestion into a partition it cannot read back, and the live E2E
+            gate was the first caller to trip over it: its probes enqueued
+            under the deployment's placeholder tenant, the worker persisted
+            there and reported success, and the gate's readback -- scoped to
+            the smoke principal's own tenant -- reported ``runs=0`` seconds
+            later (ODP-P10-LIVE-EXTDATA-DIAG-001 §3). The authenticated
+            principal is now the only source of the ingestion tenant, which is
+            the same rule ``forecast`` already follows.
+            """
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "code": "AUTHENTICATION_REQUIRED",
+                        "message": "External fetch jobs require an authenticated principal",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if not rbac_allows(principal, "integration", Action.CREATE):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "EXTERNAL_FETCH_CREATE_FORBIDDEN",
+                        "message": "Principal cannot enqueue external-data ingestion jobs",
+                    },
+                )
+            active_tenant_id = str(principal.tenant_id or "").strip()
+            if not active_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "External fetch jobs require an authenticated tenant scope",
+                    },
+                )
+            return active_tenant_id
+
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
@@ -840,6 +888,7 @@ else:
         ) -> dict[str, Any]:
             payload = body.payload
             idempotency_tenant_id: str | None = None
+            idempotency_scope = ""
             if body.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="execute")
                 supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
@@ -855,12 +904,30 @@ else:
                     )
                 payload = {**payload, "tenant_id": active_tenant_id}
                 idempotency_tenant_id = active_tenant_id
+                idempotency_scope = "forecast:v1"
+            elif body.job_type == "external-fetch":
+                active_tenant_id = external_fetch_job_tenant(request)
+                supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
+                if supplied_tenant_id and supplied_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "TENANT_SCOPE_MISMATCH",
+                            "message": (
+                                "External fetch job tenant does not match the "
+                                "authenticated tenant scope"
+                            ),
+                        },
+                    )
+                payload = {**payload, "tenant_id": active_tenant_id}
+                idempotency_tenant_id = active_tenant_id
+                idempotency_scope = "external-fetch:v1"
 
             effective_idempotency_key = body.idempotency_key or idempotency_key
             queue_idempotency_key = effective_idempotency_key
             if effective_idempotency_key and idempotency_tenant_id is not None:
                 queue_idempotency_key = (
-                    f"forecast:v1:{idempotency_tenant_id}:{effective_idempotency_key}"
+                    f"{idempotency_scope}:{idempotency_tenant_id}:{effective_idempotency_key}"
                 )
             job, created = job_queue.enqueue(
                 JobRequest(
