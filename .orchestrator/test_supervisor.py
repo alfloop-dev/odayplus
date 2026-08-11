@@ -163,7 +163,7 @@ class RuntimeConfigTests(unittest.TestCase):
              mock.patch.object(
                  supervisor.runtime_ai_status,
                  "task_pr_ci_status",
-                 return_value=("OPEN", "success"),
+                 return_value=("MERGED", "success"),
              ):
             self.assertEqual(
                 supervisor.resolve_task_progress_head("PINNED-RUNTIME-001"),
@@ -2072,6 +2072,53 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertIn("must fetch and rebase/compose", request.message)
         self.assertTrue(request.message.endswith("original owner dispatch"))
 
+    def test_prepare_finalize_workspace_never_prompts_to_mutate_approved_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "finalize-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="immutable finalize",
+                task_id="FINALIZE-001",
+                reason="owned_finalize_dispatch",
+            )
+            refresh_status = "base_advance_rebase_required:local=" + "a" * 40 + ",base=" + "b" * 40
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(supervisor, "_refresh_reused_worker_worktree", return_value=(True, refresh_status)),
+                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    {},
+                    request,
+                    queue_event_id="evt-finalize",
+                    target_agent="Codex",
+                )
+
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.message, "immutable finalize")
+        self.assertNotIn("base_advance_required", request.metadata)
+        self.assertTrue(request.metadata["approved_head_immutable"])
+        self.assertTrue(request.metadata["base_advance_deferred_to_merge_queue"])
+
     def test_failed_queue_finalization_preserves_worker_worktree(self) -> None:
         state = {
             "queue": {"events": {"evt-failed": {"status": "started"}}},
@@ -3202,7 +3249,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
             mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -3239,7 +3286,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
             mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -7283,7 +7330,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
             mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -8346,7 +8393,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
-            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")),
         ):
             changed = supervisor.poll_workers(config, state)
 
@@ -11458,7 +11505,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         # Without this, a config/schema regression would make every negative
         # sub-case below pass vacuously (the B13 failure mode).
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             self.assertEqual(
                 supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map),
                 1,
@@ -11470,16 +11517,16 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         # probe shells out to `gh`, returns ("unknown"), and produces the None
         # the assertion is checking -- which is how B14/B17/B18 stayed vacuous.
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
         with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
         # Head drifted off the approved head, CI green: still must not dispatch.
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
 
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
@@ -11596,6 +11643,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         *,
         head: Any,
         ci: Any,
+        pr_status: str = "MERGED",
     ) -> tuple[bool, list[dict[str, Any]], unittest.mock.MagicMock]:
         """Drive dispatch_ready_tasks once and collect the operator signals."""
         state = {
@@ -11617,7 +11665,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", ci)), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=(pr_status, ci)), \
              unittest.mock.patch("supervisor.reassert_approved_review_gate_if_due", return_value=False), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.sync_status_pipeline"), \
@@ -11630,6 +11678,30 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 agent_ids_override=["antigravity4"],
             )
         return dispatched, logged, mock_queue
+
+    def test_green_open_pr_waits_for_merge_before_finalize_dispatch(self) -> None:
+        approved = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-WAIT-MERGE",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "priority": "P1",
+            "approved_head": approved,
+        }
+
+        dispatched, _, queue = self._run_finalize_dispatch_capturing_signals(
+            config,
+            task,
+            head=approved,
+            ci="success",
+            pr_status="OPEN",
+        )
+
+        self.assertFalse(dispatched)
+        queue.assert_not_called()
+        self.assertIn("awaiting merge queue", task["next"])
 
     def test_supervisor_emits_operator_signal_for_silent_finalize_suppression(self) -> None:
         """B20: suppressing finalize dispatch must not be silent.
@@ -11852,17 +11924,17 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         # Head mismatch -> must return False
         task_map["FINAL-001"]["approved_head"] = approved_head
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
 
         # CI pending -> must return False
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "pending")):
             self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
 
         # Positive control: matching head + green CI -> returns True (preempts)
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_dispatch_capacity", return_value=1):
             self.assertTrue(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
 
@@ -11895,7 +11967,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
@@ -11956,7 +12028,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
@@ -11975,7 +12047,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.write_activity_log"), \
              unittest.mock.patch("supervisor.write_json"), \
@@ -11998,7 +12070,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
@@ -12040,7 +12112,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
@@ -12084,7 +12156,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "approved_head": "1111111122222222333333334444444455555555",
         }
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555") as mock_resolve, \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             prio = supervisor.dispatch_priority_for_task(config, task, "Antigravity4")
             self.assertIsNotNone(prio)
             mock_resolve.assert_called_with("FREEZE-TEST-FRESH-001", force_refresh=True)
@@ -12139,7 +12211,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         # nothing to compare against -- so both are pinned green. If the
         # suppression came from the CI probe instead, this would pass vacuously.
         with unittest.mock.patch("ai_status.resolve_task_sha", return_value=self.MISSING_HEAD_APPROVED), \
-             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             self.assertIsNone(
                 supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map)
             )
@@ -12278,7 +12350,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
             # 5. Only now does the task dispatch and finalize, and the merge
             #    commit is recorded as a distinct fact from the approved head.
-            with unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            with unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
                 self.assertEqual(
                     supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map={task_id: task}),
                     1,
@@ -14291,7 +14363,7 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
         with mock.patch("ai_status.resolve_task_sha", return_value=None), \
              mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
              mock.patch("ai_status.run_git_command") as mock_git, \
-             mock.patch("ai_status.task_pr_ci_status", return_value=("CLOSED", "success")):
+             mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")):
             def git_side_effect(cmd, **kwargs):
                 if cmd[0] == "rev-parse" and cmd[1] == "HEAD":
                     return checkout_head

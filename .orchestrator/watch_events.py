@@ -254,7 +254,13 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     task_id = str(event.get("task_id") or "").strip()
     reason = str(event.get("reason") or "wakeup").strip()
     normalized_reason = reason.lower()
-    if normalized_reason in {"review_ready_dispatch", "status:review"}:
+    if normalized_reason == "owned_finalize_dispatch":
+        lifecycle_guardrails = (
+            "這次是 immutable finalize dispatch。不得修改 tracked files、merge/rebase dev、"
+            "建立 commit、push branch 或再次執行 task_finalize.sh。只可核對 approved_head、"
+            "PR 與 CI；PR 尚未 merge 就保持 review_approved 並退出，merge 後才由 owner 執行 done。"
+        )
+    elif normalized_reason in {"review_ready_dispatch", "status:review"}:
         lifecycle_guardrails = (
             "這次是 reviewer dispatch。程序退出前必須做出可稽核的 review 決定："
             "通過則 approve，發現問題則 reopen／退回 in_progress。只新增 review note、"
@@ -263,7 +269,6 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     elif normalized_reason in {
         "owned_ready_dispatch",
         "owned_in_progress_dispatch",
-        "owned_finalize_dispatch",
     }:
         lifecycle_guardrails = (
             "這次是 owner dispatch。若工作已可送審，程序退出前必須先用 "
@@ -280,6 +285,28 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     task_id_kebab = re.sub(r"[^a-z0-9]+", "-", task_id.lower()).strip("-") if task_id else "none"
     branch_name = f"{task_branch_prefix}{task_id}" if task_id else f"{task_branch_prefix}(none)"
     lane = re.sub(r"[^a-z0-9]+", "-", str(target_agent or "").lower()).strip("-") or "unknown"
+    if normalized_reason == "owned_finalize_dispatch":
+        branch_work_guardrails = (
+            "這是 reviewer-approved immutable head 的 finalize lane：\n"
+            f"- 核准分支是 `{branch_name}`；只能讀取與核對，不可更新 branch。\n"
+            "- 即使 branch 落後 dev，也不可 merge、rebase、cherry-pick、commit 或 push；merge queue 會在暫存 ref 組合 base。\n"
+            "- working tree 若有 tracked diff，回報 blocker 並停止，不可把它納入已核准交付。"
+        )
+        finalize_guardrails = (
+            "依 `.orchestrator/skills/task-closeout-finalization.md` 的 immutable finalize 流程："
+            "確認 exact approved SHA 的 PR 已 merged，再用 "
+            f"`AI_NAME={display_name_for(config, agent['id'])} \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" done` 結案。"
+        )
+    else:
+        branch_work_guardrails = (
+            "進入 task 工作前，先確認你在正確的 branch 上：\n"
+            f"- 預期 branch 名稱：`{branch_name}`（從 `{base_branch}` 開出的 per-task branch；task id kebab: `{task_id_kebab}`）。\n"
+            f"- 如果目前 branch 不對，優先使用 `./scripts/git/task_start.sh \"{task_id}\"`，不要手寫臨時 branch 規則。\n"
+            "- 如果 working tree 有未 commit diff 且不屬於這個 task，回報 blocker，不要 stash、不要繼續。\n"
+            "- 任何跨檔案或 routing 接點的 task-owned 改動，到可描述的中間狀態就依 worker-anchor-commit 規則做 anchor commit。\n"
+            f"- Anchor commit subject 建議：`{task_id}: anchor <scope>`；commit body 保留必要 trailers。"
+        )
+        finalize_guardrails = ""
     variables = {
         "context_files": "\n".join(f"- {path}" for path in context_files) if context_files else "- AI_COLLABORATION_GUIDE.md",
         "task_id": task_id or "(none)",
@@ -294,6 +321,8 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
         "target_agent_display_name": display_name_for(config, agent["id"]),
         "lifecycle_guardrails": lifecycle_guardrails,
+        "branch_work_guardrails": branch_work_guardrails,
+        "finalize_guardrails": finalize_guardrails,
     }
     return render_template(template_path, variables).strip() + "\n"
 

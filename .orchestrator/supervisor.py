@@ -2964,21 +2964,33 @@ def prepare_worker_workspace(
                     return False, message
                 _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
             if refresh_status.startswith("base_advance_rebase_required:"):
-                base_advance_prompt = (
-                    "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
-                    f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
-                    f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
-                    "and rebase/compose the current base in this task worktree, resolve and "
-                    "verify it, then push normally. Do not reset, discard, or overwrite task "
-                    "history.\n\n"
-                )
-                request.message = base_advance_prompt + request.message
-                request.metadata.update(
-                    {
-                        "base_advance_required": True,
-                        "worktree_refresh_status": refresh_status,
-                    }
-                )
+                if str(request.reason or "").strip() == "owned_finalize_dispatch":
+                    # The reviewer approved an exact immutable head. A finalize
+                    # worker may observe that dev advanced, but must never compose
+                    # the base into the approved branch and invalidate the review.
+                    request.metadata.update(
+                        {
+                            "approved_head_immutable": True,
+                            "base_advance_deferred_to_merge_queue": True,
+                            "worktree_refresh_status": refresh_status,
+                        }
+                    )
+                else:
+                    base_advance_prompt = (
+                        "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
+                        f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
+                        f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
+                        "and rebase/compose the current base in this task worktree, resolve and "
+                        "verify it, then push normally. Do not reset, discard, or overwrite task "
+                        "history.\n\n"
+                    )
+                    request.message = base_advance_prompt + request.message
+                    request.metadata.update(
+                        {
+                            "base_advance_required": True,
+                            "worktree_refresh_status": refresh_status,
+                        }
+                    )
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -11546,8 +11558,8 @@ def dispatch_priority_for_task(
         except Exception:
             return None
         try:
-            _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
-            if ci_status not in {"success", "none"}:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
+            if str(pr_status or "").strip().upper() != "MERGED" or ci_status not in {"success", "none"}:
                 return None
         except Exception:
             return None
@@ -12391,9 +12403,10 @@ def dispatch_ready_tasks(
                             )
                     continue
 
+                pr_status = "UNKNOWN"
                 ci_status = "unknown"
                 try:
-                    _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                    pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
                 except Exception as err:
                     console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
 
@@ -12467,6 +12480,22 @@ def dispatch_ready_tasks(
                     if task.pop("ci_pending_since_ts", None) is not None:
                         status_path = config_path(config, "status_file")
                         write_json(status_path, status)
+
+                # CI success on an open PR is only merge readiness, not task
+                # completion. Dispatching an LLM here caused it to compose dev
+                # and create a closeout commit, invalidating the exact head the
+                # reviewer had frozen. The merge queue owns base composition;
+                # the owner finalize lane starts only after GitHub says MERGED.
+                if str(pr_status or "").strip().upper() != "MERGED":
+                    msg = (
+                        f"PR for task {task_id} is CI-green and awaiting merge queue; "
+                        "approved branch head remains immutable and finalize dispatch is deferred."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
+                    continue
 
                 reason = "owned_finalize_dispatch"
                 priority = 1
