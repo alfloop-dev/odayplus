@@ -194,6 +194,15 @@ parent changes field names, query identity, maturity definitions, hash procedure
 or join semantics, those changes belong to the parent/canonical layer and require
 their own review and exact evidence refresh.
 
+## Closeout verification
+
+At owner closeout on `2026-08-11` UTC, the approved support-only scope was
+rechecked after composing `origin/dev` at `b3981961` into the task branch. The
+four evidence files cited below retained their recorded SHA-256 values,
+`git diff --check origin/dev...HEAD` passed, and the task-to-base diff remained
+limited to this packet. No canonical, runtime, registry, governance, or Human/Ops
+evidence file was changed by the sidecar.
+
 ## Source basis
 
 - Live canonical task reads on 2026-08-11 UTC for the sidecar, parent,
@@ -212,5 +221,6 @@ their own review and exact evidence refresh.
 - `models/sitescore/opening_outcome.py` and the approved parent implementation
   review addendum in `docs/evidence/models/ODP-PLAN-SITESCORE-OUTCOME-001-review.md`.
 
-Observed repository baseline: `529f0a2c8a722bb27430fb0d614229ef1ea6c127`,
-equal to the observed `origin/dev` tip when this packet was prepared.
+Preparation baseline: `529f0a2c8a722bb27430fb0d614229ef1ea6c127`, equal
+to the observed `origin/dev` tip when this packet was prepared. Closeout base:
+`b3981961f0a5df3ccd4fe575fe7a63d535889ef8c`, composed before finalization.
