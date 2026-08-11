@@ -15,6 +15,7 @@ uv run pytest modules/netplan tests/integration/test_netplan_solver.py -q
 - Key scenarios verified:
   - `test_rebalance_invokes_avm_and_netplan_oss_and_persists_results`: verified that `solve_netplan` emits `isStale`, `isInfeasible`, and `diagnostics` in `netPlanScenarios` rows in canonical operator API.
   - `test_stale_solve_result_cannot_be_submitted_or_approved`: verified that modifying scenario constraints after solve marks the solve stale and blocks submit/decide with `NetPlanApprovalError`.
+  - `test_model_version_drift_makes_solve_stale_and_blocks_approval`: verified that changing `model_version` (e.g. from v1 to v2) makes `is_stale()` return `True` and blocks submit/decide approval.
   - `test_all_structured_diagnostic_fields_rendered`: verified all 5 diagnostic fields (`violated_constraint`, `affected_stores`, `required_relaxation`, `business_impact`, `suggested_action`) are populated and non-empty.
   - `test_update_scenario_lifecycle_restrictions`: verified `update_scenario` restricts updates on `pending_approval` scenarios.
   - `test_update_scenario_resets_solved_and_infeasible_to_draft_and_allows_resolving`: verified that updating a `SOLVED` or `INFEASIBLE` scenario resets its state to `DRAFT` and permits re-solving.

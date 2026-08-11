@@ -14,9 +14,10 @@
 - When no candidate combination satisfies constraints, solver returns `STATUS_INFEASIBLE` with structured `diagnostics`.
 
 ### 2. Scenario Version, Hash Binding & Lifecycle State Machine
-- Updated `ScenarioSolveRecord` in `modules/netplan/domain/planning.py` to include `problem_hash` binding (computed via `compute_solver_problem_hash`).
-- Added `is_stale(scenario)` method to `ScenarioSolveRecord` to check if solver problem hash matches the current scenario's parameters (returns `True` if `problem_hash` is missing).
-- Bound scenario to model version `netplan-network-baseline-v1`.
+- Updated `ScenarioSolveRecord` in `modules/netplan/domain/planning.py` to include `problem_hash` binding (computed via `compute_solver_problem_hash`) and persisted `model_version`.
+- `compute_solver_problem_hash` incorporates `model_version` in the hashed payload dictionary.
+- Added `is_stale(scenario)` method to `ScenarioSolveRecord` to check if solver problem hash matches the current scenario's parameters or if `model_version` differs (returns `True` on version drift or missing `problem_hash`).
+- Bound scenario to model version `netplan-network-baseline-v1` by default; model version drift makes solves stale and approval-blocking.
 - Updated `VALID_TRANSITIONS` in `modules/netplan/domain/planning.py` to allow returning to `DRAFT` from `SOLVED` and `INFEASIBLE`.
 - Fixed `update_scenario` in `modules/netplan/application/planning.py`:
   - Automatically transitions `SOLVED` and `INFEASIBLE` scenarios back to `DRAFT` upon parameter/constraint modification so they can be re-solved cleanly without getting stuck.

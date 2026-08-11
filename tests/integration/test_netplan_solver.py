@@ -1762,6 +1762,48 @@ def test_stale_solve_result_cannot_be_submitted_or_approved() -> None:
         )
 
 
+def test_model_version_drift_makes_solve_stale_and_blocks_approval() -> None:
+    repository = InMemoryNetPlanRepository()
+    service = NetPlanService(repository=repository)
+    scenario = service.create_scenario(
+        tenant_id="tenant-1",
+        scenario_name="model version drift test",
+        planning_horizon="2026Q3",
+        existing_stores=_stores(),
+        candidate_sites=_sites(),
+        constraints=_constraints(),
+        scenario_id="scenario-model-version-drift",
+        correlation_id="corr-model-version-drift",
+    )
+    solve = service.solve(scenario.scenario_id)
+    assert solve.is_stale(scenario) is False
+    assert solve.model_version == "netplan-network-baseline-v1"
+    assert solve.to_dict()["model_version"] == "netplan-network-baseline-v1"
+
+    # Simulate model_version drift (e.g. from v1 to v2)
+    drifted_scenario = replace(scenario, model_version="netplan-network-baseline-v2")
+    repository.save_scenario(drifted_scenario)
+
+    assert solve.is_stale(drifted_scenario) is True
+
+    # Submit for approval must be blocked due to stale result from model version drift
+    with pytest.raises(NetPlanApprovalError, match="stale solve result cannot be submitted"):
+        service.submit_for_approval(scenario.scenario_id)
+
+    # Force status to PENDING_APPROVAL to test decide blocking as well
+    repository.save_scenario(
+        replace(drifted_scenario, status=NetPlanScenarioStatus.PENDING_APPROVAL)
+    )
+
+    with pytest.raises(NetPlanApprovalError, match="stale solve result cannot be approved"):
+        service.decide(
+            scenario.scenario_id,
+            actor_id=APPROVAL_PRINCIPAL,
+            reason="attempt approval of solve with drifted model version",
+            approval_receipt_id="dummy",
+        )
+
+
 def test_all_structured_diagnostic_fields_rendered() -> None:
     options = build_scenario_options(existing_stores=_stores(), candidate_sites=_sites())
     result = solve_network_plan(

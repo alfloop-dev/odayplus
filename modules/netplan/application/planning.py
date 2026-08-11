@@ -227,6 +227,7 @@ class NetPlanService:
             scenario.constraints,
             100_000.0,
             alternative_limit,
+            scenario.model_version,
         )
         solve = self.repository.save_solve(
             ScenarioSolveRecord(
@@ -236,6 +237,7 @@ class NetPlanService:
                 alternative_limit=alternative_limit,
                 execution_metadata=execution_metadata,
                 problem_hash=problem_hash,
+                model_version=scenario.model_version,
             )
         )
         self.repository.save_scenario(transitioned)
@@ -527,6 +529,7 @@ class NetPlanService:
                     scenario.constraints,
                     100_000.0,
                     solve.alternative_limit,
+                    scenario.model_version,
                 ),
             ),
         )
