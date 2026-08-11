@@ -144,7 +144,13 @@ else:
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
         from shared.infrastructure.persistence import build_persistence
-        from shared.observability import SpanKind, SpanStatus, Telemetry, TraceContext
+        from shared.observability import (
+            RouteTemplateResolver,
+            SpanKind,
+            SpanStatus,
+            Telemetry,
+            TraceContext,
+        )
 
         telemetry = telemetry or Telemetry("oday-api")
         provider_validation = external_provider_validation or validate_external_providers_or_raise()
@@ -477,6 +483,50 @@ else:
             """Production HTTP telemetry middleware recording api_request_count, api_error_count, and api_latency_ms."""
             pass
 
+        # Built on first request: routers are still being mounted at the time
+        # this middleware is declared, so the route table is not complete yet.
+        route_resolver_cell: dict[str, RouteTemplateResolver] = {}
+
+        def route_label(path: str) -> str:
+            """Bounded ``route`` label: the registered template, never the raw path.
+
+            ODP-SD-11 §5.1 budgets ``route`` cardinality against the route table.
+            Emitting ``request.url.path`` instead makes every ``/jobs/<uuid>``
+            its own series and exhausts the budget inside one load wave.
+            """
+            resolver = route_resolver_cell.get("resolver")
+            if resolver is None:
+                resolver = RouteTemplateResolver(api.routes)
+                route_resolver_cell["resolver"] = resolver
+            return resolver.resolve(path)
+
+        def emit_telemetry(correlation_id: str, *records: Any) -> None:
+            """Run metric emissions so telemetry can never fail a live request.
+
+            Instrumentation is a side channel: a registry-level rejection (bad
+            label, cardinality guard, type mismatch) must degrade the metric,
+            not the response the caller is waiting on. Each emission is guarded
+            independently so one bad signal does not suppress the others.
+            """
+            for record in records:
+                try:
+                    record()
+                except Exception as exc:
+                    try:
+                        telemetry.logger.warning(
+                            "telemetry_emission_failed",
+                            correlation_id=correlation_id,
+                            actor="system",
+                            resource="telemetry",
+                            action="emit",
+                            error_code=type(exc).__name__,
+                        )
+                    except Exception:
+                        # The failure report must not become the failure. An
+                        # injected telemetry double may carry no logger, and a
+                        # custom sink can raise on its own.
+                        pass
+
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
             context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
@@ -489,14 +539,19 @@ else:
             )
 
             start_t = time.monotonic()
+            route = route_label(request.url.path)
 
             with telemetry.operation(
-                name=f"HTTP {request.method} {request.url.path}",
+                name=f"HTTP {request.method} {route}",
                 kind=SpanKind.API,
                 context=trace_ctx,
                 resource="HTTP",
                 action=request.method,
-                latency_labels={"service": "oday-api", "route": request.url.path},
+                # Latency is emitted explicitly below, inside emit_telemetry, so
+                # it is both contained and counted exactly once per request.
+                latency_metric=None,
+                # Live request path: a failing sink must not become a 500.
+                contain_telemetry_errors=True,
             ) as span:
                 if require_live_data and request.url.path not in {
                     "/health",
@@ -547,18 +602,34 @@ else:
                         span.status = SpanStatus.ERROR
                         span.error_code = "HTTP_503"
                         status_str = "503"
-                        telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
-                        telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
+                        count_labels = {"service": "oday-api", "route": route, "status": status_str}
+                        latency_labels = {"service": "oday-api", "route": route}
+                        rejected_ms = (time.monotonic() - start_t) * 1000.0
+                        emit_telemetry(
+                            context.correlation_id,
+                            lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
+                            lambda: telemetry.metrics.increment("api_error_count", labels=count_labels),
+                            lambda: telemetry.metrics.observe("api_latency_ms", rejected_ms, labels=latency_labels),
+                        )
                         return response
                 response = await call_next(request)
                 status_str = str(response.status_code)
                 duration_ms = (time.monotonic() - start_t) * 1000.0
-                telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
-                telemetry.metrics.observe("api_latency_ms", duration_ms, labels={"service": "oday-api", "route": request.url.path})
-                if response.status_code >= 400:
+                count_labels = {"service": "oday-api", "route": route, "status": status_str}
+                latency_labels = {"service": "oday-api", "route": route}
+                is_error = response.status_code >= 400
+                emissions = [
+                    lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
+                    lambda: telemetry.metrics.observe("api_latency_ms", duration_ms, labels=latency_labels),
+                ]
+                if is_error:
+                    emissions.append(
+                        lambda: telemetry.metrics.increment("api_error_count", labels=count_labels)
+                    )
+                emit_telemetry(context.correlation_id, *emissions)
+                if is_error:
                     span.status = SpanStatus.ERROR
                     span.error_code = f"HTTP_{response.status_code}"
-                    telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
