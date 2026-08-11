@@ -335,6 +335,7 @@ OPERATOR_CONSOLE_RESOURCE = "operator_console"
 OPERATOR_TENANT_ID = "tenant-a"
 
 _OPERATOR_ROLE_BY_PLATFORM_ROLE: dict[Role, tuple[str, ...]] = {
+    Role.PLATFORM_ADMIN: ("platform-admin", "ops-lead", "pm-audit"),
     # The CS lead console persona is a narrower operational view selected by
     # an authenticated operations manager; selecting it cannot widen grants.
     Role.OPERATIONS_MANAGER: ("ops-lead", "cs-lead"),
@@ -351,6 +352,9 @@ _OPERATOR_ROLE_BY_PLATFORM_ROLE: dict[Role, tuple[str, ...]] = {
 }
 
 _OPERATOR_ROLE_ALIASES = {
+    "platformadmin": "platform-admin",
+    "platform-admin": "platform-admin",
+    "admin": "platform-admin",
     "opslead": "ops-lead",
     "ops-lead": "ops-lead",
     "cslead": "cs-lead",
@@ -374,6 +378,7 @@ _OPERATOR_ROLE_ALIASES = {
 }
 
 _OPERATOR_ROLE_PRIORITY = (
+    "platform-admin",
     "ops-lead",
     "expansion-manager",
     "expansion-staff",

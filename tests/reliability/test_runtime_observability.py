@@ -712,7 +712,7 @@ def test_oncall_adapter_non_2xx_route_fails(monkeypatch: Any) -> None:
     assert receipt["status"] == "FAILED"
 
 
-def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
+def test_unconfigured_route_fails_closed(tmp_path: Path, monkeypatch: Any) -> None:
     from modules.notifications import (
         InMemoryNotificationRepository,
         NotificationService,
@@ -720,6 +720,7 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
     )
     from shared.observability.alerts import AlertRouter
 
+    monkeypatch.setenv("RELEASE_SHA", "a" * 40)
     repo = InMemoryNotificationRepository()
 
     def mock_200_transport(url: str, payload: dict) -> tuple[int, str]:
@@ -752,6 +753,223 @@ def test_unconfigured_route_fails_closed(tmp_path: Path) -> None:
     }
     with pytest.raises(ValueError, match="is unconfigured. Fail-closed gate enforced."):
         router.route_alert("audit-write-failure")  # audit-write-failure is P1
+
+
+def test_alert_release_identity_contract_and_propagation(monkeypatch: Any) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    valid_sha = "f" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+    service.set_preferences("ops-lead", ["webhook"])
+
+    router = AlertRouter(notification_service=service)
+    routed = router.route_alert("audit-write-failure")
+    assert routed["release_sha"] == valid_sha
+    assert routed["release_identity_bound"] is True
+
+    nid = router.trigger_alert("audit-write-failure", "Test details")
+    assert nid is not None
+    receipts = [r for r in adapter.delivery_receipts if r.get("notification_id") == nid]
+    assert len(receipts) >= 1
+    assert f"Release SHA: {valid_sha}" in receipts[0]["detail"]
+
+
+def test_alert_release_identity_bound_flag_is_derived_not_asserted(monkeypatch: Any) -> None:
+    """The routed ``release_identity_bound`` must be able to report False.
+
+    It used to be the literal ``True``, so every consumer -- including the
+    completion evidence generator, which reads it back as proof that alerts
+    carry release identity -- was reading its own assumption. A flag that
+    cannot fail proves nothing, so pin the failing direction: when the trusted
+    deployed identity rotates out from under an already-resolved SHA, the
+    annotation downgrades while the page still routes.
+    """
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    resolved_sha = "f" * 40
+    rotated_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", resolved_sha)
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+    service.set_preferences("ops-lead", ["webhook"])
+
+    router = AlertRouter(notification_service=service)
+
+    # Rotate the deployed identity between SHA resolution and payload emission.
+    calls = {"n": 0}
+    real_trusted = router.get_trusted_release_sha
+
+    def rotating_trusted() -> str | None:
+        calls["n"] += 1
+        return real_trusted() if calls["n"] == 1 else rotated_sha
+
+    router.get_trusted_release_sha = rotating_trusted  # type: ignore[method-assign]
+
+    routed = router.route_alert("audit-write-failure")
+
+    # The page is still routed and still names the SHA it resolved against...
+    assert routed["receiver"]
+    assert routed["release_sha"] == resolved_sha
+    # ...but no longer claims that SHA is the bound deployed identity.
+    assert routed["release_identity_bound"] is False
+
+
+
+
+
+
+def test_alert_release_identity_mutation_fails_closed(monkeypatch: Any) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+
+    router = AlertRouter(notification_service=service, release_sha=None)
+
+    # 1. Routing without release_sha fails closed
+    with pytest.raises(
+        ValueError, match="Release identity contract violation: release_sha is unbound or invalid"
+    ):
+        router.route_alert("audit-write-failure")
+
+    # 2. Mutating config to remove release_identity fails closed
+    router.config.pop("release_identity", None)
+    with pytest.raises(
+        ValueError, match="Alert release identity configuration is missing or unbound"
+    ):
+        router.validate_routing_config()
+
+    # 3. Mutating bound=False fails closed
+    router.config["release_identity"] = {"enabled": True, "bound": False}
+    with pytest.raises(
+        ValueError, match="Alert release identity configuration is missing or unbound"
+    ):
+        router.validate_routing_config()
+
+
+def test_alert_router_strict_sha_validation_and_caller_override_rejection(
+    monkeypatch: Any,
+) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    trusted_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", trusted_sha)
+    router = AlertRouter(notification_service=service)
+
+    # 1. Malformed SHA inputs fail closed with ValueError
+    malformed_inputs = ["not-a-sha", "12345", "a" * 39, "a" * 41, "g" * 40, ""]
+    for bad_sha in malformed_inputs:
+        with pytest.raises(ValueError, match="is not a valid 40-character hex SHA"):
+            router.resolve_release_sha(bad_sha)
+        with pytest.raises(ValueError, match="is not a valid 40-character hex SHA"):
+            router.route_alert("audit-write-failure", release_sha=bad_sha)
+
+    # 2. Caller input overriding router/deployed SHA fails closed with ValueError
+    mismatched_sha = "b" * 40
+    with pytest.raises(ValueError, match="does not match trusted deployed release SHA"):
+        router.resolve_release_sha(mismatched_sha)
+    with pytest.raises(ValueError, match="does not match trusted deployed release SHA"):
+        router.route_alert("audit-write-failure", release_sha=mismatched_sha)
+
+    # 3. Unbound router rejects caller-supplied SHA override
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+    unbound_router = AlertRouter(notification_service=service, release_sha=None)
+    with pytest.raises(ValueError, match="router has no trusted deployed release SHA bound"):
+        unbound_router.resolve_release_sha("a" * 40)
+
+    # 4. Valid matching caller-supplied SHA succeeds
+    bound_router = AlertRouter(notification_service=service, release_sha=trusted_sha)
+    assert bound_router.resolve_release_sha(trusted_sha) == trusted_sha
+    routed = bound_router.route_alert("audit-write-failure", release_sha=trusted_sha)
+    assert routed["release_sha"] == trusted_sha
+
+    # 5. Config validation for exact_sha_binding and per-alert release_identity_bound
+    bound_router.config["release_identity"]["exact_sha_binding"] = "not-a-full-sha"
+    with pytest.raises(ValueError, match="is not a valid 40-character hex SHA or placeholder"):
+        bound_router.validate_routing_config()
+
+    bound_router.config["release_identity"]["exact_sha_binding"] = "c" * 40
+    with pytest.raises(ValueError, match="does not match trusted deployed release SHA"):
+        bound_router.validate_routing_config()
+
+    bound_router.config["release_identity"]["exact_sha_binding"] = "${RELEASE_SHA}"
+    bound_router.config["alerts"][0]["release_identity_bound"] = False
+    with pytest.raises(ValueError, match="release_identity_bound is missing or false"):
+        bound_router.validate_routing_config()
+
+
+def test_validate_routing_config_rejects_malformed_exact_sha_binding(monkeypatch: Any) -> None:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+    from shared.observability.alerts import AlertRouter
+
+    repo = InMemoryNotificationRepository()
+    adapter = OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok"))
+    service = NotificationService(repository=repo, adapter=adapter)
+
+    trusted_sha = "a" * 40
+    monkeypatch.setenv("RELEASE_SHA", trusted_sha)
+    router = AlertRouter(notification_service=service)
+
+    # 1. Malformed non-placeholder exact_sha_binding (e.g. 'not-a-full-sha') fails closed
+    router.config["release_identity"]["exact_sha_binding"] = "not-a-full-sha"
+    with pytest.raises(ValueError, match="is not a valid 40-character hex SHA or placeholder"):
+        router.validate_routing_config()
+
+    # 2. Non-string exact_sha_binding fails closed
+    router.config["release_identity"]["exact_sha_binding"] = 12345
+    with pytest.raises(ValueError, match="exact_sha_binding must be a string"):
+        router.validate_routing_config()
+
+    # 3. Unsupported / malformed placeholders fail closed even when RELEASE_SHA is present
+    malformed_placeholders = [
+        "$TYPO_RELEASE_SHA",
+        "${TYPO_RELEASE_SHA}",
+        "$",
+        "$$",
+        "$RELEASE_SHA",
+        "${RELEASE_SHA_TYPO}",
+    ]
+    for bad_placeholder in malformed_placeholders:
+        router.config["release_identity"]["exact_sha_binding"] = bad_placeholder
+        with pytest.raises(ValueError, match="is not a valid 40-character hex SHA or placeholder"):
+            router.validate_routing_config()
 
 
 def test_release_sha_dashboard_traceability_and_watch_window_receipt(
@@ -2800,7 +3018,11 @@ def test_round7_export_receipt_canonical_integrity_and_value_mutation() -> None:
 
         reg.register(
             MetricDefinition(
-                "adlift_incremental_gm", MetricType.GAUGE, MetricCategory.BUSINESS, "AdLift GM"
+                "adlift_incremental_gm",
+                MetricType.GAUGE,
+                MetricCategory.BUSINESS,
+                "AdLift GM",
+                owner="business-analytics",
             )
         )
         reg.set("adlift_incremental_gm", val)
@@ -5611,3 +5833,582 @@ def test_b39_arbitrary_secret_and_mock_transport_cannot_mint_watch_passed(tmp_pa
 
     # Clean environment
     os.environ.pop("MONITORING_PROVIDER_SECRET", None)
+
+
+def test_b40_metrics_registry_enforces_undeclared_labels_and_cardinality_bounds() -> None:
+    """B40 Test: Verify fail-closed enforcement of declared label names and max series cardinality."""
+    from shared.observability.metrics import CardinalityPolicy
+
+    reg = MetricsRegistry(max_series_per_metric=5, cardinality_policy=CardinalityPolicy.REJECT)
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    # 1. Undeclared label key must raise ValueError. This stays fail-closed under
+    #    every policy: an undeclared key is a coding defect, not a data value.
+    with pytest.raises(ValueError, match="undeclared label key"):
+        reg.increment(
+            "api_request_count",
+            labels={"service": "api", "route": "/jobs", "status": "200", "unbounded_user_id": "user-123"},
+        )
+
+    # 2. Under REJECT, exceeding max series per metric must raise ValueError.
+    #    The production default is SHED (see test_c1_registry_sheds_overflow_*),
+    #    which bounds cardinality identically but degrades the metric instead of
+    #    the live request that emitted it.
+    for i in range(5):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
+
+    with pytest.raises(ValueError, match="exceeded maximum allowed series cardinality threshold"):
+        reg.set("dlq_message_count", 99.0, labels={"topic": "topic-overflow"})
+
+
+def test_b41_metric_definitions_require_auditable_ownership() -> None:
+    """B41 Test: Verify all platform metrics have valid non-empty owner fields."""
+    for m in PLATFORM_METRICS:
+        assert m.owner and isinstance(m.owner, str) and len(m.owner.strip()) > 0, f"Metric {m.name} missing owner"
+
+    # Attempting to register a metric with no owner must raise ValueError
+    invalid_metric = _build_unowned_definition("unowned_metric")
+    reg = MetricsRegistry()
+    with pytest.raises(ValueError, match="must have a valid non-empty owner"):
+        reg.register(invalid_metric)
+
+
+def _build_unowned_definition(name: str) -> Any:
+    """Construct an ownerless definition the only way that still works.
+
+    ``MetricDefinition.__post_init__`` rejects a blank owner, so this bypasses
+    ``__init__`` exactly the way ``pickle`` does when a definition crosses a
+    process boundary. That is the path ``MetricsRegistry.register``'s own owner
+    check exists to cover, so the check stays exercised rather than dead.
+    """
+    from shared.observability.metrics import MetricCategory, MetricDefinition, MetricType
+
+    definition = object.__new__(MetricDefinition)
+    definition.__dict__.update(
+        name=name,
+        type=MetricType.COUNTER,
+        category=MetricCategory.TRAFFIC,
+        description="Unowned test metric",
+        labels=(),
+        unit="",
+        min_value=None,
+        max_value=None,
+        owner="",
+        max_series=None,
+    )
+    return definition
+
+
+@pytest.mark.parametrize("blank_owner", ["", "   ", "\t\n"])
+def test_b41a_metric_definition_rejects_blank_owner_at_construction(blank_owner: str) -> None:
+    """An unowned metric must be unbuildable, not merely unregistrable.
+
+    ``owner`` previously defaulted to ``sre-platform``. Every construction site
+    that omitted it therefore passed the ownership gate while naming a team
+    that had never agreed to carry the signal -- ``auth.attempts_total`` in
+    ``modules/opsboard/auth/boundary.py`` was a live instance. The gate can
+    only be real if omitting the field fails.
+    """
+    from shared.observability.metrics import MetricCategory, MetricDefinition, MetricType
+
+    with pytest.raises(ValueError, match="must declare a non-empty owner"):
+        MetricDefinition(
+            "blank_owner_metric",
+            MetricType.COUNTER,
+            MetricCategory.TRAFFIC,
+            "Blank owner test metric",
+            owner=blank_owner,
+        )
+
+    # Omitting `owner` entirely is the case the old default silently absorbed.
+    with pytest.raises(ValueError, match="must declare a non-empty owner"):
+        MetricDefinition(
+            "defaulted_owner_metric",
+            MetricType.COUNTER,
+            MetricCategory.TRAFFIC,
+            "Defaulted owner test metric",
+        )
+
+
+def test_b41b_every_metric_definition_in_the_repo_declares_an_owner() -> None:
+    """No construction site anywhere may rely on an implicit owner.
+
+    Scanning the source rather than the imported objects catches a site in a
+    module this suite never imports, which is how the auth boundary's metric
+    stayed ownerless.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    skip_parts = {".git", ".venv", "venv", "node_modules", "__pycache__"}
+    offenders: list[str] = []
+
+    def negative_probe_ranges(tree: ast.AST) -> list[tuple[int, int]]:
+        """Line ranges where an ownerless construction is the point of the code.
+
+        Exempting by expected-failure context rather than by file keeps the
+        scan honest: a real site cannot hide by living in a test module, and
+        this suite's own `pytest.raises` cases and the evidence generator's
+        `except ValueError` probes are recognised for what they are.
+        """
+        ranges: list[tuple[int, int]] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try) and any(
+                isinstance(h.type, ast.Name) and h.type.id == "ValueError"
+                for h in node.handlers
+            ):
+                ranges.append((node.lineno, node.end_lineno or node.lineno))
+            elif isinstance(node, ast.With):
+                for item in node.items:
+                    call = item.context_expr
+                    if (
+                        isinstance(call, ast.Call)
+                        and isinstance(call.func, ast.Attribute)
+                        and call.func.attr == "raises"
+                    ):
+                        ranges.append((node.lineno, node.end_lineno or node.lineno))
+        return ranges
+
+    for path in root.rglob("*.py"):
+        if skip_parts.intersection(path.parts):
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        exempt = negative_probe_ranges(tree)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            called = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if called != "MetricDefinition":
+                continue
+            if any(kw.arg == "owner" for kw in node.keywords):
+                continue
+            if any(start <= node.lineno <= end for start, end in exempt):
+                continue
+            offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+
+    assert not offenders, f"MetricDefinition sites without an explicit owner: {offenders}"
+
+
+def test_b42_alerts_runbook_anchors_and_headings_are_valid() -> None:
+    """B42 Test: Verify all alerts in alerts.json point to valid runbook files and valid markdown section anchors."""
+    import re
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    alerts_path = root / "infra" / "monitoring" / "alerts.json"
+    alerts_data = json.loads(alerts_path.read_text(encoding="utf-8"))
+
+    def header_to_slug(header_text: str) -> str:
+        clean = re.sub(r"[^\w\s-]", "", header_text.lower().strip())
+        return re.sub(r"[\s_]+", "-", clean)
+
+    for alert in alerts_data.get("alerts", []):
+        runbook = alert.get("runbook")
+        assert runbook and isinstance(runbook, str), f"Alert {alert['id']} missing runbook"
+        file_part, anchor = runbook.split("#") if "#" in runbook else (runbook, None)
+        runbook_file = root / file_part
+        assert runbook_file.exists(), f"Alert {alert['id']} runbook file '{file_part}' does not exist"
+
+        if anchor:
+            content = runbook_file.read_text(encoding="utf-8")
+            header_lines = [line.lstrip("#").strip() for line in content.splitlines() if line.startswith("#")]
+            slugs = {header_to_slug(h) for h in header_lines if h}
+            assert anchor in slugs, f"Alert {alert['id']} anchor #{anchor} not found in {file_part}. Found anchors: {sorted(slugs)}"
+
+
+# --- C1: bounded route cardinality must not break instrumented callers -------
+#
+# Regression cover for the reopen at 54b749e0: the API middleware labelled
+# api_request_count with the raw request.url.path, so 150 concurrent /jobs/{id}
+# reads minted 150 series, tripped the registry cardinality guard, and the
+# resulting ValueError escaped into the request path (52/150 request failures in
+# tests/performance/test_load_and_soak.py). The fix has two independent layers,
+# and each is pinned below: normalize the label at the source, and make overflow
+# shed instead of raising at the instrumented caller.
+
+
+def test_c1_route_label_is_normalized_to_bounded_templates() -> None:
+    """Layer 1: dynamic path segments collapse to their registered template."""
+    from shared.observability.routes import (
+        UNMATCHED_ROUTE_TEMPLATE,
+        RouteTemplateResolver,
+        compile_route_template,
+    )
+
+    resolver = RouteTemplateResolver(
+        [
+            _FakeRoute("/health"),
+            _FakeRoute("/jobs"),
+            _FakeRoute("/jobs/{job_id}"),
+            _FakeRoute("/files/{rest:path}"),
+        ]
+    )
+
+    # Distinct ids must not produce distinct label values.
+    labels = {resolver.resolve(f"/jobs/{i:08d}-uuid-{i}") for i in range(500)}
+    assert labels == {"/jobs/{job_id}"}
+
+    assert resolver.resolve("/jobs") == "/jobs"
+    assert resolver.resolve("/health") == "/health"
+    assert resolver.resolve("/files/a/b/c.txt") == "/files/{rest:path}"
+    # Unrouted paths (scanners, 404 probes) share one reserved bucket.
+    assert resolver.resolve("/definitely/not/a/route") == UNMATCHED_ROUTE_TEMPLATE
+    assert resolver.resolve("") == UNMATCHED_ROUTE_TEMPLATE
+
+    # The compiled template must not match a longer path by prefix.
+    pattern = compile_route_template("/jobs/{job_id}")
+    assert pattern.match("/jobs/abc")
+    assert not pattern.match("/jobs/abc/extra")
+
+
+class _FakeRoute:
+    """Minimal duck-type of a router route for resolver unit tests."""
+
+    def __init__(self, path: str) -> None:
+        self.path_format = path
+
+
+def test_c1_registry_sheds_overflow_without_failing_the_caller() -> None:
+    """Layer 2: past the budget, emission is shed and counted, never raised."""
+    from shared.observability.metrics import (
+        OVERFLOW_LABEL_VALUE,
+        CardinalityPolicy,
+        MetricsRegistry,
+    )
+
+    reg = MetricsRegistry(max_series_per_metric=5)
+    assert reg.cardinality_policy is CardinalityPolicy.SHED
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    for i in range(5):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
+
+    # 200 further distinct label values: none may raise.
+    for i in range(200):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"overflow-{i}"})
+
+    # Cardinality stays bounded at budget + the single reserved overflow series.
+    assert reg.series_count("dlq_message_count") == 6
+
+    report = reg.overflow_report()
+    assert report["policy"] == "shed"
+    assert report["shed_emissions"]["dlq_message_count"] == 200
+    assert report["metrics_with_shedding"] == ["dlq_message_count"]
+
+    overflow_entries = [
+        entry
+        for entry in reg.snapshot()["dlq_message_count"]
+        if entry.get("cardinality_overflow")
+    ]
+    assert len(overflow_entries) == 1
+    assert overflow_entries[0]["labels"] == {"topic": OVERFLOW_LABEL_VALUE}
+    assert overflow_entries[0]["shed_emissions"] == 200
+
+
+def test_c1_reject_policy_still_fails_closed_for_config_validation() -> None:
+    """Config/evidence contexts keep the fail-closed behaviour."""
+    from shared.observability.metrics import CardinalityPolicy, MetricsRegistry
+
+    reg = MetricsRegistry(max_series_per_metric=5, cardinality_policy=CardinalityPolicy.REJECT)
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+    for i in range(5):
+        reg.set("dlq_message_count", float(i), labels={"topic": f"topic-{i}"})
+
+    with pytest.raises(ValueError, match="exceeded maximum allowed series cardinality threshold"):
+        reg.set("dlq_message_count", 99.0, labels={"topic": "topic-overflow"})
+
+
+def test_c1_http_metrics_declare_a_budget_covering_the_route_table() -> None:
+    """The declared budgets must actually fit the app's route table."""
+    from shared.observability.metrics import MetricsRegistry
+    from shared.observability.routes import RouteTemplateResolver
+
+    pytest.importorskip("fastapi")
+    from apps.api.oday_api.main import create_app
+
+    resolver = RouteTemplateResolver(create_app().routes)
+    template_count = resolver.template_count
+    assert template_count > 100, "route table lookup regressed to a near-empty set"
+
+    reg = MetricsRegistry()
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    # route-only signal: one series per template plus the unmatched bucket.
+    assert reg.series_budget("api_latency_ms") > template_count + 1
+    # route x status signals need headroom for the status dimension.
+    assert reg.series_budget("api_request_count") > template_count + 1
+    assert reg.series_budget("api_error_count") > template_count + 1
+
+
+def test_c1_instrumented_api_caller_survives_past_the_cardinality_cap() -> None:
+    """End-to-end: requests keep succeeding past the budget, telemetry degrades.
+
+    Drives the real middleware through a registry whose budget is deliberately
+    tiny, so every request after the first few is in overflow territory. Before
+    the fix this raised ValueError out of the middleware and returned 500s.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    tiny = MetricsRegistry(max_series_per_metric=2)
+    for m in PLATFORM_METRICS:
+        tiny.register(m)
+
+    app = create_app(telemetry=_Telemetry("oday-api", metrics=tiny))
+    client = TestClient(app)
+
+    statuses = []
+    for i in range(60):
+        # Distinct dynamic ids + unrouted paths: both would be unbounded labels.
+        statuses.append(client.get(f"/jobs/job-{i}-{'x' * 12}").status_code)
+        statuses.append(client.get(f"/not-a-route/{i}").status_code)
+
+    # No request may fail because of instrumentation.
+    assert 500 not in statuses, f"instrumentation broke the request path: {sorted(set(statuses))}"
+
+    # Cardinality stayed bounded: budget (2) + reserved overflow series.
+    for name in ("api_request_count", "api_latency_ms"):
+        assert tiny.series_count(name) <= 3, f"{name} exceeded its bound: {tiny.snapshot()[name]}"
+
+    # And the route labels that were recorded are templates, not raw paths.
+    recorded_routes = {
+        entry["labels"].get("route") for entry in tiny.snapshot()["api_request_count"]
+    }
+    assert not any(
+        route and route.startswith("/jobs/job-") for route in recorded_routes
+    ), f"raw path leaked into the route label: {recorded_routes}"
+
+
+def test_c1_api_latency_is_recorded_exactly_once_per_request() -> None:
+    """The middleware must not double-count latency (operation + explicit emit)."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    reg = MetricsRegistry()
+    for m in PLATFORM_METRICS:
+        reg.register(m)
+
+    client = TestClient(create_app(telemetry=_Telemetry("oday-api", metrics=reg)))
+    for _ in range(5):
+        assert client.get("/health").status_code == 200
+
+    health_latency = [
+        entry
+        for entry in reg.snapshot()["api_latency_ms"]
+        if entry["labels"].get("route") == "/health"
+    ]
+    assert len(health_latency) == 1
+    assert health_latency[0]["count"] == 5
+
+    health_requests = [
+        entry
+        for entry in reg.snapshot()["api_request_count"]
+        if entry["labels"].get("route") == "/health"
+    ]
+    assert len(health_requests) == 1
+    assert health_requests[0]["value"] == 5
+
+
+def test_c1_middleware_contains_telemetry_failures_of_any_kind() -> None:
+    """A metrics backend that raises on every emission must not break requests.
+
+    Cardinality was one way telemetry could throw; this pins the general
+    property, so a future emission bug degrades the signal rather than the API.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    class ExplodingRegistry(MetricsRegistry):
+        def increment(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+        def observe(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+    exploding = ExplodingRegistry()
+    for m in PLATFORM_METRICS:
+        exploding.register(m)
+
+    client = TestClient(create_app(telemetry=_Telemetry("oday-api", metrics=exploding)))
+    assert client.get("/health").status_code == 200
+    assert client.get("/healthz").status_code == 200
+
+
+def test_c1_containment_survives_a_failing_telemetry_logger() -> None:
+    """Containment must hold even when the fallback log path itself raises."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from apps.api.oday_api.main import create_app
+    from shared.observability import Telemetry as _Telemetry
+    from shared.observability.metrics import MetricsRegistry
+
+    class ExplodingRegistry(MetricsRegistry):
+        def increment(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+    telemetry = _Telemetry("oday-api", metrics=ExplodingRegistry())
+    for m in PLATFORM_METRICS:
+        telemetry.metrics.register(m)
+
+    def exploding_sink(record: Any) -> None:
+        raise RuntimeError("log sink unavailable")
+
+    telemetry.logger = StructuredLogger("oday-api", sink=exploding_sink)
+
+    assert TestClient(create_app(telemetry=telemetry)).get("/health").status_code == 200
+
+
+# --- C2: alert delivery must not pre-empt the caller's own error handling ----
+#
+# Regression cover for the CI break at ce0a3a70: the strict release-identity
+# contract added by this task made AlertRouter fail closed, and the DLQ
+# poison-isolation branch in apps/worker/assisted_listing_intake/worker.py pages
+# from inside its own failure handler. With no deployed RELEASE_SHA bound the
+# raise escaped *before* the job.dead_lettered outbox event was written, so a
+# misconfigured alerting stack silently changed how a poison job was handled
+# (tests/reliability/test_assisted_listing_intake_jobs.py, 2 failures).
+#
+# The contract stays fail-closed. Callers that page while handling a failure go
+# through try_trigger_alert, which loses the page loudly -- contained, counted
+# on alert_delivery_failure_count, and alerted on by the alert-delivery-failure
+# policy -- instead of replacing the failure being handled.
+
+
+def _c2_notification_service() -> Any:
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        NotificationService,
+        OnCallNotificationAdapter,
+    )
+
+    return NotificationService(
+        repository=InMemoryNotificationRepository(),
+        adapter=OnCallNotificationAdapter(http_transport=lambda u, p: (200, "ok")),
+    )
+
+
+def _c2_registry() -> MetricsRegistry:
+    registry = MetricsRegistry()
+    for definition in PLATFORM_METRICS:
+        registry.register(definition)
+    return registry
+
+
+def _c2_delivery_failures(registry: MetricsRegistry) -> list[dict[str, Any]]:
+    return registry.snapshot().get("alert_delivery_failure_count", [])
+
+
+def test_c2_unbound_release_identity_is_contained_and_counted(monkeypatch: Any) -> None:
+    """No trusted deployed SHA: the page is lost, the caller is not."""
+    from shared.observability import try_trigger_alert
+
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+    registry = _c2_registry()
+
+    result = try_trigger_alert(
+        _c2_notification_service(),
+        "dlq-spike",
+        "Job job-1 stage CHECKING_IDENTITY exceeded max attempts",
+        registry=registry,
+    )
+
+    assert result is None
+    failures = _c2_delivery_failures(registry)
+    assert len(failures) == 1
+    assert failures[0]["value"] == 1.0
+    assert failures[0]["labels"] == {"alert_id": "dlq-spike", "error_class": "ValueError"}
+
+
+def test_c2_missing_alert_config_is_contained_at_construction(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Router construction validates the whole routing table, so it raises too."""
+    from shared.observability import try_trigger_alert
+
+    monkeypatch.setenv("RELEASE_SHA", "b" * 40)
+    registry = _c2_registry()
+
+    result = try_trigger_alert(
+        _c2_notification_service(),
+        "dlq-spike",
+        "detail",
+        alerts_cfg_path=str(tmp_path / "no_such_alerts.json"),
+        registry=registry,
+    )
+
+    assert result is None
+    assert _c2_delivery_failures(registry)[0]["labels"]["error_class"] == "ValueError"
+
+
+def test_c2_containment_does_not_suppress_a_deliverable_page(monkeypatch: Any) -> None:
+    """The guard must not swallow success: a bound identity still pages."""
+    from shared.observability import try_trigger_alert
+
+    valid_sha = "d" * 40
+    monkeypatch.setenv("RELEASE_SHA", valid_sha)
+    registry = _c2_registry()
+    service = _c2_notification_service()
+    service.set_preferences("oncall-engineer", ["webhook"])
+
+    result = try_trigger_alert(
+        service,
+        "dlq-spike",
+        "Job job-2 stage CHECKING_IDENTITY exceeded max attempts",
+        registry=registry,
+    )
+
+    assert result is not None
+    assert _c2_delivery_failures(registry) == []
+
+
+def test_c2_failure_recording_cannot_become_the_failure(monkeypatch: Any) -> None:
+    """The counter runs inside the caller's error handling; it must not raise."""
+    from shared.observability import try_trigger_alert
+
+    monkeypatch.delenv("RELEASE_SHA", raising=False)
+    monkeypatch.delenv("TRUSTED_DEPLOYED_RELEASE_SHA", raising=False)
+
+    class ExplodingRegistry(MetricsRegistry):
+        def increment(self, *args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("metrics backend unavailable")
+
+    assert (
+        try_trigger_alert(
+            _c2_notification_service(), "dlq-spike", "detail", registry=ExplodingRegistry()
+        )
+        is None
+    )
+
+
+def test_c2_dlq_poison_isolation_pages_through_the_contained_path() -> None:
+    """The worker's DLQ branch must not reintroduce the raw fail-closed call."""
+    import inspect
+
+    from apps.worker.assisted_listing_intake import worker as intake_worker
+
+    source = inspect.getsource(intake_worker)
+    assert "try_trigger_alert(" in source
+    assert "AlertRouter(" not in source

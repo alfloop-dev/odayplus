@@ -9,6 +9,12 @@ from modules.opsboard.application.store_ops import (
     StoreOpsPolicyError,
     StoreOpsService,
 )
+from modules.opsboard.application.user_role_management import (
+    UserNotFound,
+    UserRoleManagementError,
+    UserRoleManagementService,
+    UserRolePolicyError,
+)
 
 __all__ = [
     "OperatorStateService",
@@ -18,4 +24,8 @@ __all__ = [
     "StoreOpsNotFound",
     "StoreOpsPolicyError",
     "StoreOpsService",
+    "UserRoleManagementService",
+    "UserNotFound",
+    "UserRolePolicyError",
+    "UserRoleManagementError",
 ]

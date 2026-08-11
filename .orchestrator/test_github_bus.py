@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 import unittest
@@ -258,7 +259,16 @@ class GitHubBusCommandTests(unittest.TestCase):
         with (
             mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
-            mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
+            mock.patch.object(
+                github_bus,
+                "remote_branch_exists",
+                side_effect=lambda branch: branch == "feature/lin-001",
+            ),
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                side_effect=lambda branch: "a" * 40 if branch == "feature/lin-001" else None,
+            ),
             mock.patch.object(github_bus, "branch_has_diff", return_value=True),
             mock.patch.object(github_bus, "find_existing_pr", return_value=None),
             mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
@@ -310,6 +320,7 @@ class GitHubBusCommandTests(unittest.TestCase):
             mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=False),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None),
             mock.patch.object(github_bus, "write_activity_log") as write_activity_log,
         ):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
@@ -321,7 +332,7 @@ class GitHubBusCommandTests(unittest.TestCase):
         self.assertEqual(entry["head_sha"], "abc123")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "github_review_pr_skipped")
 
-    def test_upsert_review_pr_skips_recent_remote_recheck_for_unpublished_branch(self) -> None:
+    def test_upsert_review_pr_rechecks_origin_even_for_recent_unpublished_branch(self) -> None:
         config = {
             "github_bus": {
                 "default_branch": "master",
@@ -359,12 +370,17 @@ class GitHubBusCommandTests(unittest.TestCase):
         with (
             mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
-            mock.patch.object(github_bus, "remote_branch_exists") as remote_branch_exists,
+            mock.patch.object(
+                github_bus,
+                "remote_branch_exists",
+                side_effect=lambda branch: branch == "feature/lin-001",
+            ),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None) as remote_branch_head_sha,
         ):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
 
         self.assertFalse(changed)
-        remote_branch_exists.assert_not_called()
+        remote_branch_head_sha.assert_called_once_with("feature/lin-001")
 
     def test_upsert_review_pr_rechecks_unpublished_branch_after_ttl(self) -> None:
         config = {
@@ -404,12 +420,251 @@ class GitHubBusCommandTests(unittest.TestCase):
         with (
             mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "feature/lin-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
-            mock.patch.object(github_bus, "remote_branch_exists", return_value=False) as remote_branch_exists,
+            mock.patch.object(
+                github_bus,
+                "remote_branch_exists",
+                side_effect=lambda branch: branch == "feature/lin-001",
+            ),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None) as remote_branch_head_sha,
         ):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
 
         self.assertFalse(changed)
-        remote_branch_exists.assert_called_once_with("feature/lin-001")
+        remote_branch_head_sha.assert_called_once_with("feature/lin-001")
+
+    def test_remote_branch_head_sha_requires_exact_origin_ref(self) -> None:
+        branch = "task/ODP-REMOTE-001"
+        exact_sha = "1" * 40
+        heads = {f"{branch}-SIDECAR": "2" * 40, branch: exact_sha}
+
+        with mock.patch.object(github_bus, "remote_branch_heads", return_value=heads) as snapshot:
+            self.assertEqual(github_bus.remote_branch_head_sha(branch), exact_sha)
+
+        snapshot.assert_called_once_with("origin")
+
+    def test_upsert_review_pr_uses_task_origin_ref_when_status_root_and_owner_branch_differ(self) -> None:
+        task_id = "ODP-API-HEALTH-DATA-MODE-CONTRACT-001"
+        task_branch = f"task/{task_id}"
+        remote_sha = "6b4d56e8" + "0" * 32
+        config = {
+            "branch_workflow": {"task_branch_prefix": "task/"},
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+        }
+        status = {
+            "agents": [{"name": "Antigravity", "branch": "task/ODP-RUNTIME-GCP-001"}],
+            "tasks": [],
+        }
+        task = {
+            "id": task_id,
+            "title": "Health data mode contract",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "artifacts": ["foo.py"],
+            "next": "ready for review",
+        }
+
+        def remote_sha_for(branch: str, remote: str = "origin") -> str | None:
+            del remote
+            return remote_sha if branch == task_branch else None
+
+        bus_state = {"tasks": {}}
+        with (
+            mock.patch.object(github_bus, "remote_branch_head_sha", side_effect=remote_sha_for),
+            mock.patch.object(github_bus, "branch_exists", return_value=False),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=None),
+            mock.patch.object(github_bus, "current_branch", return_value="dev"),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True) as branch_has_diff,
+            mock.patch.object(github_bus, "find_existing_pr", return_value=None),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(
+                    ["gh"],
+                    0,
+                    "https://github.com/ajoe734/pantheon/pull/573\n",
+                    "",
+                ),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                status,
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        create_args = run_gh.call_args.args[0]
+        self.assertEqual(create_args[create_args.index("--head") + 1], task_branch)
+        branch_has_diff.assert_called_once_with("dev", task_branch, expected_head_sha=remote_sha)
+        review_pr = bus_state["tasks"][task_id]["review_pr"]
+        self.assertEqual(review_pr["state"], "open")
+        self.assertEqual(review_pr["head_sha"], remote_sha)
+        self.assertEqual(review_pr["remote_ref"], f"refs/heads/{task_branch}")
+
+    def test_upsert_review_pr_does_not_skip_when_exact_origin_sha_is_not_fetched(self) -> None:
+        task_id = "ODP-UNFETCHED-001"
+        task_branch = f"task/{task_id}"
+        remote_sha = "7" * 40
+        config = {
+            "branch_workflow": {"task_branch_prefix": "task/"},
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+        }
+        task = {
+            "id": task_id,
+            "title": "Unfetched task branch",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude3",
+            "depends_on": [],
+            "artifacts": ["foo.py"],
+            "next": "ready for review",
+        }
+        bus_state = {"tasks": {}}
+
+        with (
+            mock.patch.object(
+                github_bus,
+                "remote_branch_head_sha",
+                side_effect=lambda branch, remote="origin": remote_sha if branch == task_branch else None,
+            ),
+            mock.patch.object(github_bus, "branch_exists", return_value=False),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=None),
+            mock.patch.object(github_bus, "current_branch", return_value="dev"),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=None) as branch_has_diff,
+            mock.patch.object(github_bus, "find_existing_pr", return_value=None),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(
+                    ["gh"],
+                    0,
+                    "https://github.com/ajoe734/pantheon/pull/580\n",
+                    "",
+                ),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                {"agents": [], "tasks": []},
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        branch_has_diff.assert_called_once_with("dev", task_branch, expected_head_sha=remote_sha)
+        self.assertEqual(run_gh.call_args.args[0][0:2], ["pr", "create"])
+        self.assertEqual(bus_state["tasks"][task_id]["review_pr"]["state"], "open")
+
+    def test_upsert_review_pr_recovers_false_unpublished_state_from_task_origin_ref(self) -> None:
+        task_id = "ODP-API-HEALTH-DATA-MODE-CONTRACT-001"
+        task_branch = f"task/{task_id}"
+        remote_sha = "6b4d56e8" + "0" * 32
+        config = {
+            "branch_workflow": {"task_branch_prefix": "task/"},
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+        }
+        status = {
+            "agents": [{"name": "Antigravity", "branch": "task/ODP-RUNTIME-GCP-001"}],
+            "tasks": [],
+        }
+        task = {
+            "id": task_id,
+            "title": "Health data mode contract",
+            "summary_zh": "review me",
+            "status": "review",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "artifacts": ["foo.py"],
+            "next": "ready for review",
+        }
+        skip_hash = json.dumps(
+            {
+                "state": "skipped_unpublished_branch",
+                "task_id": task_id,
+                "branch": task_branch,
+                "base": "dev",
+                "head_sha": None,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        bus_state = {
+            "tasks": {
+                task_id: {
+                    "review_pr": {
+                        "branch": task_branch,
+                        "state": "skipped_unpublished_branch",
+                        "head_sha": None,
+                        "last_remote_branch_check_at": "2026-08-02T08:00:00Z",
+                    },
+                    "last_review_hash": skip_hash,
+                }
+            }
+        }
+
+        def remote_sha_for(branch: str, remote: str = "origin") -> str | None:
+            del remote
+            return remote_sha if branch == task_branch else None
+
+        with (
+            mock.patch.object(github_bus, "remote_branch_head_sha", side_effect=remote_sha_for),
+            mock.patch.object(github_bus, "branch_exists", return_value=False),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=None),
+            mock.patch.object(github_bus, "current_branch", return_value="dev"),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=None),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(
+                    ["gh"],
+                    0,
+                    "https://github.com/ajoe734/pantheon/pull/573\n",
+                    "",
+                ),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(
+                config,
+                bus_state,
+                status,
+                "ajoe734/pantheon",
+                task,
+            )
+
+        self.assertTrue(changed)
+        create_args = run_gh.call_args.args[0]
+        self.assertEqual(create_args[create_args.index("--head") + 1], task_branch)
+        review_pr = bus_state["tasks"][task_id]["review_pr"]
+        self.assertEqual(review_pr["state"], "open")
+        self.assertEqual(review_pr["head_sha"], remote_sha)
+        self.assertEqual(review_pr["remote_ref"], f"refs/heads/{task_branch}")
 
 
 class FindExistingReviewPrTests(unittest.TestCase):
@@ -1004,6 +1259,51 @@ class TaskPRDiscoveryTests(unittest.TestCase):
         self.assertNotIn("git rev-parse task/ODP-REMOTE-001", calls)
         self.assertNotIn("git rev-list --count dev..task/ODP-REMOTE-001", calls)
 
+    def test_branch_diff_is_unknown_when_exact_origin_sha_is_not_fetched(self) -> None:
+        expected_sha = "3" * 40
+        stale_sha = "2" * 40
+        calls: list[str] = []
+
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            del cwd
+            cmd_str = " ".join(cmd)
+            calls.append(cmd_str)
+            if "rev-parse refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, f"{stale_sha}\n", "")
+            return subprocess.CompletedProcess(cmd, 1, "", "ref not found")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertIsNone(
+                github_bus.branch_has_diff(
+                    "dev",
+                    "task/ODP-REMOTE-001",
+                    expected_head_sha=expected_sha,
+                )
+            )
+
+        self.assertFalse(any("rev-list --count" in call for call in calls))
+
+    def test_branch_diff_uses_ref_only_when_it_matches_exact_origin_sha(self) -> None:
+        expected_sha = "3" * 40
+
+        def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
+            del cwd
+            cmd_str = " ".join(cmd)
+            if "rev-parse refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, f"{expected_sha}\n", "")
+            if "rev-list --count refs/remotes/origin/dev..refs/remotes/origin/task/ODP-REMOTE-001" in cmd_str:
+                return subprocess.CompletedProcess(cmd, 0, "2\n", "")
+            return subprocess.CompletedProcess(cmd, 1, "", "ref not found")
+
+        with mock.patch.object(github_bus, "run_command", side_effect=mock_cmd):
+            self.assertTrue(
+                github_bus.branch_has_diff(
+                    "dev",
+                    "task/ODP-REMOTE-001",
+                    expected_head_sha=expected_sha,
+                )
+            )
+
     def test_current_branch_returns_none_when_detached_head(self) -> None:
         def mock_cmd(cmd: list[str], cwd: str | Path | None = None) -> subprocess.CompletedProcess[str]:
             if "symbolic-ref" in cmd:
@@ -1121,6 +1421,7 @@ class TaskPRBaseBranchTests(unittest.TestCase):
             mock.patch.object(github_bus, "branch_exists", side_effect=lambda branch: branch == "task/LIN-001"),
             mock.patch.object(github_bus, "branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "remote_branch_exists", return_value=True),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value="abc123"),
             mock.patch.object(github_bus, "branch_has_diff", return_value=True),
             mock.patch.object(github_bus, "find_existing_pr", return_value=None),
             mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
