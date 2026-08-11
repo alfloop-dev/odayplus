@@ -101,6 +101,32 @@ if [ "$AHEAD" -eq 0 ]; then
   exit 1
 fi
 
+# `done` enforces this immutable commit convention after merge. Enforce the
+# same rule before publishing the PR, otherwise a fully green, reviewed merge
+# can become impossible to close without rewriting history.
+HEAD_SUBJECT="$(git show -s --format=%s HEAD)"
+HEAD_BODY="$(git show -s --format=%b HEAD)"
+case "$HEAD_SUBJECT" in
+  *"$TASK_ID"*) ;;
+  *)
+    echo "task_finalize: HEAD subject must include task id $TASK_ID." >&2
+    echo "task_finalize: commit with scripts/git/worker_commit.py before opening the PR." >&2
+    exit 1
+    ;;
+esac
+for FIELD in LLM-Agent Task-ID Reviewer; do
+  VALUE="$(printf '%s\n' "$HEAD_BODY" | sed -n "s/^${FIELD}:[[:space:]]*//p" | head -1)"
+  if [ -z "$VALUE" ]; then
+    echo "task_finalize: HEAD body is missing required metadata: $FIELD." >&2
+    echo "task_finalize: commit with scripts/git/worker_commit.py before opening the PR." >&2
+    exit 1
+  fi
+  if [ "$FIELD" = "Task-ID" ] && [ "$VALUE" != "$TASK_ID" ]; then
+    echo "task_finalize: HEAD Task-ID metadata is '$VALUE', expected '$TASK_ID'." >&2
+    exit 1
+  fi
+done
+
 # gh resolution mirrors scripts/check_pr_merge_eligibility.get_gh_executable:
 # .orchestrator/bin/gh is a broker shim, not the real CLI.
 resolve_gh() {
