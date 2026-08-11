@@ -8,9 +8,15 @@ so these tests assert the failure paths, not just the happy one.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from scripts.openapi import check_drift, export_openapi, generate_client
 from scripts.openapi.export_openapi import ARTIFACT_PATH, build_schema, serialize
 from scripts.openapi.generate_client import OUTPUT_PATH, render
 from scripts.openapi.openapi_diff import diff_openapi
@@ -83,6 +89,101 @@ def test_generated_client_exposes_only_versioned_paths() -> None:
     text = OUTPUT_PATH.read_text(encoding="utf-8")
     assert '"/api/v1/audit/events": ["GET"]' in text
     assert '\n  "/audit/events"' not in text, "a deprecated alias leaked into the client"
+
+
+# --- the freshness checks fail, at the exit code CI reads ---
+#
+# Everything above proves the checks pass on a clean tree. A gate that passes on
+# a clean tree and also passes on a dirty one is worse than no gate, so these
+# point the real checks at deliberately stale inputs and assert the non-zero
+# exit. Both entrypoints end in ``raise SystemExit(main())``, so a ``main()``
+# return value *is* the process exit code.
+
+
+def _sandbox_emitter(tmp_path: Path, generated: str) -> Path:
+    """A throwaway repo root holding the real emitter and a chosen client file.
+
+    ``generate_client.py`` resolves every path from its own ``__file__``, so
+    copying it into ``tmp_path`` re-points it at the sandbox. That lets the probe
+    run the real CLI against stale content without writing into the checked-in
+    tree, which a killed test run would otherwise leave dirty.
+    """
+    scripts_dir = tmp_path / "scripts" / "openapi"
+    scripts_dir.mkdir(parents=True)
+    shutil.copy(generate_client.__file__, scripts_dir / "generate_client.py")
+
+    artifact = tmp_path / "packages" / "openapi-client" / "openapi.json"
+    artifact.parent.mkdir(parents=True)
+    shutil.copy(ARTIFACT_PATH, artifact)
+
+    output = tmp_path / "packages" / "openapi-client" / "src" / "generated" / "types.ts"
+    output.parent.mkdir(parents=True)
+    output.write_text(generated, encoding="utf-8")
+    return scripts_dir / "generate_client.py"
+
+
+def _run_check(script: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(script), "--check"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_client_check_cli_exits_zero_on_a_faithfully_generated_client(tmp_path: Path) -> None:
+    """The positive control: without it, a probe that always fails proves nothing."""
+    result = _run_check(_sandbox_emitter(tmp_path, render(_artifact())))
+    assert result.returncode == 0, result.stderr
+
+
+def test_client_check_cli_exits_non_zero_on_a_stale_generated_client(tmp_path: Path) -> None:
+    """An operation dropped from the client is exactly the drift CI must catch."""
+    fresh = render(_artifact())
+    stale = fresh.replace('  "/api/v1/audit/events": ["GET"],\n', "", 1)
+    assert stale != fresh, "the probe must actually make the client stale"
+
+    result = _run_check(_sandbox_emitter(tmp_path, stale))
+    assert result.returncode == 1
+    assert "is stale" in result.stderr
+
+
+def test_client_check_cli_exits_non_zero_when_the_client_was_never_generated(
+    tmp_path: Path,
+) -> None:
+    script = _sandbox_emitter(tmp_path, "")
+    (tmp_path / "packages" / "openapi-client" / "src" / "generated" / "types.ts").unlink()
+
+    result = _run_check(script)
+    assert result.returncode == 1
+    assert "is missing" in result.stderr
+
+
+def test_artifact_check_exits_non_zero_when_the_artifact_no_longer_matches_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An artifact that lost every path is the "endpoint changed, nobody
+    re-exported" case, reduced to its smallest reproducible form."""
+    stale = tmp_path / "openapi.json"
+    stale.write_text(serialize({"openapi": "3.1.0", "paths": {}}), encoding="utf-8")
+    # REPO_ROOT travels with the path: the error message renders it relative.
+    monkeypatch.setattr(export_openapi, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(export_openapi, "ARTIFACT_PATH", stale)
+
+    assert export_openapi.main(["--check"]) == 1
+
+
+def test_the_contract_gate_fails_the_build_when_one_stage_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """check_drift runs every stage before reporting, so a single stale stage
+    must still turn the whole gate non-zero rather than being averaged away."""
+    stale = tmp_path / "types.ts"
+    stale.write_text("// hand-edited, never regenerated\n", encoding="utf-8")
+    monkeypatch.setattr(generate_client, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(generate_client, "OUTPUT_PATH", stale)
+
+    assert check_drift.main(["--skip-diff"]) == 1
 
 
 # --- the diff classifier ---

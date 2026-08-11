@@ -8,6 +8,7 @@ export type WorkspaceNavItem = {
 };
 
 export type OperatorRoleId =
+  | "platform-admin"
   | "ops-lead"
   | "cs-lead"
   | "field-lead"
@@ -57,6 +58,12 @@ export const WORKSPACES: WorkspaceNavItem[] = [
 
 export const OPERATOR_ROLES: OperatorRole[] = [
   {
+    id: "platform-admin",
+    label: "平台維運管理員",
+    subtitle: "平台管理、使用者與角色權限設定",
+    allowedWorkspaces: ["today", "store", "growth", "network", "govern"],
+  },
+  {
     id: "ops-lead",
     label: "營運主管",
     subtitle: "全域監控、跨域指派與核准",
@@ -98,7 +105,11 @@ export const DEFAULT_OPERATOR_ROLE_ID: OperatorRoleId = "ops-lead";
 export const DEFAULT_WORKSPACE_ID: WorkspaceId = "today";
 
 export function getOperatorRole(roleId: string | null | undefined): OperatorRole {
-  return OPERATOR_ROLES.find((role) => role.id === roleId) ?? OPERATOR_ROLES[0];
+  return (
+    OPERATOR_ROLES.find((role) => role.id === roleId) ??
+    OPERATOR_ROLES.find((role) => role.id === DEFAULT_OPERATOR_ROLE_ID) ??
+    OPERATOR_ROLES[0]
+  );
 }
 
 export function getWorkspace(workspaceId: string | null | undefined): WorkspaceNavItem {

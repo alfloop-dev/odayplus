@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date
 from enum import StrEnum
+from typing import Any
 
 
 class Readiness(StrEnum):
@@ -64,11 +65,44 @@ class FeatureFlag:
 
         return self.enabled and not self.is_expired(on)
 
+    def to_dict(self, on: date | None = None) -> dict[str, Any]:
+        check_date = on or date.today()
+        return {
+            "key": self.key,
+            "owner": self.owner,
+            "enabled": self.enabled,
+            "readiness": self.readiness.value if isinstance(self.readiness, Readiness) else str(self.readiness),
+            "high_risk": self.high_risk,
+            "expires_on": self.expires_on.isoformat() if self.expires_on else None,
+            "description": self.description,
+            "approved_by": list(sorted(self.approved_by)),
+            "is_active": self.is_active(check_date),
+            "is_expired": self.is_expired(check_date),
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> FeatureFlag:
+        expires_on = date.fromisoformat(d["expires_on"]) if d.get("expires_on") else None
+        readiness_val = d.get("readiness", Readiness.EXPERIMENTAL)
+        try:
+            readiness = Readiness(readiness_val)
+        except ValueError:
+            readiness = Readiness.EXPERIMENTAL
+        approved_by = frozenset(d.get("approved_by", []))
+        return cls(
+            key=d["key"],
+            owner=d["owner"],
+            enabled=bool(d.get("enabled", False)),
+            readiness=readiness,
+            high_risk=bool(d.get("high_risk", False)),
+            expires_on=expires_on,
+            description=d.get("description", ""),
+            approved_by=approved_by,
+        )
+
 
 class FeatureFlagRegistry:
-    """In-memory flag store. The persistence-backed implementation arrives with
-    the admin/config task; this provides the stable contract and safe defaults.
-    """
+    """In-memory flag store with governance validation and persistence hooks."""
 
     def __init__(self, flags: dict[str, FeatureFlag] | None = None) -> None:
         self._flags: dict[str, FeatureFlag] = dict(flags or {})
@@ -82,31 +116,42 @@ class FeatureFlagRegistry:
     def all(self) -> tuple[FeatureFlag, ...]:
         return tuple(self._flags.values())
 
-    def is_enabled(self, key: str, *, on: date) -> bool:
+    def is_enabled(self, key: str, *, on: date | None = None) -> bool:
         """True only when the flag exists, is enabled, and is not expired.
 
         Unknown flags are treated as disabled (deny by default).
         """
 
+        check_date = on or date.today()
         flag = self._flags.get(key)
-        return flag is not None and flag.is_active(on)
+        return flag is not None and flag.is_active(check_date)
 
     def enable(self, key: str, *, approvals: frozenset[str] = frozenset()) -> FeatureFlag:
         """Enable a flag, enforcing dual approval for high-risk flags."""
 
         flag = self._require(key)
-        if flag.high_risk and len(approvals) < DUAL_APPROVAL_MINIMUM:
+        effective_approvals = flag.approved_by | approvals
+        if flag.high_risk and len(effective_approvals) < DUAL_APPROVAL_MINIMUM:
             raise PermissionError(
                 f"high-risk flag {key!r} needs >= {DUAL_APPROVAL_MINIMUM} "
-                f"distinct approvals, got {len(approvals)}"
+                f"distinct approvals, got {len(effective_approvals)}"
             )
-        updated = replace(flag, enabled=True, approved_by=approvals)
+        updated = replace(flag, enabled=True, approved_by=effective_approvals)
         self._flags[key] = updated
         return updated
 
     def disable(self, key: str) -> FeatureFlag:
         flag = self._require(key)
         updated = replace(flag, enabled=False, approved_by=frozenset())
+        self._flags[key] = updated
+        return updated
+
+    def add_approval(self, key: str, approver: str) -> FeatureFlag:
+        flag = self._require(key)
+        if not approver or not approver.strip():
+            raise ValueError("approver cannot be empty")
+        new_approvals = flag.approved_by | {approver.strip()}
+        updated = replace(flag, approved_by=new_approvals)
         self._flags[key] = updated
         return updated
 
@@ -144,8 +189,28 @@ DEFAULT_FLAGS: dict[str, FeatureFlag] = dict(
     ]
 )
 
+_GLOBAL_REGISTRY: FeatureFlagRegistry | None = None
+
+
+def get_global_registry() -> FeatureFlagRegistry:
+    """Return the process-wide singleton registry."""
+
+    global _GLOBAL_REGISTRY
+    if _GLOBAL_REGISTRY is None:
+        _GLOBAL_REGISTRY = FeatureFlagRegistry({k: v for k, v in DEFAULT_FLAGS.items()})
+    return _GLOBAL_REGISTRY
+
+
+def reset_global_registry() -> FeatureFlagRegistry:
+    """Reset the process-wide singleton registry to initial defaults (used in tests)."""
+
+    global _GLOBAL_REGISTRY
+    _GLOBAL_REGISTRY = FeatureFlagRegistry({k: v for k, v in DEFAULT_FLAGS.items()})
+    return _GLOBAL_REGISTRY
+
 
 def default_registry() -> FeatureFlagRegistry:
-    """A fresh registry seeded with the default high-risk flags."""
+    """Return the shared global registry, ensuring single process-wide truth."""
 
-    return FeatureFlagRegistry({k: v for k, v in DEFAULT_FLAGS.items()})
+    return get_global_registry()
+

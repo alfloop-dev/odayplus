@@ -6,6 +6,12 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  # A merge queue tests each candidate on a temporary ref built from the target
+  # branch plus the queued PRs, and it waits for the *required* checks to report
+  # against that ref. Without this trigger the jobs below never run there, every
+  # queued PR times out and is ejected, and the queue silently blocks all merges.
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   orchestrator:
@@ -96,8 +102,21 @@ jobs:
       # It is a wall-clock SLO measurement, so it is enforced by the dedicated
       # performance-gate job below instead of being measured on a runner that is
       # already loaded by ~1900 other tests and a Postgres service container.
+      # `-n auto` is what makes this step tolerable. It was 17 of the job's 21
+      # minutes, run serially, and with a merge queue every PR pays it at least
+      # twice: once on the PR and again on the queue's ref.
+      #
+      # Measured on one machine, same commit, same marker filter, fleet running
+      # in both cases so the load is comparable:
+      #   serial   2145.7s   100% pass
+      #   -n 4      905.6s   100% pass    -> 2.37x
+      # Not the theoretical 4x, because the session-scoped `intake_pg_server`
+      # fixture starts one bundled PostgreSQL per xdist worker. That is also why
+      # it is safe: each worker gets its own mkdtemp data directory, so they
+      # cannot corrupt one another. Tests that bind fixed ports are excluded by
+      # the `requires_live_env` marker already applied above.
       - name: Test product code
-        run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models
+        run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto
 
       - name: Test official real-estate outcomes on PostgreSQL 16
         run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
