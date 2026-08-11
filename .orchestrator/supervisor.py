@@ -122,6 +122,7 @@ from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
+STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 # Max time the antigravity model-rotation will treat a pool as exhausted before
 # re-probing it. Kept SHORT because Gemini's 5-hour limit is a rolling window
 # that recovers within minutes — a longer cooldown (e.g. trusting the error's
@@ -7168,6 +7169,48 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     )
 
 
+def write_status_snapshot_if_current(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Atomically reject a stale whole-status write instead of losing a newer transition.
+
+    Supervisor probes can spend seconds in git/GitHub calls after loading the
+    board. A worker or operator may complete a canonical status command during
+    that interval. Both writers share the same lock, and every successful write
+    advances a UUID revision, so the old Supervisor snapshot fails closed and
+    the next tick starts from canonical disk state.
+    """
+
+    status_path = config_path(config, "status_file")
+    lock_path = status_path.with_name(f"{status_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_revision = status.get(STATUS_WRITE_REVISION_FIELD)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            latest = load_json(status_path, default={}) or {}
+            actual_revision = latest.get(STATUS_WRITE_REVISION_FIELD)
+            if actual_revision != expected_revision:
+                status.clear()
+                status.update(latest)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "stale_status_write_rejected",
+                        "message": (
+                            "Supervisor discarded a stale ai-status.json snapshot after "
+                            "a newer canonical writer advanced the status revision."
+                        ),
+                        "expected_revision": expected_revision,
+                        "actual_revision": actual_revision,
+                    },
+                )
+                return False
+            status[STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+            write_json(status_path, status)
+            return True
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     if not script.exists():
@@ -7343,7 +7386,8 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
     task["last_update"] = timestamp
     task["next"] = message
-    write_json(config_path(config, "status_file"), status)
+    if not write_status_snapshot_if_current(config, status):
+        return False
     synced = sync_status_pipeline(config)
     if synced:
         write_activity_log(
@@ -7383,7 +7427,6 @@ def persist_task_reassignment(
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
 ) -> bool:
-    status_path = config_path(config, "status_file")
     status = load_status(config)
     tasks = status.get("tasks", []) or []
     timestamp = utc_now()
@@ -7438,7 +7481,8 @@ def persist_task_reassignment(
             }
         )
 
-    write_json(status_path, status)
+    if not write_status_snapshot_if_current(config, status):
+        return False
     return sync_status_pipeline(config)
 
 
@@ -10090,7 +10134,8 @@ def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) ->
         )
         changed = True
     if changed:
-        write_json(config_path(config, "status_file"), status)
+        if not write_status_snapshot_if_current(config, status):
+            return False
         sync_status_pipeline(config)
     return changed
 
@@ -10150,7 +10195,8 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         )
         changed = True
     if changed:
-        write_json(config_path(config, "status_file"), status)
+        if not write_status_snapshot_if_current(config, status):
+            return False
         sync_status_pipeline(config)
     return changed
 
@@ -12346,8 +12392,8 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -12367,8 +12413,8 @@ def dispatch_ready_tasks(
                             f"({approved_head[:8]}); re-review required."
                         )
                         task.pop("approved_head", None)
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         sync_status_pipeline(config)
                         write_activity_log(
                             config,
@@ -12391,8 +12437,8 @@ def dispatch_ready_tasks(
                         )
                         if task.get("next") != msg:
                             task["next"] = msg
-                            status_path = config_path(config, "status_file")
-                            write_json(status_path, status)
+                            if not write_status_snapshot_if_current(config, status):
+                                return changed
                             write_activity_log(
                                 config,
                                 {
@@ -12436,16 +12482,16 @@ def dispatch_ready_tasks(
                                 },
                             )
                     if status_dirty:
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                     continue
                 elif ci_status == "failure":
                     task.pop("ci_pending_since_ts", None)
                     msg = f"CI checks for task {task_id} failed; resolve failing checks before finalization."
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -12465,8 +12511,8 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -12478,8 +12524,8 @@ def dispatch_ready_tasks(
                     continue
                 else:
                     if task.pop("ci_pending_since_ts", None) is not None:
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
 
                 # CI success on an open PR is only merge readiness, not task
                 # completion. Dispatching an LLM here caused it to compose dev
@@ -12493,8 +12539,8 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                     continue
 
                 reason = "owned_finalize_dispatch"

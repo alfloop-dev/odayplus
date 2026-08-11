@@ -124,6 +124,55 @@ class TestConfigFixtureTests(unittest.TestCase):
         self.assertEqual(sorted(config.get("agents") or {}), ["solo"])
 
 
+class StatusWriteConcurrencyTests(unittest.TestCase):
+    def test_stale_supervisor_snapshot_cannot_overwrite_newer_cli_revision(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-status-cas-") as tmp:
+            root = Path(tmp)
+            status_path = root / "ai-status.json"
+            config = {
+                "paths": {
+                    "status_file": str(status_path),
+                    "activity_log": str(root / "ai-activity-log.jsonl"),
+                }
+            }
+            stale = {
+                "_status_write_revision": "old-revision",
+                "tasks": [{"id": "TASK-001", "status": "review", "review_submission": {"remote_sha": "old"}}],
+            }
+            latest = {
+                "_status_write_revision": "new-revision",
+                "tasks": [{"id": "TASK-001", "status": "review", "review_submission": {"remote_sha": "new"}}],
+            }
+            status_path.write_text(json.dumps(latest), encoding="utf-8")
+
+            self.assertFalse(supervisor.write_status_snapshot_if_current(config, stale))
+            self.assertEqual(stale, latest)
+            self.assertEqual(json.loads(status_path.read_text(encoding="utf-8")), latest)
+
+    def test_current_supervisor_snapshot_advances_revision_atomically(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-status-cas-") as tmp:
+            root = Path(tmp)
+            status_path = root / "ai-status.json"
+            config = {
+                "paths": {
+                    "status_file": str(status_path),
+                    "activity_log": str(root / "ai-activity-log.jsonl"),
+                }
+            }
+            status = {
+                "_status_write_revision": "current-revision",
+                "tasks": [{"id": "TASK-001", "status": "review", "next": "updated"}],
+            }
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+
+            self.assertTrue(supervisor.write_status_snapshot_if_current(config, status))
+            self.assertNotEqual(status["_status_write_revision"], "current-revision")
+            self.assertEqual(
+                json.loads(status_path.read_text(encoding="utf-8")),
+                status,
+            )
+
+
 class RuntimeConfigTests(unittest.TestCase):
     def test_supervisor_pins_ai_status_to_immutable_runtime(self) -> None:
         self.assertEqual(

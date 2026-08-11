@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import gzip
 import json
 import os
@@ -10,6 +11,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1191,6 +1194,20 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
+
+
+@contextmanager
+def status_write_transaction():
+    """Serialize canonical status commands with Supervisor compare-and-swap writes."""
+
+    lock_file = STATUS_FILE.with_name(f"{STATUS_FILE.name}.lock")
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    with lock_file.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def ensure_sprint_started_at(state: dict[str, Any]) -> None:
@@ -4823,6 +4840,11 @@ def sync_all(state: dict[str, Any]) -> None:
     recompute_workload(state)
     ensure_sprint_started_at(state)
     state["updated_at"] = iso_now()
+    # Every canonical write gets a unique revision. The Supervisor compares
+    # the revision it loaded with the revision on disk while holding the same
+    # lock; a slow GitHub probe can therefore never overwrite a newer CLI
+    # transition with its stale whole-document snapshot.
+    state["_status_write_revision"] = uuid.uuid4().hex
     save_state(state)
     logs = load_logs()
     write_current_work(state, logs)
@@ -6491,7 +6513,6 @@ ACTORLESS_MUTATING_COMMANDS = frozenset({"sync"})
 
 
 def main(argv: list[str]) -> int:
-    state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
@@ -6499,21 +6520,27 @@ def main(argv: list[str]) -> int:
     commands = MUTATING_COMMANDS
 
     if command in read_only_commands:
+        state = load_state()
         read_only_commands[command](state, args)
         return 0
 
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    state_before = deepcopy(state)
-    commands[command](state, args)
-    sync_all(state)
-    try:
-        reconcile_status_check_outbox(state)
-        emit_status_checks_for_changed_tasks(state_before, state, command, args)
+    with status_write_transaction():
+        # Load only after acquiring the lock. Otherwise two well-formed CLI
+        # commands could serialize their writes while the second still acted
+        # on a pre-lock snapshot.
+        state = load_state()
+        state_before = deepcopy(state)
+        commands[command](state, args)
         sync_all(state)
-    except Exception as exc:
-        print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+        try:
+            reconcile_status_check_outbox(state)
+            emit_status_checks_for_changed_tasks(state_before, state, command, args)
+            sync_all(state)
+        except Exception as exc:
+            print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
     return 0
 
 
