@@ -48,7 +48,7 @@ class WatcherBookkeepingTests(unittest.TestCase):
         self.assertIn("PR 尚未 merge 就保持 review_approved", finalize_message)
         self.assertNotIn("scripts/git/task_finalize.sh 推送", finalize_message)
 
-    def test_run_scan_updates_snapshot_without_queueing_when_runtime_enqueue_disabled(self) -> None:
+    def test_run_scan_is_noop_when_runtime_enqueue_disabled(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -99,11 +99,11 @@ class WatcherBookkeepingTests(unittest.TestCase):
         ):
             changed = watch_events.run_scan(config, state, replay=False, provider_capabilities={})
 
-        self.assertTrue(changed)
-        self.assertEqual(state["tasks"]["P3-001"]["status"], "review")
-        self.assertEqual(state["recent_terminal_tasks"], [{"task_id": "OPS-001"}])
+        self.assertFalse(changed)
+        self.assertEqual(state["tasks"]["P3-001"]["status"], "in_progress")
+        self.assertNotIn("recent_terminal_tasks", state)
         self.assertEqual(state["pending_handoff_keys"], [])
-        self.assertIsNotNone(state["last_scan_at"])
+        self.assertEqual(state["last_scan_at"], "2026-04-06T09:00:00Z")
 
 
 if __name__ == "__main__":
