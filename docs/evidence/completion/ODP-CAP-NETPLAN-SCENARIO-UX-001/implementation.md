@@ -3,8 +3,8 @@
 ## Task Summary
 - **Task ID**: ODP-CAP-NETPLAN-SCENARIO-UX-001
 - **Title**: Complete NetPlan scenario and infeasibility UX
-- **Owner**: Antigravity
-- **Reviewer**: Claude
+- **Owner**: Claude
+- **Reviewer**: Codex
 
 ## Changes Made
 

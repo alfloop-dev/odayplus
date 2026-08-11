@@ -39,3 +39,40 @@ npm run test --workspace=@oday-plus/web -- src/app/__tests__/netplanDiagnosticsU
 - Structured diagnostic fields (5 fields) in backend & frontend component DOM: VERIFIED
 - Stale result approval rejection & reset to draft on update: VERIFIED
 - Delivered tests & API routes: VERIFIED
+
+## Re-verification After Base Advance (2026-08-11)
+
+Base advance composed `origin/dev` @ `b785d281` into
+`task/ODP-CAP-NETPLAN-SCENARIO-UX-001` via merge commit `5ac267d5`
+(no rebase, no force-push). The three incoming `dev` commits were
+content-neutral for this task's surface (`git diff HEAD...origin/dev`
+was empty before the merge), so the reviewed deliverable is unchanged.
+
+Commands re-run in the task worktree at the post-merge head:
+
+```bash
+.venv/bin/pytest modules/netplan tests/integration/test_netplan_solver.py -p no:warnings
+.venv/bin/pytest tests/integration/test_netplan_solver.py -p no:warnings \
+  -k "model_version or stale or infeasible or diagnostic"
+npm run test --workspace=@oday-plus/web -- src/app/__tests__/netplanDiagnosticsUx.test.tsx
+```
+
+Results:
+
+- Python netplan suite: **109 passed** in 106.41s.
+- Acceptance-focused subset (model version drift, stale protection,
+  infeasibility diagnostics, structured diagnostic fields):
+  **14 passed**, 93 deselected.
+- Frontend diagnostics component suite: **1 file / 1 test passed**
+  (vitest 4.1.10).
+
+`uv` is not installed in this worker worktree, so the pytest invocations
+used the checked-in `.venv/bin/pytest` interpreter directly instead of
+`uv run pytest`; the test selection is identical. `make api-contract`
+was not re-run because the base advance introduced no schema or route
+changes and the OpenAPI artifacts are byte-identical to the previously
+verified state.
+
+Task metadata correction: `implementation.md` carried a stale
+Owner/Reviewer pair from an earlier assignment round; it now reflects
+the current owner `Claude` and reviewer `Codex`.
