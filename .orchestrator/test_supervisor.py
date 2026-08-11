@@ -11618,6 +11618,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", ci)), \
+             unittest.mock.patch("supervisor.reassert_approved_review_gate_if_due", return_value=False), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.sync_status_pipeline"), \
              unittest.mock.patch("supervisor.write_json"), \
@@ -11756,6 +11757,30 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         self.assertTrue(dispatched)
         mock_queue.assert_called_once()
         self.assertNotIn("ci_pending_since_ts", task)
+
+    def test_pending_ci_reasserts_exact_approved_review_gate_at_bounded_rate(self) -> None:
+        config = self._build_freeze_test_config()
+        config["ready_dispatcher"]["review_gate_reassert_seconds"] = 300
+        task = {
+            "id": "FREEZE-TEST-GATE-REASSERT",
+            "status": "review_approved",
+            "approved_head": "1" * 40,
+        }
+
+        with unittest.mock.patch("ai_status.emit_task_review_status_check") as emit:
+            self.assertTrue(
+                supervisor.reassert_approved_review_gate_if_due(config, task, now_ts=1_000)
+            )
+            self.assertFalse(
+                supervisor.reassert_approved_review_gate_if_due(config, task, now_ts=1_299)
+            )
+            self.assertTrue(
+                supervisor.reassert_approved_review_gate_if_due(config, task, now_ts=1_300)
+            )
+
+        self.assertEqual(emit.call_count, 2)
+        emit.assert_called_with(task, "review_approved")
+        self.assertEqual(task["review_gate_reasserted_at_ts"], 1_300)
 
     def test_explicit_re_review_command(self) -> None:
         state = {

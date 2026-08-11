@@ -10017,6 +10017,35 @@ def task_assignment_integrity_issues(
     return issues
 
 
+def reassert_approved_review_gate_if_due(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    now_ts: float | None = None,
+) -> bool:
+    """Repair an overwritten/missing exact-head review gate at a bounded rate."""
+    settings = ready_dispatch_settings(config)
+    try:
+        interval = max(30.0, float(settings.get("review_gate_reassert_seconds", 300)))
+    except (TypeError, ValueError):
+        interval = 300.0
+    current_ts = now_ts if now_ts is not None else datetime.now(UTC).timestamp()
+    try:
+        last_ts = float(task.get("review_gate_reasserted_at_ts") or 0)
+    except (TypeError, ValueError):
+        last_ts = 0.0
+    if last_ts and current_ts - last_ts < interval:
+        return False
+
+    # Head equality and approved_head presence are verified immediately before
+    # this helper is called. Re-emitting the same desired state is idempotent
+    # and repairs a later stale writer/status post without weakening the gate.
+    runtime_ai_status.emit_task_review_status_check(task, "review_approved")
+    task["review_gate_reasserted_at_ts"] = current_ts
+    task["review_gate_reasserted_at"] = utc_now()
+    return True
+
+
 def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) -> bool:
     """Backfill durable scheduling metadata omitted by legacy task writers."""
     paths = config.get("paths") or {}
@@ -12370,18 +12399,21 @@ def dispatch_ready_tasks(
 
                 if ci_status == "pending":
                     now_ts = datetime.now(UTC).timestamp()
+                    status_dirty = reassert_approved_review_gate_if_due(
+                        config,
+                        task,
+                        now_ts=now_ts,
+                    )
                     start_ts = task.get("ci_pending_since_ts")
                     if not start_ts:
                         task["ci_pending_since_ts"] = now_ts
                         task["ci_pending_since"] = utc_now()
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        status_dirty = True
                     elif now_ts - float(start_ts) > 1800:
                         msg = f"CI status for task {task_id} has been pending for over 30 minutes; operator intervention required."
                         if task.get("next") != msg:
                             task["next"] = msg
-                            status_path = config_path(config, "status_file")
-                            write_json(status_path, status)
+                            status_dirty = True
                             write_activity_log(
                                 config,
                                 {
@@ -12390,6 +12422,9 @@ def dispatch_ready_tasks(
                                     "message": msg,
                                 },
                             )
+                    if status_dirty:
+                        status_path = config_path(config, "status_file")
+                        write_json(status_path, status)
                     continue
                 elif ci_status == "failure":
                     task.pop("ci_pending_since_ts", None)
