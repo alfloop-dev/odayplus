@@ -4,11 +4,15 @@ Packet task: `ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001-SIDECAR-ACCEPTANCE`
 
 Parent task: `ODP-ORCH-ACTOR-REF-LIVE-ROLLOUT-001`
 
-Packet owner / reviewer: Codex4 / Antigravity
+Packet owner / reviewer: Claude / Antigravity
+
+Packet preparer of rounds 1-3: Codex4. Helper-reclaimed by Claude on
+2026-08-11 after the CI dependency below merged; the designated reviewer is
+unchanged.
 
 Parent owner / reviewer at packet preparation: Antigravity / Codex2
 
-Prepared: 2026-08-01
+Prepared: 2026-08-01. Last refreshed: 2026-08-11.
 
 ## Scope and disposition
 
@@ -147,6 +151,57 @@ PR `#556` therefore remains blocked; its latest run at sidecar head
 `#562` is reviewed and merged, this branch is refreshed from that `dev`, and
 the sidecar checks pass on the resulting exact head.
 
+### Dependency cleared 2026-08-11
+
+The three conditions recorded above are now satisfied.
+
+| Condition | Result |
+| --- | --- |
+| PR `#562` reviewed and merged | Merged as `aff272d3da55967497d2aba0e72d569b9b15ff70`; its final task commit is `f19611ed6368e9e74f77b8ec6a2fd33367734698`. `git merge-base --is-ancestor f19611ed origin/dev` exits 0. |
+| Branch refreshed from that `dev` | `origin/dev` at `529f0a2c8a722bb27430fb0d614229ef1ea6c127` was merged into this task branch as refresh merge `a0bf0d56b2ee31673c495b034933ef4e5fc89504`. The merge was clean, with no conflicts and no manual resolution. `git merge-base --is-ancestor aff272d3 HEAD` exits 0. This section is the only commit after that merge. |
+| Sidecar checks pass on the resulting head | See the local reproduction below; the path-classification error is gone. Authoritative confirmation is the PR `#556` check run at the exact refreshed head. |
+
+The repair changed *where* the strict receipt-ancestry rule is enforced rather
+than weakening it. Before the repair, `make product-e2e-gate` ran
+`scripts/e2e/check_product_release_gate.py` with no mode flag, so it always
+executed `validate_receipt_packet`, whose `EVIDENCE_COMMIT_ALLOWLIST` admits
+only the three product E2E receipt files. Any dev-merge PR carrying a
+non-receipt file — including a required `support/sidecars/**` artifact —
+therefore failed. After the repair, `make product-e2e-gate` invokes the checker
+with `--dev-merge` and additionally runs `scripts/e2e/run_product_e2e.sh`, and
+`check_product_release_gate.py` guards the receipt-packet validation behind
+`if not args.dev_merge`. The strict exact-source ancestry rule is preserved
+intact for the production path, `make product-release-gate`, which this packet
+does not and must not satisfy.
+
+Local reproduction on refresh merge `a0bf0d56`, whose only working-tree delta
+was this section:
+
+```bash
+git merge-base --is-ancestor f19611ed6368e9e74f77b8ec6a2fd33367734698 origin/dev
+git diff --stat origin/dev...HEAD          # 1 file changed, 189 insertions(+)
+git diff --check origin/dev...HEAD         # exit 0
+make release-gate-registry                 # exit 0, "RELEASE STATE: NO-GO"
+python3 scripts/e2e/check_product_release_gate.py --dev-merge
+```
+
+The registry check exits 0: a well-formed Gate 0-6 NO-GO is the expected and
+valid state for a dev-merge PR, and this packet claims no production release
+authority. The `--dev-merge` checker no longer reports
+`intervening commits touch non-evidence paths`; its only remaining local
+failure is `Cannot find module '@playwright/test'`, an absent local dependency
+in this worker worktree. CI installs it explicitly (`npm ci` plus
+`npx playwright install --with-deps chromium` in the `product-e2e-gate` job),
+so that failure is a local environment limitation, not a packet assertion and
+not a basis for changing this support-only slice. The reviewer should treat the
+PR `#556` check run at the exact refreshed head as authoritative over this
+local reproduction.
+
+Nothing in the parent acceptance checklist above changes as a result of this
+refresh. The dependency was a shared CI compatibility blocker on *publishing*
+the packet; it never bore on the correctness of the parent rollout evidence,
+and item 9 remains **OPEN** on its own merits.
+
 ## Operational follow-ups, not absorbed here
 
 The parent evidence flags two configuration drifts:
@@ -183,7 +238,13 @@ and all eight primary receipts named in the checklist are present and nonempty.
 ## Handoff
 
 Antigravity should review this packet for accurate indexing and decide whether
-to absorb it into the parent review flow. For the parent task, the next safe
-action is to obtain Codex2's independent acceptance of exact final head
-`08f045b2` and the required live-state evidence. This packet itself grants no
-deployment, merge, approval, or closeout authority.
+to absorb it into the parent review flow. Review target is the current pushed
+head of PR `#556`, which is the single packet commit sitting directly on refresh
+merge `a0bf0d56b2ee31673c495b034933ef4e5fc89504`; the diff against `origin/dev`
+is this one support file and nothing else. Earlier heads `0f0898ce`, `4d3c2e02`,
+and `5919917b` are superseded by the base refresh and should not be reviewed.
+
+For the parent task, the next safe action is unchanged: obtain Codex2's
+independent acceptance of exact final head `08f045b2` and the required
+live-state evidence. This packet itself grants no deployment, merge, approval,
+or closeout authority.
