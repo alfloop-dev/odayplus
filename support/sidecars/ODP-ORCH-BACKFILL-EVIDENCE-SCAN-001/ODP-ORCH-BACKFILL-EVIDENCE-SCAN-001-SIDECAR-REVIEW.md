@@ -177,4 +177,44 @@ None of the three changes the acceptance judgement; the packet's verdict on the 
   3. **Verification Suite Execution**: Ran backfill pytest suite via `/home/lupin/oday-plus/.venv/bin/pytest -v scripts/orchestrator/test_backfill_task_archive_snapshots.py`. All 28 tests pass cleanly.
   4. **Parent Task Alignment**: Confirmed parent task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` (PR #682) merged into `dev` at commit `262684d7` and archived as `done`.
 
+---
+
+## 7. Closeout Record
+
+### Delivery State
+
+| Field | Value |
+|---|---|
+| Reviewed & Merged Content | `01c43b33` — merged to `dev` via PR #791; this is the packet body reviewed in §6 |
+| Sign-off Commit | `8c8ddb6c` — records §6 above; authored after approval, so it sits outside the `01c43b33` freeze |
+| Closeout Branch Head | base-advanced onto `origin/dev` (65 commits, conflict-free), pushed as PR #794 |
+| Diff vs `dev` | 1 file, `support/sidecars/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW.md` only |
+
+### Why This Packet Returned To Review
+
+`task-review-gate` reported `pending` at `8c8ddb6c` with *"Branch HEAD differs from
+approved head (`01c43b33`); re-review required"*. This is not a defect in the packet —
+it is the approval freeze behaving as designed:
+
+- `approved_head` was stamped at `01c43b33`, the commit the reviewer actually read.
+- The §6 sign-off text is itself a new commit, which moves the head past that stamp.
+- `is_approved_head_satisfied()` carries an approval forward across a head advance only
+  when every changed path sits under `docs/evidence/`
+  (`APPROVAL_EVIDENCE_PATH_PREFIXES`). This packet lives under `support/sidecars/`, so
+  the carry-forward branch does not apply and the freeze correctly invalidates.
+
+The gate blocks PR #794, and PR #794 must merge before `done` will accept the task, so
+the owner cannot clear this alone. The packet is therefore returned to `review` for a
+re-stamp at the current head.
+
+### What The Reviewer Is Asked To Confirm
+
+1. The content merged at `01c43b33` is unchanged by the base advance — the only
+   post-approval delta is §6 (the reviewer's own sign-off) and this §7.
+2. Scope is still support-only: `git diff --stat origin/dev...HEAD` shows exactly one
+   file under `support/sidecars/`.
+3. No canonical L1 document, runtime contract, or orchestrator implementation is touched.
+
+Once re-stamped, `approved_head` moves to the current head, `task-review-gate` turns
+green, PR #794 merges into `dev`, and the owner (`Claude`) runs `done`.
 
