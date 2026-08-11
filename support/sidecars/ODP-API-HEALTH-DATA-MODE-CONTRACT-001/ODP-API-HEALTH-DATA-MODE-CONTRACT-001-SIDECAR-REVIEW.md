@@ -2,13 +2,14 @@
 
 - Sidecar task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`
 - Parent task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
-- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` → `Antigravity5` (2026-08-10 current)
-- Assigned sidecar reviewer: `Codex2` (reassigned 2026-08-10 for account-pool independence)
-- Parent owner: `Antigravity4` (2026-08-05 refresh) → `Antigravity` (current)
-- Parent reviewer (current): `Codex`
+- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` → `Antigravity5` (2026-08-10) → `Claude` (2026-08-11 current, helper-claimed)
+- Assigned sidecar reviewer: `Codex2` (reassigned 2026-08-10 for account-pool independence; preserved through the 2026-08-11 helper claim)
+- Parent owner: `Antigravity4` (2026-08-05 refresh) → `Antigravity` (final)
+- Parent reviewer (final): `Codex`
 - Parent reviewer at capture time: `Antigravity7`
+- Parent task status: `done` (archived `2026-08-10T12:38:26Z`)
 - Evidence captured: `2026-08-02` UTC
-- Evidence refreshed: `2026-08-05` and `2026-08-10` UTC — the 2026-08-10 delta is current
+- Evidence refreshed: `2026-08-05`, `2026-08-10`, and `2026-08-11` UTC — the 2026-08-11 delta is current
 - Parent branch: `origin/task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
 - Exact reviewed parent HEAD: `6b4d56e892b5d4886db932a4acaf20b192a23538`
 - Parent PR: `#574` (`dev` <- `task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`)
@@ -295,8 +296,95 @@ git diff --check
 
 No canonical truth, runtime, registry, governance, or parent-task implementation is changed by this review note. Reviewer `Codex2` finds no blocking issue and approves the sidecar support packet. The exact approved task-branch head is frozen by the canonical `approve` status transition after this note is committed and pushed.
 
+## Review delta 2026-08-11 (current)
+
+This section records only what changed since the `2026-08-10` delta. It adds no new contract claim; the substantive review conclusions in § "Review delta 2026-08-10" still stand unchanged.
+
+This delta covers two consecutive `2026-08-11` refresh rounds on the same lane. Round A ran `00:36Z`–`00:49Z` and produced commit `9ab6e085`; round B is the current one and produced the head this packet asks the reviewer to stamp. Both were triggered by orchestrator requeues, not by a defect found in the packet.
+
+### 1. Why this refresh exists — requeue, not a new finding
+
+The sidecar task was already `review_approved` at head `eeefdd2f7e4e439a0756123e2b02bb2e500f8a29` with `Codex2`'s independent approval recorded.
+
+| Round | Trigger | Time (UTC) | Head at trigger |
+| --- | --- | --- | --- |
+| A | `ci_repair_requeued` — CI status pending > 30 min; returned the task to `in_progress` | `2026-08-11T00:35:26Z` | `eeefdd2f` |
+| A | helper-claimed by idle `Claude`, reviewer `Codex2` preserved | `2026-08-11T00:36:19Z` | `eeefdd2f` |
+| B | `ci_repair_requeued` — CI status pending > 30 min again | `2026-08-11T01:19:46Z` | `9ab6e085` |
+| B | `wake_queued` — `owned_in_progress_dispatch` to owner `Claude` | `2026-08-11T01:20:29Z` | `9ab6e085` |
+
+No prior conclusion is retracted in either round.
+
+### 1a. Root cause of the round-B requeue — an undelivered commit, not a red test
+
+Round A base-advanced the branch and committed this delta as `9ab6e085` (`2026-08-11T00:43:50Z`), then pushed `task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW` to that exact head. **No pull request was ever opened for that commit.** The only PR this branch has ever had is `#782`, which merged at head `f1810463` on `2026-08-10T13:55:31Z` and therefore cannot carry a commit created a day later. The orchestrator logged `github_review_pr_skipped` at `00:49:45Z` ("branch has no commits ahead of `dev` yet") and `github_review_pr_synced` at `00:52:49Z`, but a `gh pr list --state all` filtered to this branch still returns `#782` only.
+
+With no open PR, no workflow ran against `9ab6e085`. Its combined commit status is `failure` with exactly one context, `task-review-gate=failure`, and no CI checks at all — which is precisely the "CI pending > 30 minutes" condition that fired the round-B requeue.
+
+So round B's corrective action is a delivery action, not a content action: base-advance again, then actually open the task PR so the delta can merge into `dev`.
+
+### 2. Base advance to current `origin/dev`
+
+| Signal | 2026-08-10 delta | 2026-08-11 round A | 2026-08-11 round B (current) |
+| --- | --- | --- | --- |
+| `origin/dev` tip | `da5fe95f` / `f9da2955` lineage | `b785d28112f22cf56388e5c2fe2a0afefa9919ed` | `87ccf72f563ee78c5322e26d98ea0f2566a20490` |
+| Task head | `eeefdd2f` | `9ab6e085`, on the base-advance merge `bdcc3a56` | `744bc104`, the base-advance merge of `origin/dev` `87ccf72f` onto `9ab6e085` |
+| Distance behind `origin/dev` | 3 commits | 0 at commit time | 4 at dispatch, 0 after the merge |
+| Merge conflicts | none | none | none |
+| Task-only tree diff vs `origin/dev` | empty | 1 file, `+73 / -6` | 1 file, `+73 / -6` before this section's edit |
+| Open PR carrying the head | `#782` (merged) | none — see § 1a | opened this round |
+
+Round A composed `a14594ea`, `f8a78b9e`, `b785d281`, all from `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001-SIDECAR-ACCEPTANCE`. Round B composed `8c8ddb6c`, `d56e2be3`, `98746be8`, `87ccf72f`, all from `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW`, whose entire diff is that lane's own packet file under `support/sidecars/`. Neither round touches any health, validator, or data-mode surface. Both base advances were normal merges; task history is preserved and no force-push was used.
+
+The task-only diff against `origin/dev` is no longer empty: the `2026-08-10` packet body is already in `dev` via PR `#782`, but this `2026-08-11` delta is not, and stays undelivered until the PR opened this round merges.
+
+### 3. Parent lineage re-verified on the new base
+
+All parent reference commits remain ancestors of `origin/dev` `87ccf72f`, re-checked this round with `git merge-base --is-ancestor`:
+
+| Commit | Role | Ancestor of `origin/dev` `87ccf72f` |
+| --- | --- | --- |
+| `4b1ff51f` | parent implementation merge (PR `#574`) | yes |
+| `7471d42f` | parent closeout evidence commit | yes |
+| `a19384d4` | parent approved head / closeout PR `#779` | yes |
+| `f9da2955` | parent closeout merge into `dev` | yes |
+
+The same check reports `eeefdd2f` and `9ab6e085` as **not** ancestors of `origin/dev`, which is the expected shape: those are task-branch merge/delta commits, and only the packet content squashed through PR `#782` reached `dev`.
+
+The parent task `ODP-API-HEALTH-DATA-MODE-CONTRACT-001` is archived `done` (`2026-08-10T12:38:26Z`, terminal outcome `completed`), so nothing in this packet can still be pending on the parent lane.
+
+### 4. Verification on the base-advanced head
+
+Re-run in this sidecar worktree at `744bc104` (round B), reproducing the round-A result on the newer base:
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest \
+  tests/reliability/test_health_endpoints.py \
+  tests/ops/test_cloud_run_live_deployment.py
+# 381 passed, 1 warning
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  scripts/deployment/validate_cloud_run_live_deployment.py \
+  tests/ops/test_cloud_run_live_deployment.py \
+  tests/reliability/test_health_endpoints.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+The single warning is the existing Starlette/`httpx` TestClient deprecation warning. The full files are run here rather than the `-k` selections used in earlier deltas, so this is a superset of the 2026-08-10 verification.
+
+### 5. Disposition after this refresh
+
+- The packet content is unchanged in substance; `Codex2`'s 2026-08-10 approval reasoning still holds and was re-checked against the new base.
+- The reviewer action needed is to re-stamp the exact pushed head — the commit that carries this delta on top of the base-advance merge `744bc104` — because the previous `approved_head` `eeefdd2f` was invalidated by the required base advance, and the round-A head `9ab6e085` was invalidated by the round-B base advance, under the same exact-head rule this packet has applied throughout.
+- Delivery, not approval, was the blocking gap: this round opens the task PR so the delta can merge into `dev`. Approving without a merged PR would repeat the round-A stall, since `done` requires the task head to be an ancestor of `dev`.
+- Owner changed to `Claude` on `2026-08-11`; reviewer `Codex2` is unchanged, so review independence is preserved.
+- No canonical truth, runtime, registry, governance, or parent implementation is touched by this delta.
+
 ## Sidecar boundary and final review decision
 
 This artifact is the only repository output of `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`. It records evidence and reviewer audit notes only. It does not modify or redefine the health contract, runtime behavior, release gates, canonical documents, or parent task disposition.
 
-Review decision: **Approved** by assigned independent reviewer `Codex2`.
+Review decision: **Approved** by assigned independent reviewer `Codex2` at head `eeefdd2f`. That approval is on record and is not retracted; it awaits only a re-stamp at the base-advanced pushed head, per § "Review delta 2026-08-11 (current)".
