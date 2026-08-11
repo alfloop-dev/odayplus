@@ -197,7 +197,7 @@ their own review and exact evidence refresh.
 ## Closeout verification
 
 At owner closeout on `2026-08-11` UTC, the approved support-only scope was
-rechecked after composing `origin/dev` at `1b431dd4` into the task branch. The
+rechecked after composing `origin/dev` at `88269ee3` into the task branch. The
 four evidence files cited below retained their recorded SHA-256 values,
 `git diff --check origin/dev...HEAD` passed, and the task-to-base diff remained
 limited to this packet. No canonical, runtime, registry, governance, or Human/Ops
@@ -223,4 +223,4 @@ evidence file was changed by the sidecar.
 
 Preparation baseline: `529f0a2c8a722bb27430fb0d614229ef1ea6c127`, equal
 to the observed `origin/dev` tip when this packet was prepared. Closeout base:
-`1b431dd4a0e2a69b2fe0db0af4cdbf5b7082d68f`, composed before finalization.
+`88269ee3317276eca39e4da622785367eb07acb2`, composed before finalization.
