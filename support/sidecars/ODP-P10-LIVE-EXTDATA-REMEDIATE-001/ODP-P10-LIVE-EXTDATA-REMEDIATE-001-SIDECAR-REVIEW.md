@@ -3,10 +3,10 @@
 - Sidecar task: `ODP-P10-LIVE-EXTDATA-REMEDIATE-001-SIDECAR-REVIEW`
 - Parent task: `ODP-P10-LIVE-EXTDATA-REMEDIATE-001` (pack order `T11`)
 - Helper kind: `review_packet`
-- Sidecar owner: Claude2 · Sidecar reviewer: Claude
+- Sidecar owner: Claude2 · Sidecar reviewer: Codex
 - Parent owner: Claude · Parent reviewer: Antigravity6
 - Phase: `Package10LiveClosure`
-- Prepared: `2026-08-11T11:49Z`
+- Prepared: `2026-08-11T11:49Z` · Revised: `2026-08-11T11:58Z` (§5.4 gates closed, §8 added)
 - Companion artifact: `ODP-P10-LIVE-EXTDATA-REMEDIATE-001-SIDECAR-ACCEPTANCE.md` (same directory)
 
 ---
@@ -46,7 +46,8 @@ confirmed by what actually shipped (§5.1 below).
 | `review_gate_sha` | `147fdcfd0f483a3a45bac913be59afb526b02ba2` |
 | PR `headRefOid` | `147fdcfd0f483a3a45bac913be59afb526b02ba2` |
 | Branch base (merge-base with `dev`) | `dc8fdb9b6d19d4d36091af6aabe713e1677eda54` |
-| Parent task status | `review` |
+| Parent task status | `review_approved` (was `review` at packet time — see §8) |
+| Parent `approved_head` | `147fdcfd0f483a3a45bac913be59afb526b02ba2` |
 
 **No head drift.** The PR head, the task record's `review_gate_sha`, and the commit
 replayed in §3 are the same SHA. The reviewer is looking at exactly what was verified.
@@ -245,20 +246,20 @@ requires a grant it previously did not. The parent deliberately did not ship it 
 the ceiling, not named in T10 §7). Nothing is blocked — the live principal already holds
 `data_owner` — but this should be captured as a follow-up so it is not lost at closeout.
 
-### 5.4 CI state at review time
+### 5.4 CI state — now closed
 
-| Check | State |
-| --- | --- |
-| `orchestrator` | ✅ SUCCESS |
-| `performance-gate` | ✅ SUCCESS |
-| `product` | ⏳ IN_PROGRESS |
-| `product-e2e-gate` | ⏳ IN_PROGRESS |
-| `task-review-gate` | ⏳ PENDING (awaits this review) |
+| Check | At packet time (`11:49Z`) | At revision (`11:58Z`) |
+| --- | --- | --- |
+| `orchestrator` | ✅ SUCCESS | ✅ pass (1m22s) |
+| `performance-gate` | ✅ SUCCESS | ✅ pass (59s) |
+| `product` | ⏳ IN_PROGRESS | ✅ pass (13m58s) |
+| `product-e2e-gate` | ⏳ IN_PROGRESS | ✅ pass (6m20s) |
+| `task-review-gate` | ⏳ PENDING (awaits this review) | ✅ pass — approved by `Antigravity6` |
 
-Acceptance criterion 5 ("focused integration, live gate, Ruff diff and exact-head CI pass")
-is **not yet fully evidenced**: the local replays in §3 are green (V1–V4), but `product`
-and `product-e2e-gate` had not concluded at packet time. The reviewer should confirm both
-are green **at `147fdcfd`** before approving.
+All five checks are green **at the exact head `147fdcfd`**, and PR #809 now reports
+`mergeStateStatus: CLEAN`. Acceptance criterion 5 ("focused integration, live gate, Ruff
+diff and exact-head CI pass") is therefore **fully evidenced**: V1–V4 locally plus
+exact-head CI. Read via `gh pr checks 809` / `gh pr view 809` at `2026-08-11T11:58Z`.
 
 ---
 
@@ -270,7 +271,7 @@ are green **at `147fdcfd`** before approving.
 | 2 | Smallest fix makes worker and API share one durable run | ✅ Confirmed on the merits | Fix is request-path only, at the single point where the tenant enters. C5 shows the alternatives (deployment variable, principal-map secret) fix one instance, not the failure mode. |
 | 3 | Real candidate produces both provider runs with lineage | ⏳ **Open — cannot close here** | Needs a live Deploy Dev run; no `gcloud` credentials on this host. Confirming artifact: next `live-e2e-gate.json`. Exit conditions enumerated in README §7. |
 | 4 | Retry idempotency, DQ, tenant audit, failure classification remain fail-closed | ✅ Confirmed | V2 (64 passed) — `test_scheduled_ingestion_tenant_propagation.py` re-asserts scheduler fail-closed tenant handling, cross-tenant replay refusal, audit-event tenant, and dead-lettering of untenanted payloads, all unchanged. Plus C1/C3. |
-| 5 | Focused integration, live gate, Ruff diff, exact-head CI pass | ⚠️ **Partial** | V1–V4 green locally at the exact head. Two GitHub checks still running (§5.4). |
+| 5 | Focused integration, live gate, Ruff diff, exact-head CI pass | ✅ **Confirmed** (was partial at packet time) | V1–V4 green locally at the exact head, and all five GitHub checks now green at `147fdcfd` (§5.4). |
 | 6 | Independent review and rollback evidence pass | ✅ Rollback sound; review is the reviewer's call | Rollback is a single revert: request-path only, no migration, no data change, no config to undo. C3 confirms the one forward-compat caveat is weaker than the parent claimed. This packet is the independent-verification input, not the approval. |
 
 ---
@@ -283,25 +284,66 @@ parent's evidence README was independently re-executed by this sidecar and match
 one most easily faked. The diff is narrow, the tests have teeth, the rollback is trivial,
 and the one scope deviation was self-disclosed rather than hidden.
 
-Two things are genuinely outstanding and should gate approval:
+Two things were flagged as gating approval. **The parent has since been approved by
+`Antigravity6` at `147fdcfd`**, so both are recorded here at their settled state:
 
-1. **§5.1** — the writable-ceiling amendment needs an explicit coordinator ruling and a
-   recorded trail. This is the only item that could send T11 back rather than forward.
-2. **§5.4** — `product` and `product-e2e-gate` must land green at `147fdcfd`.
+1. **§5.1 — still open as a trail gap, not as a blocker.** The parent's task record at
+   `2026-08-11T11:58Z` still carries the original seven `writable_paths` globs, and no
+   amendment note was added. The reviewer effectively took option (a) — accepting the two
+   files under the T10 §7 + dispatch-note intent — but the ruling lives only in the review,
+   not on the task record. That is precisely the outcome §5.1 warned against: the next
+   reader of `writable_paths` sees two files outside the ceiling with no trail. **Recommend
+   the coordinator record the amendment on T11 at closeout**, retroactively if necessary.
+   This does not warrant reopening an approved head.
+2. **§5.4 — closed.** `product` (13m58s) and `product-e2e-gate` (6m20s) both landed green
+   at `147fdcfd`, `task-review-gate` passed, and PR #809 is `CLEAN`.
 
 Criterion 3 (§6) stays open by construction and is expected to close on the next Deploy
-Dev at the SHA carrying this change; it is not a reason to withhold approval of the code.
+Dev at the SHA carrying this change; it was correctly not a reason to withhold approval.
 
-**To the sidecar reviewer (`Claude`):** this packet is support-only. Please confirm it
+**To the sidecar reviewer (`Codex`):** this packet is support-only. Please confirm it
 stays inside the sidecar boundary — no canonical truth, no contract schema, no
 runtime/registry/governance implementation, single artifact under
 `support/sidecars/ODP-P10-LIVE-EXTDATA-REMEDIATE-001/`.
+
+---
+
+## 8. Sidecar resubmission record (head-drift reopen)
+
+`Codex` reopened this sidecar at `2026-08-11T11:54Z` on exact-head integrity, not on the
+merits: *"Review merits pass, but approval is blocked by exact-head integrity."* No content
+change was requested. This section records what moved and why the head changed again.
+
+| Event | SHA | Note |
+| --- | --- | --- |
+| Original submission (PR #810) | `d3fb0679` | `review_submission.remote_sha` recorded here |
+| `origin/dev` composition into the task branch | `15ed73c3` | Merge of `origin/dev` (`e16dfde4`); PR head advanced, `review_gate_sha` followed, `remote_sha` did not → drift |
+| This revision | new head | §5.4 / §6-5 / §7 updated; reviewer name corrected `Claude` → `Codex` |
+
+**The packet content did not change across the composition.** `git diff d3fb0679 15ed73c3
+-- support/` is empty; the three files the merge touched are unrelated
+`ODP-ORCH-BRANCH-PROTECTION-PER-BRANCH-STRICT-001` orchestrator work. The reopen was a
+bookkeeping mismatch between the recorded submission SHA and the live PR head.
+
+**Why this revision is a new commit rather than a bare resubmit at `15ed73c3`.**
+`task_finalize.sh` validates `HEAD` for the task id plus the `LLM-Agent` / `Task-ID` /
+`Reviewer` trailers (lines 105–129). `15ed73c3` is a merge commit with an empty body, so a
+resubmit at that exact SHA is refused by the script. A trailer-carrying commit was required
+regardless; this revision folds the genuinely new facts (§5.4 gates closed, §7 item 1
+settled) into it rather than shipping an empty one. The commit also corrects the stale
+`Reviewer: Claude` trailer to `Reviewer: Codex` after the assignment reconciliation.
+
+Sidecar boundary is unchanged: one file under
+`support/sidecars/ODP-P10-LIVE-EXTDATA-REMEDIATE-001/`, no canonical truth, no contract
+schema, no runtime/registry/governance implementation.
 
 ### Provenance
 
 - Task state read from the live canonical status root
   (`$PANTHEON_STATUS_ROOT/ai-status.json`), not the repo worktree copy — the tracked
   `ai-status.json` is a four-task sample fixture and contains neither T10 nor T11.
-- PR and check state read via `gh pr view 809` at `2026-08-11T11:49Z`.
+- PR and check state read via `gh pr view 809` at `2026-08-11T11:49Z`, and re-read via
+  `gh pr checks 809` / `gh pr view 809 --json headRefOid,mergeStateStatus` at
+  `2026-08-11T11:58Z` for §5.4 and §7.
 - All test and lint results in §3 executed by this sidecar at `147fdcfd`.
 - No secret value, bearer token, or credential appears in this packet.
