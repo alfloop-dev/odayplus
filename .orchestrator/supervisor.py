@@ -6936,7 +6936,14 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
         return False
     if agent_dispatch_disabled(config, name):
         return False
-    if not isinstance(task, dict) or task_is_sidecar(task):
+    if not isinstance(task, dict):
+        return True
+    # This is the shared eligibility predicate for owned dispatch, helper
+    # claims, and quota failover. A non-dispatchable or human-gate task must
+    # never become executable merely because an automated lane is idle.
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    if task_is_sidecar(task):
         return True
     return name not in sidecar_only_agent_names(config)
 
@@ -10607,7 +10614,7 @@ def build_catalog_sidecar_candidates(
         phase_match = str(template.get("parent_phase_match") or "").strip()
         activation_dependencies = [str(item).strip() for item in template.get("activation_dependencies", []) if str(item).strip()]
         for parent in status.get("tasks", []) or []:
-            if task_is_sidecar(parent):
+            if task_is_sidecar(parent) or task_is_human_gate(parent) or bool(parent.get("non_dispatchable")):
                 continue
             parent_id = str(parent.get("id") or "").strip()
             if not parent_id:
@@ -10679,7 +10686,7 @@ def build_dynamic_sidecar_candidates(
     resolver = TaskResolver(task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
-        if task_is_sidecar(parent):
+        if task_is_sidecar(parent) or task_is_human_gate(parent) or bool(parent.get("non_dispatchable")):
             continue
         parent_id = str(parent.get("id") or "").strip()
         if not parent_id or str(parent.get("status") or "").lower() == "done":
