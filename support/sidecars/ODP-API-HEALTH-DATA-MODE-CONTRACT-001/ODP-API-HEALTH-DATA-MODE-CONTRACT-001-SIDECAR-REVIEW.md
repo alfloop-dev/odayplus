@@ -2,13 +2,14 @@
 
 - Sidecar task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`
 - Parent task: `ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
-- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` → `Antigravity5` (2026-08-10 current)
-- Assigned sidecar reviewer: `Codex2` (reassigned 2026-08-10 for account-pool independence)
-- Parent owner: `Antigravity4` (2026-08-05 refresh) → `Antigravity` (current)
-- Parent reviewer (current): `Codex`
+- Sidecar owner: `Codex8` (2026-08-02 capture) → `Claude` (2026-08-05 refresh) → `Codex` → `Antigravity5` (2026-08-10) → `Claude` (2026-08-11 current, helper-claimed)
+- Assigned sidecar reviewer: `Codex2` (reassigned 2026-08-10 for account-pool independence; preserved through the 2026-08-11 helper claim)
+- Parent owner: `Antigravity4` (2026-08-05 refresh) → `Antigravity` (final)
+- Parent reviewer (final): `Codex`
 - Parent reviewer at capture time: `Antigravity7`
+- Parent task status: `done` (archived `2026-08-10T12:38:26Z`)
 - Evidence captured: `2026-08-02` UTC
-- Evidence refreshed: `2026-08-05` and `2026-08-10` UTC — the 2026-08-10 delta is current
+- Evidence refreshed: `2026-08-05`, `2026-08-10`, and `2026-08-11` UTC — the 2026-08-11 delta is current
 - Parent branch: `origin/task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`
 - Exact reviewed parent HEAD: `6b4d56e892b5d4886db932a4acaf20b192a23538`
 - Parent PR: `#574` (`dev` <- `task/ODP-API-HEALTH-DATA-MODE-CONTRACT-001`)
@@ -295,8 +296,74 @@ git diff --check
 
 No canonical truth, runtime, registry, governance, or parent-task implementation is changed by this review note. Reviewer `Codex2` finds no blocking issue and approves the sidecar support packet. The exact approved task-branch head is frozen by the canonical `approve` status transition after this note is committed and pushed.
 
+## Review delta 2026-08-11 (current)
+
+This section records only what changed since the `2026-08-10` delta. It adds no new contract claim; the substantive review conclusions in § "Review delta 2026-08-10" still stand unchanged.
+
+### 1. Why this refresh exists — requeue, not a new finding
+
+The sidecar task was already `review_approved` at head `eeefdd2f7e4e439a0756123e2b02bb2e500f8a29` with `Codex2`'s independent approval recorded. At `2026-08-11T00:35:26Z` the orchestrator emitted `ci_repair_requeued` because the task's CI status had been pending for over 30 minutes, which returned the task to `in_progress`, and at `2026-08-11T00:36:19Z` it was helper-claimed by idle `Claude` with reviewer `Codex2` preserved.
+
+So the trigger is a CI-freshness requeue plus an owner change, not a defect found in the packet. No prior conclusion is retracted.
+
+### 2. Base advance to current `origin/dev`
+
+| Signal | 2026-08-10 delta | 2026-08-11 refresh |
+| --- | --- | --- |
+| `origin/dev` tip | `da5fe95f` / `f9da2955` lineage | `b785d28112f22cf56388e5c2fe2a0afefa9919ed` |
+| Task head | `eeefdd2f` | `bdcc3a56`, the base-advance merge of `origin/dev` `b785d281`; this delta commits directly on top of it |
+| Distance behind `origin/dev` | 3 commits | 0 |
+| Merge conflicts | none | none |
+| Task-only tree diff vs `origin/dev` | empty | empty |
+
+The three newly composed `dev` commits (`a14594ea`, `f8a78b9e`, `b785d281`) belong to `ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001-SIDECAR-ACCEPTANCE` and touch no health, validator, or data-mode surface. The base advance was a normal merge; task history is preserved and no force-push was required.
+
+The task-only diff against `origin/dev` is empty because this packet already merged to `dev` as PR `#782` on `2026-08-10T13:55:31Z`. The artifact is delivered; the branch carries base composition plus this delta.
+
+### 3. Parent lineage re-verified on the new base
+
+All parent reference commits remain ancestors of `origin/dev` `b785d281`:
+
+| Commit | Role | Ancestor of `origin/dev` |
+| --- | --- | --- |
+| `4b1ff51f` | parent implementation merge (PR `#574`) | yes |
+| `7471d42f` | parent closeout evidence commit | yes |
+| `a19384d4` | parent approved head / closeout PR `#779` | yes |
+| `f9da2955` | parent closeout merge into `dev` | yes |
+
+The parent task `ODP-API-HEALTH-DATA-MODE-CONTRACT-001` is archived `done` (`2026-08-10T12:38:26Z`, terminal outcome `completed`), so nothing in this packet can still be pending on the parent lane.
+
+### 4. Verification on the base-advanced head
+
+Run in this sidecar worktree at `bdcc3a56`:
+
+```bash
+/home/lupin/oday-plus/.venv/bin/pytest \
+  tests/reliability/test_health_endpoints.py \
+  tests/ops/test_cloud_run_live_deployment.py
+# 381 passed, 1 warning
+
+/home/lupin/oday-plus/.venv/bin/ruff check \
+  scripts/deployment/validate_cloud_run_live_deployment.py \
+  tests/ops/test_cloud_run_live_deployment.py \
+  tests/reliability/test_health_endpoints.py
+# All checks passed!
+
+git diff --check
+# clean
+```
+
+The single warning is the existing Starlette/`httpx` TestClient deprecation warning. The full files are run here rather than the `-k` selections used in earlier deltas, so this is a superset of the 2026-08-10 verification.
+
+### 5. Disposition after this refresh
+
+- The packet content is unchanged in substance; `Codex2`'s 2026-08-10 approval reasoning still holds and was re-checked against the new base.
+- The only reviewer action needed is to re-stamp the exact pushed head — the commit that carries this delta on top of the base-advance merge `bdcc3a56` — because the previous `approved_head` `eeefdd2f` was invalidated by the required base advance under the same exact-head rule this packet has applied throughout.
+- Owner changed to `Claude` on `2026-08-11`; reviewer `Codex2` is unchanged, so review independence is preserved.
+- No canonical truth, runtime, registry, governance, or parent implementation is touched by this delta.
+
 ## Sidecar boundary and final review decision
 
 This artifact is the only repository output of `ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-REVIEW`. It records evidence and reviewer audit notes only. It does not modify or redefine the health contract, runtime behavior, release gates, canonical documents, or parent task disposition.
 
-Review decision: **Approved** by assigned independent reviewer `Codex2`.
+Review decision: **Approved** by assigned independent reviewer `Codex2` at head `eeefdd2f`. That approval is on record and is not retracted; it awaits only a re-stamp at the base-advanced pushed head, per § "Review delta 2026-08-11 (current)".
