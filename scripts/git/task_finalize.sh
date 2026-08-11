@@ -28,18 +28,21 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-auto-merge]
+Usage: scripts/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-auto-merge] [--no-status-submit]
 
   <TASK-ID>        e.g. ODP-EXAMPLE-001 (branch task/ODP-EXAMPLE-001)
   --dry-run        print what would run; touch neither origin nor GitHub
   --base <branch>  PR target (default: $PANTHEON_TASK_PR_BASE or dev)
   --no-auto-merge  push and open the PR, but leave auto-merge off
+  --no-status-submit  do not atomically move a tracked task to review (only for
+                      supervisor housekeeping PRs which have no board task)
 EOF
 }
 
 TASK_ID=""
 DRY_RUN=0
 AUTO_MERGE=1
+STATUS_SUBMIT=1
 BASE_BRANCH="${PANTHEON_TASK_PR_BASE:-dev}"
 MERGE_METHOD="${PANTHEON_TASK_PR_MERGE_METHOD:-merge}"
 
@@ -47,6 +50,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --no-auto-merge) AUTO_MERGE=0; shift ;;
+    --no-status-submit) STATUS_SUBMIT=0; shift ;;
     --base) BASE_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     -*) echo "task_finalize: unknown option $1" >&2; usage; exit 2 ;;
@@ -220,5 +224,15 @@ fi
 
 PR_URL="$("$GH" pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || true)"
 echo "task_finalize: PR #$PR_NUMBER ${PR_URL:-} for $TASK_ID"
+if [ "$STATUS_SUBMIT" -eq 1 ]; then
+  if [ -z "${AI_NAME:-}" ]; then
+    echo "task_finalize: PR exists but review was NOT recorded: AI_NAME is required for the atomic status submission." >&2
+    echo "task_finalize: re-run with AI_NAME=<task-owner>, or use --no-status-submit only for untracked housekeeping PRs." >&2
+    exit 1
+  fi
+  AI_NAME="$AI_NAME" "$ROOT/scripts/ai-status.sh" submit_review "$TASK_ID" "$PR_NUMBER" \
+    "Remote PR #$PR_NUMBER is open against $BASE_BRANCH: ${PR_URL:-GitHub URL unavailable}"
+  echo "task_finalize: review submission recorded atomically for $TASK_ID"
+fi
 echo "task_finalize: wait for the merge into $BASE_BRANCH, then run:"
 echo "  AI_NAME=<Owner> ./scripts/ai-status.sh done \"$TASK_ID\" \"<checkpoint>\""

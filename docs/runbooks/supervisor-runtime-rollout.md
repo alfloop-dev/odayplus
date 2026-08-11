@@ -1,8 +1,8 @@
 ---
 doc_id: ODP-RUNBOOK-SUPERVISOR-RUNTIME-ROLLOUT
 title: Supervisor Runtime Rollout
-status: executed
-date: 2026-08-04
+status: maintained
+date: 2026-08-11
 language: zh-TW
 owner: "Platform/Ops"
 ---
@@ -125,6 +125,24 @@ $ uv run pytest .orchestrator/ -q
 例如只推 #612 的權限限制而沒有 #611 的 base 修正，會讓 task PR 完全無法建立。
 
 ## 6. 執行步驟
+
+從 2026-08-11 起，**不得在既有 runtime checkout 直接 fetch/checkout 或覆蓋檔案**。
+這種做法會讓 Git 的 HEAD 看似最新、實際執行檔卻是舊的 dirty overlay。請一律用
+`rollout_supervisor_runtime.py` 建立乾淨、具名分支的新 worktree，預檢 HEAD、距離與
+tracked working tree 後，才原子切換 `runtime-current` symlink：
+
+```bash
+python3 scripts/orchestrator/rollout_supervisor_runtime.py \
+  --source-root /path/to/clean-origin-dev-worktree \
+  --runtime-link /home/lupin/oday-plus-supervisor-runtime-current \
+  --runtime-parent /home/lupin \
+  --service pantheon-supervisor.service
+```
+
+此指令拒絕 dirty source、非 `origin/dev` 的 source HEAD、dirty target、detached target
+與落後目標 ref。重啟失敗時會把 symlink 回復至前一個 runtime 並重新啟動服務。
+
+以下是舊版的人工流程，僅保留作為歷史與回復說明：
 
 ```bash
 RUNTIME=/home/lupin/oday-plus-supervisor-runtime-d9c4b474

@@ -2785,6 +2785,7 @@ def task_metadata_from_env() -> dict[str, Any]:
         "helper_parent": os.environ.get("TASK_HELPER_PARENT", "").strip() or None,
         "helper_kind": os.environ.get("TASK_HELPER_KIND", "").strip() or None,
         "auto_created_by": os.environ.get("TASK_AUTO_CREATED_BY", "").strip() or None,
+        "priority": os.environ.get("TASK_PRIORITY", "").strip().upper() or None,
     }
     for key, value in explicit_fields.items():
         if value is not None:
@@ -4929,10 +4930,20 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
+    task = get_task(state, task_id)
+    if task is None:
+        priority = str(metadata.get("priority") or "P2").strip().upper()
+        if priority not in {"P0", "P1", "P2", "P3"}:
+            raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
+        metadata["priority"] = priority
+    elif "priority" in metadata:
+        priority = str(metadata.get("priority") or "").strip().upper()
+        if priority not in {"P0", "P1", "P2", "P3"}:
+            raise SystemExit("TASK_PRIORITY must be one of P0, P1, P2, or P3")
+        metadata["priority"] = priority
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
 
-    task = get_task(state, task_id)
     timestamp = iso_now()
     if task is None:
         if archived_task_snapshot(task_id):
@@ -5073,6 +5084,114 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "reopen", "task_id": task_id, "message": message})
 
 
+def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str, Any]:
+    """Return immutable evidence that an *open* task PR exists on GitHub.
+
+    A local branch, a task handoff note, and a GitHub check are all insufficient
+    evidence on their own.  The reviewer must be looking at a remotely published
+    task branch and at the PR which carries its exact current SHA into the
+    configured integration branch.  Keeping this check here makes the status
+    transition atomic: a worker cannot first label work ``review`` and only
+    later discover that its branch was never pushed.
+    """
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id or not pr_number.isdigit():
+        raise SystemExit("Review submission requires a task id and numeric PR number")
+
+    config = load_config()
+    repository_id = task_primary_repository_id(config, task) or "pantheon"
+    repository_root = repository_local_path(config, repository_id) or ROOT
+    branch = f"task/{task_id}"
+    base_branch = delivery_merge_target_branch(config, repository_id)
+    remote_sha = resolve_task_sha(task_id, force_refresh=True)
+    if not remote_sha:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: origin/{branch} is missing. "
+            "Push the task branch with scripts/git/task_finalize.sh first."
+        )
+
+    pr = run_gh_json_command(
+        [
+            "pr", "view", pr_number,
+            "--json", "number,state,url,headRefName,headRefOid,baseRefName,isDraft",
+        ],
+        cwd=repository_root,
+    )
+    if not pr:
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: GitHub PR #{pr_number} cannot be verified."
+        )
+    if (
+        str(pr.get("state") or "").upper() != "OPEN"
+        or bool(pr.get("isDraft"))
+        or str(pr.get("headRefName") or "") != branch
+        or str(pr.get("headRefOid") or "") != remote_sha
+        or str(pr.get("baseRefName") or "") != base_branch
+    ):
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: PR #{pr_number} must be an open, non-draft "
+            f"{branch} -> {base_branch} PR at remote SHA {remote_sha[:8]}."
+        )
+    return {
+        "pr_number": int(pr_number),
+        "pr_url": str(pr.get("url") or ""),
+        "branch": branch,
+        "remote_sha": remote_sha,
+        "base_branch": base_branch,
+        "verified_at": iso_now(),
+    }
+
+
+def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
+    """Atomically publish remote PR evidence and hand a task to its reviewer.
+
+    Usage: submit_review <task-id> <pr-number> <message>
+    """
+    if len(args) < 3:
+        raise SystemExit("Usage: submit_review <task-id> <pr-number> <message>")
+    task_id, pr_number, message = args[0], args[1], args[2]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    if task.get("owner") != actor:
+        raise SystemExit(f"Only the owner ({task.get('owner')}) can submit {task_id} for review")
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if not reviewer:
+        raise SystemExit(f"{task_id} has no assigned reviewer")
+
+    submission = review_submission_for_task(task, pr_number)
+    timestamp = iso_now()
+    task["status"] = "review"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task["review_submission"] = submission
+    task.pop("approved_head", None)
+    mark_handoffs_done_for_actor(state, task_id, actor)
+    mark_blockers_resolved(state, task_id)
+    state.setdefault("handoffs", []).append(
+        {
+            "task_id": task_id,
+            "from": actor,
+            "to": reviewer,
+            "message": message,
+            "status": "pending",
+            "created_at": timestamp,
+        }
+    )
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "review_submission",
+            "task_id": task_id,
+            "message": f"Submitted PR #{submission['pr_number']} to {reviewer}: {message}",
+            "submission": submission,
+        }
+    )
+
+
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
@@ -5087,6 +5206,13 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if task.get("reviewer") != to_agent:
         raise SystemExit(
             f"{task_id} handoff target must match the assigned reviewer ({task.get('reviewer')}); reassign reviewer first if needed"
+        )
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict) or not submission.get("remote_sha") or not submission.get("pr_number"):
+        raise SystemExit(
+            f"Cannot hand off {task_id} for review without verified remote PR evidence. "
+            "Run scripts/git/task_finalize.sh, then "
+            f"AI_NAME={actor} ./scripts/ai-status.sh submit_review {task_id} <pr-number> <message>."
         )
     timestamp = iso_now()
     task["status"] = "review"
@@ -5712,6 +5838,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             "and approve again. No approval was recorded."
         )
 
+    submission = task.get("review_submission")
+    submitted_sha = (
+        str(submission.get("remote_sha") or "").strip()
+        if isinstance(submission, dict)
+        else ""
+    )
+    if not submitted_sha or submitted_sha != approved_sha:
+        display_submitted = submitted_sha[:8] if submitted_sha else "missing"
+        raise SystemExit(
+            f"Cannot approve task {task_id}: verified review submission SHA "
+            f"({display_submitted}) does not match current remote task head "
+            f"({approved_sha[:8]}). The owner must run task_finalize.sh again so the "
+            "exact PR head is re-submitted for review. No approval was recorded."
+        )
+
     # B20: approved_head is immutable for the lifetime of one approval. Every
     # transition back to `review` (handoff, reopen, re_review, and the
     # supervisor's head-drift demotion) pops it, so a task sitting in `review`
@@ -6289,6 +6430,7 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
             and command
             in {
                 "approve",
+                "submit_review",
                 "reopen",
                 "handoff",
                 "progress",
@@ -6325,6 +6467,7 @@ MUTATING_COMMANDS = {
     "reopen": command_reopen,
     "re_review": command_re_review,
     "re-review": command_re_review,
+    "submit_review": command_submit_review,
     "handoff": command_handoff,
     "blocker": command_blocker,
     "retarget_blocker": command_retarget_blocker,

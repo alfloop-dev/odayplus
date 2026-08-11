@@ -7359,6 +7359,7 @@ def persist_task_reassignment(
     new_reviewer: str,
     message: str,
     new_status: str | None = None,
+    new_waiting_for: str | None = None,
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
@@ -7379,6 +7380,8 @@ def persist_task_reassignment(
         task["status"] = new_status
         if str(new_status).lower() == "todo":
             task.pop("waiting_for", None)
+    if new_waiting_for:
+        task["waiting_for"] = new_waiting_for
     task["last_update"] = timestamp
     task["assignment_note"] = message
     # Reassignment is coordination metadata, not resolution of an external
@@ -9898,6 +9901,314 @@ def task_is_human_gate(task: dict[str, Any]) -> bool:
     )
 
 
+def review_submission_is_complete(config: dict[str, Any], task: dict[str, Any]) -> bool:
+    """Return whether review has immutable, task-scoped remote PR provenance."""
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict):
+        return False
+    task_id = str(task.get("id") or "").strip()
+    expected_branch = f"task/{task_id}"
+    expected_base = str((config.get("branch_workflow") or {}).get("dev_branch") or "dev").strip()
+    try:
+        pr_number = int(submission.get("pr_number") or 0)
+    except (TypeError, ValueError):
+        pr_number = 0
+    return bool(
+        task_id
+        and pr_number > 0
+        and str(submission.get("branch") or "") == expected_branch
+        and str(submission.get("base_branch") or "") == expected_base
+        and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(submission.get("remote_sha") or ""))
+    )
+
+
+def task_actor_assignment_block_reason(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task: dict[str, Any],
+    agent_name: str | None,
+) -> str | None:
+    """Return a stable assignment problem, excluding momentary slot occupancy."""
+    name = str(agent_name or "").strip()
+    if not name:
+        return "missing actor"
+    if is_human_gate_agent(name):
+        return None
+    normalized = normalize_agent_id(name)
+    agent = (config.get("agents", {}) or {}).get(normalized)
+    if not isinstance(agent, dict):
+        return f"unregistered actor {name}"
+    if not agent_can_take_task(config, name, task):
+        return f"actor {name} is disabled or not eligible for this task"
+    pool_reason = account_pool_dispatch_block_reason(config, name, runtime_state=state)
+    if pool_reason:
+        return pool_reason
+    provider = str(agent.get("provider") or normalized)
+    return provider_runtime_config_block_reason(config, provider)
+
+
+def task_assignment_integrity_issues(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task: dict[str, Any],
+) -> list[str]:
+    """Audit the invariants shared by Supervisor dispatch and Auto Worker review."""
+    if str(task.get("status") or "").strip().lower() not in AGENT_OPEN_TASK_STATUSES:
+        return []
+    issues: list[str] = []
+    if str(task.get("priority") or "").strip().upper() not in {"P0", "P1", "P2", "P3"}:
+        issues.append("priority_missing_or_invalid")
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    owner_reason = task_actor_assignment_block_reason(config, state, task, owner)
+    reviewer_reason = task_actor_assignment_block_reason(config, state, task, reviewer)
+    if owner_reason:
+        issues.append(f"owner_unavailable:{owner_reason}")
+    if reviewer_reason:
+        issues.append(f"reviewer_unavailable:{reviewer_reason}")
+    if (
+        owner
+        and reviewer
+        and not is_human_gate_agent(owner)
+        and not is_human_gate_agent(reviewer)
+        and not review_is_independent(config, owner, reviewer)
+    ):
+        issues.append("owner_reviewer_same_account_pool")
+    if str(task.get("status") or "").strip().lower() == "review" and not review_submission_is_complete(config, task):
+        issues.append("review_submission_missing_or_invalid")
+    waiting_for = str(task.get("waiting_for") or "").strip()
+    if (
+        str(task.get("status") or "").strip().lower() == "blocked"
+        and waiting_for
+        and not is_human_gate_agent(waiting_for)
+    ):
+        waiting_reason = task_actor_assignment_block_reason(config, state, task, waiting_for)
+        if waiting_reason:
+            issues.append(f"waiting_for_unavailable:{waiting_reason}")
+    return issues
+
+
+def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Backfill durable scheduling metadata omitted by legacy task writers."""
+    paths = config.get("paths") or {}
+    if not paths.get("status_file") or not paths.get("activity_log"):
+        return False
+    tasks = status.get("tasks", []) or []
+    task_map = {str(task.get("id") or ""): task for task in tasks if task.get("id")}
+    changed = False
+    timestamp = utc_now()
+    for task in tasks:
+        if str(task.get("status") or "").strip().lower() not in AGENT_OPEN_TASK_STATUSES:
+            continue
+        if str(task.get("priority") or "").strip().upper() in {"P0", "P1", "P2", "P3"}:
+            continue
+        task_id = str(task.get("id") or "").strip()
+        parent_id = str(task.get("helper_parent") or "").strip()
+        if not parent_id and "-SIDECAR-" in task_id:
+            parent_id = task_id.split("-SIDECAR-", 1)[0]
+        parent = task_map.get(parent_id, {})
+        priority = normalized_business_priority(parent.get("priority"), default="P2")
+        task["priority"] = priority
+        task["last_update"] = timestamp
+        write_activity_log(
+            config,
+            {
+                "type": "task_metadata_integrity_repaired",
+                "task_id": task_id,
+                "message": f"Backfilled required business priority as {priority}.",
+            },
+        )
+        changed = True
+    if changed:
+        write_json(config_path(config, "status_file"), status)
+        sync_status_pipeline(config)
+    return changed
+
+
+def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Remove legacy false-review states before reviewer dispatch.
+
+    Human data/approval gates return to blocked.  Executable tasks return to
+    their owner so task_finalize can publish and atomically submit the PR.
+    """
+    paths = config.get("paths") or {}
+    # The repair is a canonical-state migration and must never write through
+    # the repository fallback used by small unit-test configs or library-only
+    # callers. Production always supplies both explicit coordination paths.
+    if not paths.get("status_file") or not paths.get("activity_log"):
+        return False
+    changed = False
+    timestamp = utc_now()
+    for task in status.get("tasks", []) or []:
+        if str(task.get("status") or "").strip().lower() != "review":
+            continue
+        if review_submission_is_complete(config, task):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if task_is_human_gate(task):
+            task["status"] = "blocked"
+            task["waiting_for"] = "Human/Ops"
+            message = (
+                "Review state repaired: this is a Human/Ops input/approval gate, not a submitted code review. "
+                "It remains blocked until the accountable human evidence is supplied."
+            )
+        else:
+            task["status"] = "in_progress"
+            task.pop("waiting_for", None)
+            if task_is_sidecar(task) and task.get("depends_on"):
+                # A legacy sidecar that already reached review has completed
+                # its support artifact. Its parent/human-gate references are
+                # context, not prerequisites for publishing that artifact.
+                # Preserve them for traceability without letting the owner
+                # closeout dispatch deadlock behind the parent it supports.
+                task["review_submission_context_dependencies"] = list(task.get("depends_on") or [])
+                task["depends_on"] = []
+            message = (
+                "Review state repaired: no verified remote task PR was recorded. The owner must publish via "
+                "scripts/git/task_finalize.sh before review can be dispatched."
+            )
+        task["last_update"] = timestamp
+        task["next"] = message
+        task.pop("approved_head", None)
+        for handoff in status.get("handoffs", []) or []:
+            if handoff.get("task_id") == task_id and handoff.get("status") != "done":
+                handoff["status"] = "done"
+                handoff["resolved_at"] = timestamp
+        write_activity_log(
+            config,
+            {"type": "review_submission_repaired", "task_id": task_id, "message": message},
+        )
+        changed = True
+    if changed:
+        write_json(config_path(config, "status_file"), status)
+        sync_status_pipeline(config)
+    return changed
+
+
+def normalize_task_assignment_integrity(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+) -> bool:
+    """Reassign unavailable or non-independent automatic task actors."""
+    paths = config.get("paths") or {}
+    if not paths.get("status_file") or not paths.get("activity_log"):
+        return False
+    issues = task_assignment_integrity_issues(config, state, task)
+    assignment_issues = {
+        issue.split(":", 1)[0]
+        for issue in issues
+        if issue.startswith("owner_unavailable:")
+        or issue.startswith("reviewer_unavailable:")
+        or issue == "owner_reviewer_same_account_pool"
+    }
+    waiting_for_unavailable = any(issue.startswith("waiting_for_unavailable:") for issue in issues)
+    if not assignment_issues and not waiting_for_unavailable:
+        return False
+
+    task_id = str(task.get("id") or "").strip()
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    new_owner = owner
+    new_reviewer = reviewer
+    new_waiting_for: str | None = None
+    changes: list[str] = []
+
+    if "owner_unavailable" in assignment_issues and not is_human_gate_agent(owner):
+        owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
+        replacement = first_viable_agent(
+            config,
+            owner_candidates,
+            exclude={owner, reviewer},
+            state=state,
+            task=task,
+            status=status,
+            role="owner",
+            exclude_pools={agent_account_pool_id(config, reviewer)} if reviewer and not is_human_gate_agent(reviewer) else set(),
+        )
+        if replacement:
+            new_owner = replacement
+            changes.append(f"owner {owner} -> {new_owner}")
+
+    reviewer_needs_replacement = (
+        "reviewer_unavailable" in assignment_issues
+        or "owner_reviewer_same_account_pool" in assignment_issues
+        or (
+            new_owner
+            and new_reviewer
+            and not is_human_gate_agent(new_owner)
+            and not is_human_gate_agent(new_reviewer)
+            and not review_is_independent(config, new_owner, new_reviewer)
+        )
+    )
+    if reviewer_needs_replacement and not is_human_gate_agent(reviewer):
+        reviewer_candidates = get_agent_reassignment_candidates(config, reviewer or owner, role="reviewer", task=task)
+        replacement = first_viable_agent(
+            config,
+            reviewer_candidates,
+            exclude={new_owner, reviewer},
+            state=state,
+            task=task,
+            status=status,
+            role="reviewer",
+            exclude_pools={agent_account_pool_id(config, new_owner)},
+        )
+        if replacement:
+            new_reviewer = replacement
+            changes.append(f"reviewer {reviewer} -> {new_reviewer}")
+
+    if waiting_for_unavailable:
+        waiting_for = str(task.get("waiting_for") or "").strip()
+        task_status = str(task.get("status") or "").strip().lower()
+        if waiting_for == owner and new_owner:
+            replacement_waiting_for = new_owner
+        elif waiting_for == reviewer and new_reviewer:
+            replacement_waiting_for = new_reviewer
+        elif task_status == "review" and new_reviewer:
+            replacement_waiting_for = new_reviewer
+        else:
+            replacement_waiting_for = new_owner
+        if (
+            replacement_waiting_for
+            and not task_actor_assignment_block_reason(config, state, task, replacement_waiting_for)
+        ):
+            new_waiting_for = replacement_waiting_for
+            changes.append(f"waiting_for {waiting_for} -> {new_waiting_for}")
+
+    if not changes or new_owner == new_reviewer:
+        return False
+    if (
+        not is_human_gate_agent(new_owner)
+        and not is_human_gate_agent(new_reviewer)
+        and not review_is_independent(config, new_owner, new_reviewer)
+    ):
+        return False
+
+    message = f"Auto-reconciled task assignment integrity: {', '.join(changes)}."
+    if not persist_task_reassignment(
+        config,
+        task_id=task_id,
+        new_owner=new_owner,
+        new_reviewer=new_reviewer,
+        message=message,
+        new_waiting_for=new_waiting_for,
+        handoff_to=new_owner if new_owner != owner else new_reviewer,
+        handoff_from=owner if new_owner != owner else reviewer,
+    ):
+        return False
+    write_activity_log(
+        config,
+        {
+            "type": "task_assignment_integrity_repaired",
+            "task_id": task_id,
+            "message": message,
+            "issues": issues,
+        },
+    )
+    return True
+
+
 def chair_blocked_owner_rescue_allowed(task: dict[str, Any]) -> bool:
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
@@ -10009,6 +10320,11 @@ def task_phase_priority(task: dict[str, Any], task_map: dict[str, dict[str, Any]
     if status == "blocked":
         return 5
     return 9
+
+
+def normalized_business_priority(value: Any, default: str = "P2") -> str:
+    priority = str(value or "").strip().upper()
+    return priority if priority in {"P0", "P1", "P2", "P3"} else default
 
 
 def dynamic_sidecar_kind(task: dict[str, Any]) -> str | None:
@@ -10343,6 +10659,7 @@ def build_catalog_sidecar_candidates(
                     "reviewer": reviewer,
                     "mutates_canonical": bool(template.get("mutates_canonical", False)),
                     "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                    "business_priority": normalized_business_priority(parent.get("priority")),
                 }
             )
     return candidates
@@ -10414,6 +10731,7 @@ def build_dynamic_sidecar_candidates(
                 "reviewer": reviewer,
                 "mutates_canonical": False,
                 "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
+                "business_priority": normalized_business_priority(parent.get("priority")),
             }
         )
     return candidates
@@ -10433,6 +10751,7 @@ def create_sidecar_task(
     helper_parent: str,
     helper_kind: str,
     mutates_canonical: bool,
+    priority: str,
 ) -> tuple[bool, str]:
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     metadata = {
@@ -10442,6 +10761,7 @@ def create_sidecar_task(
         "helper_kind": helper_kind,
         "mutates_canonical": mutates_canonical,
         "auto_created_by": "supervisor-underutilization",
+        "priority": normalized_business_priority(priority),
     }
     env = os.environ.copy()
     env.update(
@@ -11769,6 +12089,13 @@ def dispatch_ready_tasks(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
 
+    metadata_repaired = repair_open_task_metadata(config, status)
+    if metadata_repaired:
+        status = load_status(config)
+    review_states_repaired = repair_unsubmitted_review_tasks(config, status)
+    if review_states_repaired:
+        status = load_status(config)
+
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
@@ -11791,13 +12118,19 @@ def dispatch_ready_tasks(
     failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
     disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
-    changed = False
+    changed = metadata_repaired or review_states_repaired
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
             continue
-        normalized = normalize_mainline_task_assignment(config, task) or normalized
+        assignment_normalized = normalize_task_assignment_integrity(config, state, status, task)
+        normalized = assignment_normalized or normalized
+        # Both normalizers persist from canonical disk state. Avoid letting the
+        # legacy mainline guard immediately overwrite a repair using this
+        # loop's stale pre-repair task object.
+        if not assignment_normalized:
+            normalized = normalize_mainline_task_assignment(config, task) or normalized
 
     if normalized:
         changed = True
@@ -12555,6 +12888,7 @@ def dispatch_underutilization_sidecars(
             helper_parent=str(candidate["parent_task_id"]),
             helper_kind=str(candidate["kind"]),
             mutates_canonical=bool(candidate.get("mutates_canonical", False)),
+            priority=str(candidate.get("business_priority") or "P2"),
         )
         if not ok:
             write_activity_log(
