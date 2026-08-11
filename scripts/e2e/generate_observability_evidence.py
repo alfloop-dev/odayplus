@@ -13,10 +13,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from apps.worker.oday_worker.main import ODayWorker
-from modules.notifications import (
-    ConsoleNotificationAdapter,
-    NotificationService,
-)
+from modules.notifications import NotificationService
 from shared.infrastructure.persistence import build_persistence
 from shared.observability import ListSink, StructuredLogger, Telemetry
 from shared.observability.alerts import AlertRouter
@@ -32,14 +29,53 @@ def main():
         logger=StructuredLogger("oday-platform", sink=logger_sink),
     )
 
-    # 2. Setup NotificationService with ConsoleNotificationAdapter for "real delivery"
-    from modules.notifications import InMemoryNotificationRepository
+    # 2. Setup NotificationService with OnCallNotificationAdapter for real HTTP delivery receipts
+    import threading
+    from datetime import UTC, datetime
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    class OnCallHTTPHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length)
+            payload = json.loads(body.decode("utf-8")) if body else {}
+
+            prov_rcpt = f"prov-rcpt-{payload.get('delivery_id', '123')}"
+
+            response_payload = {
+                "status": "LOCAL_TEST_ONLY",
+                "route": payload.get("user_id", "ops-lead"),
+                "delivery_id": payload.get("delivery_id"),
+                "provider_receipt_id": prov_rcpt,
+                "received_at": datetime.now(UTC).isoformat(),
+            }
+            response_bytes = json.dumps(response_payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response_bytes)))
+            self.end_headers()
+            self.wfile.write(response_bytes)
+
+        def log_message(self, format, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), OnCallHTTPHandler)
+    server_port = server.server_port
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    from modules.notifications import (
+        InMemoryNotificationRepository,
+        get_notification_adapter,
+    )
     repo = InMemoryNotificationRepository()
-    adapter = ConsoleNotificationAdapter()
+    endpoint = f"http://127.0.0.1:{server_port}/api/v1/alerts"
+    os.environ["ONCALL_ENDPOINT_URL"] = endpoint
+    adapter = get_notification_adapter(endpoint_url=endpoint, http_transport=None)
     notification_service = NotificationService(repository=repo, adapter=adapter)
 
     # Set preferences for receiver
-    notification_service.set_preferences("ops-lead", ["email", "sms"])
+    notification_service.set_preferences("ops-lead", ["webhook", "email"])
 
     # 3. Create app and trigger a request from a simulated "browser"
     app = create_app(
@@ -71,12 +107,21 @@ def main():
     worker.run_once()
 
     # 5. AlertRouter routes and triggers an alert
-    print("\n--- Step 3: Triggering Alert and Real Notification Delivery ---")
-    alert_router = AlertRouter(notification_service=notification_service)
+    print("\n--- Step 3: Triggering Alert and Local Test Notification Delivery ---")
+    git_sha = os.getenv("RELEASE_SHA") or "f" * 40
+    alert_router = AlertRouter(notification_service=notification_service, release_sha=git_sha)
 
     # We will trigger "audit-write-failure" (P1 alert)
-    nid = alert_router.trigger_alert("audit-write-failure", "Durable storage write timeout on DB query")
+    nid = alert_router.trigger_alert("audit-write-failure", "Durable storage write timeout on DB query", release_sha=git_sha)
     print(f"Alert Trigger Notification ID: {nid}")
+    server.shutdown()
+
+    real_receipt = adapter.delivery_receipts[0] if adapter.delivery_receipts else {}
+    receipt_status = real_receipt.get("status", "")
+    if receipt_status == "DELIVERED":
+        raise RuntimeError("Local loopback simulation cannot emit DELIVERED status.")
+    if receipt_status not in {"FAILED", "TEST_ONLY", "PENDING_VERIFICATION"}:
+        raise RuntimeError(f"Unexpected local receipt status '{receipt_status}'")
 
     # 6. Gather all traces and logs
     print("\n--- Step 4: Exporting Trace Spans ---")
@@ -99,7 +144,7 @@ Key implementation components:
    - **Retry & Receipts**: Automatically retries failed sends and logs individual delivery status in `notification_receipts`.
    - **Escalation**: Escalates high-priority notifications to secondary channels if primary channel fails.
    - **Storage Adapters**: Supported by both `InMemoryNotificationRepository` and SQLite `DurableNotificationRepository`.
-   - **Real Delivery**: Verified with `ConsoleNotificationAdapter` printing to stdout and `AlertRouter` routing.
+   - **Local Delivery Simulation**: Verified with `OnCallNotificationAdapter` producing HTTP 200 TEST_ONLY receipts over local loopback network socket and `AlertRouter` fail-closed routing.
 2. **Process and Dependency Health checks**:
    - **Liveness (`/healthz`)**: Verifies process health.
    - **Readiness (`/readiness`)**: Verifies database connection.
@@ -111,9 +156,13 @@ Key implementation components:
 
 ---
 
-## Runtime Proof (Current SHA)
+## Runtime Proof (Current SHA - Local Test Simulation)
 
-This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **real alert delivery** through `AlertRouter` and `ConsoleNotificationAdapter`.
+> [!NOTE]
+> This evidence script (`generate_observability_evidence.py`) uses memory persistence, FastAPI TestClient, and a local loopback HTTP server to provide deterministic local test-only evidence. Production and live deployment acceptance require Cloud Monitoring backend resource IDs, provider route readback receipts, exact full 40-character release SHAs, and monitored watch-window query executions as enforced by `validate_cloud_run_live_deployment.py` and `shared/observability/`.
+
+This evidence is generated dynamically at runtime on the current SHA. It demonstrates a fully correlated **browser -> API -> worker trace** and a **test delivery simulation** through `AlertRouter` and `OnCallNotificationAdapter` over an HTTP network socket.
+
 
 ### 1. Correlated Trace Flow
 A simulated browser action sends a request to the API with correlation ID `{correlation_id}`, which is automatically propagated to the background worker job execution.
@@ -141,26 +190,21 @@ The background worker claimed and executed the job. Both the API HTTP span and t
 {json.dumps(spans, indent=2)}
 ```
 
-### 2. Real Alert Delivery & Tested Routing
-A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and successfully delivered to stdout via the `ConsoleNotificationAdapter`.
+### 2. Local Test Delivery & Alert Routing Simulation
+A P1 alert (`audit-write-failure`) was routed to `ops-lead` (per `alerts.json` configuration) and processed via `OnCallNotificationAdapter` producing a local HTTP response-derived receipt (status: {receipt_status}).
 
 #### Routed Alert Configuration
 ```json
 {json.dumps(alert_router.route_alert("audit-write-failure"), indent=2)}
 ```
 
-#### Real Delivery Console Log Output
-```
-[REAL DELIVERY] Sent email notification to ops-lead
-ID: {nid}
-Title: ALERT: [P1] Audit write failure
-Detail: Alert ID: audit-write-failure
-Condition: any audit_event_write_failure_count for high-risk action or export in production
-Runbook: docs/runbooks/observability-and-runbook.md#audit-write-failure
-Details: Durable storage write timeout on DB query
+#### Local Test Delivery Receipt Output (Captured directly from OnCallNotificationAdapter)
+```json
+{json.dumps(real_receipt, indent=2)}
 ```
 
 ---
+
 
 ## Verification Evidence
 
@@ -181,15 +225,15 @@ tests/reliability/test_cross_flow_gate.py .................               [100%]
 
 ## Artifact Mapping
 
-- **Notifications Domain Models**: `modules/notifications/domain/models.py` ([models.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/modules/notifications/domain/models.py))
-- **Notifications Repository**: `modules/notifications/infrastructure/repositories.py` ([repositories.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/modules/notifications/infrastructure/repositories.py))
-- **Notifications Service**: `modules/notifications/application/service.py` ([service.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/modules/notifications/application/service.py))
-- **Durable DB Migrations**: `infra/db/migrations/000005_durable_notifications.sql` ([000005_durable_notifications.sql](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/infra/db/migrations/000005_durable_notifications.sql))
-- **Detailed Health Endpoints**: `apps/api/oday_api/main.py` ([main.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/apps/api/oday_api/main.py#L116))
-- **Worker Observability**: `apps/worker/oday_worker/main.py` ([main.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/apps/worker/oday_worker/main.py#L31))
-- **Scheduler Observability**: `apps/scheduler/oday_scheduler/main.py` ([main.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/apps/scheduler/oday_scheduler/main.py#L29))
-- **Notifications Unit Tests**: `tests/reliability/test_notifications.py` ([test_notifications.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/tests/reliability/test_notifications.py))
-- **Health Endpoint Tests**: `tests/reliability/test_health_endpoints.py` ([test_health_endpoints.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-obs-001/tests/reliability/test_health_endpoints.py))
+- **Notifications Domain Models**: `modules/notifications/domain/models.py`
+- **Notifications Repository**: `modules/notifications/infrastructure/repositories.py`
+- **Notifications Service**: `modules/notifications/application/service.py`
+- **Durable DB Migrations**: `infra/db/migrations/000005_durable_notifications.sql`
+- **Detailed Health Endpoints**: `apps/api/oday_api/main.py`
+- **Worker Observability**: `apps/worker/oday_worker/main.py`
+- **Scheduler Observability**: `apps/scheduler/oday_scheduler/main.py`
+- **Notifications Unit Tests**: `tests/reliability/test_notifications.py`
+- **Health Endpoint Tests**: `tests/reliability/test_health_endpoints.py`
 """
 
     with open(evidence_path, "w", encoding="utf-8") as f:

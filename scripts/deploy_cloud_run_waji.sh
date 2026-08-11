@@ -42,6 +42,11 @@ run_locked_python() {
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
 : "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?Error: ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS is required for live deployments.}"
 
+if [ -z "${ODP_SCHEDULED_INGESTION_TENANT_ID:-}" ] && [ -z "${ODP_TENANT_ID:-}" ]; then
+  echo "Error: ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required." >&2
+  exit 1
+fi
+
 case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
   statsforecast:seasonal_naive|statsforecast:auto_arima|statsforecast:auto_ets)
     ;;
@@ -196,6 +201,8 @@ keys = [
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
+    "ODP_SCHEDULED_INGESTION_TENANT_ID",
+    "ODP_TENANT_ID",
 ]
 provider_config = {
     "listing.partner_feed": (
@@ -222,7 +229,12 @@ selected = {
 }
 for provider_id in sorted(selected):
     keys.extend(provider_config.get(provider_id, ()))
-payload = {key: os.environ[key] for key in keys}
+payload = {key: os.environ[key] for key in keys if key in os.environ}
+tenant_id = os.environ.get("ODP_SCHEDULED_INGESTION_TENANT_ID") or os.environ.get("ODP_TENANT_ID")
+if not tenant_id:
+    raise ValueError("ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required for Cloud Run deployment")
+payload["ODP_SCHEDULED_INGESTION_TENANT_ID"] = tenant_id
+payload["ODP_TENANT_ID"] = tenant_id
 payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
 payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)

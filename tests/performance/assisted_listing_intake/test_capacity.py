@@ -1,6 +1,10 @@
 from pathlib import Path
 
+import pytest
+
 from scripts.load.assisted_listing_intake.runtime import run_capacity
+
+pytestmark = pytest.mark.performance
 
 
 def test_approved_capacity_and_slo_are_measured(tmp_path: Path) -> None:

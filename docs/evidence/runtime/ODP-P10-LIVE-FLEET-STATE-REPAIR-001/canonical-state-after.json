@@ -1,0 +1,549 @@
+{
+  "captured_from": "/home/lupin/oday-plus-supervisor-live/ai-status.json",
+  "gate_authority": {
+    "run_id": "31316767710",
+    "head_sha": "9c95ecc3e1f2d0885bb4078070a116e852487f69",
+    "generated_at": "2026-08-09T14:07:16Z",
+    "correlation_id": "corr-live-e2e-9c95ecc3e1f2-1786284436",
+    "ok": false,
+    "checks": 50,
+    "passed": 43,
+    "failed": 7,
+    "blocking_dependencies": [
+      "external-data",
+      "mlflow"
+    ]
+  },
+  "tasks": [
+    {
+      "order": "T00",
+      "id": "ODP-P10-LIVE-FLEET-STATE-REPAIR-001",
+      "title": "Repair canonical Package 10 live-closure task truth",
+      "status": "in_progress",
+      "owner": "Claude",
+      "reviewer": "Antigravity4",
+      "automation_class": "AUTO_NOW_AFTER_EVIDENCE_REFRESH",
+      "mutates_canonical": true,
+      "depends_on": [
+        "ODP-P10-LIVE-GAP-EVIDENCE-REFRESH-20260809"
+      ],
+      "source_docs": [
+        "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+        "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "docs/evidence/ODP_LIVE_E2E_GATE.md",
+        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-FLEET-STATE-REPAIR-001/**",
+        ".orchestrator/task-briefs/odp_p10_live_*.md"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        ".github/**",
+        "docs/design/**",
+        "docs_archive/**"
+      ],
+      "acceptance_count": 8,
+      "next": "Supervisor auto-started ODP-P10-LIVE-FLEET-STATE-REPAIR-001 after successful dispatch.",
+      "last_update": "2026-08-09T14:42:18Z"
+    },
+    {
+      "order": "T10",
+      "id": "ODP-P10-LIVE-EXTDATA-DIAG-001",
+      "title": "Diagnose successful worker probes with zero persisted ingestion runs",
+      "status": "todo",
+      "owner": "Antigravity5",
+      "reviewer": "Claude2",
+      "automation_class": "AUTO_NOW",
+      "mutates_canonical": false,
+      "depends_on": [
+        "ODP-P10-LIVE-FLEET-STATE-REPAIR-001"
+      ],
+      "source_docs": [
+        "docs/evidence/ODP_LIVE_E2E_GATE.md",
+        "docs/evidence/fleet_dispatch/ODP-DEPLOY-WORKER-JOB-EXECUTION-001.md",
+        "docs/design/EXTERNAL_PROVIDER_LIVE_REQUIRED_RECONCILIATION.md"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-DIAG-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "scripts/**",
+        "tests/**",
+        ".github/**",
+        ".orchestrator/**",
+        "models/**",
+        "docs/design/**",
+        "docs_archive/**"
+      ],
+      "acceptance_count": 6,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. external-data blockers: data:ingestion_runs runs=0, data:admin_boundary.official_dataset:run_exists, data:poi.commercial_api:run_exists. Dependency: ODP-P10-LIVE-FLEET-STATE-REPAIR-001 (in_progress, this repair). Prior art restored by T00: ODP-LIVE-REQUIRED-PROVIDER-INGESTION-001 diagnosed on 2026-08-03 at 5a1aee5b that the worker persists IngestionRunRecord under tenant_id='' via ExternalIngestionService._resolve_store(''), while the API reads tenant-scoped under a11ce505-70bc-56d9-8564-ad22efa23c9e; that task changed no code, so the write/read tenant asymmetry is the leading hypothesis to confirm or refute first. Resume when: T00 reaches done and no Deploy Dev run is active; then produce one evidence-backed root cause and either runtime-only closure or an exact T11 handoff. Do not patch product code in T10.",
+      "last_update": "2026-08-09T15:06:41Z"
+    },
+    {
+      "order": "T11",
+      "id": "ODP-P10-LIVE-EXTDATA-REMEDIATE-001",
+      "title": "Correct diagnosed external-data persistence or readback defect",
+      "status": "blocked",
+      "owner": "Claude2",
+      "reviewer": "Antigravity6",
+      "automation_class": "CONDITIONAL_AUTO_REMEDIATION",
+      "mutates_canonical": true,
+      "depends_on": [
+        "ODP-P10-LIVE-EXTDATA-DIAG-001"
+      ],
+      "source_docs": [
+        "docs/evidence/ODP_LIVE_E2E_GATE.md",
+        "docs/design/EXTERNAL_PROVIDER_LIVE_REQUIRED_RECONCILIATION.md"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json",
+        "docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-DIAG-001/**"
+      ],
+      "writable_paths": [
+        "modules/external_data/application/**",
+        "modules/external_data/workers/**",
+        "shared/infrastructure/persistence/**external_data**",
+        "apps/worker/oday_worker/**",
+        "apps/api/app/routes/external_data.py",
+        "tests/** limited to focused tests matching the diagnosed path",
+        "docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-REMEDIATE-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/web/**",
+        "docs/design/**",
+        "docs_archive/**",
+        "models/**",
+        "auth and RBAC surfaces",
+        "deployment workflows unless coordinator amends exact scope"
+      ],
+      "acceptance_count": 6,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. external-data blockers: data:ingestion_runs runs=0, data:admin_boundary.official_dataset:run_exists, data:poi.commercial_api:run_exists. Dependency: ODP-P10-LIVE-EXTDATA-DIAG-001 (todo). Creation condition unmet: T11 stays blocked until T10 records remediation_required with a named defect path. T00 has now installed the exact writable ceiling from the pack (modules/external_data/application, modules/external_data/workers, shared/infrastructure/persistence external_data, apps/worker/oday_worker, apps/api/app/routes/external_data.py, focused tests, own evidence dir), so the second half of the dispatch_condition is satisfied. Resume when: T10 is done AND records remediation_required. If T10 closes runtime-only, supersede T11 instead of starting it.",
+      "last_update": "2026-08-09T15:07:09Z"
+    },
+    {
+      "order": "T20",
+      "id": "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001",
+      "title": "Backfill authoritative ForecastOps daily history for canonical horizons",
+      "status": "blocked",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "automation_class": "HYBRID_HUMAN_GATE",
+      "mutates_canonical": true,
+      "depends_on": [
+        "ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001",
+        "ODP-MODEL-CAPABILITY-READINESS-001",
+        "ODP-P10-LIVE-FLEET-STATE-REPAIR-001"
+      ],
+      "source_docs": null,
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "scripts/data_plane/**",
+        "scripts/models/**",
+        "docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/web/**",
+        "apps/api/**",
+        "modules/**",
+        "models/shared_ml/**",
+        "docs_archive/**",
+        "docs/design/**",
+        "docs/evidence/PACKAGE_10_*",
+        "scripts/deploy_cloud_run_waji.sh",
+        "tests/ops/**",
+        ".orchestrator/**",
+        ".github/**"
+      ],
+      "acceptance_count": 5,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. mlflow blockers: runtime:model_bindings PRODUCTION_MODEL_REGISTRY_UNAVAILABLE, runtime:model_capability:forecastops available=False, models:registry versions=0, models:forecastops:production_alias versionsWithProductionAlias=0 (exactly one required). T20 is the data precondition for the mlflow blocker set: models:registry versions=0 cannot clear until eligible real daily history exists. Dependencies: ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001, ODP-MODEL-CAPABILITY-READINESS-001, ODP-P10-LIVE-FLEET-STATE-REPAIR-001 (in_progress). Human gate H01 authoritative_forecast_history_authority is outstanding, waiting_for Human/Ops. Resume when: T00 is done and either an already authorized accessible source is identified, or H01 supplies source system, accountable owner, immutable snapshot URI/hash, permitted use and tenant scope, coverage cutoff and attestation. Never fabricate, synthesize, duplicate or relabel authoritative history to clear the gate.",
+      "last_update": "2026-08-09T14:55:28Z"
+    },
+    {
+      "order": "T21",
+      "id": "ODP-PRODUCTION-MODEL-REGISTRY-001",
+      "title": "Release governed ForecastOps production model binding",
+      "status": "blocked",
+      "owner": "Antigravity",
+      "reviewer": "Claude",
+      "automation_class": "HYBRID_HUMAN_GATE",
+      "mutates_canonical": true,
+      "depends_on": [
+        "ODP-MODEL-READY-COMPOSE-001",
+        "ODP-LEARNINGHUB-PROD-FIX-001",
+        "ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001",
+        "ODP-HEATZONE-PIT-LABEL-AUTHORITY-001",
+        "ODP-MODEL-CAPABILITY-READINESS-001",
+        "ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001"
+      ],
+      "source_docs": null,
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "models/**",
+        "scripts/models/**",
+        "docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/web/**",
+        "apps/api/**",
+        "modules/**",
+        "docs/design/**",
+        "docs_archive/**",
+        ".orchestrator/**",
+        ".github/**",
+        "deployment workflows unless coordinator amends exact scope"
+      ],
+      "acceptance_count": 1,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. mlflow blockers: runtime:model_bindings PRODUCTION_MODEL_REGISTRY_UNAVAILABLE, runtime:model_capability:forecastops available=False, models:registry versions=0, models:forecastops:production_alias versionsWithProductionAlias=0 (exactly one required). Dependencies: ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001 (blocked, T20) plus ODP-MODEL-READY-COMPOSE-001, ODP-LEARNINGHUB-PROD-FIX-001, ODP-FORECAST-LEARNINGHUB-TEMPORAL-COMPOSE-001, ODP-HEATZONE-PIT-LABEL-AUTHORITY-001, ODP-MODEL-CAPABILITY-READINESS-001. Human gate H02 model_promotion_approval is outstanding, waiting_for Human/Ops. The gate already passes no_fabricated_alias and governedDisabled=True for avm, heatzone and sitescore, so ForecastOps is the only model blocker. Resume when: T20 is done with eligible real history AND H02 records the exact model, version, snapshot hash, cutoff, threshold acceptance, rollback version and monitoring plan. Exactly one production alias for forecast_revenue_interval; no self-approval, no empty or fabricated alias.",
+      "last_update": "2026-08-09T14:55:54Z"
+    },
+    {
+      "order": "T30",
+      "id": "ODP-P10-DEV-REDEPLOY-VERIFY-001",
+      "title": "Redeploy dev and prove Package 10 Operator runtime parity",
+      "status": "blocked",
+      "owner": "Antigravity3",
+      "reviewer": "Claude2",
+      "automation_class": "AUTO_AFTER_DEPENDENCY",
+      "mutates_canonical": true,
+      "depends_on": [
+        "ODP-P10-LIVE-EXTDATA-DIAG-001",
+        "ODP-PRODUCTION-MODEL-REGISTRY-001"
+      ],
+      "source_docs": [
+        "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+        "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "docs/evidence/ODP_LIVE_E2E_GATE.md"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-DEV-REDEPLOY-VERIFY-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        "scripts/**",
+        "tests/**",
+        ".orchestrator/**",
+        ".github/**",
+        "docs_archive/**",
+        "docs/design/**",
+        "docs/evidence/PACKAGE_10_*"
+      ],
+      "acceptance_count": 6,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. external-data blockers: data:ingestion_runs runs=0, data:admin_boundary.official_dataset:run_exists, data:poi.commercial_api:run_exists. mlflow blockers: runtime:model_bindings PRODUCTION_MODEL_REGISTRY_UNAVAILABLE, runtime:model_capability:forecastops available=False, models:registry versions=0, models:forecastops:production_alias versionsWithProductionAlias=0 (exactly one required). Dependencies: ODP-P10-LIVE-EXTDATA-DIAG-001 (todo) and ODP-PRODUCTION-MODEL-REGISTRY-001 (blocked); conditional dependency ODP-P10-LIVE-EXTDATA-REMEDIATE-001 applies only if T10 records remediation_required. T30 must re-observe public /platform/health and the release readback on its own promoted SHA and must not inherit the 8ec12c02 rollback readback recorded at 2026-08-09T12:26:28Z. Resume when: both dependencies are done, the fail-closed gate can pass on the candidate, and no Deploy Dev run is active. On failure capture artifacts and roll back; do not patch product code inside T30.",
+      "last_update": "2026-08-09T14:56:20Z"
+    },
+    {
+      "order": "T40",
+      "id": "ODP-P10-LIVE-VISUAL-PARITY-001",
+      "title": "Verify all Package 10 screens against the promoted canonical HTML",
+      "status": "todo",
+      "owner": "Claude",
+      "reviewer": "Antigravity4",
+      "automation_class": "AUTO_AFTER_DEPENDENCY",
+      "mutates_canonical": false,
+      "depends_on": [
+        "ODP-P10-DEV-REDEPLOY-VERIFY-001"
+      ],
+      "source_docs": [
+        "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+        "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html",
+        "scripts/e2e/check_product_grade_ci_gates.py"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-VISUAL-PARITY-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        "scripts/**",
+        "tests/**",
+        ".orchestrator/**",
+        ".github/**",
+        "docs_archive/**",
+        "docs/design/**",
+        "docs/evidence/PACKAGE_10_*"
+      ],
+      "acceptance_count": 6,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. Dependency: ODP-P10-DEV-REDEPLOY-VERIFY-001 (blocked). No promoted Package 10 release exists to audit: run 31316767710 was rolled back by the fail-closed gate, so public traffic still serves rollback release 8ec12c02. Screen-contract authority is scripts/e2e/check_product_grade_ci_gates.py, read-only: EXPECTED_SCREEN_LABEL_COUNT=40, REQUIRED_VISUAL_VIEWPORTS 390/1024/1440, and CANONICAL_LABEL_IMPLEMENTATIONS, which records deliberate canonical deviations from the archived HTML; a strict label diff that ignores it produces false mismatches and must not open a remediation task. Resume when: T30 is done and a Package 10 release is actually promoted and retained; then audit all 40 contracts at all three viewports on that exact SHA.",
+      "last_update": "2026-08-09T15:07:36Z"
+    },
+    {
+      "order": "T41",
+      "id": "ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+      "title": "Reprove 117 retired paths and legacy visuals on current dev and live SHA",
+      "status": "todo",
+      "owner": "Claude2",
+      "reviewer": "Antigravity6",
+      "automation_class": "AUTO_NOW_STATIC_AND_AUTO_AFTER_DEPENDENCY_RUNTIME",
+      "mutates_canonical": false,
+      "depends_on": [
+        "ODP-P10-LIVE-FLEET-STATE-REPAIR-001"
+      ],
+      "source_docs": [
+        "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.md",
+        "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        "scripts/**",
+        "tests/**",
+        ".orchestrator/**",
+        ".github/**",
+        "docs_archive/**",
+        "docs/design/**",
+        "docs/evidence/PACKAGE_10_*"
+      ],
+      "acceptance_count": 5,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. Two-phase task. Static phase depends only on ODP-P10-LIVE-FLEET-STATE-REPAIR-001 (in_progress) and is dispatchable as soon as T00 is done; it does not wait for any deploy. Runtime phase depends on ODP-P10-DEV-REDEPLOY-VERIFY-001 (blocked). Source ACKs ODP-P10-CAN-001-R3A/R3B are historical R3 implementation records read read-only to reconstruct the 117-path inventory verified at 435c79e3 with release_status=no_go; they must not be reopened or redispatched as implementation work. Resume when: T00 is done, start the static half immediately on current dev; hold the runtime half until T30 promotes and retains a release, then bind evidence to that exact public SHA rather than the historical head.",
+      "last_update": "2026-08-09T15:08:04Z"
+    },
+    {
+      "order": "T42",
+      "id": "ODP-PLAN-LIVE-STAGING-PROOF-001",
+      "title": "Close Package 10 live and staging proof after verified deployment",
+      "status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Claude2",
+      "automation_class": "AUTO_AFTER_DEPENDENCY",
+      "mutates_canonical": false,
+      "depends_on": [
+        "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
+        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+        "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001",
+        "ODP-RUNTIME-GCP-001",
+        "ODP-LIVE-RUNTIME-DEV-COMPOSE-001",
+        "ODP-P10-DEV-REDEPLOY-VERIFY-001",
+        "ODP-DEPLOY-WORKER-JOB-EXECUTION-001"
+      ],
+      "source_docs": [
+        "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json",
+        "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md",
+        "docs/evidence/ODP_LIVE_E2E_GATE.md",
+        "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-PLAN-LIVE-STAGING-PROOF-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        "scripts/**",
+        "tests/**",
+        ".orchestrator/**",
+        ".github/**",
+        "docs_archive/**",
+        "docs/design/**",
+        "docs/evidence/PACKAGE_10_*"
+      ],
+      "acceptance_count": 11,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. Package 10 dependency: ODP-P10-DEV-REDEPLOY-VERIFY-001 (blocked); legacy plan dependencies ODP-PLAN-CANONICAL-SHELL-LIVE-001, ODP-PLAN-ACCEPTANCE-REAL-EXEC-001, ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001, ODP-RUNTIME-GCP-001, ODP-LIVE-RUNTIME-DEV-COMPOSE-001, ODP-DEPLOY-WORKER-JOB-EXECUTION-001 remain in force. T00 added the control-pack JSON to source_docs so validate_plan_execution_pack.py no longer reports 'source_docs must reference the control-pack JSON' for this task. Resume when: T30 is done with a retained promotion, and T40 and T41 have produced exact-SHA evidence to consume. Reject fixture, mock, seed and local-only evidence.",
+      "last_update": "2026-08-09T15:08:37Z"
+    },
+    {
+      "order": "T50",
+      "id": "ODP-PLAN-UAT-SIGNOFF-001",
+      "title": "Prepare and route Package 10 UAT signoff packet",
+      "status": "todo",
+      "owner": "Antigravity",
+      "reviewer": "Human/Ops",
+      "automation_class": "AUTO_EVIDENCE_PLUS_HUMAN_SIGNOFF",
+      "mutates_canonical": false,
+      "depends_on": [
+        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+        "ODP-PLAN-AVM-OUTCOME-001",
+        "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
+        "ODP-PLAN-FORECAST-BUSINESS-001",
+        "ODP-PLAN-HEATZONE-OUTCOME-001",
+        "ODP-PLAN-NETPLAN-ACCEPTANCE-001",
+        "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001",
+        "ODP-PLAN-PRICE-ADLIFT-PILOT-001",
+        "ODP-PLAN-SITESCORE-OUTCOME-001",
+        "ODP-P10-LIVE-VISUAL-PARITY-001",
+        "ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+        "ODP-PLAN-LIVE-STAGING-PROOF-001"
+      ],
+      "source_docs": [
+        "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json",
+        "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md",
+        "docs/evidence/ODP_LIVE_E2E_GATE.md",
+        "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-PLAN-UAT-SIGNOFF-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        "scripts/**",
+        "tests/**",
+        ".orchestrator/**",
+        ".github/**",
+        "docs_archive/**",
+        "docs/design/**",
+        "docs/evidence/PACKAGE_10_*"
+      ],
+      "acceptance_count": 9,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. Package 10 dependencies: ODP-P10-LIVE-VISUAL-PARITY-001 (todo), ODP-P10-LIVE-LEGACY-RETIREMENT-001 (todo), ODP-PLAN-LIVE-STAGING-PROOF-001 (todo); the full legacy plan dependency set also remains in force. Human gate H03 design_and_uat_acceptance is outstanding; reviewer is Human/Ops and no auto worker may sign. T00 added the control-pack JSON to source_docs so validate_plan_execution_pack.py no longer reports 'source_docs must reference the control-pack JSON' for this task. Resume when: T40, T41 and T42 are done; then assemble the exact-SHA UAT packet with scenario ids, tester principal and role, release, results, defect ledger and correlation IDs, and route it to the accountable human for approve or reject on the exact public SHA.",
+      "last_update": "2026-08-09T15:09:04Z"
+    },
+    {
+      "order": "T60",
+      "id": "ODP-PLAN-FINAL-GATE-AUDIT-001",
+      "title": "Run final Package 10 gate audit after attributed UAT signoff",
+      "status": "todo",
+      "owner": "Antigravity2",
+      "reviewer": "Human/Ops",
+      "automation_class": "AUTO_EVIDENCE_PLUS_HUMAN_SIGNOFF",
+      "mutates_canonical": false,
+      "depends_on": [
+        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+        "ODP-PLAN-AVM-OUTCOME-001",
+        "ODP-PLAN-AVM-OUTCOME-BACKFILL-001",
+        "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
+        "ODP-PLAN-DEFERRED-OSS-ADR-001",
+        "ODP-PLAN-ENGINEERING-HARDENING-001",
+        "ODP-PLAN-FORECAST-BUSINESS-001",
+        "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001",
+        "ODP-PLAN-GAP-ARCHIVE-001",
+        "ODP-PLAN-GATE-REGISTRY-001",
+        "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
+        "ODP-PLAN-HEATZONE-OUTCOME-001",
+        "ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001",
+        "ODP-PLAN-LIVE-STAGING-PROOF-001",
+        "ODP-PLAN-NETPLAN-ACCEPTANCE-001",
+        "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001",
+        "ODP-PLAN-OBSERVABILITY-LIVE-001",
+        "ODP-PLAN-OSS-LEGAL-POLICY-001",
+        "ODP-PLAN-OSS-LICENSE-GATE-001",
+        "ODP-PLAN-PRICE-ADLIFT-PILOT-001",
+        "ODP-PLAN-SITESCORE-OUTCOME-001",
+        "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+        "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
+        "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001",
+        "ODP-PLAN-UAT-SIGNOFF-001"
+      ],
+      "source_docs": [
+        "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json",
+        "docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.md",
+        "docs/evidence/ODP_LIVE_E2E_GATE.md",
+        "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md"
+      ],
+      "target_context_paths": [
+        "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.md",
+        "docs/evidence/fleet_dispatch/PACKAGE_10_LIVE_COMPLETION_EXECUTION_TASKS_2026-08-09.json"
+      ],
+      "writable_paths": [
+        "docs/evidence/runtime/ODP-PLAN-FINAL-GATE-AUDIT-001/**"
+      ],
+      "forbidden_paths": [
+        "apps/**",
+        "modules/**",
+        "shared/**",
+        "models/**",
+        "scripts/**",
+        "tests/**",
+        ".orchestrator/**",
+        ".github/**",
+        "docs_archive/**",
+        "docs/design/**",
+        "docs/evidence/PACKAGE_10_*"
+      ],
+      "acceptance_count": 10,
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. Dependency: ODP-PLAN-UAT-SIGNOFF-001 (todo) plus the 24 other declared plan dependencies. Human gate H04 final_release_risk_decision is outstanding; reviewer is Human/Ops and release_claim stays no-go-until-final-gate-audit. Program exit criteria are not met at 9c95ecc3: Deploy Dev still fails and rolls back, required provider runs are absent, and ForecastOps resolves no production alias. T00 added the control-pack JSON to source_docs so validate_plan_execution_pack.py no longer reports 'source_docs must reference the control-pack JSON' for this task. Resume when: T50 is done with attributed signoff; then re-run the full RTM and emit GO or NO-GO with exact public readback. No implicit approval and no waiver without organizational authority.",
+      "last_update": "2026-08-09T15:09:32Z"
+    }
+  ],
+  "restored": {
+    "id": "ODP-LIVE-REQUIRED-PROVIDER-INGESTION-001",
+    "status": "done",
+    "terminal_outcome": "superseded",
+    "superseded_by": "ODP-P10-LIVE-EXTDATA-DIAG-001",
+    "owner": "Claude",
+    "reviewer": "Antigravity4",
+    "historical_owner": "Antigravity",
+    "historical_reviewer": "Antigravity7",
+    "historical_release_sha": "5a1aee5b0a9d6fdd2311b4cbd3569527c5f89837",
+    "delivery_commit": "f63381a7",
+    "artifacts": [
+      "docs/evidence/runtime/ODP-LIVE-REQUIRED-PROVIDER-INGESTION-001/README.md",
+      "docs/evidence/runtime/ODP-LIVE-REQUIRED-PROVIDER-INGESTION-001/ingestion-runs-evidence.json"
+    ],
+    "residual_scope": "The worker-vs-API tenant asymmetry was diagnosed but not remediated, so data:ingestion_runs still reports runs=0 at 9c95ecc3. Residual scope is carried by ODP-P10-LIVE-EXTDATA-DIAG-001 and, if remediation is proven necessary, ODP-P10-LIVE-EXTDATA-REMEDIATE-001.",
+    "delivered_findings": [
+      "worker handle_external_fetch calls run_scheduled() which calls ingest() without tenant_id, so ExternalIngestionService._resolve_store(\"\") returns the unscoped store and persists IngestionRunRecord with tenant_id=\"\"",
+      "GET /api/v1/external-data/ingestion-runs resolves tenant a11ce505-70bc-56d9-8564-ad22efa23c9e and reads through TenantScopedDocumentStore, so worker-written rows are invisible and count=0",
+      "worker and API bind the same Secret Manager reference oday-plus-dev-api-database-url-pg16 and the same durable_documents table, so the asymmetry is tenant scope and not database binding",
+      "two governed runs were created through the authenticated API path and read back with lineage, but no code or configuration change was made, so the worker-path defect was never fixed"
+    ]
+  }
+}

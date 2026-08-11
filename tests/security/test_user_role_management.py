@@ -1,0 +1,540 @@
+"""Unit and contract tests for User Role Management (ODP-CAP-USER-ROLE-UI-001).
+
+Tests:
+1. UserRoleManagementService initialization, seeding, list, get, save, status toggle, export_state, and audit logging.
+2. RBAC enforcement via create_operator_router():
+   - PLATFORM_ADMIN is allowed to view, create/update, and toggle status.
+   - OPERATIONS_MANAGER is denied (403 Forbidden) on write and read routes for /operator/users.
+3. Server-side derivation of audit trail actor from verified request state.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from apps.api.app.routes.operator import create_operator_router
+from modules.opsboard.application.user_role_management import (
+    UserRoleManagementService,
+    UserRolePolicyError,
+)
+from shared.audit import InMemoryAuditLog
+from shared.auth import DataClassification, Role
+
+
+def test_user_role_service_defaults_and_queries() -> None:
+    audit_log = InMemoryAuditLog()
+    service = UserRoleManagementService(audit_log=audit_log)
+
+    users = service.list_users()
+    assert len(users) >= 5
+
+    ops_lead = service.get_user("ops-lead")
+    assert ops_lead["name"] == "營運主管"
+    assert Role.OPERATIONS_MANAGER.value in ops_lead["roles"]
+    assert ops_lead["status"] == "active"
+
+    roles = service.list_roles()
+    assert len(roles) == 18
+    assert any(r["role_id"] == Role.PLATFORM_ADMIN.value for r in roles)
+    assert any(r["role_id"] == Role.OPERATIONS_MANAGER.value for r in roles)
+
+
+def test_user_role_service_export_state() -> None:
+    service = UserRoleManagementService()
+    service.save_user(
+        subject_id="ops-lead",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        reason="Testing state export",
+    )
+    state = service.export_state()
+    assert "users" in state
+    assert "events" in state
+    assert len(state["users"]) >= 5
+    assert len(state["events"]) >= 1
+
+    reloaded = UserRoleManagementService(initial_state=state, seed_fixtures=False)
+    assert len(reloaded.list_users()) == len(state["users"])
+    assert len(reloaded.get_audit_trail()) == len(state["events"])
+
+
+def test_user_role_service_tenant_isolation_and_filtering() -> None:
+    service = UserRoleManagementService()
+    # Save user with tenant-a
+    service.save_user(
+        subject_id="user-a",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-a"},
+        tenant_id="tenant-a",
+        reason="Tenant A assignment",
+    )
+    # Rejects cross-tenant scope modification
+    with pytest.raises(UserRolePolicyError, match="restricted to tenant 'tenant-a'"):
+        service.save_user(
+            subject_id="user-a",
+            roles=[Role.OPERATIONS_MANAGER.value],
+            scope={"tenant_id": "tenant-b"},
+            tenant_id="tenant-a",
+            reason="Cross tenant attempt",
+        )
+
+    # Save user with tenant-b
+    service.save_user(
+        subject_id="user-b",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-b"},
+        tenant_id="tenant-b",
+        reason="Tenant B assignment",
+    )
+
+    # get_audit_trail with tenant_id filters correctly
+    events_a = service.get_audit_trail(tenant_id="tenant-a")
+    assert all(e["metadata"].get("tenant_id") == "tenant-a" for e in events_a)
+    assert any(e["metadata"].get("subject_id") == "user-a" for e in events_a)
+    assert not any(e["metadata"].get("subject_id") == "user-b" for e in events_a)
+
+
+def test_user_role_service_save_user_and_audit_event() -> None:
+    audit_log = InMemoryAuditLog()
+    service = UserRoleManagementService(audit_log=audit_log)
+
+    # Save user with new roles and scope
+    updated = service.save_user(
+        subject_id="ops-lead",
+        roles=[Role.OPERATIONS_MANAGER.value, Role.PLATFORM_ADMIN.value],
+        scope={
+            "tenant_id": "tenant-001",
+            "brand_ids": ["brand-x"],
+            "region_ids": ["region-north"],
+            "store_ids": ["store-101"],
+            "clearance": DataClassification.HIGHLY_RESTRICTED.name,
+        },
+        actor_name="admin-user",
+        actor_role="platform_admin",
+        reason="Promoted ops-lead to platform admin",
+    )
+
+    assert set(updated["roles"]) == {Role.OPERATIONS_MANAGER.value, Role.PLATFORM_ADMIN.value}
+    assert updated["scope"]["tenant_id"] == "tenant-001"
+    assert updated["scope"]["brand_ids"] == ["brand-x"]
+
+    # Check audit trail
+    events = service.get_audit_trail(subject_id="ops-lead")
+    assert len(events) == 1
+    assert events[0]["action"] == "USER_UPDATED"
+    assert events[0]["actor"] == "admin-user"
+    assert events[0]["detail"]["reason"] == "Promoted ops-lead to platform admin"
+
+
+def test_user_role_service_invalid_role_policy_error() -> None:
+    service = UserRoleManagementService()
+    with pytest.raises(UserRolePolicyError, match="Invalid role"):
+        service.save_user(
+            subject_id="test-user",
+            roles=["invalid_role_name"],
+        )
+
+
+def test_user_role_service_status_toggle() -> None:
+    audit_log = InMemoryAuditLog()
+    service = UserRoleManagementService(audit_log=audit_log)
+
+    disabled = service.set_user_status(
+        subject_id="marketing-lead",
+        status="disabled",
+        actor_name="admin",
+        reason="Account deactivated",
+    )
+    assert disabled["status"] == "disabled"
+
+    events = service.get_audit_trail(subject_id="marketing-lead")
+    assert len(events) == 1
+    assert events[0]["action"] == "USER_STATUS_UPDATED"
+    assert events[0]["detail"]["status"] == "disabled"
+
+
+def test_operator_router_rbac_guards_and_audit_actor() -> None:
+    """Test full create_operator_router() RBAC enforcement for user/role management."""
+    audit_log = InMemoryAuditLog()
+    router = create_operator_router(audit_log=audit_log)
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    client = TestClient(app)
+
+    admin_headers = {
+        "x-subject-id": "platform-admin-user",
+        "x-roles": "platform_admin",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "platform-admin",
+    }
+
+    ops_headers = {
+        "x-subject-id": "ops-manager-user",
+        "x-roles": "operations_manager",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "ops-lead",
+    }
+
+    # 1. PLATFORM_ADMIN can list users
+    res = client.get("/api/v1/operator/users", headers=admin_headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert "users" in data
+    assert data["count"] >= 5
+
+    # 2. PLATFORM_ADMIN can list 18 canonical roles
+    res = client.get("/api/v1/operator/users/roles", headers=admin_headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["count"] == 18
+
+    # 3. OPERATIONS_MANAGER gets 403 on GET /operator/users
+    res = client.get("/api/v1/operator/users", headers=ops_headers)
+    assert res.status_code == 403
+
+    # 4. OPERATIONS_MANAGER gets 403 on POST /operator/users (cannot self-promote)
+    res = client.post(
+        "/api/v1/operator/users",
+        headers=ops_headers,
+        json={
+            "subjectId": "ops-manager-user",
+            "roles": ["platform_admin"],
+            "reason": "Attempting self escalation",
+        },
+    )
+    assert res.status_code == 403
+
+    # 5. PLATFORM_ADMIN can POST /operator/users and actor is derived server-side
+    res = client.post(
+        "/api/v1/operator/users",
+        headers=admin_headers,
+        json={
+            "subjectId": "ops-lead",
+            "roles": ["operations_manager", "site_reviewer"],
+            "reason": "Assigned site_reviewer to ops-lead",
+            "actorName": "forged-client-actor-name",  # Should be ignored
+        },
+    )
+    assert res.status_code == 200
+
+    # Verify audit trail actor is 'platform-admin-user' (server-derived), NOT forged name
+    audit_res = client.get("/api/v1/operator/users/audit-trail", headers=admin_headers)
+    assert audit_res.status_code == 200
+    audit_data = audit_res.json()
+    latest_event = [e for e in audit_data["events"] if e["metadata"].get("subject_id") == "ops-lead"][-1]
+    assert latest_event["actor"] == "platform-admin-user"
+
+    # 6. OPERATIONS_MANAGER gets 403 on status toggle
+    res = client.post(
+        "/api/v1/operator/users/ops-lead/status",
+        headers=ops_headers,
+        json={"status": "disabled", "reason": "Unauthorized attempt"},
+    )
+    assert res.status_code == 403
+
+
+def test_durable_audit_trail_isolation_and_no_exponential_growth(tmp_path: Path) -> None:
+    """Test F1: Multiple saves do not exponentially grow event count or leak cross-tenant events."""
+    from apps.api.app.routes.operator_modules.live_service import DurableTenantServiceResolver
+    from shared.infrastructure.persistence.document_store import SqliteDocumentStore
+    from shared.infrastructure.persistence.engine import SqliteEngine
+    from shared.infrastructure.persistence.operator_domains import (
+        DurableOperatorDomainStateRepository,
+    )
+
+    doc_store = SqliteDocumentStore(SqliteEngine(tmp_path / "test.db"))
+    repo = DurableOperatorDomainStateRepository(doc_store, "users-roles")
+    shared_log = InMemoryAuditLog()
+
+    resolver = DurableTenantServiceResolver(
+        repo,
+        factory=lambda state, tenant_id: UserRoleManagementService(
+            audit_log=shared_log,
+            initial_state=state,
+            seed_fixtures=False,
+        ),
+        exporter=lambda service: service.export_state(),
+        mutating_methods={"save_user", "set_user_status"},
+    )
+
+    class DummyState:
+        def __init__(self, tenant_id: str):
+            self.operator_tenant_id = tenant_id
+
+    class DummyReq:
+        def __init__(self, tenant_id: str):
+            self.state = DummyState(tenant_id)
+
+    proxy_a = resolver(DummyReq("tenant-a"))
+    proxy_b = resolver(DummyReq("tenant-b"))
+
+    # Perform 4 saves for tenant-a
+    for i in range(4):
+        proxy_a.save_user(
+            subject_id="user-a",
+            roles=[Role.OPERATIONS_MANAGER.value],
+            scope={"tenant_id": "tenant-a"},
+            tenant_id="tenant-a",
+            reason=f"Tenant A save {i+1}",
+        )
+
+    # Perform 2 saves for tenant-b
+    for i in range(2):
+        proxy_b.save_user(
+            subject_id="user-b",
+            roles=[Role.AUDITOR.value],
+            scope={"tenant_id": "tenant-b"},
+            tenant_id="tenant-b",
+            reason=f"Tenant B save {i+1}",
+        )
+
+    events_a = proxy_a.get_audit_trail(tenant_id="tenant-a")
+    assert len(events_a) == 4, f"Expected exactly 4 events for tenant-a, got {len(events_a)}"
+
+    events_b = proxy_b.get_audit_trail(tenant_id="tenant-b")
+    assert len(events_b) == 2, f"Expected exactly 2 events for tenant-b, got {len(events_b)}"
+
+    # Check state document for tenant-a directly from repo
+    state_a = repo.load("tenant-a")
+    assert len(state_a.get("events", [])) == 4
+
+
+def test_durable_audit_trail_timestamp_and_integrity_preservation() -> None:
+    """Test F2 & F3: occurred_at and integrity hash chain are preserved across state reload."""
+    from datetime import UTC, datetime, timedelta
+
+    from shared.audit import AuditEvent
+
+    service = UserRoleManagementService(seed_fixtures=False)
+    past_time = datetime.now(UTC) - timedelta(hours=2)
+
+    # Record initial event with explicit past timestamp and job_id
+    ev1 = AuditEvent(
+        event_type="user_role_management.user_created",
+        actor="admin",
+        action="USER_CREATED",
+        resource="user:ops-lead",
+        outcome="success",
+        correlation_id="cid-123",
+        job_id="job-456",
+        metadata={"tenant_id": "tenant-a", "subject_id": "ops-lead"},
+        occurred_at=past_time,
+    )
+    service._record_audit_event(ev1)
+
+    state = service.export_state()
+    assert len(state["events"]) == 1
+
+    # Reload service from exported state
+    reloaded = UserRoleManagementService(initial_state=state, seed_fixtures=False)
+
+    # Check F2: occurred_at is preserved
+    reloaded_events = reloaded.audit_log.list_events()
+    assert len(reloaded_events) == 1
+    assert reloaded_events[0].occurred_at == past_time
+    assert reloaded_events[0].job_id == "job-456"
+
+    # Check F3: chain verification succeeds on valid state
+    chain_ver = reloaded.audit_log.verify_chain()
+    assert chain_ver.ok is True
+
+    # Tamper with state by modifying metadata or deleting an event
+    tampered_state = service.export_state()
+    tampered_state["events"][0]["metadata"]["subject_id"] = "tampered-user"
+    tampered_service = UserRoleManagementService(initial_state=tampered_state, seed_fixtures=False)
+    tampered_ver = tampered_service.audit_log.verify_chain()
+    assert tampered_ver.ok is False, "Expected hash chain verification to fail for tampered event metadata"
+
+
+def test_save_user_existing_tenant_guard() -> None:
+    """Test Minor 2: Tenant guard prevents modifying a user that belongs to another tenant."""
+    service = UserRoleManagementService()
+    service.save_user(
+        subject_id="tenant-a-user",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-a"},
+        tenant_id="tenant-a",
+        reason="Create user in tenant A",
+    )
+
+    with pytest.raises(UserRolePolicyError, match="restricted to tenant 'tenant-b'"):
+        service.save_user(
+            subject_id="tenant-a-user",
+            roles=[Role.PLATFORM_ADMIN.value],
+            tenant_id="tenant-b",
+            reason="Unauthorized cross tenant edit attempt",
+        )
+
+
+def test_shared_audit_log_does_not_corrupt_private_chain() -> None:
+    """Test B3: Recording audit event to a pre-populated shared audit log does not corrupt private audit chain."""
+    shared_log = InMemoryAuditLog()
+    # Seed shared_log with 5 pre-existing events so sequence/previous_hash differ
+    for i in range(5):
+        from shared.audit import AuditEvent
+        shared_log.record(
+            AuditEvent(
+                event_type="system.boot",
+                actor="system",
+                action="BOOT",
+                resource="server",
+                outcome="success",
+                correlation_id=f"cid-boot-{i}",
+            )
+        )
+
+    service = UserRoleManagementService(audit_log=shared_log, seed_fixtures=False)
+    service.save_user(
+        subject_id="user-isolated",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        reason="Testing shared log isolation",
+    )
+
+    # Verify private audit log hash chain
+    private_ver = service.audit_log.verify_chain()
+    assert private_ver.ok is True, f"Private audit chain failed verification: {private_ver.issues}"
+
+    # Verify export_state has valid chain upon reload
+    state = service.export_state()
+    reloaded = UserRoleManagementService(initial_state=state, seed_fixtures=False)
+    reloaded_ver = reloaded.audit_log.verify_chain()
+    assert reloaded_ver.ok is True, f"Reloaded state audit chain failed verification: {reloaded_ver.issues}"
+
+
+def test_save_user_preserves_abac_attributes_when_attributes_omitted() -> None:
+    """Test D1: ABAC attributes are preserved when attributes parameter is None (omitted)."""
+    service = UserRoleManagementService()
+    ops_lead_before = service.get_user("ops-lead")
+    assert ops_lead_before["attributes"] == {"department": "Operations", "level": "Senior"}
+
+    updated = service.save_user(
+        subject_id="ops-lead",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        attributes=None,
+        reason="Updating roles while preserving ABAC attributes",
+    )
+    assert updated["attributes"] == {"department": "Operations", "level": "Senior"}
+
+
+def test_save_user_allows_tenant_default_seeded_principal_under_tenant_restriction() -> None:
+    """Test D2: Caller restricted to tenant-a can edit seeded principal with tenant-default scope."""
+    service = UserRoleManagementService()
+    updated = service.save_user(
+        subject_id="ops-lead",
+        roles=[Role.OPERATIONS_MANAGER.value, Role.REGIONAL_SUPERVISOR.value],
+        scope={"tenant_id": "tenant-default"},
+        tenant_id="tenant-a",
+        reason="Editing seeded principal under tenant-a console restriction",
+    )
+    assert updated["subject_id"] == "ops-lead"
+    assert updated["scope"]["tenant_id"] == "tenant-default"
+    # E1: the event must be partitioned by the caller's tenant, not the scope tenant.
+    events = service.get_audit_trail(tenant_id="tenant-a")
+    assert [e["metadata"]["subject_id"] for e in events] == ["ops-lead"]
+    assert events[0]["metadata"]["scope_tenant_id"] == "tenant-default"
+
+
+def test_set_user_status_tenant_guard_and_audit_partition() -> None:
+    """Test E1: set_user_status honours the caller tenant for guard and audit key."""
+    service = UserRoleManagementService()
+    service.save_user(
+        subject_id="tenant-a-user",
+        roles=[Role.OPERATIONS_MANAGER.value],
+        scope={"tenant_id": "tenant-a"},
+        tenant_id="tenant-a",
+        reason="Create user in tenant A",
+    )
+
+    with pytest.raises(UserRolePolicyError, match="restricted to tenant 'tenant-b'"):
+        service.set_user_status(
+            subject_id="tenant-a-user",
+            status="disabled",
+            tenant_id="tenant-b",
+            reason="Cross tenant status toggle attempt",
+        )
+
+    # Toggling a tenant-default seeded principal as a tenant-a caller is allowed
+    # and lands in tenant-a's audit partition.
+    service.set_user_status(
+        subject_id="marketing-lead",
+        status="disabled",
+        tenant_id="tenant-a",
+        reason="Disable seeded principal from tenant-a console",
+    )
+    events = service.get_audit_trail(subject_id="marketing-lead", tenant_id="tenant-a")
+    assert len(events) == 1
+    assert events[0]["action"] == "USER_STATUS_UPDATED"
+    assert events[0]["metadata"]["scope_tenant_id"] == "tenant-default"
+
+
+def test_operator_router_ui_shaped_flow_leaves_visible_audit_trail() -> None:
+    """Test E1: the default UI create + status-toggle flow must be auditable end-to-end.
+
+    The UI posts scope.tenant_id='tenant-default' (the useState default in
+    UserRoleManagementController) while the console caller is restricted to
+    its own tenant. Both writes must show up in GET /operator/users/audit-trail.
+    """
+    router = create_operator_router(audit_log=InMemoryAuditLog())
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+    client = TestClient(app)
+
+    admin_headers = {
+        "x-subject-id": "platform-admin-user",
+        "x-roles": "platform_admin",
+        "x-tenant-id": "tenant-a",
+        "x-operator-role": "platform-admin",
+    }
+
+    res = client.post(
+        "/api/v1/operator/users",
+        headers=admin_headers,
+        json={
+            "subjectId": "new-ui-user",
+            "email": "new-ui-user@odayplus.com",
+            "name": "UI 建立的使用者",
+            "roles": ["operations_manager"],
+            "scope": {
+                "tenant_id": "tenant-default",
+                "brand_ids": [],
+                "region_ids": [],
+                "store_ids": [],
+                "clearance": "CONFIDENTIAL",
+            },
+            "reason": "Created from operator console",
+        },
+    )
+    assert res.status_code == 200, res.text
+
+    listed = client.get("/api/v1/operator/users", headers=admin_headers).json()
+    assert any(u["subject_id"] == "new-ui-user" for u in listed["users"])
+
+    audit = client.get(
+        "/api/v1/operator/users/audit-trail?subject_id=new-ui-user",
+        headers=admin_headers,
+    ).json()
+    assert audit["count"] == 1, f"create left no visible audit record: {audit}"
+    assert audit["events"][0]["action"] == "USER_CREATED"
+
+    res = client.post(
+        "/api/v1/operator/users/new-ui-user/status",
+        headers=admin_headers,
+        json={"status": "disabled", "reason": "Disabled from operator console"},
+    )
+    assert res.status_code == 200, res.text
+
+    audit = client.get(
+        "/api/v1/operator/users/audit-trail?subject_id=new-ui-user",
+        headers=admin_headers,
+    ).json()
+    assert audit["count"] == 2, f"status toggle left no visible audit record: {audit}"
+    assert [e["action"] for e in audit["events"]] == [
+        "USER_CREATED",
+        "USER_STATUS_UPDATED",
+    ]
+

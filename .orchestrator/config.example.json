@@ -30,6 +30,7 @@
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
+    "external_command_timeout_seconds": 30,
     "auto_refresh_provider_capabilities": true
   },
   "worker_runtime": {
@@ -271,6 +272,8 @@
   "github_bus": {
     "enabled": true,
     "command_timeout_seconds": 8,
+    "remote_ref_snapshot_ttl_seconds": 30,
+    "remote_ref_snapshot_max_stale_seconds": 300,
     "poll_interval_seconds": 30,
     "repo": null,
     "default_branch": "main",
@@ -540,6 +543,7 @@
       "codex": {
         "cli": "codex",
         "ask_for_approval": "never",
+        "model": "gpt-5.3-codex-spark",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
       },
