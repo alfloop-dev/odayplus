@@ -10614,7 +10614,7 @@ def build_catalog_sidecar_candidates(
         phase_match = str(template.get("parent_phase_match") or "").strip()
         activation_dependencies = [str(item).strip() for item in template.get("activation_dependencies", []) if str(item).strip()]
         for parent in status.get("tasks", []) or []:
-            if task_is_sidecar(parent):
+            if task_is_sidecar(parent) or task_is_human_gate(parent) or bool(parent.get("non_dispatchable")):
                 continue
             parent_id = str(parent.get("id") or "").strip()
             if not parent_id:
@@ -10686,7 +10686,7 @@ def build_dynamic_sidecar_candidates(
     resolver = TaskResolver(task_map)
     candidates: list[dict[str, Any]] = []
     for parent in status.get("tasks", []) or []:
-        if task_is_sidecar(parent):
+        if task_is_sidecar(parent) or task_is_human_gate(parent) or bool(parent.get("non_dispatchable")):
             continue
         parent_id = str(parent.get("id") or "").strip()
         if not parent_id or str(parent.get("status") or "").lower() == "done":

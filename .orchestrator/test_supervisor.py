@@ -6707,6 +6707,31 @@ class ArchivedSidecarCandidateTests(unittest.TestCase):
         after = supervisor.build_dynamic_sidecar_candidates(self.config, status, task_map, set())
         self.assertEqual(after, [])
 
+    def test_non_dispatchable_parent_never_creates_catalog_or_dynamic_sidecar(self) -> None:
+        self.write_catalog(
+            [
+                {
+                    "template_id": "operator_review_packet",
+                    "kind": "review_packet",
+                    "parent_task_ids": ["APP-001"],
+                    "title_template": "Prepare {{parent_task_id}} review packet",
+                    "summary_zh_template": "支援 {{parent_task_id}}。",
+                }
+            ]
+        )
+        status = self.parent_status()
+        status["tasks"][0]["non_dispatchable"] = True
+        task_map = {"APP-001": status["tasks"][0]}
+
+        self.assertEqual(
+            supervisor.build_catalog_sidecar_candidates(self.config, status, task_map, set()),
+            [],
+        )
+        self.assertEqual(
+            supervisor.build_dynamic_sidecar_candidates(self.config, status, task_map, set()),
+            [],
+        )
+
     def test_unrelated_archived_sidecar_does_not_block_a_fresh_candidate(self) -> None:
         self.archive_sidecar("APP-002-SIDECAR-REVIEW", helper_parent="APP-002", helper_kind="review_packet")
         status = self.parent_status()
