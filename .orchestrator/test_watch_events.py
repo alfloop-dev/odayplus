@@ -31,7 +31,8 @@ class WatcherBookkeepingTests(unittest.TestCase):
         }
         owner_message = watch_events.render_wakeup_message(base, owner_event, "antigravity4")
         reviewer_message = watch_events.render_wakeup_message(base, reviewer_event, "codex6")
-        self.assertIn("必須用正式 handoff／re_review", owner_message)
+        self.assertIn("scripts/git/task_finalize.sh", owner_message)
+        self.assertIn("不得直接 handoff／re_review", owner_message)
         self.assertIn("no-progress failure", owner_message)
         self.assertIn("必須做出可稽核的 review 決定", reviewer_message)
         self.assertIn("讓 task 留在 review", reviewer_message)

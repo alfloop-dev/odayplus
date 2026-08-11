@@ -359,6 +359,100 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         )
         self.assertEqual(selected, "CodexReviewer")
 
+    def test_task_assignment_audit_catches_shared_pool_disabled_actor_and_false_review(self) -> None:
+        config = self._config()
+        task = {
+            "id": "TASK-INTEGRITY-1",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Antigravity2",
+            "waiting_for": "Codex",
+        }
+        issues = supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task)
+        self.assertTrue(any(issue.startswith("owner_unavailable:") for issue in issues))
+        self.assertIn("review_submission_missing_or_invalid", issues)
+
+        task.update(owner="Antigravity", reviewer="Antigravity2", status="todo", waiting_for=None)
+        issues = supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task)
+        self.assertIn("owner_reviewer_same_account_pool", issues)
+
+    def test_assignment_integrity_reassigns_reviewer_to_independent_healthy_pool(self) -> None:
+        config = self._config()
+        config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}
+        config["account_pools"]["claude_main"] = {"max_concurrent": 1, "state": "healthy"}
+        config["agents"]["claude"] = {
+            "id": "claude", "display_name": "Claude", "provider": "claude", "account_pool": "claude_main",
+        }
+        config["providers"]["claude"] = {}
+        task = {"id": "TASK-INTEGRITY-2", "status": "todo", "owner": "Antigravity", "reviewer": "Antigravity2"}
+        status = {"tasks": [task]}
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(
+                supervisor.normalize_task_assignment_integrity(config, {"workers": {}}, status, task)
+            )
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Claude")
+
+    def test_assignment_integrity_retargets_stale_blocked_waiting_actor(self) -> None:
+        config = self._config()
+        config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}
+        config["account_pools"]["claude_main"] = {"max_concurrent": 1, "state": "healthy"}
+        config["agents"]["claude"] = {
+            "id": "claude", "display_name": "Claude", "provider": "claude", "account_pool": "claude_main",
+        }
+        config["providers"]["claude"] = {}
+        task = {
+            "id": "TASK-INTEGRITY-3",
+            "status": "blocked",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "waiting_for": "Codex",
+        }
+        status = {"tasks": [task]}
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(
+                supervisor.normalize_task_assignment_integrity(config, {"workers": {}}, status, task)
+            )
+        self.assertEqual(persist.call_args.kwargs["new_waiting_for"], "Antigravity")
+
+    def test_false_review_repair_blocks_human_gate_and_returns_sidecar_to_owner(self) -> None:
+        config = self._config()
+        config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}
+        status = {
+            "tasks": [
+                {
+                    "id": "HUMAN-GATE",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Human/Ops",
+                    "task_class": "human_gate",
+                },
+                {
+                    "id": "SIDECAR",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Human/Ops",
+                    "task_class": "sidecar",
+                },
+            ],
+            "handoffs": [],
+        }
+        with (
+            mock.patch.object(supervisor, "write_json"),
+            mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            self.assertTrue(supervisor.repair_unsubmitted_review_tasks(config, status))
+        self.assertEqual(status["tasks"][0]["status"], "blocked")
+        self.assertEqual(status["tasks"][0]["waiting_for"], "Human/Ops")
+        self.assertEqual(status["tasks"][1]["status"], "in_progress")
+
     def test_quota_failure_fences_sibling_slots_and_hands_off(self) -> None:
         config = self._config()
         triggering = {
@@ -6861,7 +6955,22 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 }
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {
+            "tasks": [
+                {
+                    "id": "T-REVIEW",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "review_submission": {
+                        "pr_number": 123,
+                        "branch": "task/T-REVIEW",
+                        "base_branch": "dev",
+                        "remote_sha": "1111111122222222333333334444444455555555",
+                    },
+                }
+            ]
+        }
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -6896,7 +7005,22 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 }
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {
+            "tasks": [
+                {
+                    "id": "T-REVIEW",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "review_submission": {
+                        "pr_number": 123,
+                        "branch": "task/T-REVIEW",
+                        "base_branch": "dev",
+                        "remote_sha": "1111111122222222333333334444444455555555",
+                    },
+                }
+            ]
+        }
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -6923,7 +7047,22 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 }
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {
+            "tasks": [
+                {
+                    "id": "T-REVIEW",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "review_submission": {
+                        "pr_number": 123,
+                        "branch": "task/T-REVIEW",
+                        "base_branch": "dev",
+                        "remote_sha": "1111111122222222333333334444444455555555",
+                    },
+                }
+            ]
+        }
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -6952,7 +7091,22 @@ class ChairReviewDispatchTests(unittest.TestCase):
                 }
             },
         }
-        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+        status = {
+            "tasks": [
+                {
+                    "id": "T-REVIEW",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "review_submission": {
+                        "pr_number": 123,
+                        "branch": "task/T-REVIEW",
+                        "base_branch": "dev",
+                        "remote_sha": "1111111122222222333333334444444455555555",
+                    },
+                }
+            ]
+        }
 
         with (
             mock.patch.object(supervisor, "load_status", return_value=status),
@@ -6985,7 +7139,18 @@ class ChairReviewDispatchTests(unittest.TestCase):
         }
         status = {
             "tasks": [
-                {"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"},
+                {
+                    "id": "T-REVIEW",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Codex2",
+                    "review_submission": {
+                        "pr_number": 123,
+                        "branch": "task/T-REVIEW",
+                        "base_branch": "dev",
+                        "remote_sha": "1111111122222222333333334444444455555555",
+                    },
+                },
                 {
                     "id": "T-FINALIZE",
                     "status": "review_approved",
@@ -10994,6 +11159,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "owner": "Antigravity4",
                     "reviewer": "Claude",
                     "status": "review",
+                    "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                 },
                 {
                     "id": "FREEZE-TEST-002",
@@ -11222,6 +11388,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                         "owner": "Antigravity4",
                         "reviewer": "Claude",
                         "status": "review",
+                        "review_submission": {"remote_sha": "1111111122222222333333334444444455555555"},
                     }
                 ]
             }
@@ -11278,6 +11445,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "reviewer": "Claude",
                     "status": "review",
                     "approved_head": old_head,
+                    "review_submission": {"remote_sha": new_head},
                 }
             ]
         }
@@ -11293,6 +11461,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
 
         # Positive control: re-approving at the *same* head is not a conflict,
         # so the guard cannot be satisfied by rejecting every stale-head task.
+        state["tasks"][0]["review_submission"]["remote_sha"] = old_head
         with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
              unittest.mock.patch("ai_status.append_log"), \
@@ -12046,6 +12215,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                     "reviewer": "Claude",
                     "status": "review",
                     "review_notes_zh": "已審核通過",
+                    "review_submission": {"remote_sha": approved},
                 }
             ]
         }
@@ -12184,6 +12354,12 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                         "owner": "Antigravity4",
                         "reviewer": "Claude",
                         "status": "review_approved",
+                        "review_submission": {
+                            "pr_number": 123,
+                            "remote_sha": approved,
+                            "branch": "task/FREEZE-TEST-023",
+                            "base_branch": "dev",
+                        },
                         "approved_head": approved,
                         "last_approved_head": approved,
                     }

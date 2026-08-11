@@ -200,6 +200,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     "owner": "Codex",
                     "reviewer": "Claude",
                     "status": "review",
+                    "review_submission": {
+                        "pr_number": 123,
+                        "remote_sha": "1111111122222222333333334444444455555555",
+                        "branch": "task/REG-002",
+                        "base_branch": "dev",
+                    },
                     "depends_on": [],
                     "artifacts": [],
                     "acceptance": [],
@@ -284,6 +290,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
 
+        self.state["tasks"][0].pop("review_submission", None)
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
@@ -3603,7 +3610,13 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
         # 2. Test command_approve when origin changes to remote_sha
         state_approve = {
-            "tasks": [{"id": task_id, "status": "review", "owner": "Codex", "reviewer": "Claude"}]
+            "tasks": [{
+                "id": task_id,
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "review_submission": {"remote_sha": remote_sha},
+            }]
         }
         mock_changed = mock.Mock(returncode=0, stdout=f"{remote_sha}\trefs/heads/task/{task_id}\n")
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
@@ -3612,6 +3625,24 @@ class StatusCheckEmissionTests(unittest.TestCase):
             task = ai_status.get_task(state_approve, task_id)
             self.assertEqual(task["approved_head"], remote_sha)
             self.assertNotEqual(task["approved_head"], stale_sha)
+
+        # A branch update after task_finalize invalidates the submitted review
+        # packet. The reviewer must never approve a different remote head.
+        state_mismatch = {
+            "tasks": [{
+                "id": task_id,
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "review_submission": {"remote_sha": stale_sha},
+            }]
+        }
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_changed):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state_mismatch, [task_id, "Must not approve moved head"])
+        self.assertIn("does not match current remote task head", str(cm.exception))
+        self.assertEqual(ai_status.get_task(state_mismatch, task_id)["status"], "review")
 
         # 3. Once merged, command_done uses the unique checkout and immutable
         # PR head from delivery provenance, not the now-ephemeral remote ref.

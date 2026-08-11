@@ -5827,6 +5827,21 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
             "and approve again. No approval was recorded."
         )
 
+    submission = task.get("review_submission")
+    submitted_sha = (
+        str(submission.get("remote_sha") or "").strip()
+        if isinstance(submission, dict)
+        else ""
+    )
+    if not submitted_sha or submitted_sha != approved_sha:
+        display_submitted = submitted_sha[:8] if submitted_sha else "missing"
+        raise SystemExit(
+            f"Cannot approve task {task_id}: verified review submission SHA "
+            f"({display_submitted}) does not match current remote task head "
+            f"({approved_sha[:8]}). The owner must run task_finalize.sh again so the "
+            "exact PR head is re-submitted for review. No approval was recorded."
+        )
+
     # B20: approved_head is immutable for the lifetime of one approval. Every
     # transition back to `review` (handoff, reopen, re_review, and the
     # supervisor's head-drift demotion) pops it, so a task sitting in `review`
