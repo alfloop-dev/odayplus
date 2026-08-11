@@ -75,7 +75,6 @@ from common import (
     relpath,
     selected_shared_files,
     shell_quote,
-    snapshot_task,
     spawn_background_process,
     summarize_failure_reason,
     utc_now,
@@ -119,7 +118,12 @@ from runtime_state import (
     save_runtime_state,
 )
 from task_archive import TaskResolver
-from watch_events import enqueue_runtime_events_enabled, queue_delivery_event, run_scan, trim_seen_events
+from watch_events import (
+    enqueue_runtime_events_enabled,
+    queue_delivery_event,
+    run_scan,
+    trim_seen_events,
+)
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
 STATUS_WRITE_REVISION_FIELD = "_status_write_revision"

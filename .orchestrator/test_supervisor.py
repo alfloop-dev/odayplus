@@ -8040,7 +8040,6 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "status": "review_approved",
             "approved_head": "1111111122222222333333334444444455555555",
         }
-        status_data = {"tasks": [task_mutated]}
         task_map = {"FREEZE-TEST-007": task_mutated}
 
         ai_status.clear_ai_status_caches()
