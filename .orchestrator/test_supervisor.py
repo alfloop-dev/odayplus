@@ -376,6 +376,48 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         issues = supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task)
         self.assertIn("owner_reviewer_same_account_pool", issues)
 
+    def test_assignment_integrity_audits_non_dispatchable_actor_identity_without_dispatch_eligibility(self) -> None:
+        config = self._config()
+        task = {
+            "id": "OPERATOR-ONLY",
+            "status": "todo",
+            "priority": "P0",
+            "owner": "Antigravity",
+            "reviewer": "Codex",
+            "non_dispatchable": True,
+        }
+
+        self.assertEqual(
+            supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
+            [],
+        )
+
+        task["reviewer"] = "UnknownReviewer"
+        self.assertEqual(
+            supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task),
+            ["reviewer_unavailable:unregistered actor UnknownReviewer"],
+        )
+
+    def test_assignment_integrity_does_not_reassign_human_gate(self) -> None:
+        config = self._config()
+        task = {
+            "id": "HUMAN-GATE",
+            "status": "blocked",
+            "priority": "P1",
+            "owner": "Human/Ops",
+            "reviewer": "Antigravity",
+            "waiting_for": "Human/Ops",
+            "task_class": "human_gate",
+            "non_dispatchable": True,
+        }
+        status = {"tasks": [task]}
+
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            self.assertFalse(
+                supervisor.normalize_task_assignment_integrity(config, {"workers": {}}, status, task)
+            )
+        persist.assert_not_called()
+
     def test_assignment_integrity_reassigns_reviewer_to_independent_healthy_pool(self) -> None:
         config = self._config()
         config["paths"] = {"status_file": "/tmp/status.json", "activity_log": "/tmp/activity.jsonl"}

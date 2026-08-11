@@ -9934,8 +9934,15 @@ def task_actor_assignment_block_reason(
     state: dict[str, Any],
     task: dict[str, Any],
     agent_name: str | None,
+    *,
+    require_dispatch_eligibility: bool = True,
 ) -> str | None:
-    """Return a stable assignment problem, excluding momentary slot occupancy."""
+    """Return a stable assignment problem, excluding momentary slot occupancy.
+
+    Non-dispatchable and human-gate tasks still need registered actors for
+    durable ownership and audit history, but their actors must not be judged
+    by the dispatch predicate that deliberately rejects those task classes.
+    """
     name = str(agent_name or "").strip()
     if not name:
         return "missing actor"
@@ -9945,6 +9952,8 @@ def task_actor_assignment_block_reason(
     agent = (config.get("agents", {}) or {}).get(normalized)
     if not isinstance(agent, dict):
         return f"unregistered actor {name}"
+    if not require_dispatch_eligibility:
+        return None
     if not agent_can_take_task(config, name, task):
         return f"actor {name} is disabled or not eligible for this task"
     pool_reason = account_pool_dispatch_block_reason(config, name, runtime_state=state)
@@ -9967,8 +9976,21 @@ def task_assignment_integrity_issues(
         issues.append("priority_missing_or_invalid")
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
-    owner_reason = task_actor_assignment_block_reason(config, state, task, owner)
-    reviewer_reason = task_actor_assignment_block_reason(config, state, task, reviewer)
+    requires_dispatch = not (task_is_human_gate(task) or bool(task.get("non_dispatchable")))
+    owner_reason = task_actor_assignment_block_reason(
+        config,
+        state,
+        task,
+        owner,
+        require_dispatch_eligibility=requires_dispatch,
+    )
+    reviewer_reason = task_actor_assignment_block_reason(
+        config,
+        state,
+        task,
+        reviewer,
+        require_dispatch_eligibility=requires_dispatch,
+    )
     if owner_reason:
         issues.append(f"owner_unavailable:{owner_reason}")
     if reviewer_reason:
