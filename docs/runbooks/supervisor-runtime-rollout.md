@@ -136,11 +136,15 @@ python3 scripts/orchestrator/rollout_supervisor_runtime.py \
   --source-root /path/to/clean-origin-dev-worktree \
   --runtime-link /home/lupin/oday-plus-supervisor-runtime-current \
   --runtime-parent /home/lupin \
+  --status-root /home/lupin/oday-plus-supervisor-live \
   --service pantheon-supervisor.service
 ```
 
 此指令拒絕 dirty source、非 `origin/dev` 的 source HEAD、dirty target、detached target
-與落後目標 ref。重啟失敗時會把 symlink 回復至前一個 runtime 並重新啟動服務。
+與落後目標 ref。它也會原子更新 canonical status root 的 `scripts/ai-status.sh`，使所有
+supervisor、worker 與人工狀態命令都由 `runtime-current/scripts/ai_status.py` 執行，避免
+舊 checkout 的 writer 把已修正狀態寫回舊格式。重啟失敗時會把 runtime symlink 與
+status launcher 一起回復，再重新啟動前一版服務。
 
 以下是舊版的人工流程，僅保留作為歷史與回復說明：
 
