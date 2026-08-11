@@ -252,7 +252,10 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
         cleanup_paths.append(index_file)
 
         _run(["git", "-C", str(worktree_path), "reset", "--mixed", "HEAD", "--quiet"], check=False)
-        _run(["bash", "scripts/git/task_finalize.sh", task_id], cwd=worktree_path)
+        # This is supervisor housekeeping, not a canonical board task.  It has
+        # no owner/reviewer row to transition, so opt out explicitly; every
+        # normal worker task must use task_finalize's atomic review submission.
+        _run(["bash", "scripts/git/task_finalize.sh", task_id, "--no-status-submit"], cwd=worktree_path)
         pr_opened = True
         return True, f"opened PR for {task_id} ({len(files)} files)"
     except subprocess.CalledProcessError as exc:
