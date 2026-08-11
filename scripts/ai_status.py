@@ -1568,6 +1568,11 @@ def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
         return result.returncode == 0
     except subprocess.TimeoutExpired:
         return False
+    except OSError:
+        # An unreadable or missing `cwd` makes subprocess raise instead of
+        # returning a code. Every caller reads False as "not proven", so a check
+        # that could not run must report that rather than crash the transition.
+        return False
 
 
 def get_gh_executable() -> str:
@@ -2097,7 +2102,11 @@ def split_task_owned_dirty_entries(entries: list[str], task_id: str) -> tuple[li
     return owned, ignored_seeds
 
 
-def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[str, Any]:
+def resolve_task_delivery_checkout(
+    repository_root: Path,
+    task_id: str,
+    approved_head: str | None = None,
+) -> dict[str, Any]:
     """Resolve the checkout owned by ``task_id``, or report that none survives.
 
     The gate exists so a ``done`` never reads the central writer's HEAD as if it
@@ -2113,9 +2122,19 @@ def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[
     from merged-PR provenance alone and may not fall back to any local working
     tree's HEAD or cleanliness. Two or more matches is still ambiguity and still
     fails closed here, because then there is no single task-owned truth to read.
+
+    The one exception is when ``approved_head`` names which of the claimants is
+    the delivery. A reassigned or restarted lane can leave an older checkout of
+    the same branch behind in the configured repository, and a *superseded*
+    checkout is not a competing truth -- it holds a prefix of the same history.
+    So when exactly one claimant is at the reviewer-approved head and every other
+    claimant is strictly behind it, that one is selected and the rest are recorded
+    as superseded. A claimant that is not an ancestor is a different line of work,
+    so it stays ambiguous and still fails closed.
     """
 
     branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    approved_head = str(approved_head or "").strip()
     current_branch = run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd=repository_root,
@@ -2139,6 +2158,20 @@ def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[
         if entry.get("branch") in {f"refs/heads/{name}" for name in branch_names}
         and entry.get("worktree")
     ]
+    superseded: list[str] = []
+    if len(matches) > 1 and approved_head:
+        exact = [entry for entry in matches if str(entry.get("HEAD") or "").strip() == approved_head]
+        others = [entry for entry in matches if str(entry.get("HEAD") or "").strip() != approved_head]
+        if len(exact) == 1 and all(
+            str(entry.get("HEAD") or "").strip()
+            and git_command_succeeds(
+                ["merge-base", "--is-ancestor", str(entry["HEAD"]).strip(), approved_head],
+                cwd=repository_root,
+            )
+            for entry in others
+        ):
+            superseded = [str(entry["worktree"]) for entry in others]
+            matches = exact
     if len(matches) > 1:
         raise SystemExit(
             f"Cannot finalize task {task_id}: expected exactly one task-owned delivery "
@@ -2150,11 +2183,53 @@ def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[
             "branch": branch_names[0],
             "present": False,
         }
-    return {
+    resolved: dict[str, Any] = {
         "checkout": Path(matches[0]["worktree"]).resolve(strict=False),
         "branch": str(matches[0]["branch"]).removeprefix("refs/heads/"),
         "present": True,
     }
+    if superseded:
+        resolved["superseded_checkouts"] = superseded
+    return resolved
+
+
+def is_stale_task_checkout(
+    repository_root: Path,
+    checkout_head: str,
+    approved_head: str,
+) -> bool:
+    """True when the task checkout merely lags the reviewer-approved head.
+
+    Finalize reads the task checkout's HEAD as the task's delivery head, and an
+    advance past the approved head already has a carry-forward path. The other
+    direction had none: a checkout sitting *behind* the approved commit was read
+    as "the wrong head" and blocked a task whose exact approved head had already
+    merged. That checkout is history, not a competing delivery -- it holds a
+    prefix of the reviewed line and nothing the reviewer did not see.
+
+    "Behind" is deliberately narrow, because it is what lets the caller trust
+    merged-PR provenance instead of the working tree:
+
+    * the approved commit must exist here, so the later reads of its subject,
+      body and author describe the reviewed commit rather than nothing, and
+    * the checkout HEAD must be an ancestor of it.
+
+    A divergent or rewritten head satisfies neither and stays a hard failure.
+    """
+
+    checkout_head = str(checkout_head or "").strip()
+    approved_head = str(approved_head or "").strip()
+    if not checkout_head or not approved_head or checkout_head == approved_head:
+        return False
+    if not git_command_succeeds(
+        ["cat-file", "-e", f"{approved_head}^{{commit}}"],
+        cwd=repository_root,
+    ):
+        return False
+    return git_command_succeeds(
+        ["merge-base", "--is-ancestor", checkout_head, approved_head],
+        cwd=repository_root,
+    )
 
 
 def task_delivery_checkout(repository_root: Path, task_id: str) -> tuple[Path, str]:
@@ -2556,11 +2631,15 @@ def collect_done_delivery_metadata(
             repository_id = "pantheon"
             repository_root = pantheon_root
     configured_repository_root = repository_root.resolve(strict=False)
-    resolved_checkout = resolve_task_delivery_checkout(configured_repository_root, task_id)
+    resolved_checkout = resolve_task_delivery_checkout(
+        configured_repository_root, task_id, approved_head=approved_head
+    )
     repository_root = resolved_checkout["checkout"]
     branch = resolved_checkout["branch"]
     task_checkout_present = bool(resolved_checkout["present"])
     configured_repository_slug = repository_slug(config, repository_id)
+    stale_task_checkout = False
+    stale_checkout_head = ""
     if task_checkout_present:
         checkout_head = run_git_command(
             ["rev-parse", "HEAD"],
@@ -2602,9 +2681,32 @@ def collect_done_delivery_metadata(
     }
     if not task_checkout_present:
         delivery["provenance_mode"] = "merged_pr_without_task_checkout"
+    superseded_checkouts = resolved_checkout.get("superseded_checkouts") or []
+    if superseded_checkouts:
+        delivery["superseded_task_checkouts"] = [str(path) for path in superseded_checkouts]
     if checkout_head != approved_head:
         if is_approved_head_satisfied(task, checkout_head, approved_head, repository_root=repository_root):
             delivery["post_merge_checkout_advanced"] = True
+        elif is_stale_task_checkout(repository_root, checkout_head, approved_head):
+            # The surviving checkout is an earlier state of this same branch, so it
+            # cannot speak for the delivery either way -- it is neither the reviewed
+            # commit nor a competing one. Delivery is then proven exactly as it is
+            # when no checkout survives at all: from the merged PR at the approved
+            # head, which `enforce_delivery_merged_gate` below still has to pass.
+            if not settings["require_merged_pr"]:
+                raise SystemExit(
+                    f"Cannot finalize task {task_id}: the task-owned delivery checkout is "
+                    f"behind the reviewer-approved head ({approved_head[:8]}), so delivery "
+                    "can only be proven from a merged task PR, but "
+                    "delivery_gates.require_merged_pr is disabled."
+                )
+            stale_task_checkout = True
+            stale_checkout_head = checkout_head
+            checkout_head = approved_head
+            delivery["verified_head"] = approved_head
+            delivery["provenance_mode"] = "merged_pr_with_stale_task_checkout"
+            delivery["stale_task_checkout"] = True
+            delivery["stale_checkout_head"] = stale_checkout_head
         else:
             raise SystemExit(
                 f"Cannot finalize task {task_id}: task-owned checkout HEAD ({checkout_head[:8]}) "
@@ -2701,7 +2803,7 @@ def collect_done_delivery_metadata(
             raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
         delivery["commit_metadata"] = metadata_fields
 
-    if task_checkout_present:
+    if task_checkout_present and not stale_task_checkout:
         porcelain = run_git_command(
             ["status", "--porcelain", "--untracked-files=all"],
             cwd=repository_root,
@@ -2724,9 +2826,27 @@ def collect_done_delivery_metadata(
         # reading the shared writer's tree would answer a question about a
         # different lane. Record that it was not evaluated rather than claiming a
         # clean result that was never observed.
+        #
+        # A stale checkout is the same shape: its edits sit on a commit the PR
+        # already merged past, so they cannot reach the delivery -- but they are
+        # observable, so they are recorded rather than dropped.
         delivery["git_clean"] = None
         delivery["git_clean_evaluated"] = False
-        delivery["git_clean_skip_reason"] = "no task-owned delivery checkout"
+        delivery["git_clean_skip_reason"] = (
+            "task-owned delivery checkout is behind the reviewer-approved head"
+            if stale_task_checkout
+            else "no task-owned delivery checkout"
+        )
+        if stale_task_checkout:
+            stale_porcelain = run_git_command(
+                ["status", "--porcelain", "--untracked-files=all"],
+                cwd=repository_root,
+                required=False,
+            )
+            stale_dirty, _ = split_task_owned_dirty_entries(
+                [line for line in stale_porcelain.splitlines() if line.strip()], task_id
+            )
+            delivery["stale_checkout_dirty_entry_count"] = len(stale_dirty)
 
     remotes_output = run_git_command(
         ["remote"],
