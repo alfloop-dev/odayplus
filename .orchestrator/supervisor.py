@@ -8693,9 +8693,8 @@ def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) ->
         )
         changed = True
     if changed:
-        if not write_status_snapshot_if_current(config, status):
+        if not commit_canonical_task_transition(config, status):
             return False
-        sync_status_pipeline(config)
     return changed
 
 
@@ -8754,9 +8753,8 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         )
         changed = True
     if changed:
-        if not write_status_snapshot_if_current(config, status):
+        if not commit_canonical_task_transition(config, status):
             return False
-        sync_status_pipeline(config)
     return changed
 
 
