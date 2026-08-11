@@ -12,7 +12,8 @@
 | Parent task class / state | `human_gate` / `blocked` (`waiting_for: Human/Ops`) |
 | Parent template anchor | `9a6569aabab00bd7c7eaeb58478496888695808d` |
 | Decision-template PR | [#532](https://github.com/alfloop-dev/odayplus/pull/532), open and unmerged when checked on 2026-08-11 UTC |
-| Sidecar base-advance commit | `b90bcc33475441e0c360ee55b7fd51f78c0f4ac6` (composes `origin/dev` `529f0a2c8a722bb27430fb0d614229ef1ea6c127`) |
+| Sidecar PR / review freeze | [#799](https://github.com/alfloop-dev/odayplus/pull/799); Human/Ops accepted `a326363b1f2fae4fdaaf644c0a71789ad9f2948b`, before the required current-base composition |
+| Sidecar base-advance commit | `2c34f79f7c632afce4d0189b64e475ada399229d` (composes `origin/dev` `494bc7e74cd6fb74a54044f29d14b8a9523f595a`) |
 | Packet verdict | **Support ready; parent legal acceptance remains pending and release remains NO-GO** |
 
 This is a support-only review aid. It does not approve a license policy, create
@@ -46,7 +47,7 @@ The parent anchor `9a6569aa` contains these **unapproved templates**:
 
 As observed after the required base advance, `9a6569aa` is **not** an ancestor
 of `origin/dev`; the three paths above are absent from `origin/dev` at
-`529f0a2c`. The parent task branch ref was also absent from the remote branch
+`494bc7e7`. The parent task branch ref was also absent from the remote branch
 listing. Reviewers must therefore inspect the immutable anchor or PR #532 and
 must not infer that these templates are deployed, merged, or canonical.
 
@@ -118,7 +119,7 @@ receipt.
 | Create support artifacts only | Satisfied: only this task-scoped support packet is changed. |
 | Do not edit canonical truth | Satisfied: no L1, planning truth, runtime, registry, governance implementation, or parent template is changed. |
 | Provide acceptance checklist and dependency map | Satisfied by the checklist, classified dependency table, and graph above. |
-| Hand off to assigned reviewer | Ready for formal PR submission to `Human/Ops`; parent owner decides whether to absorb it. |
+| Hand off to assigned reviewer | PR #799 was submitted to `Human/Ops`; because the mandatory current-base composition advances its exact head beyond the accepted `a326363b`, the refreshed head must pass the repository's immutable review gate before closeout. |
 | Make no parent acceptance/release claim | Satisfied: parent remains `blocked`; release remains `NO-GO`. |
 
 The parent owner may absorb the checklist or dependency distinctions, but must
