@@ -245,15 +245,19 @@ class ScenarioSolveRecord:
     alternative_limit: int = 3
     execution_metadata: dict[str, Any] = field(default_factory=dict)
     problem_hash: str = ""
+    model_version: str = NETPLAN_MODEL_VERSION
 
     def is_stale(self, scenario: NetPlanScenario, risk_penalty: float = 100_000.0) -> bool:
         if not self.problem_hash:
+            return True
+        if self.model_version != scenario.model_version:
             return True
         current_hash = compute_solver_problem_hash(
             scenario.options_by_entity,
             scenario.constraints,
             risk_penalty,
             self.alternative_limit,
+            scenario.model_version,
         )
         return self.problem_hash != current_hash
 
@@ -265,6 +269,7 @@ class ScenarioSolveRecord:
             "alternative_limit": self.alternative_limit,
             "execution_metadata": self.execution_metadata,
             "problem_hash": self.problem_hash,
+            "model_version": self.model_version,
         }
 
 
