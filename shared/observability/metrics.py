@@ -26,6 +26,27 @@ class MetricType(StrEnum):
     HISTOGRAM = "histogram"
 
 
+class CardinalityPolicy(StrEnum):
+    """What a registry does when a metric exceeds its series budget.
+
+    ``SHED`` is the production default: emission sites are on the live request
+    path, so an unexpected label value must never turn into a 500. Overflow is
+    folded into one reserved series per metric and counted, which keeps the
+    cardinality bound *and* leaves an alertable trace that shedding happened.
+
+    ``REJECT`` fails closed and is for configuration/validation contexts (config
+    linting, evidence generation, tests) where an unbounded label set is a
+    defect that should stop the build rather than degrade silently.
+    """
+
+    SHED = "shed"
+    REJECT = "reject"
+
+
+# Reserved label value marking the per-metric overflow series.
+OVERFLOW_LABEL_VALUE = "__overflow__"
+
+
 class MetricCategory(StrEnum):
     # Categories mapped to the ODP-R7-001 acceptance keywords.
     LATENCY = "latency"
@@ -49,12 +70,33 @@ class MetricDefinition:
     unit: str = ""
     min_value: float | None = None
     max_value: float | None = None
+    # No plausible-looking default. ``sre-platform`` (the catalog's most common
+    # team) made the ownership gate decorative: a new signal silently inherited
+    # an owner that had never agreed to page for it, and the gate could not
+    # fail. Empty is the only honest default, and __post_init__ rejects it, so
+    # an unowned metric cannot be constructed at all.
+    owner: str = ""
+    # Per-metric series budget. Defaults to the registry-wide bound; set it
+    # explicitly when a signal's label domain is legitimately larger than the
+    # default (for example ``route`` spanning the whole HTTP route table).
+    max_series: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.owner or not self.owner.strip():
+            raise ValueError(
+                f"metric {self.name!r} must declare a non-empty owner. Fail-closed gate enforced."
+            )
 
 
 def _label_key(labels: Mapping[str, str] | None) -> tuple[tuple[str, str], ...]:
     if not labels:
         return ()
     return tuple(sorted((str(k), str(v)) for k, v in labels.items()))
+
+
+def _overflow_label_key(definition: MetricDefinition) -> tuple[tuple[str, str], ...]:
+    """Label key of the single reserved overflow series for a metric."""
+    return tuple(sorted((label, OVERFLOW_LABEL_VALUE) for label in definition.labels))
 
 
 @dataclass
@@ -91,11 +133,28 @@ class _Series:
 class MetricsRegistry:
     """Holds metric definitions and their per-label-set series."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        max_series_per_metric: int = 100,
+        cardinality_policy: CardinalityPolicy = CardinalityPolicy.SHED,
+    ) -> None:
         self._definitions: dict[str, MetricDefinition] = {}
         self._series: dict[tuple[str, tuple[tuple[str, str], ...]], _Series] = {}
+        self.max_series_per_metric = max_series_per_metric
+        self.cardinality_policy = CardinalityPolicy(cardinality_policy)
+        # metric name -> number of emissions folded into its overflow series.
+        self._shed_counts: dict[str, int] = {}
 
     def register(self, definition: MetricDefinition) -> MetricDefinition:
+        # Second line, not redundant with MetricDefinition.__post_init__:
+        # unpickling a dataclass restores state through __setstate__ without
+        # calling __init__, so a definition that crosses a process boundary
+        # never re-runs construction-time validation.
+        if not definition.owner or not str(definition.owner).strip():
+            raise ValueError(
+                f"metric {definition.name!r} must have a valid non-empty owner. Fail-closed gate enforced."
+            )
+
         existing = self._definitions.get(definition.name)
         if existing is not None and existing != definition:
             raise ValueError(
@@ -112,11 +171,39 @@ class MetricsRegistry:
 
     def _resolve(self, name: str, labels: Mapping[str, str] | None) -> _Series:
         definition = self.definition(name)
+        if labels:
+            undeclared = set(labels.keys()) - set(definition.labels)
+            if undeclared:
+                raise ValueError(
+                    f"Metric {name!r} received undeclared label key(s) {sorted(undeclared)}. "
+                    f"Declared allowed labels: {definition.labels}. Fail-closed label validation enforced."
+                )
         key = (name, _label_key(labels))
         series = self._series.get(key)
-        if series is None:
-            series = _Series(definition=definition)
-            self._series[key] = series
+        if series is not None:
+            return series
+
+        overflow_key = (name, _overflow_label_key(definition))
+        if key != overflow_key:
+            budget = self.series_budget(name)
+            # The reserved overflow series does not consume the budget, so a
+            # metric holds at most ``budget + 1`` series.
+            live_series_count = sum(1 for k in self._series if k[0] == name and k != overflow_key)
+            if live_series_count >= budget:
+                if self.cardinality_policy is CardinalityPolicy.REJECT:
+                    raise ValueError(
+                        f"Metric {name!r} exceeded maximum allowed series cardinality threshold "
+                        f"({budget}). High-cardinality label explosion rejected. "
+                        f"Fail-closed gate enforced."
+                    )
+                self._shed_counts[name] = self._shed_counts.get(name, 0) + 1
+                key = overflow_key
+                series = self._series.get(key)
+                if series is not None:
+                    return series
+
+        series = _Series(definition=definition)
+        self._series[key] = series
         return series
 
     def increment(
@@ -178,18 +265,49 @@ class MetricsRegistry:
             result.setdefault(definition.category, []).append(definition.name)
         return result
 
+    def series_budget(self, name: str) -> int:
+        """Series budget for ``name``: its declared bound, else the registry bound."""
+        definition = self._definitions.get(name)
+        declared = getattr(definition, "max_series", None) if definition else None
+        return int(declared) if declared else self.max_series_per_metric
+
+    def series_count(self, name: str) -> int:
+        """Number of live series currently held for ``name`` (overflow included)."""
+        return sum(1 for key in self._series if key[0] == name)
+
+    def overflow_report(self) -> dict[str, Any]:
+        """Describe cardinality shedding so operators can alert on it.
+
+        ``shed_emissions`` is per-metric and monotonic for the life of the
+        registry; a non-zero value means real label values were collapsed into
+        the reserved overflow series and the underlying instrumentation site
+        needs a bounded label.
+        """
+        return {
+            "policy": self.cardinality_policy.value,
+            "max_series_per_metric": self.max_series_per_metric,
+            "overflow_label_value": OVERFLOW_LABEL_VALUE,
+            "shed_emissions": dict(self._shed_counts),
+            "shed_emissions_total": sum(self._shed_counts.values()),
+            "metrics_with_shedding": sorted(self._shed_counts),
+        }
+
     def snapshot(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for (name, label_key), series in self._series.items():
             entry = series.snapshot()
             entry["labels"] = dict(label_key)
             entry["category"] = series.definition.category.value
+            if label_key and label_key == _overflow_label_key(series.definition):
+                entry["cardinality_overflow"] = True
+                entry["shed_emissions"] = self._shed_counts.get(name, 0)
             out.setdefault(name, []).append(entry)
         return out
 
     def clear(self) -> None:
         """Clear all recorded metric series values."""
         self._series.clear()
+        self._shed_counts.clear()
 
 
 class _Timer:
@@ -230,55 +348,73 @@ class _Timer:
 C, G, H = MetricType.COUNTER, MetricType.GAUGE, MetricType.HISTOGRAM
 Cat = MetricCategory
 
+# The ``route`` label is the registered route template, never the raw path (see
+# shared.observability.routes), so these budgets are bounded by the size of the
+# route table -- a closed set that changes only when routes are added -- times
+# the closed set of HTTP status codes. They are sized well above the current
+# table (~460 templates including the /api/v1 aliases) so a normal route
+# addition does not start shedding.
+_API_ROUTE_STATUS_SERIES_BUDGET = 2000
+_API_ROUTE_SERIES_BUDGET = 1000
+
 PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
     # §5.1 Technical
     MetricDefinition(
-        "api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status"), min_value=0.0
+        "api_request_count", C, Cat.TRAFFIC, "API request volume", ("service", "route", "status"), min_value=0.0, owner="sre-platform", max_series=_API_ROUTE_STATUS_SERIES_BUDGET
     ),
     MetricDefinition(
-        "api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status"), min_value=0.0
+        "api_error_count", C, Cat.ERROR, "API 4xx/5xx responses", ("service", "route", "status"), min_value=0.0, owner="sre-platform", max_series=_API_ROUTE_STATUS_SERIES_BUDGET
     ),
     MetricDefinition(
-        "api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms", min_value=0.0
+        "api_latency_ms", H, Cat.LATENCY, "API latency P50/P95/P99", ("service", "route"), "ms", min_value=0.0, owner="sre-platform", max_series=_API_ROUTE_SERIES_BUDGET
     ),
     MetricDefinition(
-        "db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms", min_value=0.0
+        "db_query_latency_ms", H, Cat.LATENCY, "DB query latency", ("query_group",), "ms", min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s", min_value=0.0
+        "job_duration_seconds", H, Cat.JOB, "Batch job duration", ("job_type", "status"), "s", min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class"), min_value=0.0
+        "job_failure_count", C, Cat.JOB, "Batch job failures", ("job_type", "error_class"), min_value=0.0, owner="sre-platform"
     ),
     MetricDefinition(
-        "event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription"), min_value=0.0
+        "event_consumer_lag", G, Cat.QUEUE, "Event backlog", ("topic", "subscription"), min_value=0.0, owner="sre-messaging"
     ),
-    MetricDefinition("dlq_message_count", G, Cat.QUEUE, "Dead-letter queue depth", ("topic",), min_value=0.0),
+    MetricDefinition("dlq_message_count", G, Cat.QUEUE, "Dead-letter queue depth", ("topic",), min_value=0.0, owner="sre-messaging"),
     MetricDefinition(
-        "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",), min_value=0.0
+        "external_connector_failure_count", C, Cat.ERROR, "External source failures", ("source",), min_value=0.0, owner="sre-platform"
+    ),
+    MetricDefinition(
+        "alert_delivery_failure_count",
+        C,
+        Cat.ERROR,
+        "Alerts that could not be routed or delivered (a lost page)",
+        ("alert_id", "error_class"),
+        min_value=0.0,
+        owner="sre-platform",
     ),
     # §5.2 Data / Model
     MetricDefinition(
-        "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h", min_value=0.0
+        "data_freshness_hours", G, Cat.DATA, "Data freshness", ("source", "view"), "h", min_value=0.0, owner="data-platform"
     ),
-    MetricDefinition("data_quality_score", G, Cat.DATA, "Data quality score", ("dataset", "run"), min_value=0.0, max_value=1.0),
-    MetricDefinition("feature_null_rate", G, Cat.DATA, "Feature null rate", ("feature", "view"), min_value=0.0, max_value=1.0),
-    MetricDefinition("prediction_count", C, Cat.MODEL, "Prediction volume", ("model", "module"), min_value=0.0),
+    MetricDefinition("data_quality_score", G, Cat.DATA, "Data quality score", ("dataset", "run"), min_value=0.0, max_value=1.0, owner="data-platform"),
+    MetricDefinition("feature_null_rate", G, Cat.DATA, "Feature null rate", ("feature", "view"), min_value=0.0, max_value=1.0, owner="data-platform"),
+    MetricDefinition("prediction_count", C, Cat.MODEL, "Prediction volume", ("model", "module"), min_value=0.0, owner="ml-platform"),
     MetricDefinition(
-        "model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment"), min_value=0.0
+        "model_error_metric", G, Cat.MODEL, "MAE/MAPE/RMSE", ("model", "horizon", "segment"), min_value=0.0, owner="ml-platform"
     ),
     MetricDefinition(
-        "prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon"), min_value=0.0, max_value=1.0
+        "prediction_interval_coverage", G, Cat.MODEL, "P80/P90 coverage", ("model", "horizon"), min_value=0.0, max_value=1.0, owner="ml-platform"
     ),
-    MetricDefinition("drift_score", G, Cat.MODEL, "Feature/model drift", ("feature", "model"), min_value=0.0),
+    MetricDefinition("drift_score", G, Cat.MODEL, "Feature/model drift", ("feature", "model"), min_value=0.0, owner="ml-platform"),
     MetricDefinition(
-        "model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",), min_value=0.0
+        "model_alias_change_count", C, Cat.MODEL, "Release/rollback count", ("model",), min_value=0.0, owner="ml-platform"
     ),
     # §5.3 Business KPIs
     MetricDefinition(
-        "heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption", min_value=0.0, max_value=1.0
+        "heatzone_topk_adoption_rate", G, Cat.BUSINESS, "HeatZone Top-K survey adoption", min_value=0.0, max_value=1.0, owner="business-analytics"
     ),
-    MetricDefinition("listing_dedup_accuracy", G, Cat.BUSINESS, "Listing dedup accuracy", min_value=0.0, max_value=1.0),
+    MetricDefinition("listing_dedup_accuracy", G, Cat.BUSINESS, "Listing dedup accuracy", min_value=0.0, max_value=1.0, owner="business-analytics"),
     MetricDefinition(
         "sitescore_realization_rate",
         G,
@@ -287,6 +423,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("horizon",),
         min_value=0.0,
         max_value=1.0,
+        owner="business-analytics",
     ),
     MetricDefinition(
         "forecast_alert_precision",
@@ -296,6 +433,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("metric",),
         min_value=0.0,
         max_value=1.0,
+        owner="business-analytics",
     ),
     MetricDefinition(
         "intervention_recovery_rate",
@@ -305,19 +443,20 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("window",),
         min_value=0.0,
         max_value=1.0,
+        owner="business-analytics",
     ),
     MetricDefinition(
-        "price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations", min_value=0.0
+        "price_hard_constraint_violation_count", C, Cat.BUSINESS, "Price hard-constraint violations", min_value=0.0, owner="business-analytics"
     ),
     MetricDefinition(
-        "adlift_incremental_gm", G, Cat.BUSINESS, "AdLift incremental GM / iROMI", ("metric",)
+        "adlift_incremental_gm", G, Cat.BUSINESS, "AdLift incremental GM / iROMI", ("metric",), owner="business-analytics"
     ),
-    MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage", min_value=0.0, max_value=1.0),
+    MetricDefinition("avm_interval_coverage", G, Cat.BUSINESS, "AVM interval coverage", min_value=0.0, max_value=1.0, owner="business-analytics"),
     MetricDefinition(
-        "netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome", min_value=0.0, max_value=1.0
+        "netplan_plan_adoption_rate", G, Cat.BUSINESS, "NetPlan plan adoption/outcome", min_value=0.0, max_value=1.0, owner="business-analytics"
     ),
     MetricDefinition(
-        "model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",), min_value=0.0, max_value=1.0
+        "model_adoption_rate", G, Cat.BUSINESS, "Model adoption / override rate", ("kind",), min_value=0.0, max_value=1.0, owner="business-analytics"
     ),
     # §7 / §10 Audit trail and evidence export
     MetricDefinition(
@@ -327,6 +466,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         "Audit events durably recorded",
         ("event_type", "action", "result"),
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
         "audit_event_write_failure_count",
@@ -335,6 +475,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         "Audit event write failures",
         ("event_type", "action", "error_class"),
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
         "audit_event_pipeline_lag_seconds",
@@ -344,12 +485,13 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("sink", "event_type"),
         "s",
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
-        "audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",), min_value=0.0
+        "audit_event_replay_count", C, Cat.AUDIT, "Audit dead-letter replay attempts", ("result",), min_value=0.0, owner="security-audit"
     ),
     MetricDefinition(
-        "audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result"), min_value=0.0
+        "audit_evidence_export_count", C, Cat.AUDIT, "Audit evidence exports", ("scope", "result"), min_value=0.0, owner="security-audit"
     ),
     MetricDefinition(
         "audit_completeness_gap_count",
@@ -358,6 +500,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         "Missing required audit timeline events",
         ("rule", "resource", "missing_event_type"),
         min_value=0.0,
+        owner="security-audit",
     ),
     MetricDefinition(
         "deployment_watch_window_status",
@@ -367,6 +510,7 @@ PLATFORM_METRICS: tuple[MetricDefinition, ...] = (
         ("release_sha", "status"),
         min_value=0.0,
         max_value=1.0,
+        owner="sre-platform",
     ),
 )
 

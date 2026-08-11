@@ -4,6 +4,10 @@ const OPERATOR_TENANT_STORAGE_KEY = "oday.operator.tenant";
 const DEFAULT_OPERATOR_ROLE_ID = "ops-lead";
 
 const OPERATOR_API_ROLES: Record<string, string> = {
+  "platform-admin": "platform_admin",
+  platformAdmin: "platform_admin",
+  admin: "platform_admin",
+  platform_admin: "platform_admin",
   "cs-lead": "operations_manager",
   csLead: "operations_manager",
   supportLead: "operations_manager",
@@ -16,9 +20,11 @@ const OPERATOR_API_ROLES: Record<string, string> = {
   marketingManager: "marketing_manager",
   "ops-lead": "operations_manager",
   opsLead: "operations_manager",
+  operations_manager: "operations_manager",
   "pm-audit": "auditor",
   auditPm: "auditor",
   pmAudit: "auditor",
+  auditor: "auditor",
   "site-reviewer": "site_reviewer",
   siteReviewer: "site_reviewer",
 };

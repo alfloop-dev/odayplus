@@ -3,10 +3,11 @@
 - **Task ID**: `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW`
 - **Parent Task**: `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001`
 - **Helper Kind**: `review_packet`
-- **Owner**: `Antigravity`
-- **Reviewer**: `Claude3`
+- **Owner**: `Claude` (helper-claimed 2026-08-10; originally `Antigravity`)
+- **Reviewer**: `Claude2`
 - **Status**: `review`
-- **Packet Revision**: Round 2 (2026-08-07) — rewritten to accurately review parent deliverable at approved head `b81f4322` on PR #682
+- **Packet Revision**: Round 3 (2026-08-10) — Round 2 approved; folds in the reviewer's three non-blocking observations (parent PR now merged, §4 graph-figure attribution, §3 A6 ReviewBus separator)
+- **Prior Revision**: Round 2 (2026-08-07) — rewritten to accurately review parent deliverable at approved head `b81f4322` on PR #682
 - **Target Artifact**: `support/sidecars/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW.md`
 
 ### Parent Pin
@@ -15,7 +16,7 @@
 |---|---|
 | Parent Approved Head | `b81f43223dd7bf930c4209875cf6b3f87274c64d` |
 | Parent Review Gate SHA | `b81f43223dd7bf930c4209875cf6b3f87274c64d` |
-| Parent Branch / PR | `task/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` → PR #682 (`OPEN`, `BLOCKED`, not yet merged to `dev`) |
+| Parent Branch / PR | `task/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` → PR #682 (`MERGED` to `dev` at commit `262684d7`; parent task closed as `done`) |
 | Parent Delivering Commits | `66fd4300ebd6ac2dbce11c80631d65641237ead0`, `b81f43223dd7bf930c4209875cf6b3f87274c64d` |
 | Deliverable Surface | 2 files modified (+360 insertions, -18 deletions over `dev`) |
 
@@ -86,7 +87,7 @@ The 17 new tests added by parent commit `b81f4322` cover all acceptance criteria
 | **A3** | `subject_delivers` | Rejects task ID prefix collision (`TASK-C` vs `TASK-C2`) | `test_subject_delivers_rejects_task_id_prefix_collision` |
 | **A4** | `subject_delivers` | Rejects merge commit of another task branch even if ID is in title/body | `test_subject_delivers_rejects_merge_of_another_task_branch` |
 | **A5** | `subject_delivers` | Rejects commit subject that merely mentions task ID without delivery format | `test_subject_delivers_rejects_mere_mention_in_subject` |
-| **A6** | `subject_delivers` | Accepts ReviewBus squash format (`[ReviewBus] <id>: ...`) | `test_subject_delivers_accepts_reviewbus_subject` |
+| **A6** | `subject_delivers` | Accepts ReviewBus squash format — `[ReviewBus] <id>` followed by `:` **or** whitespace (`_introduces(..., allow_space=True)`); the test asserts the space form `[ReviewBus] <id> <summary> (#N)` | `test_subject_delivers_accepts_reviewbus_subject` |
 | **A7** | `subject_delivers` | Rejects sidecar reviewbus subject naming parent task (`...PARENT-SIDECAR-REVIEW...`) | `test_subject_delivers_rejects_reviewbus_sidecar_naming_its_parent` |
 | **A8** | `subject_delivers` | Accepts merge PR format without owner prefix (`Merge pull request #N from task/<id>`) | `test_subject_delivers_accepts_merge_without_owner_prefix` |
 | **A9** | `subject_delivers` | Rejects merge commit of non-task branch (e.g. `feat/foo`) | `test_subject_delivers_rejects_non_task_branch_merge` |
@@ -133,23 +134,33 @@ ruff check \
 | `py_compile` | **PASS** | Clean compilation (exit code 0) |
 | `ruff check` | **PASS** | All checks passed cleanly |
 | Live Corpus Audit (307 task IDs) | **PASS** | 307/307 correct: 0 false negatives, 0 misattributions (11 historical misattributions fixed) |
-| Live Dependency Graph Effect | **PASS** | Graph failures reduced from **33 to 2** (the 2 remaining are genuinely undelivered `ODP-PLAN-OSS-LICENSE-GATE-001`) |
+| Live Dependency Graph Effect | **PASS** | Per `b81f4322`, against a rebuilt archive: **47 failures baseline → 5 (pre-fix scanner) → 2 (this change)**. The 2 remaining are the genuinely undelivered `ODP-PLAN-OSS-LICENSE-GATE-001`, not a scanner miss. (The earlier "33 → 2" figure comes from `66fd4300`, measured against live state at that point — a different baseline, so the two numbers are not comparable.) |
 
 ---
 
 ## 5. Handoff Note, Recommendation & Residual Risk
 
 ### Recommendations for Parent Task Closeout
-1. **Absorb Recommendation**: Strongly recommend that parent owner (`Claude3`) absorb this sidecar review packet and finalize PR #682.
-2. **Merge Sequence**: Once PR #682 merges into `dev`, parent task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` should be transitioned to `done` via `scripts/ai-status.sh done`.
+1. **Absorb Status**: Parent PR #682 has been successfully absorbed and merged into `dev` (`262684d7`).
+2. **Merge & Completion**: Parent task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001` has been transitioned to `done`.
 
 ### Residual Risk & Maintenance Note
 - **Idempotent Preservation**: The backfill tool intentionally never overwrites existing task archive snapshots.
 - **Archive Cleanup**: Historical snapshots created before this fix (e.g. `ODP-PLAN-SITESCORE-OUTCOME-001` archived under sidecar PR #633 instead of squash #525) will remain as originally written unless explicitly remediated via a dedicated archive cleanup task or manual overwrite.
 
+### Round 3 Corrections (from reviewer's non-blocking observations)
+
+| Ref | Observation | Resolution |
+|---|---|---|
+| **M1** | Parent Pin stated PR #682 `OPEN`/`BLOCKED` — correct when Round 2 was written (07:02Z), but the PR merged at 07:34Z and the parent archived as `done` | Parent Pin and §5 now record the merged state (`262684d7`); the absorb recommendation is marked as realised |
+| **M2** | §4 attributed "graph 33 → 2" to the approved head, but `b81f4322` records 47 → 5 → 2; 33 → 2 is `66fd4300`'s figure | §4 now carries `b81f4322`'s 47 → 5 → 2 and notes the two baselines are not comparable |
+| **M3** | §3 A6 wrote the ReviewBus form as `[ReviewBus] <id>: ...`; the implementation also accepts a whitespace separator | §3 A6 now states `:` **or** whitespace (`_introduces(..., allow_space=True)`) and cites the test's space form |
+
+None of the three changes the acceptance judgement; the packet's verdict on the parent deliverable is unchanged.
+
 ### Handoff Details
-- **Sidecar Owner**: `Antigravity`
-- **Assigned Reviewer**: `Claude3`
+- **Sidecar Owner**: `Claude` (helper-claimed; originally `Antigravity`)
+- **Assigned Reviewer**: `Claude2`
 - **Sidecar Artifact**: `support/sidecars/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001/ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW.md`
-- **State Handoff**: Handoff task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW` to `review` state assigned to `Claude3`.
+- **State Handoff**: Handoff task `ODP-ORCH-BACKFILL-EVIDENCE-SCAN-001-SIDECAR-REVIEW` to `review` state assigned to `Claude2`.
 

@@ -123,6 +123,29 @@ class InMemoryAuditLog:
             replayed.append(self.record(event))
         return replayed
 
+    def append_verbatim(self, event: AuditEvent) -> AuditEvent:
+        """Append an already-stamped event without re-stamping or re-writing WORM.
+
+        Restore paths rehydrate events that were integrity-stamped and written
+        to the immutable sink when they were first recorded. Re-``record()``ing
+        them would renumber the chain and re-write the same WORM object, which
+        the append-only sinks reject by design, so the persisted
+        ``sequence``/``previous_hash``/``event_hash`` are kept verbatim.
+
+        Chain contiguity is deliberately *not* enforced here: a document whose
+        events were deleted or reordered must rehydrate and then fail
+        :meth:`verify_chain`, which is what makes the tampering visible. Raising
+        at append time would instead hide it behind a load error.
+        """
+
+        if event.sequence is None or event.event_hash is None:
+            raise ValueError(
+                "append_verbatim requires an already-stamped event; "
+                "use record() for new events"
+            )
+        self._events.append(event)
+        return event
+
     def delete_event(self, event_id: str) -> None:
         raise AuditImmutabilityError(
             f"audit sink is append-only; delete denied for {event_id}"
