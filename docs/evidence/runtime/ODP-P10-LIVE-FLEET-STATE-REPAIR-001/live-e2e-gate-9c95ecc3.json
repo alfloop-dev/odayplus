@@ -1,0 +1,387 @@
+{
+  "blockers": [
+    {
+      "check": "runtime:model_bindings",
+      "dependency": "mlflow",
+      "detail": "mode=mlflow-production-unverified ready=False autoSeeded=False error=forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias",
+      "next_action": "Publish/approve the MLflow model versions and point the 'production' alias at them (MLFLOW_TRACKING_URI registry)."
+    },
+    {
+      "check": "runtime:model_capability:forecastops",
+      "dependency": "mlflow",
+      "detail": "available=False reasonCode=PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+      "next_action": "Publish/approve the MLflow model versions and point the 'production' alias at them (MLFLOW_TRACKING_URI registry)."
+    },
+    {
+      "check": "models:registry",
+      "dependency": "mlflow",
+      "detail": "versions=0",
+      "next_action": "Publish/approve the MLflow model versions and point the 'production' alias at them (MLFLOW_TRACKING_URI registry)."
+    },
+    {
+      "check": "models:forecastops:production_alias",
+      "dependency": "mlflow",
+      "detail": "model=forecast_revenue_interval versionsWithProductionAlias=0 (exactly one required)",
+      "next_action": "Publish/approve the MLflow model versions and point the 'production' alias at them (MLFLOW_TRACKING_URI registry)."
+    },
+    {
+      "check": "data:ingestion_runs",
+      "dependency": "external-data",
+      "detail": "runs=0",
+      "next_action": "Run a real ingestion for the required providers; the deployed release has no populated, lineage-complete ingestion run to serve."
+    },
+    {
+      "check": "data:admin_boundary.official_dataset:run_exists",
+      "dependency": "external-data",
+      "detail": "no persisted ingestion run for a required live provider",
+      "next_action": "Run a real ingestion for the required providers; the deployed release has no populated, lineage-complete ingestion run to serve."
+    },
+    {
+      "check": "data:poi.commercial_api:run_exists",
+      "dependency": "external-data",
+      "detail": "no persisted ingestion run for a required live provider",
+      "next_action": "Run a real ingestion for the required providers; the deployed release has no populated, lineage-complete ingestion run to serve."
+    }
+  ],
+  "blocking_dependencies": [
+    "external-data",
+    "mlflow"
+  ],
+  "checks": [
+    {
+      "dependency": "config",
+      "detail": "configured deployed API origin",
+      "name": "config:api_url",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "configured deployed Web origin",
+      "name": "config:web_url",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "9c95ecc3e1f2d0885bb4078070a116e852487f69",
+      "name": "config:expected_sha",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "configured",
+      "name": "config:operator_credential",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "operations_manager,model_owner,data_owner",
+      "name": "config:operator_role",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "admin_boundary.official_dataset,geocode.primary_api,poi.commercial_api",
+      "name": "config:required_providers",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "all required providers are classified",
+      "name": "config:provider_registry_known",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "admin_boundary.official_dataset,poi.commercial_api",
+      "name": "config:snapshot_providers",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "probeProvider=admin_boundary.official_dataset schedulable=admin_boundary.official_dataset,poi.commercial_api",
+      "name": "config:worker_probe_provider",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "dev",
+      "name": "config:expected_deployment",
+      "ok": true
+    },
+    {
+      "dependency": "config",
+      "detail": "deadline=600.0s interval=10.0s",
+      "name": "config:worker_polling",
+      "ok": true
+    },
+    {
+      "dependency": "release",
+      "detail": "expected=9c95ecc3e1f2d0885bb4078070a116e852487f69 actual=9c95ecc3e1f2d0885bb4078070a116e852487f69",
+      "name": "release:platform_version",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "release:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "api-runtime",
+      "detail": "status=ok requireLiveData=True deploymentMode=dev expectedDeploymentMode=dev",
+      "name": "runtime:readiness",
+      "ok": true
+    },
+    {
+      "dependency": "postgresql",
+      "detail": "configured=postgresql runtime=postgresql durable=True reachable=True",
+      "name": "runtime:persistence",
+      "ok": true
+    },
+    {
+      "dependency": "provider",
+      "detail": "mode=live configurationValid=True connectivityHealthy=True",
+      "name": "runtime:provider",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "mode=mlflow-production-unverified ready=False autoSeeded=False error=forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias",
+      "name": "runtime:model_bindings",
+      "ok": false
+    },
+    {
+      "dependency": "provider",
+      "detail": "connectivityHealthy=True authenticated=True schemaValid=True reasonCode=ok",
+      "name": "runtime:provider_probe:admin_boundary.official_dataset",
+      "ok": true
+    },
+    {
+      "dependency": "provider",
+      "detail": "connectivityHealthy=True authenticated=True schemaValid=True reasonCode=ok",
+      "name": "runtime:provider_probe:geocode.primary_api",
+      "ok": true
+    },
+    {
+      "dependency": "provider",
+      "detail": "connectivityHealthy=True authenticated=True schemaValid=True reasonCode=ok",
+      "name": "runtime:provider_probe:poi.commercial_api",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governedDisabled=True available=False reasonCode=DATA_CONTRACT_NOT_MATURE evidenceReasonCode=DATA_CONTRACT_NOT_MATURE evidenceComplete=True evidenceAutoSeeded=False inventoryVersion=pg16-production-model-inventory-2026-07-25-v1 observedAt=2026-07-25T15:20:00Z",
+      "name": "runtime:model_capability:avm",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "available=False reasonCode=PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+      "name": "runtime:model_capability:forecastops",
+      "ok": false
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governedDisabled=True available=False reasonCode=DATA_CONTRACT_NOT_MATURE evidenceReasonCode=DATA_CONTRACT_NOT_MATURE evidenceComplete=True evidenceAutoSeeded=False inventoryVersion=pg16-production-model-inventory-2026-07-25-v1 observedAt=2026-07-25T15:20:00Z",
+      "name": "runtime:model_capability:heatzone",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governedDisabled=True available=False reasonCode=DATA_CONTRACT_NOT_MATURE evidenceReasonCode=DATA_CONTRACT_NOT_MATURE evidenceComplete=True evidenceAutoSeeded=False inventoryVersion=pg16-production-model-inventory-2026-07-25-v1 observedAt=2026-07-25T15:20:00Z",
+      "name": "runtime:model_capability:sitescore",
+      "ok": true
+    },
+    {
+      "dependency": "postgresql",
+      "detail": "mode=live origin=authoritative persistenceMode=postgresql operatorReady=True",
+      "name": "runtime:data_origin",
+      "ok": true
+    },
+    {
+      "dependency": "api-runtime",
+      "detail": "none",
+      "name": "runtime:no_blocking_reasons",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "runtime:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=401 (expected 401/403)",
+      "name": "auth:anonymous_denied",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=200",
+      "name": "auth:operator_bootstrap",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "data_mode=live data_source=operator-shell-production surrogatePaths=none",
+      "name": "auth:operator_bootstrap:provenance",
+      "ok": true
+    },
+    {
+      "dependency": "auth",
+      "detail": "status=307 location=/login?returnTo=%2Foperator",
+      "name": "auth:web_operator_requires_login",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "versions=0",
+      "name": "models:registry",
+      "ok": false
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governed-disabled service must not have a production alias (model=dealroom_avm found=0)",
+      "name": "models:avm:no_fabricated_alias",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "model=forecast_revenue_interval versionsWithProductionAlias=0 (exactly one required)",
+      "name": "models:forecastops:production_alias",
+      "ok": false
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governed-disabled service must not have a production alias (model=heatzone_priority found=0)",
+      "name": "models:heatzone:no_fabricated_alias",
+      "ok": true
+    },
+    {
+      "dependency": "mlflow",
+      "detail": "governed-disabled service must not have a production alias (model=sitescore_propensity found=0)",
+      "name": "models:sitescore:no_fabricated_alias",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "models:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "status=202 jobId=present jobStatus=queued auditEventId=present",
+      "name": "worker:enqueue",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "status=202 sameJob=True created=False",
+      "name": "worker:idempotent_replay",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "worker job oday-worker-r-9c95ecc3e1f2 execution completed",
+      "name": "worker:drain_trigger",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "status=succeeded attempts=1 error=none deadline=600.0s",
+      "name": "worker:terminal_success",
+      "ok": true
+    },
+    {
+      "dependency": "worker",
+      "detail": "status=succeeded attempts=1 error=none deadline=600.0s",
+      "name": "worker:ingestion_probe:poi.commercial_api",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "correlationId=corr-live-e2e-9c95ecc3e1f2-1786284436 jobEnqueueEvents=2 accepted=1",
+      "name": "audit:durable_receipt",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "idempotentReplayEvents=1",
+      "name": "audit:idempotent_replay_receipt",
+      "ok": true
+    },
+    {
+      "dependency": "audit",
+      "detail": "hash-chained receipt present",
+      "name": "audit:receipt_integrity",
+      "ok": true
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "audit:no_surrogate_markers",
+      "ok": true
+    },
+    {
+      "dependency": "external-data",
+      "detail": "runs=0",
+      "name": "data:ingestion_runs",
+      "ok": false
+    },
+    {
+      "dependency": "external-data",
+      "detail": "no persisted ingestion run for a required live provider",
+      "name": "data:admin_boundary.official_dataset:run_exists",
+      "ok": false
+    },
+    {
+      "dependency": "external-data",
+      "detail": "no persisted ingestion run for a required live provider",
+      "name": "data:poi.commercial_api:run_exists",
+      "ok": false
+    },
+    {
+      "dependency": "data-binding",
+      "detail": "none",
+      "name": "data:no_surrogate_markers",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-live-e2e-9c95ecc3e1f2-1786284436",
+  "expected_deployment": "dev",
+  "expected_release_sha": "9c95ecc3e1f2d0885bb4078070a116e852487f69",
+  "generated_at": "2026-08-09T14:07:16Z",
+  "inputs": {
+    "api_url_configured": true,
+    "enrichment_provider_ids": [
+      "geocode.primary_api"
+    ],
+    "operator_credential_configured": true,
+    "required_provider_ids": [
+      "admin_boundary.official_dataset",
+      "geocode.primary_api",
+      "poi.commercial_api"
+    ],
+    "secret_values_redacted": true,
+    "snapshot_provider_ids": [
+      "admin_boundary.official_dataset",
+      "poi.commercial_api"
+    ],
+    "web_url_configured": true,
+    "worker_probe_provider_id": "admin_boundary.official_dataset"
+  },
+  "ok": false,
+  "schema_version": 1,
+  "worker": {
+    "idempotency_key_configured": true,
+    "ingestion_probe_provider_ids": [
+      "admin_boundary.official_dataset",
+      "poi.commercial_api"
+    ],
+    "job_id": "06cb31de-f047-4a16-bc74-d97deb709a0e",
+    "job_type": "external-fetch",
+    "terminal_status": "succeeded"
+  }
+}

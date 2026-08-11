@@ -5,9 +5,11 @@ from modules.priceops.application.pricing import (
     ActivationResult,
     ApprovalBlockedError,
     EvaluationResult,
+    InvalidScenarioError,
     MissingRollbackPlanError,
     PlanNotFoundError,
     PriceOpsService,
+    UnavailableSimulationResultError,
 )
 
 __all__ = [
@@ -15,7 +17,10 @@ __all__ = [
     "ApprovalBlockedError",
     "ActivationResult",
     "EvaluationResult",
+    "InvalidScenarioError",
     "MissingRollbackPlanError",
     "PlanNotFoundError",
     "PriceOpsService",
+    "UnavailableSimulationResultError",
 ]
+

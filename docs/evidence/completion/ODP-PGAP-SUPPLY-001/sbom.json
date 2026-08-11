@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-459c672b6baa26f7b38277b9fb83fa50",
+  "serialNumber": "urn:uuid:sha256-e20bd030faaaf141316420460020eefd",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-07-26T16:31:23.989491+00:00",
+    "timestamp": "2026-08-10T11:16:58.496506+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "cf68e42dfd91c0d8be8ce43dde8bcb9d6a8f08fe"
+        "value": "6b4245581f1a252917165e58b5d43e88d657ab72"
       },
       {
         "name": "sbom-hash",
-        "value": "459c672b6baa26f7b38277b9fb83fa509773acf41f6289219542e1b942414d44"
+        "value": "e20bd030faaaf141316420460020eefd86df45b9fb063197bc5cc6b96081365e"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:bf45c1fd525255f38416ecf233962503c3ff635cee72a0b28726bfa0314bb37c"
+        "value": "sha256:1a5dcac02c7113edacda2b66ab9f657911117752d9f6420e09b1a7eebd7a62e9"
       }
     ]
   },
@@ -1064,10 +1064,10 @@
     },
     {
       "name": "@typescript-eslint/typescript-estree/brace-expansion",
-      "version": "5.0.7",
+      "version": "5.0.9",
       "type": "library",
-      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7",
-      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.7"
+      "purl": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.9",
+      "bom-ref": "pkg:npm/@typescript-eslint/typescript-estree/brace-expansion@5.0.9"
     },
     {
       "name": "@typescript-eslint/typescript-estree/minimatch",
@@ -1512,10 +1512,10 @@
     },
     {
       "name": "brace-expansion",
-      "version": "1.1.16",
+      "version": "1.1.18",
       "type": "library",
-      "purl": "pkg:npm/brace-expansion@1.1.16",
-      "bom-ref": "pkg:npm/brace-expansion@1.1.16"
+      "purl": "pkg:npm/brace-expansion@1.1.18",
+      "bom-ref": "pkg:npm/brace-expansion@1.1.18"
     },
     {
       "name": "braces",
@@ -2562,10 +2562,10 @@
     },
     {
       "name": "js-yaml",
-      "version": "4.3.0",
+      "version": "4.3.1",
       "type": "library",
-      "purl": "pkg:npm/js-yaml@4.3.0",
-      "bom-ref": "pkg:npm/js-yaml@4.3.0"
+      "purl": "pkg:npm/js-yaml@4.3.1",
+      "bom-ref": "pkg:npm/js-yaml@4.3.1"
     },
     {
       "name": "json-buffer",
@@ -2856,10 +2856,10 @@
     },
     {
       "name": "nanoid",
-      "version": "3.3.16",
+      "version": "3.3.18",
       "type": "library",
-      "purl": "pkg:npm/nanoid@3.3.16",
-      "bom-ref": "pkg:npm/nanoid@3.3.16"
+      "purl": "pkg:npm/nanoid@3.3.18",
+      "bom-ref": "pkg:npm/nanoid@3.3.18"
     },
     {
       "name": "napi-postinstall",
@@ -3080,10 +3080,10 @@
     },
     {
       "name": "postcss",
-      "version": "8.5.22",
+      "version": "8.5.26",
       "type": "library",
-      "purl": "pkg:npm/postcss@8.5.22",
-      "bom-ref": "pkg:npm/postcss@8.5.22"
+      "purl": "pkg:npm/postcss@8.5.26",
+      "bom-ref": "pkg:npm/postcss@8.5.26"
     },
     {
       "name": "potpack",
@@ -4136,6 +4136,13 @@
       "bom-ref": "pkg:pypi/evidently@0.7.21"
     },
     {
+      "name": "execnet",
+      "version": "2.1.2",
+      "type": "library",
+      "purl": "pkg:pypi/execnet@2.1.2",
+      "bom-ref": "pkg:pypi/execnet@2.1.2"
+    },
+    {
       "name": "faker",
       "version": "40.35.0",
       "type": "library",
@@ -4221,10 +4228,10 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.55",
+      "version": "3.1.58",
       "type": "library",
-      "purl": "pkg:pypi/gitpython@3.1.55",
-      "bom-ref": "pkg:pypi/gitpython@3.1.55"
+      "purl": "pkg:pypi/gitpython@3.1.58",
+      "bom-ref": "pkg:pypi/gitpython@3.1.58"
     },
     {
       "name": "giturlparse",
@@ -5002,6 +5009,13 @@
       "type": "library",
       "purl": "pkg:pypi/pytest@9.1.1",
       "bom-ref": "pkg:pypi/pytest@9.1.1"
+    },
+    {
+      "name": "pytest-xdist",
+      "version": "3.8.0",
+      "type": "library",
+      "purl": "pkg:pypi/pytest-xdist@3.8.0",
+      "bom-ref": "pkg:pypi/pytest-xdist@3.8.0"
     },
     {
       "name": "python-dateutil",

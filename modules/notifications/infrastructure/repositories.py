@@ -13,6 +13,7 @@ class InMemoryNotificationRepository:
     _preferences: dict[str, UserPreference] = field(default_factory=dict)
     _deduplication: dict[str, tuple[str, datetime]] = field(default_factory=dict)
     _receipts: dict[str, NotificationReceipt] = field(default_factory=dict)
+    _inapp_inbox: list[dict] = field(default_factory=list)
 
     def save_preference(self, pref: UserPreference) -> UserPreference:
         self._preferences[pref.user_id] = pref
@@ -36,6 +37,35 @@ class InMemoryNotificationRepository:
 
     def list_receipts_for_notification(self, notification_id: str) -> list[NotificationReceipt]:
         return [r for r in self._receipts.values() if r.notification_id == notification_id]
+
+    def save_inapp_item(self, item: dict) -> dict:
+        self._inapp_inbox.append(item)
+        return item
+
+    def get_inapp_items(
+        self,
+        user_id: str | None = None,
+        severity: str | None = None,
+        acknowledged: bool | None = None,
+    ) -> list[dict]:
+        res = list(self._inapp_inbox)
+        if user_id:
+            res = [i for i in res if i.get("user_id") == user_id]
+        if severity:
+            res = [i for i in res if i.get("severity") == severity]
+        if acknowledged is not None:
+            res = [i for i in res if i.get("acknowledged") is acknowledged]
+        return res
+
+    def acknowledge_inapp_item(self, user_id: str, notification_id: str) -> bool:
+        now_iso = datetime.now(UTC).isoformat()
+        found = False
+        for i in self._inapp_inbox:
+            if (not user_id or i.get("user_id") == user_id) and i.get("notification_id") == notification_id:
+                i["acknowledged"] = True
+                i["acknowledged_at"] = now_iso
+                found = True
+        return found
 
 
 class DurableNotificationRepository:
@@ -136,3 +166,81 @@ class DurableNotificationRepository:
             )
             for row in rows
         ]
+
+    def save_inapp_item(self, item: dict) -> dict:
+        created_at = item.get("created_at") or datetime.now(UTC).isoformat()
+        self._engine.execute(
+            "INSERT INTO notification_inapp_inbox (notification_id, user_id, title, detail, severity, created_at, acknowledged, acknowledged_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(notification_id) DO UPDATE SET "
+            "  title = excluded.title, "
+            "  detail = excluded.detail, "
+            "  severity = excluded.severity, "
+            "  acknowledged = excluded.acknowledged, "
+            "  acknowledged_at = excluded.acknowledged_at",
+            (
+                item["notification_id"],
+                item["user_id"],
+                item["title"],
+                item["detail"],
+                item.get("severity", "info"),
+                created_at,
+                1 if item.get("acknowledged") else 0,
+                item.get("acknowledged_at"),
+            ),
+        )
+        return item
+
+    def get_inapp_items(
+        self,
+        user_id: str | None = None,
+        severity: str | None = None,
+        acknowledged: bool | None = None,
+    ) -> list[dict]:
+        query = "SELECT * FROM notification_inapp_inbox WHERE 1=1"
+        params: list[Any] = []
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        if severity:
+            query += " AND severity = ?"
+            params.append(severity)
+        if acknowledged is not None:
+            query += " AND acknowledged = ?"
+            params.append(1 if acknowledged else 0)
+        query += " ORDER BY created_at DESC"
+        rows = self._engine.query(query, tuple(params))
+        return [
+            {
+                "notification_id": row["notification_id"],
+                "user_id": row["user_id"],
+                "title": row["title"],
+                "detail": row["detail"],
+                "severity": row["severity"],
+                "created_at": row["created_at"],
+                "acknowledged": bool(row["acknowledged"]),
+                "acknowledged_at": row["acknowledged_at"],
+            }
+            for row in rows
+        ]
+
+    def acknowledge_inapp_item(self, user_id: str, notification_id: str) -> bool:
+        """Acknowledge one inbox item, scoped to ``user_id`` when given.
+
+        Returns whether a row actually matched — the same contract as the
+        in-memory repository. Acknowledging a nonexistent notification, or one
+        owned by another user, must report ``False`` so an API layer built on
+        this cannot answer "acknowledged" to a cross-user attempt.
+        """
+        now_iso = datetime.now(UTC).isoformat()
+        if user_id:
+            result = self._engine.execute(
+                "UPDATE notification_inapp_inbox SET acknowledged = 1, acknowledged_at = ? WHERE notification_id = ? AND user_id = ?",
+                (now_iso, notification_id, user_id),
+            )
+        else:
+            result = self._engine.execute(
+                "UPDATE notification_inapp_inbox SET acknowledged = 1, acknowledged_at = ? WHERE notification_id = ?",
+                (now_iso, notification_id),
+            )
+        return int(getattr(result, "rowcount", -1)) > 0
