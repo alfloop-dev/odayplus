@@ -3305,6 +3305,29 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
         self.assertFalse(needs_materialization)
 
+    def test_agent_cannot_take_non_dispatchable_or_human_gate_task(self) -> None:
+        config = {
+            "agents": {
+                "claude": {"id": "claude", "display_name": "Claude", "provider": "claude"},
+            },
+            "providers": {},
+        }
+
+        self.assertFalse(
+            supervisor.agent_can_take_task(
+                config,
+                "Claude",
+                {"id": "OPERATOR-ONLY", "non_dispatchable": True},
+            )
+        )
+        self.assertFalse(
+            supervisor.agent_can_take_task(
+                config,
+                "Claude",
+                {"id": "HUMAN-GATE", "task_class": "human_gate"},
+            )
+        )
+
     def test_dispatcher_helper_claims_ready_todo_when_owner_is_busy_with_finalize(self) -> None:
         config = {
             "schema": {

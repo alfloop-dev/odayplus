@@ -6936,7 +6936,14 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
         return False
     if agent_dispatch_disabled(config, name):
         return False
-    if not isinstance(task, dict) or task_is_sidecar(task):
+    if not isinstance(task, dict):
+        return True
+    # This is the shared eligibility predicate for owned dispatch, helper
+    # claims, and quota failover. A non-dispatchable or human-gate task must
+    # never become executable merely because an automated lane is idle.
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    if task_is_sidecar(task):
         return True
     return name not in sidecar_only_agent_names(config)
 
