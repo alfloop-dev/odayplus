@@ -988,7 +988,7 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "deny")
 
-    def test_finalize_commit_sequence_is_auto_allowed(self) -> None:
+    def test_finalize_commit_sequence_is_denied_for_immutable_approved_head(self) -> None:
         command = (
             "git add ai-status.json ai-activity-log.jsonl current-work.md && "
             "git commit -m \"BG-006 finalize\""
@@ -1024,11 +1024,11 @@ EOF
         ):
             evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
 
-        self.assertEqual(evaluation["decision"], "allow")
-        self.assertEqual(evaluation["risk_class"], "repo_finalize_git")
+        self.assertEqual(evaluation["decision"], "deny")
+        self.assertEqual(evaluation["risk_class"], "immutable_review_head")
         self.assertIn("BG-006", evaluation["reason"])
 
-    def test_finalize_heredoc_commit_sequence_with_stderr_merge_is_auto_allowed(self) -> None:
+    def test_finalize_heredoc_commit_sequence_with_stderr_merge_is_denied(self) -> None:
         command = """git add docs/operations/postgres-cutoff-wave3-runbook.md && git commit -m "$(cat <<'EOF'
 SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3: owner closeout finalization
 
@@ -1072,8 +1072,8 @@ EOF
         ):
             evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
 
-        self.assertEqual(evaluation["decision"], "allow")
-        self.assertEqual(evaluation["risk_class"], "repo_finalize_git")
+        self.assertEqual(evaluation["decision"], "deny")
+        self.assertEqual(evaluation["risk_class"], "immutable_review_head")
         self.assertIn("SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3", evaluation["reason"])
 
     def test_non_finalize_commit_follows_safe_bash_classification(self) -> None:

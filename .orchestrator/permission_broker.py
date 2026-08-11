@@ -1074,9 +1074,12 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     verb_phrase = " and ".join(verbs)
     task_id = context["task_id"]
     return {
-        "decision": "allow",
-        "reason": f"Auto-allowed safe finalize {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}.",
-        "risk_class": "repo_finalize_git",
+        "decision": "deny",
+        "reason": (
+            f"Denied {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}: "
+            "the reviewer-approved branch head is immutable. Return to review before changing it."
+        ),
+        "risk_class": "immutable_review_head",
     }
 
 

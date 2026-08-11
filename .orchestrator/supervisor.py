@@ -122,6 +122,7 @@ from task_archive import TaskResolver
 from watch_events import queue_delivery_event, run_scan, trim_seen_events
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
+STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 # Max time the antigravity model-rotation will treat a pool as exhausted before
 # re-probing it. Kept SHORT because Gemini's 5-hour limit is a rolling window
 # that recovers within minutes — a longer cooldown (e.g. trusting the error's
@@ -2964,21 +2965,33 @@ def prepare_worker_workspace(
                     return False, message
                 _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
             if refresh_status.startswith("base_advance_rebase_required:"):
-                base_advance_prompt = (
-                    "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
-                    f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
-                    f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
-                    "and rebase/compose the current base in this task worktree, resolve and "
-                    "verify it, then push normally. Do not reset, discard, or overwrite task "
-                    "history.\n\n"
-                )
-                request.message = base_advance_prompt + request.message
-                request.metadata.update(
-                    {
-                        "base_advance_required": True,
-                        "worktree_refresh_status": refresh_status,
-                    }
-                )
+                if str(request.reason or "").strip() == "owned_finalize_dispatch":
+                    # The reviewer approved an exact immutable head. A finalize
+                    # worker may observe that dev advanced, but must never compose
+                    # the base into the approved branch and invalidate the review.
+                    request.metadata.update(
+                        {
+                            "approved_head_immutable": True,
+                            "base_advance_deferred_to_merge_queue": True,
+                            "worktree_refresh_status": refresh_status,
+                        }
+                    )
+                else:
+                    base_advance_prompt = (
+                        "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
+                        f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
+                        f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
+                        "and rebase/compose the current base in this task worktree, resolve and "
+                        "verify it, then push normally. Do not reset, discard, or overwrite task "
+                        "history.\n\n"
+                    )
+                    request.message = base_advance_prompt + request.message
+                    request.metadata.update(
+                        {
+                            "base_advance_required": True,
+                            "worktree_refresh_status": refresh_status,
+                        }
+                    )
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -7156,6 +7169,48 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     )
 
 
+def write_status_snapshot_if_current(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Atomically reject a stale whole-status write instead of losing a newer transition.
+
+    Supervisor probes can spend seconds in git/GitHub calls after loading the
+    board. A worker or operator may complete a canonical status command during
+    that interval. Both writers share the same lock, and every successful write
+    advances a UUID revision, so the old Supervisor snapshot fails closed and
+    the next tick starts from canonical disk state.
+    """
+
+    status_path = config_path(config, "status_file")
+    lock_path = status_path.with_name(f"{status_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_revision = status.get(STATUS_WRITE_REVISION_FIELD)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            latest = load_json(status_path, default={}) or {}
+            actual_revision = latest.get(STATUS_WRITE_REVISION_FIELD)
+            if actual_revision != expected_revision:
+                status.clear()
+                status.update(latest)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "stale_status_write_rejected",
+                        "message": (
+                            "Supervisor discarded a stale ai-status.json snapshot after "
+                            "a newer canonical writer advanced the status revision."
+                        ),
+                        "expected_revision": expected_revision,
+                        "actual_revision": actual_revision,
+                    },
+                )
+                return False
+            status[STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+            write_json(status_path, status)
+            return True
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     if not script.exists():
@@ -7331,7 +7386,8 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
     task["last_update"] = timestamp
     task["next"] = message
-    write_json(config_path(config, "status_file"), status)
+    if not write_status_snapshot_if_current(config, status):
+        return False
     synced = sync_status_pipeline(config)
     if synced:
         write_activity_log(
@@ -7371,7 +7427,6 @@ def persist_task_reassignment(
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
 ) -> bool:
-    status_path = config_path(config, "status_file")
     status = load_status(config)
     tasks = status.get("tasks", []) or []
     timestamp = utc_now()
@@ -7426,7 +7481,8 @@ def persist_task_reassignment(
             }
         )
 
-    write_json(status_path, status)
+    if not write_status_snapshot_if_current(config, status):
+        return False
     return sync_status_pipeline(config)
 
 
@@ -9934,8 +9990,15 @@ def task_actor_assignment_block_reason(
     state: dict[str, Any],
     task: dict[str, Any],
     agent_name: str | None,
+    *,
+    require_dispatch_eligibility: bool = True,
 ) -> str | None:
-    """Return a stable assignment problem, excluding momentary slot occupancy."""
+    """Return a stable assignment problem, excluding momentary slot occupancy.
+
+    Non-dispatchable and human-gate tasks still need registered actors for
+    durable ownership and audit history, but their actors must not be judged
+    by the dispatch predicate that deliberately rejects those task classes.
+    """
     name = str(agent_name or "").strip()
     if not name:
         return "missing actor"
@@ -9945,6 +10008,8 @@ def task_actor_assignment_block_reason(
     agent = (config.get("agents", {}) or {}).get(normalized)
     if not isinstance(agent, dict):
         return f"unregistered actor {name}"
+    if not require_dispatch_eligibility:
+        return None
     if not agent_can_take_task(config, name, task):
         return f"actor {name} is disabled or not eligible for this task"
     pool_reason = account_pool_dispatch_block_reason(config, name, runtime_state=state)
@@ -9967,8 +10032,21 @@ def task_assignment_integrity_issues(
         issues.append("priority_missing_or_invalid")
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
-    owner_reason = task_actor_assignment_block_reason(config, state, task, owner)
-    reviewer_reason = task_actor_assignment_block_reason(config, state, task, reviewer)
+    requires_dispatch = not (task_is_human_gate(task) or bool(task.get("non_dispatchable")))
+    owner_reason = task_actor_assignment_block_reason(
+        config,
+        state,
+        task,
+        owner,
+        require_dispatch_eligibility=requires_dispatch,
+    )
+    reviewer_reason = task_actor_assignment_block_reason(
+        config,
+        state,
+        task,
+        reviewer,
+        require_dispatch_eligibility=requires_dispatch,
+    )
     if owner_reason:
         issues.append(f"owner_unavailable:{owner_reason}")
     if reviewer_reason:
@@ -9993,6 +10071,35 @@ def task_assignment_integrity_issues(
         if waiting_reason:
             issues.append(f"waiting_for_unavailable:{waiting_reason}")
     return issues
+
+
+def reassert_approved_review_gate_if_due(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    now_ts: float | None = None,
+) -> bool:
+    """Repair an overwritten/missing exact-head review gate at a bounded rate."""
+    settings = ready_dispatch_settings(config)
+    try:
+        interval = max(30.0, float(settings.get("review_gate_reassert_seconds", 300)))
+    except (TypeError, ValueError):
+        interval = 300.0
+    current_ts = now_ts if now_ts is not None else datetime.now(UTC).timestamp()
+    try:
+        last_ts = float(task.get("review_gate_reasserted_at_ts") or 0)
+    except (TypeError, ValueError):
+        last_ts = 0.0
+    if last_ts and current_ts - last_ts < interval:
+        return False
+
+    # Head equality and approved_head presence are verified immediately before
+    # this helper is called. Re-emitting the same desired state is idempotent
+    # and repairs a later stale writer/status post without weakening the gate.
+    runtime_ai_status.emit_task_review_status_check(task, "review_approved")
+    task["review_gate_reasserted_at_ts"] = current_ts
+    task["review_gate_reasserted_at"] = utc_now()
+    return True
 
 
 def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) -> bool:
@@ -10027,7 +10134,8 @@ def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) ->
         )
         changed = True
     if changed:
-        write_json(config_path(config, "status_file"), status)
+        if not write_status_snapshot_if_current(config, status):
+            return False
         sync_status_pipeline(config)
     return changed
 
@@ -10087,7 +10195,8 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
         )
         changed = True
     if changed:
-        write_json(config_path(config, "status_file"), status)
+        if not write_status_snapshot_if_current(config, status):
+            return False
         sync_status_pipeline(config)
     return changed
 
@@ -11495,8 +11604,8 @@ def dispatch_priority_for_task(
         except Exception:
             return None
         try:
-            _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
-            if ci_status not in {"success", "none"}:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
+            if str(pr_status or "").strip().upper() != "MERGED" or ci_status not in {"success", "none"}:
                 return None
         except Exception:
             return None
@@ -12283,8 +12392,8 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -12304,8 +12413,8 @@ def dispatch_ready_tasks(
                             f"({approved_head[:8]}); re-review required."
                         )
                         task.pop("approved_head", None)
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         sync_status_pipeline(config)
                         write_activity_log(
                             config,
@@ -12328,8 +12437,8 @@ def dispatch_ready_tasks(
                         )
                         if task.get("next") != msg:
                             task["next"] = msg
-                            status_path = config_path(config, "status_file")
-                            write_json(status_path, status)
+                            if not write_status_snapshot_if_current(config, status):
+                                return changed
                             write_activity_log(
                                 config,
                                 {
@@ -12340,26 +12449,30 @@ def dispatch_ready_tasks(
                             )
                     continue
 
+                pr_status = "UNKNOWN"
                 ci_status = "unknown"
                 try:
-                    _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                    pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
                 except Exception as err:
                     console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
 
                 if ci_status == "pending":
                     now_ts = datetime.now(UTC).timestamp()
+                    status_dirty = reassert_approved_review_gate_if_due(
+                        config,
+                        task,
+                        now_ts=now_ts,
+                    )
                     start_ts = task.get("ci_pending_since_ts")
                     if not start_ts:
                         task["ci_pending_since_ts"] = now_ts
                         task["ci_pending_since"] = utc_now()
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        status_dirty = True
                     elif now_ts - float(start_ts) > 1800:
                         msg = f"CI status for task {task_id} has been pending for over 30 minutes; operator intervention required."
                         if task.get("next") != msg:
                             task["next"] = msg
-                            status_path = config_path(config, "status_file")
-                            write_json(status_path, status)
+                            status_dirty = True
                             write_activity_log(
                                 config,
                                 {
@@ -12368,14 +12481,17 @@ def dispatch_ready_tasks(
                                     "message": msg,
                                 },
                             )
+                    if status_dirty:
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                     continue
                 elif ci_status == "failure":
                     task.pop("ci_pending_since_ts", None)
                     msg = f"CI checks for task {task_id} failed; resolve failing checks before finalization."
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -12395,8 +12511,8 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -12408,8 +12524,24 @@ def dispatch_ready_tasks(
                     continue
                 else:
                     if task.pop("ci_pending_since_ts", None) is not None:
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
+
+                # CI success on an open PR is only merge readiness, not task
+                # completion. Dispatching an LLM here caused it to compose dev
+                # and create a closeout commit, invalidating the exact head the
+                # reviewer had frozen. The merge queue owns base composition;
+                # the owner finalize lane starts only after GitHub says MERGED.
+                if str(pr_status or "").strip().upper() != "MERGED":
+                    msg = (
+                        f"PR for task {task_id} is CI-green and awaiting merge queue; "
+                        "approved branch head remains immutable and finalize dispatch is deferred."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        if not write_status_snapshot_if_current(config, status):
+                            return changed
+                    continue
 
                 reason = "owned_finalize_dispatch"
                 priority = 1
