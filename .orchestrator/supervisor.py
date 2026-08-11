@@ -5932,6 +5932,17 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
     return False
 
 
+def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Commit a scheduler transition through one canonical write/sync path.
+
+    Callers may decide a transition, but they cannot independently choose a
+    snapshot write versus derived-artifact sync.  The next refactor moves the
+    remaining field mutations into this boundary; keeping the commit point
+    singular first prevents a new writer from bypassing revision fencing.
+    """
+    return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
+
+
 def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -> bool:
     reason = str(event.get("reason") or "").strip()
     action = DISPATCH_STATUS_ACTIONS.get(reason)
@@ -6066,9 +6077,7 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
     task["last_update"] = timestamp
     task["next"] = message
-    if not write_status_snapshot_if_current(config, status):
-        return False
-    synced = sync_status_pipeline(config)
+    synced = commit_canonical_task_transition(config, status)
     if synced:
         write_activity_log(
             config,
@@ -6139,7 +6148,7 @@ def persist_task_reassignment(
                 continue
             blocker["status"] = "resolved"
             blocker["resolved_at"] = timestamp
-            blocker["resolution_ref"] = f"chair_reassignment:{task_id}"
+            blocker["resolution_ref"] = f"scheduler_reassignment:{task_id}"
 
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") != task_id or handoff.get("status") == "done":
@@ -6161,9 +6170,7 @@ def persist_task_reassignment(
             }
         )
 
-    if not write_status_snapshot_if_current(config, status):
-        return False
-    return sync_status_pipeline(config)
+    return commit_canonical_task_transition(config, status)
 
 
 def maybe_reassign_task_after_worker_failure(
