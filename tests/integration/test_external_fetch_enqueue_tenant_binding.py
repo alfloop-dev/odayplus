@@ -64,8 +64,12 @@ def bundle(tmp_path):
         made.engine.close()
 
 
-def _headers(*, tenant: str | None = OPERATOR_TENANT, roles: str = "data_owner",
-             subject: str | None = "live-e2e-gate") -> dict[str, str]:
+def _headers(
+    *,
+    tenant: str | None = OPERATOR_TENANT,
+    roles: str = "data_owner",
+    subject: str | None = "live-e2e-gate",
+) -> dict[str, str]:
     headers = {"x-roles": roles}
     if subject is not None:
         headers["x-subject-id"] = subject
@@ -172,10 +176,7 @@ def test_matching_tenant_on_the_payload_is_accepted(bundle) -> None:
     )
 
     assert accepted.status_code == 202, accepted.text
-    assert (
-        bundle.job_queue.get(accepted.json()["job_id"]).payload["tenant_id"]
-        == OPERATOR_TENANT
-    )
+    assert bundle.job_queue.get(accepted.json()["job_id"]).payload["tenant_id"] == OPERATOR_TENANT
 
 
 # -- 3. a foreign tenant is refused, not honoured ----------------------------
@@ -264,9 +265,7 @@ def test_two_tenants_sharing_one_idempotency_key_are_not_collapsed(bundle) -> No
     payload = {"provider_id": PROVIDER_ID, "schedule_id": "live-e2e-gate"}
 
     first = _enqueue(client, payload, headers=OPERATOR_HEADERS, key="shared-key")
-    other = _enqueue(
-        client, payload, headers=_headers(tenant="tenant-other"), key="shared-key"
-    )
+    other = _enqueue(client, payload, headers=_headers(tenant="tenant-other"), key="shared-key")
 
     assert first.status_code == 202 and other.status_code == 202
     assert other.json()["created"] is True
