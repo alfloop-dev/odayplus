@@ -856,6 +856,15 @@ export type NetPlanSolvePayload = {
   solved_at?: string | null;
 };
 
+/** NetPlanUpdateScenarioPayload */
+export type NetPlanUpdateScenarioPayload = {
+  candidate_sites?: Record<string, unknown>[] | null;
+  constraints?: Record<string, unknown> | null;
+  existing_stores?: Record<string, unknown>[] | null;
+  planning_horizon?: string | null;
+  scenario_name?: string | null;
+};
+
 /** NetworkListingActorPayload */
 export type NetworkListingActorPayload = {
   actorName?: string | null;
@@ -1211,6 +1220,18 @@ export type ScopeContext = {
   tenant_id: string;
 };
 
+/** Scope constraint parameters on Tenant, Brand, Region, Store, etc. */
+export type ScopePayload = {
+  assigned_area_ids?: string[];
+  brand_ids?: string[];
+  clearance?: string;
+  heat_zone_ids?: string[];
+  modules?: string[];
+  region_ids?: string[];
+  store_ids?: string[];
+  tenant_id?: string;
+};
+
 /** SegmentMetricPayload */
 export type SegmentMetricPayload = {
   metrics: Record<string, number>;
@@ -1351,6 +1372,27 @@ export type UrlIntakeRequest = {
   scope: ScopeContext;
 };
 
+/** POST /operator/users — payload for user role & scope assignment. */
+export type UserSavePayload = {
+  actorName?: string | null;
+  actorRole?: string | null;
+  attributes?: Record<string, unknown> | null;
+  email?: string | null;
+  name?: string | null;
+  reason?: string;
+  roles: string[];
+  scope?: ScopePayload | null;
+  status?: string;
+  subjectId: string;
+};
+
+/** POST /operator/users/{subject_id}/status — payload for status change. */
+export type UserStatusPayload = {
+  actorName?: string | null;
+  reason?: string;
+  status: string;
+};
+
 /** ValidationError */
 export type ValidationError = {
   ctx?: Record<string, unknown>;
@@ -1358,6 +1400,45 @@ export type ValidationError = {
   loc: (string | number)[];
   msg: string;
   type: string;
+};
+
+/** XlsxCommitReceipt */
+export type XlsxCommitReceipt = {
+  accepted_count: number;
+  batch_id: string;
+  committed_at: string;
+  correlation_id: string;
+  intake_ids: string[];
+  rejected_count: number;
+  replayed?: boolean;
+};
+
+/** XlsxCommitRequest */
+export type XlsxCommitRequest = {
+  batch_id?: string | null;
+  rows: Record<string, unknown>[];
+  scope: ScopeContext;
+};
+
+/** XlsxPreviewRequest */
+export type XlsxPreviewRequest = {
+  custom_mapping?: Record<string, string> | null;
+  file_base64: string;
+  scope?: ScopeContext | null;
+};
+
+/** XlsxPreviewResponse */
+export type XlsxPreviewResponse = {
+  batch_id: string;
+  has_formula_or_external_link_warnings: boolean;
+  preview_rows: Record<string, unknown>[];
+  rejected_count: number;
+  row_errors: Record<string, unknown>[];
+  schema_mapping: Record<string, string>;
+  total_rows: number;
+  valid_count: number;
+  valid_rows: Record<string, unknown>[];
+  warnings: string[];
 };
 
 /** ConflictCheckPayload */
@@ -1496,6 +1577,9 @@ export const API_PATHS = {
   "/api/v1/identity/split": ["POST"],
   "/api/v1/identity/unmerge": ["POST"],
   "/api/v1/intake-batches": ["POST"],
+  "/api/v1/intake-batches/xlsx/commit": ["POST"],
+  "/api/v1/intake-batches/xlsx/errors/{batch_id}/export": ["GET"],
+  "/api/v1/intake-batches/xlsx/preview": ["POST"],
   "/api/v1/intakes": ["GET"],
   "/api/v1/intakes/url": ["POST"],
   "/api/v1/intakes/{intake_id}": ["GET"],
@@ -1539,7 +1623,7 @@ export const API_PATHS = {
   "/api/v1/listings/import-jobs": ["POST"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
-  "/api/v1/netplan/scenarios/{scenario_id}": ["GET"],
+  "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],
   "/api/v1/netplan/scenarios/{scenario_id}/close": ["POST"],
   "/api/v1/netplan/scenarios/{scenario_id}/decide": ["POST"],
   "/api/v1/netplan/scenarios/{scenario_id}/execute": ["POST"],
@@ -1631,6 +1715,11 @@ export const API_PATHS = {
   "/api/v1/operator/store-ops/issues/{issue_id}/{action_type}": ["POST"],
   "/api/v1/operator/store-ops/summary": ["GET"],
   "/api/v1/operator/today": ["GET"],
+  "/api/v1/operator/users": ["GET", "POST"],
+  "/api/v1/operator/users/audit-trail": ["GET"],
+  "/api/v1/operator/users/roles": ["GET"],
+  "/api/v1/operator/users/{subject_id}": ["GET"],
+  "/api/v1/operator/users/{subject_id}/status": ["POST"],
   "/api/v1/platform/dashboards/provisioned": ["GET"],
   "/api/v1/platform/metrics/export": ["GET"],
   "/api/v1/platform/observability": ["GET"],

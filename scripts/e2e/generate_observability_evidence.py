@@ -108,10 +108,11 @@ def main():
 
     # 5. AlertRouter routes and triggers an alert
     print("\n--- Step 3: Triggering Alert and Local Test Notification Delivery ---")
-    alert_router = AlertRouter(notification_service=notification_service)
+    git_sha = os.getenv("RELEASE_SHA") or "f" * 40
+    alert_router = AlertRouter(notification_service=notification_service, release_sha=git_sha)
 
     # We will trigger "audit-write-failure" (P1 alert)
-    nid = alert_router.trigger_alert("audit-write-failure", "Durable storage write timeout on DB query")
+    nid = alert_router.trigger_alert("audit-write-failure", "Durable storage write timeout on DB query", release_sha=git_sha)
     print(f"Alert Trigger Notification ID: {nid}")
     server.shutdown()
 

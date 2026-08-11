@@ -921,6 +921,39 @@ def create_operator_router(
                 service_resolver=governance_resolver,
             )
         )
+        from apps.api.app.routes.operator_modules.users_roles import (
+            create_user_role_sub_router,
+        )
+        from modules.opsboard.application.user_role_management import (
+            UserRoleManagementService,
+        )
+
+        user_role_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "users-roles",
+        )
+        user_role_resolver = DurableTenantServiceResolver(
+            user_role_state_repository,
+            factory=lambda state, tenant_id: UserRoleManagementService(
+                audit_log=active_audit_log,
+                initial_state=state,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={"save_user", "set_user_status"},
+        )
+        router.include_router(
+            create_user_role_sub_router(
+                UserRoleManagementService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "user", Action.VIEW, engine=authz_engine
+                ),
+                require_manage_permission_fn=require_operator_permission(
+                    "user", Action.UPDATE, engine=authz_engine
+                ),
+                service_resolver=user_role_resolver,
+            )
+        )
 
         return router
 
@@ -1123,6 +1156,56 @@ def create_operator_router(
             privacy_service,
             require_view_permission_fn=operator_view_guard,
             require_write_permission_fn=operator_write_guard,
+        )
+    )
+
+    # Users & Roles — Self-service role assignment, scope axes, and audit logging (ODP-CAP-USER-ROLE-UI-001)
+    from apps.api.app.routes.operator_modules.live_service import (
+        DurableTenantServiceResolver,
+    )
+    from apps.api.app.routes.operator_modules.users_roles import (
+        create_user_role_sub_router,
+    )
+    from modules.opsboard.application.user_role_management import (
+        UserRoleManagementService,
+    )
+    from shared.infrastructure.persistence.operator_domains import (
+        DurableOperatorDomainStateRepository,
+    )
+
+    user_role_state_repo_fallback = (
+        DurableOperatorDomainStateRepository(document_store, "users-roles")
+        if document_store is not None
+        else None
+    )
+    user_role_resolver_fallback = (
+        DurableTenantServiceResolver(
+            user_role_state_repo_fallback,
+            factory=lambda state, tenant_id: UserRoleManagementService(
+                audit_log=active_audit_log,
+                initial_state=state,
+                seed_fixtures=True,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={"save_user", "set_user_status"},
+        )
+        if user_role_state_repo_fallback is not None
+        else None
+    )
+
+    user_role_view_guard = require_operator_permission(
+        "user", Action.VIEW, tenant_id=OPERATOR_TENANT_ID, engine=authz_engine
+    )
+    user_role_manage_guard = require_operator_permission(
+        "user", Action.UPDATE, tenant_id=OPERATOR_TENANT_ID, engine=authz_engine
+    )
+    user_role_service = UserRoleManagementService(audit_log=active_audit_log)
+    router.include_router(
+        create_user_role_sub_router(
+            user_role_service,
+            require_view_permission_fn=user_role_view_guard,
+            require_manage_permission_fn=user_role_manage_guard,
+            service_resolver=user_role_resolver_fallback,
         )
     )
 
