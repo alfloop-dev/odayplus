@@ -14,6 +14,15 @@ This tool writes the missing snapshots. It is deliberately conservative:
   the target ref is skipped, not archived. Documentation wording is never used
   as the completion signal, because it is unreliable (one task's evidence file
   still reads "still requires ... before merge" for work that was merged).
+* **Evidence is matched on delivery *form*, not on mention.** ``git log --grep``
+  searches the whole commit message, so the newest commit naming a task id is
+  very often some *other* task's commit that merely referenced it in its body.
+  ``--grep`` is therefore used only as a cheap prefilter; every candidate is
+  then re-checked with :func:`subject_delivers`, which accepts a subject only
+  when it is a merge of that task's own ``task/<id>`` branch or a squash
+  subject introduced by ``<id>:``. Candidates are scanned until one qualifies
+  instead of stopping at the first, which is what previously turned real
+  merges into "no merge evidence".
 * **Idempotent.** An existing snapshot is never overwritten.
 * **Dry-run by default.** ``--apply`` is required to write anything.
 * **Honestly labelled.** Every snapshot carries ``backfill.retroactive: true``
@@ -65,6 +74,25 @@ CANDIDATE_TASK_IDS = (
 
 PR_PATTERN = re.compile(r"#(\d+)")
 
+# "Merge pull request #678 from alfloop-dev/task/ODP-CI-FLAKE-REMEDIATION-001"
+MERGE_SUBJECT_PATTERN = re.compile(
+    r"^Merge pull request #(?P<pr>\d+) from (?P<source>\S+)\s*$"
+)
+
+# "[ReviewBus] ODP-PLAN-AVM-OUTCOME-001 <summary> (#587)" -- ReviewBus PRs land
+# as squashes whose subject carries this prefix instead of "<id>: ".
+REVIEWBUS_PREFIX_PATTERN = re.compile(r"^\[ReviewBus\]\s+", re.IGNORECASE)
+
+# Upper bound on candidates examined per task id. --grep already narrows the
+# history to commits that mention the id at all, so this only bounds the
+# pathological case; it is not the "stop at the first hit" behaviour that
+# caused the original false negatives.
+SCAN_LIMIT = 500
+
+DELIVERY_FORM_MERGE = "merge-commit"
+DELIVERY_FORM_SQUASH = "squash-subject"
+DELIVERY_FORM_REVIEWBUS = "reviewbus-subject"
+
 
 class MergeEvidence(dict):
     """Merge commit, ISO date and PR number backing one task id."""
@@ -81,37 +109,127 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def find_merge_evidence(repo: Path, task_id: str, ref: str) -> MergeEvidence | None:
-    """Return merge evidence for ``task_id`` on ``ref``, or None when absent.
+def _task_branch(source: str) -> str | None:
+    """Return the task id from a merge source ref, or None if it is not a task branch.
 
-    A ``Merge pull request ... /task/<id>`` commit is the strongest signal and is
-    preferred. A squash merge that names the task id in its subject is accepted
-    as a fallback, since some tasks land that way.
+    Both ``alfloop-dev/task/<id>`` and the bare ``task/<id>`` occur in history.
     """
 
-    for pattern in (f"Merge pull request.*{task_id}", task_id):
-        line = _git(
-            repo,
-            "log",
-            ref,
-            "--format=%H|%cI|%s",
-            f"--grep={pattern}",
-            "--max-count=1",
-        )
-        if not line:
-            continue
+    marker = "/task/"
+    index = source.find(marker)
+    if index >= 0:
+        return source[index + len(marker) :]
+    if source.startswith("task/"):
+        return source[len("task/") :]
+    return None
+
+
+def _introduces(text: str, task_id: str, *, allow_space: bool) -> bool:
+    """True when ``text`` starts with ``task_id`` at a real identifier boundary.
+
+    The boundary check is the whole point: ``ODP-X-001`` must not be considered
+    the opener of ``ODP-X-001-SIDECAR-ACCEPTANCE: ...``.
+    """
+
+    if text[: len(task_id)].casefold() != task_id.casefold():
+        return False
+    tail = text[len(task_id) :]
+    if tail.startswith(":"):
+        return True
+    return allow_space and (tail == "" or tail[:1].isspace())
+
+
+def subject_delivers(subject: str, task_id: str) -> str | None:
+    """Return the delivery form when ``subject`` *delivers* ``task_id``, else None.
+
+    Only three subject shapes count as a delivery, and each must name the task
+    id exactly:
+
+    ``merge-commit``
+        ``Merge pull request #N from <owner>/task/<task_id>`` -- the branch tail
+        must equal the task id.
+    ``squash-subject``
+        ``<task_id>: <summary>``.
+    ``reviewbus-subject``
+        ``[ReviewBus] <task_id> <summary> (#N)``.
+
+    Merely *mentioning* the id is not delivery. This matters because task ids
+    are routinely prefixes of one another, and a sidecar's own commit normally
+    names its parent in the summary. ``[ReviewBus] ODP-X-001-SIDECAR-ACCEPTANCE
+    Prepare ODP-X-001 acceptance packet`` delivers the sidecar, not ``ODP-X-001``
+    -- attributing it to the parent is precisely the false positive that put a
+    parent task in the archive on the strength of its sidecar's merge.
+    """
+
+    subject = subject.strip()
+
+    merge_match = MERGE_SUBJECT_PATTERN.match(subject)
+    if merge_match:
+        branch = _task_branch(merge_match.group("source"))
+        if branch is not None and branch.casefold() == task_id.casefold():
+            return DELIVERY_FORM_MERGE
+        return None
+
+    reviewbus = REVIEWBUS_PREFIX_PATTERN.match(subject)
+    if reviewbus:
+        rest = subject[reviewbus.end() :]
+        if _introduces(rest, task_id, allow_space=True):
+            return DELIVERY_FORM_REVIEWBUS
+        return None
+
+    if _introduces(subject, task_id, allow_space=False):
+        return DELIVERY_FORM_SQUASH
+    return None
+
+
+def find_merge_evidence(
+    repo: Path, task_id: str, ref: str, scan_limit: int = SCAN_LIMIT
+) -> MergeEvidence | None:
+    """Return merge evidence for ``task_id`` on ``ref``, or None when absent.
+
+    ``--grep`` is a prefilter only: it matches the whole commit message, so most
+    hits are other tasks' commits that merely referenced this id. Every
+    candidate is re-checked with :func:`subject_delivers`, and the scan
+    continues past non-delivering commits rather than giving up on the first.
+
+    A ``Merge pull request ... /task/<id>`` commit is the strongest signal and
+    is preferred; a squash subject introduced by ``<id>:`` is accepted as a
+    fallback, since some tasks land that way.
+    """
+
+    output = _git(
+        repo,
+        "log",
+        ref,
+        "--format=%H|%cI|%s",
+        f"--grep={task_id}",
+        "--fixed-strings",
+        "--regexp-ignore-case",
+        f"--max-count={scan_limit}",
+    )
+    if not output:
+        return None
+
+    fallback: MergeEvidence | None = None
+    for line in output.splitlines():
         sha, _, rest = line.partition("|")
         iso_date, _, subject = rest.partition("|")
-        if task_id not in subject and "Merge pull request" not in subject:
+        form = subject_delivers(subject, task_id)
+        if form is None:
             continue
         pr_match = PR_PATTERN.search(subject)
-        return MergeEvidence(
+        evidence = MergeEvidence(
             merge_commit=sha,
             merged_at=iso_date,
             merge_pr=f"#{pr_match.group(1)}" if pr_match else None,
             subject=subject,
+            delivery_form=form,
         )
-    return None
+        if form == DELIVERY_FORM_MERGE:
+            return evidence
+        if fallback is None:
+            fallback = evidence
+    return fallback
 
 
 def find_repo_artifacts(repo: Path, task_id: str, limit: int = 4) -> list[str]:
@@ -154,6 +272,7 @@ def build_snapshot(
             "merge_commit": evidence["merge_commit"],
             "merge_pr": evidence["merge_pr"],
             "merge_subject": evidence["subject"],
+            "delivery_form": evidence.get("delivery_form"),
             "note": (
                 "Derived from repository merge evidence, not from a live "
                 "lifecycle transition. owner/reviewer were not recoverable."

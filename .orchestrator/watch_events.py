@@ -266,8 +266,10 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "owned_finalize_dispatch",
     }:
         lifecycle_guardrails = (
-            "這次是 owner dispatch。若工作已可送審，程序退出前必須用正式 handoff／re_review "
-            "把 task 轉成 review；只寫『ready/awaiting review』但不轉狀態，會被判定為 "
+            "這次是 owner dispatch。若工作已可送審，程序退出前必須先用 "
+            "scripts/git/task_finalize.sh 推送 task branch、建立 PR 並原子記錄 review submission；"
+            "不得直接 handoff／re_review 製造沒有遠端 PR 證明的 review。只寫『ready/awaiting review』"
+            "但不完成正式提交，會被判定為 "
             "no-progress failure。若只完成一段增量，至少要留下新的 task branch commit 或實質 next 狀態。"
         )
     else:

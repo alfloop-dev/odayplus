@@ -63,6 +63,7 @@ AUTH_ATTEMPTS_METRIC = MetricDefinition(
     category=MetricCategory.ERROR,
     description="Authentication attempts by token type and outcome.",
     labels=("token_type", "outcome", "reason"),
+    owner="security-audit",
 )
 
 

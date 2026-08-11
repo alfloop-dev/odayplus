@@ -1,0 +1,70 @@
+{
+  "checks": [
+    {
+      "detail": "exact release SHA is present in image/env/labels",
+      "name": "jobs-smoke:worker:release_sha",
+      "ok": true
+    },
+    {
+      "detail": "bounded worker entrypoint is configured",
+      "name": "jobs-smoke:worker:entrypoint",
+      "ok": true
+    },
+    {
+      "detail": "selected=admin_boundary.official_dataset,geocode.primary_api,poi.commercial_api",
+      "name": "jobs-smoke:worker:provider_selection",
+      "ok": true
+    },
+    {
+      "detail": "job selection matches the release provider allowlist",
+      "name": "jobs-smoke:worker:selected_provider_release_match",
+      "ok": true
+    },
+    {
+      "detail": "database and every selected provider secret are bound to Secret Manager references: ODAY_DATABASE_URL,ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN,ODP_GEOCODE_PROVIDER_API_KEY,ODP_POI_PROVIDER_API_KEY",
+      "name": "jobs-smoke:worker:secret_bindings",
+      "ok": true
+    },
+    {
+      "detail": "latest execution completed with succeededCount>=1 and failedCount=0",
+      "name": "jobs-smoke:worker:execution",
+      "ok": true
+    },
+    {
+      "detail": "execution has a queryable Cloud Run status receipt",
+      "name": "jobs-smoke:worker:execution_receipt",
+      "ok": true
+    }
+  ],
+  "execution_name": "oday-worker-r-9c95ecc3e1f2-hm5jl",
+  "expected_sha": "9c95ecc3e1f2d0885bb4078070a116e852487f69",
+  "generated_at": "2026-08-09T14:04:56Z",
+  "job_kind": "worker",
+  "job_name": "oday-worker-r-9c95ecc3e1f2",
+  "ok": true,
+  "release_provider_ids": [
+    "admin_boundary.official_dataset",
+    "geocode.primary_api",
+    "poi.commercial_api"
+  ],
+  "required_secret_env_vars": [
+    "ODAY_DATABASE_URL",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
+    "ODP_GEOCODE_PROVIDER_API_KEY",
+    "ODP_POI_PROVIDER_API_KEY"
+  ],
+  "schema_version": 1,
+  "secret_bound_env_vars": [
+    "ODAY_DATABASE_URL",
+    "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
+    "ODP_GEOCODE_PROVIDER_API_KEY",
+    "ODP_POI_PROVIDER_API_KEY"
+  ],
+  "secret_values_redacted": true,
+  "selected_provider_ids": [
+    "admin_boundary.official_dataset",
+    "geocode.primary_api",
+    "poi.commercial_api"
+  ],
+  "unselected_provider_secret_env_vars": []
+}

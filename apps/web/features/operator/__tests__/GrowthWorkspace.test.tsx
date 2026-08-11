@@ -226,6 +226,42 @@ describe("GrowthWorkspace API loading", () => {
     expect(within(table).getAllByText("建立定價草稿")).toHaveLength(3);
   });
 
+  it("renders PriceOps interactive scenario workbench, baseline/alternative bands, and decision writeback", () => {
+    vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
+
+    render(
+      <GrowthWorkspace
+        apiData={{
+          availability: "fixture",
+          freshness: FIXTURE_FRESHNESS,
+          fromApi: false,
+          items: GROWTH_ITEMS,
+          recommendations: PRICEOPS_RECOMMENDATIONS,
+          segments: SEGMENTS,
+        }}
+        basePath="/operator"
+        searchParams={{ gtab: "priceops" }}
+      />,
+    );
+
+    const workbench = screen.getByTestId("priceops-scenario-workbench");
+    expect(workbench).toBeInTheDocument();
+
+    const baselineBand = screen.getByTestId("priceops-baseline-band");
+    expect(baselineBand).toBeInTheDocument();
+    expect(within(baselineBand).getByText(/Baseline \(目前價格\)/)).toBeInTheDocument();
+
+    const alternativeBand = screen.getByTestId("priceops-alternative-band");
+    expect(alternativeBand).toBeInTheDocument();
+    expect(within(alternativeBand).getByText(/Alternative Scenario \(情境模擬\)/)).toBeInTheDocument();
+
+    const writebackBtn = screen.getByTestId("priceops-writeback-btn");
+    expect(writebackBtn).toBeInTheDocument();
+
+    fireEvent.click(writebackBtn);
+    expect(screen.getByTestId("priceops-audit-status")).toBeInTheDocument();
+  });
+
   it("keeps Growth approval decisions in Govern", () => {
     vi.stubEnv("NEXT_PUBLIC_PRODUCTION_MODE", "false");
     const pending = {

@@ -38,7 +38,6 @@ DEFAULT_ACTIVE_WORKER_STATUSES = [
     "running",
     "waiting_approval",
     "retry_backoff",
-    "manual_pending",
     "stalled",
 ]
 DEFAULT_MAX_TASKS_PER_AGENT: int | None = None
@@ -56,6 +55,18 @@ def dispatch_reason_priority(reason: str | None) -> int | None:
 
 def is_execution_dispatch_reason(reason: str | None) -> bool:
     return str(reason or "") in EXECUTION_DISPATCH_REASONS
+
+
+def task_priority_rank(task: dict[str, Any] | None) -> int:
+    """Return the durable business priority rank used by the ready dispatcher.
+
+    Lifecycle work (review/finalize/execute) remains a tie-breaker, not the
+    primary priority.  Older state files often omit a priority, so an unset or
+    malformed value deliberately sorts after P0-P3 instead of silently being
+    treated as P0.
+    """
+    value = str((task or {}).get("priority") or "").strip().upper()
+    return {"P0": 0, "P1": 1, "P2": 2, "P3": 3}.get(value, 4)
 
 
 def normalized_status_set(values: Any, default: list[str]) -> set[str]:

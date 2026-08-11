@@ -1,0 +1,90 @@
+ ⚠ Compiled with warnings in 32.8s
+
+./features/operator/designAligned.module.css
+Warning
+
+(1155:3) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./features/operator/designAligned.module.css
+./features/operator/DesignAlignedWorkspaces.tsx
+
+./features/operator/networkFindAreas.module.css
+Warning
+
+(1939:3) autoprefixer: start value has mixed support, consider using flex-start instead
+
+Import trace for requested module:
+./features/operator/networkFindAreas.module.css
+./features/operator/NetworkFindAreasWorkspace.tsx
+
+./features/operator/networkFindAreas.module.css
+Warning
+
+(2049:3) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./features/operator/networkFindAreas.module.css
+./features/operator/NetworkFindAreasWorkspace.tsx
+
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|<repo>/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!<repo>/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!<repo>/apps/web/features/operator/designAligned.module.css': No serializer registered for Warning
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> Array { 1 items } -> webpack/lib/ModuleWarning -> Warning
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|<repo>/node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!<repo>/node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!<repo>/apps/web/features/operator/networkFindAreas.module.css': No serializer registered for Warning
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> Array { 2 items } -> webpack/lib/ModuleWarning -> Warning
+ ⚠ Compiled with warnings in 27.1s
+
+./features/operator/designAligned.module.css.webpack[javascript/auto]!=!../../node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!../../node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!./features/operator/designAligned.module.css
+Warning
+
+(1155:3) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./features/operator/designAligned.module.css.webpack[javascript/auto]!=!../../node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!../../node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!./features/operator/designAligned.module.css
+./features/operator/designAligned.module.css
+./features/operator/DesignAlignedWorkspaces.tsx
+
+./features/operator/networkFindAreas.module.css.webpack[javascript/auto]!=!../../node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!../../node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!./features/operator/networkFindAreas.module.css
+Warning
+
+(1939:3) autoprefixer: start value has mixed support, consider using flex-start instead
+
+Import trace for requested module:
+./features/operator/networkFindAreas.module.css.webpack[javascript/auto]!=!../../node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!../../node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!./features/operator/networkFindAreas.module.css
+./features/operator/networkFindAreas.module.css
+./features/operator/NetworkFindAreasWorkspace.tsx
+
+./features/operator/networkFindAreas.module.css.webpack[javascript/auto]!=!../../node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!../../node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!./features/operator/networkFindAreas.module.css
+Warning
+
+(2049:3) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./features/operator/networkFindAreas.module.css.webpack[javascript/auto]!=!../../node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[2]!../../node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[5].use[3]!./features/operator/networkFindAreas.module.css
+./features/operator/networkFindAreas.module.css
+./features/operator/NetworkFindAreasWorkspace.tsx
+
+ ✓ Compiled successfully in 64s
+
+Route (app)                                 Size  First Load JS
+┌ ○ /_not-found                            675 B         103 kB
+├ ƒ /api/v1                                139 B         103 kB
+├ ƒ /api/v1/[...path]                      139 B         103 kB
+├ ƒ /auth/callback                         139 B         103 kB
+├ ƒ /auth/logout                           139 B         103 kB
+├ ƒ /auth/session                          139 B         103 kB
+├ ƒ /avm/[...path]                         139 B         103 kB
+├ ƒ /franchisee                          2.86 kB         116 kB
+├ ƒ /intake/[intakeId]                     190 B         816 kB
+├ ƒ /login                                 139 B         103 kB
+└ ƒ /operator                              205 B         816 kB
++ First Load JS shared by all             103 kB
+  ├ chunks/18-ff6a2aec3d6a1486.js        46.3 kB
+  ├ chunks/87c73c54-24122e7b92478d00.js  54.2 kB
+  └ other shared chunks (total)          1.97 kB
+
+
+ƒ Middleware                             35.6 kB
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
