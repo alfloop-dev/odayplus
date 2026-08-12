@@ -1124,6 +1124,11 @@ def _dashboard_slot_count(config: dict[str, Any], agent_id: str) -> int:
     for slot_id, slot_agent in agents.items():
         if str((slot_agent or {}).get("dispatch_slot_for") or "").strip() == agent_id:
             slot_ids.add(str(slot_id))
+    account_pool = str(agent.get("account_pool") or "").strip()
+    if account_pool:
+        for slot_id, slot_agent in agents.items():
+            if str((slot_agent or {}).get("dispatch_slot_for_pool") or "").strip() == account_pool:
+                slot_ids.add(str(slot_id))
     return len(slot_ids)
 
 
@@ -1131,6 +1136,12 @@ def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> 
     ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
     caps = ready_dispatcher.get("max_tasks_per_agent_by_agent")
     agent_id = _dashboard_agent_id(config, agent_name)
+    slot_count = _dashboard_slot_count(config, agent_id)
+    # As in the supervisor, executable slots are the capacity authority.  A
+    # legacy per-alias setting is not allowed to make one account appear as
+    # seven independent workers on the dashboard.
+    if slot_count:
+        return slot_count
     canonical = canonical_agent_name(agent_name)
     lookup_keys = {
         str(agent_name or "").strip().lower(),
@@ -1149,9 +1160,6 @@ def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> 
                 continue
 
     default_capacity = optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent")
-    slot_count = _dashboard_slot_count(config, agent_id)
-    if slot_count:
-        return max(default_capacity or 0, slot_count)
     return default_capacity or 1
 
 

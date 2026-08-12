@@ -58,8 +58,21 @@ def configure(config: dict[str, Any]) -> dict[str, Any]:
         "codex_bjoe_slot_2": ("codex", "codex_bjoe"),
         "codex_bjoe_slot_3": ("codex", "codex_bjoe"),
     }
-    for slot_id, (provider, pool) in slots.items():
-        adapter = "claude_cli" if provider == "claude" else ("codex" if provider.startswith("codex") else "antigravity")
+    for slot_id, (source_agent_id, pool) in slots.items():
+        # A slot must reuse the source identity's provider configuration.  In
+        # particular, codex_bjoe is configured through `codex1` (its own
+        # CODEX_HOME); replacing that with the generic `codex` provider silently
+        # spends a different credential and defeats pool accounting.
+        source_agent = agents.get(source_agent_id, {})
+        provider = str(source_agent.get("provider") or source_agent_id)
+        adapter = str(
+            source_agent.get("adapter")
+            or (
+                "claude_cli"
+                if source_agent_id == "claude"
+                else ("codex" if source_agent_id.startswith("codex") else "antigravity")
+            )
+        )
         agents[slot_id] = {
             "id": slot_id,
             "display_name": slot_id,
@@ -73,17 +86,27 @@ def configure(config: dict[str, Any]) -> dict[str, Any]:
         agents.pop(slot_id, None)
 
     ready = config.setdefault("ready_dispatcher", {})
+    # The central dispatcher owns assignment.  Leaving these legacy paths in
+    # the live config makes a worker able to race it and leaves a second,
+    # incompatible capacity model visible on the dashboard.
+    ready.pop("helper_claim", None)
+    ready.pop("worker_self_claim", None)
+    ready.pop("max_tasks_per_agent", None)
+    ready.pop("max_tasks_per_agent_by_agent", None)
+    ready.pop("target_workload", None)
+    ready.pop("agent_workload_weights", None)
+    ready.pop("target_workload_mode", None)
+    ready.pop("max_concurrent_per_quota_group", None)
+    ready["reviewer_failover"] = {"enabled": True}
     active = ready.get("active_worker_statuses", [])
     ready["active_worker_statuses"] = [status for status in active if status != "manual_pending"]
-    ready["max_concurrent_per_quota_group"] = {
-        "antigravity_main": 3,
-        "claude_main": 2,
-        "codex_bjoe": 3,
-        "codex_lupin": 2,
-        "codex_ajoe": 0,
-    }
     ready["max_concurrent_workers"] = 10
     ready["max_dispatches_per_tick"] = min(10, max(1, int(ready.get("max_dispatches_per_tick", 10))))
+    # Removed in the first supervisor simplification.  Delete it from the
+    # authoritative runtime config too, so it cannot become a future source
+    # of stale state or an operator-facing false control.
+    config.pop("underutilization_dispatch", None)
+    config.pop("chair_review", None)
     worktrees = config.setdefault("worker_worktrees", {})
     worktrees["recover_clean_diverged_worktrees"] = True
     # Bound remote worktree preflight so one wedged GitHub HTTPS request cannot
