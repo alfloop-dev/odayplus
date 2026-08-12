@@ -1141,6 +1141,15 @@ def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
     normalized = normalize_agent_id(agent_id or "")
     settings = settings or ready_dispatch_settings(config)
+    # Slots model actual processes.  Once an identity belongs to a pool with
+    # declared slots, a legacy per-alias target can only be a reporting hint;
+    # letting it raise capacity turns seven aliases of one credential into
+    # fictitious worker capacity.  Pool quota remains the second, independent
+    # ceiling applied by the dispatcher.
+    slot_count = len(logical_worker_slot_ids(config, normalized))
+    if slot_count:
+        return slot_count
+
     default_capacity: int | None = None
     raw_default_capacity = settings.get("max_tasks_per_agent")
     if raw_default_capacity not in (None, ""):
@@ -1156,9 +1165,6 @@ def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settin
                 return max(1, int(overrides[key]))
             except (TypeError, ValueError):
                 pass
-    slot_count = len(logical_worker_slot_ids(config, normalized))
-    if slot_count:
-        return max(default_capacity or 0, slot_count)
     return default_capacity or 1
 
 
@@ -5936,9 +5942,11 @@ def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, A
     """Commit a scheduler transition through one canonical write/sync path.
 
     Callers may decide a transition, but they cannot independently choose a
-    snapshot write versus derived-artifact sync.  The next refactor moves the
-    remaining field mutations into this boundary; keeping the commit point
-    singular first prevents a new writer from bypassing revision fencing.
+    snapshot write versus derived-artifact sync.  This is deliberately the
+    only supervisor task-transition commit point: a successful mutation is
+    never allowed to leave the canonical board and its derived artifacts out
+    of sync, and a rejected stale snapshot is never followed by a sync of the
+    wrong state.
     """
     return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
 
@@ -10440,7 +10448,7 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        if not write_status_snapshot_if_current(config, status):
+                        if not commit_canonical_task_transition(config, status):
                             return changed
                         write_activity_log(
                             config,
@@ -10461,9 +10469,8 @@ def dispatch_ready_tasks(
                             f"({approved_head[:8]}); re-review required."
                         )
                         task.pop("approved_head", None)
-                        if not write_status_snapshot_if_current(config, status):
+                        if not commit_canonical_task_transition(config, status):
                             return changed
-                        sync_status_pipeline(config)
                         write_activity_log(
                             config,
                             {
@@ -10485,7 +10492,7 @@ def dispatch_ready_tasks(
                         )
                         if task.get("next") != msg:
                             task["next"] = msg
-                            if not write_status_snapshot_if_current(config, status):
+                            if not commit_canonical_task_transition(config, status):
                                 return changed
                             write_activity_log(
                                 config,
@@ -10530,7 +10537,7 @@ def dispatch_ready_tasks(
                                 },
                             )
                     if status_dirty:
-                        if not write_status_snapshot_if_current(config, status):
+                        if not commit_canonical_task_transition(config, status):
                             return changed
                     continue
                 elif ci_status == "failure":
@@ -10538,7 +10545,7 @@ def dispatch_ready_tasks(
                     msg = f"CI checks for task {task_id} failed; resolve failing checks before finalization."
                     if task.get("next") != msg:
                         task["next"] = msg
-                        if not write_status_snapshot_if_current(config, status):
+                        if not commit_canonical_task_transition(config, status):
                             return changed
                         write_activity_log(
                             config,
@@ -10559,7 +10566,7 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        if not write_status_snapshot_if_current(config, status):
+                        if not commit_canonical_task_transition(config, status):
                             return changed
                         write_activity_log(
                             config,
@@ -10572,7 +10579,7 @@ def dispatch_ready_tasks(
                     continue
                 else:
                     if task.pop("ci_pending_since_ts", None) is not None:
-                        if not write_status_snapshot_if_current(config, status):
+                        if not commit_canonical_task_transition(config, status):
                             return changed
 
                 # CI success on an open PR is only merge readiness, not task
@@ -10587,7 +10594,7 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        if not write_status_snapshot_if_current(config, status):
+                        if not commit_canonical_task_transition(config, status):
                             return changed
                     continue
 

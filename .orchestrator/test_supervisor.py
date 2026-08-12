@@ -125,6 +125,13 @@ class TestConfigFixtureTests(unittest.TestCase):
 
 
 class StatusWriteConcurrencyTests(unittest.TestCase):
+    def test_supervisor_has_one_task_transition_commit_boundary(self) -> None:
+        source = Path(supervisor.__file__).read_text(encoding="utf-8")
+        # Definition plus the canonical boundary only.  Dispatch, repair,
+        # preemption, and reassignment must not regain a direct snapshot write
+        # that can skip derived-state synchronization.
+        self.assertEqual(source.count("write_status_snapshot_if_current("), 2)
+
     def test_stale_supervisor_snapshot_cannot_overwrite_newer_cli_revision(self) -> None:
         with tempfile.TemporaryDirectory(prefix="pantheon-status-cas-") as tmp:
             root = Path(tmp)
@@ -336,6 +343,15 @@ class AccountPoolSchedulingTests(unittest.TestCase):
             "disabled",
             supervisor.agent_auto_dispatch_block_reason(config, {"workers": {}}, "codex", {}) or "",
         )
+
+    def test_declared_slots_override_legacy_per_alias_capacity(self) -> None:
+        config = self._config()
+        config["ready_dispatcher"]["max_tasks_per_agent_by_agent"] = {"Antigravity": 99}
+
+        # Aliases describe who owns/reviews a task. They are not 99 processes:
+        # this account has exactly the two executable slots declared above.
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "antigravity"), 2)
+        self.assertEqual(supervisor.agent_dispatch_capacity(config, "antigravity2"), 2)
 
     def test_priority_precedes_lifecycle_and_board_order(self) -> None:
         config = {
@@ -8523,6 +8539,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
@@ -8540,6 +8558,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")), \
@@ -8584,10 +8604,19 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("supervisor.runtime_ai_status.resolve_task_checkout_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("supervisor.runtime_ai_status.is_approved_head_satisfied", return_value=True), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
+             unittest.mock.patch("supervisor.runtime_ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.agent_dispatch_capacity", return_value=10), \
+             unittest.mock.patch("supervisor.agent_can_take_task", return_value=True), \
+             unittest.mock.patch("supervisor.worktree_block_still_matches_dispatch", return_value=False), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
                 config,
@@ -8603,12 +8632,18 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("supervisor.runtime_ai_status.resolve_task_checkout_sha", return_value=None), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
+             unittest.mock.patch("supervisor.runtime_ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.write_activity_log"), \
              unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.commit_canonical_task_transition", return_value=True), \
+             unittest.mock.patch("supervisor.sync_status_pipeline", return_value=True), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
                 config,
@@ -8626,10 +8661,19 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("supervisor.runtime_ai_status.resolve_task_checkout_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             unittest.mock.patch("supervisor.runtime_ai_status.is_approved_head_satisfied", return_value=True), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
+             unittest.mock.patch("supervisor.runtime_ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.agent_dispatch_capacity", return_value=10), \
+             unittest.mock.patch("supervisor.agent_can_take_task", return_value=True), \
+             unittest.mock.patch("supervisor.worktree_block_still_matches_dispatch", return_value=False), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
                 config,
@@ -8645,12 +8689,18 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("supervisor.runtime_ai_status.resolve_task_checkout_sha", return_value=APPROVED), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")), \
+             unittest.mock.patch("supervisor.runtime_ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.write_activity_log"), \
              unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.commit_canonical_task_transition", return_value=True), \
+             unittest.mock.patch("supervisor.sync_status_pipeline", return_value=True), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
                 config,
@@ -8668,10 +8718,18 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("supervisor.runtime_ai_status.resolve_task_checkout_sha", return_value=APPROVED), \
+             unittest.mock.patch("supervisor.runtime_ai_status.is_approved_head_satisfied", return_value=True), \
              unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
+             unittest.mock.patch("supervisor.runtime_ai_status.task_pr_ci_status", return_value=("MERGED", "success")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.agent_dispatch_capacity", return_value=10), \
+             unittest.mock.patch("supervisor.agent_can_take_task", return_value=True), \
+             unittest.mock.patch("supervisor.worktree_block_still_matches_dispatch", return_value=False), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
                 config,
@@ -8687,12 +8745,18 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
              unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
              unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.repair_open_task_metadata", return_value=False), \
+             unittest.mock.patch("supervisor.repair_unsubmitted_review_tasks", return_value=False), \
              unittest.mock.patch("supervisor.load_status", return_value=status), \
              unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("supervisor.runtime_ai_status.resolve_task_checkout_sha", return_value=APPROVED), \
              unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")), \
+             unittest.mock.patch("supervisor.runtime_ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")), \
              unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
              unittest.mock.patch("supervisor.write_activity_log"), \
              unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.commit_canonical_task_transition", return_value=True), \
+             unittest.mock.patch("supervisor.sync_status_pipeline", return_value=True), \
              unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
             dispatched = supervisor.dispatch_ready_tasks(
                 config,

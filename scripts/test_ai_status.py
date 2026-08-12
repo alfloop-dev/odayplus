@@ -2666,6 +2666,20 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
         self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
 
+    def test_dashboard_slots_override_legacy_alias_capacity(self) -> None:
+        config = {
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "account_pool": "antigravity_main"},
+                "antigravity2": {"display_name": "Antigravity2", "account_pool": "antigravity_main"},
+                "antigravity_slot_1": {"dispatch_slot_for_pool": "antigravity_main"},
+                "antigravity_slot_2": {"dispatch_slot_for_pool": "antigravity_main"},
+            },
+            "ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Antigravity": 99}},
+        }
+
+        self.assertEqual(ai_status.dashboard_agent_capacity(config, "Antigravity"), 2)
+        self.assertEqual(ai_status.dashboard_agent_capacity(config, "Antigravity2"), 2)
+
     def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
         state = {
             "updated_at": "2026-04-14T02:00:00Z",
