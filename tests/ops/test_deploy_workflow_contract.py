@@ -174,6 +174,26 @@ def _parsed(workflow: DeployWorkflow) -> dict:
     return yaml.safe_load(workflow.path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
+def test_tenant_variables_pass_through_without_placeholder_defaults(
+    workflow: DeployWorkflow,
+) -> None:
+    """Missing tenant configuration must reach the deploy script as empty.
+
+    ``deploy_cloud_run_waji.sh`` already fails closed when both tenant variables
+    are unset. Supplying ``tenant-dev`` / ``tenant-staging`` here bypasses that
+    guard and can make the worker write into a partition the smoke principal
+    cannot read. Keep the workflow as a pure pass-through so deployment cannot
+    silently invent a tenant scope.
+    """
+
+    environment = _parsed(workflow)["jobs"][workflow.job_id]["env"]
+    assert environment["ODP_SCHEDULED_INGESTION_TENANT_ID"] == (
+        "${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID }}"
+    )
+    assert environment["ODP_TENANT_ID"] == "${{ vars.ODP_TENANT_ID }}"
+
+
 def _steps(workflow: DeployWorkflow) -> list[dict]:
     return [
         step

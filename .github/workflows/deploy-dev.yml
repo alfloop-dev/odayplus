@@ -98,8 +98,8 @@ jobs:
       ODP_EXTERNAL_PROVIDER_MODE: live
       ODP_PERSISTENCE: postgresql
       ODP_OBJECT_STORE: gcs
-      ODP_SCHEDULED_INGESTION_TENANT_ID: ${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID || 'tenant-dev' }}
-      ODP_TENANT_ID: ${{ vars.ODP_TENANT_ID || 'tenant-dev' }}
+      ODP_SCHEDULED_INGESTION_TENANT_ID: ${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID }}
+      ODP_TENANT_ID: ${{ vars.ODP_TENANT_ID }}
     steps:
       - uses: actions/checkout@v4
 
