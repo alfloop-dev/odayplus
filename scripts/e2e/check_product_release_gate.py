@@ -11,6 +11,7 @@ product environment smoke.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -66,6 +67,7 @@ REQUIRED_FILES = {
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
     "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
+    "runtime admission checker": "scripts/release/check_runtime_admission.py",
     "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
     "external proof fleet pickup board checker": "scripts/e2e/check_external_proof_fleet_pickup_board.py",
     "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
@@ -83,7 +85,7 @@ REQUIRED_FILES = {
     "external proof escalation comment syncer": "scripts/e2e/sync_external_proof_escalation_comments.py",
     "external proof follow-up workflow checker": "scripts/e2e/check_external_proof_followup_workflow.py",
     "external proof follow-up workflow": ".github/workflows/external-proof-followup.yml",
-    "remote staging workflow": ".github/workflows/deploy-staging.yml",
+    "runtime release workflow": ".github/workflows/deploy-dev.yml",
 }
 
 REQUIRED_RUNNER_SPECS = (
@@ -121,6 +123,33 @@ REQUIRED_REPORT_TOKENS = (
     "corr-pv006-ops-intervention-price-ad",
     "corr-pv007-avm-netplan-learning-audit",
 )
+
+STAGE_TIMEOUT_SECONDS = float(os.environ.get("ODP_RELEASE_GATE_STAGE_TIMEOUT_SECONDS", "120"))
+
+
+def run_stage(command: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run one release-gate stage with a bounded deadline.
+
+    A hanging GitHub/Playwright/status probe must become a visible gate failure;
+    it must never hold a supervisor or deployment runner forever.
+    """
+
+    try:
+        return subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=STAGE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            command,
+            124,
+            stdout=exc.stdout or "",
+            stderr=f"stage timed out after {STAGE_TIMEOUT_SECONDS:.0f}s",
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -170,22 +199,21 @@ def main(argv: list[str] | None = None) -> int:
         if required_token not in assignment_text:
             errors.append(f"fleet assignment ledger missing token: {required_token}")
 
-    staging_workflow = ROOT / ".github/workflows/deploy-staging.yml"
-    staging_workflow_text = staging_workflow.read_text(encoding="utf-8") if staging_workflow.exists() else ""
+    runtime_workflow = ROOT / ".github/workflows/deploy-dev.yml"
+    runtime_workflow_text = runtime_workflow.read_text(encoding="utf-8") if runtime_workflow.exists() else ""
     for required_token in (
-        "Deploy/Verify Staging",
+        "Runtime Release",
         "workflow_dispatch",
-        "ODAY_RELEASE_SHA",
-        "ODP_STAGING_DEPLOY_URL",
-        "ODP_STAGING_API_URL",
-        "ODP_STAGING_SECRET_OWNER",
-        "scripts/e2e/check_remote_staging_proof.py",
+        "release_sha",
+        "task_id",
+        "release_lease",
+        "Validate supervisor release admission",
+        "check_runtime_admission.py",
+        "ODAY_RELEASE_SHA: ${{ inputs.release_sha }}",
         "actions/upload-artifact@v4",
     ):
-        if required_token not in staging_workflow_text:
-            errors.append(f"remote staging workflow missing token: {required_token}")
-    if "TODO: replace with real deploy" in staging_workflow_text:
-        errors.append("remote staging workflow still contains placeholder deploy TODO")
+        if required_token not in runtime_workflow_text:
+            errors.append(f"runtime release workflow missing token: {required_token}")
 
     external_followup_workflow = ROOT / ".github/workflows/external-proof-followup.yml"
     external_followup_workflow_text = (
@@ -211,12 +239,8 @@ def main(argv: list[str] | None = None) -> int:
         if required_token not in external_followup_workflow_text:
             errors.append(f"external proof follow-up workflow missing token: {required_token}")
 
-    external_followup_workflow_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_followup_workflow.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    external_followup_workflow_check = run_stage(
+        [sys.executable, "scripts/e2e/check_external_proof_followup_workflow.py"]
     )
     if external_followup_workflow_check.returncode != 0:
         output = "\n".join(
@@ -231,13 +255,7 @@ def main(argv: list[str] | None = None) -> int:
         registry_command.append("--require-go")
     if args.expected_sha:
         registry_command.extend(["--expected-sha", args.expected_sha])
-    gate_registry_check = subprocess.run(
-        registry_command,
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    gate_registry_check = run_stage(registry_command)
     if gate_registry_check.returncode != 0:
         output = "\n".join(
             line
@@ -286,13 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         errors.append(f"acceptance scenario/inventory validator error: {exc}")
 
-    closeout_queue_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_closeout_queue.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    closeout_queue_check = run_stage([sys.executable, "scripts/e2e/check_product_closeout_queue.py"])
     if closeout_queue_check.returncode != 0:
         output = "\n".join(
             line
@@ -301,12 +313,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         errors.append(f"closeout queue check failed: {output}")
 
-    closeout_pickup_board_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    closeout_pickup_board_check = run_stage(
+        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"]
     )
     if closeout_pickup_board_check.returncode != 0:
         output = "\n".join(
@@ -316,12 +324,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         errors.append(f"closeout pickup board check failed: {output}")
 
-    fleet_dispatch_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    fleet_dispatch_check = run_stage(
+        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"]
     )
     if fleet_dispatch_check.returncode != 0:
         output = "\n".join(
@@ -331,12 +335,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         errors.append(f"product-grade fleet dispatch check failed: {output}")
 
-    external_proof_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_closeout_queue.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    external_proof_check = run_stage(
+        [sys.executable, "scripts/e2e/check_external_proof_closeout_queue.py"]
     )
     if external_proof_check.returncode != 0:
         output = "\n".join(
@@ -346,12 +346,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         errors.append(f"external proof closeout queue check failed: {output}")
 
-    external_pickup_board_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_fleet_pickup_board.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    external_pickup_board_check = run_stage(
+        [sys.executable, "scripts/e2e/check_external_proof_fleet_pickup_board.py"]
     )
     if external_pickup_board_check.returncode != 0:
         output = "\n".join(
@@ -361,12 +357,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         errors.append(f"external proof fleet pickup board check failed: {output}")
 
-    external_handback_template_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_handback_template.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    external_handback_template_check = run_stage(
+        [sys.executable, "scripts/e2e/check_external_proof_handback_template.py"]
     )
     if external_handback_template_check.returncode != 0:
         output = "\n".join(
@@ -376,12 +368,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         errors.append(f"external proof handback template check failed: {output}")
 
-    external_handback_status_board_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_handback_status_board.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+    external_handback_status_board_check = run_stage(
+        [sys.executable, "scripts/e2e/check_external_proof_handback_status_board.py"]
     )
     if external_handback_status_board_check.returncode != 0:
         output = "\n".join(
@@ -393,13 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         errors.append(f"external proof handback status board check failed: {output}")
 
-    go_no_go_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    go_no_go_check = run_stage([sys.executable, "scripts/e2e/check_product_go_no_go.py"])
     if go_no_go_check.returncode != 0:
         output = "\n".join(
             line

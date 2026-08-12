@@ -1,13 +1,29 @@
-name: Deploy Dev
+name: Runtime Release
 
 on:
-  push:
-    branches: [dev]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: "Release environment"
+        required: true
+        type: choice
+        options: [dev, staging]
+      release_sha:
+        description: "Exact 40-character commit SHA to release"
+        required: true
+        type: string
+      task_id:
+        description: "Supervisor-owned release task ID"
+        required: true
+        type: string
+      release_lease:
+        description: "Supervisor release lease identifier"
+        required: true
+        type: string
 
 concurrency:
-  group: deploy-dev
-  cancel-in-progress: true
+  group: runtime-release-${{ inputs.environment }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -15,7 +31,25 @@ permissions:
   id-token: write
 
 jobs:
+  admission:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate supervisor release admission
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TASK_ID: ${{ inputs.task_id }}
+          RELEASE_LEASE: ${{ inputs.release_lease }}
+        run: |
+          set -euo pipefail
+          python3 scripts/release/check_runtime_admission.py \
+            --sha "${RELEASE_SHA}" \
+            --environment "${{ inputs.environment }}" \
+            --task-id "${RELEASE_TASK_ID}" \
+            --lease "${RELEASE_LEASE}"
+
   e2e-operational-evidence:
+    needs: admission
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +60,7 @@ jobs:
     needs: e2e-operational-evidence
     runs-on: ubuntu-latest
     environment:
-      name: dev
-      url: ${{ vars.ODP_DEV_DEPLOY_URL }}
+      name: ${{ inputs.environment }}
     env:
       HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -88,8 +121,8 @@ jobs:
       ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET: ${{ vars.ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET }}
       ODP_WEB_OIDC_CLIENT_SECRET_SECRET: ${{ vars.ODP_WEB_OIDC_CLIENT_SECRET_SECRET }}
       ODP_WEB_SESSION_SECRET_SECRET: ${{ vars.ODP_WEB_SESSION_SECRET_SECRET }}
-      ODP_DEPLOY_ENV: dev
-      ODAY_RELEASE_SHA: ${{ github.sha }}
+      ODP_DEPLOY_ENV: ${{ inputs.environment }}
+      ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
       ODP_REQUIRE_LIVE_DATA: "true"
       ODP_DATA_BINDING_MODE: live
       ODP_PRODUCT_MODE: production
@@ -136,7 +169,7 @@ jobs:
             exit 1
           fi
           uv run --frozen python scripts/deployment/validate_cloud_run_live_deployment.py preflight \
-            --environment dev \
+            --environment "${ODP_DEPLOY_ENV}" \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --output .odp_data/deployment/cloud-run-preflight.json
 
@@ -155,14 +188,14 @@ jobs:
 
       - name: Build, push, deploy, and verify Cloud Run
         env:
-          IMAGE_TAG: dev-${{ github.sha }}
+          IMAGE_TAG: ${{ inputs.environment }}-${{ inputs.release_sha }}
         run: ./scripts/deploy_cloud_run_waji.sh
 
       - name: Upload deployment validation reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cloud-run-dev-validation
+          name: runtime-release-${{ inputs.environment }}-validation
           # ODP-DEPLOY-JOB-RECEIPT-UPLOAD-001: the previous `.odp_data/deployment/*.json`
           # glob is not recursive, so run 30436771086 published the three top-level
           # reports and silently dropped the migration/scheduler/worker Job receipts

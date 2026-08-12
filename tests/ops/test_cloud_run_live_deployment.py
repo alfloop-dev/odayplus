@@ -23,7 +23,6 @@ SCHEDULER_HELPER_PATH = ROOT / "scripts/deployment/cloud_scheduler_trigger.py"
 DEPLOY_SCRIPT = ROOT / "scripts/deploy_cloud_run_waji.sh"
 WORKFLOWS = (
     ROOT / ".github/workflows/deploy-dev.yml",
-    ROOT / ".github/workflows/deploy-staging.yml",
 )
 EXPECTED_SHA = "a" * 40
 
@@ -5081,7 +5080,10 @@ def _workflow_job_env(workflow: Path) -> dict[str, str]:
             continue
         name, raw = match.group(1), match.group(2).strip()
         if raw.startswith("${{"):
-            env[name] = ""
+            # Runtime Release binds the deploy environment to the required
+            # workflow input.  Use the representative allowed value here so
+            # this source-level contract still evaluates the real mode wiring.
+            env[name] = "dev" if "inputs.environment" in raw else ""
             continue
         env[name] = raw.strip('"')
     return env

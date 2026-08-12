@@ -624,19 +624,16 @@ def test_dev_merge_gate_accepts_valid_no_go_but_release_gate_fails_closed() -> N
     assert "NO-GO" in production_release.stdout
 
 
-def test_ci_and_promotion_workflows_use_separate_gate_modes() -> None:
+def test_ci_is_not_a_deployment_authority() -> None:
     ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    promotion_workflow = (ROOT / ".github/workflows/promote-dev-to-main.yml").read_text(
-        encoding="utf-8"
-    )
+    runtime_workflow = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     assert "run: make product-e2e-gate" in ci_workflow
     assert "run: make product-release-gate" not in ci_workflow
-    assert 'EXPECTED_SHA="${{ github.event.workflow_run.head_sha }}"' in promotion_workflow
-    assert "PROMOTION_SHA" in promotion_workflow
-    assert "Promotion SHA drift detected" in promotion_workflow
-    assert "github.event.workflow_run.head_sha" in promotion_workflow
+    assert "push:" not in runtime_workflow
+    assert "Validate supervisor release admission" in runtime_workflow
+    assert "check_runtime_admission.py" in runtime_workflow
     assert "check_product_release_gate.py --dev-merge" in makefile
     assert "check_product_release_gate.py --require-go" in makefile
 

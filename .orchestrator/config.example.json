@@ -604,47 +604,8 @@
   "branch_workflow": {
     "enabled": true,
     "task_branch_prefix": "task/",
-    "publish_branch_prefix": "publish/",
-    "release_tag_prefix": "release/",
-    "prod_tag_prefix": "prod/",
-    "archive_tag_prefix": "archive/",
     "dev_branch": "dev",
     "main_branch": "main",
-    "nightly_publish": {
-      "enabled": true,
-      "cron_utc": "0 3 * * *",
-      "version_format": "vYYYY.MM.DD.N",
-      "skip_if_no_new_commits": true
-    },
-    "environments": {
-      "dev": {
-        "branch": "dev",
-        "auto_deploy": true,
-        "deploy_trigger": "on_push",
-        "url_env": "ODP_DEV_DEPLOY_URL"
-      },
-      "staging": {
-        "branch": "main",
-        "auto_deploy": true,
-        "deploy_trigger": "on_push",
-        "url_env": "ODP_STAGING_DEPLOY_URL"
-      }
-    },
-    "promote": {
-      "source_branch": "dev",
-      "target_branch": "main",
-      "trigger": "ci_green",
-      "require_dev_ci_green": true,
-      "soak_days": 0,
-      "regression_label_prefix": "regression/",
-      "block_labels": [
-        "hold-promote",
-        "regression"
-      ],
-      "promote_pr_label": "auto-promote",
-      "auto_merge": true,
-      "auto_revert_on_red_main_ci": true
-    },
     "task_pr": {
       "target_branch": "dev",
       "auto_merge": true,

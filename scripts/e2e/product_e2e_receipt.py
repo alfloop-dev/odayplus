@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
+import math
 import re
 import subprocess
 from dataclasses import dataclass
@@ -19,6 +19,7 @@ EXPECTED_CANONICAL_SPEC_COUNT = 16
 EXPECTED_PLAYWRIGHT_TEST_COUNT = 107
 RAW_PLAYWRIGHT_PATH = "docs/evidence/e2e/raw_playwright_results.json"
 RAW_PYTEST_PATH = "docs/evidence/e2e/raw_pytest_results.json"
+COMMAND_TIMEOUT_SECONDS = float(os.environ.get("ODP_RELEASE_GATE_STAGE_TIMEOUT_SECONDS", "120"))
 RECEIPT_PATH = "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
 EVIDENCE_COMMIT_ALLOWLIST = frozenset(
     {
@@ -329,6 +330,7 @@ def git_value(root: Path, *args: str) -> str:
         check=True,
         capture_output=True,
         text=True,
+        timeout=COMMAND_TIMEOUT_SECONDS,
     )
     return proc.stdout.strip()
 
@@ -824,6 +826,7 @@ def _status_paths(root: Path) -> list[str]:
         check=True,
         capture_output=True,
         text=True,
+        timeout=COMMAND_TIMEOUT_SECONDS,
     )
     paths: list[str] = []
     for line in proc.stdout.splitlines():
@@ -1294,6 +1297,7 @@ def validate_acceptance_scenarios_and_inventory(root: Path) -> list[str]:
         check=False,
         capture_output=True,
         text=True,
+        timeout=COMMAND_TIMEOUT_SECONDS,
     )
     if proc.returncode != 0:
         errors.append(f"Playwright --list exited {proc.returncode}: {proc.stderr.strip()}")
