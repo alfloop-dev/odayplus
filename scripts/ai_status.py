@@ -18,7 +18,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-
 COMMAND_TIMEOUT_SECONDS = 8.0
 from zoneinfo import ZoneInfo
 
