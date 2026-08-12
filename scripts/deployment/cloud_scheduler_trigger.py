@@ -149,8 +149,11 @@ def generate_restore_args(payload: dict[str, Any], location: str, project: str) 
 
     headers = http_target.get("headers")
     if isinstance(headers, Mapping) and headers:
-        for k, v in headers.items():
-            args.append(f"--headers={k}={v}")
+        # gcloud accepts a single comma-separated header map for update;
+        # repeating --update-headers silently leaves Content-Type at its
+        # message-body default (application/octet-stream).
+        header_values = ",".join(f"{k}={v}" for k, v in headers.items())
+        args.append(f"--headers={header_values}")
     elif method == "POST":
         args.append("--headers=Content-Type=application/json")
 

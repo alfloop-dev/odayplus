@@ -130,7 +130,8 @@ restore_scheduler_trigger() {
 
   # `gcloud scheduler jobs create http` accepts --headers, while the update
   # command requires --update-headers.  Snapshots are restored through either
-  # path, so adapt only the update form here.
+  # path, so adapt only the update form here.  The helper emits one combined
+  # header map so Content-Type is not lost to the message-body default.
   if [ "${action}" = "update" ]; then
     local i
     for i in "${!gcloud_args[@]}"; do
