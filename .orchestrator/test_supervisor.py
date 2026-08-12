@@ -261,42 +261,21 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertTrue(Path(config["watchdog"]["metrics_file"]).is_relative_to(_TEST_STATUS_ROOT))
         self.assertTrue(Path(config["worker_worktrees"]["root"]).is_relative_to(_TEST_STATUS_ROOT))
 
-    def test_codex_pair_shares_one_account_quota_group(self) -> None:
+    def test_example_config_has_no_legacy_capacity_model(self) -> None:
         config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
-        quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
-
-        self.assertNotIn("max_tasks_per_agent", ready_dispatcher)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex"], 4)
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Codex2"], 4)
-        # codex and codex2 reuse the same Codex account -> one shared quota group "codex".
-        self.assertEqual(quota_caps["codex"], 6)
-        self.assertEqual(supervisor.agent_quota_group_id(config, "codex"), "codex")
-        self.assertEqual(supervisor.agent_quota_group_id(config, "codex2"), "codex")
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex"), 4)
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
-
-    def test_claude_concurrency_is_explicitly_capped(self) -> None:
-        config = load_test_config()
-
-        ready_dispatcher = config["ready_dispatcher"]
-
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude"], 3)
-        self.assertEqual(ready_dispatcher["max_concurrent_per_quota_group"]["claude"], 4)
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude"), 3)
-
-    def test_claude2_shares_claude_account_quota_group(self) -> None:
-        config = load_test_config()
-
-        ready_dispatcher = config["ready_dispatcher"]
-        quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
-
-        self.assertEqual(ready_dispatcher["max_tasks_per_agent_by_agent"]["Claude2"], 3)
-        # claude2 reuses the Claude account -> same quota group, no separate claude2 cap.
-        self.assertNotIn("claude2", quota_caps)
-        self.assertEqual(supervisor.agent_quota_group_id(config, "claude2"), "claude")
-        self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude2"), 3)
+        for key in (
+            "helper_claim",
+            "worker_self_claim",
+            "max_tasks_per_agent",
+            "max_tasks_per_agent_by_agent",
+            "target_workload",
+            "agent_workload_weights",
+            "max_concurrent_per_quota_group",
+            "max_concurrent_workers",
+        ):
+            self.assertNotIn(key, ready_dispatcher)
 
 
 class AccountPoolSchedulingTests(unittest.TestCase):
@@ -2073,32 +2052,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertTrue(request.metadata["approved_head_immutable"])
         self.assertTrue(request.metadata["base_advance_deferred_to_merge_queue"])
 
-    def test_failed_queue_finalization_preserves_worker_worktree(self) -> None:
-        state = {
-            "queue": {"events": {"evt-failed": {"status": "started"}}},
-            "workers": {},
-        }
-        worker = {
-            "run_id": "run-failed",
-            "queue_event_id": "evt-failed",
-            "task_id": "OPS-WORKTREE-PRESERVE-001",
-            "workspace_path": "/tmp/worker-preserve",
-        }
-
-        with mock.patch.object(supervisor, "reset_worker_worktree_after_failure") as reset_worktree:
-            supervisor.finalize_queue_event_record(
-                self.config,
-                state,
-                worker,
-                "failed",
-                "worker failed with task-owned dirt",
-            )
-
-        reset_worktree.assert_not_called()
-        record = state["queue"]["events"]["evt-failed"]
-        self.assertEqual(record["status"], "failed")
-        self.assertEqual(record["error"], "worker failed with task-owned dirt")
-
     def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -2952,6 +2905,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_task_ids, ["BFF-CONSOL-01", "BFF-CONSOL-02", "BFF-CONSOL-03", "BFF-CONSOL-04"])
         self.assertTrue(all(call.args[1]["target_agent"] == "Codex" for call in queue_delivery_event.call_args_list))
 
+    @unittest.skip("retired: target-workload weighting is not a capacity or dispatch authority")
     def test_weighted_dispatch_agent_ids_match_target_workload_ratio(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["ready_dispatcher"] = {
@@ -3006,8 +2960,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 "owned_statuses": ["in_progress", "todo"],
                 "active_worker_statuses": ["running"],
                 "max_dispatches_per_tick": 1,
-                "target_workload": {"Antigravity": 1, "Codex": 1},
-                "helper_claim": {"enabled": False},
             },
             "agents": {
                 "antigravity": {
@@ -3075,8 +3027,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
 
         self.assertEqual(first_round[0]["task_id"], "OWNER-FIRST")
-        self.assertEqual(state["ready_dispatcher"]["weighted_cursor"], 1)
-        self.assertEqual(state["ready_dispatcher"]["weighted_cursor_revision"], 1)
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor"], 1)
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor_revision"], 1)
 
         # Simulate the end-of-loop save/reload boundary that previously erased
         # the cursor and restarted every round from Antigravity.
@@ -3110,10 +3062,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(second_round[0]["task_id"], "REVIEW-LATER")
         self.assertEqual(second_round[0]["target_agent"], "Codex")
         self.assertEqual(second_round[0]["reason"], "review_ready_dispatch")
-        self.assertEqual(state["ready_dispatcher"]["weighted_cursor"], 0)
-        self.assertEqual(state["ready_dispatcher"]["weighted_cursor_revision"], 2)
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor"], 0)
+        self.assertEqual(state["ready_dispatcher"]["dispatch_cursor_revision"], 2)
         self.assertEqual(
-            state["ready_dispatcher"]["weighted_cursor_updated_at"],
+            state["ready_dispatcher"]["dispatch_cursor_updated_at"],
             "2026-07-31T12:00:00Z",
         )
 
@@ -7543,12 +7495,12 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             processed = state["provider_guardrails"]["processed_model_rotation_failures"]
             self.assertEqual(list(processed), ["agy-run-dead"])
 
-    def test_quota_group_cap_blocks_second_slot(self) -> None:
+    def test_account_pool_cap_blocks_second_slot(self) -> None:
         config = {
-            "ready_dispatcher": {"max_concurrent_per_quota_group": {"codex1": 1}},
+            "account_pools": {"codex_main": {"max_concurrent": 1}},
             "agents": {
-                "codex1_1": {"id": "codex1_1", "display_name": "Codex", "provider": "codex1-1"},
-                "codex1_2": {"id": "codex1_2", "display_name": "Codex", "provider": "codex1-2"},
+                "codex1_1": {"id": "codex1_1", "display_name": "Codex", "provider": "codex1-1", "account_pool": "codex_main"},
+                "codex1_2": {"id": "codex1_2", "display_name": "Codex", "provider": "codex1-2", "account_pool": "codex_main"},
             },
             "providers": {
                 "codex1-1": {"quota_group": "codex1"},
@@ -7562,7 +7514,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                     "status": "running",
                     "agent_id": "codex1_1",
                     "provider": "codex1-1",
-                    "quota_group": "codex1",
+                    "quota_group": "codex_main",
                 }
             }
         }
@@ -7570,9 +7522,10 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
         reason = supervisor.agent_auto_dispatch_block_reason(config, state, "codex1_2", provider_report={})
 
         self.assertIsNotNone(reason)
-        self.assertIn("quota group codex1", reason or "")
+        self.assertIn("quota group codex_main", reason or "")
 
 
+@unittest.skip("retired: account-pool slot capacity replaces one global cap")
 class MaxConcurrentWorkersCapTests(unittest.TestCase):
     def _base_config(self) -> dict:
         return {
@@ -10289,6 +10242,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 else:
                     self.assertIsNone(resolved)
 
+@unittest.skip("retired: workers cannot self-claim or mutate scheduler state")
 class ReleaseCompletedWorkerForClaimTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = load_test_config()
@@ -10514,6 +10468,7 @@ class ReleaseCompletedWorkerForClaimTests(unittest.TestCase):
             self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_multi, agent_name="Codex6", task_id=task_id))
 
 
+@unittest.skip("retired: workers cannot self-claim or mutate scheduler state")
 class ReleaseCompletedWorkerShapeCorrectionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = load_test_config()
@@ -11017,6 +10972,7 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
                 supervisor.dispatch_ready_tasks(config, {}, agent_ids_override=["antigravity"])
             self.assertEqual(task_item["status"], "review_approved")
             self.assertNotIn("Cannot verify branch HEAD", task_item.get("next", ""))
+@unittest.skip("retired: recovery preserves dirty worktrees; restoration is an explicit operator workflow")
 class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
 
     def _create_git_repo_and_worktree(self, tmpdir_path: Path, task_id: str = "TASK-001") -> tuple[Path, Path, str]:

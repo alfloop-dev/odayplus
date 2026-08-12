@@ -1362,7 +1362,7 @@ class HumanOpsAgentTests(unittest.TestCase):
         self.assertEqual(human_ops["status"], "blocked")
         self.assertEqual(human_ops["current_task_ids"], ["PROD-WRITES-001-V2"])
         self.assertEqual(ai_status.get_agent(state, "Claude")["status"], "idle")
-        self.assertEqual(state["workload"]["Human/Ops"], 0)
+        self.assertNotIn("workload", state)
         self.assertEqual(state["workload_summary"]["Human/Ops"]["blocked"], 1)
 
 
@@ -2073,8 +2073,6 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         self.assertEqual(bundle["focus_mode"], "execution")
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
-        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Codex"], 5)
-        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Gemini"], 5)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
         self.assertEqual(bundle["execution_summary"]["in_review"], 1)
@@ -2651,7 +2649,14 @@ class PortableStateRenderingTests(unittest.TestCase):
             "provider_guardrails": {"dispatch_pauses": {}},
         }
         approval_state = {"pending": [], "history": []}
-        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Codex": 2}}}
+        config = {
+            "agents": {
+                "codex": {"display_name": "Codex", "account_pool": "codex_main"},
+                "codex_slot_1": {"dispatch_slot_for_pool": "codex_main"},
+                "codex_slot_2": {"dispatch_slot_for_pool": "codex_main"},
+            },
+            "ready_dispatcher": {},
+        }
 
         with (
             mock.patch.object(ai_status, "load_config", return_value=config),
@@ -2663,8 +2668,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
-        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
-        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
+        self.assertEqual(bundle["dispatch_policy"]["capacity_authority"], "account_pools_and_dispatch_slots")
 
     def test_dashboard_slots_override_legacy_alias_capacity(self) -> None:
         config = {
@@ -2674,7 +2678,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                 "antigravity_slot_1": {"dispatch_slot_for_pool": "antigravity_main"},
                 "antigravity_slot_2": {"dispatch_slot_for_pool": "antigravity_main"},
             },
-            "ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Antigravity": 99}},
+            "ready_dispatcher": {},
         }
 
         self.assertEqual(ai_status.dashboard_agent_capacity(config, "Antigravity"), 2)
@@ -3991,7 +3995,7 @@ class ActorReferenceValidationTests(unittest.TestCase):
 
         roster = [agent["name"] for agent in state["agents"]]
         self.assertNotIn(self.PROSE, roster)
-        self.assertNotIn(self.PROSE, state["workload"])
+        self.assertNotIn("workload", state)
         self.assertIn("Claude", roster)
 
     def test_invalid_actor_references_are_reported(self) -> None:

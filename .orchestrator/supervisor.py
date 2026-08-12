@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import copy
 import fcntl
 import fnmatch
 import hashlib
 import json
-import math
 import os
 import random
 import re
@@ -398,8 +396,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
-    parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
-    parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
     parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
 
@@ -1059,33 +1055,14 @@ def queued_quota_group_counts(config: dict[str, Any], state: dict[str, Any]) -> 
 def quota_group_concurrency_limit(
     config: dict[str, Any],
     agent_id: str | None,
-    settings: dict[str, Any] | None = None,
 ) -> int | None:
-    settings = settings or ready_dispatch_settings(config)
-    raw = settings.get("max_concurrent_per_quota_group")
-    group_id = agent_quota_group_id(config, agent_id)
     _pool_id, pool = account_pool_settings(config, agent_id)
     if pool.get("max_concurrent") not in (None, ""):
         try:
             return max(0, int(pool["max_concurrent"]))
         except (TypeError, ValueError):
-            pass
-    if isinstance(raw, dict):
-        provider_id = agent_provider_id(config, agent_id)
-        display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
-        for key in (group_id, provider_id, normalize_agent_id(agent_id or ""), display_name):
-            if key in raw:
-                try:
-                    return max(0, int(raw[key]))
-                except (TypeError, ValueError):
-                    return None
-        return None
-    if raw in (None, ""):
-        return None
-    try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        return None
+            return None
+    return None
 
 
 def agent_is_dispatch_slot(agent: dict[str, Any] | None) -> bool:
@@ -1138,88 +1115,15 @@ def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
     ]
 
 
-def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
+def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None) -> int:
     normalized = normalize_agent_id(agent_id or "")
-    settings = settings or ready_dispatch_settings(config)
-    # Slots model actual processes.  Once an identity belongs to a pool with
-    # declared slots, a legacy per-alias target can only be a reporting hint;
-    # letting it raise capacity turns seven aliases of one credential into
-    # fictitious worker capacity.  Pool quota remains the second, independent
-    # ceiling applied by the dispatcher.
+    # Slots model actual processes. Aliases never create capacity.
     slot_count = len(logical_worker_slot_ids(config, normalized))
     if slot_count:
         return slot_count
-
-    default_capacity: int | None = None
-    raw_default_capacity = settings.get("max_tasks_per_agent")
-    if raw_default_capacity not in (None, ""):
-        try:
-            default_capacity = max(1, int(raw_default_capacity))
-        except (TypeError, ValueError):
-            default_capacity = None
-    display_name = display_name_for(config, normalized)
-    overrides = settings.get("max_tasks_per_agent_by_agent", {}) or {}
-    for key in (normalized, display_name):
-        if key in overrides:
-            try:
-                return max(1, int(overrides[key]))
-            except (TypeError, ValueError):
-                pass
-    return default_capacity or 1
-
-
-def dispatch_weight_mapping(settings: dict[str, Any] | None) -> dict[str, Any]:
-    settings = settings or {}
-    mapping = settings.get("target_workload") or settings.get("agent_workload_weights") or {}
-    return mapping if isinstance(mapping, dict) else {}
-
-
-def dispatch_weight_for_agent(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
-    mapping = dispatch_weight_mapping(settings)
-    if not mapping:
-        return 1
-    normalized = normalize_agent_id(agent_id or "")
-    display_name = display_name_for(config, normalized)
-    for key in (display_name, normalized):
-        if key in mapping:
-            try:
-                return max(0, int(mapping[key]))
-            except (TypeError, ValueError):
-                return 0
-    return 0
-
-
-def weighted_dispatch_agent_ids(config: dict[str, Any], settings: dict[str, Any] | None = None) -> list[str]:
-    settings = settings or ready_dispatch_settings(config)
-    base_agent_ids = dispatch_loop_agent_ids(config)
-    if not dispatch_weight_mapping(settings):
-        return base_agent_ids
-
-    weighted = [
-        (agent_id, dispatch_weight_for_agent(config, agent_id, settings))
-        for agent_id in base_agent_ids
-    ]
-    weighted = [(agent_id, weight) for agent_id, weight in weighted if weight > 0]
-    if not weighted:
-        return base_agent_ids
-
-    divisor = 0
-    for _agent_id, weight in weighted:
-        divisor = weight if divisor == 0 else math.gcd(divisor, weight)
-    normalized = [(agent_id, max(1, weight // max(1, divisor))) for agent_id, weight in weighted]
-    total = sum(weight for _agent_id, weight in normalized)
-    current = {agent_id: 0 for agent_id, _weight in normalized}
-    sequence: list[str] = []
-    for _ in range(total):
-        for agent_id, weight in normalized:
-            current[agent_id] += weight
-        selected = max(
-            normalized,
-            key=lambda item: (current[item[0]], item[1], -base_agent_ids.index(item[0])),
-        )[0]
-        sequence.append(selected)
-        current[selected] -= total
-    return sequence
+    # Unpooled configurations remain safe during migration: one process per
+    # logical identity. Production account pools always declare slots.
+    return 1
 
 
 def select_dispatch_agent_id(
@@ -5661,9 +5565,8 @@ def agent_open_task_counts(
     is first in that pool and is always viable, so it won. Observed on
     2026-08-08: Antigravity owned 23 open tasks while Antigravity2 through
     Antigravity7 held 3, 6, 3, 4, 3 and 4 -- six idle lanes behind one queue.
-    An agent runs one worker at a time (`max_active_workers_per_task: 1`), so
-    concentration translates directly into serialised throughput no matter how
-    high `max_concurrent_workers` is set.
+    A task has at most one active worker, so concentration translates directly
+    into serialised throughput even when other account-pool slots are idle.
     """
 
     status = status if isinstance(status, dict) else load_status(config)
@@ -8322,201 +8225,6 @@ def reviewer_failover_settings(config: dict[str, Any]) -> dict[str, Any]:
     return settings
 
 
-def worker_self_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
-    settings = dict(ready_dispatch_settings(config).get("worker_self_claim", {}) or {})
-    settings.setdefault("enabled", False)
-    settings.setdefault(
-        "release_task_statuses",
-        ["in_progress", "review", "review_approved", "done", "blocked", "assigned"],
-    )
-    return settings
-
-
-def release_completed_worker_for_claim(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    agent_name: str,
-    task_id: str | None,
-) -> bool:
-    if not task_id or not isinstance(task_id, str):
-        return False
-    settings = worker_self_claim_settings(config)
-    allowed_statuses = {str(value).lower() for value in settings.get("release_task_statuses", [])}
-    allowed_statuses.update({"in_progress", "review", "review_approved", "done", "blocked", "assigned"})
-    if not allowed_statuses:
-        return False
-    status = load_status(config)
-    task = task_index_from_status(config, status).get(task_id)
-    if not task or str(task.get("status") or "").lower() not in allowed_statuses:
-        return False
-
-    normalized_agent = normalize_agent_id(agent_name)
-    display_agent = display_name_for(config, normalized_agent)
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-
-    workers_dict = state.get("workers", {})
-    if not isinstance(workers_dict, dict):
-        return False
-
-    matching_entries = []
-    for worker_key, worker in workers_dict.items():
-        if not isinstance(worker, dict):
-            continue
-        if worker.get("task_id") != task_id:
-            continue
-        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
-        norm_w_agent = normalize_agent_id(worker_agent)
-        if norm_w_agent != normalized_agent and display_name_for(config, norm_w_agent) != display_agent:
-            continue
-        if worker.get("status") not in active_statuses:
-            continue
-        matching_entries.append((worker_key, worker))
-
-    if len(matching_entries) != 1:
-        return False
-
-    worker_key, worker = matching_entries[0]
-    if not isinstance(worker_key, str) or not worker_key.strip():
-        return False
-    worker_key_str = worker_key.strip()
-
-    worker_pid = worker.get("pid")
-    if worker_pid is not None:
-        if type(worker_pid) is not int or worker_pid <= 0:
-            return False
-
-    worker_child_pid = worker.get("child_pid")
-    if worker_child_pid is not None:
-        if type(worker_child_pid) is not int or worker_child_pid <= 0:
-            return False
-
-    if (worker_pid is not None and pid_is_alive(worker_pid)) or (worker_child_pid is not None and pid_is_alive(worker_child_pid)):
-        return False
-
-    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
-    status_path_val = worker.get("runner_status_path") or worker.get("status_path") or metadata.get("runner_status_path") or metadata.get("status_path")
-    if not status_path_val or not isinstance(status_path_val, (str, Path)):
-        return False
-
-    receipt = _load_runtime_marker(status_path_val)
-    if not receipt or not isinstance(receipt, dict):
-        return False
-
-    receipt_status = receipt.get("status") or receipt.get("runner_status")
-    if not isinstance(receipt_status, str) or receipt_status.strip().lower() not in {"completed", "success", "succeeded"}:
-        return False
-
-    raw_exit = receipt.get("exit_code")
-    if type(raw_exit) is not int or raw_exit != 0:
-        return False
-
-    if receipt.get("signal") is not None or receipt.get("runner_signal") is not None:
-        return False
-
-    receipt_run_id_val = receipt.get("run_id")
-    receipt_w_run_id_val = receipt.get("worker_run_id")
-
-    if receipt_run_id_val is not None and not isinstance(receipt_run_id_val, str):
-        return False
-    if receipt_w_run_id_val is not None and not isinstance(receipt_w_run_id_val, str):
-        return False
-
-    raw_receipt_run_id = receipt_run_id_val if receipt_run_id_val is not None else receipt_w_run_id_val
-    if not isinstance(raw_receipt_run_id, str):
-        return False
-    receipt_run_id = raw_receipt_run_id.strip()
-    if not receipt_run_id:
-        return False
-
-    if receipt_run_id_val is not None and receipt_w_run_id_val is not None:
-        if receipt_run_id_val.strip() != receipt_w_run_id_val.strip():
-            return False
-
-    raw_worker_run_id = worker.get("run_id")
-    if raw_worker_run_id is not None and not isinstance(raw_worker_run_id, str):
-        return False
-    if isinstance(raw_worker_run_id, str) and raw_worker_run_id.strip():
-        if raw_worker_run_id.strip() != receipt_run_id:
-            return False
-
-    if receipt_run_id != worker_key_str:
-        return False
-
-    receipt_pid = receipt.get("pid")
-    if receipt_pid is not None:
-        if type(receipt_pid) is not int or receipt_pid <= 0:
-            return False
-
-    receipt_child_pid = receipt.get("child_pid")
-    if receipt_child_pid is not None:
-        if type(receipt_child_pid) is not int or receipt_child_pid <= 0:
-            return False
-
-    if worker_pid is not None:
-        if receipt_pid is None or receipt_pid != worker_pid:
-            return False
-
-    if worker_child_pid is not None:
-        if receipt_child_pid is None or receipt_child_pid != worker_child_pid:
-            return False
-
-    if (receipt_pid is not None and pid_is_alive(receipt_pid)) or (receipt_child_pid is not None and pid_is_alive(receipt_child_pid)):
-        return False
-
-    old_worker = copy.deepcopy(worker)
-    queue_event_id = worker.get("queue_event_id")
-    has_queue_event = False
-    old_queue_event = None
-    queue_events_dict = None
-
-    if queue_event_id and isinstance(state.get("queue"), dict):
-        events = state["queue"].get("events")
-        if isinstance(events, dict):
-            queue_events_dict = events
-            if queue_event_id in events and isinstance(events[queue_event_id], dict):
-                has_queue_event = True
-                old_queue_event = copy.deepcopy(events[queue_event_id])
-
-    now = utc_now()
-    worker["status"] = "completed"
-    worker["completed_at"] = now
-    worker["last_event_at"] = now
-    worker["last_error"] = None
-
-    def _rollback() -> None:
-        worker.clear()
-        worker.update(old_worker)
-        if queue_events_dict is not None and queue_event_id:
-            if has_queue_event and old_queue_event is not None:
-                if queue_event_id in queue_events_dict and isinstance(queue_events_dict[queue_event_id], dict):
-                    queue_events_dict[queue_event_id].clear()
-                    queue_events_dict[queue_event_id].update(old_queue_event)
-                else:
-                    queue_events_dict[queue_event_id] = copy.deepcopy(old_queue_event)
-            else:
-                queue_events_dict.pop(queue_event_id, None)
-
-    try:
-        finalize_queue_event_record(config, state, worker, "completed")
-        write_activity_log(
-            config,
-            {
-                "type": "worker_self_claim_released",
-                "task_id": task_id,
-                "message": f"{display_agent} released completed worker slot before self-claim.",
-                "worker_run_id": worker.get("run_id"),
-                "queue_event_id": worker.get("queue_event_id"),
-            },
-        )
-    except Exception:
-        _rollback()
-        return False
-
-    return True
-
-
-
 def task_is_sidecar(task: dict[str, Any]) -> bool:
     return str(task.get("task_class") or "").strip().lower() == "sidecar"
 
@@ -8989,66 +8697,6 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
     return True
 
 
-def workload_targets(status: dict[str, Any]) -> dict[str, float]:
-    raw = status.get("workload")
-    if not isinstance(raw, dict):
-        return {}
-    targets: dict[str, float] = {}
-    for name, value in raw.items():
-        try:
-            targets[str(name)] = float(value)
-        except (TypeError, ValueError):
-            continue
-    return targets
-
-
-def open_owner_counts(status: dict[str, Any], owner_field: str = "owner") -> tuple[dict[str, int], int]:
-    counts: dict[str, int] = {}
-    total = 0
-    for task in status.get("tasks", []) or []:
-        task_status = str(task.get("status") or "").lower()
-        if task_status in {"done", "superseded"}:
-            continue
-        owner = str(task.get(owner_field) or "").strip()
-        if not owner:
-            continue
-        counts[owner] = counts.get(owner, 0) + 1
-        total += 1
-    return counts, total
-
-
-def agent_within_target_workload_for_assignment(
-    status: dict[str, Any],
-    agent_name: str,
-    *,
-    owner_field: str = "owner",
-    previous_owner: str | None = None,
-    creates_new_task: bool = False,
-) -> bool:
-    targets = workload_targets(status)
-    target = targets.get(agent_name)
-    if target is None:
-        return True
-
-    counts, total = open_owner_counts(status, owner_field)
-    current_count = counts.get(agent_name, 0)
-    if previous_owner and previous_owner != agent_name:
-        counts[previous_owner] = max(0, counts.get(previous_owner, 0) - 1)
-        counts[agent_name] = current_count + 1
-    elif creates_new_task:
-        total += 1
-        counts[agent_name] = current_count + 1
-    else:
-        counts[agent_name] = current_count + 1
-
-    if current_count <= 0:
-        return True
-    if total <= 0:
-        return True
-    projected_share = (counts.get(agent_name, 0) / total) * 100
-    return projected_share <= target
-
-
 def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
     settings = ready_dispatch_settings(config)
     statuses = set(str(value).lower() for value in settings.get("review_statuses", []))
@@ -9395,149 +9043,6 @@ def _quarantine_and_preserve_dirty_worktree(
     return True
 
 
-def restore_quarantined_worktree_backup(
-    backup_dir: Path | str,
-    target_dir: Path | str,
-) -> tuple[bool, str]:
-    """Restore a quarantined worktree backup manifest and files into target_dir."""
-    backup_path = Path(backup_dir).expanduser().resolve()
-    target_path = Path(target_dir).expanduser().resolve()
-    manifest_file = backup_path / "manifest.json"
-    checksums_file = backup_path / "backup_checksums.sha256"
-    if not manifest_file.exists() or not checksums_file.exists():
-        return False, "missing manifest or checksums file"
-
-    try:
-        checksums = json.loads(checksums_file.read_text(encoding="utf-8"))
-        for rel_bp, expected_sha in checksums.items():
-            fp = backup_path / rel_bp
-            if not fp.exists() and not os.path.islink(fp):
-                return False, f"corrupted backup: missing {rel_bp}"
-            if fp.is_symlink() or os.path.islink(fp):
-                target = os.readlink(fp)
-                h_val = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
-            else:
-                h_b = hashlib.sha256()
-                with open(fp, "rb") as f_b:
-                    while ch := f_b.read(65536):
-                        h_b.update(ch)
-                h_val = h_b.hexdigest()
-            if h_val != expected_sha:
-                return False, f"corrupted backup: checksum mismatch for {rel_bp}"
-
-        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-        untracked_base = backup_path / "untracked"
-        staged_patch = backup_path / "staged.patch"
-        unstaged_patch = backup_path / "unstaged.patch"
-
-        is_git_repo = (target_path / ".git").exists()
-
-        if is_git_repo:
-            if staged_patch.exists() and staged_patch.stat().st_size > 0:
-                apply_staged = subprocess.run(
-                    ["git", "apply", "--index", "--binary", str(staged_patch)],
-                    cwd=target_path,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if apply_staged.returncode != 0:
-                    return False, f"restoration_failed: failed to apply staged patch: {apply_staged.stderr}"
-
-            if unstaged_patch.exists() and unstaged_patch.stat().st_size > 0:
-                apply_unstaged = subprocess.run(
-                    ["git", "apply", "--binary", str(unstaged_patch)],
-                    cwd=target_path,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if apply_unstaged.returncode != 0:
-                    return False, f"restoration_failed: failed to apply unstaged patch: {apply_unstaged.stderr}"
-
-            for file_entry in manifest.get("files", []):
-                status_code = str(file_entry.get("status_code", ""))
-                rel_p = file_entry.get("path")
-                if not rel_p:
-                    continue
-                if status_code.startswith("?"):
-                    src_fp = untracked_base / rel_p
-                    dst_fp = target_path / rel_p
-                    if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
-                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                        if dst_fp.exists() or os.path.islink(dst_fp):
-                            dst_fp.unlink()
-                        os.symlink(file_entry["symlink_target"], dst_fp)
-                    elif src_fp.exists() and src_fp.is_file():
-                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_fp, dst_fp)
-        else:
-            for file_entry in manifest.get("files", []):
-                rel_p = file_entry.get("path")
-                if not rel_p:
-                    continue
-                src_fp = untracked_base / rel_p
-                dst_fp = target_path / rel_p
-                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
-                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                    if dst_fp.exists() or os.path.islink(dst_fp):
-                        dst_fp.unlink()
-                    os.symlink(file_entry["symlink_target"], dst_fp)
-                elif src_fp.exists() and src_fp.is_file():
-                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_fp, dst_fp)
-        return True, "restored"
-    except Exception as exc:
-        return False, f"restoration_failed: {exc}"
-
-
-def _backup_and_reset_dirty_worktree(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    worktree_path: Path | str | None,
-    task_id: str | None,
-    *,
-    run_id: str | None = None,
-    trigger: str = "",
-) -> bool:
-    return _quarantine_and_preserve_dirty_worktree(
-        config,
-        state,
-        worktree_path,
-        task_id,
-        expected_branch=worker_task_branch(config, task_id) if task_id else None,
-        run_id=run_id,
-        trigger=trigger,
-    )
-
-
-def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> None:
-    """Reset a failed worker's isolated worktree state by preserving its backup."""
-    settings = worker_worktree_settings(config)
-    if not settings.get("enabled"):
-        return
-    task_id = worker.get("task_id")
-    repo_root = config_path(config, "status_file").parents[0].resolve()
-    raw_path = str(worker.get("workspace_path") or "").strip()
-    worktree_path: Path | None = None
-    if raw_path:
-        worktree_path = Path(raw_path).expanduser()
-    elif task_id:
-        branch = worker_task_branch(config, task_id)
-        worktree_path = _existing_worktree_for_branch(repo_root, branch, exclude_root=True) or worker_task_worktree_path(
-            config, task_id, settings
-        )
-    _quarantine_and_preserve_dirty_worktree(
-        config,
-        state,
-        worktree_path,
-        task_id,
-        expected_branch=worker_task_branch(config, task_id) if task_id else None,
-        run_id=worker.get("run_id"),
-        trigger="worker_failed",
-    )
-
-
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
     queue_event_id = worker.get("queue_event_id")
     if not queue_event_id:
@@ -9643,10 +9148,6 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     state["queue"]["events"] = {event_id: record for event_id, record in queue_events.items() if event_id in kept_ids}
     save_event_queue(config, kept)
     return True
-
-
-def task_status_map(status: dict[str, Any]) -> dict[str, str]:
-    return {str(task.get("id")): str(task.get("status") or "") for task in status.get("tasks", []) if task.get("id")}
 
 
 def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -9825,7 +9326,7 @@ def reassign_unavailable_reviewers(
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     reserved_agents = set(active_agents) | set(pending_agents)
     reserved_tasks = {task_id for task_id, _agent_id in active_task_agents | pending_task_agents}
-    candidate_agent_ids = weighted_dispatch_agent_ids(config, settings)
+    candidate_agent_ids = dispatch_loop_agent_ids(config)
     changed = False
 
     for task in status.get(tasks_path, []) or []:
@@ -9863,12 +9364,6 @@ def reassign_unavailable_reviewers(
                 or not agent_can_take_task(config, candidate, task)
                 or not review_is_independent(config, owner, candidate)
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
-                or not agent_within_target_workload_for_assignment(
-                    status,
-                    candidate,
-                    owner_field=reviewer_field,
-                    previous_owner=reviewer,
-                )
             ):
                 continue
             replacement = candidate
@@ -10067,7 +9562,7 @@ def higher_priority_ready_task_exists(
         if event_priority is not None and event_priority < current_priority and event_task_id:
             served_higher_priority_task_ids.add(event_task_id)
 
-    agent_capacity = agent_dispatch_capacity(config, logical_agent_id, settings)
+    agent_capacity = agent_dispatch_capacity(config, logical_agent_id)
     free_slots = max(0, agent_capacity - occupied_count)
     unserved_higher_priority = higher_priority_task_ids - served_higher_priority_task_ids
     return len(unserved_higher_priority) > free_slots
@@ -10339,15 +9834,14 @@ def dispatch_ready_tasks(
         task_map = {task.get(task_id_field): task for task in tasks}
 
     dispatches = 0
-    weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings)) and not agent_ids_override
     agent_sequence = (
         [normalize_agent_id(agent_id) for agent_id in agent_ids_override if normalize_agent_id(agent_id)]
         if agent_ids_override
-        else weighted_dispatch_agent_ids(config, settings)
+        else dispatch_loop_agent_ids(config)
     )
     dispatch_state = state.setdefault("ready_dispatcher", {})
     try:
-        dispatch_cursor = int(dispatch_state.get("weighted_cursor", 0))
+        dispatch_cursor = int(dispatch_state.get("dispatch_cursor", 0))
     except (TypeError, ValueError):
         dispatch_cursor = 0
     if agent_sequence:
@@ -10355,11 +9849,6 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
-    max_concurrent = ready_dispatch_max_concurrent_workers(config)
-    if max_concurrent is not None and max_concurrent > 0:
-        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
-        if live_total >= max_concurrent:
-            return changed
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
@@ -10379,7 +9868,7 @@ def dispatch_ready_tasks(
         quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
         if quota_limit and quota_group and quota_used >= quota_limit:
             continue
-        agent_capacity = agent_dispatch_capacity(config, agent_id, settings)
+        agent_capacity = agent_dispatch_capacity(config, agent_id)
         current_agent_load = len(agent_loads.get(target_agent, []))
         if current_agent_load >= agent_capacity:
             continue
@@ -10623,9 +10112,8 @@ def dispatch_ready_tasks(
             candidates.append((task_priority_rank(task), priority, index, task, reason))
 
         candidates.sort(key=lambda item: (item[0], item[1], item[2]))
-        per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
         queued_for_agent = 0
-        for _, _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason in candidates[:available_agent_slots]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
@@ -10646,28 +10134,17 @@ def dispatch_ready_tasks(
             break
 
     if agent_sequence and considered_agents and not agent_ids_override:
-        dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
-        raw_cursor_revision = dispatch_state.get("weighted_cursor_revision", 0)
+        dispatch_state["dispatch_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
+        raw_cursor_revision = dispatch_state.get("dispatch_cursor_revision", 0)
         try:
             if isinstance(raw_cursor_revision, bool):
                 raise ValueError
             cursor_revision = int(raw_cursor_revision)
         except (TypeError, ValueError):
             cursor_revision = 0
-        dispatch_state["weighted_cursor_revision"] = max(0, cursor_revision) + 1
-        dispatch_state["weighted_cursor_updated_at"] = utc_now()
+        dispatch_state["dispatch_cursor_revision"] = max(0, cursor_revision) + 1
+        dispatch_state["dispatch_cursor_updated_at"] = utc_now()
     return changed
-
-
-def ready_dispatch_max_concurrent_workers(config: dict[str, Any]) -> int | None:
-    max_concurrent_setting = ready_dispatch_settings(config).get("max_concurrent_workers")
-    try:
-        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
-    if max_concurrent is not None and max_concurrent <= 0:
-        return None
-    return max_concurrent
 
 
 def run_once(
@@ -10828,61 +10305,6 @@ def run_supervisor_cycle(
         return False
 
 
-def claim_next_task_for_agent(
-    config: dict[str, Any],
-    *,
-    agent_name: str,
-    release_task_id: str | None = None,
-    quiet: bool = False,
-) -> bool:
-    settings = worker_self_claim_settings(config)
-    if not settings.get("enabled", False):
-        console_log("worker self-claim disabled", quiet=quiet)
-        return False
-    agent_id = normalize_agent_id(agent_name)
-    if not agent_id or agent_id not in config.get("agents", {}):
-        console_log(f"worker self-claim skipped: unknown agent {agent_name}", quiet=quiet)
-        return False
-
-    state = load_runtime_state(config)
-    planning_state = load_discussion_planning_state()
-    changed = release_completed_worker_for_claim(
-        config,
-        state,
-        agent_name=display_name_for(config, agent_id),
-        task_id=release_task_id,
-    )
-    provider_report = load_provider_report(config)
-    changed = expire_provider_dispatch_pauses(config, state) or changed
-    changed = reconcile_queue_records(config, state) or changed
-    changed = prune_event_queue(config, state) or changed
-    if not discussion_planning_is_active(planning_state):
-        changed = dispatch_ready_tasks(
-            config,
-            state,
-            provider_report=provider_report,
-            agent_ids_override=[agent_id],
-            max_dispatches_override=1,
-        ) or changed
-        changed = (
-            process_queue(
-                config,
-                state,
-                provider_report,
-                agent_ids_override=[agent_id],
-            )
-            or changed
-        )
-    supervisor_state = state.setdefault("supervisor", {})
-    occupancy = compute_mode_occupancy(config, state)
-    supervisor_state["mode_occupancy"] = occupancy
-    focus_mode = str(supervisor_state.get("focus_mode") or "execution")
-    supervisor_state["mode_status"] = "active" if mode_has_activity(occupancy.get(focus_mode)) else "idle"
-    save_runtime_state(config, state)
-    refresh_dashboard_runtime_artifacts(config)
-    return changed
-
-
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
@@ -10896,14 +10318,6 @@ def main() -> int:
             console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
         else:
             console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
-        return 0
-    if args.claim_agent:
-        claim_next_task_for_agent(
-            config,
-            agent_name=args.claim_agent,
-            release_task_id=args.release_task,
-            quiet=args.quiet,
-        )
         return 0
     if not acquire_singleton_lock(config):
         console_log(
