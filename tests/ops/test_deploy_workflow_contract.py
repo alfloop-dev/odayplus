@@ -183,8 +183,9 @@ def test_tenant_variables_pass_through_without_placeholder_defaults(
     ``deploy_cloud_run_waji.sh`` already fails closed when both tenant variables
     are unset. Supplying ``tenant-dev`` / ``tenant-staging`` here bypasses that
     guard and can make the worker write into a partition the smoke principal
-    cannot read. Keep the workflow as a pure pass-through so deployment cannot
-    silently invent a tenant scope.
+    cannot read. The environment owner must bind both repository variables to
+    that principal's tenant claim; this contract keeps the workflow as a pure
+    pass-through so deployment cannot silently invent a different tenant scope.
     """
 
     environment = _parsed(workflow)["jobs"][workflow.job_id]["env"]

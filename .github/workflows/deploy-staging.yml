@@ -81,6 +81,9 @@ jobs:
       ODP_EXTERNAL_PROVIDER_MODE: live
       ODP_PERSISTENCE: postgresql
       ODP_OBJECT_STORE: gcs
+      # Both values must match the smoke principal's tenant claim. Do not add a
+      # placeholder fallback: deploy_cloud_run_waji.sh fails closed when the
+      # environment has not configured a tenant explicitly.
       ODP_SCHEDULED_INGESTION_TENANT_ID: ${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID }}
       ODP_TENANT_ID: ${{ vars.ODP_TENANT_ID }}
     steps:
