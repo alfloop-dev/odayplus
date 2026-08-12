@@ -105,77 +105,62 @@ KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
-        "target_workload": 20,
     },
     "Claude2": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude2-execution-control",
-        "target_workload": 10,
     },
     "Antigravity": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity-research-runtime",
-        "target_workload": 70,
     },
     "Antigravity2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity2-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity3": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity3-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity4": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity4-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity5": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity5-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity6": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity6-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity7": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity7-research-runtime",
-        "target_workload": 5,
     },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
-        "target_workload": 5,
     },
     "Gemini2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini2-research-runtime",
-        "target_workload": 5,
     },
     "Codex": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 5,
     },
     "Codex2": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 5,
     },
     "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
         "default_branch": "feat/copilot-research-critique",
-        "target_workload": 5,
     },
     "Human/Ops": {
         "capability_lane": ["human-gate", "operations", "signoff"],
         "default_branch": "human/ops",
-        "target_workload": 0,
     },
 }
 
@@ -911,7 +896,6 @@ def default_state() -> dict[str, Any]:
         ],
         "handoffs": [],
         "blockers": [],
-        "workload": {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()},
     }
 
 
@@ -1026,19 +1010,6 @@ def load_config() -> dict[str, Any]:
     return payload
 
 
-def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
-    value = settings.get(key, default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)
-
-
 def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
     try:
         return int(settings.get(key, default))
@@ -1046,49 +1017,14 @@ def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
         return default
 
 
-def optional_int_config_setting(settings: dict[str, Any], key: str) -> int | None:
-    value = settings.get(key)
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def int_mapping_config_setting(settings: dict[str, Any], key: str) -> dict[str, int]:
-    raw = settings.get(key)
-    if not isinstance(raw, dict):
-        return {}
-    values: dict[str, int] = {}
-    for name, value in raw.items():
-        try:
-            values[str(name)] = int(value)
-        except (TypeError, ValueError):
-            continue
-    return values
-
-
 def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
-    helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
-    worker_self_claim = ready_dispatcher.get("worker_self_claim") if isinstance(ready_dispatcher.get("worker_self_claim"), dict) else {}
-    claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
-    helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
-    worker_self_claim_enabled = bool_config_setting(worker_self_claim, "enabled", False)
     return {
-        "mode": "worker_self_claim" if worker_self_claim_enabled else ("idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch"),
-        "worker_self_claim_enabled": worker_self_claim_enabled,
-        "worker_self_claim_command": worker_self_claim.get("claim_command") or "",
-        "helper_claim_enabled": helper_claim_enabled,
-        "claim_idle_work": claim_idle_work,
-        "claim_sidecars_when_idle": bool_config_setting(helper_claim, "claim_sidecars_when_idle", False),
-        "require_owner_higher_priority_load": bool_config_setting(helper_claim, "require_owner_higher_priority_load", True),
+        "mode": "supervisor_owned_dispatch",
+        "capacity_authority": "account_pools_and_dispatch_slots",
         "owned_work_first": True,
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
-        "max_tasks_per_agent": optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent"),
-        "max_tasks_per_agent_by_agent": int_mapping_config_setting(ready_dispatcher, "max_tasks_per_agent_by_agent"),
-        "max_concurrent_per_quota_group": int_mapping_config_setting(ready_dispatcher, "max_concurrent_per_quota_group"),
+        "reviewer_failover_enabled": bool((ready_dispatcher.get("reviewer_failover") or {}).get("enabled", True)),
         "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
         "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
     }
@@ -1133,8 +1069,6 @@ def _dashboard_slot_count(config: dict[str, Any], agent_id: str) -> int:
 
 
 def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> int:
-    ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
-    caps = ready_dispatcher.get("max_tasks_per_agent_by_agent")
     agent_id = _dashboard_agent_id(config, agent_name)
     slot_count = _dashboard_slot_count(config, agent_id)
     # As in the supervisor, executable slots are the capacity authority.  A
@@ -1142,56 +1076,7 @@ def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> 
     # seven independent workers on the dashboard.
     if slot_count:
         return slot_count
-    canonical = canonical_agent_name(agent_name)
-    lookup_keys = {
-        str(agent_name or "").strip().lower(),
-        canonical.lower(),
-        agent_id.lower(),
-        agent_id.lower().replace("_", "-"),
-        agent_id.lower().replace("-", "_"),
-    }
-    if isinstance(caps, dict):
-        for key, value in caps.items():
-            if str(key).strip().lower() not in lookup_keys:
-                continue
-            try:
-                return max(1, int(value))
-            except (TypeError, ValueError):
-                continue
-
-    default_capacity = optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent")
-    return default_capacity or 1
-
-
-def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dict[str, Any]]:
-    claims: list[dict[str, Any]] = []
-    for line_no, line in enumerate(reversed(load_log_tail_lines(max_lines=max_scan_lines)), start=1):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            entry = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            print(
-                f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
-                file=sys.stderr,
-            )
-            continue
-        if str(entry.get("type") or "") != "task_helper_claimed":
-            continue
-        claims.append(
-            {
-                "task_id": entry.get("task_id"),
-                "from_owner": entry.get("from_owner") or entry.get("from"),
-                "to_owner": entry.get("to_owner") or entry.get("to"),
-                "new_reviewer": entry.get("new_reviewer") or entry.get("reviewer"),
-                "message": entry.get("message"),
-                "ts": entry.get("ts") or entry.get("updated_at"),
-            }
-        )
-        if len(claims) >= limit:
-            break
-    return claims
+    return 1
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -1409,7 +1294,6 @@ def ensure_agent(name: str) -> dict[str, Any]:
         KNOWN_AGENTS[canonical] = {
             "capability_lane": template["capability_lane"],
             "default_branch": f"feat/{canonical.lower()}-branch" if problem is None else "",
-            "target_workload": 0 if problem is not None else 5,
         }
     return KNOWN_AGENTS[canonical]
 
@@ -3062,6 +2946,10 @@ def validate_state(state: dict[str, Any]) -> None:
 
 
 def normalize_state_agents(state: dict[str, Any]) -> None:
+    # `workload` used to be a target-percentage dispatch policy. Pool slots are
+    # now the sole capacity authority; prune the obsolete snapshot whenever a
+    # status document is read so an old writer cannot make it look live again.
+    state.pop("workload", None)
     for task in state.get("tasks", []):
         task["owner"] = active_agent_name(task.get("owner"))
         task["reviewer"] = active_agent_name(task.get("reviewer"))
@@ -3185,11 +3073,6 @@ def recompute_workload(state: dict[str, Any]) -> None:
         if task["status"] in {"in_progress", "review", "blocked"}:
             bucket["active"] += 1
 
-    state["workload"] = {
-        name: KNOWN_AGENTS[name]["target_workload"]
-        for name in KNOWN_AGENTS
-        if not is_quarantined_agent(name)
-    }
     state["workload_summary"] = summary
 
 
@@ -3602,15 +3485,11 @@ def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else request_snapshot.get("metadata", {})
     if isinstance(metadata.get("planning"), dict) and metadata.get("planning"):
         return str(metadata["planning"].get("mode") or "discussion_planning")
-    if isinstance(metadata.get("chair"), dict) and metadata.get("chair"):
-        return "chair_review"
     if isinstance(metadata.get("coordination"), dict) and metadata.get("coordination"):
         return "coordination"
     reason = str(payload.get("reason") or request_snapshot.get("reason") or "").strip()
     if reason.startswith("discussion_planning_"):
         return "discussion_planning"
-    if reason.startswith("chair_review:"):
-        return "chair_review"
     if reason.startswith("coordination:"):
         return "coordination"
     return "execution"
@@ -3858,8 +3737,6 @@ def detect_truth_mismatches(
         if task_id:
             live_workers_by_task.setdefault(task_id, []).append(worker)
         else:
-            if str(worker.get("dispatch_mode") or "").strip() == "chair_review":
-                continue
             push(
                 {
                     "id": f"worker-without-task:{worker.get('run_id')}",
@@ -3875,7 +3752,7 @@ def detect_truth_mismatches(
 
         task = task_map.get(task_id)
         if task is None:
-            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination", "chair_review"}:
+            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination"}:
                 continue
             if resolver.source(task_id) == "archive":
                 continue
@@ -4728,13 +4605,11 @@ def build_dashboard_bundle(
         "planning": {"running": 0, "pending": 0, "queued": 0},
         "execution": {"running": 0, "pending": 0, "queued": 0},
         "coordination": {"running": 0, "pending": 0, "queued": 0},
-        "chair_review": {"running": 0, "pending": 0, "queued": 0},
     }
     dispatch_mode_map = {
         "discussion_planning": "planning",
         "execution": "execution",
         "coordination": "coordination",
-        "chair_review": "chair_review",
     }
     for worker in live_workers:
         mode_name = dispatch_mode_map.get(str(worker.get("dispatch_mode") or "").strip())
@@ -4752,19 +4627,6 @@ def build_dashboard_bundle(
         computed_mode_occupancy[mode_name]["queued"] += 1
     mode_occupancy = computed_mode_occupancy
 
-    chair_rotation = orchestrator.get("chair_rotation") if isinstance(orchestrator.get("chair_rotation"), dict) else {}
-    chair_summary = {
-        "current_index": int(chair_rotation.get("current_index") or 0),
-        "last_chair_agent": chair_rotation.get("last_chair_agent"),
-        "last_chair_run_at": chair_rotation.get("last_chair_run_at"),
-        "last_chair_reason": chair_rotation.get("last_chair_reason"),
-        "last_review_path": chair_rotation.get("last_review_path"),
-        "last_review_summary": chair_rotation.get("last_review_summary") or [],
-        "pending_review_path": chair_rotation.get("pending_review_path"),
-        "pending_review_agent": chair_rotation.get("pending_review_agent"),
-        "sidecar_approved_until": chair_rotation.get("sidecar_approved_until"),
-    }
-
     lanes: dict[str, dict[str, int]] = {}
     for worker in workers:
         actor = str(worker.get("actor") or "-")
@@ -4775,8 +4637,6 @@ def build_dashboard_bundle(
         lane[bucket] = lane.get(bucket, 0) + 1
         if worker.get("status") == "failed":
             lane["failed"] += 1
-
-    dispatch_targets = {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()}
 
     sprint_started_at_value = str(state.get("sprint_started_at") or "").strip() or None
     completed_in_sprint, superseded_in_sprint = count_terminal_since(sprint_started_at_value)
@@ -4806,7 +4666,6 @@ def build_dashboard_bundle(
             "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
             "mode_occupancy": mode_occupancy,
             "lanes": lanes,
-            "dispatch_targets": dispatch_targets,
         },
         "execution_summary": {
             "ready_now": ready_now,
@@ -4854,9 +4713,7 @@ def build_dashboard_bundle(
         },
         "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
-        "chair_summary": chair_summary,
         "dispatch_policy": dispatch_policy,
-        "recent_helper_claims": recent_helper_claims(),
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
@@ -5635,7 +5492,6 @@ def command_prune_agents(state: dict[str, Any], args: list[str]) -> None:
     for name in doomed:
         KNOWN_AGENTS.pop(name, None)
         QUARANTINED_AGENTS.discard(name)
-        state.get("workload", {}).pop(name, None)
         state.get("workload_summary", {}).pop(name, None)
 
     timestamp = iso_now()

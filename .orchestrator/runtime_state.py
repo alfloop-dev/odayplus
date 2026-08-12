@@ -30,13 +30,13 @@ def default_state() -> dict[str, Any]:
         "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
-        # The weighted ready-dispatch cursor is durable scheduling state. If it
-        # is dropped between loops, agents near the front of the sequence can
-        # consume the per-tick budget forever and starve later reviewers.
+        # The round-robin ready-dispatch cursor is durable scheduling state. If
+        # it is dropped between loops, agents near the front of the sequence
+        # can consume the per-tick budget forever and starve later reviewers.
         "ready_dispatcher": {
-            "weighted_cursor": 0,
-            "weighted_cursor_revision": 0,
-            "weighted_cursor_updated_at": None,
+            "dispatch_cursor": 0,
+            "dispatch_cursor_revision": 0,
+            "dispatch_cursor_updated_at": None,
         },
         "queue": {
             "events": {},
@@ -150,16 +150,19 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(ready_dispatcher, dict):
         ready_dispatcher = {}
         state["ready_dispatcher"] = ready_dispatcher
+    legacy_cursor = ready_dispatcher.pop("weighted_cursor", 0)
+    legacy_revision = ready_dispatcher.pop("weighted_cursor_revision", 0)
+    legacy_updated_at = ready_dispatcher.pop("weighted_cursor_updated_at", None)
     try:
-        ready_dispatcher["weighted_cursor"] = max(
-            0, int(ready_dispatcher.get("weighted_cursor", 0))
+        ready_dispatcher["dispatch_cursor"] = max(
+            0, int(ready_dispatcher.get("dispatch_cursor", legacy_cursor))
         )
     except (TypeError, ValueError):
-        ready_dispatcher["weighted_cursor"] = 0
-    ready_dispatcher["weighted_cursor_revision"] = _nonnegative_cursor_revision(
-        ready_dispatcher.get("weighted_cursor_revision", 0)
+        ready_dispatcher["dispatch_cursor"] = 0
+    ready_dispatcher["dispatch_cursor_revision"] = _nonnegative_cursor_revision(
+        ready_dispatcher.get("dispatch_cursor_revision", legacy_revision)
     )
-    cursor_updated_at = ready_dispatcher.get("weighted_cursor_updated_at")
+    cursor_updated_at = ready_dispatcher.get("dispatch_cursor_updated_at", legacy_updated_at)
     if isinstance(cursor_updated_at, str) and cursor_updated_at:
         try:
             datetime.fromisoformat(cursor_updated_at.replace("Z", "+00:00"))
@@ -167,7 +170,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
             cursor_updated_at = None
     else:
         cursor_updated_at = None
-    ready_dispatcher["weighted_cursor_updated_at"] = cursor_updated_at
+    ready_dispatcher["dispatch_cursor_updated_at"] = cursor_updated_at
     state.setdefault("queue", {})
     state["queue"].setdefault("events", {})
     state.setdefault("workers", {})
@@ -494,25 +497,22 @@ def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -
 
 def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(disk_state, dict):
-        return in_mem_state
-    merged = deepcopy(in_mem_state)
+        return migrate_state(in_mem_state)
+    disk_state = migrate_state(disk_state)
+    merged = migrate_state(in_mem_state)
 
-    # `--claim-agent` intentionally does not advance the global weighted
-    # cursor, but it can save a snapshot loaded before the singleton loop
-    # advanced it. A monotonic revision, advanced atomically with the cursor by
-    # the singleton dispatch path, determines the winner without relying on a
-    # collision-prone or attacker-controlled wall clock. Equal/legacy revisions
-    # prefer disk so an auxiliary writer can never roll scheduling fairness
-    # backward. The timestamp remains informational only.
+    # The singleton loop owns the round-robin cursor. A monotonic revision,
+    # advanced atomically with that cursor, prevents an older snapshot from
+    # rolling scheduling fairness backward. The timestamp is informational.
     disk_dispatcher = disk_state.get("ready_dispatcher")
     mem_dispatcher = merged.get("ready_dispatcher")
     if isinstance(disk_dispatcher, dict):
         disk_revision = _nonnegative_cursor_revision(
-            disk_dispatcher.get("weighted_cursor_revision", 0)
+            disk_dispatcher.get("dispatch_cursor_revision", 0)
         )
         mem_revision = (
             _nonnegative_cursor_revision(
-                mem_dispatcher.get("weighted_cursor_revision", 0)
+                mem_dispatcher.get("dispatch_cursor_revision", 0)
             )
             if isinstance(mem_dispatcher, dict)
             else 0

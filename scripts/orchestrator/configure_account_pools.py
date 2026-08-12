@@ -97,10 +97,10 @@ def configure(config: dict[str, Any]) -> dict[str, Any]:
     ready.pop("agent_workload_weights", None)
     ready.pop("target_workload_mode", None)
     ready.pop("max_concurrent_per_quota_group", None)
+    ready.pop("max_concurrent_workers", None)
     ready["reviewer_failover"] = {"enabled": True}
     active = ready.get("active_worker_statuses", [])
     ready["active_worker_statuses"] = [status for status in active if status != "manual_pending"]
-    ready["max_concurrent_workers"] = 10
     ready["max_dispatches_per_tick"] = min(10, max(1, int(ready.get("max_dispatches_per_tick", 10))))
     # Removed in the first supervisor simplification.  Delete it from the
     # authoritative runtime config too, so it cannot become a future source
