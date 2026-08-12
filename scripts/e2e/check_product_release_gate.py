@@ -36,6 +36,7 @@ REQUIRED_FILES = {
     "release gate registry": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
     "release gate registry guide": "docs/evidence/gates/README.md",
     "release gate registry checker": "scripts/e2e/check_release_gate_registry.py",
+    "product-grade gate reconciliation checker": "scripts/e2e/check_product_grade_gate_reconciliation.py",
     "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
@@ -121,6 +122,21 @@ REQUIRED_REPORT_TOKENS = (
     "corr-pv006-ops-intervention-price-ad",
     "corr-pv007-avm-netplan-learning-audit",
 )
+
+
+def run_checker(script: str, *arguments: str) -> tuple[int, str]:
+    """Run a sibling checker and return its code plus compact diagnostics."""
+    result = subprocess.run(
+        [sys.executable, script, *arguments],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    output = "\n".join(
+        line for line in (result.stdout + result.stderr).splitlines() if line.strip()
+    )
+    return result.returncode, output
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -211,40 +227,30 @@ def main(argv: list[str] | None = None) -> int:
         if required_token not in external_followup_workflow_text:
             errors.append(f"external proof follow-up workflow missing token: {required_token}")
 
-    external_followup_workflow_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_followup_workflow.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if external_followup_workflow_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (external_followup_workflow_check.stdout + external_followup_workflow_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_external_proof_followup_workflow.py")
+    if checker_status != 0:
         errors.append(f"external proof follow-up workflow check failed: {output}")
 
-    registry_command = [sys.executable, "scripts/e2e/check_release_gate_registry.py"]
+    registry_arguments: list[str] = []
     if args.require_go:
-        registry_command.append("--require-go")
+        registry_arguments.append("--require-go")
     if args.expected_sha:
-        registry_command.extend(["--expected-sha", args.expected_sha])
-    gate_registry_check = subprocess.run(
-        registry_command,
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
+        registry_arguments.extend(["--expected-sha", args.expected_sha])
+    registry_status, output = run_checker(
+        "scripts/e2e/check_release_gate_registry.py",
+        *registry_arguments,
     )
-    if gate_registry_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (gate_registry_check.stdout + gate_registry_check.stderr).splitlines()
-            if line.strip()
-        )
+    if registry_status != 0:
         errors.append(f"release gate registry check failed: {output}")
+
+    # Keep the product-grade evidence queues and handback board on one truth
+    # surface. This used to be a standalone checker, which meant the release
+    # gate could pass while the quoted blocker/ACK counts had drifted apart.
+    reconciliation_status, output = run_checker(
+        "scripts/e2e/check_product_grade_gate_reconciliation.py", "--skip-runtime"
+    )
+    if reconciliation_status != 0:
+        errors.append(f"product-grade gate reconciliation check failed: {output}")
 
     runner = ROOT / "scripts/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""
@@ -286,126 +292,36 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         errors.append(f"acceptance scenario/inventory validator error: {exc}")
 
-    closeout_queue_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_closeout_queue.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if closeout_queue_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (closeout_queue_check.stdout + closeout_queue_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_product_closeout_queue.py")
+    if checker_status != 0:
         errors.append(f"closeout queue check failed: {output}")
 
-    closeout_pickup_board_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if closeout_pickup_board_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (closeout_pickup_board_check.stdout + closeout_pickup_board_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_product_closeout_pickup_board.py")
+    if checker_status != 0:
         errors.append(f"closeout pickup board check failed: {output}")
 
-    fleet_dispatch_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if fleet_dispatch_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (fleet_dispatch_check.stdout + fleet_dispatch_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_product_grade_fleet_dispatch.py")
+    if checker_status != 0:
         errors.append(f"product-grade fleet dispatch check failed: {output}")
 
-    external_proof_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_closeout_queue.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if external_proof_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (external_proof_check.stdout + external_proof_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_external_proof_closeout_queue.py")
+    if checker_status != 0:
         errors.append(f"external proof closeout queue check failed: {output}")
 
-    external_pickup_board_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_fleet_pickup_board.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if external_pickup_board_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (external_pickup_board_check.stdout + external_pickup_board_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_external_proof_fleet_pickup_board.py")
+    if checker_status != 0:
         errors.append(f"external proof fleet pickup board check failed: {output}")
 
-    external_handback_template_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_handback_template.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if external_handback_template_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (external_handback_template_check.stdout + external_handback_template_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_external_proof_handback_template.py")
+    if checker_status != 0:
         errors.append(f"external proof handback template check failed: {output}")
 
-    external_handback_status_board_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_external_proof_handback_status_board.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if external_handback_status_board_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (
-                external_handback_status_board_check.stdout + external_handback_status_board_check.stderr
-            ).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_external_proof_handback_status_board.py")
+    if checker_status != 0:
         errors.append(f"external proof handback status board check failed: {output}")
 
-    go_no_go_check = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if go_no_go_check.returncode != 0:
-        output = "\n".join(
-            line
-            for line in (go_no_go_check.stdout + go_no_go_check.stderr).splitlines()
-            if line.strip()
-        )
+    checker_status, output = run_checker("scripts/e2e/check_product_go_no_go.py")
+    if checker_status != 0:
         errors.append(f"product go/no-go guard check failed: {output}")
 
     for doc_label, relative_path in (

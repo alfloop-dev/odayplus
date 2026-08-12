@@ -155,6 +155,7 @@ else:
         registry: MlflowRegistryAdapter | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
+        from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
@@ -190,15 +191,7 @@ else:
                 composition_error = exc
                 service = None
 
-        def require_runtime_binding() -> None:
-            if composition_error is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "code": composition_error.code,
-                        "message": str(composition_error),
-                    },
-                )
+        require_runtime_binding = runtime_binding_guard(composition_error)
 
         router = APIRouter(
             prefix="/learninghub",

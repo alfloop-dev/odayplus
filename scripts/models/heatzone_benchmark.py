@@ -12,7 +12,6 @@ Audits HeatZone model-ready label inventory against canonical requirements:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import re
@@ -28,6 +27,7 @@ if str(ROOT) not in sys.path:
 
 from models.shared_ml.model_ready_receipt import load_model_ready_receipt
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
+from shared.integrity import compute_content_sha256
 
 BENCHMARK_RECEIPT_SCHEMA_VERSION = 1
 BENCHMARK_RECEIPT_KIND = "heatzone-gate1-benchmark-receipt"
@@ -46,12 +46,7 @@ HEX_64_PATTERN = re.compile(r"^[0-9a-fA-F]{64}$")
 
 def compute_benchmark_receipt_sha256(payload: dict[str, Any]) -> str:
     """Compute sha256 digest of benchmark receipt body excluding integrity envelope."""
-    canonical = json.dumps(
-        {k: v for k, v in payload.items() if k != "integrity"},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return compute_content_sha256(payload)
 
 
 def _validate_metric_value(name: str, value: float | None) -> None:
