@@ -172,9 +172,11 @@ def generate_restore_args(payload: dict[str, Any], location: str, project: str) 
         if retry.get("maxRetryDuration"):
             args.append(f"--max-retry-duration={retry['maxRetryDuration']}")
         if retry.get("minBackoffDuration"):
-            args.append(f"--min-backoff-duration={retry['minBackoffDuration']}")
+            # gcloud renamed the Scheduler retry flags; the old
+            # *-duration spellings are rejected by current Cloud SDKs.
+            args.append(f"--min-backoff={retry['minBackoffDuration']}")
         if retry.get("maxBackoffDuration"):
-            args.append(f"--max-backoff-duration={retry['maxBackoffDuration']}")
+            args.append(f"--max-backoff={retry['maxBackoffDuration']}")
         if retry.get("maxDoublings") is not None:
             args.append(f"--max-doublings={retry['maxDoublings']}")
 

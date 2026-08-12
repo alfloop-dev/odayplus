@@ -498,6 +498,10 @@ upsert_scheduler_trigger() {
     --project="${GCP_PROJECT}" >/dev/null 2>&1; then
     action="update"
   fi
+  local header_arg="--headers=Content-Type=application/json"
+  if [ "${action}" = "update" ]; then
+    header_arg="--update-headers=Content-Type=application/json"
+  fi
   gcloud scheduler jobs "${action}" http "${trigger_name}" \
     --location="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
@@ -506,7 +510,7 @@ upsert_scheduler_trigger() {
     --uri="${target_uri}" \
     --http-method=POST \
     --message-body="{}" \
-    --headers="Content-Type=application/json" \
+    "${header_arg}" \
     --oauth-service-account-email="${ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT}" \
     --oauth-token-scope="https://www.googleapis.com/auth/cloud-platform" \
     --quiet
