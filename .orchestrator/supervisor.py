@@ -3,12 +3,10 @@ from __future__ import annotations
 
 import argparse
 import atexit
-import copy
 import fcntl
 import fnmatch
 import hashlib
 import json
-import math
 import os
 import random
 import re
@@ -75,7 +73,6 @@ from common import (
     relpath,
     selected_shared_files,
     shell_quote,
-    snapshot_task,
     spawn_background_process,
     summarize_failure_reason,
     utc_now,
@@ -98,6 +95,7 @@ from dispatch_policy import (
     is_execution_dispatch_reason,
     normalized_status_set,
     ready_dispatch_settings,
+    task_priority_rank,
 )
 from github_bus import sync_github_bus
 from provider_permissions import (
@@ -118,9 +116,15 @@ from runtime_state import (
     save_runtime_state,
 )
 from task_archive import TaskResolver
-from watch_events import queue_delivery_event, run_scan, trim_seen_events
+from watch_events import (
+    enqueue_runtime_events_enabled,
+    queue_delivery_event,
+    run_scan,
+    trim_seen_events,
+)
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
+STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 # Max time the antigravity model-rotation will treat a pool as exhausted before
 # re-probing it. Kept SHORT because Gemini's 5-hour limit is a rolling window
 # that recovers within minutes — a longer cooldown (e.g. trusting the error's
@@ -392,8 +396,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress terminal heartbeat output.")
     parser.add_argument("--verbose", action="store_true", help="Print active worker and queue details each tick.")
-    parser.add_argument("--claim-agent", default=None, help="Let one idle agent claim and start one ready task.")
-    parser.add_argument("--release-task", default=None, help="Release this agent's completed worker slot before claiming more work.")
     parser.add_argument("--clear-provider-pause", default=None, help="Manually clear one provider dispatch pause.")
     return parser.parse_args()
 
@@ -550,17 +552,12 @@ def event_dispatch_mode(event: dict[str, Any]) -> str:
     planning = metadata.get("planning")
     if isinstance(planning, dict) and planning:
         return "planning"
-    chair = metadata.get("chair")
-    if isinstance(chair, dict) and chair:
-        return "chair_review"
     coordination = metadata.get("coordination")
     if isinstance(coordination, dict) and coordination:
         return "coordination"
     reason = str(event.get("reason") or "").strip()
     if reason.startswith("discussion_planning_"):
         return "planning"
-    if reason.startswith("chair_review:"):
-        return "chair_review"
     if reason.startswith("coordination:"):
         return "coordination"
     return "execution"
@@ -569,8 +566,6 @@ def event_dispatch_mode(event: dict[str, Any]) -> str:
 def worker_dispatch_mode(worker: dict[str, Any]) -> str:
     if worker_is_discussion_planning(worker):
         return "planning"
-    if worker_is_chair_review(worker):
-        return "chair_review"
     if worker_is_coordination_dispatch(worker):
         return "coordination"
     return "execution"
@@ -581,7 +576,6 @@ def empty_mode_occupancy() -> dict[str, dict[str, int]]:
         "planning": {"running": 0, "pending": 0, "queued": 0},
         "execution": {"running": 0, "pending": 0, "queued": 0},
         "coordination": {"running": 0, "pending": 0, "queued": 0},
-        "chair_review": {"running": 0, "pending": 0, "queued": 0},
     }
 
 
@@ -871,8 +865,144 @@ def agent_provider_id(config: dict[str, Any], agent_id: str | None) -> str:
 
 
 def agent_quota_group_id(config: dict[str, Any], agent_id: str | None) -> str:
+    """Return the real account pool for an execution identity.
+
+    `quota_group` was historically provider-scoped, which made aliases such as
+    Antigravity2..7 look like independent accounts.  An explicit agent
+    `account_pool` is authoritative and lets multiple logical roles share one
+    provider account, quota budget, and worker-slot set.
+    """
+    normalized = normalize_agent_id(agent_id or "")
+    agent = (config.get("agents", {}) or {}).get(normalized, {}) or {}
+    explicit_pool = agent.get("account_pool") or agent.get("quota_group")
+    if explicit_pool:
+        return normalize_agent_id(str(explicit_pool))
     provider_id = agent_provider_id(config, agent_id)
     return provider_dispatch_group_id(config, provider_id or agent_id)
+
+
+def account_pool_settings(config: dict[str, Any], agent_id: str | None) -> tuple[str, dict[str, Any]]:
+    """Return the configured real-account pool for an execution identity.
+
+    Logical names are deliberately not a scheduling resource.  A pool is the
+    credential/account that actually consumes quota; aliases and dispatch slots
+    therefore resolve to the same entry here.
+    """
+    pool_id = agent_quota_group_id(config, agent_id)
+    pools = config.get("account_pools", {}) or {}
+    raw = pools.get(pool_id, {}) if isinstance(pools, dict) else {}
+    return pool_id, raw if isinstance(raw, dict) else {}
+
+
+def _account_pool_runtime_bucket(state: dict[str, Any]) -> dict[str, Any]:
+    """Runtime-only quota lifecycle for real credential pools.
+
+    Configuration says how much concurrency an account may have.  Runtime
+    state says whether that account is temporarily unavailable.  Keeping those
+    concerns separate prevents a restart or config reload from accidentally
+    resurrecting an exhausted account.
+    """
+    bucket = state.setdefault("account_pool_runtime", {})
+    return bucket if isinstance(bucket, dict) else {}
+
+
+def account_pool_runtime_state(
+    config: dict[str, Any],
+    state: dict[str, Any] | None,
+    agent_id: str | None,
+    *,
+    now: datetime | None = None,
+) -> tuple[str, dict[str, Any]]:
+    pool_id, pool = account_pool_settings(config, agent_id)
+    configured_state = str(pool.get("state") or "").strip().lower()
+    configured_limit = quota_group_concurrency_limit(config, agent_id)
+    if not pool_id:
+        return "healthy", {}
+    if pool.get("enabled") is False or configured_state == "disabled" or configured_limit == 0:
+        return "disabled", {"state": "disabled", "effective_concurrency": 0}
+    if state is None:
+        return "healthy", {"state": "healthy", "effective_concurrency": configured_limit}
+
+    bucket = _account_pool_runtime_bucket(state)
+    entry = bucket.setdefault(
+        pool_id,
+        {
+            "state": "healthy",
+            "effective_concurrency": configured_limit,
+            "generation": 0,
+        },
+    )
+    lifecycle = str(entry.get("state") or "healthy").strip().lower()
+    current_time = now or datetime.now(UTC)
+    if lifecycle == "cooldown":
+        next_probe = _parse_iso_utc(str(entry.get("next_probe_at") or entry.get("blocked_until") or ""))
+        if next_probe is not None and next_probe <= current_time:
+            # A real task executed on one slot is the authenticated canary
+            # probe.  This avoids a second provider-specific probe protocol
+            # while still proving the exact credential that will do the work.
+            lifecycle = "recovering"
+            entry["state"] = lifecycle
+            entry["effective_concurrency"] = 1
+            entry["last_probe_at"] = utc_now()
+            entry["probe_attempts"] = int(entry.get("probe_attempts", 0)) + 1
+    if lifecycle == "recovering":
+        entry["effective_concurrency"] = min(1, configured_limit or 1)
+    elif lifecycle == "healthy":
+        entry["effective_concurrency"] = configured_limit
+    return lifecycle, entry
+
+
+def account_pool_effective_concurrency(
+    config: dict[str, Any],
+    state: dict[str, Any] | None,
+    agent_id: str | None,
+) -> int | None:
+    configured = quota_group_concurrency_limit(config, agent_id)
+    lifecycle, entry = account_pool_runtime_state(config, state, agent_id)
+    if lifecycle in {"disabled", "cooldown", "paused", "exhausted"}:
+        return 0
+    runtime_limit = entry.get("effective_concurrency")
+    try:
+        runtime_limit = max(0, int(runtime_limit))
+    except (TypeError, ValueError):
+        runtime_limit = configured
+    if configured is None:
+        return runtime_limit
+    if runtime_limit is None:
+        return configured
+    return min(configured, runtime_limit)
+
+
+def account_pool_dispatch_block_reason(
+    config: dict[str, Any],
+    agent_id: str | None,
+    runtime_state: dict[str, Any] | None = None,
+) -> str | None:
+    pool_id, pool = account_pool_settings(config, agent_id)
+    if not pool_id:
+        return None
+    if pool and pool.get("enabled") is False:
+        return f"account pool {pool_id} is disabled"
+    configured_state = str(pool.get("state") or "").strip().lower()
+    if configured_state in {"disabled", "exhausted", "cooldown", "paused"}:
+        detail = str(pool.get("reason") or "").strip()
+        return f"account pool {pool_id} is {configured_state}" + (f": {detail}" if detail else "")
+    lifecycle, runtime = account_pool_runtime_state(config, runtime_state, agent_id)
+    if lifecycle in {"disabled", "exhausted", "cooldown", "paused"}:
+        detail = str(runtime.get("reason") or "").strip()
+        return f"account pool {pool_id} is {lifecycle}" + (f": {detail}" if detail else "")
+    return None
+
+
+def agent_account_pool_id(config: dict[str, Any], agent_id: str | None) -> str:
+    """Semantic alias used for independence checks and dashboard reporting."""
+    return agent_quota_group_id(config, agent_id)
+
+
+def review_is_independent(config: dict[str, Any], owner: str | None, reviewer: str | None) -> bool:
+    owner_pool = agent_account_pool_id(config, owner)
+    reviewer_pool = agent_account_pool_id(config, reviewer)
+    return bool(owner_pool and reviewer_pool and owner_pool != reviewer_pool)
 
 
 def active_quota_group_counts(
@@ -925,31 +1055,24 @@ def queued_quota_group_counts(config: dict[str, Any], state: dict[str, Any]) -> 
 def quota_group_concurrency_limit(
     config: dict[str, Any],
     agent_id: str | None,
-    settings: dict[str, Any] | None = None,
 ) -> int | None:
-    settings = settings or ready_dispatch_settings(config)
-    raw = settings.get("max_concurrent_per_quota_group")
-    group_id = agent_quota_group_id(config, agent_id)
-    if isinstance(raw, dict):
-        provider_id = agent_provider_id(config, agent_id)
-        display_name = display_name_for(config, normalize_agent_id(agent_id or ""))
-        for key in (group_id, provider_id, normalize_agent_id(agent_id or ""), display_name):
-            if key in raw:
-                try:
-                    return max(0, int(raw[key]))
-                except (TypeError, ValueError):
-                    return None
-        return None
-    if raw in (None, ""):
-        return None
-    try:
-        return max(0, int(raw))
-    except (TypeError, ValueError):
-        return None
+    _pool_id, pool = account_pool_settings(config, agent_id)
+    if pool.get("max_concurrent") not in (None, ""):
+        try:
+            return max(0, int(pool["max_concurrent"]))
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def agent_is_dispatch_slot(agent: dict[str, Any] | None) -> bool:
-    return bool(isinstance(agent, dict) and str(agent.get("dispatch_slot_for") or "").strip())
+    return bool(
+        isinstance(agent, dict)
+        and (
+            str(agent.get("dispatch_slot_for") or "").strip()
+            or str(agent.get("dispatch_slot_for_pool") or "").strip()
+        )
+    )
 
 
 def logical_worker_slot_ids(config: dict[str, Any], agent_id: str | None) -> list[str]:
@@ -972,6 +1095,15 @@ def logical_worker_slot_ids(config: dict[str, Any], agent_id: str | None) -> lis
         if normalized_slot and normalized_slot not in seen:
             seen.add(normalized_slot)
             slot_ids.append(normalized_slot)
+    account_pool = agent_account_pool_id(config, normalized)
+    if account_pool:
+        for slot_id, slot_agent in agents.items():
+            if normalize_agent_id(str((slot_agent or {}).get("dispatch_slot_for_pool") or "")) != account_pool:
+                continue
+            normalized_slot = normalize_agent_id(slot_id)
+            if normalized_slot and normalized_slot not in seen:
+                seen.add(normalized_slot)
+                slot_ids.append(normalized_slot)
     return slot_ids
 
 
@@ -983,82 +1115,15 @@ def dispatch_loop_agent_ids(config: dict[str, Any]) -> list[str]:
     ]
 
 
-def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
+def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None) -> int:
     normalized = normalize_agent_id(agent_id or "")
-    settings = settings or ready_dispatch_settings(config)
-    default_capacity: int | None = None
-    raw_default_capacity = settings.get("max_tasks_per_agent")
-    if raw_default_capacity not in (None, ""):
-        try:
-            default_capacity = max(1, int(raw_default_capacity))
-        except (TypeError, ValueError):
-            default_capacity = None
-    display_name = display_name_for(config, normalized)
-    overrides = settings.get("max_tasks_per_agent_by_agent", {}) or {}
-    for key in (normalized, display_name):
-        if key in overrides:
-            try:
-                return max(1, int(overrides[key]))
-            except (TypeError, ValueError):
-                pass
+    # Slots model actual processes. Aliases never create capacity.
     slot_count = len(logical_worker_slot_ids(config, normalized))
     if slot_count:
-        return max(default_capacity or 0, slot_count)
-    return default_capacity or 1
-
-
-def dispatch_weight_mapping(settings: dict[str, Any] | None) -> dict[str, Any]:
-    settings = settings or {}
-    mapping = settings.get("target_workload") or settings.get("agent_workload_weights") or {}
-    return mapping if isinstance(mapping, dict) else {}
-
-
-def dispatch_weight_for_agent(config: dict[str, Any], agent_id: str | None, settings: dict[str, Any] | None = None) -> int:
-    mapping = dispatch_weight_mapping(settings)
-    if not mapping:
-        return 1
-    normalized = normalize_agent_id(agent_id or "")
-    display_name = display_name_for(config, normalized)
-    for key in (display_name, normalized):
-        if key in mapping:
-            try:
-                return max(0, int(mapping[key]))
-            except (TypeError, ValueError):
-                return 0
-    return 0
-
-
-def weighted_dispatch_agent_ids(config: dict[str, Any], settings: dict[str, Any] | None = None) -> list[str]:
-    settings = settings or ready_dispatch_settings(config)
-    base_agent_ids = dispatch_loop_agent_ids(config)
-    if not dispatch_weight_mapping(settings):
-        return base_agent_ids
-
-    weighted = [
-        (agent_id, dispatch_weight_for_agent(config, agent_id, settings))
-        for agent_id in base_agent_ids
-    ]
-    weighted = [(agent_id, weight) for agent_id, weight in weighted if weight > 0]
-    if not weighted:
-        return base_agent_ids
-
-    divisor = 0
-    for _agent_id, weight in weighted:
-        divisor = weight if divisor == 0 else math.gcd(divisor, weight)
-    normalized = [(agent_id, max(1, weight // max(1, divisor))) for agent_id, weight in weighted]
-    total = sum(weight for _agent_id, weight in normalized)
-    current = {agent_id: 0 for agent_id, _weight in normalized}
-    sequence: list[str] = []
-    for _ in range(total):
-        for agent_id, weight in normalized:
-            current[agent_id] += weight
-        selected = max(
-            normalized,
-            key=lambda item: (current[item[0]], item[1], -base_agent_ids.index(item[0])),
-        )[0]
-        sequence.append(selected)
-        current[selected] -= total
-    return sequence
+        return slot_count
+    # Unpooled configurations remain safe during migration: one process per
+    # logical identity. Production account pools always declare slots.
+    return 1
 
 
 def select_dispatch_agent_id(
@@ -1069,7 +1134,6 @@ def select_dispatch_agent_id(
     provider_report: dict[str, Any] | None = None,
 ) -> str | None:
     normalized = normalize_agent_id(agent_id or "")
-    settings = ready_dispatch_settings(config)
     slot_ids = logical_worker_slot_ids(config, normalized)
     if not slot_ids:
         return normalized
@@ -1081,7 +1145,7 @@ def select_dispatch_agent_id(
     for slot_id in slot_ids:
         if slot_id in active_slots:
             continue
-        quota_limit = quota_group_concurrency_limit(config, slot_id, settings)
+        quota_limit = account_pool_effective_concurrency(config, state, slot_id)
         quota_group = agent_quota_group_id(config, slot_id)
         if quota_limit and quota_group:
             quota_counts = active_quota_group_counts(config, state, active_statuses)
@@ -1168,7 +1232,6 @@ WORKER_WORKTREE_EXECUTION_REASONS = [
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_FINALIZE,
     REASON_REVIEW_READY,
-    "chair_review:*",
 ]
 
 
@@ -1176,12 +1239,25 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("worker_worktrees")
     settings = raw if isinstance(raw, dict) else {}
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
+    try:
+        git_network_timeout_seconds = max(
+            1.0,
+            float(
+                settings.get(
+                    "git_network_timeout_seconds",
+                    config.get("supervisor", {}).get("external_command_timeout_seconds", 30),
+                )
+            ),
+        )
+    except (TypeError, ValueError):
+        git_network_timeout_seconds = 30.0
     return {
         "enabled": bool(settings.get("enabled", False)),
         "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
         "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
         "reuse_existing": bool(settings.get("reuse_existing", True)),
         "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
+        "git_network_timeout_seconds": git_network_timeout_seconds,
     }
 
 
@@ -1470,16 +1546,115 @@ def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
         return 1, ""
 
 
+def _run_git_network_command(
+    cwd: Path,
+    args: list[str],
+    *,
+    timeout_seconds: float | None,
+) -> tuple[subprocess.CompletedProcess[str] | None, str | None]:
+    """Run a remote git operation with a bounded wait.
+
+    Worktree preflight runs in the supervisor's critical path.  A wedged
+    HTTPS remote must fail this one lease closed, rather than consuming every
+    scheduler tick and hiding useful capacity behind a stuck subprocess.
+    ``None`` keeps direct unit-test callers backward compatible.
+    """
+    kwargs: dict[str, Any] = {
+        "cwd": cwd,
+        "capture_output": True,
+        "text": True,
+        "check": False,
+    }
+    if timeout_seconds is not None:
+        kwargs["timeout"] = timeout_seconds
+    try:
+        return subprocess.run(["git", *args], **kwargs), None
+    except subprocess.TimeoutExpired:
+        limit = float(timeout_seconds or 0)
+        return None, f"git network command timed out after {limit:g}s"
+    except (OSError, ValueError) as exc:
+        return None, f"git network command could not start: {type(exc).__name__}: {exc}"
+
+
 def _git_commit_oid(cwd: Path, ref: str) -> str | None:
     returncode, output = _git_output(cwd, "rev-parse", "--verify", f"{ref}^{{commit}}")
     oid = output.splitlines()[0].strip() if output else ""
     return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
 
 
+_REMOTE_HEAD_SNAPSHOTS: dict[tuple[str, str], tuple[float, dict[str, str], float]] = {}
+
+
+def _clear_remote_head_snapshot_cache() -> None:
+    """Clear cached remote ref heads for supervisor operations."""
+    _REMOTE_HEAD_SNAPSHOTS.clear()
+
+
+def _get_remote_heads_snapshot(
+    cwd: Path,
+    remote: str = "origin",
+    *,
+    network_timeout_seconds: float | None = None,
+    force_refresh: bool = False,
+) -> tuple[dict[str, str] | None, str]:
+    """Fetch remote branch heads snapshot (mapping branch_name -> commit_sha).
+
+    Returns (heads_dict, status_prefix).
+    On success: (heads_dict, "ok").
+    On failure: (None, "fetch_timed_out: ..." or "fetch_failed: ...").
+    """
+    now = time.monotonic()
+    remotes_rc, remote_url = _git_output(cwd, "remote", "get-url", remote)
+    cache_key = (remote_url.strip() if remotes_rc == 0 else str(cwd.resolve()), remote)
+
+    cached = _REMOTE_HEAD_SNAPSHOTS.get(cache_key)
+    ttl = 30.0
+    max_stale = 300.0
+
+    if not force_refresh and cached and now < cached[0]:
+        return cached[1], "ok"
+
+    remote_query, network_error = _run_git_network_command(
+        cwd,
+        ["ls-remote", "--heads", remote],
+        timeout_seconds=network_timeout_seconds,
+    )
+    if network_error:
+        last_success = cached[2] if cached else float("-inf")
+        if cached and now - last_success < max_stale:
+            return cached[1], "ok"
+        return None, f"fetch_timed_out: {network_error}"
+
+    if remote_query is None or remote_query.returncode != 0:
+        last_success = cached[2] if cached else float("-inf")
+        if cached and now - last_success < max_stale:
+            return cached[1], "ok"
+        details = (
+            (remote_query.stderr or remote_query.stdout or "").strip()
+            if remote_query
+            else "unknown network failure"
+        )
+        return None, f"fetch_failed: {details}"
+
+    heads: dict[str, str] = {}
+    for line in (remote_query.stdout or "").splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        sha, ref = parts[0].strip(), parts[1].strip()
+        if ref.startswith("refs/heads/") and sha:
+            heads[ref.removeprefix("refs/heads/")] = sha
+
+    _REMOTE_HEAD_SNAPSHOTS[cache_key] = (now + ttl, heads, now)
+    return heads, "ok"
+
+
 def _fetch_authoritative_task_head(
     repo_root: Path,
     worktree_path: Path,
     branch: str,
+    *,
+    network_timeout_seconds: float | None = None,
 ) -> tuple[str | None, str]:
     """Resolve the immutable commit used for dirty-worktree lease recovery.
 
@@ -1496,37 +1671,33 @@ def _fetch_authoritative_task_head(
             return local_head, "local_only_task_ref"
         return None, "unverifiable_refs: missing local task branch"
 
-    remote_query = subprocess.run(
-        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{branch}"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
+    heads_snapshot, snapshot_status = _get_remote_heads_snapshot(
+        worktree_path,
+        "origin",
+        network_timeout_seconds=network_timeout_seconds,
     )
-    if remote_query.returncode == 2:
-        return None, "unverifiable_refs: remote task branch is missing"
-    if remote_query.returncode != 0:
-        details = (remote_query.stderr or remote_query.stdout or "").strip()
-        return None, f"fetch_failed: {details}"
+    if heads_snapshot is None:
+        return None, snapshot_status
 
-    advertised = (remote_query.stdout or "").strip().split()
-    advertised_head = advertised[0] if advertised else ""
+    if branch not in heads_snapshot:
+        return None, "unverifiable_refs: remote task branch is missing"
+
+    advertised_head = heads_snapshot[branch]
     if not re.fullmatch(r"[0-9a-fA-F]{40,64}", advertised_head):
         return None, "unverifiable_refs: invalid advertised remote task HEAD"
 
-    fetch_proc = subprocess.run(
+    fetch_proc, network_error = _run_git_network_command(
+        worktree_path,
         [
-            "git",
             "fetch",
             "origin",
             "--quiet",
             f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
         ],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
+        timeout_seconds=network_timeout_seconds,
     )
+    if network_error or fetch_proc is None:
+        return None, f"fetch_timed_out: {network_error or 'unknown network failure'}"
     if fetch_proc.returncode != 0:
         details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
         return None, f"fetch_failed: {details}"
@@ -1716,7 +1887,88 @@ def _publish_unpublished_task_branch(
     if push_proc.returncode != 0:
         details = (push_proc.stderr or push_proc.stdout or "").strip().splitlines()
         return False, f"push failed: {details[0] if details else 'unknown'}"
+    _clear_remote_head_snapshot_cache()
     return True, f"published {local_head[:12]}"
+
+
+def _preserve_and_reset_clean_diverged_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worktree_path: Path,
+    task_id: str | None,
+    expected_branch: str,
+) -> tuple[bool, str]:
+    """Recover a clean diverged task branch without losing its local history.
+
+    A clean branch that is both ahead of and behind its remote cannot be
+    fast-forwarded or safely pushed.  Keeping it in place permanently blocks
+    the task.  When explicitly enabled, retain the complete local tip under an
+    immutable timestamped preservation ref, then reset the leased branch to
+    the remotely published task head.  The operator can recover the preserved
+    commits later, while dispatch proceeds only from the reviewed remote head.
+    """
+    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    for worker in (state.get("workers", {}) or {}).values():
+        if str(worker.get("status") or "") not in active_statuses:
+            continue
+        if str(worker.get("task_id") or "") == str(task_id or ""):
+            return False, "active worker still owns this task"
+
+    dirty_rc, dirty_out = _git_output(worktree_path, "status", "--porcelain")
+    if dirty_rc != 0 or dirty_out.strip():
+        return False, "worktree is no longer clean"
+    local_head = _git_commit_oid(worktree_path, "HEAD")
+    remote_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
+    if not local_head or not remote_head or local_head == remote_head:
+        return False, "missing or unchanged task heads"
+    remote_contains_local_rc, _ = _git_output(
+        worktree_path, "merge-base", "--is-ancestor", local_head, remote_head
+    )
+    local_contains_remote_rc, _ = _git_output(
+        worktree_path, "merge-base", "--is-ancestor", remote_head, local_head
+    )
+    # Never reset an ahead-only branch: its unpublished commits can be
+    # fast-forward published safely by the caller.  Recovery is only safe for
+    # a real fork, where neither tip is an ancestor of the other.
+    if remote_contains_local_rc != 1 or local_contains_remote_rc != 1:
+        return False, "branch is not a genuine local/remote divergence"
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    preserved_ref = f"supervisor-preserved/{_task_id_slug(task_id)}-{stamp}-{uuid.uuid4().hex[:8]}"
+    preserve_proc = subprocess.run(
+        ["git", "branch", preserved_ref, local_head],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if preserve_proc.returncode != 0:
+        details = (preserve_proc.stderr or preserve_proc.stdout or "").strip()
+        return False, f"failed to create preservation ref: {details}"
+    reset_proc = subprocess.run(
+        ["git", "reset", "--hard", remote_head],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if reset_proc.returncode != 0 or _git_commit_oid(worktree_path, "HEAD") != remote_head:
+        details = (reset_proc.stderr or reset_proc.stdout or "").strip()
+        return False, f"preserved {preserved_ref}, but reset verification failed: {details}"
+    write_activity_log(
+        config,
+        {
+            "type": "worker_worktree_clean_divergence_recovered",
+            "task_id": task_id,
+            "workspace_path": str(worktree_path),
+            "workspace_branch": expected_branch,
+            "preserved_ref": preserved_ref,
+            "previous_head": local_head,
+            "remote_head": remote_head,
+            "message": "Clean diverged worktree reset to remote task head after preserving local history.",
+        },
+    )
+    return True, f"clean_divergence_recovered:{preserved_ref}"
 
 
 def _refresh_reused_worker_worktree(
@@ -1724,6 +1976,8 @@ def _refresh_reused_worker_worktree(
     worktree_path: Path,
     base_ref: str,
     expected_branch: str,
+    *,
+    network_timeout_seconds: float | None = None,
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree using a fail-closed three-way policy.
 
@@ -1776,13 +2030,13 @@ def _refresh_reused_worker_worktree(
 
     has_remote_origin = "origin" in _git_output(worktree_path, "remote")[1].splitlines()
     if has_remote_origin:
-        fetch_proc = subprocess.run(
-            ["git", "fetch", "origin", base, "--quiet"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
+        fetch_proc, network_error = _run_git_network_command(
+            worktree_path,
+            ["fetch", "origin", base, "--quiet"],
+            timeout_seconds=network_timeout_seconds,
         )
+        if network_error or fetch_proc is None:
+            return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
         if fetch_proc.returncode != 0:
             details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
             return False, f"fetch_failed: {details}"
@@ -1816,37 +2070,39 @@ def _refresh_reused_worker_worktree(
 
     remote_task_head: str | None = None
     if has_remote_origin:
-        remote_query = subprocess.run(
-            ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-            check=False,
+        heads_snapshot, snapshot_status = _get_remote_heads_snapshot(
+            worktree_path,
+            "origin",
+            network_timeout_seconds=network_timeout_seconds,
         )
-        remote_task_exists = remote_query.returncode == 0
-        if remote_query.returncode not in {0, 2}:
-            details = (remote_query.stderr or remote_query.stdout or "").strip()
-            return False, f"fetch_failed: {details}"
+        if heads_snapshot is None:
+            return False, snapshot_status
+        remote_task_exists = expected_branch in heads_snapshot
         if remote_task_exists:
-            fetch_task_proc = subprocess.run(
+            advertised_task_head = heads_snapshot[expected_branch]
+            fetch_task_proc, network_error = _run_git_network_command(
+                worktree_path,
                 [
-                    "git",
                     "fetch",
                     "origin",
                     "--quiet",
                     f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
                 ],
-                cwd=worktree_path,
-                capture_output=True,
-                text=True,
-                check=False,
+                timeout_seconds=network_timeout_seconds,
             )
+            if network_error or fetch_task_proc is None:
+                return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
             if fetch_task_proc.returncode != 0:
                 details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
                 return False, f"fetch_failed: {details}"
             remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
             if not remote_task_head:
                 return False, "unverifiable_refs: missing fetched remote task HEAD"
+            if remote_task_head.lower() != advertised_task_head.lower():
+                return False, (
+                    "unverifiable_refs: fetched remote task HEAD does not match "
+                    f"advertised HEAD ({remote_task_head} != {advertised_task_head})"
+                )
             if local_head != remote_task_head:
                 remote_contains_local_rc, _ = _git_output(
                     worktree_path,
@@ -2415,6 +2671,7 @@ def prepare_worker_workspace(
                 worktree_path,
                 str(settings.get("base_ref") or "origin/dev"),
                 branch,
+                network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
             )
             write_activity_log(
                 config,
@@ -2435,6 +2692,7 @@ def prepare_worker_workspace(
                         repo_root,
                         worktree_path,
                         branch,
+                        network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                     )
                     recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
                         config,
@@ -2495,6 +2753,54 @@ def prepare_worker_workspace(
                                     refresh_status = (
                                         f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
                                     )
+                if (
+                    not refresh_ok
+                    and refresh_status.startswith("task_head_mismatch:")
+                    and bool(settings.get("recover_clean_diverged_worktrees", False))
+                ):
+                    recovered, recovery_detail = _preserve_and_reset_clean_diverged_worktree(
+                        config,
+                        state,
+                        worktree_path,
+                        workspace_task_id,
+                        branch,
+                    )
+                    if recovered:
+                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                            repo_root,
+                            worktree_path,
+                            str(settings.get("base_ref") or "origin/dev"),
+                            branch,
+                            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+                        )
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_worktree_clean_divergence_recovery_verified",
+                                "task_id": request.task_id,
+                                "target_agent": target_agent,
+                                "queue_event_id": queue_event_id,
+                                "workspace_branch": branch,
+                                "workspace_path": str(worktree_path),
+                                "recovery_detail": recovery_detail,
+                                "refresh_ok": refresh_ok,
+                                "refresh_status": refresh_status,
+                            },
+                        )
+                    else:
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "worker_worktree_clean_divergence_recovery_blocked",
+                                "task_id": request.task_id,
+                                "target_agent": target_agent,
+                                "queue_event_id": queue_event_id,
+                                "workspace_branch": branch,
+                                "workspace_path": str(worktree_path),
+                                "recovery_detail": recovery_detail,
+                                "refresh_status": refresh_status,
+                            },
+                        )
                 if not refresh_ok and refresh_status != "skipped_dirty_worktree":
                     # The clean-but-unpublished deadlock. Publishing is only
                     # attempted for fast-forwards on a clean worktree; anything
@@ -2506,6 +2812,7 @@ def prepare_worker_workspace(
                             worktree_path,
                             str(settings.get("base_ref") or "origin/dev"),
                             branch,
+                            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                         )
                         write_activity_log(
                             config,
@@ -2563,21 +2870,33 @@ def prepare_worker_workspace(
                     return False, message
                 _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
             if refresh_status.startswith("base_advance_rebase_required:"):
-                base_advance_prompt = (
-                    "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
-                    f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
-                    f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
-                    "and rebase/compose the current base in this task worktree, resolve and "
-                    "verify it, then push normally. Do not reset, discard, or overwrite task "
-                    "history.\n\n"
-                )
-                request.message = base_advance_prompt + request.message
-                request.metadata.update(
-                    {
-                        "base_advance_required": True,
-                        "worktree_refresh_status": refresh_status,
-                    }
-                )
+                if str(request.reason or "").strip() == "owned_finalize_dispatch":
+                    # The reviewer approved an exact immutable head. A finalize
+                    # worker may observe that dev advanced, but must never compose
+                    # the base into the approved branch and invalidate the review.
+                    request.metadata.update(
+                        {
+                            "approved_head_immutable": True,
+                            "base_advance_deferred_to_merge_queue": True,
+                            "worktree_refresh_status": refresh_status,
+                        }
+                    )
+                else:
+                    base_advance_prompt = (
+                        "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
+                        f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
+                        f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
+                        "and rebase/compose the current base in this task worktree, resolve and "
+                        "verify it, then push normally. Do not reset, discard, or overwrite task "
+                        "history.\n\n"
+                    )
+                    request.message = base_advance_prompt + request.message
+                    request.metadata.update(
+                        {
+                            "base_advance_required": True,
+                            "worktree_refresh_status": refresh_status,
+                        }
+                    )
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -2850,7 +3169,10 @@ def start_worker_for_request(
         "logical_agent_id": logical_agent_id,
         "dispatch_slot_id": dispatch_slot_id or None,
         "dispatch_slot": request.metadata.get("dispatch_slot"),
-        "quota_group": provider_dispatch_group_id(config, request.provider),
+        # Keep the credential/account pool captured at dispatch time.  Looking
+        # it up from `request.provider` here used to split one real account
+        # across aliases and let each alias consume a separate quota budget.
+        "quota_group": agent_quota_group_id(config, agent["id"]),
         "task_id": request.task_id,
         "session_id": result.session_id,
         "mode": result.mode,
@@ -3138,9 +3460,39 @@ def process_queue(
             changed = True
             continue
         if not workspace_ok:
-            record["status"] = "pending"
+            # A failed preflight has not leased a process or a slot.  Leaving it
+            # pending turns one bad worktree into head-of-line blocking for the
+            # complete logical agent/account pool.  Preserve the evidence, mark
+            # this event terminal, and let the ready dispatcher consider the
+            # next task immediately.  A later explicit task state/worktree
+            # change produces a new event signature and can retry safely.
+            record["status"] = "failed"
+            record["processed_at"] = utc_now()
+            record["error"] = f"Worker workspace preflight blocked: {workspace_message}"
             record["last_wait_reason"] = workspace_message
             record["worktree_lease_blocked_at"] = utc_now()
+            task = task_map.get(str(event.get("task_id") or ""))
+            if task:
+                block_entry = (state.get("worker_worktree_lease_blocks") or {}).get(
+                    normalize_agent_id(str(event.get("task_id") or "")) or str(event.get("task_id") or "")
+                )
+                if isinstance(block_entry, dict):
+                    block_entry["dispatch_signature"] = ready_dispatch_signature(
+                        task,
+                        str(event.get("reason") or ""),
+                        task_map,
+                    )
+            write_activity_log(
+                config,
+                {
+                    "type": "dispatch_preflight_blocked",
+                    "task_id": event.get("task_id"),
+                    "target_agent": event.get("target_display_name") or event.get("target_agent"),
+                    "provider": request.provider,
+                    "queue_event_id": event_id,
+                    "message": record["error"],
+                },
+            )
             changed = True
             continue
         request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
@@ -3174,6 +3526,7 @@ def process_queue(
             failure_worker = {
                 "provider": request.provider,
                 "agent_id": request.agent_id,
+                "logical_agent_id": (request.metadata or {}).get("logical_agent_id"),
                 "task_id": request.task_id,
                 "queue_event_id": event_id,
                 "run_id": record.get("run_id"),
@@ -3205,7 +3558,10 @@ def process_queue(
                     failure_kind=str(failure.get("kind") or ""),
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
+                    worker=failure_worker,
                 )
+            if is_terminal_quota_failure_kind(failure_kind):
+                fence_account_pool_workers(config, state, failure_worker, failure_reason)
             if is_retryable_capacity_failure_kind(failure_kind):
                 retry = worker_retry_settings(config, request.provider)
                 retry_count = int(record.get("retry_count", 0))
@@ -3611,1321 +3967,6 @@ def worker_is_coordination_dispatch(worker: dict[str, Any]) -> bool:
         return True
     reason = str(request_snapshot.get("reason") or worker.get("reason") or "").strip()
     return reason.startswith("coordination:")
-
-
-def worker_is_chair_review(worker: dict[str, Any]) -> bool:
-    request_snapshot = worker.get("request_snapshot", {}) or {}
-    metadata = request_snapshot.get("metadata", {}) or {}
-    chair = metadata.get("chair")
-    if isinstance(chair, dict) and chair:
-        return True
-    reason = str(request_snapshot.get("reason") or worker.get("reason") or "").strip()
-    return reason.startswith("chair_review:")
-
-
-def chair_review_settings(config: dict[str, Any]) -> dict[str, Any]:
-    settings = dict(config.get("chair_review", {}) or {})
-    settings.setdefault("enabled", True)
-    settings.setdefault("cooldown_seconds", 1800)
-    settings.setdefault("candidates", ["Codex", "Codex2", "Claude", "Claude2"])
-    settings.setdefault("task_id", "OPS-CHAIR-REVIEW")
-    settings.setdefault("output_dir", ".orchestrator/chair-reviews")
-    settings.setdefault("skill_path", ".orchestrator/skills/chairman-review.md")
-    settings.setdefault("recent_summary_lines", 6)
-    settings.setdefault("decision_schema_version", 1)
-    settings.setdefault("approval_ttl_minutes", 45)
-    settings.setdefault("min_approval_ttl_minutes", 5)
-    settings.setdefault("max_approval_ttl_minutes", 120)
-    settings.setdefault("approval_actions_enabled", True)
-    settings.setdefault("max_pending_approvals_in_prompt", 6)
-    settings.setdefault("bypass_cooldown_for_pending_approvals", True)
-    settings.setdefault("bypass_primary_work_for_pending_approvals", True)
-    settings.setdefault("reassignment_actions_enabled", True)
-    settings.setdefault("max_reassignment_actions", 4)
-    settings.setdefault("failure_loop_reassignment_threshold", int(worker_reassignment_settings(config).get("after_attempts", 2)))
-    settings.setdefault("max_failure_loops_in_prompt", 6)
-    settings.setdefault("bypass_cooldown_for_failure_loops", True)
-    return settings
-
-
-def chair_review_base_dir(config: dict[str, Any]) -> Path:
-    try:
-        return config_path(config, "state_file").parent.parent
-    except KeyError:
-        status_file = ((config.get("paths", {}) or {}).get("status_file") or "").strip()
-        return Path(status_file).resolve().parent if status_file else THIS_DIR.parent
-
-
-def chair_review_output_dir(config: dict[str, Any]) -> Path:
-    raw_path = str(chair_review_settings(config).get("output_dir") or ".orchestrator/chair-reviews").strip()
-    path = Path(raw_path)
-    if not path.is_absolute():
-        path = chair_review_base_dir(config) / path
-    return path
-
-
-def chair_review_skill_path(config: dict[str, Any]) -> Path | None:
-    raw_path = str(chair_review_settings(config).get("skill_path") or "").strip()
-    if not raw_path:
-        return None
-    path = Path(raw_path)
-    if not path.is_absolute():
-        path = chair_review_base_dir(config) / path
-    return path
-
-
-def chair_review_context_files(config: dict[str, Any]) -> list[str]:
-    paths = [relpath(path) for path in selected_shared_files(config)]
-    skill_path = chair_review_skill_path(config)
-    if skill_path and skill_path.exists():
-        skill_relpath = relpath(skill_path)
-        if skill_relpath not in paths:
-            paths.append(skill_relpath)
-    return paths
-
-
-def chair_rotation_state(state: dict[str, Any]) -> dict[str, Any]:
-    rotation = state.setdefault("chair_rotation", {})
-    rotation.setdefault("current_index", 0)
-    rotation.setdefault("last_chair_run_at", None)
-    rotation.setdefault("last_chair_agent", None)
-    rotation.setdefault("last_chair_reason", None)
-    rotation.setdefault("last_review_path", None)
-    rotation.setdefault("last_review_summary", None)
-    rotation.setdefault("pending_review_path", None)
-    rotation.setdefault("pending_decision_path", None)
-    rotation.setdefault("pending_review_event_id", None)
-    rotation.setdefault("pending_review_agent", None)
-    rotation.setdefault("sidecar_approved_until", None)
-    rotation.setdefault("sidecar_approval_max_sidecars", None)
-    return rotation
-
-
-def chair_review_summary_lines(path: Path, *, max_lines: int) -> list[str]:
-    try:
-        content = path.read_text(encoding="utf-8")
-    except OSError:
-        return []
-    lines = [line.strip() for line in content.splitlines() if line.strip()]
-    return lines[: max(1, max_lines)]
-
-
-def chair_review_decision_path(review_path: Path) -> Path:
-    return review_path.with_suffix(".json")
-
-
-def chair_review_state_path(value: str | None) -> Path | None:
-    raw_value = str(value or "").strip()
-    if not raw_value:
-        return None
-    path = Path(raw_value)
-    if path.is_absolute():
-        return path
-    return THIS_DIR.parent / path
-
-
-def chair_review_worker_path(worker: dict[str, Any]) -> str:
-    snapshot = worker.get("request_snapshot", {}) or {}
-    metadata = snapshot.get("metadata", {}) or {}
-    chair = metadata.get("chair") if isinstance(metadata, dict) else None
-    if isinstance(chair, dict):
-        return str(chair.get("review_path") or "")
-    metadata = worker.get("metadata", {}) or {}
-    chair = metadata.get("chair") if isinstance(metadata, dict) else None
-    if isinstance(chair, dict):
-        return str(chair.get("review_path") or "")
-    return ""
-
-
-def pending_chair_review_active(state: dict[str, Any], pending_review_path: str) -> bool:
-    active_statuses = {
-        "running",
-        "started",
-        "waiting_approval",
-        "manual_pending",
-        "retry_backoff",
-        "suspended_approval",
-        "stalled",
-        "fallback",
-    }
-    for worker in state.get("workers", {}).values():
-        if not worker_is_chair_review(worker):
-            continue
-        if chair_review_worker_path(worker) != pending_review_path:
-            continue
-        if str(worker.get("status") or "") in active_statuses:
-            return True
-
-    rotation = chair_rotation_state(state)
-    pending_event_id = str(rotation.get("pending_review_event_id") or "").strip()
-    if pending_event_id:
-        record = (state.get("queue", {}) or {}).get("events", {}).get(pending_event_id, {}) or {}
-        if record and str(record.get("status") or "") not in {"completed", "failed"}:
-            return True
-    return False
-
-
-def chair_review_worker_workspace_path(worker: dict[str, Any]) -> Path | None:
-    raw_path = str(worker.get("workspace_path") or "").strip()
-    if not raw_path:
-        snapshot = worker.get("request_snapshot", {}) or {}
-        metadata = snapshot.get("metadata", {}) or {}
-        if isinstance(metadata, dict):
-            raw_path = str(metadata.get("workspace_path") or "").strip()
-    if not raw_path:
-        metadata = worker.get("metadata", {}) or {}
-        if isinstance(metadata, dict):
-            raw_path = str(metadata.get("workspace_path") or "").strip()
-    return Path(raw_path) if raw_path else None
-
-
-def chair_review_workspace_artifact_path(config: dict[str, Any], workspace_path: Path, artifact_path: Path) -> Path | None:
-    if not artifact_path.is_absolute():
-        return workspace_path / artifact_path
-
-    base_candidates: list[Path] = []
-    try:
-        base_candidates.append(config_path(config, "status_file").parent)
-    except KeyError:
-        pass
-    base_candidates.append(chair_review_base_dir(config))
-
-    for base in base_candidates:
-        try:
-            relative_path = artifact_path.resolve().relative_to(base.resolve())
-        except ValueError:
-            continue
-        return workspace_path / relative_path
-    return None
-
-
-def sync_chair_review_artifacts_from_worker_workspace(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    pending_review_relpath: str,
-    review_path: Path,
-    decision_path: Path,
-) -> bool:
-    """Copy completed chair-review artifacts out of an isolated worker workspace."""
-    copied = False
-    for worker in state.get("workers", {}).values():
-        if not worker_is_chair_review(worker):
-            continue
-        if chair_review_worker_path(worker) != pending_review_relpath:
-            continue
-
-        workspace_path = chair_review_worker_workspace_path(worker)
-        if workspace_path is None:
-            continue
-        source_review_path = chair_review_workspace_artifact_path(config, workspace_path, review_path)
-        source_decision_path = chair_review_workspace_artifact_path(config, workspace_path, decision_path)
-        if source_review_path is None or not source_review_path.exists():
-            continue
-
-        review_path.parent.mkdir(parents=True, exist_ok=True)
-        if not review_path.exists() or source_review_path.stat().st_mtime_ns > review_path.stat().st_mtime_ns:
-            shutil.copy2(source_review_path, review_path)
-            copied = True
-
-        if source_decision_path is not None and source_decision_path.exists():
-            decision_path.parent.mkdir(parents=True, exist_ok=True)
-            if not decision_path.exists() or source_decision_path.stat().st_mtime_ns > decision_path.stat().st_mtime_ns:
-                shutil.copy2(source_decision_path, decision_path)
-                copied = True
-
-        if copied:
-            write_activity_log(
-                config,
-                {
-                    "type": "chair_review_artifact_synced_from_worktree",
-                    "task_id": chair_review_settings(config).get("task_id"),
-                    "message": f"Copied chair review artifacts from worker workspace {workspace_path}.",
-                    "review_path": relpath(review_path),
-                    "decision_path": relpath(decision_path),
-                    "workspace_path": str(workspace_path),
-                    "source_review_path": str(source_review_path),
-                    "source_decision_path": str(source_decision_path) if source_decision_path is not None else None,
-                },
-            )
-        return copied
-    return copied
-
-
-def normalize_chair_review_decision(
-    config: dict[str, Any],
-    payload: Any,
-) -> tuple[dict[str, Any] | None, str | None]:
-    settings = chair_review_settings(config)
-    if not isinstance(payload, dict):
-        return None, "decision JSON must be an object"
-
-    expected_version = int(settings.get("decision_schema_version", 1))
-    try:
-        version = int(payload.get("version", expected_version))
-    except (TypeError, ValueError):
-        return None, "version must be an integer"
-    if version != expected_version:
-        return None, f"unsupported decision schema version {version}"
-
-    decision = str(payload.get("decision") or "").strip().lower()
-    approved_value = payload.get("sidecar_approved")
-    if isinstance(approved_value, bool):
-        sidecar_approved = approved_value
-    elif decision in {"approve_sidecars", "approve", "approved"}:
-        sidecar_approved = True
-    elif decision in {"deny_sidecars", "deny", "denied", "hold"}:
-        sidecar_approved = False
-    else:
-        return None, "sidecar_approved must be boolean or decision must approve/deny sidecars"
-
-    if not decision:
-        decision = "approve_sidecars" if sidecar_approved else "deny_sidecars"
-
-    try:
-        ttl_minutes = int(payload.get("approval_ttl_minutes", settings.get("approval_ttl_minutes", 45)))
-    except (TypeError, ValueError):
-        return None, "approval_ttl_minutes must be an integer"
-    if sidecar_approved:
-        min_ttl = int(settings.get("min_approval_ttl_minutes", 5))
-        max_ttl = int(settings.get("max_approval_ttl_minutes", 120))
-        ttl_minutes = max(min_ttl, min(max_ttl, ttl_minutes))
-    else:
-        ttl_minutes = 0
-
-    blocked_by = payload.get("blocked_by") or []
-    if not isinstance(blocked_by, list):
-        return None, "blocked_by must be a list"
-    blocked_sidecar_parents = payload.get("blocked_sidecar_parents") or []
-    if not isinstance(blocked_sidecar_parents, list):
-        return None, "blocked_sidecar_parents must be a list"
-    recommended_focus = payload.get("recommended_focus") or []
-    if not isinstance(recommended_focus, list):
-        return None, "recommended_focus must be a list"
-    approval_actions = payload.get("approval_actions") or []
-    if not isinstance(approval_actions, list):
-        return None, "approval_actions must be a list"
-    normalized_approval_actions: list[dict[str, Any]] = []
-    for index, action in enumerate(approval_actions):
-        if not isinstance(action, dict):
-            return None, f"approval_actions[{index}] must be an object"
-        approval_id = str(action.get("approval_id") or "").strip()
-        if not approval_id:
-            return None, f"approval_actions[{index}].approval_id is required"
-        action_decision = str(action.get("decision") or "").strip().lower()
-        if action_decision not in {"allow", "deny"}:
-            return None, f"approval_actions[{index}].decision must be allow or deny"
-        action_reason = str(action.get("reason") or "").strip()
-        if not action_reason:
-            return None, f"approval_actions[{index}].reason is required"
-        normalized_approval_actions.append(
-            {
-                "approval_id": approval_id,
-                "decision": action_decision,
-                "reason": action_reason,
-                "remember": bool(action.get("remember", False)),
-            }
-        )
-
-    reassignment_actions = payload.get("reassignment_actions") or []
-    if not isinstance(reassignment_actions, list):
-        return None, "reassignment_actions must be a list"
-    normalized_reassignment_actions: list[dict[str, Any]] = []
-    max_reassignment_actions = max(0, int(settings.get("max_reassignment_actions", 4)))
-    for index, action in enumerate(reassignment_actions[:max_reassignment_actions]):
-        if not isinstance(action, dict):
-            return None, f"reassignment_actions[{index}] must be an object"
-        task_id = str(action.get("task_id") or "").strip()
-        if not task_id:
-            return None, f"reassignment_actions[{index}].task_id is required"
-        role = str(action.get("role") or "").strip().lower()
-        if role not in {"owner", "reviewer"}:
-            return None, f"reassignment_actions[{index}].role must be owner or reviewer"
-        to_agent = str(action.get("to") or action.get("to_agent") or "").strip()
-        if not to_agent:
-            return None, f"reassignment_actions[{index}].to is required"
-        action_reason = str(action.get("reason") or "").strip()
-        if not action_reason:
-            return None, f"reassignment_actions[{index}].reason is required"
-        normalized_reassignment_actions.append(
-            {
-                "task_id": task_id,
-                "role": role,
-                "from": str(action.get("from") or action.get("from_agent") or "").strip(),
-                "to": to_agent,
-                "reason": action_reason,
-            }
-        )
-
-    max_sidecars = payload.get("max_sidecars")
-    normalized_max_sidecars = None
-    if max_sidecars is not None:
-        try:
-            normalized_max_sidecars = max(0, int(max_sidecars))
-        except (TypeError, ValueError):
-            return None, "max_sidecars must be an integer when present"
-
-    reason = str(payload.get("reason") or "").strip()
-    if not reason:
-        reason = "Chair review approved sidecar dispatch." if sidecar_approved else "Chair review denied sidecar dispatch."
-
-    return (
-        {
-            "version": version,
-            "decision": decision,
-            "sidecar_approved": sidecar_approved,
-            "approval_ttl_minutes": ttl_minutes,
-            "max_sidecars": normalized_max_sidecars,
-            "reason": reason,
-            "blocked_by": [str(item) for item in blocked_by if str(item).strip()],
-            "blocked_sidecar_parents": [str(item) for item in blocked_sidecar_parents if str(item).strip()],
-            "recommended_focus": [str(item) for item in recommended_focus if str(item).strip()],
-            "approval_actions": normalized_approval_actions,
-            "reassignment_actions": normalized_reassignment_actions,
-        },
-        None,
-    )
-
-
-def mark_chair_review_problem(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    problem_type: str,
-    message: str,
-    review_path: Path | None = None,
-    decision_path: Path | None = None,
-) -> bool:
-    rotation = chair_rotation_state(state)
-    now = utc_now()
-    rotation["last_chair_problem"] = problem_type
-    rotation["last_chair_problem_at"] = now
-    rotation["last_chair_problem_message"] = message
-    rotation["last_review_valid"] = False
-    if review_path is not None and review_path.exists():
-        rotation["last_review_path"] = relpath(review_path)
-        rotation["last_review_summary"] = chair_review_summary_lines(
-            review_path,
-            max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)),
-        )
-    if decision_path is not None:
-        rotation["last_review_decision_path"] = relpath(decision_path)
-    rotation["pending_review_path"] = None
-    rotation["pending_decision_path"] = None
-    rotation["pending_review_event_id"] = None
-    rotation["pending_review_agent"] = None
-    rotation["last_chair_run_at"] = None
-    write_activity_log(
-        config,
-        {
-            "type": problem_type,
-            "task_id": chair_review_settings(config).get("task_id"),
-            "message": message,
-            "review_path": relpath(review_path) if review_path is not None else None,
-            "decision_path": relpath(decision_path) if decision_path is not None else None,
-        },
-    )
-    return True
-
-
-def apply_chair_review_decision(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    review_path: Path,
-    decision_path: Path,
-    decision: dict[str, Any],
-) -> bool:
-    rotation = chair_rotation_state(state)
-    summary_lines = chair_review_summary_lines(
-        review_path,
-        max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)),
-    )
-    if not summary_lines:
-        summary_lines = [str(decision.get("reason") or "Chair review decision recorded.")]
-
-    now = utc_now()
-    current_dt = _parse_iso_utc(now) or datetime.now(UTC)
-    approved = bool(decision.get("sidecar_approved"))
-    if approved:
-        approval_until = current_dt + timedelta(minutes=int(decision.get("approval_ttl_minutes") or 0))
-        rotation["sidecar_approved_until"] = approval_until.replace(microsecond=0).isoformat().replace("+00:00", "Z")
-        rotation["sidecar_approval_max_sidecars"] = decision.get("max_sidecars")
-    else:
-        rotation["sidecar_approved_until"] = None
-        rotation["sidecar_approval_max_sidecars"] = None
-
-    rotation["last_review_path"] = relpath(review_path)
-    rotation["last_review_decision_path"] = relpath(decision_path)
-    rotation["last_review_summary"] = summary_lines
-    rotation["last_review_decision"] = decision.get("decision")
-    rotation["last_review_valid"] = True
-    rotation["last_review_sidecar_approved"] = approved
-    rotation["last_review_reason"] = decision.get("reason")
-    rotation["last_review_blocked_by"] = decision.get("blocked_by", [])
-    rotation["last_review_blocked_sidecar_parents"] = decision.get("blocked_sidecar_parents", [])
-    rotation["last_review_recommended_focus"] = decision.get("recommended_focus", [])
-    rotation["last_review_approval_actions"] = decision.get("approval_actions", [])
-    rotation["last_review_reassignment_actions"] = decision.get("reassignment_actions", [])
-    rotation["last_review_at"] = now
-    rotation["last_chair_problem"] = None
-    rotation["last_chair_problem_message"] = None
-    rotation["sidecar_blocked_parents"] = decision.get("blocked_sidecar_parents", [])
-
-    if rotation.get("pending_review_path") == relpath(review_path):
-        rotation["pending_review_path"] = None
-        rotation["pending_decision_path"] = None
-        rotation["pending_review_event_id"] = None
-        rotation["pending_review_agent"] = None
-
-    write_activity_log(
-        config,
-        {
-            "type": "chair_review_approved_sidecars" if approved else "chair_review_denied_sidecars",
-            "task_id": chair_review_settings(config).get("task_id"),
-            "message": str(decision.get("reason") or ""),
-            "review_path": relpath(review_path),
-            "decision_path": relpath(decision_path),
-            "sidecar_approved_until": rotation.get("sidecar_approved_until"),
-            "max_sidecars": decision.get("max_sidecars"),
-            "blocked_by": decision.get("blocked_by", []),
-            "blocked_sidecar_parents": decision.get("blocked_sidecar_parents", []),
-            "approval_actions": decision.get("approval_actions", []),
-            "reassignment_actions": decision.get("reassignment_actions", []),
-        },
-    )
-    apply_chair_review_reassignment_actions(config, state, decision.get("reassignment_actions", []), review_path=review_path)
-    apply_chair_review_approval_actions(config, decision.get("approval_actions", []), review_path=review_path)
-    return True
-
-
-def canonical_agent_name(config: dict[str, Any], value: str | None) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    agent_id = normalize_agent_id(raw)
-    if agent_id and agent_id in config.get("agents", {}):
-        return display_name_for(config, agent_id)
-    for known in known_agent_display_names(config):
-        if known.casefold() == raw.casefold():
-            return known
-    return raw
-
-
-def log_chair_reassignment_skip(
-    config: dict[str, Any],
-    *,
-    review_path: Path,
-    action: dict[str, Any],
-    message: str,
-) -> None:
-    write_activity_log(
-        config,
-        {
-            "type": "chair_review_reassignment_skipped",
-            "task_id": action.get("task_id"),
-            "message": message,
-            "review_path": relpath(review_path),
-            "action": action,
-        },
-    )
-
-
-def apply_chair_review_reassignment_actions(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    reassignment_actions: list[dict[str, Any]],
-    *,
-    review_path: Path,
-) -> None:
-    if not reassignment_actions:
-        return
-    if not chair_review_settings(config).get("reassignment_actions_enabled", True):
-        write_activity_log(
-            config,
-            {
-                "type": "chair_review_reassignment_actions_skipped",
-                "task_id": chair_review_settings(config).get("task_id"),
-                "message": "Chair review included reassignment actions, but reassignment action execution is disabled.",
-                "review_path": relpath(review_path),
-                "count": len(reassignment_actions),
-            },
-        )
-        return
-
-    dispatch_settings = ready_dispatch_settings(config)
-    review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
-    finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
-    owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
-
-    for action in reassignment_actions:
-        task_id = str(action.get("task_id") or "").strip()
-        role = str(action.get("role") or "").strip().lower()
-        to_agent = canonical_agent_name(config, str(action.get("to") or ""))
-        from_agent = canonical_agent_name(config, str(action.get("from") or ""))
-        reason = str(action.get("reason") or "Chair review reassignment.").strip()
-
-        status = load_status(config)
-        task = task_index_from_status(config, status).get(task_id)
-        if not task:
-            log_chair_reassignment_skip(
-                config,
-                review_path=review_path,
-                action=action,
-                message=f"Chair reassignment skipped because task {task_id} no longer exists.",
-            )
-            continue
-        if to_agent not in known_agent_display_names(config):
-            log_chair_reassignment_skip(
-                config,
-                review_path=review_path,
-                action=action,
-                message=f"Chair reassignment skipped because target agent {to_agent} is not configured.",
-            )
-            continue
-        if agent_dispatch_paused(config, state, to_agent):
-            log_chair_reassignment_skip(
-                config,
-                review_path=review_path,
-                action=action,
-                message=f"Chair reassignment skipped because target agent {to_agent} is dispatch-paused.",
-            )
-            continue
-        if not agent_can_take_task(config, to_agent, task):
-            log_chair_reassignment_skip(
-                config,
-                review_path=review_path,
-                action=action,
-                message=f"Chair reassignment skipped because {to_agent} is not eligible for task {task_id}.",
-            )
-            continue
-
-        task_status = str(task.get("status") or "").lower()
-        owner = str(task.get("owner") or "").strip()
-        reviewer = str(task.get("reviewer") or "").strip()
-        applied = False
-        message = ""
-
-        if role == "reviewer":
-            if task_status not in review_statuses:
-                log_chair_reassignment_skip(
-                    config,
-                    review_path=review_path,
-                    action=action,
-                    message=f"Chair reviewer reassignment skipped because task {task_id} is status={task_status}.",
-                )
-                continue
-            if from_agent and reviewer != from_agent:
-                log_chair_reassignment_skip(
-                    config,
-                    review_path=review_path,
-                    action=action,
-                    message=f"Chair reviewer reassignment skipped because reviewer moved from {from_agent} to {reviewer}.",
-                )
-                continue
-            if to_agent in {owner, reviewer}:
-                log_chair_reassignment_skip(
-                    config,
-                    review_path=review_path,
-                    action=action,
-                    message=f"Chair reviewer reassignment skipped because target {to_agent} would duplicate owner or reviewer.",
-                )
-                continue
-            message = f"Chair reassigned review from {reviewer} to {to_agent}: {reason}"
-            applied = persist_task_reassignment(
-                config,
-                task_id=task_id,
-                new_owner=owner,
-                new_reviewer=to_agent,
-                message=message,
-                handoff_to=to_agent,
-                handoff_from=reviewer,
-            )
-        elif role == "owner":
-            blocked_owner_rescue = chair_blocked_owner_rescue_allowed(task)
-            allowed_owner_statuses = owned_statuses | finalize_statuses
-            if blocked_owner_rescue:
-                allowed_owner_statuses.add("blocked")
-            if task_status not in allowed_owner_statuses:
-                log_chair_reassignment_skip(
-                    config,
-                    review_path=review_path,
-                    action=action,
-                    message=f"Chair owner reassignment skipped because task {task_id} is status={task_status}.",
-                )
-                continue
-            if from_agent and owner != from_agent:
-                log_chair_reassignment_skip(
-                    config,
-                    review_path=review_path,
-                    action=action,
-                    message=f"Chair owner reassignment skipped because owner moved from {from_agent} to {owner}.",
-                )
-                continue
-            if to_agent == reviewer:
-                log_chair_reassignment_skip(
-                    config,
-                    review_path=review_path,
-                    action=action,
-                    message=f"Chair owner reassignment skipped because target {to_agent} is already reviewer.",
-                )
-                continue
-            requeue_for_fresh_dispatch = (
-                (task_status in owned_statuses or blocked_owner_rescue)
-                and task_status not in finalize_statuses
-            )
-            message = f"Chair reassigned owner from {owner} to {to_agent}: {reason}"
-            if requeue_for_fresh_dispatch:
-                suffix = "Task returned to todo for a blocked-owner rescue dispatch." if blocked_owner_rescue else "Task returned to todo for a fresh run."
-                message = f"{message.rstrip('.')}. {suffix}"
-            applied = persist_task_reassignment(
-                config,
-                task_id=task_id,
-                new_owner=to_agent,
-                new_reviewer=reviewer,
-                message=message,
-                new_status="todo" if requeue_for_fresh_dispatch else None,
-                handoff_to=to_agent,
-                handoff_from=owner,
-                resolve_open_blockers=blocked_owner_rescue,
-            )
-
-        if not applied:
-            log_chair_reassignment_skip(
-                config,
-                review_path=review_path,
-                action=action,
-                message=f"Chair reassignment for {task_id} could not be persisted.",
-            )
-            continue
-
-        clear_task_failure_streaks_for_task(state, task_id)
-        write_activity_log(
-            config,
-            {
-                "type": "chair_review_reassignment_applied",
-                "task_id": task_id,
-                "message": message,
-                "role": role,
-                "from_agent": from_agent or (reviewer if role == "reviewer" else owner),
-                "to_agent": to_agent,
-                "review_path": relpath(review_path),
-            },
-        )
-
-
-def apply_chair_review_approval_actions(
-    config: dict[str, Any],
-    approval_actions: list[dict[str, Any]],
-    *,
-    review_path: Path,
-) -> None:
-    if not approval_actions:
-        return
-    if not chair_review_settings(config).get("approval_actions_enabled", True):
-        write_activity_log(
-            config,
-            {
-                "type": "chair_review_approval_actions_skipped",
-                "task_id": chair_review_settings(config).get("task_id"),
-                "message": "Chair review included approval actions, but approval action execution is disabled.",
-                "review_path": relpath(review_path),
-                "count": len(approval_actions),
-            },
-        )
-        return
-
-    pending_by_id = {
-        str(item.get("approval_id") or ""): item
-        for item in safe_load_approval_state(config).get("pending", []) or []
-        if item.get("approval_id")
-    }
-    for action in approval_actions:
-        approval_id = str(action.get("approval_id") or "").strip()
-        action_decision = str(action.get("decision") or "").strip().lower()
-        if approval_id not in pending_by_id:
-            write_activity_log(
-                config,
-                {
-                    "type": "chair_review_approval_action_skipped",
-                    "task_id": chair_review_settings(config).get("task_id"),
-                    "message": f"Chair review approval action skipped because {approval_id} is no longer pending.",
-                    "approval_id": approval_id,
-                    "decision": action_decision,
-                    "review_path": relpath(review_path),
-                },
-            )
-            continue
-        try:
-            resolve_approval(
-                config,
-                approval_id,
-                decision=action_decision,
-                note=f"Chair review {relpath(review_path)}: {action.get('reason')}",
-                remember=bool(action.get("remember", False)),
-            )
-        except KeyError:
-            write_activity_log(
-                config,
-                {
-                    "type": "chair_review_approval_action_skipped",
-                    "task_id": chair_review_settings(config).get("task_id"),
-                    "message": f"Chair review approval action skipped because {approval_id} disappeared during resolution.",
-                    "approval_id": approval_id,
-                    "decision": action_decision,
-                    "review_path": relpath(review_path),
-                },
-            )
-
-
-def refresh_chair_review_artifact(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    review_path: Path,
-    decision_path: Path,
-) -> bool:
-    if not decision_path.exists():
-        return mark_chair_review_problem(
-            config,
-            state,
-            problem_type="chair_review_invalid_schema",
-            message=f"Chair review {relpath(review_path)} did not produce required decision JSON {relpath(decision_path)}.",
-            review_path=review_path,
-            decision_path=decision_path,
-        )
-    try:
-        payload = load_json(decision_path, default={})
-    except (OSError, json.JSONDecodeError) as exc:
-        return mark_chair_review_problem(
-            config,
-            state,
-            problem_type="chair_review_invalid_schema",
-            message=f"Chair review decision JSON could not be parsed: {exc}",
-            review_path=review_path,
-            decision_path=decision_path,
-        )
-
-    decision, error = normalize_chair_review_decision(config, payload)
-    if decision is None:
-        return mark_chair_review_problem(
-            config,
-            state,
-            problem_type="chair_review_invalid_schema",
-            message=f"Chair review decision JSON failed validation: {error}",
-            review_path=review_path,
-            decision_path=decision_path,
-        )
-    return apply_chair_review_decision(config, state, review_path=review_path, decision_path=decision_path, decision=decision)
-
-
-def refresh_chair_review_state(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    rotation = chair_rotation_state(state)
-    output_dir = chair_review_output_dir(config)
-    pending_review_relpath = str(rotation.get("pending_review_path") or "").strip()
-    if pending_review_relpath:
-        pending_review_path = chair_review_state_path(pending_review_relpath)
-        pending_decision_path = chair_review_state_path(str(rotation.get("pending_decision_path") or "")) if rotation.get("pending_decision_path") else None
-        if pending_review_path is not None:
-            pending_decision_path = pending_decision_path or chair_review_decision_path(pending_review_path)
-            pending_active = pending_chair_review_active(state, pending_review_relpath)
-            sync_chair_review_artifacts_from_worker_workspace(
-                config,
-                state,
-                pending_review_relpath=pending_review_relpath,
-                review_path=pending_review_path,
-                decision_path=pending_decision_path,
-            )
-            if pending_decision_path.exists():
-                return refresh_chair_review_artifact(
-                    config,
-                    state,
-                    review_path=pending_review_path,
-                    decision_path=pending_decision_path,
-                )
-            if pending_review_path.exists() and not pending_active:
-                return refresh_chair_review_artifact(
-                    config,
-                    state,
-                    review_path=pending_review_path,
-                    decision_path=pending_decision_path,
-                )
-            if not pending_active:
-                return mark_chair_review_problem(
-                    config,
-                    state,
-                    problem_type="chair_review_missing_report",
-                    message=f"Chair review worker finished without producing {pending_review_relpath}.",
-                    review_path=pending_review_path,
-                    decision_path=pending_decision_path,
-                )
-
-    if not output_dir.exists():
-        return False
-    review_files = sorted(output_dir.glob("*.md"), key=lambda item: item.stat().st_mtime, reverse=True)
-    if not review_files:
-        return False
-    latest = review_files[0]
-    latest_relpath = relpath(latest)
-    if rotation.get("last_review_path") == latest_relpath:
-        return False
-    decision_path = chair_review_decision_path(latest)
-    if decision_path.exists():
-        return refresh_chair_review_artifact(config, state, review_path=latest, decision_path=decision_path)
-
-    summary_lines = chair_review_summary_lines(latest, max_lines=int(chair_review_settings(config).get("recent_summary_lines", 6)))
-    rotation["last_review_path"] = latest_relpath
-    rotation["last_review_summary"] = summary_lines
-    rotation["last_review_valid"] = False
-    rotation["last_chair_problem"] = "chair_review_invalid_schema"
-    rotation["last_chair_problem_message"] = f"Chair review {latest_relpath} has no decision JSON."
-    return True
-
-
-def chair_review_candidates(config: dict[str, Any]) -> list[str]:
-    candidates: list[str] = []
-    for item in chair_review_settings(config).get("candidates", []):
-        agent_name = str(item or "").strip()
-        if not agent_name:
-            continue
-        agent_id = normalize_agent_id(agent_name)
-        if agent_id and agent_id in config.get("agents", {}):
-            candidates.append(display_name_for(config, agent_id))
-    return candidates
-
-
-def chair_review_cooldown_active(config: dict[str, Any], state: dict[str, Any], *, now: str) -> bool:
-    last_run = _parse_iso_utc(str(chair_rotation_state(state).get("last_chair_run_at") or ""))
-    current_dt = _parse_iso_utc(now)
-    if last_run is None or current_dt is None:
-        return False
-    return (current_dt - last_run).total_seconds() < float(chair_review_settings(config).get("cooldown_seconds", 1800))
-
-
-def chair_review_active(state: dict[str, Any]) -> bool:
-    for worker in state.get("workers", {}).values():
-        if str(worker.get("status") or "") in {"running", "started", "waiting_approval", "manual_pending", "retry_backoff", "suspended_approval", "stalled", "fallback"} and worker_is_chair_review(worker):
-            return True
-    return False
-
-
-def chair_review_worker_artifacts_applied(state: dict[str, Any], worker: dict[str, Any]) -> bool:
-    if not worker_is_chair_review(worker):
-        return False
-    review_relpath = chair_review_worker_path(worker)
-    if not review_relpath:
-        return False
-
-    rotation = chair_rotation_state(state)
-    if str(rotation.get("last_review_path") or "") != review_relpath:
-        return False
-    if not rotation.get("last_review_valid"):
-        return False
-
-    review_path = chair_review_state_path(review_relpath)
-    decision_path = chair_review_state_path(str(rotation.get("last_review_decision_path") or ""))
-    return bool(review_path and review_path.exists() and decision_path and decision_path.exists())
-
-
-def chair_review_report_path(config: dict[str, Any], agent_name: str, *, issued_at: str) -> Path:
-    stamp = issued_at.replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
-    filename = f"{stamp}-{normalize_agent_id(agent_name) or agent_name.lower()}.md"
-    return chair_review_output_dir(config) / filename
-
-
-def task_failure_record_requires_triage(record: dict[str, Any], threshold: int) -> bool:
-    """Keep provider outages from freezing a task's older logic-failure streak."""
-    try:
-        count = int(record.get("count", 0))
-    except (TypeError, ValueError):
-        return False
-    if count < threshold:
-        return False
-    last_kind = str(record.get("last_failure_kind") or "")
-    last_reason = str(record.get("last_reason") or "")
-    return not should_pause_dispatch_for_failure_kind(last_kind) and not is_transient_infra_reason(last_reason)
-
-
-def chair_review_failure_loop_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
-    settings = chair_review_settings(config)
-    if not settings.get("reassignment_actions_enabled", True):
-        return []
-    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
-    try:
-        status = load_status(config)
-    except KeyError:
-        return []
-    task_map = task_index_from_status(config, status)
-    dispatch_settings = ready_dispatch_settings(config)
-    review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
-    finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
-    owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
-    eligible_statuses = {str(value).lower() for value in worker_reassignment_settings(config).get("eligible_statuses", [])}
-    max_items = max(1, int(settings.get("max_failure_loops_in_prompt", 6)))
-    loops: list[dict[str, Any]] = []
-
-    for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
-        if not isinstance(record, dict):
-            continue
-        if not task_failure_record_requires_triage(record, threshold):
-            continue
-        count = int(record.get("count", 0))
-        task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
-        provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
-        task = task_map.get(task_id)
-        if not task or not provider:
-            continue
-        task_status = str(task.get("status") or "").lower()
-        if eligible_statuses and task_status not in eligible_statuses:
-            continue
-        agent_name = display_name_for(config, provider)
-        owner = str(task.get("owner") or "").strip()
-        reviewer = str(task.get("reviewer") or "").strip()
-        role = ""
-        exclude: set[str] = set()
-        candidates: list[str] = []
-        if task_status in review_statuses and reviewer == agent_name:
-            role = "reviewer"
-            exclude = {owner, reviewer}
-            candidates = get_agent_reassignment_candidates(config, agent_name, role="reviewer", task=task)
-        elif task_status in owned_statuses | finalize_statuses and owner == agent_name:
-            role = "owner"
-            exclude = {owner, reviewer}
-            candidates = get_agent_reassignment_candidates(config, agent_name, role="owner", task=task)
-        if not role:
-            continue
-        viable_candidates = [
-            candidate
-            for candidate in candidates
-            if first_viable_agent(config, [candidate], exclude=exclude, state=state, task=task) == candidate
-        ]
-        loops.append(
-            {
-                "task_id": task_id,
-                "status": task_status,
-                "role": role,
-                "agent": agent_name,
-                "count": count,
-                "last_failure_kind": record.get("last_failure_kind"),
-                "last_failure_at": record.get("last_failure_at"),
-                "last_reason": record.get("last_reason"),
-                "owner": owner,
-                "reviewer": reviewer,
-                "viable_reassignment_targets": viable_candidates,
-            }
-        )
-
-    loops.sort(key=lambda item: (-int(item.get("count") or 0), str(item.get("task_id") or "")))
-    return loops[:max_items]
-
-
-def chair_review_failure_loop_lines(config: dict[str, Any], state: dict[str, Any]) -> list[str]:
-    lines: list[str] = []
-    for item in chair_review_failure_loop_details(config, state):
-        reason = str(item.get("last_reason") or "").replace("\n", " ").strip()
-        if len(reason) > 220:
-            reason = reason[:217] + "..."
-        lines.append(
-            "- "
-            f"task={item.get('task_id')} "
-            f"status={item.get('status')} "
-            f"role={item.get('role')} "
-            f"agent={item.get('agent')} "
-            f"failures={item.get('count')} "
-            f"targets={json.dumps(item.get('viable_reassignment_targets') or [], ensure_ascii=False)} "
-            f"last_reason={json.dumps(reason, ensure_ascii=False)}"
-        )
-    return lines
-
-
-def chair_review_blocked_owner_rescue_details(config: dict[str, Any], state: dict[str, Any]) -> list[dict[str, Any]]:
-    settings = chair_review_settings(config)
-    if not settings.get("reassignment_actions_enabled", True):
-        return []
-    try:
-        status = load_status(config)
-    except KeyError:
-        return []
-    max_items = max(1, int(settings.get("max_blocked_owner_rescues_in_prompt", 6)))
-    details: list[dict[str, Any]] = []
-    for task in status.get("tasks", []) or []:
-        if not isinstance(task, dict) or not chair_blocked_owner_rescue_allowed(task):
-            continue
-        task_id = str(task.get("id") or "").strip()
-        owner = str(task.get("owner") or "").strip()
-        reviewer = str(task.get("reviewer") or "").strip()
-        candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
-        viable_candidates = [
-            candidate
-            for candidate in candidates
-            if first_viable_agent(config, [candidate], exclude={owner, reviewer}, state=state, task=task) == candidate
-        ]
-        details.append(
-            {
-                "task_id": task_id,
-                "status": str(task.get("status") or "").lower(),
-                "owner": owner,
-                "reviewer": reviewer,
-                "waiting_for": str(task.get("waiting_for") or "").strip(),
-                "next": str(task.get("next") or "").replace("\n", " ").strip(),
-                "viable_reassignment_targets": viable_candidates,
-            }
-        )
-    return details[:max_items]
-
-
-def chair_review_blocked_owner_rescue_lines(config: dict[str, Any], state: dict[str, Any]) -> list[str]:
-    lines: list[str] = []
-    for item in chair_review_blocked_owner_rescue_details(config, state):
-        note = str(item.get("next") or "")
-        if len(note) > 220:
-            note = note[:217] + "..."
-        lines.append(
-            "- "
-            f"task={item.get('task_id')} "
-            f"status={item.get('status')} "
-            f"owner={item.get('owner')} "
-            f"reviewer={item.get('reviewer')} "
-            f"waiting_for={json.dumps(item.get('waiting_for') or '', ensure_ascii=False)} "
-            f"targets={json.dumps(item.get('viable_reassignment_targets') or [], ensure_ascii=False)} "
-            f"next={json.dumps(note, ensure_ascii=False)}"
-        )
-    return lines
-
-
-def chair_reassignment_triage_needed_for_task(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    task_id: str,
-    agent_name: str,
-) -> bool:
-    settings = chair_review_settings(config)
-    if not settings.get("reassignment_actions_enabled", True):
-        return False
-    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
-    provider_id = normalize_agent_id(agent_name)
-    if not task_id or not provider_id:
-        return False
-    record = ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).get(
-        _failure_streak_key(task_id, provider_id)
-    )
-    if not isinstance(record, dict):
-        return False
-    return task_failure_record_requires_triage(record, threshold)
-
-
-def failure_loop_task_agents_for_task_map(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    task_map: dict[str, dict[str, Any]],
-) -> set[tuple[str, str]]:
-    settings = chair_review_settings(config)
-    if not settings.get("reassignment_actions_enabled", True):
-        return set()
-    threshold = max(1, int(settings.get("failure_loop_reassignment_threshold", 2)))
-    dispatch_settings = ready_dispatch_settings(config)
-    review_statuses = {str(value).lower() for value in dispatch_settings.get("review_statuses", ["review"])}
-    finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
-    owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
-    task_agents: set[tuple[str, str]] = set()
-    for key, record in ((state.get("provider_guardrails", {}) or {}).get("task_failure_streaks", {}) or {}).items():
-        if not isinstance(record, dict):
-            continue
-        if not task_failure_record_requires_triage(record, threshold):
-            continue
-        task_id = str(record.get("task_id") or str(key).rsplit(":", 1)[0] or "").strip()
-        provider = normalize_agent_id(str(record.get("provider") or str(key).rsplit(":", 1)[-1] or ""))
-        task = task_map.get(task_id)
-        if not task or not provider:
-            continue
-        agent_name = display_name_for(config, provider)
-        task_status = str(task.get("status") or "").lower()
-        if task_status in review_statuses and str(task.get("reviewer") or "").strip() == agent_name:
-            task_agents.add((task_id, agent_name))
-        elif task_status in owned_statuses | finalize_statuses and str(task.get("owner") or "").strip() == agent_name:
-            task_agents.add((task_id, agent_name))
-    return task_agents
-
-
-def failure_loop_agents_for_task_map(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    task_map: dict[str, dict[str, Any]],
-) -> set[str]:
-    agents: set[str] = set()
-    for _task_id, agent_name in failure_loop_task_agents_for_task_map(config, state, task_map):
-        agents.add(agent_name)
-    return agents
-
-
-def build_chair_review_message(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    agent_name: str,
-    review_path: Path,
-) -> str:
-    approval_state = safe_load_approval_state(config)
-    paused_lanes = sorted((state.get("provider_guardrails", {}) or {}).get("dispatch_pauses", {}).keys())
-    underutilization = state.get("underutilization", {}) or {}
-    occupancy = (state.get("supervisor", {}) or {}).get("mode_occupancy", {}) or {}
-    queue_depth = len(load_event_queue(config))
-    decision_path = chair_review_decision_path(review_path)
-    skill_path = chair_review_skill_path(config)
-    skill_line = f"- Skill Reference: {relpath(skill_path)}\n" if skill_path and skill_path.exists() else ""
-    pending_approval_lines = chair_review_pending_approval_lines(config, approval_state)
-    pending_approvals_block = "\n".join(pending_approval_lines) if pending_approval_lines else "- none"
-    failure_loop_lines = chair_review_failure_loop_lines(config, state)
-    failure_loops_block = "\n".join(failure_loop_lines) if failure_loop_lines else "- none"
-    blocked_owner_rescue_lines = chair_review_blocked_owner_rescue_lines(config, state)
-    blocked_owner_rescues_block = "\n".join(blocked_owner_rescue_lines) if blocked_owner_rescue_lines else "- none"
-    return (
-        "你是本輪輪值主席，請做一次 operational review，不接主線實作。\n\n"
-        f"- Chair Agent: {agent_name}\n"
-        f"- Markdown Review Output: {relpath(review_path)}\n"
-        f"- Required Decision JSON Output: {relpath(decision_path)}\n"
-        f"{skill_line}"
-        f"- Queue Depth: {queue_depth}\n"
-        f"- Pending Approvals: {len(approval_state.get('pending') or [])}\n"
-        f"- Paused Lanes: {', '.join(paused_lanes) if paused_lanes else 'none'}\n"
-        f"- Underutilization Ratio: {underutilization.get('last_ratio') if underutilization.get('last_ratio') is not None else 'unknown'}\n"
-        f"- Mode Occupancy: {json.dumps(occupancy, ensure_ascii=False)}\n\n"
-        "Pending Approval Details:\n"
-        f"{pending_approvals_block}\n\n"
-        "Repeated Failure Details:\n"
-        f"{failure_loops_block}\n\n"
-        "Blocked Owner Rescue Candidates:\n"
-        f"{blocked_owner_rescues_block}\n\n"
-        "請檢查以下事項：\n"
-        "1. task board 是否有假的 in_progress（沒有 live worker）。\n"
-        "2. worker 是否跑錯 owner/reviewer 或 queue event 對不上。\n"
-        "3. dispatch queue / approval queue 是否有卡住太久的項目。\n"
-        "4. provider guardrail 是否讓主線無法推進。\n"
-        "5. review / review_approved 是否有長時間滯留。\n"
-        "6. sidecar 是否過多、重複、或缺少明確 parent support need。\n"
-        "7. 已 closeout 的工作是否仍停在 push_status/ahead；有安全的 normal push approval 時主席要處理。\n\n"
-        "請一定要產生兩個檔案：\n"
-        f"1. markdown 人類報告：{relpath(review_path)}，格式建議包含 Summary、Findings、Suggested Repairs、Sidecar Recommendation。\n"
-        f"2. JSON 決策檔：{relpath(decision_path)}，必須符合以下 schema。\n\n"
-        "JSON schema:\n"
-        "{\n"
-        '  "version": 1,\n'
-        '  "decision": "approve_sidecars | deny_sidecars",\n'
-        '  "sidecar_approved": true,\n'
-        '  "approval_ttl_minutes": 45,\n'
-        '  "max_sidecars": null,\n'
-        '  "reason": "one concise operational reason",\n'
-        '  "blocked_by": [],\n'
-        '  "blocked_sidecar_parents": [],\n'
-        '  "approval_actions": [\n'
-        "    {\n"
-        '      "approval_id": "apr-...",\n'
-        '      "decision": "allow | deny",\n'
-        '      "reason": "why this approval is safe or should be denied",\n'
-        '      "remember": false\n'
-        "    }\n"
-        "  ],\n"
-        '  "reassignment_actions": [\n'
-        "    {\n"
-        '      "task_id": "SVC-...",\n'
-        '      "role": "owner | reviewer",\n'
-        '      "from": "Codex2",\n'
-        '      "to": "Claude",\n'
-        '      "reason": "why this reassignment is the right repair"\n'
-        "    }\n"
-        "  ],\n"
-        '  "recommended_focus": []\n'
-        "}\n\n"
-        "如果目前有 idle auto worker、execution backlog 有可安全平行化的工作、且沒有 global blocker，預設應 approve_sidecars。\n"
-        "不要為 sidecar wave 設定數量上限；max_sidecars 請填 null，除非存在具體安全風險需要暫時 cap。\n"
-        "如果 deny_sidecars，blocked_by 必須列出具體 blocker；如果只有特定 parent 不應產生 sidecar，請放進 blocked_sidecar_parents。\n"
-        "如果 Pending Approval Details 裡有你能判斷的低風險 approval，請在 approval_actions 裡 allow 或 deny；不能判斷就不要列入。\n"
-        "如果 Repeated Failure Details 顯示同一 agent 在同一 task 壞循環，請用 reassignment_actions 指定是否改派；不需要就留空。\n"
-        "如果 Blocked Owner Rescue Candidates 有可用 targets，且不是 human gate，請用 role=owner 的 reassignment_actions 改派給健康 target；supervisor 會把該 task 退回 todo 重新 dispatch。\n"
-        "你可以提出 repair commands 或建立 OPS-/SUP- follow-up task 建議；不要直接手改 task board，也不要直接把 task 標成 done。\n"
-    )
-
-
-def chair_review_pending_approval_lines(config: dict[str, Any], approval_state: dict[str, Any]) -> list[str]:
-    max_items = max(1, int(chair_review_settings(config).get("max_pending_approvals_in_prompt", 6)))
-    lines: list[str] = []
-    for item in (approval_state.get("pending", []) or [])[:max_items]:
-        preview = str(item.get("tool_input_preview") or "").replace("\n", " ").strip()
-        if len(preview) > 240:
-            preview = preview[:237] + "..."
-        lines.append(
-            "- "
-            f"approval_id={item.get('approval_id')} "
-            f"provider={item.get('provider')} "
-            f"task={item.get('task_id')} "
-            f"worker={item.get('worker_run_id')} "
-            f"tool={item.get('tool_name')} "
-            f"risk={item.get('risk_class')} "
-            f"created_at={item.get('created_at')} "
-            f"preview={json.dumps(preview, ensure_ascii=False)}"
-        )
-    if len(approval_state.get("pending", []) or []) > max_items:
-        lines.append(f"- ... {len(approval_state.get('pending', []) or []) - max_items} more pending approvals omitted")
-    return lines
-
-
-def queue_chair_review_event(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    agent_name: str,
-    reason: str,
-    issued_at: str,
-) -> str:
-    agent = agent_config_for(config, agent_name)
-    review_path = chair_review_report_path(config, agent_name, issued_at=issued_at)
-    decision_path = chair_review_decision_path(review_path)
-    review_path.parent.mkdir(parents=True, exist_ok=True)
-    queue_payload = {
-        "event_id": new_runtime_id("evt"),
-        "created_at": issued_at,
-        "event_key": f"chair:{normalize_agent_id(agent_name)}:{reason}:{issued_at}",
-        "task_id": None,
-        "target_agent": agent["id"],
-        "target_display_name": display_name_for(config, agent["id"]),
-        "provider": agent.get("provider", agent["id"]),
-        "reason": reason,
-        "message": build_chair_review_message(config, state, agent_name=agent_name, review_path=review_path),
-        "context_files": chair_review_context_files(config),
-        "target_files": [relpath(review_path), relpath(decision_path)],
-        "metadata": {
-            "chair": {
-                "mode": "chair_review",
-                "agent": agent_name,
-                "review_path": relpath(review_path),
-                "decision_path": relpath(decision_path),
-            },
-            "workspace_task_id": f"chair-review-{review_path.stem}",
-        },
-    }
-    enqueue_event(config, queue_payload)
-    rotation = chair_rotation_state(state)
-    rotation["last_chair_run_at"] = issued_at
-    rotation["last_chair_agent"] = agent_name
-    rotation["last_chair_reason"] = reason
-    rotation["pending_review_path"] = relpath(review_path)
-    rotation["pending_decision_path"] = relpath(decision_path)
-    rotation["pending_review_event_id"] = queue_payload["event_id"]
-    rotation["pending_review_agent"] = agent_name
-    write_activity_log(
-        config,
-        {
-            "type": "chair_review_queued",
-            "task_id": chair_review_settings(config).get("task_id"),
-            "target_agent": display_name_for(config, agent["id"]),
-            "delivery_mode": config.get("providers", {}).get(agent.get("provider", agent["id"]), {}).get(
-                "delivery_mode", agent.get("adapter", "file_inbox")
-            ),
-            "message": f"Chair review queued for {agent_name}: {reason}",
-            "queue_event_id": queue_payload["event_id"],
-        },
-    )
-    return queue_payload["event_key"]
 
 
 def queue_discussion_planning_event(
@@ -5618,6 +4659,106 @@ def _task_failure_streak_bucket(state: dict[str, Any]) -> dict[str, Any]:
     return _provider_guardrail_bucket(state).setdefault("task_failure_streaks", {})
 
 
+def mark_account_pool_cooldown(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any] | None,
+    reason: str,
+    *,
+    failure_kind: str,
+    blocked_until: datetime,
+) -> bool:
+    """Fence one real account and remember when its authenticated canary may run.
+
+    A quota result from any alias invalidates every slot of that account.  The
+    durable state is consulted before every dispatch, including after a
+    supervisor restart.
+    """
+    execution_id = ""
+    if isinstance(worker, dict):
+        execution_id = str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or "")
+    pool_id, pool = account_pool_settings(config, execution_id)
+    try:
+        configured_limit = int(pool.get("max_concurrent", 1) or 0)
+    except (TypeError, ValueError):
+        configured_limit = quota_group_concurrency_limit(config, execution_id) or 0
+    if not pool_id or pool.get("enabled") is False or configured_limit == 0:
+        return False
+    bucket = _account_pool_runtime_bucket(state)
+    previous = bucket.get(pool_id) if isinstance(bucket.get(pool_id), dict) else {}
+    prior_until = _parse_iso_utc(str(previous.get("next_probe_at") or ""))
+    chosen_until = max(blocked_until, prior_until) if prior_until is not None else blocked_until
+    worker_run_id = str((worker or {}).get("run_id") or "")
+    same_failure = (
+        str(previous.get("state") or "") == "cooldown"
+        and str(previous.get("last_worker_run_id") or "") == worker_run_id
+        and str(previous.get("next_probe_at") or "") == chosen_until.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    )
+    entry = dict(previous)
+    entry.update(
+        {
+            "state": "cooldown",
+            "effective_concurrency": 0,
+            "reason": summarize_failure_reason(reason, pool_id).get("summary") or failure_kind,
+            "failure_kind": failure_kind,
+            "last_failure_at": utc_now(),
+            "next_probe_at": chosen_until.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "last_worker_run_id": worker_run_id or None,
+        }
+    )
+    if not same_failure:
+        entry["generation"] = int(previous.get("generation", 0) or 0) + 1
+    bucket[pool_id] = entry
+    if not same_failure:
+        write_activity_log(
+            config,
+            {
+                "type": "account_pool_cooldown",
+                "account_pool": pool_id,
+                "task_id": (worker or {}).get("task_id"),
+                "worker_run_id": worker_run_id or None,
+                "next_probe_at": entry["next_probe_at"],
+                "generation": entry["generation"],
+                "message": f"Account pool {pool_id} fenced after {failure_kind}; authenticated canary eligible at {entry['next_probe_at']}.",
+            },
+        )
+    return not same_failure
+
+
+def record_account_pool_canary_success(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> bool:
+    pool_id, pool = account_pool_settings(
+        config,
+        str(worker.get("logical_agent_id") or worker.get("agent_id") or worker.get("provider") or ""),
+    )
+    entry = _account_pool_runtime_bucket(state).get(pool_id)
+    if not pool_id or not isinstance(entry, dict) or str(entry.get("state") or "") != "recovering":
+        return False
+    try:
+        configured = max(0, int(pool.get("max_concurrent")))
+    except (TypeError, ValueError):
+        configured = quota_group_concurrency_limit(config, str(worker.get("logical_agent_id") or worker.get("agent_id") or ""))
+    entry.update(
+        {
+            "state": "healthy",
+            "effective_concurrency": configured,
+            "last_recovered_at": utc_now(),
+            "last_canary_run_id": worker.get("run_id"),
+            "reason": None,
+        }
+    )
+    write_activity_log(
+        config,
+        {
+            "type": "account_pool_recovered",
+            "account_pool": pool_id,
+            "task_id": worker.get("task_id"),
+            "worker_run_id": worker.get("run_id"),
+            "message": f"Account pool {pool_id} canary completed; restored configured concurrency.",
+        },
+    )
+    return True
+
+
 def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) -> str | None:
     """Return a non-secret stable identity for the account behind a provider.
 
@@ -5916,6 +5057,15 @@ def mark_provider_dispatch_paused(
                 ),
                 "raw_ref": raw_ref,
             },
+        )
+    if effective_pause_kind in {"quota_terminal", "auth", "provider_config", "provider_unavailable"}:
+        mark_account_pool_cooldown(
+            config,
+            state,
+            worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id),
+            reason,
+            failure_kind=effective_pause_kind,
+            blocked_until=blocked_until,
         )
     return changed
 
@@ -6396,7 +5546,14 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
         return False
     if agent_dispatch_disabled(config, name):
         return False
-    if not isinstance(task, dict) or task_is_sidecar(task):
+    if not isinstance(task, dict):
+        return True
+    # This is the shared eligibility predicate for owned dispatch, helper
+    # claims, and quota failover. A non-dispatchable or human-gate task must
+    # never become executable merely because an automated lane is idle.
+    if task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    if task_is_sidecar(task):
         return True
     return name not in sidecar_only_agent_names(config)
 
@@ -6415,9 +5572,8 @@ def agent_open_task_counts(
     is first in that pool and is always viable, so it won. Observed on
     2026-08-08: Antigravity owned 23 open tasks while Antigravity2 through
     Antigravity7 held 3, 6, 3, 4, 3 and 4 -- six idle lanes behind one queue.
-    An agent runs one worker at a time (`max_active_workers_per_task: 1`), so
-    concentration translates directly into serialised throughput no matter how
-    high `max_concurrent_workers` is set.
+    A task has at most one active worker, so concentration translates directly
+    into serialised throughput even when other account-pool slots are idle.
     """
 
     status = status if isinstance(status, dict) else load_status(config)
@@ -6446,10 +5602,12 @@ def first_viable_agent(
     status: dict[str, Any] | None = None,
     balance_load: bool = True,
     role: str = "owner",
+    exclude_pools: set[str] | None = None,
 ) -> str | None:
     known = known_agent_display_names(config)
     seen: set[str] = set()
     viable: list[str] = []
+    excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
     for candidate in preferred:
         name = str(candidate or "").strip()
         if not name or name in seen or name in exclude:
@@ -6471,6 +5629,8 @@ def first_viable_agent(
                 block_reason = agent_auto_dispatch_block_reason(config, state, name, provider_report=provider_report)
                 if block_reason:
                     continue
+            if agent_account_pool_id(config, name) in excluded_pool_ids:
+                continue
             if task is not None and not agent_can_take_task(config, name, task):
                 continue
             viable.append(name)
@@ -6501,9 +5661,12 @@ def agent_auto_dispatch_block_reason(
         return "missing target agent"
     if agent_dispatch_paused(config, state, normalized_agent):
         return f"dispatch is paused or disabled for {display_name_for(config, normalized_agent) or normalized_agent}"
+    pool_block_reason = account_pool_dispatch_block_reason(config, normalized_agent, runtime_state=state)
+    if pool_block_reason:
+        return pool_block_reason
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
-    quota_limit = quota_group_concurrency_limit(config, normalized_agent, settings)
+    quota_limit = account_pool_effective_concurrency(config, state, normalized_agent)
     quota_group = agent_quota_group_id(config, normalized_agent)
     if quota_limit and quota_group:
         active_quota_counts = active_quota_group_counts(config, state, active_statuses)
@@ -6602,6 +5765,48 @@ def auto_dispatch_block_is_temporary_capacity(reason: str | None) -> bool:
     )
 
 
+def write_status_snapshot_if_current(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Atomically reject a stale whole-status write instead of losing a newer transition.
+
+    Supervisor probes can spend seconds in git/GitHub calls after loading the
+    board. A worker or operator may complete a canonical status command during
+    that interval. Both writers share the same lock, and every successful write
+    advances a UUID revision, so the old Supervisor snapshot fails closed and
+    the next tick starts from canonical disk state.
+    """
+
+    status_path = config_path(config, "status_file")
+    lock_path = status_path.with_name(f"{status_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_revision = status.get(STATUS_WRITE_REVISION_FIELD)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            latest = load_json(status_path, default={}) or {}
+            actual_revision = latest.get(STATUS_WRITE_REVISION_FIELD)
+            if actual_revision != expected_revision:
+                status.clear()
+                status.update(latest)
+                write_activity_log(
+                    config,
+                    {
+                        "type": "stale_status_write_rejected",
+                        "message": (
+                            "Supervisor discarded a stale ai-status.json snapshot after "
+                            "a newer canonical writer advanced the status revision."
+                        ),
+                        "expected_revision": expected_revision,
+                        "actual_revision": actual_revision,
+                    },
+                )
+                return False
+            status[STATUS_WRITE_REVISION_FIELD] = uuid.uuid4().hex
+            write_json(status_path, status)
+            return True
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def sync_status_pipeline(config: dict[str, Any]) -> bool:
     script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
     if not script.exists():
@@ -6641,6 +5846,19 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
         },
     )
     return False
+
+
+def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Commit a scheduler transition through one canonical write/sync path.
+
+    Callers may decide a transition, but they cannot independently choose a
+    snapshot write versus derived-artifact sync.  This is deliberately the
+    only supervisor task-transition commit point: a successful mutation is
+    never allowed to leave the canonical board and its derived artifacts out
+    of sync, and a rejected stale snapshot is never followed by a sync of the
+    wrong state.
+    """
+    return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
 
 
 def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -> bool:
@@ -6739,7 +5957,10 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
     dispatch_reason = str(worker.get("request_snapshot", {}).get("reason") or "").strip()
     task_id = str(worker.get("task_id") or "").strip()
-    target_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or "")).strip()
+    target_agent = display_name_for(
+        config,
+        worker_logical_dispatch_agent_id(config, worker) or str(worker.get("provider") or ""),
+    ).strip()
     if not task_id or not target_agent:
         return False
 
@@ -6774,8 +5995,7 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
     task["last_update"] = timestamp
     task["next"] = message
-    write_json(config_path(config, "status_file"), status)
-    synced = sync_status_pipeline(config)
+    synced = commit_canonical_task_transition(config, status)
     if synced:
         write_activity_log(
             config,
@@ -6809,11 +6029,11 @@ def persist_task_reassignment(
     new_reviewer: str,
     message: str,
     new_status: str | None = None,
+    new_waiting_for: str | None = None,
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
 ) -> bool:
-    status_path = config_path(config, "status_file")
     status = load_status(config)
     tasks = status.get("tasks", []) or []
     timestamp = utc_now()
@@ -6829,6 +6049,8 @@ def persist_task_reassignment(
         task["status"] = new_status
         if str(new_status).lower() == "todo":
             task.pop("waiting_for", None)
+    if new_waiting_for:
+        task["waiting_for"] = new_waiting_for
     task["last_update"] = timestamp
     task["assignment_note"] = message
     # Reassignment is coordination metadata, not resolution of an external
@@ -6844,7 +6066,7 @@ def persist_task_reassignment(
                 continue
             blocker["status"] = "resolved"
             blocker["resolved_at"] = timestamp
-            blocker["resolution_ref"] = f"chair_reassignment:{task_id}"
+            blocker["resolution_ref"] = f"scheduler_reassignment:{task_id}"
 
     for handoff in status.get("handoffs", []) or []:
         if handoff.get("task_id") != task_id or handoff.get("status") == "done":
@@ -6866,8 +6088,7 @@ def persist_task_reassignment(
             }
         )
 
-    write_json(status_path, status)
-    return sync_status_pipeline(config)
+    return commit_canonical_task_transition(config, status)
 
 
 def maybe_reassign_task_after_worker_failure(
@@ -6917,7 +6138,10 @@ def maybe_reassign_task_after_worker_failure(
     finalize_statuses = {str(value).lower() for value in dispatch_settings.get("finalize_statuses", ["review_approved"])}
     owned_statuses = {str(value).lower() for value in dispatch_settings.get("owned_statuses", ["in_progress", "todo"])}
 
-    failing_agent = display_name_for(config, str(worker.get("agent_id") or worker.get("provider") or ""))
+    failing_agent = display_name_for(
+        config,
+        worker_logical_dispatch_agent_id(config, worker) or str(worker.get("provider") or ""),
+    )
     if is_human_gate_agent(failing_agent):
         return None
 
@@ -6926,12 +6150,22 @@ def maybe_reassign_task_after_worker_failure(
     failure_summary = summarize_failure_reason(reason, failing_agent).get("summary") or failure_label
     owner = str(task.get("owner") or "")
     reviewer = str(task.get("reviewer") or "")
+    failed_pool = agent_account_pool_id(config, failing_agent)
+    quota_exclusions = {failed_pool} if is_terminal_quota_failure_kind(str(failure.get("kind") or "")) and failed_pool else set()
 
     if task_status in review_statuses and reviewer == failing_agent:
         if is_human_gate_agent(reviewer):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
-        new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task, role="reviewer")
+        new_reviewer = first_viable_agent(
+            config,
+            candidates,
+            exclude={owner, reviewer},
+            state=state,
+            task=task,
+            role="reviewer",
+            exclude_pools=quota_exclusions | {agent_account_pool_id(config, owner)},
+        )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         message = (
@@ -6969,7 +6203,15 @@ def maybe_reassign_task_after_worker_failure(
         if is_human_gate_agent(owner):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task)
-        new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task, role="owner")
+        new_owner = first_viable_agent(
+            config,
+            candidates,
+            exclude={owner, reviewer},
+            state=state,
+            task=task,
+            role="owner",
+            exclude_pools=quota_exclusions,
+        )
         if not new_owner or is_human_gate_agent(new_owner):
             return None
         # Only the owner failed. A reviewer that is still viable keeps the task:
@@ -6977,7 +6219,14 @@ def maybe_reassign_task_after_worker_failure(
         # healthy review assignment and lose the reviewer's accumulated context.
         new_reviewer = (
             first_viable_agent(
-                config, [reviewer], exclude={new_owner}, state=state, task=task, balance_load=False
+                config,
+                [reviewer],
+                exclude={new_owner},
+                state=state,
+                task=task,
+                balance_load=False,
+                exclude_pools={agent_account_pool_id(config, new_owner)},
+                role="reviewer",
             )
             if reviewer
             else None
@@ -6986,7 +6235,13 @@ def maybe_reassign_task_after_worker_failure(
             reviewer_candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
             new_reviewer = first_viable_agent(
-                config, reviewer_candidates, exclude={new_owner}, state=state, task=task, role="reviewer"
+                config,
+                reviewer_candidates,
+                exclude={new_owner},
+                state=state,
+                task=task,
+                role="reviewer",
+                exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)},
             )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
@@ -7003,6 +6258,7 @@ def maybe_reassign_task_after_worker_failure(
             new_reviewer=new_reviewer,
             message=message,
             new_status="todo" if requeue_for_fresh_dispatch else None,
+            handoff_to=new_owner,
             handoff_from=owner,
         ):
             return None
@@ -7027,6 +6283,77 @@ def maybe_reassign_task_after_worker_failure(
         return new_owner
 
     return None
+
+
+def fence_account_pool_workers(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    triggering_worker: dict[str, Any],
+    reason: str,
+) -> int:
+    """Stop and hand off sibling runs after a shared-account quota failure.
+
+    Physical slots are only capacity; a quota failure belongs to the account
+    pool.  Leaving sibling processes alive wastes their remaining turns and
+    makes each task discover the same failure independently.  We retain each
+    task worktree, create its normal durable handoff, and only select a
+    replacement outside the fenced pool.
+    """
+    triggering_run_id = str(triggering_worker.get("run_id") or "")
+    triggering_identity = worker_logical_dispatch_agent_id(config, triggering_worker)
+    pool_id = agent_account_pool_id(config, triggering_identity)
+    if not pool_id:
+        return 0
+    active_statuses = {
+        str(value).lower()
+        for value in ready_dispatch_settings(config).get("active_worker_statuses", [])
+    }
+    fenced = 0
+    for sibling in list((state.get("workers", {}) or {}).values()):
+        if str(sibling.get("run_id") or "") == triggering_run_id:
+            continue
+        if str(sibling.get("status") or "").lower() not in active_statuses:
+            continue
+        sibling_identity = worker_logical_dispatch_agent_id(config, sibling)
+        if agent_account_pool_id(config, sibling_identity) != pool_id:
+            continue
+        if pid_is_alive(sibling.get("pid")):
+            terminate_worker_pid(sibling.get("pid"))
+        reassigned_to = maybe_reassign_task_after_worker_failure(
+            config,
+            state,
+            sibling,
+            reason,
+            terminal=True,
+            force=True,
+        )
+        sibling["status"] = "reassigned" if reassigned_to else "failed"
+        sibling["reassigned_to"] = reassigned_to
+        sibling["last_event_at"] = utc_now()
+        sibling["last_error"] = (
+            f"Account pool {pool_id} fenced after a sibling quota failure. "
+            f"{reason}"
+        )
+        finalize_queue_event_record(
+            config,
+            state,
+            sibling,
+            "completed" if reassigned_to else "failed",
+            sibling["last_error"],
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "account_pool_worker_fenced",
+                "account_pool": pool_id,
+                "task_id": sibling.get("task_id"),
+                "worker_run_id": sibling.get("run_id"),
+                "reassigned_to": reassigned_to,
+                "message": sibling["last_error"],
+            },
+        )
+        fenced += 1
+    return fenced
 
 
 def is_transient_worker_failure(config: dict[str, Any], worker: dict[str, Any], reason: str | None) -> bool:
@@ -7709,30 +7036,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             poll_counts["expired_lease_workers_failed"] += 1
             changed = True
             continue
-        if (
-            alive
-            and worker.get("status") in active_worker_statuses
-            and chair_review_worker_artifacts_applied(state, worker)
-        ):
-            terminate_worker_pid(worker.get("pid"))
-            worker["status"] = "completed"
-            worker["last_event_at"] = utc_now()
-            clear_task_failure_streak(state, worker=worker)
-            write_activity_log(
-                config,
-                {
-                    "type": "worker_completed",
-                    "provider": worker.get("provider"),
-                    "task_id": worker.get("task_id"),
-                    "message": "Chair review artifacts were accepted; terminated lingering control runner.",
-                    "worker_run_id": worker["run_id"],
-                    "pr_url": worker.get("pr_url"),
-                    "session_url": worker.get("session_url"),
-                },
-            )
-            finalize_queue_event_record(config, state, worker, "completed")
-            changed = True
-            continue
         last_event_advanced = bool(
             previous_last_event_at
             and worker.get("last_event_at")
@@ -8090,6 +7393,8 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
+                fence_account_pool_workers(config, state, worker, failure_reason)
+            if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = None
                 if not antigravity_pool_fallback_available(
                     config, str(worker.get("provider") or worker.get("agent_id") or "")
@@ -8192,6 +7497,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "session_url": worker.get("session_url"),
                     },
                 )
+                record_account_pool_canary_success(config, state, worker)
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
@@ -8206,25 +7512,6 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
                         "message": "Coordination worker exited after completing its handoff step.",
-                        "worker_run_id": worker["run_id"],
-                        "pr_url": worker.get("pr_url"),
-                        "session_url": worker.get("session_url"),
-                    },
-                )
-                finalize_queue_event_record(config, state, worker, "completed")
-                changed = True
-                continue
-            if worker_is_chair_review(worker):
-                worker["status"] = "completed"
-                worker["last_event_at"] = utc_now()
-                clear_task_failure_streak(state, worker=worker)
-                write_activity_log(
-                    config,
-                    {
-                        "type": "worker_completed",
-                        "provider": worker.get("provider"),
-                        "task_id": worker.get("task_id"),
-                        "message": "Chair review worker exited; supervisor will validate the review artifacts.",
                         "worker_run_id": worker["run_id"],
                         "pr_url": worker.get("pr_url"),
                         "session_url": worker.get("session_url"),
@@ -8694,9 +7981,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             else "Worker process missing during supervisor boot reconciliation."
         )
         runner_succeeded = worker_runner_succeeded(worker)
-        if runner_succeeded and (
-            worker_is_chair_review(worker) or worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)
-        ):
+        if runner_succeeded and (worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
             clear_task_failure_streak(state, worker=worker)
@@ -8828,6 +8113,8 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
                     worker=worker,
                 )
             if is_terminal_quota_failure_kind(failure_kind):
+                fence_account_pool_workers(config, state, worker, detected_reason)
+            if is_terminal_quota_failure_kind(failure_kind):
                 reassigned_to = None
                 if not antigravity_pool_fallback_available(
                     config, str(worker.get("provider") or worker.get("agent_id") or "")
@@ -8938,289 +8225,11 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
     )
     return changed
 
-def helper_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
-    settings = dict(ready_dispatch_settings(config).get("helper_claim", {}) or {})
+def reviewer_failover_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Settings for the only automatic reassignment: an unavailable reviewer."""
+    settings = dict(ready_dispatch_settings(config).get("reviewer_failover", {}) or {})
     settings.setdefault("enabled", True)
-    settings.setdefault("task_statuses", ["todo", "in_progress"])
-    settings.setdefault("paused_owner_task_statuses", ["in_progress"])
-    settings.setdefault("require_owner_higher_priority_load", True)
-    settings.setdefault("claim_idle_work", False)
-    settings.setdefault("claim_sidecars_when_idle", False)
-    settings.setdefault("disable_when_failure_loops", True)
     return settings
-
-
-def worker_self_claim_settings(config: dict[str, Any]) -> dict[str, Any]:
-    settings = dict(ready_dispatch_settings(config).get("worker_self_claim", {}) or {})
-    settings.setdefault("enabled", False)
-    settings.setdefault(
-        "release_task_statuses",
-        ["in_progress", "review", "review_approved", "done", "blocked", "assigned"],
-    )
-    return settings
-
-
-def release_completed_worker_for_claim(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    *,
-    agent_name: str,
-    task_id: str | None,
-) -> bool:
-    if not task_id or not isinstance(task_id, str):
-        return False
-    settings = worker_self_claim_settings(config)
-    allowed_statuses = {str(value).lower() for value in settings.get("release_task_statuses", [])}
-    allowed_statuses.update({"in_progress", "review", "review_approved", "done", "blocked", "assigned"})
-    if not allowed_statuses:
-        return False
-    status = load_status(config)
-    task = task_index_from_status(config, status).get(task_id)
-    if not task or str(task.get("status") or "").lower() not in allowed_statuses:
-        return False
-
-    normalized_agent = normalize_agent_id(agent_name)
-    display_agent = display_name_for(config, normalized_agent)
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-
-    workers_dict = state.get("workers", {})
-    if not isinstance(workers_dict, dict):
-        return False
-
-    matching_entries = []
-    for worker_key, worker in workers_dict.items():
-        if not isinstance(worker, dict):
-            continue
-        if worker.get("task_id") != task_id:
-            continue
-        worker_agent = str(worker.get("logical_agent_id") or worker.get("agent_id") or "").strip()
-        norm_w_agent = normalize_agent_id(worker_agent)
-        if norm_w_agent != normalized_agent and display_name_for(config, norm_w_agent) != display_agent:
-            continue
-        if worker.get("status") not in active_statuses:
-            continue
-        matching_entries.append((worker_key, worker))
-
-    if len(matching_entries) != 1:
-        return False
-
-    worker_key, worker = matching_entries[0]
-    if not isinstance(worker_key, str) or not worker_key.strip():
-        return False
-    worker_key_str = worker_key.strip()
-
-    worker_pid = worker.get("pid")
-    if worker_pid is not None:
-        if type(worker_pid) is not int or worker_pid <= 0:
-            return False
-
-    worker_child_pid = worker.get("child_pid")
-    if worker_child_pid is not None:
-        if type(worker_child_pid) is not int or worker_child_pid <= 0:
-            return False
-
-    if (worker_pid is not None and pid_is_alive(worker_pid)) or (worker_child_pid is not None and pid_is_alive(worker_child_pid)):
-        return False
-
-    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
-    status_path_val = worker.get("runner_status_path") or worker.get("status_path") or metadata.get("runner_status_path") or metadata.get("status_path")
-    if not status_path_val or not isinstance(status_path_val, (str, Path)):
-        return False
-
-    receipt = _load_runtime_marker(status_path_val)
-    if not receipt or not isinstance(receipt, dict):
-        return False
-
-    receipt_status = receipt.get("status") or receipt.get("runner_status")
-    if not isinstance(receipt_status, str) or receipt_status.strip().lower() not in {"completed", "success", "succeeded"}:
-        return False
-
-    raw_exit = receipt.get("exit_code")
-    if type(raw_exit) is not int or raw_exit != 0:
-        return False
-
-    if receipt.get("signal") is not None or receipt.get("runner_signal") is not None:
-        return False
-
-    receipt_run_id_val = receipt.get("run_id")
-    receipt_w_run_id_val = receipt.get("worker_run_id")
-
-    if receipt_run_id_val is not None and not isinstance(receipt_run_id_val, str):
-        return False
-    if receipt_w_run_id_val is not None and not isinstance(receipt_w_run_id_val, str):
-        return False
-
-    raw_receipt_run_id = receipt_run_id_val if receipt_run_id_val is not None else receipt_w_run_id_val
-    if not isinstance(raw_receipt_run_id, str):
-        return False
-    receipt_run_id = raw_receipt_run_id.strip()
-    if not receipt_run_id:
-        return False
-
-    if receipt_run_id_val is not None and receipt_w_run_id_val is not None:
-        if receipt_run_id_val.strip() != receipt_w_run_id_val.strip():
-            return False
-
-    raw_worker_run_id = worker.get("run_id")
-    if raw_worker_run_id is not None and not isinstance(raw_worker_run_id, str):
-        return False
-    if isinstance(raw_worker_run_id, str) and raw_worker_run_id.strip():
-        if raw_worker_run_id.strip() != receipt_run_id:
-            return False
-
-    if receipt_run_id != worker_key_str:
-        return False
-
-    receipt_pid = receipt.get("pid")
-    if receipt_pid is not None:
-        if type(receipt_pid) is not int or receipt_pid <= 0:
-            return False
-
-    receipt_child_pid = receipt.get("child_pid")
-    if receipt_child_pid is not None:
-        if type(receipt_child_pid) is not int or receipt_child_pid <= 0:
-            return False
-
-    if worker_pid is not None:
-        if receipt_pid is None or receipt_pid != worker_pid:
-            return False
-
-    if worker_child_pid is not None:
-        if receipt_child_pid is None or receipt_child_pid != worker_child_pid:
-            return False
-
-    if (receipt_pid is not None and pid_is_alive(receipt_pid)) or (receipt_child_pid is not None and pid_is_alive(receipt_child_pid)):
-        return False
-
-    old_worker = copy.deepcopy(worker)
-    queue_event_id = worker.get("queue_event_id")
-    has_queue_event = False
-    old_queue_event = None
-    queue_events_dict = None
-
-    if queue_event_id and isinstance(state.get("queue"), dict):
-        events = state["queue"].get("events")
-        if isinstance(events, dict):
-            queue_events_dict = events
-            if queue_event_id in events and isinstance(events[queue_event_id], dict):
-                has_queue_event = True
-                old_queue_event = copy.deepcopy(events[queue_event_id])
-
-    now = utc_now()
-    worker["status"] = "completed"
-    worker["completed_at"] = now
-    worker["last_event_at"] = now
-    worker["last_error"] = None
-
-    def _rollback() -> None:
-        worker.clear()
-        worker.update(old_worker)
-        if queue_events_dict is not None and queue_event_id:
-            if has_queue_event and old_queue_event is not None:
-                if queue_event_id in queue_events_dict and isinstance(queue_events_dict[queue_event_id], dict):
-                    queue_events_dict[queue_event_id].clear()
-                    queue_events_dict[queue_event_id].update(old_queue_event)
-                else:
-                    queue_events_dict[queue_event_id] = copy.deepcopy(old_queue_event)
-            else:
-                queue_events_dict.pop(queue_event_id, None)
-
-    try:
-        finalize_queue_event_record(config, state, worker, "completed")
-        write_activity_log(
-            config,
-            {
-                "type": "worker_self_claim_released",
-                "task_id": task_id,
-                "message": f"{display_agent} released completed worker slot before self-claim.",
-                "worker_run_id": worker.get("run_id"),
-                "queue_event_id": worker.get("queue_event_id"),
-            },
-        )
-    except Exception:
-        _rollback()
-        return False
-
-    return True
-
-
-
-def underutilization_settings(config: dict[str, Any]) -> dict[str, Any]:
-    settings = dict(config.get("underutilization_dispatch", {}) or {})
-    settings.setdefault("enabled", True)
-    settings.setdefault("require_recent_chair_signal", True)
-    settings.setdefault("threshold_ratio", 0.5)
-    settings.setdefault("continuous_window_seconds", 900)
-    settings.setdefault("cooldown_seconds", 900)
-    settings.setdefault("max_new_sidecars_per_wave", None)
-    settings.setdefault("max_active_sidecars_per_agent", 1)
-    settings.setdefault("respect_chair_max_sidecars", False)
-    settings.setdefault(
-        "productive_worker_statuses",
-        ["running", "waiting_approval", "suspended_approval", "retry_backoff"],
-    )
-    return settings
-
-
-def sidecar_wave_limit(raw_value: Any) -> int | None:
-    if raw_value in (None, ""):
-        return None
-    if isinstance(raw_value, str) and raw_value.strip().lower() in {"none", "null", "unlimited", "false"}:
-        return None
-    try:
-        return max(0, int(raw_value))
-    except (TypeError, ValueError):
-        return None
-
-
-def load_sidecar_catalog(config: dict[str, Any]) -> list[dict[str, Any]]:
-    path_value = config.get("sidecar_catalog_path") or config.get("paths", {}).get("sidecar_catalog")
-    if not path_value:
-        return []
-    payload = load_json(config_path(config, "sidecar_catalog") if "sidecar_catalog" in config.get("paths", {}) else Path(path_value), default={})
-    if isinstance(payload, dict):
-        templates = payload.get("templates", [])
-        if isinstance(templates, list):
-            return [dict(item) for item in templates if isinstance(item, dict)]
-    if isinstance(payload, list):
-        return [dict(item) for item in payload if isinstance(item, dict)]
-    return []
-
-
-def configured_worker_lane_ids(config: dict[str, Any]) -> list[str]:
-    lanes: list[str] = []
-    seen: set[str] = set()
-    for agent_id, agent in (config.get("agents", {}) or {}).items():
-        if agent_is_dispatch_slot(agent):
-            continue
-        display_name = str(agent.get("display_name") or agent.get("name") or agent_id)
-        if "legacy alias" in display_name.lower():
-            continue
-        lane_id = normalize_agent_id(agent.get("provider") or agent_id)
-        if not lane_id or lane_id in seen:
-            continue
-        seen.add(lane_id)
-        lanes.append(lane_id)
-    return lanes
-
-
-def productive_worker_lane_ids(config: dict[str, Any], state: dict[str, Any], productive_statuses: set[str]) -> set[str]:
-    lanes: set[str] = set()
-    for worker in state.get("workers", {}).values():
-        if str(worker.get("status") or "") not in productive_statuses:
-            continue
-        lane_id = normalize_agent_id(worker.get("provider") or worker.get("agent_id") or "")
-        if lane_id:
-            lanes.add(lane_id)
-    return lanes
-
-
-def utilization_ratio_for_sidecars(config: dict[str, Any], state: dict[str, Any], productive_statuses: set[str]) -> float:
-    lanes = configured_worker_lane_ids(config)
-    if not lanes:
-        return 1.0
-    productive = productive_worker_lane_ids(config, state, productive_statuses)
-    return len(productive) / len(lanes)
 
 
 def task_is_sidecar(task: dict[str, Any]) -> bool:
@@ -9237,137 +8246,368 @@ def task_is_human_gate(task: dict[str, Any]) -> bool:
     )
 
 
-def chair_blocked_owner_rescue_allowed(task: dict[str, Any]) -> bool:
-    if str(task.get("status") or "").strip().lower() != "blocked":
+def review_submission_is_complete(config: dict[str, Any], task: dict[str, Any]) -> bool:
+    """Return whether review has immutable, task-scoped remote PR provenance."""
+    submission = task.get("review_submission")
+    if not isinstance(submission, dict):
         return False
-    if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+    task_id = str(task.get("id") or "").strip()
+    expected_branch = f"task/{task_id}"
+    expected_base = str((config.get("branch_workflow") or {}).get("dev_branch") or "dev").strip()
+    try:
+        pr_number = int(submission.get("pr_number") or 0)
+    except (TypeError, ValueError):
+        pr_number = 0
+    return bool(
+        task_id
+        and pr_number > 0
+        and str(submission.get("branch") or "") == expected_branch
+        and str(submission.get("base_branch") or "") == expected_base
+        and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(submission.get("remote_sha") or ""))
+    )
+
+
+def task_actor_assignment_block_reason(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task: dict[str, Any],
+    agent_name: str | None,
+    *,
+    require_dispatch_eligibility: bool = True,
+) -> str | None:
+    """Return a stable assignment problem, excluding momentary slot occupancy.
+
+    Non-dispatchable and human-gate tasks still need registered actors for
+    durable ownership and audit history, but their actors must not be judged
+    by the dispatch predicate that deliberately rejects those task classes.
+    """
+    name = str(agent_name or "").strip()
+    if not name:
+        return "missing actor"
+    if is_human_gate_agent(name):
+        return None
+    normalized = normalize_agent_id(name)
+    agent = (config.get("agents", {}) or {}).get(normalized)
+    if not isinstance(agent, dict):
+        return f"unregistered actor {name}"
+    if not require_dispatch_eligibility:
+        return None
+    if not agent_can_take_task(config, name, task):
+        return f"actor {name} is disabled or not eligible for this task"
+    pool_reason = account_pool_dispatch_block_reason(config, name, runtime_state=state)
+    if pool_reason:
+        return pool_reason
+    provider = str(agent.get("provider") or normalized)
+    return provider_runtime_config_block_reason(config, provider)
+
+
+def task_assignment_integrity_issues(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    task: dict[str, Any],
+) -> list[str]:
+    """Audit the invariants shared by Supervisor dispatch and Auto Worker review."""
+    if str(task.get("status") or "").strip().lower() not in AGENT_OPEN_TASK_STATUSES:
+        return []
+    issues: list[str] = []
+    if str(task.get("priority") or "").strip().upper() not in {"P0", "P1", "P2", "P3"}:
+        issues.append("priority_missing_or_invalid")
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    requires_dispatch = not (task_is_human_gate(task) or bool(task.get("non_dispatchable")))
+    owner_reason = task_actor_assignment_block_reason(
+        config,
+        state,
+        task,
+        owner,
+        require_dispatch_eligibility=requires_dispatch,
+    )
+    reviewer_reason = task_actor_assignment_block_reason(
+        config,
+        state,
+        task,
+        reviewer,
+        require_dispatch_eligibility=requires_dispatch,
+    )
+    if owner_reason:
+        issues.append(f"owner_unavailable:{owner_reason}")
+    if reviewer_reason:
+        issues.append(f"reviewer_unavailable:{reviewer_reason}")
+    if (
+        owner
+        and reviewer
+        and not is_human_gate_agent(owner)
+        and not is_human_gate_agent(reviewer)
+        and not review_is_independent(config, owner, reviewer)
+    ):
+        issues.append("owner_reviewer_same_account_pool")
+    if str(task.get("status") or "").strip().lower() == "review" and not review_submission_is_complete(config, task):
+        issues.append("review_submission_missing_or_invalid")
+    waiting_for = str(task.get("waiting_for") or "").strip()
+    if (
+        str(task.get("status") or "").strip().lower() == "blocked"
+        and waiting_for
+        and not is_human_gate_agent(waiting_for)
+    ):
+        waiting_reason = task_actor_assignment_block_reason(config, state, task, waiting_for)
+        if waiting_reason:
+            issues.append(f"waiting_for_unavailable:{waiting_reason}")
+    return issues
+
+
+def reassert_approved_review_gate_if_due(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    now_ts: float | None = None,
+) -> bool:
+    """Repair an overwritten/missing exact-head review gate at a bounded rate."""
+    settings = ready_dispatch_settings(config)
+    try:
+        interval = max(30.0, float(settings.get("review_gate_reassert_seconds", 300)))
+    except (TypeError, ValueError):
+        interval = 300.0
+    current_ts = now_ts if now_ts is not None else datetime.now(UTC).timestamp()
+    try:
+        last_ts = float(task.get("review_gate_reasserted_at_ts") or 0)
+    except (TypeError, ValueError):
+        last_ts = 0.0
+    if last_ts and current_ts - last_ts < interval:
         return False
-    context = " ".join(
-        str(task.get(key) or "")
-        for key in (
-            "next",
-            "waiting_for",
-            "blocker",
-            "blocked_by",
-            "failure_reason",
-            "last_failure_reason",
-            "push_status",
+
+    # Head equality and approved_head presence are verified immediately before
+    # this helper is called. Re-emitting the same desired state is idempotent
+    # and repairs a later stale writer/status post without weakening the gate.
+    runtime_ai_status.emit_task_review_status_check(task, "review_approved")
+    task["review_gate_reasserted_at_ts"] = current_ts
+    task["review_gate_reasserted_at"] = utc_now()
+    return True
+
+
+def repair_open_task_metadata(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Backfill durable scheduling metadata omitted by legacy task writers."""
+    paths = config.get("paths") or {}
+    if not paths.get("status_file") or not paths.get("activity_log"):
+        return False
+    tasks = status.get("tasks", []) or []
+    task_map = {str(task.get("id") or ""): task for task in tasks if task.get("id")}
+    changed = False
+    timestamp = utc_now()
+    for task in tasks:
+        if str(task.get("status") or "").strip().lower() not in AGENT_OPEN_TASK_STATUSES:
+            continue
+        if str(task.get("priority") or "").strip().upper() in {"P0", "P1", "P2", "P3"}:
+            continue
+        task_id = str(task.get("id") or "").strip()
+        parent_id = str(task.get("helper_parent") or "").strip()
+        if not parent_id and "-SIDECAR-" in task_id:
+            parent_id = task_id.split("-SIDECAR-", 1)[0]
+        parent = task_map.get(parent_id, {})
+        priority = normalized_business_priority(parent.get("priority"), default="P2")
+        task["priority"] = priority
+        task["last_update"] = timestamp
+        write_activity_log(
+            config,
+            {
+                "type": "task_metadata_integrity_repaired",
+                "task_id": task_id,
+                "message": f"Backfilled required business priority as {priority}.",
+            },
         )
-    ).casefold()
-    return any(keyword in context for keyword in BLOCKED_OWNER_RESCUE_KEYWORDS)
+        changed = True
+    if changed:
+        if not commit_canonical_task_transition(config, status):
+            return False
+    return changed
 
 
-def sidecar_statuses() -> set[str]:
-    return {"todo", "in_progress", "review", "review_approved", "blocked", "done"}
+def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Remove legacy false-review states before reviewer dispatch.
 
-
-def sidecar_archive_tasks_dir(config: dict[str, Any]) -> Path:
-    """Archive directory the `assign` subprocess will consult.
-
-    `create_sidecar_task` shells out to `scripts/ai_status.py` with the
-    supervisor's own environment and `cwd=<status_file parent>`, so resolve the
-    archive root exactly the way `ai_status.status_root()` does for that child.
+    Human data/approval gates return to blocked.  Executable tasks return to
+    their owner so task_finalize can publish and atomically submit the PR.
     """
-    raw = str(os.environ.get("ORCH_STATUS_ROOT") or os.environ.get("PANTHEON_STATUS_ROOT") or "").strip()
-    root = Path(os.path.expanduser(raw)).resolve() if raw else config_path(config, "status_file").parent
-    return root / "ai-task-archive" / "tasks"
-
-
-def archived_sidecar_state(config: dict[str, Any]) -> tuple[set[str], set[str]]:
-    """Return (parent:kind signatures, task ids) already held by the archive.
-
-    Sidecar ids are derived deterministically from parent + kind, so an archived
-    sidecar keeps owning its id forever: `ai_status.py assign` refuses to reuse
-    an archived id. Candidate generation must therefore treat archived sidecars
-    as "already exists"; otherwise every wave re-proposes the same dead ids and
-    burns the idle-capacity budget on `sidecar_task_create_failed`.
-    """
-    signatures: set[str] = set()
-    task_ids: set[str] = set()
-    archive_dir = sidecar_archive_tasks_dir(config)
-    if not archive_dir.is_dir():
-        return signatures, task_ids
-    for path in sorted(archive_dir.glob("*.json")):
-        snapshot = load_json(path, default=None)
-        if not isinstance(snapshot, dict):
-            continue
-        task = snapshot.get("task")
-        if not isinstance(task, dict):
-            task = {}
-        task_id = str(snapshot.get("task_id") or task.get("id") or "").strip()
-        if task_id:
-            task_ids.add(task_id)
-        parent = str(task.get("helper_parent") or "").strip()
-        kind = str(task.get("helper_kind") or "").strip()
-        if parent and kind:
-            signatures.add(f"{parent}:{kind}")
-    return signatures, task_ids
-
-
-def existing_sidecar_signatures(
-    status: dict[str, Any],
-    archived_signatures: set[str] | None = None,
-) -> set[str]:
-    signatures: set[str] = set(archived_signatures or ())
+    paths = config.get("paths") or {}
+    # The repair is a canonical-state migration and must never write through
+    # the repository fallback used by small unit-test configs or library-only
+    # callers. Production always supplies both explicit coordination paths.
+    if not paths.get("status_file") or not paths.get("activity_log"):
+        return False
+    changed = False
+    timestamp = utc_now()
     for task in status.get("tasks", []) or []:
-        if not task_is_sidecar(task):
+        if str(task.get("status") or "").strip().lower() != "review":
             continue
-        parent = str(task.get("helper_parent") or "").strip()
-        kind = str(task.get("helper_kind") or "").strip()
-        if parent and kind:
-            signatures.add(f"{parent}:{kind}")
-    return signatures
+        if review_submission_is_complete(config, task):
+            continue
+        task_id = str(task.get("id") or "").strip()
+        if task_is_human_gate(task):
+            task["status"] = "blocked"
+            task["waiting_for"] = "Human/Ops"
+            message = (
+                "Review state repaired: this is a Human/Ops input/approval gate, not a submitted code review. "
+                "It remains blocked until the accountable human evidence is supplied."
+            )
+        else:
+            task["status"] = "in_progress"
+            task.pop("waiting_for", None)
+            if task_is_sidecar(task) and task.get("depends_on"):
+                # A legacy sidecar that already reached review has completed
+                # its support artifact. Its parent/human-gate references are
+                # context, not prerequisites for publishing that artifact.
+                # Preserve them for traceability without letting the owner
+                # closeout dispatch deadlock behind the parent it supports.
+                task["review_submission_context_dependencies"] = list(task.get("depends_on") or [])
+                task["depends_on"] = []
+            message = (
+                "Review state repaired: no verified remote task PR was recorded. The owner must publish via "
+                "scripts/git/task_finalize.sh before review can be dispatched."
+            )
+        task["last_update"] = timestamp
+        task["next"] = message
+        task.pop("approved_head", None)
+        for handoff in status.get("handoffs", []) or []:
+            if handoff.get("task_id") == task_id and handoff.get("status") != "done":
+                handoff["status"] = "done"
+                handoff["resolved_at"] = timestamp
+        write_activity_log(
+            config,
+            {"type": "review_submission_repaired", "task_id": task_id, "message": message},
+        )
+        changed = True
+    if changed:
+        if not commit_canonical_task_transition(config, status):
+            return False
+    return changed
 
 
-def sidecar_task_id(parent_task_id: str, kind: str) -> str:
-    slug = kind
-    if slug.endswith("_packet"):
-        slug = slug[: -len("_packet")]
-    return f"{parent_task_id}-SIDECAR-{slug.replace('_', '-').upper()}"
-
-
-def render_sidecar_template(value: str, variables: dict[str, str]) -> str:
-    rendered = str(value)
-    for key, item in variables.items():
-        rendered = rendered.replace("{{" + key + "}}", item)
-    return rendered
-
-
-def task_phase_priority(task: dict[str, Any], task_map: dict[str, dict[str, Any]], dependency_done_statuses: set[str]) -> int:
-    status = str(task.get("status") or "").lower()
-    if status == "in_progress":
-        return 0
-    if status == "review":
-        return 1
-    if status == "review_approved":
-        return 2
-    if status == "todo" and dependencies_satisfied(task, task_map, dependency_done_statuses):
-        return 3
-    if status == "todo":
-        return 4
-    if status == "blocked":
-        return 5
-    return 9
-
-
-def dynamic_sidecar_kind(task: dict[str, Any]) -> str | None:
-    phase = str(task.get("phase") or "").lower()
-    title = str(task.get("title") or "").lower()
-    artifacts = " ".join(str(item).lower() for item in (task.get("artifacts") or []))
-    if "persona and application surfaces" in phase or "bff" in title or "surface" in title or "bff" in artifacts:
-        return "bff_handoff_packet"
-    if str(task.get("status") or "").lower() in {"review", "review_approved"}:
-        return "review_packet"
-    return "acceptance_packet"
-
-
-def preferred_agents_for_sidecar(kind: str) -> list[str]:
-    mapping = {
-        "review_packet": ["Codex2", "Codex", "Claude"],
-        "acceptance_packet": ["Codex", "Codex2", "Claude"],
-        "bff_handoff_packet": ["Claude", "Codex", "Codex2"],
+def normalize_task_assignment_integrity(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+) -> bool:
+    """Reassign unavailable or non-independent automatic task actors."""
+    paths = config.get("paths") or {}
+    if not paths.get("status_file") or not paths.get("activity_log"):
+        return False
+    issues = task_assignment_integrity_issues(config, state, task)
+    assignment_issues = {
+        issue.split(":", 1)[0]
+        for issue in issues
+        if issue.startswith("owner_unavailable:")
+        or issue.startswith("reviewer_unavailable:")
+        or issue == "owner_reviewer_same_account_pool"
     }
-    return mapping.get(kind, ["Codex", "Codex2", "Claude"])
+    waiting_for_unavailable = any(issue.startswith("waiting_for_unavailable:") for issue in issues)
+    if not assignment_issues and not waiting_for_unavailable:
+        return False
+
+    task_id = str(task.get("id") or "").strip()
+    owner = str(task.get("owner") or "").strip()
+    reviewer = str(task.get("reviewer") or "").strip()
+    new_owner = owner
+    new_reviewer = reviewer
+    new_waiting_for: str | None = None
+    changes: list[str] = []
+
+    if "owner_unavailable" in assignment_issues and not is_human_gate_agent(owner):
+        owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
+        replacement = first_viable_agent(
+            config,
+            owner_candidates,
+            exclude={owner, reviewer},
+            state=state,
+            task=task,
+            status=status,
+            role="owner",
+            exclude_pools={agent_account_pool_id(config, reviewer)} if reviewer and not is_human_gate_agent(reviewer) else set(),
+        )
+        if replacement:
+            new_owner = replacement
+            changes.append(f"owner {owner} -> {new_owner}")
+
+    reviewer_needs_replacement = (
+        "reviewer_unavailable" in assignment_issues
+        or "owner_reviewer_same_account_pool" in assignment_issues
+        or (
+            new_owner
+            and new_reviewer
+            and not is_human_gate_agent(new_owner)
+            and not is_human_gate_agent(new_reviewer)
+            and not review_is_independent(config, new_owner, new_reviewer)
+        )
+    )
+    if reviewer_needs_replacement and not is_human_gate_agent(reviewer):
+        reviewer_candidates = get_agent_reassignment_candidates(config, reviewer or owner, role="reviewer", task=task)
+        replacement = first_viable_agent(
+            config,
+            reviewer_candidates,
+            exclude={new_owner, reviewer},
+            state=state,
+            task=task,
+            status=status,
+            role="reviewer",
+            exclude_pools={agent_account_pool_id(config, new_owner)},
+        )
+        if replacement:
+            new_reviewer = replacement
+            changes.append(f"reviewer {reviewer} -> {new_reviewer}")
+
+    if waiting_for_unavailable:
+        waiting_for = str(task.get("waiting_for") or "").strip()
+        task_status = str(task.get("status") or "").strip().lower()
+        if waiting_for == owner and new_owner:
+            replacement_waiting_for = new_owner
+        elif waiting_for == reviewer and new_reviewer:
+            replacement_waiting_for = new_reviewer
+        elif task_status == "review" and new_reviewer:
+            replacement_waiting_for = new_reviewer
+        else:
+            replacement_waiting_for = new_owner
+        if (
+            replacement_waiting_for
+            and not task_actor_assignment_block_reason(config, state, task, replacement_waiting_for)
+        ):
+            new_waiting_for = replacement_waiting_for
+            changes.append(f"waiting_for {waiting_for} -> {new_waiting_for}")
+
+    if not changes or new_owner == new_reviewer:
+        return False
+    if (
+        not is_human_gate_agent(new_owner)
+        and not is_human_gate_agent(new_reviewer)
+        and not review_is_independent(config, new_owner, new_reviewer)
+    ):
+        return False
+
+    message = f"Auto-reconciled task assignment integrity: {', '.join(changes)}."
+    if not persist_task_reassignment(
+        config,
+        task_id=task_id,
+        new_owner=new_owner,
+        new_reviewer=new_reviewer,
+        message=message,
+        new_waiting_for=new_waiting_for,
+        handoff_to=new_owner if new_owner != owner else new_reviewer,
+        handoff_from=owner if new_owner != owner else reviewer,
+    ):
+        return False
+    write_activity_log(
+        config,
+        {
+            "type": "task_assignment_integrity_repaired",
+            "task_id": task_id,
+            "message": message,
+            "issues": issues,
+        },
+    )
+    return True
+
+
+def normalized_business_priority(value: Any, default: str = "P2") -> str:
+    priority = str(value or "").strip().upper()
+    return priority if priority in {"P0", "P1", "P2", "P3"} else default
 
 
 def blocked_task_auto_recovery_eligible(
@@ -9527,360 +8767,6 @@ def normalize_mainline_task_assignment(
         quiet=SUPERVISOR_LOG_QUIET,
     )
     return True
-
-
-def agent_has_dispatchable_primary_work(
-    config: dict[str, Any],
-    status: dict[str, Any],
-    agent_name: str,
-    task_map: dict[str, dict[str, Any]],
-) -> bool:
-    settings = ready_dispatch_settings(config)
-    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    for task in status.get("tasks", []) or []:
-        if task_is_sidecar(task):
-            continue
-        if not agent_can_take_task(config, agent_name, task):
-            continue
-        prio = dispatch_priority_for_task(
-            config,
-            task,
-            agent_name,
-            task_map=task_map,
-            dependencies_done_statuses=dependency_done_statuses,
-        )
-        if prio is not None:
-            return True
-    return False
-
-
-
-def count_open_sidecars_for_agent(status: dict[str, Any], agent_name: str) -> int:
-    count = 0
-    for task in status.get("tasks", []) or []:
-        if task.get("owner") != agent_name:
-            continue
-        if not task_is_sidecar(task):
-            continue
-        if str(task.get("status") or "").lower() == "done":
-            continue
-        count += 1
-    return count
-
-
-def workload_targets(status: dict[str, Any]) -> dict[str, float]:
-    raw = status.get("workload")
-    if not isinstance(raw, dict):
-        return {}
-    targets: dict[str, float] = {}
-    for name, value in raw.items():
-        try:
-            targets[str(name)] = float(value)
-        except (TypeError, ValueError):
-            continue
-    return targets
-
-
-def open_owner_counts(status: dict[str, Any], owner_field: str = "owner") -> tuple[dict[str, int], int]:
-    counts: dict[str, int] = {}
-    total = 0
-    for task in status.get("tasks", []) or []:
-        task_status = str(task.get("status") or "").lower()
-        if task_status in {"done", "superseded"}:
-            continue
-        owner = str(task.get(owner_field) or "").strip()
-        if not owner:
-            continue
-        counts[owner] = counts.get(owner, 0) + 1
-        total += 1
-    return counts, total
-
-
-def agent_within_target_workload_for_assignment(
-    status: dict[str, Any],
-    agent_name: str,
-    *,
-    owner_field: str = "owner",
-    previous_owner: str | None = None,
-    creates_new_task: bool = False,
-) -> bool:
-    targets = workload_targets(status)
-    target = targets.get(agent_name)
-    if target is None:
-        return True
-
-    counts, total = open_owner_counts(status, owner_field)
-    current_count = counts.get(agent_name, 0)
-    if previous_owner and previous_owner != agent_name:
-        counts[previous_owner] = max(0, counts.get(previous_owner, 0) - 1)
-        counts[agent_name] = current_count + 1
-    elif creates_new_task:
-        total += 1
-        counts[agent_name] = current_count + 1
-    else:
-        counts[agent_name] = current_count + 1
-
-    if current_count <= 0:
-        return True
-    if total <= 0:
-        return True
-    projected_share = (counts.get(agent_name, 0) / total) * 100
-    return projected_share <= target
-
-
-def eligible_idle_agents_for_sidecars(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    status: dict[str, Any],
-    *,
-    max_active_sidecars_per_agent: int,
-    provider_report: dict[str, Any] | None = None,
-) -> list[str]:
-    settings = ready_dispatch_settings(config)
-    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
-    active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
-    pending_agents, _pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
-    task_map = task_index_from_status(config, status)
-    owner_field = config.get("schema", {}).get("assignee_field", "owner")
-    agents: list[str] = []
-    for agent_id, agent in (config.get("agents", {}) or {}).items():
-        if agent_is_dispatch_slot(agent):
-            continue
-        display_name = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
-        if "legacy alias" in display_name.lower():
-            continue
-        normalized = normalize_agent_id(agent_id)
-        if agent_auto_dispatch_block_reason(config, state, normalized, provider_report):
-            continue
-        if normalized in active_agents or normalized in pending_agents:
-            continue
-        if count_open_sidecars_for_agent(status, display_name) >= max_active_sidecars_per_agent:
-            continue
-        if agent_has_dispatchable_primary_work(config, status, display_name, task_map):
-            continue
-        if not agent_within_target_workload_for_assignment(
-            status,
-            display_name,
-            owner_field=owner_field,
-            creates_new_task=True,
-        ):
-            continue
-        agents.append(display_name)
-    return agents
-
-
-def sidecar_support_artifact(parent_task_id: str, sidecar_id: str) -> str:
-    return f"support/sidecars/{parent_task_id}/{sidecar_id}.md"
-
-
-def build_catalog_sidecar_candidates(
-    config: dict[str, Any],
-    status: dict[str, Any],
-    task_map: dict[str, dict[str, Any]],
-    existing_signatures: set[str],
-    archived_task_ids: set[str] | None = None,
-) -> list[dict[str, Any]]:
-    settings = ready_dispatch_settings(config)
-    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    if archived_task_ids is None:
-        archived_task_ids = archived_sidecar_state(config)[1]
-    resolver = TaskResolver(task_map)
-    templates = load_sidecar_catalog(config)
-    candidates: list[dict[str, Any]] = []
-    for template in templates:
-        kind = str(template.get("kind") or "").strip()
-        if not kind:
-            continue
-        parent_ids = [str(item).strip() for item in template.get("parent_task_ids", []) if str(item).strip()]
-        phase_match = str(template.get("parent_phase_match") or "").strip()
-        activation_dependencies = [str(item).strip() for item in template.get("activation_dependencies", []) if str(item).strip()]
-        for parent in status.get("tasks", []) or []:
-            if task_is_sidecar(parent):
-                continue
-            parent_id = str(parent.get("id") or "").strip()
-            if not parent_id:
-                continue
-            if parent_ids and parent_id not in parent_ids:
-                continue
-            if not parent_ids and phase_match and str(parent.get("phase") or "") != phase_match:
-                continue
-            if not parent_ids and not phase_match:
-                continue
-            if str(parent.get("status") or "").lower() == "done":
-                continue
-            if any(resolver.dependency_status(dep) not in dependency_done_statuses or not resolver.dependency_satisfied(dep) for dep in activation_dependencies):
-                continue
-            signature = f"{parent_id}:{kind}"
-            if signature in existing_signatures:
-                continue
-            reviewer = str(parent.get("owner") or "").strip()
-            if not reviewer:
-                continue
-            sidecar_id = sidecar_task_id(parent_id, kind)
-            if sidecar_id in archived_task_ids:
-                continue
-            variables = {
-                "parent_task_id": parent_id,
-                "parent_title": str(parent.get("title") or ""),
-                "parent_phase": str(parent.get("phase") or ""),
-                "sidecar_task_id": sidecar_id,
-                "kind": kind,
-                "kind_slug": kind.replace("_", "-"),
-            }
-            artifact_targets = [
-                render_sidecar_template(str(item), variables)
-                for item in (template.get("artifact_targets") or [])
-                if str(item).strip()
-            ] or [sidecar_support_artifact(parent_id, sidecar_id)]
-            candidates.append(
-                {
-                    "template_id": str(template.get("template_id") or sidecar_id),
-                    "kind": kind,
-                    "parent_task_id": parent_id,
-                    "parent_task": parent,
-                    "sidecar_id": sidecar_id,
-                    "title": render_sidecar_template(str(template.get("title_template") or sidecar_id), variables),
-                    "summary_zh": render_sidecar_template(str(template.get("summary_zh_template") or ""), variables),
-                    "phase": str(parent.get("phase") or "Support"),
-                    "depends_on": activation_dependencies,
-                    "artifacts": artifact_targets,
-                    "reviewer": reviewer,
-                    "mutates_canonical": bool(template.get("mutates_canonical", False)),
-                    "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
-                }
-            )
-    return candidates
-
-
-def build_dynamic_sidecar_candidates(
-    config: dict[str, Any],
-    status: dict[str, Any],
-    task_map: dict[str, dict[str, Any]],
-    existing_signatures: set[str],
-    archived_task_ids: set[str] | None = None,
-) -> list[dict[str, Any]]:
-    settings = ready_dispatch_settings(config)
-    dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    if archived_task_ids is None:
-        archived_task_ids = archived_sidecar_state(config)[1]
-    resolver = TaskResolver(task_map)
-    candidates: list[dict[str, Any]] = []
-    for parent in status.get("tasks", []) or []:
-        if task_is_sidecar(parent):
-            continue
-        parent_id = str(parent.get("id") or "").strip()
-        if not parent_id or str(parent.get("status") or "").lower() == "done":
-            continue
-        kind = dynamic_sidecar_kind(parent)
-        if kind not in {"review_packet", "acceptance_packet", "bff_handoff_packet"}:
-            continue
-        signature = f"{parent_id}:{kind}"
-        if signature in existing_signatures:
-            continue
-        parent_status = str(parent.get("status") or "").lower()
-        if kind in {"review_packet", "acceptance_packet"} and parent_status == "todo" and not dependencies_satisfied(parent, task_map, dependency_done_statuses):
-            continue
-        activation_dependencies = [
-            dep_id
-            for dep_id in (parent.get("depends_on") or [])
-            if resolver.dependency_status(dep_id) in dependency_done_statuses and resolver.dependency_satisfied(dep_id)
-        ]
-        if kind == "bff_handoff_packet" and parent.get("depends_on") and not activation_dependencies:
-            continue
-        reviewer = str(parent.get("owner") or "").strip()
-        if not reviewer:
-            continue
-        sidecar_id = sidecar_task_id(parent_id, kind)
-        if sidecar_id in archived_task_ids:
-            continue
-        title_by_kind = {
-            "review_packet": f"Prepare {parent_id} review packet and evidence summary",
-            "acceptance_packet": f"Prepare {parent_id} acceptance packet and dependency map",
-            "bff_handoff_packet": f"Prepare {parent_id} BFF and frontend handoff packet",
-        }
-        summary_by_kind = {
-            "review_packet": f"平行支援 {parent_id}，先整理 review packet、evidence summary 與 reviewer handoff，不改 canonical truth。",
-            "acceptance_packet": f"平行支援 {parent_id}，先整理 acceptance checklist、dependency map 與 support packet，不改 canonical truth。",
-            "bff_handoff_packet": f"平行支援 {parent_id}，先整理 BFF query gap、operator journey 與前端 handoff materials，不改 canonical truth。",
-        }
-        candidates.append(
-            {
-                "template_id": f"dynamic:{kind}",
-                "kind": kind,
-                "parent_task_id": parent_id,
-                "parent_task": parent,
-                "sidecar_id": sidecar_id,
-                "title": title_by_kind[kind],
-                "summary_zh": summary_by_kind[kind],
-                "phase": str(parent.get("phase") or "Support"),
-                "depends_on": activation_dependencies,
-                "artifacts": [sidecar_support_artifact(parent_id, sidecar_id)],
-                "reviewer": reviewer,
-                "mutates_canonical": False,
-                "priority": task_phase_priority(parent, task_map, dependency_done_statuses),
-            }
-        )
-    return candidates
-
-
-def create_sidecar_task(
-    config: dict[str, Any],
-    *,
-    sidecar_id: str,
-    owner: str,
-    reviewer: str,
-    phase: str,
-    title: str,
-    summary_zh: str,
-    depends_on: list[str],
-    artifacts: list[str],
-    helper_parent: str,
-    helper_kind: str,
-    mutates_canonical: bool,
-) -> tuple[bool, str]:
-    script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
-    metadata = {
-        "task_class": "sidecar",
-        "auto_generated": True,
-        "helper_parent": helper_parent,
-        "helper_kind": helper_kind,
-        "mutates_canonical": mutates_canonical,
-        "auto_created_by": "supervisor-underutilization",
-    }
-    env = os.environ.copy()
-    env.update(
-        {
-            "AI_NAME": "Codex",
-            "TASK_PHASE": phase,
-            "TASK_TITLE": title,
-            "TASK_SUMMARY_ZH": summary_zh,
-            "TASK_DEPENDS_ON": ",".join(depends_on),
-            "TASK_ARTIFACTS": ",".join(artifacts),
-            "TASK_ACCEPTANCE": ",".join(
-                [
-                    "Create support artifacts only",
-                    "Do not edit canonical truth",
-                    "Hand off the packet to the assigned reviewer",
-                ]
-            ),
-            "TASK_METADATA_JSON": json.dumps(metadata, ensure_ascii=False),
-        }
-    )
-    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
-    try:
-        result = subprocess.run(
-            [sys.executable, str(script), "assign", sidecar_id, owner, reviewer],
-            cwd=str(config_path(config, "status_file").parent),
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired:
-        return False, f"sidecar assignment timed out after {timeout_seconds:g}s"
-    if result.returncode != 0:
-        return False, result.stderr.strip() or result.stdout.strip() or "unknown error"
-    return True, ""
 
 
 def redispatch_candidate_statuses(config: dict[str, Any]) -> set[str]:
@@ -10229,149 +9115,6 @@ def _quarantine_and_preserve_dirty_worktree(
     return True
 
 
-def restore_quarantined_worktree_backup(
-    backup_dir: Path | str,
-    target_dir: Path | str,
-) -> tuple[bool, str]:
-    """Restore a quarantined worktree backup manifest and files into target_dir."""
-    backup_path = Path(backup_dir).expanduser().resolve()
-    target_path = Path(target_dir).expanduser().resolve()
-    manifest_file = backup_path / "manifest.json"
-    checksums_file = backup_path / "backup_checksums.sha256"
-    if not manifest_file.exists() or not checksums_file.exists():
-        return False, "missing manifest or checksums file"
-
-    try:
-        checksums = json.loads(checksums_file.read_text(encoding="utf-8"))
-        for rel_bp, expected_sha in checksums.items():
-            fp = backup_path / rel_bp
-            if not fp.exists() and not os.path.islink(fp):
-                return False, f"corrupted backup: missing {rel_bp}"
-            if fp.is_symlink() or os.path.islink(fp):
-                target = os.readlink(fp)
-                h_val = "symlink:" + hashlib.sha256(target.encode("utf-8")).hexdigest()
-            else:
-                h_b = hashlib.sha256()
-                with open(fp, "rb") as f_b:
-                    while ch := f_b.read(65536):
-                        h_b.update(ch)
-                h_val = h_b.hexdigest()
-            if h_val != expected_sha:
-                return False, f"corrupted backup: checksum mismatch for {rel_bp}"
-
-        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
-        untracked_base = backup_path / "untracked"
-        staged_patch = backup_path / "staged.patch"
-        unstaged_patch = backup_path / "unstaged.patch"
-
-        is_git_repo = (target_path / ".git").exists()
-
-        if is_git_repo:
-            if staged_patch.exists() and staged_patch.stat().st_size > 0:
-                apply_staged = subprocess.run(
-                    ["git", "apply", "--index", "--binary", str(staged_patch)],
-                    cwd=target_path,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if apply_staged.returncode != 0:
-                    return False, f"restoration_failed: failed to apply staged patch: {apply_staged.stderr}"
-
-            if unstaged_patch.exists() and unstaged_patch.stat().st_size > 0:
-                apply_unstaged = subprocess.run(
-                    ["git", "apply", "--binary", str(unstaged_patch)],
-                    cwd=target_path,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if apply_unstaged.returncode != 0:
-                    return False, f"restoration_failed: failed to apply unstaged patch: {apply_unstaged.stderr}"
-
-            for file_entry in manifest.get("files", []):
-                status_code = str(file_entry.get("status_code", ""))
-                rel_p = file_entry.get("path")
-                if not rel_p:
-                    continue
-                if status_code.startswith("?"):
-                    src_fp = untracked_base / rel_p
-                    dst_fp = target_path / rel_p
-                    if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
-                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                        if dst_fp.exists() or os.path.islink(dst_fp):
-                            dst_fp.unlink()
-                        os.symlink(file_entry["symlink_target"], dst_fp)
-                    elif src_fp.exists() and src_fp.is_file():
-                        dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_fp, dst_fp)
-        else:
-            for file_entry in manifest.get("files", []):
-                rel_p = file_entry.get("path")
-                if not rel_p:
-                    continue
-                src_fp = untracked_base / rel_p
-                dst_fp = target_path / rel_p
-                if file_entry.get("is_symlink") and file_entry.get("symlink_target"):
-                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                    if dst_fp.exists() or os.path.islink(dst_fp):
-                        dst_fp.unlink()
-                    os.symlink(file_entry["symlink_target"], dst_fp)
-                elif src_fp.exists() and src_fp.is_file():
-                    dst_fp.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_fp, dst_fp)
-        return True, "restored"
-    except Exception as exc:
-        return False, f"restoration_failed: {exc}"
-
-
-def _backup_and_reset_dirty_worktree(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    worktree_path: Path | str | None,
-    task_id: str | None,
-    *,
-    run_id: str | None = None,
-    trigger: str = "",
-) -> bool:
-    return _quarantine_and_preserve_dirty_worktree(
-        config,
-        state,
-        worktree_path,
-        task_id,
-        expected_branch=worker_task_branch(config, task_id) if task_id else None,
-        run_id=run_id,
-        trigger=trigger,
-    )
-
-
-def reset_worker_worktree_after_failure(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any]) -> None:
-    """Reset a failed worker's isolated worktree state by preserving its backup."""
-    settings = worker_worktree_settings(config)
-    if not settings.get("enabled"):
-        return
-    task_id = worker.get("task_id")
-    repo_root = config_path(config, "status_file").parents[0].resolve()
-    raw_path = str(worker.get("workspace_path") or "").strip()
-    worktree_path: Path | None = None
-    if raw_path:
-        worktree_path = Path(raw_path).expanduser()
-    elif task_id:
-        branch = worker_task_branch(config, task_id)
-        worktree_path = _existing_worktree_for_branch(repo_root, branch, exclude_root=True) or worker_task_worktree_path(
-            config, task_id, settings
-        )
-    _quarantine_and_preserve_dirty_worktree(
-        config,
-        state,
-        worktree_path,
-        task_id,
-        expected_branch=worker_task_branch(config, task_id) if task_id else None,
-        run_id=worker.get("run_id"),
-        trigger="worker_failed",
-    )
-
-
 def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], worker: dict[str, Any], status: str, error: str | None = None) -> None:
     queue_event_id = worker.get("queue_event_id")
     if not queue_event_id:
@@ -10479,10 +9222,6 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     return True
 
 
-def task_status_map(status: dict[str, Any]) -> dict[str, str]:
-    return {str(task.get("id")): str(task.get("status") or "") for task in status.get("tasks", []) if task.get("id")}
-
-
 def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
@@ -10572,8 +9311,8 @@ def dispatch_priority_for_task(
         except Exception:
             return None
         try:
-            _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
-            if ci_status not in {"success", "none"}:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(str(task.get("id") or ""))
+            if str(pr_status or "").strip().upper() != "MERGED" or ci_status not in {"success", "none"}:
                 return None
         except Exception:
             return None
@@ -10608,7 +9347,11 @@ def agent_dispatch_loads(
         priority = dispatch_reason_priority(reason)
         if priority is None:
             continue
-        agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+        # A pool slot is only an execution resource. Attribute its work to the
+        # logical ownership role so role load balancing remains meaningful when
+        # many aliases share a small slot set.
+        logical_agent_id = worker_logical_dispatch_agent_id(config, worker)
+        agent_name = display_name_for(config, logical_agent_id)
         if not agent_name:
             continue
         loads.setdefault(agent_name, []).append(priority)
@@ -10633,58 +9376,7 @@ def agent_dispatch_loads(
     return loads
 
 
-def choose_helper_claim_agent(
-    config: dict[str, Any],
-    *,
-    task: dict[str, Any],
-    owner_name: str,
-    reviewer_name: str,
-    idle_agent_name: str,
-    agent_loads: dict[str, list[int]],
-    helper_settings: dict[str, Any],
-    owner_paused: bool = False,
-) -> bool:
-    if not helper_settings.get("enabled", True):
-        return False
-    if not agent_can_take_task(config, idle_agent_name, task):
-        return False
-    task_status = str(task.get("status") or "").lower()
-    allowed_statuses = {str(value).lower() for value in helper_settings.get("task_statuses", ["todo"])}
-    paused_owner_statuses = {
-        str(value).lower() for value in helper_settings.get("paused_owner_task_statuses", ["in_progress"])
-    }
-    if task_status not in allowed_statuses and not (owner_paused and task_status in paused_owner_statuses):
-        return False
-    if not owner_name or owner_name == idle_agent_name:
-        return False
-    fallbacks = get_agent_reassignment_candidates(config, owner_name, role="owner", task=task)
-    normalized_idle_agent = normalize_agent_id(idle_agent_name)
-    idle_agent_config = (config.get("agents", {}) or {}).get(normalized_idle_agent)
-    registered_idle_allowed = bool(
-        helper_settings.get("include_registered_idle_agents", False)
-        and isinstance(idle_agent_config, dict)
-        and not agent_is_dispatch_slot(idle_agent_config)
-    )
-    idle_agent_allowed = idle_agent_name in fallbacks or registered_idle_allowed
-    if not idle_agent_allowed:
-        return False
-    if owner_paused:
-        return True
-    if helper_settings.get("claim_idle_work", False):
-        return True
-    owner_loads = agent_loads.get(owner_name, [])
-    if helper_settings.get("require_owner_higher_priority_load", True):
-        dispatch_reason_for_status = {
-            "in_progress": REASON_OWNED_IN_PROGRESS,
-            "todo": REASON_OWNED_READY,
-        }.get(task_status, REASON_OWNED_READY)
-        current_priority = dispatch_reason_priority(dispatch_reason_for_status)
-        if current_priority is None or not any(priority < current_priority for priority in owner_loads):
-            return False
-    return True
-
-
-def reassign_paused_reviewers_to_registered_idle_agents(
+def reassign_unavailable_reviewers(
     config: dict[str, Any],
     state: dict[str, Any],
     status: dict[str, Any],
@@ -10692,11 +9384,7 @@ def reassign_paused_reviewers_to_registered_idle_agents(
     provider_report: dict[str, Any] | None = None,
 ) -> bool:
     settings = ready_dispatch_settings(config)
-    helper_settings = helper_claim_settings(config)
-    if not (
-        helper_settings.get("enabled", True)
-        and helper_settings.get("include_registered_idle_agents", False)
-    ):
+    if not reviewer_failover_settings(config).get("enabled", True):
         return False
 
     schema = config.get("schema", {})
@@ -10710,7 +9398,7 @@ def reassign_paused_reviewers_to_registered_idle_agents(
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     reserved_agents = set(active_agents) | set(pending_agents)
     reserved_tasks = {task_id for task_id, _agent_id in active_task_agents | pending_task_agents}
-    candidate_agent_ids = weighted_dispatch_agent_ids(config, settings)
+    candidate_agent_ids = dispatch_loop_agent_ids(config)
     changed = False
 
     for task in status.get(tasks_path, []) or []:
@@ -10729,7 +9417,8 @@ def reassign_paused_reviewers_to_registered_idle_agents(
             normalize_agent_id(reviewer),
             provider_report,
         )
-        if not reviewer_block_reason:
+        reviewer_same_pool = not review_is_independent(config, owner, reviewer)
+        if not reviewer_block_reason and not reviewer_same_pool:
             continue
 
         replacement = ""
@@ -10745,13 +9434,8 @@ def reassign_paused_reviewers_to_registered_idle_agents(
                 or agent_is_dispatch_slot(candidate_config)
                 or is_human_gate_agent(candidate)
                 or not agent_can_take_task(config, candidate, task)
+                or not review_is_independent(config, owner, candidate)
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
-                or not agent_within_target_workload_for_assignment(
-                    status,
-                    candidate,
-                    owner_field=reviewer_field,
-                    previous_owner=reviewer,
-                )
             ):
                 continue
             replacement = candidate
@@ -10760,10 +9444,16 @@ def reassign_paused_reviewers_to_registered_idle_agents(
         if not replacement:
             continue
 
-        message = (
-            f"Helper-claimed review by {replacement} while reviewer {reviewer} "
-            f"is dispatch-paused: {reviewer_block_reason}"
-        )
+        if reviewer_same_pool:
+            message = (
+                f"Reassigned review to {replacement}: {reviewer} shares account pool "
+                f"with owner {owner}, so independent review requires a different pool."
+            )
+        else:
+            message = (
+                f"Automatically reassigned review to {replacement} while reviewer {reviewer} "
+                f"is dispatch-paused: {reviewer_block_reason}"
+            )
         if not persist_task_reassignment(
             config,
             task_id=task_id,
@@ -10782,7 +9472,7 @@ def reassign_paused_reviewers_to_registered_idle_agents(
         write_activity_log(
             config,
             {
-                "type": "task_review_helper_claimed",
+                "type": "task_reviewer_reassigned",
                 "task_id": task_id,
                 "message": message,
                 "owner": owner,
@@ -10791,7 +9481,7 @@ def reassign_paused_reviewers_to_registered_idle_agents(
             },
         )
         console_log(
-            f"review helper claim: task={task_id} from={reviewer} to={replacement}",
+            f"reviewer failover: task={task_id} from={reviewer} to={replacement}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
 
@@ -10944,7 +9634,7 @@ def higher_priority_ready_task_exists(
         if event_priority is not None and event_priority < current_priority and event_task_id:
             served_higher_priority_task_ids.add(event_task_id)
 
-    agent_capacity = agent_dispatch_capacity(config, logical_agent_id, settings)
+    agent_capacity = agent_dispatch_capacity(config, logical_agent_id)
     free_slots = max(0, agent_capacity - occupied_count)
     unserved_higher_priority = higher_priority_task_ids - served_higher_priority_task_ids
     return len(unserved_higher_priority) > free_slots
@@ -10959,13 +9649,11 @@ def worker_matches_current_assignment(
         return True
     if worker_is_coordination_dispatch(worker):
         return True
-    if worker_is_chair_review(worker):
-        return True
     task_id = str(worker.get("task_id") or "")
     task = task_map.get(task_id)
     if not task:
         return False
-    agent_name = display_name_for(config, str(worker.get("agent_id") or ""))
+    agent_name = display_name_for(config, worker_logical_dispatch_agent_id(config, worker))
     settings = ready_dispatch_settings(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
     finalize_statuses = normalized_status_set(settings.get("finalize_statuses"), ["review_approved"])
@@ -11030,6 +9718,25 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
         sort_keys=True,
         ensure_ascii=True,
     )
+
+
+def worktree_block_still_matches_dispatch(
+    state: dict[str, Any],
+    task: dict[str, Any],
+    reason: str,
+    task_map: dict[str, dict[str, Any]],
+) -> bool:
+    """Do not recreate an identical wake after a fail-closed worktree block.
+
+    Any ownership, lifecycle, dependency or branch-state update changes the
+    dispatch signature and makes the task eligible again.  This preserves
+    automatic recovery without burning a provider slot every supervisor tick.
+    """
+    task_id = str(task.get("id") or "")
+    entry = (state.get("worker_worktree_lease_blocks") or {}).get(normalize_agent_id(task_id) or task_id)
+    if not isinstance(entry, dict):
+        return False
+    return str(entry.get("dispatch_signature") or "") == ready_dispatch_signature(task, reason, task_map)
 
 
 def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, task_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -11184,6 +9891,13 @@ def dispatch_ready_tasks(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
 
+    metadata_repaired = repair_open_task_metadata(config, status)
+    if metadata_repaired:
+        status = load_status(config)
+    review_states_repaired = repair_unsubmitted_review_tasks(config, status)
+    if review_states_repaired:
+        status = load_status(config)
+
     tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
     task_map = {task.get(task_id_field): task for task in tasks}
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
@@ -11198,31 +9912,31 @@ def dispatch_ready_tasks(
     active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}
     agent_loads = agent_dispatch_loads(config, state, active_statuses)
-    helper_settings = helper_claim_settings(config)
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
     seen = state.setdefault("seen_event_keys", {})
-    failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
-    failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
-    disable_helper_claims_for_failure_loops = bool(helper_settings.get("disable_when_failure_loops", True))
 
-    changed = False
+    changed = metadata_repaired or review_states_repaired
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
             continue
-        normalized = normalize_mainline_task_assignment(config, task, task_map) or normalized
+        assignment_normalized = normalize_task_assignment_integrity(config, state, status, task)
+        normalized = assignment_normalized or normalized
+        # Both normalizers persist from canonical disk state. Avoid letting the
+        # legacy mainline guard immediately overwrite a repair using this
+        # loop's stale pre-repair task object.
+        if not assignment_normalized:
+            normalized = normalize_mainline_task_assignment(config, task, task_map) or normalized
 
     if normalized:
         changed = True
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
-        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
-        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 
-    if reassign_paused_reviewers_to_registered_idle_agents(
+    if reassign_unavailable_reviewers(
         config,
         state,
         status,
@@ -11232,19 +9946,16 @@ def dispatch_ready_tasks(
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
-        failure_loop_task_agents = failure_loop_task_agents_for_task_map(config, state, task_map)
-        failure_loop_task_ids = {task_id for task_id, _agent_name in failure_loop_task_agents}
 
     dispatches = 0
-    weighted_dispatch_enabled = bool(dispatch_weight_mapping(settings)) and not agent_ids_override
     agent_sequence = (
         [normalize_agent_id(agent_id) for agent_id in agent_ids_override if normalize_agent_id(agent_id)]
         if agent_ids_override
-        else weighted_dispatch_agent_ids(config, settings)
+        else dispatch_loop_agent_ids(config)
     )
     dispatch_state = state.setdefault("ready_dispatcher", {})
     try:
-        dispatch_cursor = int(dispatch_state.get("weighted_cursor", 0))
+        dispatch_cursor = int(dispatch_state.get("dispatch_cursor", 0))
     except (TypeError, ValueError):
         dispatch_cursor = 0
     if agent_sequence:
@@ -11252,11 +9963,6 @@ def dispatch_ready_tasks(
         agent_ids = agent_sequence[dispatch_cursor:] + agent_sequence[:dispatch_cursor]
     else:
         agent_ids = []
-    max_concurrent = ready_dispatch_max_concurrent_workers(config)
-    if max_concurrent is not None and max_concurrent > 0:
-        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
-        if live_total >= max_concurrent:
-            return changed
     considered_agents = 0
     for agent_id in agent_ids:
         if dispatches >= max_dispatches_per_tick:
@@ -11266,18 +9972,17 @@ def dispatch_ready_tasks(
         if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
             continue
         # A logical agent without explicit worker slots can run only one
-        # process at a time. Do not build a same-agent queue backlog that
-        # prevents registered idle helpers from claiming the work instead.
+        # process at a time. Do not build a same-agent queue backlog.
         if not logical_worker_slot_ids(config, agent_id) and (
             agent_id in active_agents or agent_id in pending_agents
         ):
             continue
-        quota_limit = quota_group_concurrency_limit(config, agent_id, settings)
+        quota_limit = account_pool_effective_concurrency(config, state, agent_id)
         quota_group = agent_quota_group_id(config, agent_id)
         quota_used = active_quota_counts.get(quota_group, 0) + pending_quota_counts.get(quota_group, 0)
         if quota_limit and quota_group and quota_used >= quota_limit:
             continue
-        agent_capacity = agent_dispatch_capacity(config, agent_id, settings)
+        agent_capacity = agent_dispatch_capacity(config, agent_id)
         current_agent_load = len(agent_loads.get(target_agent, []))
         if current_agent_load >= agent_capacity:
             continue
@@ -11286,10 +9991,10 @@ def dispatch_ready_tasks(
             available_agent_slots = min(available_agent_slots, max(0, quota_limit - quota_used))
             if available_agent_slots <= 0:
                 continue
-        target_has_primary_work = agent_has_dispatchable_primary_work(config, status, target_agent, task_map)
-
-        candidates: list[tuple[int, int, dict[str, Any], str]] = []
-        helper_candidates: list[tuple[int, int, dict[str, Any], str, str, str, bool]] = []
+        # Sort first by the business priority carried by the task (P0..P3),
+        # then by lifecycle action (review/finalize/execute), then stable board
+        # order.  The previous implementation ignored task.priority entirely.
+        candidates: list[tuple[int, int, int, dict[str, Any], str]] = []
         for index, task in enumerate(tasks):
             task_id = str(task.get(task_id_field) or "")
             if not task_id:
@@ -11300,15 +10005,6 @@ def dispatch_ready_tasks(
             task_status = str(task.get("status") or "").lower()
             task_owner = task.get(owner_field)
             task_reviewer = task.get(reviewer_field)
-            owner_paused = bool(
-                agent_auto_dispatch_block_reason(
-                    config,
-                    state,
-                    normalize_agent_id(str(task_owner or "")),
-                    provider_report,
-                )
-            )
-
             norm_target = normalize_agent_id(target_agent or "")
             norm_task_owner = normalize_agent_id(str(task_owner or ""))
             norm_task_reviewer = normalize_agent_id(str(task_reviewer or ""))
@@ -11324,6 +10020,11 @@ def dispatch_ready_tasks(
                 # edited snapshot reaches the Supervisor. Never spend a worker
                 # slot on an approval that would be an owner self-review.
                 if norm_task_owner == norm_task_reviewer:
+                    continue
+                if not review_is_independent(config, str(task_owner or ""), target_agent):
+                    # The reassignment helper above repairs this when another
+                    # healthy pool is available.  Do not write an event on
+                    # every dispatch tick if all alternate pools are busy.
                     continue
                 reason = "review_ready_dispatch"
                 priority = 0
@@ -11350,8 +10051,8 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not commit_canonical_task_transition(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -11371,9 +10072,8 @@ def dispatch_ready_tasks(
                             f"({approved_head[:8]}); re-review required."
                         )
                         task.pop("approved_head", None)
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
-                        sync_status_pipeline(config)
+                        if not commit_canonical_task_transition(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -11395,8 +10095,8 @@ def dispatch_ready_tasks(
                         )
                         if task.get("next") != msg:
                             task["next"] = msg
-                            status_path = config_path(config, "status_file")
-                            write_json(status_path, status)
+                            if not commit_canonical_task_transition(config, status):
+                                return changed
                             write_activity_log(
                                 config,
                                 {
@@ -11407,20 +10107,25 @@ def dispatch_ready_tasks(
                             )
                     continue
 
+                pr_status = "UNKNOWN"
                 ci_status = "unknown"
                 try:
-                    _pr_st, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+                    pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
                 except Exception as err:
                     console_log(f"Failed to check CI status for {task_id}: {err}", quiet=SUPERVISOR_LOG_QUIET)
 
                 if ci_status == "pending":
                     now_ts = datetime.now(UTC).timestamp()
+                    status_dirty = reassert_approved_review_gate_if_due(
+                        config,
+                        task,
+                        now_ts=now_ts,
+                    )
                     start_ts = task.get("ci_pending_since_ts")
                     if not start_ts:
                         task["ci_pending_since_ts"] = now_ts
                         task["ci_pending_since"] = utc_now()
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        status_dirty = True
                     elif now_ts - float(start_ts) > 1800:
                         approved_key = str(approved_head or "")
                         last_requeued_ts = task.get("ci_repair_last_requeued_ts")
@@ -11470,8 +10175,8 @@ def dispatch_ready_tasks(
                     )
                     if task.get("next") != msg:
                         task["next"] = msg
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not commit_canonical_task_transition(config, status):
+                            return changed
                         write_activity_log(
                             config,
                             {
@@ -11483,8 +10188,24 @@ def dispatch_ready_tasks(
                     continue
                 else:
                     if task.pop("ci_pending_since_ts", None) is not None:
-                        status_path = config_path(config, "status_file")
-                        write_json(status_path, status)
+                        if not commit_canonical_task_transition(config, status):
+                            return changed
+
+                # CI success on an open PR is only merge readiness, not task
+                # completion. Dispatching an LLM here caused it to compose dev
+                # and create a closeout commit, invalidating the exact head the
+                # reviewer had frozen. The merge queue owns base composition;
+                # the owner finalize lane starts only after GitHub says MERGED.
+                if str(pr_status or "").strip().upper() != "MERGED":
+                    msg = (
+                        f"PR for task {task_id} is CI-green and awaiting merge queue; "
+                        "approved branch head remains immutable and finalize dispatch is deferred."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        if not commit_canonical_task_transition(config, status):
+                            return changed
+                    continue
 
                 reason = "owned_finalize_dispatch"
                 priority = 1
@@ -11497,78 +10218,22 @@ def dispatch_ready_tasks(
 
             if reason is not None and not agent_can_take_task(config, target_agent, task):
                 continue
-            if reason is not None and (task_id, target_agent) in failure_loop_task_agents:
-                continue
-            if reason is not None and chair_reassignment_triage_needed_for_task(config, state, task_id, target_agent):
-                continue
-
-            sidecar_claim_allowed = (
-                not task_is_sidecar(task)
-                or owner_paused
-                or bool(helper_settings.get("claim_sidecars_when_idle", False))
-            )
-            helper_claim_candidate = (
-                (not disable_helper_claims_for_failure_loops or task_id not in failure_loop_task_ids)
-                and dependencies_satisfied(task, task_map, dependency_done_statuses)
-                and task_id not in active_task_ids
-                and task_id not in pending_task_ids
-                and sidecar_claim_allowed
-                and agent_within_target_workload_for_assignment(
-                    status,
-                    target_agent,
-                    owner_field=owner_field,
-                    previous_owner=str(task_owner or ""),
-                )
-                and choose_helper_claim_agent(
-                    config,
-                    task=task,
-                    owner_name=str(task_owner or ""),
-                    reviewer_name=str(task_reviewer or ""),
-                    idle_agent_name=target_agent,
-                    agent_loads=agent_loads,
-                    helper_settings=helper_settings,
-                    owner_paused=owner_paused,
-                )
-            )
-
-            if helper_claim_candidate:
-                helper_dispatch_reason = (
-                    "owned_in_progress_dispatch"
-                    if task_status == "in_progress"
-                    else "owned_ready_dispatch"
-                )
-                helper_priority = 4 if task_status == "in_progress" else 5
-                if owner_paused:
-                    helper_priority -= 2
-                if task_is_sidecar(task):
-                    helper_priority += 2
-                helper_candidates.append(
-                    (
-                        helper_priority,
-                        index,
-                        task,
-                        helper_dispatch_reason,
-                        str(task_owner or ""),
-                        str(task_reviewer or ""),
-                        owner_paused,
-                    )
-                )
-
             if reason is None or priority is None:
                 continue
+            if worktree_block_still_matches_dispatch(state, task, reason, task_map):
+                continue
 
-            if is_sidecar_task and target_has_primary_work:
+            if is_sidecar_task:
                 priority += SIDECAR_READY_PRIORITY_OFFSET
 
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if event["key"] in pending_event_keys:
                 continue
-            candidates.append((priority, index, task, reason))
+            candidates.append((task_priority_rank(task), priority, index, task, reason))
 
-        candidates.sort(key=lambda item: (item[0], item[1]))
-        per_occurrence_limit = 1 if weighted_dispatch_enabled else available_agent_slots
+        candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         queued_for_agent = 0
-        for _, _, task, reason in candidates[:per_occurrence_limit]:
+        for _, _, _, task, reason in candidates[:available_agent_slots]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 seen[event["key"]] = utc_now()
@@ -11588,457 +10253,18 @@ def dispatch_ready_tasks(
         if dispatches >= max_dispatches_per_tick:
             break
 
-        remaining_occurrence_slots = max(0, per_occurrence_limit - queued_for_agent)
-        helper_candidates.sort(key=lambda item: (item[0], item[1]))
-        for (
-            _,
-            _,
-            task,
-            helper_dispatch_reason,
-            task_owner,
-            task_reviewer,
-            owner_paused,
-        ) in helper_candidates[:remaining_occurrence_slots]:
-            task_id = str(task.get(task_id_field) or "")
-            if not task_id or task_id in active_task_ids or task_id in pending_task_ids:
-                continue
-            new_reviewer = (
-                task_reviewer
-                if task_reviewer and task_reviewer != target_agent
-                else str(task_owner or "")
-            )
-            if owner_paused:
-                helper_message = f"Helper-claimed by {target_agent} while {task_owner} is dispatch-paused."
-            elif helper_settings.get("claim_idle_work", False):
-                if new_reviewer == task_reviewer:
-                    helper_message = f"Helper-claimed by idle {target_agent}; designated reviewer {task_reviewer} preserved."
-                else:
-                    helper_message = f"Helper-claimed by idle {target_agent}; previous owner {task_owner} becomes reviewer."
-            else:
-                helper_message = f"Helper-claimed by {target_agent} while {task_owner} completes higher-priority work."
-            if not persist_task_reassignment(
-                config,
-                task_id=task_id,
-                new_owner=target_agent,
-                new_reviewer=new_reviewer,
-                message=helper_message,
-                handoff_to=target_agent,
-                handoff_from=str(task_owner or ""),
-            ):
-                continue
-
-            task[owner_field] = target_agent
-            task[reviewer_field] = new_reviewer
-            task["next"] = helper_message
-
-            # Re-read the persisted task before signing the dispatch event. The
-            # status writer owns last_update; using a separate utc_now() here
-            # makes the queued event immediately look stale.
-            persisted_status = load_status(config)
-            persisted_task_map = task_index_from_status(config, persisted_status)
-            persisted_task = persisted_task_map.get(task_id)
-            if (
-                persisted_task
-                and persisted_task.get(owner_field) == target_agent
-                and persisted_task.get(reviewer_field) == new_reviewer
-            ):
-                task.update(persisted_task)
-                task_map = dict(task_map)
-                task_map[task_id] = task
-            else:
-                task["last_update"] = utc_now()
-
-            event = build_dispatch_event(task, target_agent, helper_dispatch_reason, task_map)
-            if event["key"] not in pending_event_keys and queue_dispatch_event_safely(config, event):
-                seen[event["key"]] = utc_now()
-                pending_event_keys.add(event["key"])
-                pending_agents.add(agent_id)
-                agent_loads.setdefault(target_agent, []).append(
-                    dispatch_reason_priority(helper_dispatch_reason) or 9
-                )
-                active_task_ids.add(task_id)
-                pending_task_ids.add(task_id)
-                if quota_group:
-                    pending_quota_counts[quota_group] = pending_quota_counts.get(quota_group, 0) + 1
-                changed = True
-                dispatches += 1
-                write_activity_log(
-                    config,
-                    {
-                        "type": "task_helper_claimed",
-                        "task_id": task_id,
-                        "message": helper_message,
-                        "from_owner": task_owner,
-                        "to_owner": target_agent,
-                        "new_reviewer": new_reviewer,
-                    },
-                )
-                console_log(
-                    f"helper claim: task={task_id} from={task_owner} to={target_agent}",
-                    quiet=SUPERVISOR_LOG_QUIET,
-                )
-                if dispatches >= max_dispatches_per_tick:
-                    break
-
     if agent_sequence and considered_agents and not agent_ids_override:
-        dispatch_state["weighted_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
-        raw_cursor_revision = dispatch_state.get("weighted_cursor_revision", 0)
+        dispatch_state["dispatch_cursor"] = (dispatch_cursor + considered_agents) % len(agent_sequence)
+        raw_cursor_revision = dispatch_state.get("dispatch_cursor_revision", 0)
         try:
             if isinstance(raw_cursor_revision, bool):
                 raise ValueError
             cursor_revision = int(raw_cursor_revision)
         except (TypeError, ValueError):
             cursor_revision = 0
-        dispatch_state["weighted_cursor_revision"] = max(0, cursor_revision) + 1
-        dispatch_state["weighted_cursor_updated_at"] = utc_now()
+        dispatch_state["dispatch_cursor_revision"] = max(0, cursor_revision) + 1
+        dispatch_state["dispatch_cursor_updated_at"] = utc_now()
     return changed
-
-
-def ready_dispatch_max_concurrent_workers(config: dict[str, Any]) -> int | None:
-    max_concurrent_setting = ready_dispatch_settings(config).get("max_concurrent_workers")
-    try:
-        max_concurrent = int(max_concurrent_setting) if max_concurrent_setting not in (None, "") else None
-    except (TypeError, ValueError):
-        return None
-    if max_concurrent is not None and max_concurrent <= 0:
-        return None
-    return max_concurrent
-
-
-def dispatch_chair_review(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    planning_state: dict[str, Any] | None = None,
-    provider_report: dict[str, Any] | None = None,
-) -> bool:
-    settings = chair_review_settings(config)
-    if not settings.get("enabled", True):
-        return False
-    if discussion_planning_is_active(planning_state):
-        return False
-    if chair_review_active(state):
-        return False
-    now = utc_now()
-    pending_approval_count = len(safe_load_approval_state(config).get("pending", []) or [])
-    approval_triage_requested = bool(
-        pending_approval_count
-        and settings.get("approval_actions_enabled", True)
-    )
-    failure_loop_details = chair_review_failure_loop_details(config, state)
-    failure_loop_count = len(failure_loop_details)
-    failure_loop_agents = {
-        str(item.get("agent") or "").strip()
-        for item in failure_loop_details
-        if str(item.get("agent") or "").strip()
-    }
-    bypass_cooldown = bool(
-        (
-            approval_triage_requested
-            and settings.get("approval_actions_enabled", True)
-            and settings.get("bypass_cooldown_for_pending_approvals", True)
-        )
-        or (
-            failure_loop_count
-            and settings.get("reassignment_actions_enabled", True)
-            and settings.get("bypass_cooldown_for_failure_loops", True)
-        )
-    )
-    if chair_review_cooldown_active(config, state, now=now) and not bypass_cooldown:
-        return False
-
-    candidates = chair_review_candidates(config)
-    if not candidates:
-        return False
-
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
-    pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
-    max_concurrent = ready_dispatch_max_concurrent_workers(config)
-    if max_concurrent is not None:
-        live_total = sum(len(pids) for pids in scan_live_worker_pids_by_agent().values())
-        reserved_total = len(set(active_agents) | set(pending_agents))
-        if max(live_total, reserved_total) >= max_concurrent:
-            return False
-    seen = state.setdefault("seen_event_keys", {})
-    status = load_status(config)
-    task_map = task_index_from_status(config, status)
-    rotation = chair_rotation_state(state)
-    start_index = int(rotation.get("current_index") or 0) % len(candidates)
-
-    for offset in range(len(candidates)):
-        agent_name = candidates[(start_index + offset) % len(candidates)]
-        agent_id = normalize_agent_id(agent_name)
-        if not agent_id or agent_id not in config.get("agents", {}):
-            continue
-        if agent_auto_dispatch_block_reason(config, state, agent_id, provider_report):
-            continue
-        if agent_name in failure_loop_agents:
-            continue
-        if agent_id in active_agents or agent_id in pending_agents:
-            continue
-        if (
-            not (
-                approval_triage_requested
-                and settings.get("bypass_primary_work_for_pending_approvals", True)
-            )
-            and agent_has_dispatchable_primary_work(config, status, agent_name, task_map)
-        ):
-            continue
-        if failure_loop_count:
-            reason = "chair_review:reassignment_triage"
-        elif pending_approval_count:
-            reason = "chair_review:approval_triage"
-        else:
-            reason = "chair_review:operational_review"
-        event_key = f"chair:{agent_id}:{reason}:{now}"
-        if event_key in pending_event_keys:
-            continue
-        queued_event_key = queue_chair_review_event(config, state, agent_name=agent_name, reason=reason, issued_at=now)
-        seen[queued_event_key] = now
-        pending_event_keys.add(queued_event_key)
-        rotation["current_index"] = (start_index + offset + 1) % len(candidates)
-        return True
-    return False
-
-
-def dispatch_underutilization_sidecars(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    provider_report: dict[str, Any] | None = None,
-) -> bool:
-    settings = underutilization_settings(config)
-    tracking = state.setdefault("underutilization", {})
-    rotation = chair_rotation_state(state)
-    productive_statuses = {str(value) for value in settings.get("productive_worker_statuses", [])}
-    ratio = utilization_ratio_for_sidecars(config, state, productive_statuses)
-    threshold = float(settings.get("threshold_ratio", 0.5))
-    now = utc_now()
-    tracking["last_ratio"] = round(ratio, 4)
-    changed = False
-
-    if not settings.get("enabled", True):
-        tracking["below_threshold_since"] = None
-        return changed
-
-    if settings.get("require_recent_chair_signal", True):
-        approval_until = _parse_iso_utc(str(rotation.get("sidecar_approved_until") or ""))
-        current_dt = _parse_iso_utc(now)
-        if approval_until is None or current_dt is None or current_dt > approval_until:
-            tracking["last_sidecar_wave_reason"] = "awaiting chair review approval before creating sidecars"
-            return changed
-
-    if ratio >= threshold:
-        if tracking.get("below_threshold_since") is not None:
-            tracking["below_threshold_since"] = None
-            changed = True
-        return changed
-
-    if not tracking.get("below_threshold_since"):
-        tracking["below_threshold_since"] = now
-        return True
-
-    below_since = _parse_iso_utc(tracking.get("below_threshold_since"))
-    current_dt = _parse_iso_utc(now)
-    if below_since is None or current_dt is None:
-        tracking["below_threshold_since"] = now
-        return True
-
-    if (current_dt - below_since).total_seconds() < float(settings.get("continuous_window_seconds", 900)):
-        return changed
-
-    last_wave_at = _parse_iso_utc(tracking.get("last_sidecar_wave_at"))
-    if last_wave_at is not None and (current_dt - last_wave_at).total_seconds() < float(settings.get("cooldown_seconds", 900)):
-        return changed
-
-    status = load_status(config)
-    task_map = task_index_from_status(config, status)
-    idle_agents = eligible_idle_agents_for_sidecars(
-        config,
-        state,
-        status,
-        max_active_sidecars_per_agent=int(settings.get("max_active_sidecars_per_agent", 1)),
-        provider_report=provider_report,
-    )
-    if not idle_agents:
-        tracking["last_sidecar_wave_at"] = now
-        tracking["last_sidecar_wave_reason"] = "underutilized but no idle agents were eligible for sidecar work"
-        write_activity_log(
-            config,
-            {
-                "type": "sidecar_wave_skipped",
-                "message": tracking["last_sidecar_wave_reason"],
-                "ratio": ratio,
-            },
-        )
-        return True
-
-    archived_signatures, archived_task_ids = archived_sidecar_state(config)
-    existing_signatures = existing_sidecar_signatures(status, archived_signatures=archived_signatures)
-    candidates = build_catalog_sidecar_candidates(
-        config, status, task_map, existing_signatures, archived_task_ids=archived_task_ids
-    )
-    if not candidates:
-        candidates = build_dynamic_sidecar_candidates(
-            config, status, task_map, existing_signatures, archived_task_ids=archived_task_ids
-        )
-    blocked_sidecar_parents = {str(item) for item in rotation.get("sidecar_blocked_parents", []) or [] if str(item).strip()}
-    if blocked_sidecar_parents:
-        candidates = [candidate for candidate in candidates if str(candidate.get("parent_task_id") or "") not in blocked_sidecar_parents]
-    if not candidates:
-        tracking["last_sidecar_wave_at"] = now
-        tracking["last_sidecar_wave_reason"] = "underutilized but no sidecar candidates matched the catalog or dynamic fallback"
-        write_activity_log(
-            config,
-            {
-                "type": "sidecar_wave_skipped",
-                "message": tracking["last_sidecar_wave_reason"],
-                "ratio": ratio,
-            },
-        )
-        return True
-
-    recommended_focus = {
-        str(item)
-        for item in rotation.get("last_review_recommended_focus", []) or []
-        if str(item).strip()
-    }
-    candidates.sort(
-        key=lambda item: (
-            0
-            if not recommended_focus
-            or str(item.get("parent_task_id") or "") in recommended_focus
-            or str(item.get("sidecar_id") or "") in recommended_focus
-            else 1,
-            int(item.get("priority", 9)),
-            str(item.get("parent_task_id") or ""),
-            str(item.get("kind") or ""),
-        )
-    )
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
-    _active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
-    _pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
-    seen = state.setdefault("seen_event_keys", {})
-    per_agent_counts = {agent: count_open_sidecars_for_agent(status, agent) for agent in idle_agents}
-    max_new_sidecars = sidecar_wave_limit(settings.get("max_new_sidecars_per_wave"))
-    if settings.get("respect_chair_max_sidecars", False):
-        chair_limit = sidecar_wave_limit(rotation.get("sidecar_approval_max_sidecars"))
-        if chair_limit is not None:
-            max_new_sidecars = chair_limit if max_new_sidecars is None else min(max_new_sidecars, chair_limit)
-    created = 0
-
-    for candidate in candidates:
-        if max_new_sidecars is not None and created >= max_new_sidecars:
-            break
-
-        parent_owner = str(candidate.get("reviewer") or "").strip()
-        preferred_agents = preferred_agents_for_sidecar(str(candidate.get("kind") or ""))
-        selected_owner = next(
-            (
-                agent
-                for agent in preferred_agents
-                if agent in idle_agents
-                and agent != parent_owner
-                and per_agent_counts.get(agent, 0) < int(settings.get("max_active_sidecars_per_agent", 1))
-            ),
-            None,
-        )
-        if not selected_owner:
-            selected_owner = next(
-                (
-                    agent
-                    for agent in idle_agents
-                    if agent != parent_owner
-                    and per_agent_counts.get(agent, 0) < int(settings.get("max_active_sidecars_per_agent", 1))
-                ),
-                None,
-            )
-        if not selected_owner:
-            continue
-
-        ok, error = create_sidecar_task(
-            config,
-            sidecar_id=str(candidate["sidecar_id"]),
-            owner=selected_owner,
-            reviewer=parent_owner,
-            phase=str(candidate["phase"]),
-            title=str(candidate["title"]),
-            summary_zh=str(candidate["summary_zh"]),
-            depends_on=list(candidate.get("depends_on", []) or []),
-            artifacts=list(candidate.get("artifacts", []) or []),
-            helper_parent=str(candidate["parent_task_id"]),
-            helper_kind=str(candidate["kind"]),
-            mutates_canonical=bool(candidate.get("mutates_canonical", False)),
-        )
-        if not ok:
-            write_activity_log(
-                config,
-                {
-                    "type": "sidecar_task_create_failed",
-                    "task_id": candidate["sidecar_id"],
-                    "message": f"Failed to create sidecar for {candidate['parent_task_id']}: {error}",
-                },
-            )
-            continue
-
-        status = load_status(config)
-        task_map = task_index_from_status(config, status)
-        sidecar_task = next((task for task in status.get("tasks", []) if task.get("id") == candidate["sidecar_id"]), None)
-        if not sidecar_task:
-            continue
-
-        state.setdefault("tasks", {})[candidate["sidecar_id"]] = snapshot_task(sidecar_task, config.get("schema", {}))
-
-        event = build_dispatch_event(sidecar_task, selected_owner, "owned_ready_dispatch", task_map)
-        if event["key"] in pending_event_keys:
-            continue
-        if queue_dispatch_event_safely(config, event):
-            seen[event["key"]] = utc_now()
-            pending_event_keys.add(event["key"])
-
-        per_agent_counts[selected_owner] = per_agent_counts.get(selected_owner, 0) + 1
-        existing_signatures.add(f"{candidate['parent_task_id']}:{candidate['kind']}")
-        created += 1
-        changed = True
-        write_activity_log(
-            config,
-            {
-                "type": "sidecar_task_created",
-                "task_id": candidate["sidecar_id"],
-                "message": (
-                    f"Auto-created sidecar {candidate['sidecar_id']} for {candidate['parent_task_id']} "
-                    f"({candidate['kind']}) while utilization remained below threshold."
-                ),
-                "parent_task_id": candidate["parent_task_id"],
-                "target_agent": selected_owner,
-            },
-        )
-
-    tracking["last_sidecar_wave_at"] = now
-    if created:
-        tracking["last_sidecar_wave_reason"] = (
-            f"utilization {ratio:.2f} stayed below threshold {threshold:.2f}; created {created} visible sidecar task(s)"
-        )
-        write_activity_log(
-            config,
-            {
-                "type": "sidecar_wave_started",
-                "message": tracking["last_sidecar_wave_reason"],
-                "ratio": ratio,
-                "created": created,
-            },
-        )
-        return True
-
-    tracking["last_sidecar_wave_reason"] = "underutilized but no sidecar candidate could be assigned safely"
-    write_activity_log(
-        config,
-        {
-            "type": "sidecar_wave_skipped",
-            "message": tracking["last_sidecar_wave_reason"],
-            "ratio": ratio,
-        },
-    )
-    return True
 
 
 def run_once(
@@ -12080,7 +10306,12 @@ def run_once(
         boot_and_provider_ms = state.get("supervisor", {}).get("last_stage_timings_ms", {}).get("boot_and_provider")
 
         stage_started = time.monotonic()
-        if watch:
+        # The canonical task store is the scheduler's source of truth.  The
+        # legacy watcher only maintained a second task snapshot when runtime
+        # delivery events were disabled, which made every loop write stale
+        # state without producing work.  Do not scan unless it can enqueue an
+        # event that the queue will actually consume.
+        if watch and enqueue_runtime_events_enabled(config):
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)
             if boot_and_provider_ms is not None:
@@ -12097,7 +10328,6 @@ def run_once(
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
-        changed = refresh_chair_review_state(config, state) or changed
         finish_loop_stage_timing(state, "scan_coordination_and_poll", stage_started)
 
         stage_started = time.monotonic()
@@ -12110,14 +10340,9 @@ def run_once(
         elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
-            if chair_review_failure_loop_details(config, state):
-                chair_dispatched = dispatch_chair_review(config, state, planning_state, provider_report=provider_report)
-                changed = chair_dispatched or changed
-                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
-            else:
-                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
-                changed = dispatch_chair_review(config, state, planning_state, provider_report=provider_report) or changed
-            changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
+            # Work dispatch has one purpose: assign an already canonical,
+            # ready task. Runtime heuristics never create or reassign tasks.
+            changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             changed = process_queue(config, state, provider_report) or changed
         finish_loop_stage_timing(state, "dispatch_and_queue", stage_started)
@@ -12200,61 +10425,6 @@ def run_supervisor_cycle(
         return False
 
 
-def claim_next_task_for_agent(
-    config: dict[str, Any],
-    *,
-    agent_name: str,
-    release_task_id: str | None = None,
-    quiet: bool = False,
-) -> bool:
-    settings = worker_self_claim_settings(config)
-    if not settings.get("enabled", False):
-        console_log("worker self-claim disabled", quiet=quiet)
-        return False
-    agent_id = normalize_agent_id(agent_name)
-    if not agent_id or agent_id not in config.get("agents", {}):
-        console_log(f"worker self-claim skipped: unknown agent {agent_name}", quiet=quiet)
-        return False
-
-    state = load_runtime_state(config)
-    planning_state = load_discussion_planning_state()
-    changed = release_completed_worker_for_claim(
-        config,
-        state,
-        agent_name=display_name_for(config, agent_id),
-        task_id=release_task_id,
-    )
-    provider_report = load_provider_report(config)
-    changed = expire_provider_dispatch_pauses(config, state) or changed
-    changed = reconcile_queue_records(config, state) or changed
-    changed = prune_event_queue(config, state) or changed
-    if not discussion_planning_is_active(planning_state):
-        changed = dispatch_ready_tasks(
-            config,
-            state,
-            provider_report=provider_report,
-            agent_ids_override=[agent_id],
-            max_dispatches_override=1,
-        ) or changed
-        changed = (
-            process_queue(
-                config,
-                state,
-                provider_report,
-                agent_ids_override=[agent_id],
-            )
-            or changed
-        )
-    supervisor_state = state.setdefault("supervisor", {})
-    occupancy = compute_mode_occupancy(config, state)
-    supervisor_state["mode_occupancy"] = occupancy
-    focus_mode = str(supervisor_state.get("focus_mode") or "execution")
-    supervisor_state["mode_status"] = "active" if mode_has_activity(occupancy.get(focus_mode)) else "idle"
-    save_runtime_state(config, state)
-    refresh_dashboard_runtime_artifacts(config)
-    return changed
-
-
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
@@ -12268,14 +10438,6 @@ def main() -> int:
             console_log(f"cleared provider dispatch pause: {args.clear_provider_pause}", quiet=args.quiet)
         else:
             console_log(f"no provider dispatch pause found for: {args.clear_provider_pause}", quiet=args.quiet)
-        return 0
-    if args.claim_agent:
-        claim_next_task_for_agent(
-            config,
-            agent_name=args.claim_agent,
-            release_task_id=args.release_task,
-            quiet=args.quiet,
-        )
         return 0
     if not acquire_singleton_lock(config):
         console_log(

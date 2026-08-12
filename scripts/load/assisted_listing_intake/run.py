@@ -20,6 +20,11 @@ def main() -> int:
     parser.add_argument("--volume", type=int, default=240)
     parser.add_argument("--concurrency", type=int, default=20)
     parser.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--observe-only",
+        action="store_true",
+        help="Write the complete measurement but do not use environment-sensitive latency SLOs as the process exit status.",
+    )
     args = parser.parse_args()
     if not 1 <= args.volume <= 1000:
         parser.error("--volume must be between 1 and the approved batch maximum of 1000")
@@ -32,7 +37,7 @@ def main() -> int:
         report = run_capacity(Path(directory) / "runtime.sqlite3", volume=args.volume, concurrency=args.concurrency)
     output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if report["passed"] else 1
+    return 0 if args.observe_only or report["passed"] else 1
 
 
 if __name__ == "__main__":

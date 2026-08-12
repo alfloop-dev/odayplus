@@ -7,7 +7,6 @@
     "state_file": ".orchestrator/state.json",
     "event_queue": ".orchestrator/event-queue.jsonl",
     "approval_queue": ".orchestrator/approval-queue.json",
-    "sidecar_catalog": ".orchestrator/sidecar_catalog.json",
     "github_bus_state": ".orchestrator/github-bus-state.json",
     "github_webhook_events": ".orchestrator/github-webhook-events.jsonl",
     "github_relay_state": ".orchestrator/github-relay-state.json",
@@ -105,8 +104,7 @@
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
-      "review_ready_dispatch",
-      "chair_review:*"
+      "review_ready_dispatch"
     ]
   },
   "worker_retry": {
@@ -202,20 +200,6 @@
       "Copilot": ["Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"]
     }
   },
-  "underutilization_dispatch": {
-    "enabled": false,
-    "threshold_ratio": 0.5,
-    "continuous_window_seconds": 900,
-    "cooldown_seconds": 900,
-    "max_new_sidecars_per_wave": 2,
-    "max_active_sidecars_per_agent": 1,
-    "productive_worker_statuses": [
-      "running",
-      "waiting_approval",
-      "suspended_approval",
-      "retry_backoff"
-    ]
-  },
   "approvals": {
     "stale_pending_seconds": 1800
   },
@@ -272,6 +256,8 @@
   "github_bus": {
     "enabled": true,
     "command_timeout_seconds": 8,
+    "remote_ref_snapshot_ttl_seconds": 30,
+    "remote_ref_snapshot_max_stale_seconds": 300,
     "poll_interval_seconds": 30,
     "repo": null,
     "default_branch": "main",
@@ -380,9 +366,16 @@
       "pending"
     ]
   },
+  "account_pools": {
+    "antigravity_main": {"state": "healthy", "max_concurrent": 3},
+    "claude_main": {"state": "healthy", "max_concurrent": 2},
+    "codex_bjoe": {"state": "healthy", "max_concurrent": 3},
+    "codex_lupin": {"state": "healthy", "max_concurrent": 2}
+  },
   "agents": {
     "claude": {
       "display_name": "Claude",
+      "account_pool": "claude_main",
       "provider": "claude",
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -390,6 +383,7 @@
     },
     "claude2": {
       "display_name": "Claude2",
+      "account_pool": "claude_main",
       "provider": "claude",
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -397,6 +391,7 @@
     },
     "antigravity": {
       "display_name": "Antigravity",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -404,6 +399,7 @@
     },
     "antigravity2": {
       "display_name": "Antigravity2",
+      "account_pool": "antigravity_main",
       "provider": "antigravity2",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -411,6 +407,7 @@
     },
     "antigravity3": {
       "display_name": "Antigravity3",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -418,6 +415,7 @@
     },
     "antigravity4": {
       "display_name": "Antigravity4",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -425,6 +423,7 @@
     },
     "antigravity5": {
       "display_name": "Antigravity5",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -432,6 +431,7 @@
     },
     "antigravity6": {
       "display_name": "Antigravity6",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -439,6 +439,7 @@
     },
     "antigravity7": {
       "display_name": "Antigravity7",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -446,6 +447,7 @@
     },
     "codex": {
       "display_name": "Codex",
+      "account_pool": "codex_bjoe",
       "provider": "codex",
       "adapter": "codex",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -453,11 +455,22 @@
     },
     "codex2": {
       "display_name": "Codex2",
+      "account_pool": "codex_lupin",
       "provider": "codex",
       "adapter": "codex",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex2.md"
-    }
+    },
+    "antigravity_slot_1": {"display_name": "antigravity_slot_1", "provider": "antigravity", "adapter": "antigravity", "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main", "slot_id": "antigravity_slot_1"},
+    "antigravity_slot_2": {"display_name": "antigravity_slot_2", "provider": "antigravity", "adapter": "antigravity", "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main", "slot_id": "antigravity_slot_2"},
+    "antigravity_slot_3": {"display_name": "antigravity_slot_3", "provider": "antigravity", "adapter": "antigravity", "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main", "slot_id": "antigravity_slot_3"},
+    "claude_slot_1": {"display_name": "claude_slot_1", "provider": "claude", "adapter": "claude_cli", "account_pool": "claude_main", "dispatch_slot_for_pool": "claude_main", "slot_id": "claude_slot_1"},
+    "claude_slot_2": {"display_name": "claude_slot_2", "provider": "claude", "adapter": "claude_cli", "account_pool": "claude_main", "dispatch_slot_for_pool": "claude_main", "slot_id": "claude_slot_2"},
+    "codex_bjoe_slot_1": {"display_name": "codex_bjoe_slot_1", "provider": "codex", "adapter": "codex", "account_pool": "codex_bjoe", "dispatch_slot_for_pool": "codex_bjoe", "slot_id": "codex_bjoe_slot_1"},
+    "codex_bjoe_slot_2": {"display_name": "codex_bjoe_slot_2", "provider": "codex", "adapter": "codex", "account_pool": "codex_bjoe", "dispatch_slot_for_pool": "codex_bjoe", "slot_id": "codex_bjoe_slot_2"},
+    "codex_bjoe_slot_3": {"display_name": "codex_bjoe_slot_3", "provider": "codex", "adapter": "codex", "account_pool": "codex_bjoe", "dispatch_slot_for_pool": "codex_bjoe", "slot_id": "codex_bjoe_slot_3"},
+    "codex_lupin_slot_1": {"display_name": "codex_lupin_slot_1", "provider": "codex", "adapter": "codex", "account_pool": "codex_lupin", "dispatch_slot_for_pool": "codex_lupin", "slot_id": "codex_lupin_slot_1"},
+    "codex_lupin_slot_2": {"display_name": "codex_lupin_slot_2", "provider": "codex", "adapter": "codex", "account_pool": "codex_lupin", "dispatch_slot_for_pool": "codex_lupin", "slot_id": "codex_lupin_slot_2"}
   },
   "providers": {
     "claude": {
@@ -582,40 +595,11 @@
       "manual_pending",
       "stalled"
     ],
-    "helper_claim": {
-      "enabled": true,
-      "task_statuses": [
-        "todo"
-      ],
-      "require_owner_higher_priority_load": true
-    },
-    "worker_self_claim": {
-      "enabled": true,
-      "claim_command": "AI_NAME=$AI_NAME python3 .orchestrator/supervisor.py --claim-agent \"$AI_NAME\" --release-task \"$TASK_ID\" --quiet",
-      "release_task_statuses": [
-        "review",
-        "review_approved",
-        "done",
-        "blocked"
-      ]
-    },
-    "max_tasks_per_agent_by_agent": {
-      "Claude": 3,
-      "Claude2": 3,
-      "Antigravity": 2,
-      "Antigravity2": 2,
-      "Codex": 4,
-      "Codex2": 4
-    },
     "max_dispatches_per_tick": 3,
     "max_active_workers_per_task": 1,
-    "max_concurrent_per_quota_group": {
-      "claude": 4,
-      "antigravity": 2,
-      "antigravity2": 2,
-      "codex": 6
-    },
-    "max_concurrent_workers": 6
+    "reviewer_failover": {
+      "enabled": true
+    }
   },
   "branch_workflow": {
     "enabled": true,

@@ -30,13 +30,13 @@ def default_state() -> dict[str, Any]:
         "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
-        # The weighted ready-dispatch cursor is durable scheduling state. If it
-        # is dropped between loops, agents near the front of the sequence can
-        # consume the per-tick budget forever and starve later reviewers.
+        # The round-robin ready-dispatch cursor is durable scheduling state. If
+        # it is dropped between loops, agents near the front of the sequence
+        # can consume the per-tick budget forever and starve later reviewers.
         "ready_dispatcher": {
-            "weighted_cursor": 0,
-            "weighted_cursor_revision": 0,
-            "weighted_cursor_updated_at": None,
+            "dispatch_cursor": 0,
+            "dispatch_cursor_revision": 0,
+            "dispatch_cursor_updated_at": None,
         },
         "queue": {
             "events": {},
@@ -52,23 +52,6 @@ def default_state() -> dict[str, Any]:
         "worker_worktree_lease_blocks": {},
         "approvals": {
             "last_reconciled_at": None,
-        },
-        "underutilization": {
-            "below_threshold_since": None,
-            "last_sidecar_wave_at": None,
-            "last_sidecar_wave_reason": None,
-            "last_ratio": None,
-        },
-        "chair_rotation": {
-            "current_index": 0,
-            "last_chair_run_at": None,
-            "last_chair_agent": None,
-            "last_chair_reason": None,
-            "last_review_path": None,
-            "last_review_summary": None,
-            "pending_review_path": None,
-            "pending_review_agent": None,
-            "sidecar_approved_until": None,
         },
         "provider_guardrails": {
             "dispatch_pauses": {},
@@ -113,7 +96,6 @@ def default_state() -> dict[str, Any]:
                 "planning": {"running": 0, "pending": 0, "queued": 0},
                 "execution": {"running": 0, "pending": 0, "queued": 0},
                 "coordination": {"running": 0, "pending": 0, "queued": 0},
-                "chair_review": {"running": 0, "pending": 0, "queued": 0},
             },
         },
     }
@@ -122,7 +104,16 @@ def default_state() -> dict[str, Any]:
 # Top-level state keys that were deliberately removed from the runtime state
 # contract. Only these are dropped by `migrate_state`; every other key on disk
 # survives, whether or not `default_state()` knows about it.
-RETIRED_STATE_KEYS: frozenset[str] = frozenset()
+RETIRED_STATE_KEYS: frozenset[str] = frozenset(
+    {
+        # Retired with the heuristic chair/sidecar scheduler.  Keeping these
+        # opaque blobs made obsolete decisions look live after every restart.
+        "chair_rotation",
+        "underutilization",
+        # A pre-runtime audit cache that is no longer read by any scheduler.
+        "dispatch_audit",
+    }
+)
 
 
 def _nonnegative_cursor_revision(value: Any) -> int:
@@ -159,16 +150,19 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(ready_dispatcher, dict):
         ready_dispatcher = {}
         state["ready_dispatcher"] = ready_dispatcher
+    legacy_cursor = ready_dispatcher.pop("weighted_cursor", 0)
+    legacy_revision = ready_dispatcher.pop("weighted_cursor_revision", 0)
+    legacy_updated_at = ready_dispatcher.pop("weighted_cursor_updated_at", None)
     try:
-        ready_dispatcher["weighted_cursor"] = max(
-            0, int(ready_dispatcher.get("weighted_cursor", 0))
+        ready_dispatcher["dispatch_cursor"] = max(
+            0, int(ready_dispatcher.get("dispatch_cursor", legacy_cursor))
         )
     except (TypeError, ValueError):
-        ready_dispatcher["weighted_cursor"] = 0
-    ready_dispatcher["weighted_cursor_revision"] = _nonnegative_cursor_revision(
-        ready_dispatcher.get("weighted_cursor_revision", 0)
+        ready_dispatcher["dispatch_cursor"] = 0
+    ready_dispatcher["dispatch_cursor_revision"] = _nonnegative_cursor_revision(
+        ready_dispatcher.get("dispatch_cursor_revision", legacy_revision)
     )
-    cursor_updated_at = ready_dispatcher.get("weighted_cursor_updated_at")
+    cursor_updated_at = ready_dispatcher.get("dispatch_cursor_updated_at", legacy_updated_at)
     if isinstance(cursor_updated_at, str) and cursor_updated_at:
         try:
             datetime.fromisoformat(cursor_updated_at.replace("Z", "+00:00"))
@@ -176,7 +170,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
             cursor_updated_at = None
     else:
         cursor_updated_at = None
-    ready_dispatcher["weighted_cursor_updated_at"] = cursor_updated_at
+    ready_dispatcher["dispatch_cursor_updated_at"] = cursor_updated_at
     state.setdefault("queue", {})
     state["queue"].setdefault("events", {})
     state.setdefault("workers", {})
@@ -190,21 +184,6 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     )
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
-    state.setdefault("underutilization", {})
-    state["underutilization"].setdefault("below_threshold_since", None)
-    state["underutilization"].setdefault("last_sidecar_wave_at", None)
-    state["underutilization"].setdefault("last_sidecar_wave_reason", None)
-    state["underutilization"].setdefault("last_ratio", None)
-    state.setdefault("chair_rotation", {})
-    state["chair_rotation"].setdefault("current_index", 0)
-    state["chair_rotation"].setdefault("last_chair_run_at", None)
-    state["chair_rotation"].setdefault("last_chair_agent", None)
-    state["chair_rotation"].setdefault("last_chair_reason", None)
-    state["chair_rotation"].setdefault("last_review_path", None)
-    state["chair_rotation"].setdefault("last_review_summary", None)
-    state["chair_rotation"].setdefault("pending_review_path", None)
-    state["chair_rotation"].setdefault("pending_review_agent", None)
-    state["chair_rotation"].setdefault("sidecar_approved_until", None)
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
@@ -241,7 +220,10 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("mode_switch_requested", None)
     state["supervisor"].setdefault("last_mode_switch_at", None)
     state["supervisor"].setdefault("mode_occupancy", {})
-    for mode_name in ("planning", "execution", "coordination", "chair_review"):
+    # `mode_occupancy` is nested beneath the durable supervisor record, so it
+    # is not covered by the top-level retirement list above.
+    state["supervisor"]["mode_occupancy"].pop("chair_review", None)
+    for mode_name in ("planning", "execution", "coordination"):
         bucket = state["supervisor"]["mode_occupancy"].setdefault(mode_name, {})
         bucket.setdefault("running", 0)
         bucket.setdefault("pending", 0)
@@ -294,6 +276,58 @@ def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, 
         record["processed_at"] = latest.get("last_event_at")
 
 
+def _pending_approval_run_ids(config: dict[str, Any]) -> set[str]:
+    """Return approval anchors without letting a missing optional file block state GC."""
+    try:
+        return {
+            str(item.get("worker_run_id") or "")
+            for item in load_approval_state(config).get("pending", [])
+            if item.get("worker_run_id")
+        }
+    except KeyError:
+        return set()
+
+
+def prune_orphaned_active_workers(
+    state: dict[str, Any], *, pending_approval_runs: set[str] | None = None
+) -> None:
+    """Remove active-looking records whose durable coordination anchors are gone.
+
+    This must run after every locked disk/memory merge as well as on load.  A
+    merge deliberately preserves records written by another process, but an
+    orphaned active record is not concurrent work: its queue event (and, for
+    approval workers, its approval item) no longer exists.  Without this
+    second pass a stale disk snapshot can resurrect a record the singleton
+    supervisor already reaped.
+    """
+    valid_pending_event_ids = set(state.setdefault("queue", {}).setdefault("events", {}))
+    workers = state.setdefault("workers", {})
+    pending_approval_runs = pending_approval_runs or set()
+
+    stale_manual_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if isinstance(worker, dict)
+        and worker.get("status") == "manual_pending"
+        and worker.get("queue_event_id") not in valid_pending_event_ids
+    ]
+    for run_id in stale_manual_workers:
+        workers.pop(run_id, None)
+
+    # Approval-gated workers without a surviving queue event or pending
+    # approval are likewise stale runtime leftovers.
+    stale_approval_workers = [
+        run_id
+        for run_id, worker in workers.items()
+        if isinstance(worker, dict)
+        and worker.get("status") in {"waiting_approval", "suspended_approval"}
+        and worker.get("queue_event_id") not in valid_pending_event_ids
+        and str(run_id) not in pending_approval_runs
+    ]
+    for run_id in stale_approval_workers:
+        workers.pop(run_id, None)
+
+
 
 
 def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | None = None) -> None:
@@ -326,37 +360,10 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     queued_events = load_jsonl(config_path(config, "event_queue"))
     _rebuild_queue_records(state, queued_events)
 
-    valid_pending_event_ids = set(state.setdefault("queue", {}).setdefault("events", {}))
-    workers = state.setdefault("workers", {})
-    stale_manual_workers = [
-        run_id
-        for run_id, worker in workers.items()
-        if worker.get("status") == "manual_pending" and worker.get("queue_event_id") not in valid_pending_event_ids
-    ]
-    for run_id in stale_manual_workers:
-        workers.pop(run_id, None)
-
-    try:
-        pending_approval_runs = {
-            str(item.get("worker_run_id") or "")
-            for item in load_approval_state(config).get("pending", [])
-            if item.get("worker_run_id")
-        }
-    except KeyError:
-        pending_approval_runs = set()
-    # Approval-gated workers without a surviving queue event or pending approval
-    # are stale runtime leftovers. Once both coordination anchors are gone,
-    # keeping them around only causes dashboards and health checks to report
-    # ghost workers.
-    stale_approval_workers = [
-        run_id
-        for run_id, worker in workers.items()
-        if worker.get("status") in {"waiting_approval", "suspended_approval"}
-        and worker.get("queue_event_id") not in valid_pending_event_ids
-        and str(run_id) not in pending_approval_runs
-    ]
-    for run_id in stale_approval_workers:
-        workers.pop(run_id, None)
+    prune_orphaned_active_workers(
+        state,
+        pending_approval_runs=_pending_approval_run_ids(config),
+    )
 
     prune_worker_records(state)
     return state
@@ -490,25 +497,22 @@ def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -
 
 def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(disk_state, dict):
-        return in_mem_state
-    merged = deepcopy(in_mem_state)
+        return migrate_state(in_mem_state)
+    disk_state = migrate_state(disk_state)
+    merged = migrate_state(in_mem_state)
 
-    # `--claim-agent` intentionally does not advance the global weighted
-    # cursor, but it can save a snapshot loaded before the singleton loop
-    # advanced it. A monotonic revision, advanced atomically with the cursor by
-    # the singleton dispatch path, determines the winner without relying on a
-    # collision-prone or attacker-controlled wall clock. Equal/legacy revisions
-    # prefer disk so an auxiliary writer can never roll scheduling fairness
-    # backward. The timestamp remains informational only.
+    # The singleton loop owns the round-robin cursor. A monotonic revision,
+    # advanced atomically with that cursor, prevents an older snapshot from
+    # rolling scheduling fairness backward. The timestamp is informational.
     disk_dispatcher = disk_state.get("ready_dispatcher")
     mem_dispatcher = merged.get("ready_dispatcher")
     if isinstance(disk_dispatcher, dict):
         disk_revision = _nonnegative_cursor_revision(
-            disk_dispatcher.get("weighted_cursor_revision", 0)
+            disk_dispatcher.get("dispatch_cursor_revision", 0)
         )
         mem_revision = (
             _nonnegative_cursor_revision(
-                mem_dispatcher.get("weighted_cursor_revision", 0)
+                mem_dispatcher.get("dispatch_cursor_revision", 0)
             )
             if isinstance(mem_dispatcher, dict)
             else 0
@@ -592,6 +596,13 @@ def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
             queued_events = None
         if queued_events is not None:
             _rebuild_queue_records(merged, queued_events)
+            # Re-apply the same authoritative-anchor pruning after the locked
+            # union.  Otherwise a stale record present only on disk can be
+            # reintroduced between `load_runtime_state` and this save.
+            prune_orphaned_active_workers(
+                merged,
+                pending_approval_runs=_pending_approval_run_ids(config),
+            )
 
         compact_worker_history(
             merged,

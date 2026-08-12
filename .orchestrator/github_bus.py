@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,11 @@ from watch_events import render_wakeup_message
 
 COMMENT_MARKER = "<!-- pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
+# remote -> (snapshot_expires_at, refs, last_successful_probe_at), monotonic seconds.
+_REMOTE_BRANCH_SNAPSHOTS: dict[str, tuple[float, frozenset[str], float]] = {}
+# remote -> (snapshot_expires_at, heads_dict, last_successful_probe_at), monotonic seconds.
+_REMOTE_HEAD_SNAPSHOTS: dict[str, tuple[float, dict[str, str], float]] = {}
+
 
 
 class GitHubBusError(RuntimeError):
@@ -278,7 +284,7 @@ def branch_head_sha(branch: str) -> str | None:
     return None
 
 
-def branch_has_diff(base: str, branch: str) -> bool:
+def branch_has_diff(base: str, branch: str, expected_head_sha: str | None = None) -> bool | None:
     if not base or not branch or base == "HEAD" or branch == "HEAD":
         return False
     # Keep base and head in the same namespace. Mixing a local base with a
@@ -289,22 +295,123 @@ def branch_has_diff(base: str, branch: str) -> bool:
         (base, branch),
     ]
     for base_ref, branch_ref in ref_pairs:
+        if expected_head_sha:
+            head_proc = run_command(["git", "rev-parse", branch_ref], cwd=ROOT)
+            resolved_head_sha = (head_proc.stdout or "").strip().lower()
+            if head_proc.returncode != 0 or resolved_head_sha != expected_head_sha.lower():
+                continue
         proc = run_command(["git", "rev-list", "--count", f"{base_ref}..{branch_ref}"], cwd=ROOT)
         if proc.returncode == 0:
             try:
                 return int((proc.stdout or "0").strip() or "0") > 0
             except ValueError:
                 pass
-    return False
+    # A published branch may not have been fetched into this checkout. That is
+    # different from a resolved comparison with zero commits: callers must not
+    # persist skipped_no_commits merely because the exact origin object is not
+    # available locally.
+    return None
+
+
+def remote_branch_head_sha(branch: str, remote: str = "origin") -> str | None:
+    if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
+        return None
+    heads = remote_branch_heads(remote)
+    return heads.get(branch)
 
 
 def remote_branch_exists(branch: str, remote: str = "origin") -> bool:
     if not branch or branch == "HEAD" or branch.endswith("/HEAD"):
         return False
-    proc = run_command(["git", "ls-remote", "--heads", remote, branch], cwd=ROOT)
-    if proc.returncode != 0:
-        return False
-    return bool((proc.stdout or "").strip())
+    return remote_branch_head_sha(branch, remote) is not None
+
+
+def clear_remote_branch_snapshot_cache() -> None:
+    """Clear cached remote refs (primarily for deterministic tests)."""
+    _REMOTE_BRANCH_SNAPSHOTS.clear()
+    _REMOTE_HEAD_SNAPSHOTS.clear()
+
+
+def remote_branch_snapshot_ttl_seconds() -> float:
+    """Return the bounded lifetime for the remote branch snapshot."""
+    try:
+        cfg = load_config()
+        bus = cfg.get("github_bus", {}) or {}
+        value = float(bus.get("remote_ref_snapshot_ttl_seconds", 30))
+    except Exception:
+        value = 30.0
+    return max(1.0, value)
+
+
+def remote_branch_snapshot_max_stale_seconds() -> float:
+    """Return how long a failing probe may keep serving the last good snapshot."""
+    try:
+        cfg = load_config()
+        bus = cfg.get("github_bus", {}) or {}
+        value = float(bus.get("remote_ref_snapshot_max_stale_seconds", 300))
+    except Exception:
+        value = 300.0
+    return max(0.0, value)
+
+
+def parse_remote_head_names(stdout: str) -> frozenset[str]:
+    """Extract branch names from ``git ls-remote --heads`` output."""
+    names: set[str] = set()
+    for line in stdout.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        ref = parts[1].strip()
+        if ref.startswith("refs/heads/"):
+            names.add(ref.removeprefix("refs/heads/"))
+    return frozenset(names)
+
+
+def parse_remote_heads(stdout: str) -> dict[str, str]:
+    """Extract branch names and commit SHAs from ``git ls-remote --heads`` output."""
+    heads: dict[str, str] = {}
+    for line in stdout.splitlines():
+        parts = line.split(maxsplit=1)
+        if len(parts) != 2:
+            continue
+        sha, ref = parts[0].strip(), parts[1].strip()
+        if ref.startswith("refs/heads/") and sha:
+            heads[ref.removeprefix("refs/heads/")] = sha
+    return heads
+
+
+def remote_branch_heads(remote: str = "origin") -> dict[str, str]:
+    """Read remote heads once per short TTL instead of probing every task branch."""
+    now = time.monotonic()
+    cached = _REMOTE_HEAD_SNAPSHOTS.get(remote)
+    if cached and now < cached[0]:
+        return cached[1]
+    ttl = remote_branch_snapshot_ttl_seconds()
+    try:
+        proc: subprocess.CompletedProcess[str] | None = run_git_network_process(
+            ["ls-remote", "--heads", remote],
+            timeout_seconds=git_network_timeout_seconds(),
+        )
+    except subprocess.TimeoutExpired:
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        heads = parse_remote_heads(proc.stdout or "")
+        _REMOTE_HEAD_SNAPSHOTS[remote] = (now + ttl, heads, now)
+        _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, frozenset(heads.keys()), now)
+        return heads
+    last_success = cached[2] if cached else float("-inf")
+    heads = {}
+    if cached and now - last_success < remote_branch_snapshot_max_stale_seconds():
+        heads = cached[1]
+    _REMOTE_HEAD_SNAPSHOTS[remote] = (now + ttl, heads, last_success)
+    _REMOTE_BRANCH_SNAPSHOTS[remote] = (now + ttl, frozenset(heads.keys()), last_success)
+    return heads
+
+
+def remote_branch_names(remote: str = "origin") -> frozenset[str]:
+    """Read remote head names once per short TTL instead of probing every task branch."""
+    heads = remote_branch_heads(remote)
+    return frozenset(heads.keys())
 
 
 def run_gh_process(
@@ -342,6 +449,49 @@ def run_gh_process(
         stdout = stdout_handle.read().decode("utf-8", errors="replace")
         stderr = stderr_handle.read().decode("utf-8", errors="replace")
         return subprocess.CompletedProcess([binary, *args], process.returncode or 0, stdout, stderr)
+
+
+def git_network_timeout_seconds() -> float:
+    """Bound remote Git probes so one unavailable remote cannot stall a tick."""
+    try:
+        cfg = load_config()
+        bus = cfg.get("github_bus", {}) or {}
+        value = float(bus.get("git_command_timeout_seconds", bus.get("command_timeout_seconds", 8)))
+    except Exception:
+        value = 8.0
+    return max(1.0, value)
+
+
+def run_git_network_process(
+    args: list[str], *, timeout_seconds: float
+) -> subprocess.CompletedProcess[str]:
+    """Run a remote Git command in its own process group with a hard timeout."""
+    with tempfile.TemporaryFile() as stdout_handle, tempfile.TemporaryFile() as stderr_handle:
+        process = subprocess.Popen(
+            ["git", *args],
+            cwd=str(ROOT),
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            start_new_session=True,
+        )
+        try:
+            process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired as exc:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+            raise exc
+
+        stdout_handle.seek(0)
+        stderr_handle.seek(0)
+        stdout = stdout_handle.read().decode("utf-8", errors="replace")
+        stderr = stderr_handle.read().decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(["git", *args], process.returncode or 0, stdout, stderr)
 
 
 def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.CompletedProcess[str]:
@@ -495,16 +645,16 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
             f"{prefix}{task_id.lower().replace('_', '-')}",
         ]
         for candidate in candidates:
-            if candidate != "HEAD" and branch_exists(candidate):
+            if candidate != "HEAD" and (remote_branch_exists(candidate) or branch_exists(candidate)):
                 return candidate
 
     # An exact task-matching agent branch is useful when a deployment uses a
     # non-canonical prefix, but substring-related task IDs are not equivalent.
-    if agent_branch and agent_branch != "HEAD" and (not task_id or task_id_matches_branch(task_id, agent_branch)) and branch_exists(agent_branch):
+    if agent_branch and agent_branch != "HEAD" and (not task_id or task_id_matches_branch(task_id, agent_branch)) and (remote_branch_exists(agent_branch) or branch_exists(agent_branch)):
         return agent_branch
 
     branch = current_branch()
-    if branch and branch != "HEAD" and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and branch_exists(branch):
+    if branch and branch != "HEAD" and branch != default_branch(config) and (not task_id or task_id_matches_branch(task_id, branch)) and (remote_branch_exists(branch) or branch_exists(branch)):
         return branch
 
     return None
@@ -849,21 +999,21 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             {
                 "type": "github_review_pr_skipped",
                 "task_id": task["id"],
-                "message": "Review task is in review, but no non-default local branch is available for PR creation.",
+                "message": "Review task is in review, but no task-scoped origin ref or non-default fallback branch is available for PR creation.",
             },
         )
         return True
 
     base = task_pr_base_branch(config)
     title = f"[ReviewBus] {task['id']} {task['title']}"
-    head_sha = branch_head_sha(branch)
+    local_head_sha = branch_head_sha(branch)
     skip_hash = json.dumps(
         {
             "state": "skipped_unpublished_branch",
             "task_id": task["id"],
             "branch": branch,
             "base": base,
-            "head_sha": head_sha,
+            "head_sha": local_head_sha,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -872,15 +1022,15 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         isinstance(pr_ref, dict)
         and pr_ref.get("state") == "skipped_unpublished_branch"
         and pr_ref.get("branch") == branch
-        and pr_ref.get("head_sha") == head_sha
+        and pr_ref.get("head_sha") == local_head_sha
         and entry.get("last_review_hash") == skip_hash
     )
-    if previous_unpublished:
-        last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
-        if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
-            return False
-
-    if not remote_branch_exists(branch):
+    remote_head_sha = remote_branch_head_sha(branch)
+    if not remote_head_sha:
+        if previous_unpublished:
+            last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
+            if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
+                return False
         checked_at = utc_now()
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
@@ -888,7 +1038,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             "title": title,
             "branch": branch,
             "state": "skipped_unpublished_branch",
-            "head_sha": head_sha,
+            "head_sha": local_head_sha,
             "last_remote_branch_check_at": checked_at,
         }
         entry["last_review_hash"] = skip_hash
@@ -903,6 +1053,8 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             },
         )
         return True
+    head_sha = remote_head_sha
+    remote_ref = f"refs/heads/{branch}"
     variables = {
         "marker": COMMENT_MARKER,
         "task_id": task["id"],
@@ -923,7 +1075,8 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     if entry.get("last_review_hash") == pr_hash and pr_ref:
         return False
 
-    if not branch_has_diff(base, branch):
+    has_diff = branch_has_diff(base, branch, expected_head_sha=head_sha)
+    if has_diff is False:
         entry["review_pr"] = {
             "number": (pr_ref or {}).get("number"),
             "url": (pr_ref or {}).get("url"),
@@ -931,6 +1084,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             "branch": branch,
             "state": "skipped_no_commits",
             "head_sha": head_sha,
+            "remote_ref": remote_ref,
         }
         entry["last_review_hash"] = pr_hash
         write_activity_log(
@@ -984,6 +1138,8 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         "title": title,
         "branch": branch,
         "state": "open",
+        "head_sha": head_sha,
+        "remote_ref": remote_ref,
         "last_remote_branch_check_at": utc_now(),
     }
     entry["last_review_hash"] = pr_hash

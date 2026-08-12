@@ -355,6 +355,34 @@ def test_task_finalize_refuses_uncommitted_changes(repo: Path, tmp_path: Path):
     assert "uncommitted tracked changes" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("message", "expected_error"),
+    [
+        ("fix: missing task id", "subject must include task id"),
+        (f"{TASK}: missing metadata", "missing required metadata: LLM-Agent"),
+        (
+            f"{TASK}: wrong task metadata\n\nLLM-Agent: Claude\nTask-ID: OTHER\nReviewer: Antigravity\n",
+            "expected 'ODP-TEST-001'",
+        ),
+    ],
+)
+def test_task_finalize_rejects_head_that_done_cannot_close(
+    repo: Path,
+    message: str,
+    expected_error: str,
+):
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    git(repo, "add", "owned.txt")
+    git(repo, "commit", "-m", message)
+
+    result = task_finalize(repo, TASK, "--dry-run")
+
+    assert result.returncode == 1
+    assert expected_error in result.stderr
+    assert "dry-run: git push" not in result.stdout
+
+
 def test_task_finalize_reports_already_merged_branch(repo: Path):
     git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
     result = task_finalize(repo, TASK, "--dry-run")

@@ -38,15 +38,11 @@ DEFAULT_ACTIVE_WORKER_STATUSES = [
     "running",
     "waiting_approval",
     "retry_backoff",
-    "manual_pending",
     "stalled",
 ]
-DEFAULT_MAX_TASKS_PER_AGENT: int | None = None
 DEFAULT_MAX_DISPATCHES_PER_TICK = 4
 DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS = 300
-DEFAULT_MAX_CONCURRENT_WORKERS: int | None = None
 DEFAULT_WORKER_OS_DUPLICATE_GUARD = True
-DEFAULT_MAX_CONCURRENT_PER_QUOTA_GROUP: dict[str, int] = {}
 DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK = 1
 
 
@@ -56,6 +52,18 @@ def dispatch_reason_priority(reason: str | None) -> int | None:
 
 def is_execution_dispatch_reason(reason: str | None) -> bool:
     return str(reason or "") in EXECUTION_DISPATCH_REASONS
+
+
+def task_priority_rank(task: dict[str, Any] | None) -> int:
+    """Return the durable business priority rank used by the ready dispatcher.
+
+    Lifecycle work (review/finalize/execute) remains a tie-breaker, not the
+    primary priority.  Older state files often omit a priority, so an unset or
+    malformed value deliberately sorts after P0-P3 instead of silently being
+    treated as P0.
+    """
+    value = str((task or {}).get("priority") or "").strip().upper()
+    return {"P0": 0, "P1": 1, "P2": 2, "P3": 3}.get(value, 4)
 
 
 def normalized_status_set(values: Any, default: list[str]) -> set[str]:
@@ -78,12 +86,8 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("dependency_done_statuses", list(DEFAULT_DEPENDENCY_DONE_STATUSES))
     settings.setdefault("worker_terminal_statuses", legacy_done_statuses)
     settings.setdefault("active_worker_statuses", list(DEFAULT_ACTIVE_WORKER_STATUSES))
-    settings.setdefault("max_tasks_per_agent", DEFAULT_MAX_TASKS_PER_AGENT)
-    settings.setdefault("max_tasks_per_agent_by_agent", {})
     settings.setdefault("max_dispatches_per_tick", DEFAULT_MAX_DISPATCHES_PER_TICK)
     settings.setdefault("orphaned_queue_event_grace_seconds", DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS)
-    settings.setdefault("max_concurrent_workers", DEFAULT_MAX_CONCURRENT_WORKERS)
     settings.setdefault("worker_os_duplicate_guard", DEFAULT_WORKER_OS_DUPLICATE_GUARD)
-    settings.setdefault("max_concurrent_per_quota_group", dict(DEFAULT_MAX_CONCURRENT_PER_QUOTA_GROUP))
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
     return settings

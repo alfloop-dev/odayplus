@@ -2326,6 +2326,10 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     assert "--oidc-service-account-email=scheduler-sa@example.test" in call
     assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run" in call
     assert "--max-retry-attempts=3" in call
+    assert "--min-backoff=10s" in call
+    assert "--max-backoff=600s" in call
+    assert "--update-headers=Content-Type=application/json" in call
+    assert "--headers=Content-Type=application/json" not in call
 
 
 def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
@@ -5246,6 +5250,31 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert not validator.is_valid_job_queue_health(bare_queue_text), (
         f"bare 'healthy' must fail is_valid_job_queue_health; got: {bare_queue_text!r}"
     )
+
+
+def test_declared_data_mode_handles_all_envelope_shapes() -> None:
+    """Verify _declared_data_mode across the supported API envelopes."""
+    assert validator._declared_data_mode({"modes": {"data": {"mode": "live"}}}) == "live"
+    assert validator._declared_data_mode({"details": {"data": {"mode": "live"}}}) == "live"
+    assert validator._declared_data_mode({"data_mode": "live"}) == "live"
+    assert validator._declared_data_mode({"dataMode": "live"}) == "live"
+    assert validator._declared_data_mode({"details": {"data_mode": "live"}}) == "live"
+    assert validator._declared_data_mode({"meta": {"dataMode": "live"}}) == "live"
+    assert validator._declared_data_mode({"dependencies": {"data_mode": "live"}}) == "live"
+    assert validator._declared_data_mode({"details": {"bindingMode": "live"}}) == "live"
+    assert validator._declared_data_mode({"binding_mode": "live"}) == "live"
+    assert validator._declared_data_mode({}) == ""
+    assert validator._declared_data_mode({"status": "ok"}) == ""
+
+
+def test_declared_data_mode_prefers_canonical_root_contract() -> None:
+    payload = {
+        "data_mode": "fixture",
+        "modes": {"data": {"mode": "live"}},
+        "details": {"binding_mode": "live"},
+    }
+
+    assert validator._declared_data_mode(payload) == "fixture"
 
 
 def test_real_app_health_data_mode_matches_unchanged_deploy_validator(

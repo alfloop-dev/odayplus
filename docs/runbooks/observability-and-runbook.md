@@ -130,6 +130,34 @@ Recovery checks:
 4. Evidence exports are visible as `audit.evidence_export.v1` events and
    `audit_evidence_export_count` samples under the same `correlation_id`.
 
+## Alert delivery failure
+
+`alert_delivery_failure_count` counts pages that were raised but never
+delivered, so every sample means an incident somewhere else went unannounced.
+Treat it as **P1**: it degrades every other alert on this page.
+
+Callers that page while handling their own failure (the DLQ poison-isolation
+branch is the reference case) route through
+`shared.observability.try_trigger_alert`, which contains the delivery error and
+counts it rather than letting it pre-empt the caller's error handling. So a
+non-zero count means the underlying work *was* handled correctly — only the
+notification was lost.
+
+Handling: read the `error_class` label to separate the causes — a
+`ValueError` naming `release identity` means the deployed `RELEASE_SHA` is
+unbound or does not match `release_identity.exact_sha_binding` in
+`infra/monitoring/alerts.json`; one naming routing means a severity has no
+receiver; anything else is the notification transport. Fix the binding or the
+route, then search the same window for the alerts that were suppressed and
+triage them by hand, since they will not be re-sent.
+
+Recovery checks:
+
+1. `alert_delivery_failure_count` is no longer increasing.
+2. A test page for each affected severity reaches its receiver and carries the
+   deployed `release_sha`.
+3. Every incident whose page was lost during the outage has been triaged.
+
 ## Release-SHA Dashboard Traceability & Watch-Window Receipt
 
 All production deployments tag platform metrics with the exact deployment `release_sha`.

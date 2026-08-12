@@ -12,39 +12,44 @@ Only the task owner may move a `review_approved` task to `done`. The
 owner is responsible for making the approved state durable, auditable,
 and publish-ready before running `scripts/ai-status.sh done`.
 
+## Immutable Approved Head
+
+Entering `review_approved` freezes the exact PR head. All repo artifacts,
+evidence notes, trailers, and verification fixes must already be present in that
+reviewed commit. A finalize worker is read-only with respect to the task branch:
+
+- do not merge or rebase `dev`, even when the PR is behind;
+- do not edit tracked files, create a closeout commit, push, or rerun
+  `task_finalize.sh`;
+- wait for the merge queue to compose the approved head with the current base;
+- if any repo change is truly required, run `re_review` first, make the change,
+  resubmit the exact new head, and obtain a new reviewer approval.
+
 ## Required Closeout Checklist
 
 1. Re-read the task brief, reviewer approval, and touched artifacts.
 2. Confirm the approved scope is still true in the current worktree.
-3. Update task-specific records when needed: review notes, acceptance
-   packet, handoff packet, evidence note, or narrow docs that describe
-   the delivered behavior.
+3. Confirm task-specific records, evidence, and docs are already contained in
+   the exact reviewer-approved head; do not update them during finalization.
 4. Do not broaden canonical architecture docs unless the task
    explicitly changes canonical truth.
 5. Run focused verification appropriate to the task and record the
    exact commands in the finalization message or task artifact.
-6. Inspect `git status --short` and separate task-owned changes from
-   unrelated dirty worktree changes.
-   - If this task produced anchor commits, either keep or squash them
-     according to review needs; the final task commit still needs the
-     required `LLM-Agent`, `Task-ID`, `Reviewer`, and verification
-     trailers.
-   - If `git status --short` shows files from another task or lane
-     (for example generated state mirrors, cross-sidecar docs, or
-     unrelated task artifacts), record a blocker and stop. Do not fold
-     those files into the closeout commit.
+6. Inspect `git status --short`. Any tracked change is a blocker in the
+   immutable finalize lane; do not commit, discard, or push it.
 7. Create the task PR (see § Per-Task PR Flow below) whenever the task
    changed repo files, then wait for it to merge into the target branch.
 8. Run `AI_NAME=<Owner> ./scripts/ai-status.sh done <task-id> "<checkpoint message>"`
    only after the PR is merged. An open PR, auto-merge enabled, or green
    checks are not sufficient.
 
-## Per-Task PR Flow (mandatory)
+## Pre-Review Per-Task PR Flow (mandatory)
 
 Pantheon's branch model is **per-task ephemeral branches** with PR
 auto-merge into `dev`. Permanent `worker/<name>` branches are retired.
 
-The full safe sequence for any task that produces commits:
+The full safe sequence below is completed before reviewer approval. Steps 1–3
+must never be repeated by an `owned_finalize_dispatch` worker:
 
 ```bash
 TASK=<task-id>
@@ -194,8 +199,9 @@ target branch before it updates `ai-status.json` or archives the task.
   merges. If a PR fails CI, the task branch stays for the worker (or
   chair-review) to push a fix commit; do **not** force-push to recover
   unless explicitly authorized.
-- If the PR is `BEHIND`, failing checks, or otherwise still open, leave
-  the task in `review_approved`; refresh or repair the PR branch first.
+- If the PR is `BEHIND` or otherwise still open, leave the task in
+  `review_approved`; the merge queue owns base composition. If code or evidence
+  repair is required, explicitly return to `review` before changing the branch.
 - Never use `--force`, `--mirror`, `--delete`, `--all`, or `--tags`
   pushes as routine closeout.
 

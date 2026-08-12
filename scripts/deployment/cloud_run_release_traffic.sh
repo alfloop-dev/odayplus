@@ -128,6 +128,18 @@ restore_scheduler_trigger() {
     return 1
   fi
 
+  # `gcloud scheduler jobs create http` accepts --headers, while the update
+  # command requires --update-headers.  Snapshots are restored through either
+  # path, so adapt only the update form here.
+  if [ "${action}" = "update" ]; then
+    local i
+    for i in "${!gcloud_args[@]}"; do
+      if [[ "${gcloud_args[$i]}" == --headers=* ]]; then
+        gcloud_args[$i]="--update-headers=${gcloud_args[$i]#--headers=}"
+      fi
+    done
+  fi
+
   if ! gcloud scheduler jobs "${action}" http "${trigger}" "${gcloud_args[@]}" --quiet; then
     echo "Error: failed to ${action} Cloud Scheduler trigger '${trigger}'." >&2
     return 1
@@ -174,4 +186,3 @@ restore_scheduler_trigger() {
   echo "Cloud Scheduler trigger '${trigger}' successfully restored." >&2
   return 0
 }
-
