@@ -109,6 +109,7 @@ from provider_permissions import (
 )
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
+    compact_worker_history,
     enqueue_event,
     load_approval_state,
     load_event_queue,
@@ -6406,8 +6407,9 @@ AGENT_OPEN_TASK_STATUSES = ("todo", "in_progress", "review", "review_approved", 
 def agent_open_task_counts(
     config: dict[str, Any],
     status: dict[str, Any] | None = None,
+    role: str = "owner",
 ) -> dict[str, int]:
-    """Count the open tasks each agent currently owns.
+    """Count the open tasks each agent currently has assigned in the given role ("owner" or "reviewer").
 
     Reassignment picked the first name off a hardcoded pool, and "Antigravity"
     is first in that pool and is always viable, so it won. Observed on
@@ -6420,15 +6422,16 @@ def agent_open_task_counts(
 
     status = status if isinstance(status, dict) else load_status(config)
     open_statuses = {s.lower() for s in AGENT_OPEN_TASK_STATUSES}
+    field = "reviewer" if str(role or "").lower() == "reviewer" else "owner"
     counts: dict[str, int] = {}
     for task in status.get("tasks", []) or []:
         if not isinstance(task, dict):
             continue
         if str(task.get("status") or "").lower() not in open_statuses:
             continue
-        owner = normalize_agent_id(str(task.get("owner") or ""))
-        if owner:
-            counts[owner] = counts.get(owner, 0) + 1
+        agent = normalize_agent_id(str(task.get(field) or ""))
+        if agent:
+            counts[agent] = counts.get(agent, 0) + 1
     return counts
 
 
@@ -6442,6 +6445,7 @@ def first_viable_agent(
     provider_report: dict[str, Any] | None = None,
     status: dict[str, Any] | None = None,
     balance_load: bool = True,
+    role: str = "owner",
 ) -> str | None:
     known = known_agent_display_names(config)
     seen: set[str] = set()
@@ -6480,7 +6484,7 @@ def first_viable_agent(
     # among them is free. Take the least loaded and keep the caller's ordering
     # as the tie-break, which preserves the configured preference whenever the
     # load is equal.
-    counts = agent_open_task_counts(config, status)
+    counts = agent_open_task_counts(config, status, role=role)
     return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
 
 
@@ -6609,12 +6613,24 @@ def sync_status_pipeline(config: dict[str, Any]) -> bool:
             },
         )
         return False
-    result = subprocess.run(
-        [sys.executable, str(script), "sync"],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "sync"],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        write_activity_log(
+            config,
+            {
+                "type": "task_reassignment_sync_failed",
+                "message": f"Status sync timed out after {timeout_seconds:g}s.",
+            },
+        )
+        return False
     if result.returncode == 0:
         return True
     write_activity_log(
@@ -6668,13 +6684,28 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     }[reason]
     env = os.environ.copy()
     env["AI_NAME"] = target_agent
-    result = subprocess.run(
-        [sys.executable, str(script), command_name, task_id, message],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), command_name, task_id, message],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        write_activity_log(
+            config,
+            {
+                "type": "task_dispatch_sync_failed",
+                "task_id": task_id,
+                "target_agent": target_agent,
+                "dispatch_reason": reason,
+                "message": f"Dispatch status sync timed out after {timeout_seconds:g}s.",
+            },
+        )
+        return False
     if result.returncode == 0:
         write_activity_log(
             config,
@@ -6799,7 +6830,13 @@ def persist_task_reassignment(
         if str(new_status).lower() == "todo":
             task.pop("waiting_for", None)
     task["last_update"] = timestamp
-    task["next"] = message
+    task["assignment_note"] = message
+    # Reassignment is coordination metadata, not resolution of an external
+    # gate.  Preserve the actionable blocker text until the task is explicitly
+    # moved out of blocked; otherwise dashboards claim the assignment changed
+    # while hiding the dataset/approval/deployment action still required.
+    if str(task.get("status") or "").lower() != "blocked" or new_status:
+        task["next"] = message
 
     if resolve_open_blockers:
         for blocker in status.get("blockers", []) or []:
@@ -6894,7 +6931,7 @@ def maybe_reassign_task_after_worker_failure(
         if is_human_gate_agent(reviewer):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
-        new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
+        new_reviewer = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task, role="reviewer")
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         message = (
@@ -6932,13 +6969,25 @@ def maybe_reassign_task_after_worker_failure(
         if is_human_gate_agent(owner):
             return None
         candidates = get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task)
-        new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task)
+        new_owner = first_viable_agent(config, candidates, exclude={owner, reviewer}, state=state, task=task, role="owner")
         if not new_owner or is_human_gate_agent(new_owner):
             return None
-        reviewer_candidates = [reviewer]
-        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task))
-        reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
-        new_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, state=state, task=task)
+        # Only the owner failed. A reviewer that is still viable keeps the task:
+        # load balancing is for picking a replacement, not a reason to churn a
+        # healthy review assignment and lose the reviewer's accumulated context.
+        new_reviewer = (
+            first_viable_agent(
+                config, [reviewer], exclude={new_owner}, state=state, task=task, balance_load=False
+            )
+            if reviewer
+            else None
+        )
+        if not new_reviewer:
+            reviewer_candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
+            reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
+            new_reviewer = first_viable_agent(
+                config, reviewer_candidates, exclude={new_owner}, state=state, task=task, role="reviewer"
+            )
         if not new_reviewer or is_human_gate_agent(new_reviewer):
             return None
         requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
@@ -8517,11 +8566,17 @@ def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> 
 
 
 def trim_worker_history(state: dict[str, Any], max_entries: int) -> None:
-    workers = state.get("workers", {})
-    if len(workers) <= max_entries:
-        return
-    ordered = sorted(workers.items(), key=lambda item: item[1].get("last_event_at") or "")
-    state["workers"] = dict(ordered[-max_entries:])
+    compact_worker_history(state, max_entries)
+
+
+def finish_loop_stage_timing(state: dict[str, Any], stage: str, started_at: float) -> None:
+    duration_ms = max(0, int(round((time.monotonic() - started_at) * 1000)))
+    supervisor_state = state.setdefault("supervisor", {})
+    timings = supervisor_state.setdefault("last_stage_timings_ms", {})
+    timings[str(stage)] = duration_ms
+    slowest = max(timings.items(), key=lambda item: item[1], default=(None, 0))
+    supervisor_state["slowest_stage"] = slowest[0]
+    supervisor_state["slowest_stage_duration_ms"] = slowest[1]
 
 
 def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -9399,7 +9454,7 @@ def normalize_mainline_task_assignment(
         if is_human_gate_agent(owner):
             return False
         owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=task)
-        replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task)
+        replacement_owner = first_viable_agent(config, owner_candidates, exclude={owner, reviewer}, task=task, role="owner")
         if not replacement_owner or is_human_gate_agent(replacement_owner):
             return False
         new_owner = replacement_owner
@@ -9415,7 +9470,7 @@ def normalize_mainline_task_assignment(
         if owner:
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="reviewer", task=task))
             reviewer_candidates.extend(get_agent_reassignment_candidates(config, owner, role="owner", task=task))
-        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task)
+        replacement_reviewer = first_viable_agent(config, reviewer_candidates, exclude={new_owner}, task=task, role="reviewer")
         if not replacement_reviewer or is_human_gate_agent(replacement_reviewer):
             return False
         new_reviewer = replacement_reviewer
@@ -9811,13 +9866,18 @@ def create_sidecar_task(
             "TASK_METADATA_JSON": json.dumps(metadata, ensure_ascii=False),
         }
     )
-    result = subprocess.run(
-        [sys.executable, str(script), "assign", sidecar_id, owner, reviewer],
-        cwd=str(config_path(config, "status_file").parent),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
+    timeout_seconds = float(config.get("supervisor", {}).get("external_command_timeout_seconds", 30))
+    try:
+        result = subprocess.run(
+            [sys.executable, str(script), "assign", sidecar_id, owner, reviewer],
+            cwd=str(config_path(config, "status_file").parent),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"sidecar assignment timed out after {timeout_seconds:g}s"
     if result.returncode != 0:
         return False, result.stderr.strip() or result.stdout.strip() or "unknown error"
     return True, ""
@@ -12006,6 +12066,7 @@ def run_once(
     save_runtime_state(config, state)
     changed = False
     try:
+        stage_started = time.monotonic()
         changed = reconcile_runtime_on_boot(config, state) or changed
         if changed:
             save_runtime_state(config, state)
@@ -12015,9 +12076,15 @@ def run_once(
         if pruned:
             changed = True
         provider_report = load_provider_report(config)
+        finish_loop_stage_timing(state, "boot_and_provider", stage_started)
+        boot_and_provider_ms = state.get("supervisor", {}).get("last_stage_timings_ms", {}).get("boot_and_provider")
+
+        stage_started = time.monotonic()
         if watch:
             changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
             state = load_runtime_state(config)
+            if boot_and_provider_ms is not None:
+                state.setdefault("supervisor", {}).setdefault("last_stage_timings_ms", {})["boot_and_provider"] = boot_and_provider_ms
             stamp_supervisor_runtime_state(
                 config,
                 state,
@@ -12031,6 +12098,9 @@ def run_once(
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
         changed = refresh_chair_review_state(config, state) or changed
+        finish_loop_stage_timing(state, "scan_coordination_and_poll", stage_started)
+
+        stage_started = time.monotonic()
         planning_state = load_discussion_planning_state()
         changed = auto_materialize_discussion_planning(config, planning_state) or changed
         planning_state = load_discussion_planning_state()
@@ -12050,16 +12120,28 @@ def run_once(
             changed = dispatch_underutilization_sidecars(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             changed = process_queue(config, state, provider_report) or changed
+        finish_loop_stage_timing(state, "dispatch_and_queue", stage_started)
+
+        stage_started = time.monotonic()
         changed = poll_workers(config, state, provider_report=provider_report) or changed
         changed = reconcile_queue_records(config, state) or changed
         changed = prune_event_queue(config, state) or changed
+        finish_loop_stage_timing(state, "post_dispatch_poll", stage_started)
+
+        stage_started = time.monotonic()
         changed = sync_github_bus(config, state) or changed
+        finish_loop_stage_timing(state, "github_bus", stage_started)
         # After the bus sync, so PR state is as fresh as this cycle can make it.
+        stage_started = time.monotonic()
         changed = check_branch_drift(config, state) or changed
+        finish_loop_stage_timing(state, "branch_drift", stage_started)
+
+        stage_started = time.monotonic()
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
         changed = prune_orphan_worktrees(config, state) or changed
         changed = maybe_auto_commit_archive(config, state) or changed
+        finish_loop_stage_timing(state, "retention_and_maintenance", stage_started)
 
         loop_finished_at = utc_now()
         stamp_supervisor_runtime_state(

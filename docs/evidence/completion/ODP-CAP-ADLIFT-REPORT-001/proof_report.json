@@ -1,0 +1,160 @@
+{
+  "task_id": "ODP-CAP-ADLIFT-REPORT-001",
+  "generated_at": "2026-08-08T09:53:00Z",
+  "reports": [
+    {
+      "scenario": "L3_DID_VALIDATED_SCALE",
+      "campaign_id": "camp-valid-001",
+      "campaign_name": "Summer Paid Search Pilot",
+      "channel": "paid_search",
+      "treatment_store_ids": ["t1", "t2"],
+      "control_store_ids": ["c1", "c2"],
+      "pre_trend_status": "PASS",
+      "measurement_method": "DID",
+      "surface_revenue": 26000.0,
+      "incremental_revenue": 4000.0,
+      "incremental_gross_margin": 2000.0,
+      "effect_interval": {
+        "metric": "did_gm_per_store_day",
+        "low": 90.0,
+        "point": 100.0,
+        "high": 110.0,
+        "standard_error": 5.0
+      },
+      "iromi": 2.0,
+      "ad_spend": 1000.0,
+      "evidence_level": "L3",
+      "causal_claim_allowed": true,
+      "recommendation": "SCALE",
+      "contamination": [],
+      "report_card": {
+        "campaign": "Summer Paid Search Pilot",
+        "treatmentStores": ["t1", "t2"],
+        "controlStores": ["c1", "c2"],
+        "preTrendStatus": "PASS",
+        "incrementalRevenue": 4000.0,
+        "incrementalGrossMargin": 2000.0,
+        "iromi": 2.0,
+        "evidenceLevel": "L3",
+        "continueStopRecommendation": "SCALE"
+      }
+    },
+    {
+      "scenario": "L2_PRE_TREND_FAIL_INCONCLUSIVE",
+      "campaign_id": "camp-pretrend-fail",
+      "campaign_name": "Unstable Baseline Campaign",
+      "channel": "paid_search",
+      "treatment_store_ids": ["t1"],
+      "control_store_ids": ["c1"],
+      "pre_trend_status": "FAIL",
+      "measurement_method": "DID",
+      "surface_revenue": 15000.0,
+      "incremental_revenue": 2500.0,
+      "incremental_gross_margin": 1250.0,
+      "effect_interval": {
+        "metric": "did_gm_per_store_day",
+        "low": 20.0,
+        "point": 50.0,
+        "high": 80.0,
+        "standard_error": 15.0
+      },
+      "iromi": 1.25,
+      "ad_spend": 1000.0,
+      "evidence_level": "L2",
+      "causal_claim_allowed": false,
+      "recommendation": "INCONCLUSIVE",
+      "contamination": [],
+      "report_card": {
+        "campaign": "Unstable Baseline Campaign",
+        "treatmentStores": ["t1"],
+        "controlStores": ["c1"],
+        "preTrendStatus": "FAIL",
+        "incrementalRevenue": 2500.0,
+        "incrementalGrossMargin": 1250.0,
+        "iromi": 1.25,
+        "evidenceLevel": "L2",
+        "continueStopRecommendation": "INCONCLUSIVE"
+      }
+    },
+    {
+      "scenario": "L2_CONTAMINATION_INCONCLUSIVE",
+      "campaign_id": "camp-contaminated",
+      "campaign_name": "Overlapping Promotion Campaign",
+      "channel": "paid_search",
+      "treatment_store_ids": ["t1"],
+      "control_store_ids": ["c1"],
+      "pre_trend_status": "PASS",
+      "measurement_method": "DID",
+      "surface_revenue": 18000.0,
+      "incremental_revenue": 3000.0,
+      "incremental_gross_margin": 1500.0,
+      "effect_interval": {
+        "metric": "did_gm_per_store_day",
+        "low": 40.0,
+        "point": 60.0,
+        "high": 80.0,
+        "standard_error": 10.0
+      },
+      "iromi": 1.5,
+      "ad_spend": 1000.0,
+      "evidence_level": "L2",
+      "causal_claim_allowed": false,
+      "recommendation": "INCONCLUSIVE",
+      "contamination": [
+        {
+          "store_id": "t1",
+          "role": "treatment",
+          "intervention_ids": ["promo-concurrent-99"]
+        }
+      ],
+      "report_card": {
+        "campaign": "Overlapping Promotion Campaign",
+        "treatmentStores": ["t1"],
+        "controlStores": ["c1"],
+        "preTrendStatus": "PASS",
+        "incrementalRevenue": 3000.0,
+        "incrementalGrossMargin": 1500.0,
+        "iromi": 1.5,
+        "evidenceLevel": "L2",
+        "continueStopRecommendation": "INCONCLUSIVE"
+      }
+    },
+    {
+      "scenario": "L1_BEFORE_AFTER_INCONCLUSIVE",
+      "campaign_id": "camp-no-control",
+      "campaign_name": "Uncontrolled Ad Campaign",
+      "channel": "paid_search",
+      "treatment_store_ids": ["t1"],
+      "control_store_ids": [],
+      "pre_trend_status": "NOT_TESTED",
+      "measurement_method": "DID",
+      "surface_revenue": 12000.0,
+      "incremental_revenue": 2000.0,
+      "incremental_gross_margin": 1000.0,
+      "effect_interval": {
+        "metric": "before_after_gm_per_store_day",
+        "low": 20.0,
+        "point": 20.0,
+        "high": 20.0,
+        "standard_error": 0.0
+      },
+      "iromi": 1.0,
+      "ad_spend": 1000.0,
+      "evidence_level": "L1",
+      "causal_claim_allowed": false,
+      "recommendation": "INCONCLUSIVE",
+      "contamination": [],
+      "report_card": {
+        "campaign": "Uncontrolled Ad Campaign",
+        "treatmentStores": ["t1"],
+        "controlStores": [],
+        "preTrendStatus": "NOT_TESTED",
+        "incrementalRevenue": 2000.0,
+        "incrementalGrossMargin": 1000.0,
+        "iromi": 1.0,
+        "evidenceLevel": "L1",
+        "continueStopRecommendation": "INCONCLUSIVE"
+      }
+    }
+  ]
+}
