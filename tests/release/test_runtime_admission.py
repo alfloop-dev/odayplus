@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import copy
 import importlib.util
-import json
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts/release/check_runtime_admission.py"
