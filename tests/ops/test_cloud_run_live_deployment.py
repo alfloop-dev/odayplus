@@ -2326,6 +2326,10 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     assert "--oidc-service-account-email=scheduler-sa@example.test" in call
     assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run" in call
     assert "--max-retry-attempts=3" in call
+    assert "--min-backoff=10s" in call
+    assert "--max-backoff=600s" in call
+    assert "--update-headers=Content-Type=application/json" in call
+    assert "--headers=Content-Type=application/json" not in call
 
 
 def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
