@@ -384,6 +384,11 @@ def trim_seen_events(state: dict[str, Any], max_entries: int) -> None:
 
 
 def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+    # The supervisor owns runtime state.  A disabled event transport must not
+    # still mirror the canonical task store into that state: the mirror is a
+    # stale second truth and used to be rewritten on every loop.
+    if not enqueue_runtime_events_enabled(config):
+        return False
     status = load_status(config)
     snapshot = build_snapshot(config, status)
     is_first_run = not state.get("initialized_at")
@@ -407,16 +412,13 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
 
     seen = state.setdefault("seen_event_keys", {})
     changed = False
-    if enqueue_runtime_events_enabled(config):
-        for event in events:
-            if event["key"] in seen and not replay:
-                continue
-            queued = queue_delivery_event(config, event)
-            if queued:
-                seen[event["key"]] = utc_now()
-                changed = True
-    elif events:
-        changed = True
+    for event in events:
+        if event["key"] in seen and not replay:
+            continue
+        queued = queue_delivery_event(config, event)
+        if queued:
+            seen[event["key"]] = utc_now()
+            changed = True
 
     state["initialized_at"] = state.get("initialized_at") or utc_now()
     state["last_scan_at"] = utc_now()

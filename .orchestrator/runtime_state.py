@@ -53,23 +53,6 @@ def default_state() -> dict[str, Any]:
         "approvals": {
             "last_reconciled_at": None,
         },
-        "underutilization": {
-            "below_threshold_since": None,
-            "last_sidecar_wave_at": None,
-            "last_sidecar_wave_reason": None,
-            "last_ratio": None,
-        },
-        "chair_rotation": {
-            "current_index": 0,
-            "last_chair_run_at": None,
-            "last_chair_agent": None,
-            "last_chair_reason": None,
-            "last_review_path": None,
-            "last_review_summary": None,
-            "pending_review_path": None,
-            "pending_review_agent": None,
-            "sidecar_approved_until": None,
-        },
         "provider_guardrails": {
             "dispatch_pauses": {},
             "task_failure_streaks": {},
@@ -113,7 +96,6 @@ def default_state() -> dict[str, Any]:
                 "planning": {"running": 0, "pending": 0, "queued": 0},
                 "execution": {"running": 0, "pending": 0, "queued": 0},
                 "coordination": {"running": 0, "pending": 0, "queued": 0},
-                "chair_review": {"running": 0, "pending": 0, "queued": 0},
             },
         },
     }
@@ -122,7 +104,16 @@ def default_state() -> dict[str, Any]:
 # Top-level state keys that were deliberately removed from the runtime state
 # contract. Only these are dropped by `migrate_state`; every other key on disk
 # survives, whether or not `default_state()` knows about it.
-RETIRED_STATE_KEYS: frozenset[str] = frozenset()
+RETIRED_STATE_KEYS: frozenset[str] = frozenset(
+    {
+        # Retired with the heuristic chair/sidecar scheduler.  Keeping these
+        # opaque blobs made obsolete decisions look live after every restart.
+        "chair_rotation",
+        "underutilization",
+        # A pre-runtime audit cache that is no longer read by any scheduler.
+        "dispatch_audit",
+    }
+)
 
 
 def _nonnegative_cursor_revision(value: Any) -> int:
@@ -190,21 +181,6 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     )
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
-    state.setdefault("underutilization", {})
-    state["underutilization"].setdefault("below_threshold_since", None)
-    state["underutilization"].setdefault("last_sidecar_wave_at", None)
-    state["underutilization"].setdefault("last_sidecar_wave_reason", None)
-    state["underutilization"].setdefault("last_ratio", None)
-    state.setdefault("chair_rotation", {})
-    state["chair_rotation"].setdefault("current_index", 0)
-    state["chair_rotation"].setdefault("last_chair_run_at", None)
-    state["chair_rotation"].setdefault("last_chair_agent", None)
-    state["chair_rotation"].setdefault("last_chair_reason", None)
-    state["chair_rotation"].setdefault("last_review_path", None)
-    state["chair_rotation"].setdefault("last_review_summary", None)
-    state["chair_rotation"].setdefault("pending_review_path", None)
-    state["chair_rotation"].setdefault("pending_review_agent", None)
-    state["chair_rotation"].setdefault("sidecar_approved_until", None)
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
@@ -241,7 +217,10 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("mode_switch_requested", None)
     state["supervisor"].setdefault("last_mode_switch_at", None)
     state["supervisor"].setdefault("mode_occupancy", {})
-    for mode_name in ("planning", "execution", "coordination", "chair_review"):
+    # `mode_occupancy` is nested beneath the durable supervisor record, so it
+    # is not covered by the top-level retirement list above.
+    state["supervisor"]["mode_occupancy"].pop("chair_review", None)
+    for mode_name in ("planning", "execution", "coordination"):
         bucket = state["supervisor"]["mode_occupancy"].setdefault(mode_name, {})
         bucket.setdefault("running", 0)
         bucket.setdefault("pending", 0)

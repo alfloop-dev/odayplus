@@ -97,15 +97,14 @@ class LoadRuntimeStateTests(unittest.TestCase):
             "claude-stale", runtime_state.load_runtime_state(self.config)["workers"]
         )
 
-    def test_load_runtime_state_adds_chair_rotation_defaults(self) -> None:
+    def test_load_runtime_state_drops_retired_chair_scheduler_state(self) -> None:
         self._write_json(self.root / "state.json", {"workers": {}, "queue": {"events": {}}})
         (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         state = runtime_state.load_runtime_state(self.config)
 
-        self.assertEqual(state["chair_rotation"]["current_index"], 0)
-        self.assertIsNone(state["chair_rotation"]["last_chair_agent"])
-        self.assertIn("chair_review", state["supervisor"]["mode_occupancy"])
+        self.assertNotIn("chair_rotation", state)
+        self.assertNotIn("chair_review", state["supervisor"]["mode_occupancy"])
 
     def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:
         self._write_json(
