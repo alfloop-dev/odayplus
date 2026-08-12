@@ -10152,6 +10152,9 @@ def dispatch_ready_tasks(
                                 clear_approval=False,
                             ):
                                 changed = True
+                    if status_dirty:
+                        if not commit_canonical_task_transition(config, status):
+                            return changed
 
                     continue
                 elif ci_status == "failure":
