@@ -163,12 +163,12 @@ The three conditions recorded above are now satisfied.
 
 The repair changed *where* the strict receipt-ancestry rule is enforced rather
 than weakening it. Before the repair, `make product-e2e-gate` ran
-`scripts/e2e/check_product_release_gate.py` with no mode flag, so it always
+`delivery_toolchain/e2e/check_product_release_gate.py` with no mode flag, so it always
 executed `validate_receipt_packet`, whose `EVIDENCE_COMMIT_ALLOWLIST` admits
 only the three product E2E receipt files. Any dev-merge PR carrying a
 non-receipt file — including a required `support/sidecars/**` artifact —
 therefore failed. After the repair, `make product-e2e-gate` invokes the checker
-with `--dev-merge` and additionally runs `scripts/e2e/run_product_e2e.sh`, and
+with `--dev-merge` and additionally runs `delivery_toolchain/e2e/run_product_e2e.sh`, and
 `check_product_release_gate.py` guards the receipt-packet validation behind
 `if not args.dev_merge`. The strict exact-source ancestry rule is preserved
 intact for the production path, `make product-release-gate`, which this packet
@@ -182,7 +182,7 @@ git merge-base --is-ancestor f19611ed6368e9e74f77b8ec6a2fd33367734698 origin/dev
 git diff --stat origin/dev...HEAD          # 1 file changed, 189 insertions(+)
 git diff --check origin/dev...HEAD         # exit 0
 make release-gate-registry                 # exit 0, "RELEASE STATE: NO-GO"
-python3 scripts/e2e/check_product_release_gate.py --dev-merge
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
 ```
 
 The registry check exits 0: a well-formed Gate 0-6 NO-GO is the expected and

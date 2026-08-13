@@ -11,7 +11,7 @@
       "artifacts": [
         ".github/workflows/deploy-dev.yml",
         "infra/terraform",
-        "scripts/deployment",
+        "product_ops/deployment",
         "docs/evidence/runtime"
       ],
       "next": "Ownership updated",
@@ -23,7 +23,7 @@
       "owner": "Codex5",
       "reviewer": "Codex8",
       "artifacts": [
-        "scripts/models/",
+        "product_ops/modeling/",
         "models/shared_ml/",
         "modules/learninghub/",
         "docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/"
@@ -41,7 +41,7 @@
         "apps/web/src/lib/auth/",
         "modules/forecastops/",
         "modules/learninghub/",
-        "scripts/models/",
+        "product_ops/modeling/",
         "shared/auth/",
         "shared/infrastructure/persistence/",
         "tests/integration/"
@@ -56,7 +56,7 @@
       "reviewer": "Codex8",
       "artifacts": [
         "scripts/data_plane/",
-        "scripts/models/",
+        "product_ops/modeling/",
         "docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/"
       ],
       "next": "Needs one human action: run 'gcloud auth login' for joe.tsai@dev.cctech-support.com on this host. Workspace reauth (invalid_rapt) has now taken BOTH planes: the GKE control path since ~03:50Z, and the Cloud SQL proxies at 04:25:28Z (source) / 04:30:12Z (target) when their metadata refresh hit the same wall -- they were running on a cache, never on an independent credential, so the earlier 'DB plane unaffected' carve-out is void. No probe, no slice resume and no activation can run until then. Nothing needs restarting afterwards: driver v5 parks on status=UNREACHABLE and picks the queue back up (b3..b8,s5) by itself, and finisher v8 fails closed meanwhile. -b2 is unaffected and finishing on its own in-cluster credential. Re-auth is also the only route to the April density probe, which -b5..-b8 need before their windows are trusted. Anchor c1af59a9.",

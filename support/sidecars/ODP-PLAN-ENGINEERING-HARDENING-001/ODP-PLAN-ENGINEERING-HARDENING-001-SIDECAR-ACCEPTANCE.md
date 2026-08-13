@@ -19,7 +19,7 @@ This packet is a support-only review aid and dependency map for parent task `ODP
 ## Observed state and review freeze
 
 The parent task `ODP-PLAN-ENGINEERING-HARDENING-001` focuses on engineering quality hardening, including:
-- OpenAPI response typing and client drift closure (`scripts/openapi/`, `apps/api/`, `apps/web/`).
+- OpenAPI response typing and client drift closure (`delivery_toolchain/openapi/`, `apps/api/`, `apps/web/`).
 - Frontend dependency audit and binding of 13 dev-tool high vulnerability findings to named, scoped, non-expired risk decisions from `ODP-PLAN-OSS-LEGAL-POLICY-001` (Human/Ops).
 - Resolution of CSS/build warnings, bundle size regressions, and scoped route/workspace decomposition without behavior drift.
 - Correction of stale documentation across `docs/` and synchronization with `docs/evidence/DEVELOPMENT_PLAN_OPEN_TASK_EXECUTION_PACK_2026-07-31.json`.
@@ -33,7 +33,7 @@ Any base refresh, force push, or commit of a new PR head invalidates this observ
 
 | Layer | Parent task-owned paths | Intended responsibility |
 |---|---|---|
-| OpenAPI & Client Contracts | `scripts/openapi/`, `apps/api/`, `apps/web/src/` | Eliminate OpenAPI response typing drift, generate up-to-date API client interfaces, and resolve client drift. |
+| OpenAPI & Client Contracts | `delivery_toolchain/openapi/`, `apps/api/`, `apps/web/src/` | Eliminate OpenAPI response typing drift, generate up-to-date API client interfaces, and resolve client drift. |
 | Web Workspace & Dependencies | `apps/web/package.json`, `apps/web/src/` | Resolve production high/critical vulnerabilities, audit dev dependencies, fix CSS/build warnings, and prevent bundle size regressions. |
 | Legal/Risk Binding | `ODP-PLAN-OSS-LEGAL-POLICY-001` risk receipts | Bind 13 dev-tool high vulnerability findings to authoritative, non-expired risk decisions. |
 | Workspace & Route Decomposition | `apps/web/src/routes/`, `apps/web/src/lib/` | Safely decompose large route components and workspace modules without altering canonical runtime behavior. |
@@ -46,8 +46,8 @@ Any base refresh, force push, or commit of a new PR head invalidates this observ
 
 | ID | Required proof | Reject when | Status | Evidence |
 |---|---|---|---|---|
-| A1 | OpenAPI schema and frontend/client type definitions are strictly aligned with zero response typing drift. | Stale generated client, mismatched response field types, or manually suppressed client drift errors exist. | `PENDING_PARENT` | `scripts/openapi/`, `apps/api/`, `apps/web/src/` |
-| A2 | Client regeneration script operates deterministically and passes validation without uncommitted drift. | AI-authored waivers, manual edits to generated code, or `--force` sync without schema verification are used. | `PENDING_PARENT` | `scripts/openapi/` |
+| A1 | OpenAPI schema and frontend/client type definitions are strictly aligned with zero response typing drift. | Stale generated client, mismatched response field types, or manually suppressed client drift errors exist. | `PENDING_PARENT` | `delivery_toolchain/openapi/`, `apps/api/`, `apps/web/src/` |
+| A2 | Client regeneration script operates deterministically and passes validation without uncommitted drift. | AI-authored waivers, manual edits to generated code, or `--force` sync without schema verification are used. | `PENDING_PARENT` | `delivery_toolchain/openapi/` |
 
 ### B. Dependency audit & vulnerability risk decisions
 

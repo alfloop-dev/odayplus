@@ -62,7 +62,7 @@ not attribute historical implementation commits to this task.
 The parent worktree was clean before and after these read-only checks.
 
 ```bash
-python3 scripts/openapi/check_drift.py --base-ref origin/dev
+python3 delivery_toolchain/openapi/check_drift.py --base-ref origin/dev
 # API contract gate: PASS
 # 0 additive, 0 approved breaking, 0 unapproved breaking
 

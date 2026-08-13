@@ -28,12 +28,36 @@ from common import (
     utc_now,
     write_json,
 )
+from provider_runtime import (
+    configured_provider_binary,
+    github_auth_token,
+)
+from provider_runtime import (
+    gemini_auth_ready as _gemini_auth_ready,
+)
+from provider_runtime import (
+    gemini_home as _gemini_home,
+)
+from provider_runtime import (
+    gemini_oauth_creds_path as _gemini_oauth_creds_path,
+)
+from provider_runtime import (
+    gemini_runtime_env as _gemini_runtime_env,
+)
+from provider_runtime import (
+    gemini_selected_auth_type as _gemini_selected_auth_type,
+)
+from provider_runtime import (
+    gemini_settings as _gemini_settings,
+)
+from provider_runtime import (
+    gemini_settings_path as _gemini_settings_path,
+)
 
 WORKSPACE_SETTINGS_PATH = ROOT / ".vscode" / "settings.json"
 CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
 CLAUDE_LOCAL_EXAMPLE_PATH = ROOT / ".claude" / "settings.local.example.json"
 GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
-GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 CODEX_ALLOWED_SERVICE_TIERS = ("fast", "flex")
 CLI_PROBE_TIMEOUT_SECONDS = 15.0
@@ -63,32 +87,6 @@ def _workspace_settings() -> dict[str, Any]:
 
 def _claude_local_settings() -> dict[str, Any]:
     return load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
-
-
-def _gemini_home(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
-    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("gemini", {}) or {}
-    home = str(provider.get("config_home") or provider.get("home") or "").strip()
-    return Path(os.path.expanduser(home)) if home else Path.home()
-
-
-def _gemini_settings_path(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
-    return _gemini_home(config, provider_id) / ".gemini" / "settings.json"
-
-
-def _gemini_oauth_creds_path(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
-    return _gemini_home(config, provider_id) / ".gemini" / "oauth_creds.json"
-
-
-def _gemini_runtime_env(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, str]:
-    env = dict(os.environ)
-    provider = (config or {}).get("providers", {}).get(provider_id, {}) or {}
-    for block_name in ("runtime", "gemini"):
-        block = provider.get(block_name, {}) or {}
-        for key, value in (block.get("env", {}) or {}).items():
-            if value is None:
-                continue
-            env[str(key)] = os.path.expanduser(str(value))
-    return env
 
 
 def _codex_home(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
@@ -154,66 +152,6 @@ def codex_config_health(config: dict[str, Any] | None = None, provider_id: str =
             }
         )
     return result
-
-
-def _gemini_settings(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> dict[str, Any]:
-    return load_json(_gemini_settings_path(config, provider_id), default={}) or {}
-
-
-def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:
-    source = env if env is not None else os.environ
-    return source.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _gemini_env_auth_type(env: dict[str, str] | None = None) -> str | None:
-    if _truthy_env("GOOGLE_GENAI_USE_GCA", env):
-        return "oauth-personal"
-    if _truthy_env("GEMINI_CLI_USE_COMPUTE_ADC", env):
-        return "compute-default-credentials"
-    if _truthy_env("GOOGLE_GENAI_USE_VERTEXAI", env):
-        return "vertex-ai"
-    source = env if env is not None else os.environ
-    if source.get("GEMINI_API_KEY"):
-        return "gemini-api-key"
-    return None
-
-
-def _gemini_selected_auth_type(
-    settings: dict[str, Any],
-    *,
-    oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH,
-    env: dict[str, str] | None = None,
-) -> str | None:
-    return (
-        _gemini_env_auth_type(env)
-        or settings.get("security", {}).get("auth", {}).get("selectedType")
-        or ("oauth-personal" if oauth_creds_path.exists() else None)
-    )
-
-
-def _gemini_auth_ready(
-    settings: dict[str, Any],
-    *,
-    oauth_creds_path: Path = GEMINI_OAUTH_CREDS_PATH,
-    env: dict[str, str] | None = None,
-) -> bool:
-    source = env if env is not None else os.environ
-    auth_type = _gemini_selected_auth_type(settings, oauth_creds_path=oauth_creds_path, env=source)
-    if auth_type == "oauth-personal":
-        return oauth_creds_path.exists()
-    if auth_type == "gemini-api-key":
-        return bool(source.get("GEMINI_API_KEY"))
-    if auth_type == "vertex-ai":
-        return bool(
-            source.get("GOOGLE_API_KEY")
-            or (source.get("GOOGLE_CLOUD_PROJECT") and source.get("GOOGLE_CLOUD_LOCATION"))
-        )
-    if auth_type == "compute-default-credentials":
-        if source.get("GOOGLE_APPLICATION_CREDENTIALS"):
-            return True
-        gcloud = command_exists("gcloud")
-        return bool(gcloud) and run_command([gcloud, "auth", "application-default", "print-access-token"]).returncode == 0
-    return False
 
 
 def _read_text(path: Path) -> str:
@@ -347,16 +285,8 @@ def _provider_runtime_env(config: dict[str, Any], provider_id: str) -> dict[str,
     return env
 
 
-def _gh_auth_token(binary: str | None) -> str | None:
-    if not binary:
-        return None
-    result = run_command([binary, "auth", "token"])
-    token = (result.stdout or "").strip()
-    return token or None
-
-
 def _gh_auth_ready(binary: str | None) -> bool:
-    return bool(_gh_auth_token(binary))
+    return bool(github_auth_token(binary))
 
 
 def _copilot_config_auth_ready() -> bool:
@@ -370,16 +300,11 @@ def _copilot_config_auth_ready() -> bool:
 
 
 def _copilot_auth_ready(gh_binary: str | None) -> bool:
-    if _gh_auth_token(gh_binary):
+    if github_auth_token(gh_binary):
         return True
     if any(os.environ.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
         return True
     return _copilot_config_auth_ready()
-
-
-def _configured_provider_binary(config: dict[str, Any], provider: str, section: str, default: str) -> str | None:
-    provider_settings = (config.get("providers", {}).get(provider, {}) or {}).get(section, {})
-    return command_exists(provider_settings.get("cli") or default)
 
 
 def _custom_agents_info() -> dict[str, Any]:
@@ -643,7 +568,9 @@ def _claude_provider_report(
 ) -> dict[str, Any]:
     provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
     runtime_env = _provider_runtime_env(config, provider_id)
-    provider_binary = _configured_provider_binary(config, provider_id, "runtime", "claude")
+    provider_binary = configured_provider_binary(
+        config, provider_id=provider_id, section="runtime", default="claude"
+    )
     provider_auth_ready = claude_auth_ready(provider_binary, env=runtime_env, refresh_if_needed=False)
     # Auth readiness is read off credential files and never executes the binary,
     # so on its own it cannot tell a working CLI from a wrapper whose target is
@@ -722,7 +649,9 @@ def _gemini_provider_report(
     gemini_runtime = provider_config.get("gemini", {}) or {}
     runtime_approval_mode = (provider_config.get("approval", {}) or {}).get("default_approval_mode")
     selected_model = str(gemini_runtime.get("model") or "").strip() or None
-    provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
+    provider_binary = configured_provider_binary(
+        config, provider_id=provider_id, section="gemini", default="gemini"
+    )
     probe = cli_probe(provider_binary)
     provider_settings = _gemini_settings(config, provider_id)
     oauth_creds_path = _gemini_oauth_creds_path(config, provider_id)
@@ -809,8 +738,12 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_gemini = desired_gemini_settings(config, "gemini")
     codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
     codex_binary = command_exists(codex_profile.get("cli") or "codex")
-    gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
-    copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
+    gemini_binary = configured_provider_binary(
+        config, provider_id="gemini", section="gemini", default="gemini"
+    )
+    copilot_binary = configured_provider_binary(
+        config, provider_id="copilot", section="local", default="copilot"
+    )
     copilot_probe = cli_probe(copilot_binary)
     gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
     gh_version = _gh_version(gh_binary)

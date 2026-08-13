@@ -17,6 +17,8 @@ from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+COMMAND_TIMEOUT_SECONDS = 8.0
 from zoneinfo import ZoneInfo
 
 try:
@@ -926,39 +928,6 @@ def load_logs() -> list[dict[str, Any]]:
     return logs
 
 
-def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
-    if not LOG_FILE.exists():
-        return []
-    try:
-        with LOG_FILE.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            file_size = handle.tell()
-            block_size = 1 << 16
-            buffer = bytearray()
-            line_count = 0
-            position = file_size
-            while position > 0 and line_count <= max_lines:
-                read_size = min(block_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                buffer[0:0] = chunk
-                line_count = buffer.count(b"\n")
-            tail = bytes(buffer)
-        if line_count > max_lines:
-            split_at = -1
-            extra = line_count - max_lines
-            for _ in range(extra):
-                split_at = tail.find(b"\n", split_at + 1)
-                if split_at == -1:
-                    break
-            if split_at != -1:
-                tail = tail[split_at + 1 :]
-        return tail.decode("utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-
-
 def load_planning_state() -> dict[str, Any] | None:
     if not PLANNING_STATE_FILE.exists():
         return None
@@ -1431,13 +1400,11 @@ def run_git_command(
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
-    except subprocess.TimeoutExpired as err:
+    except subprocess.TimeoutExpired as exc:
         if required:
-            raise SystemExit(
-                failure_message or "git command timed out after 30s"
-            ) from err
+            raise SystemExit(f"git command timed out after {COMMAND_TIMEOUT_SECONDS:.0f}s: {' '.join(args)}") from exc
         return ""
     if result.returncode != 0:
         if required:
@@ -1455,9 +1422,8 @@ def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
-        return result.returncode == 0
     except subprocess.TimeoutExpired:
         return False
     except OSError:
@@ -1465,6 +1431,7 @@ def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
         # returning a code. Every caller reads False as "not proven", so a check
         # that could not run must report that rather than crash the transition.
         return False
+    return result.returncode == 0
 
 
 def get_gh_executable() -> str:
@@ -1486,7 +1453,7 @@ def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
         return None
@@ -2833,10 +2800,6 @@ def task_metadata_from_env() -> dict[str, Any]:
 
 def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
-
-
-def dependency_status_label(resolver: TaskResolver, dep_id: str) -> str:
-    return resolver.dependency_status(dep_id)
 
 
 def ensure_review_finalize_handoff(
@@ -5115,7 +5078,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
     if not remote_sha:
         raise SystemExit(
             f"Cannot submit {task_id} for review: origin/{branch} is missing. "
-            "Push the task branch with scripts/git/task_finalize.sh first."
+            "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
         )
 
     pr = run_gh_json_command(
@@ -5218,7 +5181,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if not isinstance(submission, dict) or not submission.get("remote_sha") or not submission.get("pr_number"):
         raise SystemExit(
             f"Cannot hand off {task_id} for review without verified remote PR evidence. "
-            "Run scripts/git/task_finalize.sh, then "
+            "Run delivery_toolchain/git/task_finalize.sh, then "
             f"AI_NAME={actor} ./scripts/ai-status.sh submit_review {task_id} <pr-number> <message>."
         )
     timestamp = iso_now()

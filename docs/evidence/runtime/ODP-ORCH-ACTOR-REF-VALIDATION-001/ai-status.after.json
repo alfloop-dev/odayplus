@@ -411,7 +411,7 @@
       "artifacts": [
         ".github/workflows/deploy-dev.yml",
         "infra/terraform",
-        "scripts/deployment",
+        "product_ops/deployment",
         "docs/evidence/runtime"
       ],
       "acceptance": [
@@ -441,7 +441,7 @@
         "ODP-MODEL-CAPABILITY-READINESS-001"
       ],
       "artifacts": [
-        "scripts/models/",
+        "product_ops/modeling/",
         "models/shared_ml/",
         "modules/learninghub/",
         "docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/"
@@ -475,7 +475,7 @@
         "apps/web/src/lib/auth/",
         "modules/forecastops/",
         "modules/learninghub/",
-        "scripts/models/",
+        "product_ops/modeling/",
         "shared/auth/",
         "shared/infrastructure/persistence/",
         "tests/integration/"
@@ -501,7 +501,7 @@
       ],
       "artifacts": [
         "scripts/data_plane/",
-        "scripts/models/",
+        "product_ops/modeling/",
         "docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/"
       ],
       "acceptance": [
@@ -516,7 +516,7 @@
       "priority": "P0",
       "writable_paths": [
         "scripts/data_plane/**",
-        "scripts/models/**",
+        "product_ops/modeling/**",
         "docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/**"
       ],
       "forbidden_paths": [
@@ -527,13 +527,13 @@
         "docs_archive/**",
         "docs/design/**",
         "docs/evidence/PACKAGE_10_*",
-        "scripts/deploy_cloud_run_waji.sh",
+        "product_ops/deployment/deploy_cloud_run_waji.sh",
         "tests/ops/**",
         ".orchestrator/**",
         ".github/**"
       ],
       "merge_requires_independent_review": true,
-      "conflict_gate": "Before modifying any scripts/models file, compare ODP-PRODUCTION-MODEL-REGISTRY-001 task branch and active Cloud Run job contract. Do not overwrite or duplicate its release workflow; if the same file differs, report and hand off composition instead of merging independently.",
+      "conflict_gate": "Before modifying any product_ops/modeling file, compare ODP-PRODUCTION-MODEL-REGISTRY-001 task branch and active Cloud Run job contract. Do not overwrite or duplicate its release workflow; if the same file differs, report and hand off composition instead of merging independently.",
       "mutates_canonical": true,
       "waiting_for": "Human/Ops"
     },
@@ -675,8 +675,8 @@
       "writable_paths": [
         "docs/evidence/fleet_dispatch/ODP-DEPLOY-WORKER-JOB-EXECUTION-001.md",
         "docs/evidence/runtime/ODP-DEPLOY-WORKER-JOB-EXECUTION-001/**",
-        "scripts/deployment/cloud_run_job_entrypoint.py",
-        "scripts/deploy_cloud_run_waji.sh",
+        "product_ops/deployment/cloud_run_job_entrypoint.py",
+        "product_ops/deployment/deploy_cloud_run_waji.sh",
         "infra/docker/worker.Dockerfile",
         "apps/worker/**",
         "shared/jobs/**",
@@ -1167,7 +1167,7 @@
       "task_id": "ODP-P10-DEV-REDEPLOY-VERIFY-001",
       "owner": "Claude2",
       "waiting_for": "Codex",
-      "message": "BLOCKED on a deploy-script defect outside this task's writable scope. Deploy Dev run 30362772798 ran on the exact merged origin/dev SHA 450c7fadd and FAILED: scripts/deploy_cloud_run_waji.sh:284/:308 call 'gcloud run jobs executions describe-latest', which the runner's Cloud SDK rejects (Invalid choice), so the armed rollback restored the previous API/Web traffic. No oday-api or oday-web revision carries the release SHA, so acceptance 1-4 are FAIL/NOT REACHED; only acceptance 5 passes at source scope (40/40 screens, 117 retired paths, 0 survivors). The locked-Python fix DID hold (preflight 72/72, both prior ModuleNotFoundError checks green) and api/worker/scheduler images built+cosign-verified. Evidence PR #476 -> dev with full receipts, both Antigravity3 quota failures preserved. NEEDED: seed a remediation task on scripts/deploy_cloud_run_waji.sh to make the Cloud Run Job execution proof SDK-portable (executions list --sort-by=~creationTimestamp --limit=1, or pin setup-gcloud), plus a non-stubbed argv regression guard and a recursive artifact upload path; then re-dispatch this task. RISK: dev DB was migrated to the new release head while traffic rolled back to the older API image. scripts/** is forbidden here so nothing was patched.",
+      "message": "BLOCKED on a deploy-script defect outside this task's writable scope. Deploy Dev run 30362772798 ran on the exact merged origin/dev SHA 450c7fadd and FAILED: product_ops/deployment/deploy_cloud_run_waji.sh:284/:308 call 'gcloud run jobs executions describe-latest', which the runner's Cloud SDK rejects (Invalid choice), so the armed rollback restored the previous API/Web traffic. No oday-api or oday-web revision carries the release SHA, so acceptance 1-4 are FAIL/NOT REACHED; only acceptance 5 passes at source scope (40/40 screens, 117 retired paths, 0 survivors). The locked-Python fix DID hold (preflight 72/72, both prior ModuleNotFoundError checks green) and api/worker/scheduler images built+cosign-verified. Evidence PR #476 -> dev with full receipts, both Antigravity3 quota failures preserved. NEEDED: seed a remediation task on product_ops/deployment/deploy_cloud_run_waji.sh to make the Cloud Run Job execution proof SDK-portable (executions list --sort-by=~creationTimestamp --limit=1, or pin setup-gcloud), plus a non-stubbed argv regression guard and a recursive artifact upload path; then re-dispatch this task. RISK: dev DB was migrated to the new release head while traffic rolled back to the older API image. scripts/** is forbidden here so nothing was patched.",
       "status": "resolved",
       "created_at": "2026-07-28T13:38:45Z",
       "resolved_at": "2026-07-28T16:10:01Z"

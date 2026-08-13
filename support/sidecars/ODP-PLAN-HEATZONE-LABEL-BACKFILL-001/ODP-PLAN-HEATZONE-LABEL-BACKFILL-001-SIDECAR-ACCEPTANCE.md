@@ -38,9 +38,9 @@ Until `Human/Ops` provides the required authoritative dataset handback (>= 200 m
 | Sidecar Support Packet | `support/sidecars/ODP-PLAN-HEATZONE-LABEL-BACKFILL-001/ODP-PLAN-HEATZONE-LABEL-BACKFILL-001-SIDECAR-ACCEPTANCE.md` | Non-canonical acceptance packet, dependency map, and Human/Ops handback guide. |
 | Gate 1 Evidence & Data Handback | `docs/evidence/models/ODP-PLAN-HEATZONE-OUTCOME-001/` | Gate 1 benchmark receipt (`GATE1_BENCHMARK_RECEIPT.json`), report (`BENCHMARK_REPORT.md`), and data handback requirements (`DATA_HANDBACK.json`). |
 | Human Data Gate Intake | `docs/evidence/models/heatzone/human-data-gate/` | Already populated with `intake_packet.md`, `DATA_HANDBACK.json`, and `AUTHORITATIVE_READBACK_SPEC.json` (generated 2026-08-03). Human/Ops adds the dataset snapshot readback here. |
-| Benchmark & Evaluation Script | `scripts/models/heatzone_benchmark.py` | CLI (`generate` \| `verify`) that produces and verifies Gate 1 receipts for HeatZone model inventory. |
-| View Installation Script | `scripts/models/install_views.py` | Model-ready view installer (`inventory` \| `install`) creating `model_ready.heatzone_training_view`. Uses package-relative imports — see Section G. |
-| Model-Ready View SQL | `scripts/models/sql/model_ready_views.sql` (lines 670–1149) | Canonical `heatzone_training_view` definition; authoritative source for the column set Human/Ops must satisfy. |
+| Benchmark & Evaluation Script | `product_ops/modeling/heatzone_benchmark.py` | CLI (`generate` \| `verify`) that produces and verifies Gate 1 receipts for HeatZone model inventory. |
+| View Installation Script | `product_ops/modeling/install_views.py` | Model-ready view installer (`inventory` \| `install`) creating `model_ready.heatzone_training_view`. Uses package-relative imports — see Section G. |
+| Model-Ready View SQL | `product_ops/modeling/sql/model_ready_views.sql` (lines 670–1149) | Canonical `heatzone_training_view` definition; authoritative source for the column set Human/Ops must satisfy. |
 | Domain Invariants & Contract | `modules/heatzone/domain/scoring.py` (re-exported by `modules/heatzone/domain/__init__.py`) | Defines `HEATZONE_FEATURE_VERSION = "heatzone-training-view-v2"` and enforces complete-row rejection. |
 | Verification & Governance Suite | `tests/models/test_heatzone_benchmark.py`, `tests/integration/test_heatzone_flow.py` | Unit and flow tests verifying fail-closed invariants, benchmark evaluations, and synthetic label rejections. |
 
@@ -63,7 +63,7 @@ Until `Human/Ops` provides the required authoritative dataset handback (>= 200 m
 | B1 | **Zero Synthetic Data Policy** | All labels originate from real POS transactions and approved store opening dates. | Synthetic labels, fixture rows, auto-seeded entries, or simulated opening dates are present (`auto_seeded = true`). | `PASSED` | `GATE1_BENCHMARK_RECEIPT.json` (`auto_seeded: false`) |
 | B2 | **Governed-Disabled Binding** | HeatZone capability binding remains `GOVERNED_DISABLED` (`DATA_CONTRACT_NOT_MATURE`) until all criteria pass. | Capability promoted to `ACTIVE` or `PASSED` prematurely while label count < 200. | `PASSED` | `modules/heatzone/domain/scoring.py`, `BENCHMARK_REPORT.md` |
 | B3 | **No AI-Authored Waiver** | Verification requires authentic production readback; AI agents cannot self-certify data maturity. | AI-authored receipt, hardcoded mock count, or unverified ready claim. | `PASSED` | Task Brief & Governance Rules |
-| B4 | **No Row-Generation Constructs in View SQL** | `_validate_sql_contract` rejects `generate_series(`, `random(`, `setseed(`, and `create table as` in the model-ready SQL. | Installer SQL contains any prohibited row-generation construct. | `PASSED` | `scripts/models/install_views.py` |
+| B4 | **No Row-Generation Constructs in View SQL** | `_validate_sql_contract` rejects `generate_series(`, `random(`, `setseed(`, and `create table as` in the model-ready SQL. | Installer SQL contains any prohibited row-generation construct. | `PASSED` | `product_ops/modeling/install_views.py` |
 
 ### C. Gate 1 benchmark evaluation criteria
 
@@ -96,15 +96,15 @@ Re-run on composed base `529f0a2c` (2026-08-11), worktree `odp-plan-heatzone-lab
 | Command | Objective | Result | Status |
 |---|---|---|---|
 | `python3 -m pytest -q tests/models/test_heatzone_benchmark.py tests/integration/test_heatzone_flow.py` | HeatZone benchmark, Gate 1 receipt, and integration flow suites. | 28 passed | `PASSED` |
-| `python3 -m ruff check scripts/models/heatzone_benchmark.py scripts/models/install_views.py tests/models/test_heatzone_benchmark.py tests/integration/test_heatzone_flow.py modules/heatzone/domain/` | Static linting of the benchmark, installer, domain, and test surfaces. | All checks passed | `PASSED` |
+| `python3 -m ruff check product_ops/modeling/heatzone_benchmark.py product_ops/modeling/install_views.py tests/models/test_heatzone_benchmark.py tests/integration/test_heatzone_flow.py modules/heatzone/domain/` | Static linting of the benchmark, installer, domain, and test surfaces. | All checks passed | `PASSED` |
 | `git diff --check` | Formatting & whitespace check. | Clean | `PASSED` |
-| `python3 -m scripts.models.install_views --help` | Confirm installer CLI contract (`inventory` \| `install`). | Subcommands confirmed | `PASSED` |
-| `python3 scripts/models/heatzone_benchmark.py --help` | Confirm benchmark CLI contract (`generate` \| `verify`). | Subcommands confirmed | `PASSED` |
-| `python3 scripts/models/install_views.py` | Probe the runbook command published in the prior packet revision. | `ImportError: attempted relative import with no known parent package` | `FAILED` — see **G1** |
+| `python3 -m product_ops.modeling.install_views --help` | Confirm installer CLI contract (`inventory` \| `install`). | Subcommands confirmed | `PASSED` |
+| `python3 product_ops/modeling/heatzone_benchmark.py --help` | Confirm benchmark CLI contract (`generate` \| `verify`). | Subcommands confirmed | `PASSED` |
+| `python3 product_ops/modeling/install_views.py` | Probe the runbook command published in the prior packet revision. | `ImportError: attempted relative import with no known parent package` | `FAILED` — see **G1** |
 
 ## F. Schema reconciliation discrepancies (parent-owner decision required)
 
-These are reported, not fixed. `AUTHORITATIVE_READBACK_SPEC.json` and `DATA_HANDBACK.json` are canonical evidence owned by `ODP-PLAN-HEATZONE-LABEL-BACKFILL-001` / `ODP-PLAN-HEATZONE-OUTCOME-001`; a sidecar may not amend them. Each item was confirmed by grepping the `heatzone_training_view` body in `scripts/models/sql/model_ready_views.sql` (lines 670–1149).
+These are reported, not fixed. `AUTHORITATIVE_READBACK_SPEC.json` and `DATA_HANDBACK.json` are canonical evidence owned by `ODP-PLAN-HEATZONE-LABEL-BACKFILL-001` / `ODP-PLAN-HEATZONE-OUTCOME-001`; a sidecar may not amend them. Each item was confirmed by grepping the `heatzone_training_view` body in `product_ops/modeling/sql/model_ready_views.sql` (lines 670–1149).
 
 | ID | Discrepancy | Observed | Consequence if unresolved |
 |---|---|---|---|
@@ -118,8 +118,8 @@ These are reported, not fixed. `AUTHORITATIVE_READBACK_SPEC.json` and `DATA_HAND
 
 | ID | Issue | Correct form |
 |---|---|---|
-| G1 | `python3 scripts/models/install_views.py` fails immediately: the module uses package-relative imports (`from .contracts import ...`), and the bare subcommand is also missing. | `python3 -m scripts.models.install_views install` (or `inventory` for a read-only check) |
-| G2 | `heatzone_benchmark.py` is invoked correctly as a direct script path and requires an explicit subcommand. | `python3 scripts/models/heatzone_benchmark.py generate` (verified) |
+| G1 | `python3 product_ops/modeling/install_views.py` fails immediately: the module uses package-relative imports (`from .contracts import ...`), and the bare subcommand is also missing. | `python3 -m product_ops.modeling.install_views install` (or `inventory` for a read-only check) |
+| G2 | `heatzone_benchmark.py` is invoked correctly as a direct script path and requires an explicit subcommand. | `python3 product_ops/modeling/heatzone_benchmark.py generate` (verified) |
 
 ## Dependency diagram
 
@@ -167,13 +167,13 @@ When Expansion Operations / POS Data Platform is ready to hand back the authorit
 2. **Refresh View & Benchmark**:
    ```bash
    # Read-only inventory check first
-   python3 -m scripts.models.install_views inventory
+   python3 -m product_ops.modeling.install_views inventory
 
    # Re-install model-ready views (creates model_ready.heatzone_training_view)
-   python3 -m scripts.models.install_views install
+   python3 -m product_ops.modeling.install_views install
 
    # Re-evaluate the Gate 1 benchmark receipt
-   python3 scripts/models/heatzone_benchmark.py generate
+   python3 product_ops/modeling/heatzone_benchmark.py generate
    ```
 
 3. **Verify Receipt & Hand Back**:

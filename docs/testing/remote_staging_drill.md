@@ -27,7 +27,7 @@ The runbook steps executed sequentially during the drill:
 7. **Verify Rolled Back State**: Assert that the probe case is gone (rolled back) and that the Taipei baseline case remains intact.
 
 ### 2. Backup / Restore / Rollback Outputs
-The validation was run via `scripts/e2e/verify_deployment_health_backup_rollback.py` and returned a passing status.
+The validation was run via `delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py` and returned a passing status.
 - **Drill Status**: Passed
 - **Backup SHA-256**: `f22990c93d7822d063a9f9843cf551429b81ed1469574291b98b6f4add2810c9`
 - **Restored DB SHA-256**: matches backup SHA-256 (`f22990c93d7822d063a9f9843cf551429b81ed1469574291b98b6f4add2810c9`)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 STATUS_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
-UPDATER = ROOT / "scripts/e2e/update_external_proof_handback_status_board.py"
+UPDATER = ROOT / "delivery_toolchain/e2e/update_external_proof_handback_status_board.py"
 ARTIFACT_TEST = ROOT / "tests/e2e/test_external_proof_handback_artifact.py"
 EXPECTED_SHA = "89d0ccc19c983a3e8f8e908459c65939a62d4dfb"
 

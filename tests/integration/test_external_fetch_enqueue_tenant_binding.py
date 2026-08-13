@@ -277,7 +277,7 @@ def test_two_tenants_sharing_one_idempotency_key_are_not_collapsed(bundle) -> No
 
 
 def _gate_config(**overrides):
-    from scripts.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
 
     return gate.GateConfig(
         api_url="https://api.example.invalid",
@@ -296,7 +296,7 @@ def test_gate_enqueue_body_omits_the_tenant_instead_of_guessing(monkeypatch) -> 
     cannot read, the probe body must carry no tenant at all -- the API binds it
     -- rather than reintroducing the split through the environment.
     """
-    from scripts.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
 
     monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", DEPLOYMENT_TENANT)
     monkeypatch.setenv("ODP_TENANT_ID", DEPLOYMENT_TENANT)
@@ -310,7 +310,7 @@ def test_gate_enqueue_body_omits_the_tenant_instead_of_guessing(monkeypatch) -> 
 
 def test_gate_still_sends_an_explicit_operator_tenant(monkeypatch) -> None:
     """An explicit ``--operator-tenant`` is asserted, not silently dropped."""
-    from scripts.e2e import check_live_e2e_gate as gate
+    from delivery_toolchain.e2e import check_live_e2e_gate as gate
 
     monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", DEPLOYMENT_TENANT)
 

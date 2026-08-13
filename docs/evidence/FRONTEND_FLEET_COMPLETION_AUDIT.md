@@ -23,8 +23,8 @@ review/closeout.
 |---|---|
 | `docs/design/ODAY_PLUS_DESIGN_TO_FRONTEND_EXECUTION_MATRIX.md` | Source task matrix, routes, components, states, and E2E proof expectations |
 | `docs/evidence/PRODUCT_VALIDATION_FLEET_DISPATCH.md` | Durable owner/reviewer lanes and dispatch rules |
-| `scripts/e2e/run_product_e2e.sh` | Product E2E runner and required Playwright specs |
-| `scripts/e2e/check_product_release_gate.py` | Static release gate for product E2E evidence packet |
+| `delivery_toolchain/e2e/run_product_e2e.sh` | Product E2E runner and required Playwright specs |
+| `delivery_toolchain/e2e/check_product_release_gate.py` | Static release gate for product E2E evidence packet |
 | `tests/e2e/test_frontend_execution_matrix_coverage.py` | Drift guard tying dispatch, matrix, runner, and release gate together |
 | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md` | Release-level product E2E scenario registry and evidence summary |
 | GitHub PR #82 | Draft release PR with current clean checks and Human/Ops gate |

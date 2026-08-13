@@ -21,17 +21,17 @@ from modules.sitescore.domain import (
     score_sites_from_model_predictions,
     to_sitescore_model_row,
 )
-from scripts.models.contracts import MODEL_SPECS, DataBounds
-from scripts.models.install_views import (
+from product_ops.modeling.contracts import MODEL_SPECS, DataBounds
+from product_ops.modeling.install_views import (
     ELIGIBILITY_PREREQUISITE_SQL,
     ModelReadyViewInstaller,
     ModelReadyViewInstallError,
 )
-from scripts.models.release import prepare_model_rows
-from scripts.models.storage import LoadedModelReadyRows
+from product_ops.modeling.release import prepare_model_rows
+from product_ops.modeling.storage import LoadedModelReadyRows
 
 MODEL_READY_SQL = (
-    Path(__file__).parents[2] / "scripts/models/sql/model_ready_views.sql"
+    Path(__file__).parents[2] / "product_ops/modeling/sql/model_ready_views.sql"
 ).read_text(encoding="utf-8")
 NAMESPACE = UUID("f58c8d6c-baa1-4e58-9984-383fb725cd8a")
 ORIGIN = date(2025, 4, 1)

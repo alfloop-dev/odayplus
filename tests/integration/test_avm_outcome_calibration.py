@@ -417,7 +417,7 @@ def test_mutation_finance_legal_unauthorized_action_returns_deny() -> None:
 # --- B7 Mutations ---
 
 def test_authoritative_evidence_represents_unpopulated_snapshot_honestly() -> None:
-    from scripts.models.avm_benchmark import generate_avm_outcome_evidence_pack
+    from product_ops.modeling.avm_benchmark import generate_avm_outcome_evidence_pack
     report, gate1_receipt, audit_receipt, report_md, handback_json = generate_avm_outcome_evidence_pack(
         observed_count=0,
         eligible_count=0,

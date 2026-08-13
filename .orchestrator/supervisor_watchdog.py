@@ -25,6 +25,7 @@ from common import (
     write_activity_log,
     write_json,
 )
+from runtime_state import save_runtime_state
 
 ACTIVE_WORKER_STATUSES = {
     "running",
@@ -352,7 +353,11 @@ def enter_watchdog_safe_mode(config: dict[str, Any], runtime_state: dict[str, An
     watchdog["safe_mode_reason"] = reason
     watchdog["safe_mode_started_at"] = isoformat_utc(now)
     watchdog["last_decision"] = "restart_supervisor"
-    write_json(config_path(config, "state_file"), runtime_state)
+    # Runtime state has several concurrent writers (supervisor, event scanner,
+    # approval broker and watchdog).  Always use its locked merge writer so a
+    # restart decision cannot overwrite worker/queue updates made after the
+    # watchdog loaded its snapshot.
+    save_runtime_state(config, runtime_state)
 
 
 def start_supervisor(config: dict[str, Any], settings: dict[str, Any], now: datetime) -> tuple[int, Path]:

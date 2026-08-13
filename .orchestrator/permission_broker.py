@@ -15,11 +15,15 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from approval_queue import consume_resume_override, create_approval, find_resume_override
+from approval_queue import (
+    approval_signature,
+    consume_resume_override,
+    create_approval,
+    find_resume_override,
+)
 from common import (
     ROOT,
     anchor_config_paths,
-    approval_tool_input_signature,
     authoritative_status_root,
     config_path,
     load_config,
@@ -1490,19 +1494,6 @@ def _permission_request_response(
     }
 
 
-def _approval_signature(
-    session_id: str | None,
-    tool_name: str,
-    tool_input: dict[str, Any] | None = None,
-    tool_input_signature: str | None = None,
-) -> tuple[str | None, str, str]:
-    return (
-        session_id,
-        tool_name,
-        str(tool_input_signature or approval_tool_input_signature(tool_input if tool_input is not None else {})),
-    )
-
-
 def _permission_rule(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
     if not tool_name:
         return None
@@ -1535,11 +1526,11 @@ def _matching_approval(
     tool_input: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = approval_signature(session_id, tool_name, tool_input)
     pending_match = None
     history_match = None
     for item in state.get("pending", []):
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),
@@ -1547,7 +1538,7 @@ def _matching_approval(
         if item_signature == signature:
             pending_match = item
     for item in reversed(state.get("history", [])):
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),

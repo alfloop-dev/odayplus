@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_release_fleet_dispatch_status.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_release_fleet_dispatch_status.py"
 
 
 def load_checker_module():
@@ -36,20 +36,20 @@ def report_payload(*, check_returncode: int = 0, merge_state: str = "CLEAN") -> 
         "checks": [
             {
                 "label": "external issue sync",
-                "command": "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
+                "command": "python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees",
                 "returncode": check_returncode,
                 "output": "External proof issue sync checks passed.",
             },
             {
                 "label": "product closeout PR notification",
-                "command": "python3 scripts/e2e/check_product_closeout_fleet_notification.py",
+                "command": "python3 delivery_toolchain/e2e/check_product_closeout_fleet_notification.py",
                 "returncode": 0,
                 "output": "Product closeout fleet notification checks passed.",
             },
         ],
         "acceptance_readiness": {
             "label": "external acceptance readiness",
-            "command": "python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report",
+            "command": "python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --report",
             "returncode": 0,
             "output": (
                 "# External Proof Acceptance Readiness\n\n"
@@ -61,7 +61,7 @@ def report_payload(*, check_returncode: int = 0, merge_state: str = "CLEAN") -> 
         },
         "issue_handback_scan": {
             "label": "external issue handback scan",
-            "command": "python3 scripts/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
+            "command": "python3 delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation",
             "returncode": 0,
             "output": (
                 "# External Proof Issue Handback Scan\n\n"

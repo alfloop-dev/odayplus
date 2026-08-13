@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 STATUS_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
-CHECKER = ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_status_board.py"
 
 
 def load_checker_module():

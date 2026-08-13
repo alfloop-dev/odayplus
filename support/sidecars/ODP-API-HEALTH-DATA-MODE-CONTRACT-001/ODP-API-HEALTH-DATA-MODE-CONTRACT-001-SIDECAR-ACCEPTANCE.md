@@ -26,7 +26,7 @@ Parent task `ODP-API-HEALTH-DATA-MODE-CONTRACT-001` addressed the root cause acr
 1. **API Endpoint Contract (`apps/api/oday_api/main.py`)**:
    - Updated `/platform/health` and `/readiness` route handlers to explicitly expose a top-level `data_mode` string field matching `modes['data']['mode']`.
 
-2. **Deployment Validator Envelope Resolution (`scripts/deployment/validate_cloud_run_live_deployment.py`)**:
+2. **Deployment Validator Envelope Resolution (`product_ops/deployment/validate_cloud_run_live_deployment.py`)**:
    - Enhanced `validator._declared_data_mode` to inspect canonical top-level `data_mode`, nested `modes.data.mode`, `details.data.mode`, and `meta` envelope shapes.
    - Retained strict rejection of missing, empty, fixture, or mock data mode values.
 
@@ -77,7 +77,7 @@ Parent task `ODP-API-HEALTH-DATA-MODE-CONTRACT-001` addressed the root cause acr
 | File / Component Path | Primary Layer | Sidecar Slice Role | Disposition |
 | --- | --- | --- | --- |
 | `apps/api/oday_api/main.py` | API Runtime | Parent Task (`ODP-API-HEALTH-DATA-MODE-CONTRACT-001`) | **Preserved / Intact** |
-| `scripts/deployment/validate_cloud_run_live_deployment.py` | Deployment Ops | Parent Task (`ODP-API-HEALTH-DATA-MODE-CONTRACT-001`) | **Preserved / Intact** |
+| `product_ops/deployment/validate_cloud_run_live_deployment.py` | Deployment Ops | Parent Task (`ODP-API-HEALTH-DATA-MODE-CONTRACT-001`) | **Preserved / Intact** |
 | `tests/ops/test_cloud_run_live_deployment.py` | Ops Test Suite | Parent Task (`ODP-API-HEALTH-DATA-MODE-CONTRACT-001`) | **Preserved / Intact** |
 | `support/sidecars/ODP-API-HEALTH-DATA-MODE-CONTRACT-001/ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-ACCEPTANCE.md` | Sidecar Support | This Task (`ODP-API-HEALTH-DATA-MODE-CONTRACT-001-SIDECAR-ACCEPTANCE`) | **ADDED** |
 | L1 Canonical Architecture Documents | Platform Policy | None | **STRICTLY UNTOUCHED** |
@@ -96,7 +96,7 @@ The parent task fixes and this sidecar support artifact were verified with the f
 /home/lupin/oday-plus/.venv/bin/pytest -q tests/reliability/test_health_endpoints.py tests/integration/test_operator_live_provenance_health.py
 
 # 3. Static Code Quality & Formatting Audit
-/home/lupin/oday-plus/.venv/bin/ruff check apps/api/oday_api/main.py scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py
+/home/lupin/oday-plus/.venv/bin/ruff check apps/api/oday_api/main.py product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py
 git diff --check
 ```
 

@@ -30,7 +30,7 @@ tenant-qualified).
 
 - `SCHEDULED_TENANT_ENV_VAR = "ODP_SCHEDULED_INGESTION_TENANT_ID"`, falling back
   to the process-wide `ODP_TENANT_ID` already used by
-  `scripts/external_data_backfill.py`; `resolve_scheduled_tenant_id(env)` reads
+  `product_ops/external_data_backfill.py`; `resolve_scheduled_tenant_id(env)` reads
   them in that order.
 - `ODayScheduler(..., tenant_id=None, env=None)` resolves once at construction;
   an explicit `tenant_id=` wins (this is how tests and single-tenant embedders

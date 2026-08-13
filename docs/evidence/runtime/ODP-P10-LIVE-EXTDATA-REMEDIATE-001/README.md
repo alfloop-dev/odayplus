@@ -28,7 +28,7 @@ goes green without them.
 | --- | --- | --- |
 | 3 | `apps/api/oday_api/main.py` | `external_fetch_job_tenant()` resolves the enqueue tenant from the verified principal. `enqueue_job` applies it to `job_type == "external-fetch"`: a payload `tenant_id` that differs from the authenticated tenant is refused `403 TENANT_SCOPE_MISMATCH`; otherwise the payload tenant is rewritten from the principal. Anonymous → `401 AUTHENTICATION_REQUIRED`; missing `integration:create` → `403 EXTERNAL_FETCH_CREATE_FORBIDDEN`; principal with no tenant claim → `403 TENANT_SCOPE_REQUIRED`. |
 | 3 | `apps/api/oday_api/main.py` | The queue idempotency key is tenant-qualified for `external-fetch` (`external-fetch:v1:<tenant>:<key>`), so two tenants sharing one key are not collapsed into one job. The `forecast:v1:` key format is unchanged byte-for-byte. |
-| 4 | `scripts/e2e/check_live_e2e_gate.py` | `_enqueue_body` drops the `ODP_SCHEDULED_INGESTION_TENANT_ID` → `ODP_TENANT_ID` → `"tenant-e2e"` fallback chain. It omits `tenant_id` entirely and lets the API bind it. An explicit `--operator-tenant` is still sent, so a stale override fails loudly instead of writing somewhere unreadable. |
+| 4 | `delivery_toolchain/e2e/check_live_e2e_gate.py` | `_enqueue_body` drops the `ODP_SCHEDULED_INGESTION_TENANT_ID` → `ODP_TENANT_ID` → `"tenant-e2e"` fallback chain. It omits `tenant_id` entirely and lets the API bind it. An explicit `--operator-tenant` is still sent, so a stale override fails loudly instead of writing somewhere unreadable. |
 | — | `tests/integration/test_external_fetch_enqueue_tenant_binding.py` | New, 11 tests (§2). |
 
 `.github/workflows/**`, `deploy_cloud_run_waji.sh`, provider code, the ingestion
@@ -89,7 +89,7 @@ tests/integration/test_forecastops_tenant_runtime_contract.py    ├ 64 passed
 tests/reliability/test_cross_flow_gate.py                        │
 tests/integration/test_worker_scheduler_runtime.py          ┘
 tests/e2e/test_live_e2e_gate.py                                   132 passed
-ruff check apps/api/oday_api/main.py scripts/e2e/check_live_e2e_gate.py \
+ruff check apps/api/oday_api/main.py delivery_toolchain/e2e/check_live_e2e_gate.py \
            tests/integration/test_external_fetch_enqueue_tenant_binding.py
                                                                   All checks passed
 ```
@@ -177,11 +177,11 @@ docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-REMEDIATE-001/**
 Two of the four files changed here are **not** in that list:
 
 - `apps/api/oday_api/main.py`
-- `scripts/e2e/check_live_e2e_gate.py`
+- `delivery_toolchain/e2e/check_live_e2e_gate.py`
 
 Both are named verbatim in the T10 §7 preamble — *"Hand to a task with write
 access to `.github/workflows/**`, `apps/api/oday_api/main.py`,
-`scripts/e2e/check_live_e2e_gate.py`, deployment variables, and the
+`delivery_toolchain/e2e/check_live_e2e_gate.py`, deployment variables, and the
 principal-map secret"* — and the coordinator's dispatch note directs "Execute
 README section 7 exact T11 handoff". So the intent is on record; the ceiling
 JSON simply predates the diagnosis. It was authored 2026-08-09 on the

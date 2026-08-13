@@ -24,12 +24,12 @@ CLOSEOUT_MANIFEST = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 CLOSEOUT_PLAYBOOK = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md"
 CLOSEOUT_QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 CLOSEOUT_PICKUP_BOARD = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
-CHECK_CLOSEOUT_PICKUP_BOARD = ROOT / "scripts/e2e/check_product_closeout_pickup_board.py"
-CLOSEOUT_FLEET_COMMENT_SYNC = ROOT / "scripts/e2e/sync_product_closeout_fleet_comment.py"
+CHECK_CLOSEOUT_PICKUP_BOARD = ROOT / "delivery_toolchain/e2e/check_product_closeout_pickup_board.py"
+CLOSEOUT_FLEET_COMMENT_SYNC = ROOT / "delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py"
 CLOSEOUT_FLEET_NOTIFICATION_CHECK = (
-    ROOT / "scripts/e2e/check_product_closeout_fleet_notification.py"
+    ROOT / "delivery_toolchain/e2e/check_product_closeout_fleet_notification.py"
 )
-RELEASE_FLEET_DISPATCH_STATUS_CHECK = ROOT / "scripts/e2e/check_release_fleet_dispatch_status.py"
+RELEASE_FLEET_DISPATCH_STATUS_CHECK = ROOT / "delivery_toolchain/e2e/check_release_fleet_dispatch_status.py"
 PRODUCT_GRADE_GAP_TASKS = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_GAP_EXECUTION_TASKS.md"
 PRODUCT_GRADE_FLEET_DISPATCH = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.md"
 PRODUCT_GRADE_FLEET_DISPATCH_PACKET = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json"
@@ -48,23 +48,23 @@ EXTERNAL_PROOF_FLEET_PICKUP_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_P
 EXTERNAL_PROOF_HANDBACK_STATUS_BOARD = (
     ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
 )
-EXTERNAL_PROOF_PICKUP_BOARD_CHECK = ROOT / "scripts/e2e/check_external_proof_fleet_pickup_board.py"
+EXTERNAL_PROOF_PICKUP_BOARD_CHECK = ROOT / "delivery_toolchain/e2e/check_external_proof_fleet_pickup_board.py"
 EXTERNAL_PROOF_STATUS_BOARD_CHECK = (
-    ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
+    ROOT / "delivery_toolchain/e2e/check_external_proof_handback_status_board.py"
 )
-EXTERNAL_PROOF_LIVE_BLOCKERS_CHECK = ROOT / "scripts/e2e/check_external_proof_live_blockers.py"
+EXTERNAL_PROOF_LIVE_BLOCKERS_CHECK = ROOT / "delivery_toolchain/e2e/check_external_proof_live_blockers.py"
 EXTERNAL_PROOF_NOTIFICATIONS_CHECK = (
-    ROOT / "scripts/e2e/check_external_proof_fleet_notifications.py"
+    ROOT / "delivery_toolchain/e2e/check_external_proof_fleet_notifications.py"
 )
 EXTERNAL_PROOF_FOLLOWUP_WORKFLOW = ROOT / ".github/workflows/external-proof-followup.yml"
 EXTERNAL_PROOF_FOLLOWUP_WORKFLOW_CHECK = (
-    ROOT / "scripts/e2e/check_external_proof_followup_workflow.py"
+    ROOT / "delivery_toolchain/e2e/check_external_proof_followup_workflow.py"
 )
-GO_NO_GO_CHECK = ROOT / "scripts/e2e/check_product_go_no_go.py"
-RUNNER = ROOT / "scripts/e2e/run_product_e2e.sh"
-RELEASE_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
-CLOSEOUT_QUEUE_CHECK = ROOT / "scripts/e2e/check_product_closeout_queue.py"
-GRADE_FLEET_DISPATCH_CHECK = ROOT / "scripts/e2e/check_product_grade_fleet_dispatch.py"
+GO_NO_GO_CHECK = ROOT / "delivery_toolchain/e2e/check_product_go_no_go.py"
+RUNNER = ROOT / "delivery_toolchain/e2e/run_product_e2e.sh"
+RELEASE_GATE = ROOT / "delivery_toolchain/e2e/check_product_release_gate.py"
+CLOSEOUT_QUEUE_CHECK = ROOT / "delivery_toolchain/e2e/check_product_closeout_queue.py"
+GRADE_FLEET_DISPATCH_CHECK = ROOT / "delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py"
 HARDCODED_DEV_RELEASE_REF = re.compile(r"dev@[0-9a-f]{7,40}")
 STALE_RELEASE_REFS = (
     "dev@8834cc819051c2ebda8f531f467a67b07cc547e4",
@@ -240,7 +240,7 @@ def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
         assert stale_recommendation not in audit_text
 
 
-def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -> None:
+def test_release_evidence_documents_use_manifest_release_head_as_authoritative_candidate() -> None:
     evidence_docs = [
         FLEET_DISPATCH,
         COMPLETION_AUDIT,
@@ -392,12 +392,12 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
     board_text = CLOSEOUT_PICKUP_BOARD.read_text(encoding="utf-8")
 
     assert "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md" in release_gate_text
-    assert "scripts/e2e/check_product_closeout_pickup_board.py" in release_gate_text
-    assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
-    assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
-    assert "scripts/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
-    assert "scripts/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
-    assert "scripts/e2e/check_release_fleet_dispatch_status.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_pickup_board.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_action.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_action_matrix.py" in release_gate_text
+    assert "delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_release_fleet_dispatch_status.py" in release_gate_text
     assert "Product closeout pickup board checks passed." in checker_text
     assert "Product Release Closeout Pickup Board" in board_text
     assert "PRODUCT_RELEASE_CLOSEOUT_QUEUE.json" in board_text
@@ -464,7 +464,7 @@ def test_product_release_closeout_pickup_board_tracks_queue_actions() -> None:
 
 def test_product_release_closeout_pickup_board_checker_runs() -> None:
     result = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_closeout_pickup_board.py"],
+        [sys.executable, "delivery_toolchain/e2e/check_product_closeout_pickup_board.py"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -478,7 +478,7 @@ def test_product_go_no_go_guard_blocks_unaccepted_external_proof_claims() -> Non
     go_no_go_text = GO_NO_GO.read_text(encoding="utf-8")
     checker_text = GO_NO_GO_CHECK.read_text(encoding="utf-8")
 
-    assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_go_no_go.py" in release_gate_text
     assert "Product go/no-go guard checks passed." in checker_text
     assert "Decision status: conditional go for deterministic product E2E" in go_no_go_text
     assert "remote staging rollout remains conditional" in go_no_go_text
@@ -496,7 +496,7 @@ def test_product_go_no_go_guard_blocks_unaccepted_external_proof_claims() -> Non
         assert task_id in go_no_go_text
 
     result = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_go_no_go.py"],
+        [sys.executable, "delivery_toolchain/e2e/check_product_go_no_go.py"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -624,7 +624,7 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     assignment_ledger_text = PRODUCT_GRADE_FLEET_ASSIGNMENT_LEDGER.read_text(encoding="utf-8")
 
     assert "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH.json" in release_gate_text
-    assert "scripts/e2e/check_product_grade_fleet_dispatch.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py" in release_gate_text
     assert "Product-grade fleet dispatch checks passed." in checker_text
 
     assert packet["release_target"]["pr"] == 82
@@ -684,7 +684,7 @@ def test_product_grade_fleet_dispatch_packet_is_machine_actionable() -> None:
     for entry in queue["queue"]:
         assert entry["dispatch_status"] == "ready_for_fleet"
         assert entry["dispatch_command"] == (
-            f"python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task {entry['task_id']}"
+            f"python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task {entry['task_id']}"
         )
         assert (ROOT / entry["brief_path"]).exists()
         assert entry["minimum_completion_signal"]["implementation_evidence"]
@@ -700,7 +700,7 @@ def test_external_proof_fleet_pickup_board_tracks_open_release_blockers() -> Non
     board_text = EXTERNAL_PROOF_FLEET_PICKUP_BOARD.read_text(encoding="utf-8")
 
     assert "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md" in release_gate_text
-    assert "scripts/e2e/check_external_proof_fleet_pickup_board.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_fleet_pickup_board.py" in release_gate_text
     assert "External Proof Fleet Pickup Board" in board_text
     assert "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json" in board_text
     assert "check_external_proof_issue_sync.py --require-assignees" in board_text
@@ -755,7 +755,7 @@ def test_external_proof_fleet_pickup_board_checker_runs() -> None:
 
 def test_product_grade_fleet_dispatch_checker_runs() -> None:
     result = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py"],
+        [sys.executable, "delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -766,7 +766,7 @@ def test_product_grade_fleet_dispatch_checker_runs() -> None:
 
 def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
     report_result = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_grade_fleet_dispatch.py", "--report"],
+        [sys.executable, "delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py", "--report"],
         cwd=ROOT,
         check=True,
         capture_output=True,
@@ -783,7 +783,7 @@ def test_product_grade_fleet_dispatch_report_and_task_brief_run() -> None:
     brief_result = subprocess.run(
         [
             sys.executable,
-            "scripts/e2e/check_product_grade_fleet_dispatch.py",
+            "delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py",
             "--task",
             "ODP-MAP-E2E-003",
         ],
@@ -920,26 +920,26 @@ def test_release_gate_runs_closeout_queue_checker() -> None:
     release_gate_text = RELEASE_GATE.read_text(encoding="utf-8")
     queue_check_text = CLOSEOUT_QUEUE_CHECK.read_text(encoding="utf-8")
 
-    assert "scripts/e2e/check_product_closeout_queue.py" in release_gate_text
-    assert "scripts/e2e/check_product_closeout_action.py" in release_gate_text
-    assert "scripts/e2e/check_product_closeout_action_matrix.py" in release_gate_text
-    assert "scripts/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
-    assert "scripts/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
-    assert "scripts/e2e/check_release_fleet_dispatch_status.py" in release_gate_text
-    assert "scripts/e2e/check_external_proof_issue_sync.py" in release_gate_text
-    assert "scripts/e2e/check_external_proof_handback_template.py" in release_gate_text
-    assert "scripts/e2e/check_external_proof_handback_status_board.py" in release_gate_text
-    assert "scripts/e2e/check_external_proof_acceptance_readiness.py" in release_gate_text
-    assert "scripts/e2e/update_external_proof_handback_status_board.py" in release_gate_text
-    assert "scripts/e2e/check_external_proof_live_blockers.py" in release_gate_text
-    assert "scripts/e2e/check_external_proof_fleet_notifications.py" in release_gate_text
-    assert "scripts/e2e/check_external_proof_issue_handback_scan.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_queue.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_action.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_action_matrix.py" in release_gate_text
+    assert "delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_closeout_fleet_notification.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_release_fleet_dispatch_status.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_issue_sync.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_handback_template.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_handback_status_board.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py" in release_gate_text
+    assert "delivery_toolchain/e2e/update_external_proof_handback_status_board.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_live_blockers.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_fleet_notifications.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py" in release_gate_text
     assert "--fail-on-escalation" in release_gate_text
-    assert "scripts/e2e/sync_external_proof_escalation_comments.py" in release_gate_text
+    assert "delivery_toolchain/e2e/sync_external_proof_escalation_comments.py" in release_gate_text
     assert ".github/workflows/external-proof-followup.yml" in release_gate_text
-    assert "scripts/e2e/check_external_proof_followup_workflow.py" in release_gate_text
-    assert "scripts/e2e/sync_external_proof_fleet_issues.py" in release_gate_text
-    assert "scripts/e2e/check_product_go_no_go.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_followup_workflow.py" in release_gate_text
+    assert "delivery_toolchain/e2e/sync_external_proof_fleet_issues.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_product_go_no_go.py" in release_gate_text
     assert "Product closeout queue checks passed." in queue_check_text
     assert "ai-status.json" in queue_check_text
     assert "waiting_for_" in queue_check_text
@@ -952,7 +952,7 @@ def test_external_proof_followup_workflow_runs_live_handoff_guards() -> None:
     checker_text = EXTERNAL_PROOF_FOLLOWUP_WORKFLOW_CHECK.read_text(encoding="utf-8")
 
     assert ".github/workflows/external-proof-followup.yml" in release_gate_text
-    assert "scripts/e2e/check_external_proof_followup_workflow.py" in release_gate_text
+    assert "delivery_toolchain/e2e/check_external_proof_followup_workflow.py" in release_gate_text
     assert "External Proof Follow-up" in workflow_text
     assert "workflow_dispatch" in workflow_text
     assert "schedule:" in workflow_text
@@ -978,7 +978,7 @@ def test_closeout_queue_report_runs_without_live_ai_status() -> None:
     test_env = os.environ.copy()
     test_env["PANTHEON_STATUS_ROOT"] = "/tmp/nonexistent-status-path-for-test"
     result = subprocess.run(
-        [sys.executable, "scripts/e2e/check_product_closeout_queue.py", "--report"],
+        [sys.executable, "delivery_toolchain/e2e/check_product_closeout_queue.py", "--report"],
         cwd=ROOT,
         check=True,
         capture_output=True,

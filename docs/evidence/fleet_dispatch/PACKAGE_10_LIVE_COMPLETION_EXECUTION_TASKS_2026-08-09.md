@@ -318,7 +318,7 @@ Writable paths:
 
 Screen-contract authority (read-only):
 
-`scripts/e2e/check_product_grade_ci_gates.py` is the machine authority for this
+`delivery_toolchain/e2e/check_product_grade_ci_gates.py` is the machine authority for this
 task and must be read before the first screenshot. It fixes
 `EXPECTED_SCREEN_LABEL_COUNT = 40`, the required viewports
 `{390, 1024, 1440}`, `REQUIRED_VISUAL_ROUTES`, and
@@ -507,7 +507,7 @@ the ten release exit criteria in the gap analysis.
 | `active_deploy_run_at_finalization: null` | the only Deploy Dev run in the window ended `10:47:30Z`, before `prepared_at` `10:49:01Z` | pass |
 | Public release `8ec12c02` | `8ec12c02` is a real commit; `PLATFORM_COMPLETENESS_INVENTORY_2026-07-25.md` records deployed `oday-api` revision `oday-api-00005-gin` at `release_sha=8ec12c02`, which is the exact revision the rollback restored to 100% | pass |
 | 117 retired paths | `ODP-P10-LEGACY-VISUAL-RETIREMENT-VERIFICATION.json` reports `deleted_path_inventory.unique_paths=117` at `verified_head=435c79e3…` with `release_status=no_go` | pass |
-| 40 screen contracts | `scripts/e2e/check_product_grade_ci_gates.py` sets `EXPECTED_SCREEN_LABEL_COUNT = 40` and the count is CI-enforced | pass |
+| 40 screen contracts | `delivery_toolchain/e2e/check_product_grade_ci_gates.py` sets `EXPECTED_SCREEN_LABEL_COUNT = 40` and the count is CI-enforced | pass |
 | Owner and reviewer names | every named actor, including bare `Antigravity` and `Human/Ops`, is a registered agent in the canonical status root | pass |
 | Task identity is unambiguous | the six `update_existing` IDs are all active; the five `create` IDs are absent from both active state and the task archive, so no create duplicates an existing ID | pass |
 | GAP-08 stale-metadata claim | `ODP-P10-DEV-REDEPLOY-VERIFY-001` is `blocked` with a `next` field containing only auto-reassignment text | pass |
@@ -528,7 +528,7 @@ claim is correctly scoped, but T30 must re-observe it rather than inherit it.
    which this Markdown declares writable and which T00's own acceptance
    requires it to generate. Path enforcement reading the JSON peer would have
    blocked T00's required output. Added.
-3. T40's screen-contract authority was unnamed. `scripts/e2e/check_product_grade_ci_gates.py`
+3. T40's screen-contract authority was unnamed. `delivery_toolchain/e2e/check_product_grade_ci_gates.py`
    holds the label count, `REQUIRED_VISUAL_ROUTES`, `REQUIRED_VISUAL_VIEWPORTS`,
    and `CANONICAL_LABEL_IMPLEMENTATIONS`. The last records deliberate canonical
    deviations from the archived HTML, so a strict label diff without it would

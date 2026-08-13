@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
-CHECKER = ROOT / "scripts/e2e/check_external_proof_handback_template.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_template.py"
 
 
 def test_external_proof_handback_template_checker_runs() -> None:

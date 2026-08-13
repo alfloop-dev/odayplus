@@ -23,7 +23,7 @@ from modules.external_data.providers.taiwan_real_estate import (
     OfficialRealEstateSourceError,
     parse_official_real_estate,
 )
-from scripts.models.real_estate_outcomes import OfficialRealEstateOutcomeStore
+from product_ops.modeling.real_estate_outcomes import OfficialRealEstateOutcomeStore
 
 
 def _csv_bytes(rows: list[list[str]]) -> bytes:

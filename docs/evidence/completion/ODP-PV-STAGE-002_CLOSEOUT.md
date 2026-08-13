@@ -18,7 +18,7 @@ Phase: Product-Grade E2E Readiness.
 
 | Path | Purpose |
 | --- | --- |
-| `scripts/e2e/verify_deployment_health_backup_rollback.py` | Drill runner: backup, restore, rollback |
+| `delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py` | Drill runner: backup, restore, rollback |
 | `docs/testing/remote_staging_drill.md` | DR drill runbook + evidence summary |
 | `docs/testing/remote_staging_proof.md` | Staging rollout environment inventory |
 | `docs/evidence/completion/ODP-PV-STAGE-002_proof_report.json` | Machine-readable drill proof (result: passed) |
@@ -29,7 +29,7 @@ Phase: Product-Grade E2E Readiness.
 
 Drill runner command:
 ```bash
-python3 scripts/e2e/verify_deployment_health_backup_rollback.py \
+python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py \
   --api-port 8199 --web-port 3200 --source-stub-port 8177 \
   --project oday-plus-e2e-pv-stage-001
 ```

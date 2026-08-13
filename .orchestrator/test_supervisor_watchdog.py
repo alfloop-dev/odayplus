@@ -196,6 +196,22 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(result["reason"], "missing_pid")
         self.assertFalse(result["lock_held"])
 
+    def test_safe_mode_uses_canonical_runtime_state_writer(self) -> None:
+        runtime_state = {"workers": {"worker-1": {"status": "running"}}}
+        now = datetime.now(UTC)
+
+        with mock.patch.object(supervisor_watchdog, "save_runtime_state") as save_state:
+            supervisor_watchdog.enter_watchdog_safe_mode(
+                self.config,
+                runtime_state,
+                now,
+                self.config["watchdog"],
+                "stale_heartbeat",
+            )
+
+        save_state.assert_called_once_with(self.config, runtime_state)
+        self.assertEqual(runtime_state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
+
 
 if __name__ == "__main__":
     unittest.main()

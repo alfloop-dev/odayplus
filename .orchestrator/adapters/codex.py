@@ -5,12 +5,7 @@ import os
 from common import (
     agent_config_for,
     command_exists,
-    delivery_runtime_env,
     delivery_workspace_root,
-    new_runtime_id,
-    runtime_log_path,
-    spawn_background_process,
-    worker_runtime_paths,
 )
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
@@ -107,17 +102,7 @@ class CodexAdapter(BaseAdapter):
         command.append(request.message)
 
         # Build env: inherit current environment, then apply overrides.
-        spawn_env: dict[str, str] = dict(os.environ)
-        spawn_env.update(delivery_runtime_env(self.config, request.metadata))
-        for key in CODEX_INHERITED_SESSION_ENV:
-            spawn_env.pop(key, None)
-        spawn_env["AI_NAME"] = display_name
-        spawn_env["ORCH_AGENT_ID"] = request.agent_id
-        spawn_env["ORCH_PROVIDER"] = request.provider
-        if request.task_id:
-            spawn_env["ORCH_TASK_ID"] = request.task_id
-        if request.reason:
-            spawn_env["ORCH_REASON"] = request.reason
+        env_overrides: dict[str, str] = {}
 
         api_key_env = codex_settings.get("api_key_env", "").strip()
         codex_home = codex_settings.get("codex_home", "").strip()
@@ -126,40 +111,20 @@ class CodexAdapter(BaseAdapter):
             if api_key_env != "OPENAI_API_KEY":
                 api_key_value = os.environ.get(api_key_env, "")
                 if api_key_value:
-                    spawn_env["OPENAI_API_KEY"] = api_key_value
-        else:
-            spawn_env.pop("OPENAI_API_KEY", None)
+                    env_overrides["OPENAI_API_KEY"] = api_key_value
         if codex_home:
-            spawn_env["CODEX_HOME"] = os.path.expanduser(codex_home)
+            env_overrides["CODEX_HOME"] = os.path.expanduser(codex_home)
 
-        run_id = new_runtime_id("codex")
-        spawn_env["ORCH_RUN_ID"] = run_id
-        log_path = runtime_log_path("codex", request.agent_id)
-        runtime_paths = worker_runtime_paths(self.config, run_id)
-        process, _ = spawn_background_process(
-            command,
-            cwd=workspace_root,
-            log_path=log_path,
-            env=spawn_env,
-            run_id=run_id,
-            heartbeat_path=runtime_paths["heartbeat_path"],
-            status_path=runtime_paths["status_path"],
-        )
-
-        return DeliveryResult(
-            ok=True,
-            adapter=self.name,
+        remove_env = CODEX_INHERITED_SESSION_ENV + (() if api_key_env else ("OPENAI_API_KEY",))
+        return self.spawn_cli_delivery(
+            request,
+            provider_id=request.provider or "codex",
+            runtime_provider_id="codex",
             mode="codex",
-            target=display_name,
-            auto_delivered=True,
-            manual_confirmation_required=False,
-            notes="Codex CLI wake-up started in the background.",
+            display_name=display_name,
             command=command,
-            log_path=str(log_path),
-            pid=process.pid,
-            run_id=run_id,
-            metadata={
-                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
-                "runner_status_path": str(runtime_paths["status_path"]),
-            },
+            notes="Codex CLI wake-up started in the background.",
+            workspace_root=workspace_root,
+            env_overrides=env_overrides,
+            remove_env=remove_env,
         )

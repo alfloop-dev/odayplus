@@ -6489,6 +6489,172 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertIn("Task returned to todo until Codex starts a fresh run.", kwargs["message"])
 
 
+class AutomaticRecoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {"dependency_done_statuses": ["done"]},
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {"CodexCoordinator": ["Codex", "Claude"]},
+                "reviewer_fallbacks": {"CodexCoordinator": ["Codex", "Claude"]},
+            },
+        }
+
+    def test_stale_blocked_mainline_task_reopens_for_dispatch(self) -> None:
+        task = {
+            "id": "AUTO-REOPEN-001",
+            "status": "blocked",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "next": "Auto-reassigned away from sidecar-only lane Codex; owner Codex -> Antigravity.",
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                {task["id"]: task},
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+        self.assertTrue(persist.call_args.kwargs["resolve_open_blockers"])
+        self.assertIsNone(persist.call_args.kwargs["handoff_to"])
+
+    def test_unregistered_coordinator_reviewer_is_reassigned(self) -> None:
+        task = {
+            "id": "AUTO-REVIEW-001",
+            "status": "review",
+            "owner": "Antigravity",
+            "reviewer": "CodexCoordinator",
+            "depends_on": [],
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(
+                self.config,
+                task,
+                {task["id"]: task},
+            )
+
+        self.assertTrue(changed)
+        self.assertIn(persist.call_args.kwargs["new_reviewer"], {"Codex", "Claude"})
+        self.assertNotEqual(persist.call_args.kwargs["new_reviewer"], "CodexCoordinator")
+
+    def test_ci_failure_requeues_owner_and_clears_stale_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            status = {
+                "tasks": [
+                    {
+                        "id": "AUTO-CI-001",
+                        "status": "review_approved",
+                        "owner": "Antigravity",
+                        "reviewer": "Claude",
+                        "approved_head": "a" * 40,
+                    }
+                ]
+            }
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+            config = dict(self.config)
+            config["paths"] = {"status_file": str(status_path)}
+            with (
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor.requeue_task_for_ci_repair(
+                        config,
+                        "AUTO-CI-001",
+                        message="CI failed; repair queued.",
+                        clear_approval=True,
+                    )
+                )
+            saved = json.loads(status_path.read_text(encoding="utf-8"))["tasks"][0]
+            self.assertEqual(saved["status"], "in_progress")
+            self.assertNotIn("approved_head", saved)
+
+    def test_ci_failure_requeues_sidecar_owner_too(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = Path(tmpdir) / "ai-status.json"
+            status = {
+                "tasks": [
+                    {
+                        "id": "AUTO-CI-SIDECAR-001",
+                        "status": "review_approved",
+                        "owner": "Antigravity",
+                        "reviewer": "Claude",
+                        "task_class": "sidecar",
+                        "approved_head": "b" * 40,
+                    }
+                ]
+            }
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+            config = dict(self.config)
+            config["paths"] = {"status_file": str(status_path)}
+            with (
+                mock.patch.object(supervisor, "sync_status_pipeline", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                self.assertTrue(
+                    supervisor.requeue_task_for_ci_repair(
+                        config,
+                        "AUTO-CI-SIDECAR-001",
+                        message="CI failed; sidecar owner repair queued.",
+                        clear_approval=True,
+                    )
+                )
+            saved = json.loads(status_path.read_text(encoding="utf-8"))["tasks"][0]
+            self.assertEqual(saved["status"], "in_progress")
+            self.assertNotIn("approved_head", saved)
+
+    def test_ci_failure_requeue_fails_closed_on_stale_status_snapshot(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "AUTO-CI-STALE-001",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                return_value=False,
+            ) as commit,
+            mock.patch.object(supervisor, "write_activity_log") as activity_log,
+        ):
+            changed = supervisor.requeue_task_for_ci_repair(
+                self.config,
+                "AUTO-CI-STALE-001",
+                message="CI failed; repair queued.",
+                clear_approval=True,
+            )
+
+        self.assertFalse(changed)
+        commit.assert_called_once_with(self.config, status)
+        activity_log.assert_not_called()
+
+
 class WorkerPreemptionSyncTests(unittest.TestCase):
     def setUp(self) -> None:
         self.config = {
@@ -8199,14 +8365,8 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         self.assertFalse(dispatched)
         self.assertEqual([], [e["type"] for e in logged])
 
-    def test_ci_pending_escalates_to_operator_after_timeout(self) -> None:
-        """AC3 escalation half: covered by nothing until this test.
-
-        Mutating the whole `if ci_status == "pending":` branch to `if False:`
-        left the suite green, because the later catch-all still suppressed
-        dispatch. Only the ci_pending_since_ts bookkeeping and the 30-minute
-        escalation notice were lost -- and nothing asserted on either.
-        """
+    def test_ci_pending_requeues_owner_after_timeout(self) -> None:
+        """A long-pending CI result gets an automatic owner refresh run."""
         approved = "1111111122222222333333334444444455555555"
         config = self._build_freeze_test_config()
 
@@ -8238,17 +8398,22 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         )
         self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
 
-        # Past 1800s: escalate to the operator exactly once.
+        # Past 1800s: requeue the owner exactly once for a CI refresh.
         task = _task(ci_pending_since_ts=datetime.now(UTC).timestamp() - 2000)
-        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
             config, task, head=approved, ci="pending"
         )
-        self.assertIn("ci_pending_timeout", [e["type"] for e in logged])
-        self.assertIn("pending for over 30 minutes", task["next"])
+        self.assertTrue(dispatched)
+        mock_queue.assert_not_called()
+        self.assertIn("ci_repair_requeued", [e["type"] for e in logged])
+        self.assertEqual(task["status"], "in_progress")
+        self.assertIn("owner requeued", task["next"])
 
-        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
             config, task, head=approved, ci="pending"
         )
+        self.assertTrue(dispatched)
+        mock_queue.assert_called_once()
         self.assertEqual([], [e["type"] for e in logged])
 
         # Recovery: a green probe clears the pending bookkeeping and dispatches.
@@ -9079,10 +9244,7 @@ class ReviewHeadFreezeTests(unittest.TestCase):
                 self.assertEqual(task["last_approved_head"], approved)
 
     def test_ci_failure_branch_signals_and_clears_the_pending_timer(self) -> None:
-        """N1: deleting the whole `ci_status == "failure"` branch kept the suite
-        green because the catch-all still suppressed dispatch. Its distinguishing
-        side effects -- the `ci_failed` signal and popping ci_pending_since_ts so
-        a stale timer cannot fire the 30-minute escalation -- had no coverage."""
+        """A deterministic CI failure returns the task for owner repair."""
         approved = "1111111122222222333333334444444455555555"
         config = self._build_freeze_test_config()
         task = {
@@ -9098,12 +9260,14 @@ class ReviewHeadFreezeTests(unittest.TestCase):
         dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
             config, task, head=approved, ci="failure"
         )
-        self.assertFalse(dispatched)
+        self.assertTrue(dispatched)
         mock_queue.assert_not_called()
-        self.assertIn("ci_failed", [e["type"] for e in logged])
+        self.assertIn("ci_repair_requeued", [e["type"] for e in logged])
         self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
+        self.assertEqual(task["status"], "in_progress")
         self.assertNotIn("ci_pending_since_ts", task)
-        self.assertIn("failed; resolve failing checks", task["next"])
+        self.assertNotIn("approved_head", task)
+        self.assertIn("owner requeued", task["next"])
 
 
 class SuccessfulWorkerPostconditionTests(unittest.TestCase):

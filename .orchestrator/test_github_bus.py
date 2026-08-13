@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 import github_bus
+import github_cloud_relay
 from github_command_parser import GitHubCommand
 
 
@@ -1752,6 +1753,37 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 {"branch_workflow": {"enabled": False, "task_pr": {"auto_merge": True}}}
             )
         )
+
+    def test_cloud_relay_is_safe_off_by_default(self) -> None:
+        config = {
+            "paths": {"github_relay_state": "/tmp/oday-test-github-relay-state.json"},
+            "github_bus": {"phase3": {"cloud_relay": {"url_env": "TEST_RELAY_URL"}}},
+        }
+        with mock.patch.object(github_cloud_relay, "relay_request") as request:
+            self.assertEqual(github_cloud_relay.pull_commands(config), [])
+            self.assertIsNone(github_cloud_relay.push_status_digest(config, {"ok": True}))
+        request.assert_not_called()
+
+    def test_cloud_relay_requires_explicit_enable(self) -> None:
+        config = {
+            "paths": {"github_relay_state": "/tmp/oday-test-github-relay-state.json"},
+            "github_bus": {
+                "phase3": {
+                    "cloud_relay": {
+                        "enabled": True,
+                        "url_env": "TEST_RELAY_URL",
+                        "token_env": "TEST_RELAY_TOKEN",
+                    }
+                }
+            },
+        }
+        with (
+            mock.patch.dict("os.environ", {"TEST_RELAY_URL": "https://relay.test", "TEST_RELAY_TOKEN": "token"}),
+            mock.patch.object(github_cloud_relay, "relay_request", return_value={"commands": []}) as request,
+            mock.patch.object(github_cloud_relay, "write_activity_log"),
+        ):
+            self.assertEqual(github_cloud_relay.pull_commands(config), [])
+        request.assert_called_once()
 
 
 if __name__ == "__main__":

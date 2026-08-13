@@ -10,7 +10,7 @@
 - `uv run pytest tests/security/test_assisted_listing_intake_security.py -q` - passed, 24 tests.
 - `uv run pytest tests/contract/test_operator_assisted_listing_api.py -q` - passed, 20 tests.
 - `uv run pytest tests/security tests/contract -q` - passed with warnings only.
-- `python3 scripts/e2e/check_product_release_gate.py` - `Product release gate static checks passed.`
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py` - `Product release gate static checks passed.`
 - Handoff requested: Claude should perform a short refreshed-head review against the pushed task branch head.
 
 ### Review Rejection Fix (2026-07-15)
@@ -23,7 +23,7 @@
 - `uv run pytest tests/security/test_assisted_listing_intake_security.py -q` - passed, 24 tests.
 - `uv run pytest tests/contract/test_operator_assisted_listing_api.py -q` - passed, 20 tests.
 - `uv run pytest tests/security tests/contract -q` - passed.
-- `python3 scripts/e2e/check_product_release_gate.py` - `Product release gate static checks passed.`
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py` - `Product release gate static checks passed.`
 
 ### Original Security Gate Verification
 
@@ -32,7 +32,7 @@
 - `uv run pytest tests/contract/test_operator_network_listings_api.py -q` - passed.
 - `uv run pytest tests/integration/test_assisted_listing_intake_persistence.py -q` - passed.
 - `uv run pytest tests/security tests/contract -q` - passed.
-- `python3 scripts/e2e/check_product_release_gate.py` - `Product release gate static checks passed.`
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py` - `Product release gate static checks passed.`
 - `uv run ruff check modules/external_data/security/assisted_listing_retrieval.py modules/external_data/application/assisted_intake.py modules/opsboard/application/network_listings.py apps/api/app/routes/operator_modules/network_listings.py tests/security/test_assisted_listing_intake_security.py tests/contract/test_operator_assisted_listing_api.py tests/contract/test_operator_network_listings_api.py tests/integration/test_assisted_listing_intake_persistence.py` - passed.
 
 ## Residual Risk

@@ -90,7 +90,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                     clear=False,
                 ),
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
-                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
             ):
                 result = adapter.deliver(request)
 
@@ -140,7 +140,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             with (
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
                 mock.patch(
-                    "adapters.codex.spawn_background_process",
+                    "adapters.base.spawn_background_process",
                     return_value=(fake_process, Path("/tmp/codex2.log")),
                 ),
             ):
@@ -182,7 +182,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             with (
                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": "parent-key", "CODEX_THREAD_ID": "parent-thread"}, clear=False),
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
-                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
             ):
                 result = adapter.deliver(request)
 
@@ -217,7 +217,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
 
             with (
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
-                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, root / "codex.log")) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "codex.log")) as spawn,
             ):
                 result = adapter.deliver(request)
 
@@ -295,7 +295,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                 mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
                 mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
                 mock.patch(
-                    "adapters.claude_cli.spawn_background_process",
+                    "adapters.base.spawn_background_process",
                     return_value=(fake_process, Path("/tmp/claude2.log")),
                 ) as spawn,
             ):
@@ -334,7 +334,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             with (
                 mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
                 mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
-                mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
             ):
                 result = adapter.deliver(request)
 
@@ -354,7 +354,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         }
         request = DeliveryRequest(agent_id="gemini", provider="gemini", delivery_mode="gemini", message="wake")
         adapter = GeminiAdapter(config=config, provider_capabilities={})
-        with mock.patch("adapters.gemini.command_exists", return_value=None):
+        with mock.patch("provider_runtime.command_exists", return_value=None):
             result = adapter.deliver(request)
         self.assertFalse(result.ok)
         self.assertFalse(result.manual_confirmation_required)
@@ -404,9 +404,9 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             adapter = GeminiAdapter(config=config, provider_capabilities={})
             fake_process = mock.Mock(pid=1234)
             with (
-                mock.patch("adapters.gemini.command_exists", return_value="gemini"),
+                mock.patch("provider_runtime.command_exists", return_value="gemini"),
                 mock.patch("adapters.gemini._gemini_auth_ready", return_value=True),
-                mock.patch("adapters.gemini.spawn_background_process", return_value=(fake_process, root / "gemini2.log")) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "gemini2.log")) as spawn,
             ):
                 result = adapter.deliver(request)
 

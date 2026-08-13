@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-MATRIX = ROOT / "scripts/e2e/check_product_closeout_action_matrix.py"
+MATRIX = ROOT / "delivery_toolchain/e2e/check_product_closeout_action_matrix.py"
 ACTION_TEST = ROOT / "tests/e2e/test_product_closeout_action_checker.py"
 QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 

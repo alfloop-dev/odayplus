@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_external_proof_live_blockers.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_live_blockers.py"
 
 
 def load_checker_module():

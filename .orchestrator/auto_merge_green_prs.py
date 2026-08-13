@@ -26,7 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / ".orchestrator"))
 
-from scripts.check_pr_merge_eligibility import check_merge_eligibility, get_gh_executable
+from delivery_toolchain.github.check_pr_merge_eligibility import (
+    check_merge_eligibility,
+    get_gh_executable,
+)
 
 REPO = "alfloop-dev/odayplus"
 BASE = "dev"

@@ -336,7 +336,7 @@ Status vocabulary: `BLOCKED` (proof cannot be produced today), `PASSED` (proof o
 | ID | Required Proof | Reject When | Status (2026-08-06) | Evidence |
 |---|---|---|---|---|
 | C1 | `/operator` leaves loading state and renders the canonical Package 10 shell at desktop and mobile sizes. | UI hangs on spinner, renders blank, or breaks responsive boundaries. | `PENDING REDEPLOY` | Web `/operator` → `307` on the rollback release; screenshots cannot represent dev-tip parity until A1/A2 pass |
-| C2 | All 40 canonical screen labels are reachable from React router source. | Any of the 40 contracts is unreachable or errors. | `PASSED` (source-level) | `python3 scripts/e2e/check_product_grade_ci_gates.py --report` — 40/40 reachable |
+| C2 | All 40 canonical screen labels are reachable from React router source. | Any of the 40 contracts is unreachable or errors. | `PASSED` (source-level) | `python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report` — 40/40 reachable |
 | C3 | 117 retired visual paths have exactly zero survivors on `origin/dev`. | Any retired route or obsolete page file remains under `apps/web/src/app`. | `PASSED` | `ODP-P10-FLEET-CONFLICT-REAUDIT-001` audit report — 0/117 survivors |
 
 C2 and C3 are source-level guarantees and are independent of the deploy blockers. They do **not** substitute for C1, which requires a live promoted release.
@@ -465,7 +465,7 @@ If either check still fails, stop here. The deploy will fail closed at the same 
 ```bash
 git fetch origin dev --prune
 git checkout dev && git pull --ff-only
-python3 scripts/e2e/check_product_grade_ci_gates.py --report   # expect 40/40 reachable
+python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report   # expect 40/40 reachable
 ```
 
 ### Step 2: Trigger Deploy Dev on the exact dev SHA

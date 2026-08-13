@@ -71,7 +71,7 @@ conflict. Per standing practice, do not base-advance the branch to clear `BEHIND
 | Status | Path | Lines |
 | --- | --- | --- |
 | `M` | `apps/api/oday_api/main.py` | +68 −1 |
-| `M` | `scripts/e2e/check_live_e2e_gate.py` | +19 −11 |
+| `M` | `delivery_toolchain/e2e/check_live_e2e_gate.py` | +19 −11 |
 | `A` | `tests/integration/test_external_fetch_enqueue_tenant_binding.py` | +319 |
 | `A` | `docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-REMEDIATE-001/README.md` | +249 |
 
@@ -117,7 +117,7 @@ Python `3.12.3`, pytest `9.1.1`, ruff `0.15.20`.
 This is the claim most worth checking independently, because it is the one that
 distinguishes a real deterministic regression from tests written to pass. Both code files
 were reverted to the base blobs (`git checkout dc8fdb9b -- apps/api/oday_api/main.py
-scripts/e2e/check_live_e2e_gate.py`), leaving the new test file intact, and the focused
+delivery_toolchain/e2e/check_live_e2e_gate.py`), leaving the new test file intact, and the focused
 suite was re-run:
 
 ```
@@ -152,7 +152,7 @@ Each row was checked against the diff and the tree, independently of the README'
 | C1 | `forecast:v1:` key format is unchanged **byte-for-byte** (§1) | Pre-fix built `f"forecast:v1:{tenant}:{key}"` under `idempotency_tenant_id is not None`, which only the `forecast` branch set. Post-fix builds `f"{idempotency_scope}:{tenant}:{key}"` with `idempotency_scope = "forecast:v1"` set in the same branch. Both variables are set together in each branch; no other branch sets either. | ✅ Equivalent |
 | C2 | Cloud Scheduler never reaches the new binding (§4) | `apps/scheduler/oday_scheduler/main.py:105` calls `self.job_queue.enqueue(JobRequest(job_type="external-fetch", …))` **directly**, not over HTTP. Its key namespace (`scheduled-fetch:<tenant>:<window>`) cannot collide with `external-fetch:v1:`. | ✅ Confirmed |
 | C3 | Idempotency keys are "per-request dedupe markers, not durable identity", so a mid-flight revert is at worst one re-enqueue (§4) | `shared/jobs/queue.py:128` — `InMemoryJobQueue._idempotency_index` is a process-local `dict`, not persisted. The key-shape change therefore has **no cross-deploy migration hazard**; the index resets on restart. | ✅ Confirmed, and stronger than claimed |
-| C4 | Two of four files sit outside the writable ceiling (§6) | Ceiling read from the live task record's `writable_paths` (7 globs). `apps/api/oday_api/main.py` and `scripts/e2e/check_live_e2e_gate.py` match none of them. The test file falls under `tests/**` (focused, matches the diagnosed path) and the evidence README under its own glob. | ✅ Confirmed — see §5.1 |
+| C4 | Two of four files sit outside the writable ceiling (§6) | Ceiling read from the live task record's `writable_paths` (7 globs). `apps/api/oday_api/main.py` and `delivery_toolchain/e2e/check_live_e2e_gate.py` match none of them. The test file falls under `tests/**` (focused, matches the diagnosed path) and the evidence README under its own glob. | ✅ Confirmed — see §5.1 |
 | C5 | "There is no fix inside the ceiling" (§6) | `apps/api/app/routes/external_data.py` **does exist** in the tree, so the ceiling entry is not a dead path — but it is the readback surface, not the enqueue surface. The tenant enters the system at `POST /api/v1/jobs`, which is in `main.py`. No writable path can bind an enqueue-time tenant. | ✅ Confirmed |
 | C6 | New enqueue guard needs no credential change (smoke principal already holds `data_owner` → `integration:create`) | Not independently verifiable from the repo — depends on the live principal-map secret, which this worker cannot read. Cited to `ODP-OPERATOR-SMOKE-RBAC-LIVE-002`. | ⚠️ Carried on cited evidence |
 | C7 | Acceptance criterion 3 (live candidate) cannot be closed from this worker | Consistent with T10 §6 (`gcloud` has no usable credentials on this host). Confirming artifact is the next `live-e2e-gate.json`. | ✅ Consistent — open by design |
@@ -186,7 +186,7 @@ The situation is genuinely forced:
 
 - T11's ceiling was authored `2026-08-09`, **before** T10's diagnosis, on the expectation
   that the defect sat inside `modules/external_data/**`. T10 proved it does not.
-- T10 §7 names `apps/api/oday_api/main.py` and `scripts/e2e/check_live_e2e_gate.py`
+- T10 §7 names `apps/api/oday_api/main.py` and `delivery_toolchain/e2e/check_live_e2e_gate.py`
   verbatim as the surfaces the successor task needs write access to, and the coordinator's
   dispatch note says "Execute README section 7 exact T11 handoff". **The intent is on
   record; only the JSON lags.**

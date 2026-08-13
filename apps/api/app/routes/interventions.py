@@ -29,6 +29,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
+    from apps.api.app.routes._common import durable_store_required
 
     class OpenCasePayload(BaseModel):
         store_id: str = Field(min_length=1)
@@ -630,13 +631,6 @@ else:
 
         return router
 
-    def _durable_store_required(message: str) -> HTTPException:
-        return HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "DURABLE_COMMAND_STORE_REQUIRED",
-                "message": message,
-            },
-        )
+    _durable_store_required = durable_store_required
 
     __all__ = ["create_interventions_router"]

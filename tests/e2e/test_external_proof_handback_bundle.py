@@ -8,7 +8,7 @@ from pathlib import Path
 from tests.e2e.test_external_proof_handback_artifact import EXPECTED_SHA, QUEUE, valid_handback
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_external_proof_handback_bundle.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_bundle.py"
 
 
 def write_bundle(directory: Path) -> list[Path]:

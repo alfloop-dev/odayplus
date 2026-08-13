@@ -8,8 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
-SYNCER = ROOT / "scripts/e2e/sync_product_closeout_fleet_comment.py"
-CHECKER = ROOT / "scripts/e2e/check_product_closeout_fleet_notification.py"
+SYNCER = ROOT / "delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_product_closeout_fleet_notification.py"
 
 
 def load_module(path: Path, name: str):

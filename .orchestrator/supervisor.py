@@ -2329,7 +2329,7 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "## Workspace",
             "- You run inside an isolated per-task git worktree. It is NOT a staging area.",
             "- Confirm you are on the expected `task/<TASK-ID>` branch; use",
-            "  `./scripts/git/task_start.sh \"<TASK-ID>\"` if not.",
+            "  `./delivery_toolchain/git/task_start.sh \"<TASK-ID>\"` if not.",
             "- ai-status.json / current-work.md / ai-activity-log.jsonl are seeded here",
             "  (gitignored); do not edit them by hand — use the status commands.",
             "",
@@ -5537,6 +5537,13 @@ def agent_can_take_task(config: dict[str, Any], agent_name: str | None, task: di
     name = str(agent_name or "").strip()
     if not name:
         return False
+    # A task may contain historical/coordinator labels that are not worker
+    # identities (for example CodexCoordinator).  Treat those labels as
+    # invalid for automatic execution so normalization can select a real,
+    # registered fallback instead of silently considering the task eligible.
+    known_names = {item.casefold() for item in known_agent_display_names(config)}
+    if name.casefold() not in known_names:
+        return False
     if agent_dispatch_disabled(config, name):
         return False
     if not isinstance(task, dict):
@@ -8454,7 +8461,7 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
                 task["depends_on"] = []
             message = (
                 "Review state repaired: no verified remote task PR was recorded. The owner must publish via "
-                "scripts/git/task_finalize.sh before review can be dispatched."
+                "delivery_toolchain/git/task_finalize.sh before review can be dispatched."
             )
         task["last_update"] = timestamp
         task["next"] = message
@@ -8603,7 +8610,53 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
     return priority if priority in {"P0", "P1", "P2", "P3"} else default
 
 
-def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, Any]) -> bool:
+def blocked_task_auto_recovery_eligible(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]] | None = None,
+) -> bool:
+    """Whether a blocked task is stale routing state, not a real gate.
+
+    Human, external-data, deployment and operator gates remain fail-closed.
+    A blocked task with no unresolved dependency and only routing/provider
+    failure language can safely be reopened for a fresh automatic dispatch.
+    """
+    if str(task.get("status") or "").strip().lower() != "blocked":
+        return False
+    if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
+        return False
+    if task_map is not None:
+        done_statuses = {
+            str(value).lower()
+            for value in ready_dispatch_settings(config).get("dependency_done_statuses", ["done"])
+        }
+        if not dependencies_satisfied(task, task_map, done_statuses):
+            return False
+    context = " ".join(
+        str(task.get(key) or "")
+        for key in ("next", "waiting_for", "blocker", "blocked_by", "failure_reason", "last_failure_reason", "push_status")
+    ).casefold()
+    hard_gate_markers = (
+        "human/ops", "human gate", "pending_human", "authoritative", "dataset", "attestation",
+        "external-data", "mlflow", "deploy dev", "live-e2e", "production alias", "merge queue",
+        "operator intervention", "manual approval", "requires operator",
+    )
+    if any(marker in context for marker in hard_gate_markers):
+        return False
+    return bool(context) and any(
+        marker in context
+        for marker in (
+            "auto-reassigned", "sidecar-only", "quota", "auth", "credential", "worktree",
+            "push failure", "dispatch", "provider", "handoff", "stale",
+        )
+    )
+
+
+def normalize_mainline_task_assignment(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]] | None = None,
+) -> bool:
     if task_is_sidecar(task):
         return False
     settings = worker_reassignment_settings(config)
@@ -8618,9 +8671,19 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
 
     owner = str(task.get("owner") or "").strip()
     reviewer = str(task.get("reviewer") or "").strip()
-    owner_allowed = agent_can_take_task(config, owner, task)
-    reviewer_allowed = agent_can_take_task(config, reviewer, task)
-    if owner_allowed and reviewer_allowed:
+    reopen_blocked = blocked_task_auto_recovery_eligible(config, task, task_map)
+    owner_allowed = (
+        task_status not in {"todo", "in_progress", "review_approved", "blocked"}
+        or agent_can_take_task(config, owner, task)
+    )
+    # A reviewer label is only executable while the task is in review.  Older
+    # task records commonly keep a coordinator/placeholder reviewer on todo
+    # work; that metadata must not trigger an unnecessary owner reassignment.
+    reviewer_allowed = (
+        task_status != "review"
+        or agent_can_take_task(config, reviewer, task)
+    )
+    if owner_allowed and reviewer_allowed and not reopen_blocked:
         return False
 
     new_owner = owner
@@ -8654,7 +8717,7 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
         if replacement_reviewer != reviewer:
             changed_fields.append(f"reviewer {reviewer or '(unset)'} -> {new_reviewer}")
 
-    if new_owner == owner and new_reviewer == reviewer:
+    if new_owner == owner and new_reviewer == reviewer and not reopen_blocked:
         return False
 
     blocked_agents = [
@@ -8663,18 +8726,27 @@ def normalize_mainline_task_assignment(config: dict[str, Any], task: dict[str, A
         if agent_name and not agent_can_take_task(config, agent_name, task)
     ]
     blocked_summary = ", ".join(dict.fromkeys(blocked_agents)) or "disallowed lane"
-    message = (
-        f"Auto-reassigned {task_id} away from sidecar-only lane {blocked_summary}; "
-        f"{', '.join(changed_fields)}. Reserved sidecar-only agents no longer hold mainline tasks."
-    )
+    if changed_fields:
+        message = (
+            f"Auto-reassigned {task_id} away from unavailable lane {blocked_summary}; "
+            f"{', '.join(changed_fields)}."
+        )
+    else:
+        message = f"Reopened stale blocked task {task_id} for automatic dispatch."
+    if reopen_blocked:
+        message = f"{message} No unresolved dependency or human/external gate remains."
+    handoff_target = new_owner if new_owner != owner else (new_reviewer if new_reviewer != reviewer else None)
+    handoff_source = owner if new_owner != owner else (reviewer if new_reviewer != reviewer else None)
     if not persist_task_reassignment(
         config,
         task_id=task_id,
         new_owner=new_owner,
         new_reviewer=new_reviewer,
         message=message,
-        handoff_to=new_owner if new_owner != owner else new_reviewer,
-        handoff_from=owner if new_owner != owner else reviewer,
+        new_status="todo" if reopen_blocked else None,
+        handoff_to=handoff_target,
+        handoff_from=handoff_source,
+        resolve_open_blockers=reopen_blocked,
     ):
         return False
     write_activity_log(
@@ -9693,6 +9765,48 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
     }
 
 
+def requeue_task_for_ci_repair(
+    config: dict[str, Any],
+    task_id: str,
+    *,
+    message: str,
+    clear_approval: bool,
+) -> bool:
+    """Return a CI-stalled task to its owner for an automatic repair run."""
+    status = load_status(config)
+    task = next(
+        (item for item in status.get("tasks", []) or [] if str(item.get("id") or "") == task_id),
+        None,
+    )
+    # Sidecars are still real worker tasks.  They may be support-only, but a
+    # failed CI check must return them to their owner just like mainline work;
+    # only human gates and explicitly non-dispatchable tasks stay fail-closed.
+    if not isinstance(task, dict) or task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+        return False
+    if str(task.get("status") or "").lower() != "review_approved":
+        return False
+    task["status"] = "in_progress"
+    task["last_update"] = utc_now()
+    task["next"] = message
+    task.pop("ci_pending_since_ts", None)
+    task.pop("ci_pending_since", None)
+    task["ci_repair_last_requeued_ts"] = datetime.now(UTC).timestamp()
+    if clear_approval:
+        task.pop("approved_head", None)
+    if not commit_canonical_task_transition(config, status):
+        return False
+    write_activity_log(
+        config,
+        {
+            "type": "ci_repair_requeued",
+            "task_id": task_id,
+            "message": message,
+            "approval_cleared": clear_approval,
+        },
+    )
+    return True
+
+
 def queue_dispatch_event_safely(config: dict[str, Any], event: dict[str, Any]) -> bool:
     try:
         return bool(queue_delivery_event(config, event))
@@ -9814,7 +9928,7 @@ def dispatch_ready_tasks(
         # legacy mainline guard immediately overwrite a repair using this
         # loop's stale pre-repair task object.
         if not assignment_normalized:
-            normalized = normalize_mainline_task_assignment(config, task) or normalized
+            normalized = normalize_mainline_task_assignment(config, task, task_map) or normalized
 
     if normalized:
         changed = True
@@ -10013,37 +10127,46 @@ def dispatch_ready_tasks(
                         task["ci_pending_since"] = utc_now()
                         status_dirty = True
                     elif now_ts - float(start_ts) > 1800:
-                        msg = f"CI status for task {task_id} has been pending for over 30 minutes; operator intervention required."
-                        if task.get("next") != msg:
-                            task["next"] = msg
-                            status_dirty = True
-                            write_activity_log(
-                                config,
-                                {
-                                    "type": "ci_pending_timeout",
-                                    "task_id": task_id,
-                                    "message": msg,
-                                },
+                        approved_key = str(approved_head or "")
+                        last_requeued_ts = task.get("ci_repair_last_requeued_ts")
+                        try:
+                            retry_due = (
+                                last_requeued_ts is None
+                                or now_ts - float(last_requeued_ts) >= 1800
                             )
+                        except (TypeError, ValueError):
+                            retry_due = True
+                        if task.get("ci_repair_requeued_head") != approved_key or retry_due:
+                            msg = (
+                                f"CI status for task {task_id} has been pending for over 30 minutes; "
+                                "owner requeued to refresh CI automatically."
+                            )
+                            task["ci_repair_requeued_head"] = approved_key
+                            task["ci_repair_last_requeued_ts"] = now_ts
+                            status_path = config_path(config, "status_file")
+                            write_json(status_path, status)
+                            if requeue_task_for_ci_repair(
+                                config,
+                                task_id,
+                                message=msg,
+                                clear_approval=False,
+                            ):
+                                changed = True
                     if status_dirty:
                         if not commit_canonical_task_transition(config, status):
                             return changed
+
                     continue
                 elif ci_status == "failure":
                     task.pop("ci_pending_since_ts", None)
-                    msg = f"CI checks for task {task_id} failed; resolve failing checks before finalization."
-                    if task.get("next") != msg:
-                        task["next"] = msg
-                        if not commit_canonical_task_transition(config, status):
-                            return changed
-                        write_activity_log(
-                            config,
-                            {
-                                "type": "ci_failed",
-                                "task_id": task_id,
-                                "message": msg,
-                            },
-                        )
+                    msg = f"CI checks for task {task_id} failed; owner requeued to repair CI before re-review."
+                    if requeue_task_for_ci_repair(
+                        config,
+                        task_id,
+                        message=msg,
+                        clear_approval=True,
+                    ):
+                        changed = True
                     continue
                 elif ci_status not in {"success", "none"}:
                     # B20: catch-all for probe states that are neither pending,

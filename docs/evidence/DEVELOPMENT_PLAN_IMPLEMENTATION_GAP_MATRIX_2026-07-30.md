@@ -133,7 +133,7 @@ PY
 | RTM ID | 規劃要求 | 現行實作／證據 | 狀態 | 缺口 |
 |---|---|---|---|---|
 | PLAN-S0-001 | 品牌、店型、設備、店齡與干預共同語意 | canonical schemas、domain types、source contracts、migrations | `IMPLEMENTED` | 原始業務 owner 核准紀錄未在 repo |
-| PLAN-S0-002 | Feature Marts / model-ready views | `pipelines/dbt/models/model_ready/*`、`scripts/models/sql/model_ready_views.sql` | `IMPLEMENTED` | 未取得 production dbt run、lineage 與 freshness report |
+| PLAN-S0-002 | Feature Marts / model-ready views | `pipelines/dbt/models/model_ready/*`、`product_ops/modeling/sql/model_ready_views.sql` | `IMPLEMENTED` | 未取得 production dbt run、lineage 與 freshness report |
 | PLAN-S0-003 | Label Registry / Outcome Maturity | Learning Hub domain 與 release service | `IMPLEMENTED` | 正式 label owner sign-off 與成熟度營運證據不足 |
 | PLAN-S0-004 | Dataset Snapshot 可重現 | dataset snapshot、artifact checksum、model-ready receipt | `IMPLEMENTED` | 只有 receipt；缺 production artifact store readback evidence |
 | PLAN-S0-005 | MLflow Tracking / Registry | MLflow adapter、獨立 image、alias reconcile、release service | `LIVE_UNVERIFIED` | 未驗證目前 production `MLFLOW_TRACKING_URI`、artifact storage、alias |

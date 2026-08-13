@@ -489,7 +489,7 @@ def resolve_approval(
     return item
 
 
-def _approval_signature(
+def approval_signature(
     session_id: str | None,
     tool_name: str,
     tool_input: dict[str, Any] | None = None,
@@ -510,7 +510,7 @@ def find_resume_override(
     tool_input: dict[str, Any],
 ) -> dict[str, Any] | None:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = approval_signature(session_id, tool_name, tool_input)
     for item in reversed(state.get("history", [])):
         if not item.get("resume_override_active"):
             continue
@@ -518,7 +518,7 @@ def find_resume_override(
             continue
         if item.get("resume_override_consumed_at"):
             continue
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),

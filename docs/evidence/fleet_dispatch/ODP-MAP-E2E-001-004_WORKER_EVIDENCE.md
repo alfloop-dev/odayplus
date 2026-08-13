@@ -148,7 +148,7 @@ Result: `5 passed`.
 
 ```bash
 for task in ODP-MAP-E2E-001 ODP-MAP-E2E-002 ODP-MAP-E2E-003 ODP-MAP-E2E-004; do
-  python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task "$task" || exit 1
+  python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task "$task" || exit 1
 done
 ```
 

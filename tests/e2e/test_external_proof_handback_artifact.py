@@ -9,7 +9,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
-CHECKER = ROOT / "scripts/e2e/check_external_proof_handback_artifact.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_artifact.py"
 EXAMPLE = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json"
 EXPECTED_SHA = "89d0ccc19c983a3e8f8e908459c65939a62d4dfb"
 EXAMPLE_SHA = "1111111111111111111111111111111111111111"

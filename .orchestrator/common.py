@@ -793,10 +793,6 @@ def selected_shared_files(config: dict[str, Any]) -> list[Path]:
     return files
 
 
-def serialize_shared_files(paths: list[Path]) -> str:
-    return "\n".join(f"- {relpath(path)}" for path in paths)
-
-
 def compact_whitespace(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 

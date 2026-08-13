@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_external_proof_issue_handback_scan.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py"
 EXPECTED_SHA = "11f4fb625f922c5e2d178508128e9106da7c465a"
 
 
@@ -70,7 +70,7 @@ def test_issue_handback_scan_detects_candidate_handback_after_latest_pickup() ->
             handback_body=(
                 "External proof handback for ODP-MAP-STAGE-001\n"
                 f"release_head_ref_oid: {EXPECTED_SHA}\n"
-                "python3 scripts/e2e/check_external_proof_handback_artifact.py handback.json"
+                "python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py handback.json"
             )
         ),
         expected_sha=EXPECTED_SHA,

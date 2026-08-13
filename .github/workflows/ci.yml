@@ -38,14 +38,17 @@ jobs:
       - name: Prepare local config
         run: make bootstrap
 
+      - name: Enforce product and development code boundaries
+        run: uv run python delivery_toolchain/governance/check_code_boundaries.py
+
       - name: Lint orchestrator code
-        run: uv run ruff check .orchestrator scripts
+        run: uv run ruff check .orchestrator delivery_toolchain scripts
 
       - name: Check config wiring
-        run: uv run python scripts/check_config_wiring.py
+        run: uv run python delivery_toolchain/governance/check_config_wiring.py
 
       - name: Test orchestrator code
-        run: uv run pytest -m "not requires_live_env" .orchestrator scripts
+        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts
 
   product:
     runs-on: ubuntu-latest
@@ -124,7 +127,7 @@ jobs:
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
       # and any breaking change not listed in
-      # scripts/openapi/approved_breaking_changes.json (ODP-PGAP-API-001).
+      # delivery_toolchain/openapi/approved_breaking_changes.json (ODP-PGAP-API-001).
       - name: Check API contract drift
         run: make api-contract
         env:
@@ -185,7 +188,7 @@ jobs:
             status=0
             uv run pytest -m performance tests/performance || status=$?
             capacity_status=0
-            uv run python scripts/load/assisted_listing_intake/run.py \
+            uv run python delivery_toolchain/load/assisted_listing_intake/run.py \
               --volume 120 --concurrency 20 --observe-only \
               --output "performance-reports/assisted_intake_capacity_attempt_${attempt}.json" \
               || capacity_status=$?

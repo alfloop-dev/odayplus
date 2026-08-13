@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
-CHECKER = ROOT / "scripts/e2e/check_external_proof_closeout_queue.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_closeout_queue.py"
 
 
 def test_external_proof_closeout_queue_is_validated_by_checker() -> None:
@@ -55,7 +55,9 @@ def test_external_proof_tasks_do_not_allow_local_or_mock_proof_to_close_live_cla
     for entry in payload["queue"]:
         assert entry["status"] == "external_blocked"
         assert "Do not close" in entry["completion_rule"]
-        assert "gh pr view 82" in "\n".join(entry["allowed_commands"])
+        command_text = "\n".join(entry["allowed_commands"])
+        assert "gh pr view" in command_text
+        assert ".release_target.pr" in command_text
         assert "generate_external_proof_handback_skeleton.py" in "\n".join(
             entry["handback_commands"]
         )
@@ -79,7 +81,7 @@ def test_external_proof_tasks_are_routed_to_fleet_pickup_labels() -> None:
         assert f"gh issue view {issue_number}" in routing["pickup_command"]
         assert "labels" in routing["pickup_command"]
         assert "body" in routing["pickup_command"]
-        assert "PR #82" in routing["release_authority"]
+        assert "release_target.pr" in routing["release_authority"]
         assert "headRefOid" in routing["release_authority"]
         assert routing["dispatch_lane"]
         assert routing["escalation"]
