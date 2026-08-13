@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _support import load_json
+
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 E2E_DIR = Path(__file__).resolve().parent
@@ -35,10 +37,6 @@ REQUIRED_COMMENT_TOKENS = (
     "check_product_closeout_action.py",
     "Do not mark product release complete",
 )
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def load_release_pr_comments() -> dict[str, Any]:

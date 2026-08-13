@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from _support import load_json_object as read_json
+
 SCHEMA_VERSION = "2.0.0"
 EXPECTED_CANONICAL_SPEC_COUNT = 16
 EXPECTED_PLAYWRIGHT_TEST_COUNT = 107
@@ -1090,13 +1092,6 @@ def bind_scenarios(
             }
         )
     return scenario_results, errors
-
-
-def read_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    return value
 
 
 def validate_receipt_packet(

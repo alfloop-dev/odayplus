@@ -21,6 +21,17 @@ def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def parse_json(text: str) -> Any:
+    return json.loads(text)
+
+
+def load_json_object(path: Path) -> dict[str, Any]:
+    value = load_json(path)
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
 def load_module(path: Path, name: str) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
@@ -45,7 +56,7 @@ def load_github_issue(
         cwd=root,
         text=True,
     )
-    payload = json.loads(raw)
+    payload = parse_json(raw)
     if not isinstance(payload, dict):
         raise ValueError(f"GitHub issue #{issue_number} returned a non-object payload")
     return payload
@@ -58,11 +69,24 @@ def run_gh_with_retry(
     attempts: int = 3,
     runner: Callable[..., subprocess.CompletedProcess[Any]] = subprocess.run,
     sleeper: Callable[[float], None] = time.sleep,
-) -> None:
+    capture_output: bool = False,
+    text: bool = False,
+) -> subprocess.CompletedProcess[Any]:
     for attempt in range(1, attempts + 1):
-        result = runner(args, cwd=root, check=False)
+        run_options: dict[str, Any] = {"cwd": root, "check": False}
+        if capture_output:
+            run_options["capture_output"] = True
+        if text:
+            run_options["text"] = True
+        result = runner(args, **run_options)
         if result.returncode == 0:
-            return
+            return result
         if attempt == attempts:
-            raise subprocess.CalledProcessError(result.returncode, args)
+            raise subprocess.CalledProcessError(
+                result.returncode,
+                args,
+                output=getattr(result, "stdout", None),
+                stderr=getattr(result, "stderr", None),
+            )
         sleeper(2 * attempt)
+    raise RuntimeError("unreachable")

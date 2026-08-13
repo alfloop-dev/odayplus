@@ -16,6 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from _support import load_json
+
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
@@ -58,10 +60,6 @@ TASK_PROOF_GUIDANCE = {
 }
 
 FORBIDDEN_LIVE_PROOF_SHORTCUTS = "Do not use mock://, localhost, 127.0.0.1, fixture, replay fixture, deterministic fixture, or mock-live proof as closeout evidence."
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:

@@ -140,15 +140,22 @@ Git 歷史與 runbook 只用來確認使用情況，不作主要分類依據。
    `--release-sha-from-pr82`。正式 command 改為 `--release-sha-from-pr`，release PR
    從 queue 的 `release_target.pr` 解析；數字 82 只作當前 manifest 資料或 fixture，
    不再是 executable interface。
+8. **工具與產品只有邏輯分類、沒有實體邊界**：建立 `delivery_toolchain/`，將
+   OpenAPI、Git、security、release、load、chaos、GitHub policy 與 E2E gate 的
+   canonical implementation 全數移出 `scripts/`；CI、測試與操作命令已改用新路徑。
+9. **E2E JSON／GitHub transport cloning**：所有 E2E JSON 讀取只保留
+   `delivery_toolchain/e2e/_support.py` 的 canonical implementation；特殊 fleet issue
+   sync 也改用同一個 retry/captured-output helper。
+10. **Provider adapter lifecycle 與 Gemini auth authority 重複**：六個 CLI adapter
+    已共用 `BaseAdapter.spawn_cli_delivery()` 與 `unavailable_or_inbox()`；Gemini
+    home/env/settings/auth 判斷只保留在 `provider_runtime.py`，adapter 僅組 provider
+    專屬 argv 與環境差異。
 
 ## 尚未完成、但已由程式碼確認的重複
 
 | 機制 | 實際位置 | 判定 | 下一步 |
 |---|---|---|---|
 | Git/GitHub command 與 delivery truth | `supervisor.py`、`ai_status.py`、`github_bus.py` | 三者都做 branch/PR/CI/subprocess，但 authority 不同 | 先定義 GitHub client 與 delivery snapshot contract，再遷移 |
-| Provider capability authority | `provider_permissions.py`、Antigravity/Gemini adapters | auth/config/capability 判斷重疊，adapter spawn flags 不同 | 抽 shared capability/fallback/spawn lifecycle，不合併 provider-specific flags |
-| E2E JSON loaders | `_support.py` 之外仍有 13 個 local `load_json` | 純 mechanics 重複 | 分批遷移；每批保留 CLI regression test |
-| GitHub retry/issue loader | `sync_external_proof_fleet_issues.py` 尚有較特殊 body/retry loader | 與 `_support.py` 部分重疊 | 先讓 shared helper 支援 captured output/body，再遷移 |
 | Release evidence 手工鏡像 | queue、pickup board、handback template、example | 同一 command/evidence 需同步四份；本輪完整測試已實際抓到 drift | 建單一 renderer，由 queue 產生三份衍生 evidence |
 | BFF receipt-store factory | adlift/sitescore/forecastops 三份 | 結構與 tenant-scoped factory 相同 | 抽 typed factory，保留不同 store protocol |
 | BFF command-store factory | avm/interventions/priceops 三份 | 結構相同，錯誤文案與 store type略異 | 抽 durable command-store resolver |
@@ -178,10 +185,8 @@ Git 歷史與 runbook 只用來確認使用情況，不作主要分類依據。
 
 ## 下一輪順序
 
-1. 完成剩餘 E2E transport helper 遷移，量化每批移除的 local implementation。
-2. 抽 provider adapter 共用 lifecycle，維持現有 adapter entrypoint。
-3. 將 `ai_status.py` 拆成 canonical state service、delivery truth、archive、projection；
+1. 將 `ai_status.py` 拆成 canonical state service、delivery truth、archive、projection；
    原 script 留薄 CLI，避免 supervisor 與操作命令同時中斷。
-4. 依 worker lifecycle、worktree、dispatch、reconciliation 漸進拆 supervisor。
-5. 最後處理 BFF receipt/command store 與 operator composition；它們屬產品程式，
+2. 依 worker lifecycle、worktree、dispatch、reconciliation 漸進拆 supervisor。
+3. 最後處理 BFF receipt/command store 與 operator composition；它們屬產品程式，
    不與開發平台重構混在同一批部署。

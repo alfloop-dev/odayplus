@@ -20,6 +20,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from _support import load_json
+
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
@@ -135,10 +137,6 @@ LIVE_PROOF_FORBIDDEN_TOKENS = (
 TASK_SPECIFIC_FORBIDDEN_TOKENS = {
     task_id: LIVE_PROOF_FORBIDDEN_TOKENS for task_id in TASK_SPECIFIC_NOTE_TOKENS
 }
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def is_non_empty_string(value: Any) -> bool:

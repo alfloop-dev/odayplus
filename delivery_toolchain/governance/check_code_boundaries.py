@@ -27,6 +27,7 @@ class ClassifiedFile:
     boundary: str
     retention_class: str
     is_product_runtime: bool
+    verified_scope: str = ""
 
 
 def load_manifest(path: Path = DEFAULT_MANIFEST) -> dict[str, Any]:
@@ -115,12 +116,27 @@ def classify_files(paths: list[str], manifest: dict[str, Any]) -> tuple[list[Cla
         retention_class = str(settings.get("retention_class") or "")
         if retention_class not in retention_classes:
             errors.append(f"{name}: unknown retention_class {retention_class!r}")
+        verified_scope = ""
+        if name == "verification":
+            verification = manifest.get("verification_ownership", {})
+            verified_scope = str(verification.get("default_scope") or "")
+            for rule in verification.get("rules", []):
+                if not isinstance(rule, dict):
+                    continue
+                if any(matches(path, str(pattern)) for pattern in rule.get("include", [])):
+                    verified_scope = str(rule.get("scope") or "")
+                    break
+            if verified_scope not in boundaries or verified_scope == "verification":
+                errors.append(
+                    f"verification file has invalid verified scope {verified_scope!r}: {path}"
+                )
         classified.append(
             ClassifiedFile(
                 path=path,
                 boundary=name,
                 retention_class=retention_class,
                 is_product_runtime=settings.get("is_product_runtime") is True,
+                verified_scope=verified_scope,
             )
         )
     return classified, errors
@@ -238,6 +254,7 @@ def inventory_text(classified: list[ClassifiedFile], manifest: dict[str, Any]) -
         "boundary",
         "retention_class",
         "is_product_runtime",
+        "verified_scope",
         "artifact_profiles",
         "removable",
         "removal_condition",
@@ -255,6 +272,7 @@ def inventory_text(classified: list[ClassifiedFile], manifest: dict[str, Any]) -
                 "boundary": entry.boundary,
                 "retention_class": entry.retention_class,
                 "is_product_runtime": str(entry.is_product_runtime).lower(),
+                "verified_scope": entry.verified_scope,
                 "artifact_profiles": ";".join(included_profiles),
                 "removable": str(policy.get("removable", "")).lower(),
                 "removal_condition": str(policy.get("removal_condition", "")),

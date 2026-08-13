@@ -31,7 +31,9 @@ opposite direction are rejected.
 
 The checked-in inventory at `docs/audits/code-boundary-inventory.csv` lists the
 boundary, retention class, artifact profiles, and removal condition for every
-tracked Python file.
+tracked Python file. Verification files also carry `verified_scope`; deleting
+development tooling therefore has an exact test-removal set instead of requiring
+all tests to be treated as one shared bucket.
 
 ## Enforcement
 
@@ -53,6 +55,10 @@ python3 delivery_toolchain/governance/check_code_boundaries.py --write-inventory
 Legacy locations are migrated incrementally. A compatibility wrapper may keep
 an old command/import stable, but the canonical implementation must live in its
 own boundary and product code must never depend on the wrapper.
+
+The delivery boundary intentionally has no `scripts/**/*.py` catch-all. A new
+delivery command placed under `scripts/` is unclassified and fails CI; new
+delivery code must be created under `delivery_toolchain/`.
 
 ## Migration status
 

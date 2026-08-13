@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from _support import load_json
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
@@ -47,10 +48,6 @@ def load_module(path: Path, name: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def render_comment(queue_payload: dict[str, Any], rows: list[dict[str, Any]], *, release_sha: str) -> str:

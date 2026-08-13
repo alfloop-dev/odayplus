@@ -44,6 +44,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from _support import load_json
+
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "docs/evidence"
 EXTERNAL_QUEUE_PATH = EVIDENCE / "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
@@ -63,10 +65,6 @@ RESOLVED_QUEUE_STATUSES = {"resolved", "accepted", "closed", "done"}
 # Live statuses that mean the underlying work is still moving through the fleet.
 ACTIVE_LIVE_STATUSES = {"todo", "in_progress", "review", "review_approved"}
 DONE_LIVE_STATUS = "done"
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------

@@ -8,10 +8,11 @@ cannot lose issue routing, handback commands, or closeout boundaries in prose.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from _support import load_json
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
@@ -49,10 +50,6 @@ REQUIRED_BOARD_TOKENS = (
     "127.0.0.1",
     "Do not close #132-#138",
 )
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def command_fragment(command: str) -> str:

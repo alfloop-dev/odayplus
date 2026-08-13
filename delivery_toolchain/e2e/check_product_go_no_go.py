@@ -9,11 +9,11 @@ until #132-#138 handbacks are accepted.
 
 from __future__ import annotations
 
-import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+
+from _support import load_json
 
 ROOT = Path(__file__).resolve().parents[2]
 GO_NO_GO_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
@@ -87,10 +87,6 @@ REQUIRED_EXTERNAL_TASK_IDS = (
     "ODP-PV-STAGE-001",
     "ODP-PV-STAGE-002",
 )
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def validate_pending_row(text: str, row_label: str) -> str | None:

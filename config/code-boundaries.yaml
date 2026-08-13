@@ -122,30 +122,9 @@ boundaries:
     include:
       - delivery_toolchain/*.py
       - delivery_toolchain/**/*.py
-      - scripts/*.py
-      - delivery_toolchain/chaos/*.py
-      - delivery_toolchain/chaos/**/*.py
-      - delivery_toolchain/e2e/*.py
-      - delivery_toolchain/e2e/**/*.py
-      - delivery_toolchain/git/*.py
-      - delivery_toolchain/git/**/*.py
-      - delivery_toolchain/load/*.py
-      - delivery_toolchain/load/**/*.py
-      - delivery_toolchain/openapi/*.py
-      - delivery_toolchain/openapi/**/*.py
-      - delivery_toolchain/release/*.py
-      - delivery_toolchain/release/**/*.py
-      - scripts/security/*.py
-      - scripts/security/**/*.py
-      - scripts/ops/*.py
-      - scripts/ops/**/*.py
       - infra/terraform/*.py
       - infra/terraform/**/*.py
     exclude:
-      - scripts/ai_status.py
-      - scripts/external_data_backfill.py
-      - scripts/supervisor_runtime_health.py
-      - scripts/supervisor_watchdog_install.py
       - '**/test_*.py'
       - '**/tests/*.py'
       - '**/tests/**/*.py'
@@ -191,6 +170,40 @@ boundaries:
     include:
       - archive/*.py
       - archive/**/*.py
+
+verification_ownership:
+  description: Links every verification file to the removable system or tool scope it verifies.
+  default_scope: product_system
+  rules:
+    - scope: development_platform_system
+      include:
+        - .orchestrator/test_*.py
+        - .orchestrator/**/test_*.py
+        - .orchestrator/**/conftest.py
+        - scripts/orchestrator/test_*.py
+        - scripts/test_ai_status.py
+        - scripts/test_supervisor_runtime_health.py
+        - scripts/test_supervisor_watchdog_install.py
+        - tests/orchestrator/*.py
+        - tests/orchestrator/**/*.py
+    - scope: development_delivery_tooling
+      include:
+        - delivery_toolchain/**/test_*.py
+        - tests/e2e/*.py
+        - tests/e2e/**/*.py
+        - tests/security/*.py
+        - tests/security/**/*.py
+        - tests/tooling/*.py
+        - tests/tooling/**/*.py
+        - tests/contract/test_openapi_artifact_and_client.py
+    - scope: product_operations_tooling
+      include:
+        - tests/ops/*.py
+        - tests/ops/**/*.py
+        - tests/performance/*.py
+        - tests/performance/**/*.py
+        - tests/reliability/*.py
+        - tests/reliability/**/*.py
 
 artifact_profiles:
   production:

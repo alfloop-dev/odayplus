@@ -13,7 +13,8 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
-from typing import Any
+
+from _support import load_json
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
@@ -28,10 +29,6 @@ def load_artifact_checker():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def find_handback_paths(paths: list[Path]) -> list[Path]:

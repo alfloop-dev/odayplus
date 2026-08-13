@@ -103,6 +103,32 @@ def test_checked_in_repository_has_complete_boundary_coverage() -> None:
     assert errors == []
     assert classified
     assert sum(entry.is_product_runtime for entry in classified) > 0
+    assert all(entry.verified_scope for entry in classified if entry.boundary == "verification")
+
+
+def test_verification_ownership_uses_specific_rule_before_default() -> None:
+    manifest = manifest_fixture()
+    manifest["boundaries"]["verification"] = {
+        "include": ["tests/**/*.py"],
+        "retention_class": "delivery_only",
+        "is_product_runtime": False,
+        "allowed_import_scopes": ["product", "tooling", "verification"],
+    }
+    manifest["verification_ownership"] = {
+        "default_scope": "product",
+        "rules": [{"scope": "tooling", "include": ["tests/tooling/**/*.py"]}],
+    }
+
+    classified, errors = guard.classify_files(
+        ["tests/product/test_api.py", "tests/tooling/test_gate.py"],
+        manifest,
+    )
+
+    assert errors == []
+    assert {entry.path: entry.verified_scope for entry in classified} == {
+        "tests/product/test_api.py": "product",
+        "tests/tooling/test_gate.py": "tooling",
+    }
 
 
 def test_invalid_python_is_reported(tmp_path: Path) -> None:

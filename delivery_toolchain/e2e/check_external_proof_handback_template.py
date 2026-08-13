@@ -9,10 +9,11 @@ map, and remote staging evidence.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from _support import load_json
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
@@ -54,10 +55,6 @@ FORBIDDEN_TOKENS = {
     "private keys",
     "connection strings",
 }
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def non_empty_string_list(value: Any) -> bool:

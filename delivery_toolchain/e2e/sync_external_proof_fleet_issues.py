@@ -10,7 +10,6 @@ proof workers following stale handoff instructions.
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 import tempfile
@@ -32,14 +31,11 @@ from _release_target import (
     release_pr_head_command,
     release_pr_view_command,
 )
+from _support import issue_number_from_url, load_json, parse_json, run_gh_with_retry
 
 
 def load_queue(path: Path = QUEUE_PATH) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def issue_number_from_url(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1]
+    return load_json(path)
 
 
 def shell_block(command: str) -> str:
@@ -199,25 +195,29 @@ def run_gh_with_body(args: list[str], body: str) -> None:
 
 
 def run_gh(args: list[str], *, attempts: int = 3) -> None:
-    for attempt in range(1, attempts + 1):
-        result = subprocess.run(args, cwd=ROOT, check=False)
-        if result.returncode == 0:
-            return
-        if attempt == attempts:
-            raise subprocess.CalledProcessError(result.returncode, args)
-        time.sleep(2 * attempt)
+    run_gh_with_retry(
+        args,
+        root=ROOT,
+        attempts=attempts,
+        runner=subprocess.run,
+        sleeper=time.sleep,
+    )
 
 
 def load_issue(issue_number: str) -> dict[str, Any]:
     args = ["gh", "issue", "view", issue_number, "--json", "number,comments"]
-    for attempt in range(1, 4):
-        result = subprocess.run(args, cwd=ROOT, check=False, capture_output=True, text=True)
-        if result.returncode == 0:
-            return json.loads(result.stdout)
-        if attempt == 3:
-            raise subprocess.CalledProcessError(result.returncode, args, output=result.stdout, stderr=result.stderr)
-        time.sleep(2 * attempt)
-    raise RuntimeError("unreachable")
+    result = run_gh_with_retry(
+        args,
+        root=ROOT,
+        runner=subprocess.run,
+        sleeper=time.sleep,
+        capture_output=True,
+        text=True,
+    )
+    payload = parse_json(result.stdout)
+    if not isinstance(payload, dict):
+        raise ValueError(f"GitHub issue #{issue_number} returned a non-object payload")
+    return payload
 
 
 

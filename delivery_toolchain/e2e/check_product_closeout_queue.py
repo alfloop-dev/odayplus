@@ -22,6 +22,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from _support import load_json
+
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 E2E_DIR = Path(__file__).resolve().parent
@@ -76,10 +78,6 @@ AI_STATUS_ACTOR_BY_ACTION = {
     "owner_done": "owner",
     "reviewer_approve_or_reopen": "reviewer",
 }
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def status_task_index() -> dict[str, dict[str, Any]]:

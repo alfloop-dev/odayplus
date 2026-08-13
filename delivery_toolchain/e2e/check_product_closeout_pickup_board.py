@@ -8,10 +8,11 @@ release owner can trust the board without running the broader pytest suite.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from _support import load_json
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
@@ -78,10 +79,6 @@ REQUIRED_BLOCKING_TYPES = (
     "owner_status_closeout",
     "reviewer_status_closeout",
 )
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def command_fragment(command: str) -> str:

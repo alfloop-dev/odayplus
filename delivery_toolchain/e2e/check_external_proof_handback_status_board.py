@@ -9,10 +9,11 @@ checker keeps that board synchronized with #132-#138 and prevents accidental
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
+
+from _support import load_json
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
@@ -44,10 +45,6 @@ REQUIRED_GLOBAL_RULE_TOKENS = (
     "#132-#138",
     "Do not use this board as runtime proof",
 )
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def validate_status_board(queue: dict[str, Any], status_board: dict[str, Any]) -> list[str]:
