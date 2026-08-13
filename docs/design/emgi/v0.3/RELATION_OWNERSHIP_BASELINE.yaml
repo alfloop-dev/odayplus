@@ -1,0 +1,118 @@
+schema: oday-plus.emgi-relation-ownership.v1
+status: approved_baseline
+reviewed_baseline_sha: 0d1603cf347e30c9cf2f25f0eecc10673ac55015
+rules:
+  - every_relation_has_exactly_one_authoritative_writer
+  - one_relation_name_has_one_grain_and_one_purpose
+  - training_and_scoring_relations_must_not_share_a_name
+  - aliases_must_be_read_only_and_version_pinned
+  - dbt_and_installer_sql_must_not_both_create_the_same_relation
+  - generated_registry_changes_are_integration_owned
+
+relations:
+  - relation: model_ready.geo_grid_view
+    current_state: legacy_collision_risk
+    current_grain: h3_cell_current_aggregate
+    current_writer_candidates:
+      - pipelines/dbt/models/model_ready/geo_grid_view.sql
+      - scripts/models/sql/model_ready_views.sql
+    target:
+      relation: market_product.market_cell_profile_monthly
+      grain: h3_index__calendar_month__feature_policy_version
+      authoritative_writer: pipelines/dbt/models/market_product/market_cell_profile_monthly.sql
+      consumers:
+        - Market Explorer
+        - HeatZone feature materializer
+      action: rename_and_migrate
+
+  - relation: model_ready.candidate_site_view
+    current_state: invalid_multi_grain
+    current_grains:
+      - current_candidate_scoring_row
+      - opened_store_training_outcome
+    current_writer_candidates:
+      - pipelines/dbt/models/model_ready/candidate_site_view.sql
+      - scripts/models/sql/model_ready_views.sql
+    target_relations:
+      - relation: decision_ready.candidate_site_feature_snapshot
+        grain: candidate_site_id__knowledge_as_of__target_format_snapshot_id__feature_policy_version
+        authoritative_writer: pipelines/dbt/models/decision_ready/candidate_site_feature_snapshot.sql
+        purpose: runtime_scoring_input
+      - relation: model_training.sitescore_opened_store_outcome
+        grain: opened_store_id__prediction_origin_time__label_version
+        authoritative_writer: pipelines/dbt/models/model_training/sitescore_opened_store_outcome.sql
+        purpose: training_outcome
+    action: split_and_block_old_name
+
+  - relation: model_ready.forecast_training_view
+    current_state: keep_with_time_review
+    current_grain: tenant_id__store_id__business_date
+    target:
+      relation: model_training.forecast_daily_outcome
+      grain: store_id__business_date__knowledge_cutoff
+      authoritative_writer: pipelines/dbt/models/model_training/forecast_daily_outcome.sql
+      requirements:
+        - store_timezone
+        - feature_source_manifest_id
+        - label_source_manifest_id
+        - explicit_training_as_of
+    action: migrate_version
+
+  - relation: geo.pois
+    current_state: canonical_entity_only
+    target:
+      relation: market_intelligence.poi_entities
+      grain: canonical_poi_entity
+      authoritative_writer: modules/market_intelligence/poi
+      companion_relations:
+        - market_intelligence.poi_observations
+        - market_intelligence.poi_identity_edges
+        - market_intelligence.poi_status_decisions
+    action: preserve_entity_and_add_observation_history
+
+  - relation: geo.competitor_stores
+    current_state: canonical_entity_only
+    target:
+      relation: market_intelligence.competitor_entities
+      grain: canonical_competitor_entity
+      authoritative_writer: modules/market_intelligence/competitors
+      companion_relations:
+        - market_intelligence.competitor_observations
+        - market_intelligence.competitor_capacity_observations
+        - market_intelligence.competitor_status_decisions
+    action: preserve_entity_and_add_observation_history
+
+  - relation: expansion.listings
+    current_state: assisted_listing_authority
+    target:
+      relation: expansion.listings
+      grain: governed_listing_identity
+      authoritative_writer: modules/listing
+      emgi_read_model:
+        relation: market_product.listing_inventory_snapshot
+        authoritative_writer: pipelines/dbt/models/market_product/listing_inventory_snapshot.sql
+    action: no_second_listing_lifecycle
+
+  - relation: intake.source_snapshots
+    current_state: tenant_first
+    target_relations:
+      - relation: external_control.source_content_blobs
+        grain: content_sha256
+        authoritative_writer: modules/external_data/application/source_blobs.py
+      - relation: external_control.source_observations
+        grain: source_dataset_version_id__source_entity_id__observed_at
+        authoritative_writer: modules/external_data/application/source_observations.py
+      - relation: external_control.source_search_executions
+        grain: source_dataset_version_id__query_fingerprint__executed_at
+        authoritative_writer: modules/external_data/application/source_search.py
+    action: evolve_with_compatibility_adapter
+
+ci_contract:
+  registry_path: packages/schemas/emgi/relation_ownership.yaml
+  check_command: uv run python scripts/emgi/validate_relation_ownership.py
+  blocked_conditions:
+    - duplicate_authoritative_writer
+    - duplicate_relation_name_with_different_grain
+    - training_scoring_name_collision
+    - unregistered_create_or_replace_relation
+    - dbt_installer_writer_collision
