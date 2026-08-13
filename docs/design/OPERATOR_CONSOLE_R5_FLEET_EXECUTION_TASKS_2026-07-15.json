@@ -187,7 +187,7 @@
       "supersedes": ["ODP-OC-R4-012"],
       "owned_paths": [
         "infra/",
-        "scripts/deploy_cloud_run_waji.sh",
+        "product_ops/deployment/deploy_cloud_run_waji.sh",
         "cloudbuild.waji.yaml",
         "docs/evidence/completion/ODP-OC-R5-003/",
         "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"

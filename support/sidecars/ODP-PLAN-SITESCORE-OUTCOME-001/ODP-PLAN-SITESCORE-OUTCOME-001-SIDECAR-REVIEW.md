@@ -35,7 +35,7 @@ Executed in the clean parent worktree at exact implementation head `fb42ef7a`:
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check ebe994b1..fb42ef7a
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"

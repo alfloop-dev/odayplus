@@ -96,7 +96,7 @@ class LearningHubPreconditionRequiredError(LearningHubError):
 DEFAULT_RELEASE_LEASE_SECONDS = 300.0
 
 # Roles that may carry a release approval, mirroring the approval-document
-# contract enforced by ``scripts/models/contracts.require_approval_document``.
+# contract enforced by ``product_ops/modeling/contracts.require_approval_document``.
 _GOVERNANCE_APPROVAL_ROLES = frozenset({"model-review-board", "model-risk-owner"})
 
 

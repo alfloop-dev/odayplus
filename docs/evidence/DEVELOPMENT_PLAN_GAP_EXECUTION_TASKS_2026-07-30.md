@@ -167,7 +167,7 @@ RTM coverage rows；它修正的是原 ledger 把技術比較器與真實管理�
 - Scope: 將 SiteScore PG16/live inventory query 綁定可稽核的 prediction
   source、model version 與 dataset lineage；修正 outcome 已存在但 query
   未選 prediction 欄位、因此永遠無法進入 `ACTIVE` 的缺口。
-- Writable: `models/**`, `scripts/models/**`, `docs/evidence/models/**`,
+- Writable: `models/**`, `product_ops/modeling/**`, `docs/evidence/models/**`,
   focused tests.
 - Acceptance:
   query 能以明確 model/version lineage 取得 prediction 並與 M6/M12 outcome

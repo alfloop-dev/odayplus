@@ -8,7 +8,7 @@ and read the durable audit receipt back out.
 
 It is deliberately complementary to the two gates that already exist:
 
-* ``scripts/deployment/validate_cloud_run_live_deployment.py`` proves the
+* ``product_ops/deployment/validate_cloud_run_live_deployment.py`` proves the
   *deployment topology* (preflight config, Cloud Run job receipts, candidate
   revision smoke);
 * ``delivery_toolchain/e2e/check_live_production_data.py`` proves the *data plane* by
@@ -507,7 +507,7 @@ class CloudRunWorkerDriver:
             "--wait",
             "--quiet",
             (
-                "--args=scripts/deployment/cloud_run_job_entrypoint.py,worker,"
+                "--args=product_ops/deployment/cloud_run_job_entrypoint.py,worker,"
                 f"--max-jobs,{self._max_jobs}"
             ),
         ]

@@ -28,7 +28,7 @@ Compared with `origin/dev` at `475f6d5e`, the parent branch changes four files o
 | File | Contract role | Review observation |
 | --- | --- | --- |
 | `apps/api/oday_api/main.py` | Health/readiness producer | Adds top-level `data_mode` to `/platform/health` and `/readiness`; value is derived from the same `modes["data"]["mode"]` used by nested payloads. Unhealthy live-required states remain HTTP 503. |
-| `scripts/deployment/validate_cloud_run_live_deployment.py` | Candidate smoke consumer | Resolves root `data_mode`/`dataMode`, nested `modes.data.mode`, nested `details.data.mode`, Operator `meta`, and legacy binding keys. Smoke acceptance still requires `status == "ok"` and resolved mode `live`. |
+| `product_ops/deployment/validate_cloud_run_live_deployment.py` | Candidate smoke consumer | Resolves root `data_mode`/`dataMode`, nested `modes.data.mode`, nested `details.data.mode`, Operator `meta`, and legacy binding keys. Smoke acceptance still requires `status == "ok"` and resolved mode `live`. |
 | `tests/ops/test_cloud_run_live_deployment.py` | Validator and composition evidence | Covers supported envelope shapes and boots real API apps for live, unavailable, and fixture cases. |
 | `tests/reliability/test_health_endpoints.py` | Endpoint regression evidence | Asserts default fixture-mode responses expose truthful top-level `data_mode`; does not hard-code a non-live runtime as live. |
 
@@ -60,7 +60,7 @@ The following checks were run in a temporary detached worktree at `6b4d56e892b5d
 
 /home/lupin/oday-plus/.venv/bin/ruff check \
   apps/api/oday_api/main.py \
-  scripts/deployment/validate_cloud_run_live_deployment.py \
+  product_ops/deployment/validate_cloud_run_live_deployment.py \
   tests/ops/test_cloud_run_live_deployment.py \
   tests/reliability/test_health_endpoints.py
 # All checks passed!
@@ -149,7 +149,7 @@ Revised four-file table as of `origin/dev` `77567b5e`:
 | File | Still unique to the parent branch? | Note |
 | --- | --- | --- |
 | `apps/api/oday_api/main.py` | **No — now a no-op** | Identical to `dev`; superseded by `010ceef7`. |
-| `scripts/deployment/validate_cloud_run_live_deployment.py` | Yes (+28 / −10) | Resolver broadening is the real remaining payload. |
+| `product_ops/deployment/validate_cloud_run_live_deployment.py` | Yes (+28 / −10) | Resolver broadening is the real remaining payload. |
 | `tests/ops/test_cloud_run_live_deployment.py` | Yes, and conflicting | `dev` gained `test_real_app_health_data_mode_matches_unchanged_deploy_validator` from the same `010ceef7` lane; it overlaps the parent's `test_real_app_platform_health_and_readiness_data_mode_contract`. |
 | `tests/reliability/test_health_endpoints.py` | Yes (+2) | Two `data_mode == "fixture"` assertions on the existing healthy-path tests. |
 
@@ -229,7 +229,7 @@ The implementation merge changed three files relative to its composed base:
 
 | File | Merged outcome |
 | --- | --- |
-| `scripts/deployment/validate_cloud_run_live_deployment.py` | Resolves canonical root `data_mode` first, then nested health/readiness and Operator envelopes, with legacy `details` / `dependencies` / root binding-mode fallbacks retained. |
+| `product_ops/deployment/validate_cloud_run_live_deployment.py` | Resolves canonical root `data_mode` first, then nested health/readiness and Operator envelopes, with legacy `details` / `dependencies` / root binding-mode fallbacks retained. |
 | `tests/ops/test_cloud_run_live_deployment.py` | Covers all supported envelopes, canonical-root precedence when declarations conflict, and real-app `live`, `unavailable`, and `fixture` behavior. |
 | `tests/reliability/test_health_endpoints.py` | Retains truthful fixture-mode assertions on the existing endpoint tests. |
 
@@ -252,7 +252,7 @@ Run in this sidecar worktree after merging `origin/dev` `f9da2955`:
 # 9 passed
 
 /home/lupin/oday-plus/.venv/bin/ruff check \
-  scripts/deployment/validate_cloud_run_live_deployment.py \
+  product_ops/deployment/validate_cloud_run_live_deployment.py \
   tests/ops/test_cloud_run_live_deployment.py \
   tests/reliability/test_health_endpoints.py
 # All checks passed!
@@ -285,7 +285,7 @@ python3 -m pytest -q \
 # passed; existing Starlette/httpx deprecation warning only
 
 python3 -m ruff check \
-  scripts/deployment/validate_cloud_run_live_deployment.py \
+  product_ops/deployment/validate_cloud_run_live_deployment.py \
   tests/ops/test_cloud_run_live_deployment.py \
   tests/reliability/test_health_endpoints.py
 # All checks passed!
@@ -364,7 +364,7 @@ Re-run in this sidecar worktree at `744bc104` (round B), reproducing the round-A
 # 381 passed, 1 warning
 
 /home/lupin/oday-plus/.venv/bin/ruff check \
-  scripts/deployment/validate_cloud_run_live_deployment.py \
+  product_ops/deployment/validate_cloud_run_live_deployment.py \
   tests/ops/test_cloud_run_live_deployment.py \
   tests/reliability/test_health_endpoints.py
 # All checks passed!

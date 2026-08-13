@@ -66,15 +66,6 @@ boundaries:
     include:
       - product_ops/*.py
       - product_ops/**/*.py
-      - scripts/data_platform/*.py
-      - scripts/data_platform/**/*.py
-      - scripts/deployment/*.py
-      - scripts/deployment/**/*.py
-      - scripts/migrations/*.py
-      - scripts/migrations/**/*.py
-      - scripts/models/*.py
-      - scripts/models/**/*.py
-      - scripts/external_data_backfill.py
       - infra/db/migrations/*.py
       - infra/db/migrations/**/*.py
       - infra/k8s/data-platform/*.py

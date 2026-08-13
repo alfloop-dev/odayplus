@@ -18,8 +18,9 @@ from pathlib import Path
 
 # Add project root to path
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+if str(ROOT) in sys.path:
+    sys.path.remove(str(ROOT))
+sys.path.insert(0, str(ROOT))
 
 from modules.external_data.application.listing_feed_adapter import (
     FeedSchemaError,

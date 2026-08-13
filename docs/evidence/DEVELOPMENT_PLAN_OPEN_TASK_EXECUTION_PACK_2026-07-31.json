@@ -124,7 +124,7 @@
         "dashboard/alert/runbook identifiers and owners"
       ],
       "verification": [
-        "ruff check shared/observability tests/reliability scripts/deployment",
+        "ruff check shared/observability tests/reliability product_ops/deployment",
         "pytest -q tests -k \"observability or telemetry or alert or dlq\"",
         "independent pooled-coverage, negative/non-finite, wrong-release/project, route-missing, and receipt-tamper mutations",
         "git diff --check"
@@ -191,7 +191,7 @@
       ],
       "verification": [
         "pytest -q tests/models -k \"sitescore or opening_outcome\"",
-        "ruff check scripts/models models tests/models",
+        "ruff check product_ops/modeling models tests/models",
         "mutations for invented governance fields, fake maturity, fixed-multiplier metrics, malformed intervals, count/hash drift, and forged ACTIVE verdict",
         "git diff --check"
       ],

@@ -62,7 +62,7 @@ No principal-map secret existed in project `alfaloop-data-project`. Created:
 - GitHub `dev` environment variable
   `ODP_AUTH_PRINCIPAL_MAP_SECRET = oday-plus-dev-auth-principal-map:latest` —
   the reference only; the secret value exists solely in Secret Manager, which
-  is exactly what `scripts/deploy_cloud_run_waji.sh` expects
+  is exactly what `product_ops/deployment/deploy_cloud_run_waji.sh` expects
   (`ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}` secret binding).
 
 ### 3. Locked dependency bootstrap before preflight

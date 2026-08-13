@@ -365,7 +365,7 @@
         "ODP-INTAKE-SNAPSHOT-001"
       ],
       "owned_paths": [
-        "scripts/migrations/assisted_listing_intake/",
+        "product_ops/migrations/assisted_listing_intake/",
         "tests/ops/test_assisted_listing_intake_migration.py",
         "docs/runbooks/assisted-listing-intake-migration.md",
         "docs/evidence/completion/ODP-INTAKE-MIGRATION-001/"
@@ -378,7 +378,7 @@
       ],
       "verification": [
         "uv run pytest tests/ops/test_assisted_listing_intake_migration.py -q",
-        "python3 -m ruff check scripts/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py",
+        "python3 -m ruff check product_ops/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py",
         "git diff --check origin/dev...HEAD"
       ]
     },

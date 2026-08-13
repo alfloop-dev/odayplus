@@ -15,7 +15,7 @@ This addendum does not rewrite or close the historical PR #82
 human-assisted Package 7 workflow. `ODP-OC-R5-001` owns the integrated UI/API
 delivery and composes the existing ingestion primitives.
 
-- Allowed paths: `apps/web/features/listing/`, `modules/external_data/`, `modules/integration/`, `packages/schemas/source_contracts/external/`, `scripts/external_data_backfill.py`, listing-related E2E/integration tests, and task-specific files under `docs/evidence/completion/`.
+- Allowed paths: `apps/web/features/listing/`, `modules/external_data/`, `modules/integration/`, `packages/schemas/source_contracts/external/`, `product_ops/external_data_backfill.py`, listing-related E2E/integration tests, and task-specific files under `docs/evidence/completion/`.
 - Out of scope: map UI implementation, remote staging deployment changes, unrelated product workflows, and any committed provider secrets or raw sensitive provider data.
 - External dependencies: provider terms approval remains external operational state. A provider credential is required only when the approved retrieval method requires one.
 

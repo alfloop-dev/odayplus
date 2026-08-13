@@ -601,19 +601,19 @@
         },
         {
           "location": [
-            "scripts/deployment/validate_cloud_run_live_deployment.py",
+            "product_ops/deployment/validate_cloud_run_live_deployment.py",
             "1107"
           ],
           "kind": "live_backend_namespace_never_in_retirement_inventory",
-          "line": "scripts/deployment/validate_cloud_run_live_deployment.py:1107:            root, \"modules.opsboard.application.operator_state\""
+          "line": "product_ops/deployment/validate_cloud_run_live_deployment.py:1107:            root, \"modules.opsboard.application.operator_state\""
         },
         {
           "location": [
-            "scripts/deployment/validate_cloud_run_live_deployment.py",
+            "product_ops/deployment/validate_cloud_run_live_deployment.py",
             "1110"
           ],
           "kind": "live_backend_namespace_never_in_retirement_inventory",
-          "line": "scripts/deployment/validate_cloud_run_live_deployment.py:1110:            root, \"modules.opsboard.application.operator_live_repository\""
+          "line": "product_ops/deployment/validate_cloud_run_live_deployment.py:1110:            root, \"modules.opsboard.application.operator_live_repository\""
         },
         {
           "location": [

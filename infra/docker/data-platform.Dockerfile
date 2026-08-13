@@ -38,7 +38,7 @@ RUN base_digest="${PYTHON_BASE_IMAGE##*@sha256:}" \
       "pymongo==4.17.0"
 
 COPY apps/data_platform /app/apps/data_platform
-COPY scripts/data_platform /app/scripts/data_platform
+COPY product_ops/data_platform /app/product_ops/data_platform
 COPY shared /app/shared
 COPY infra/db/migrations /app/infra/db/migrations
 COPY docs/data /app/docs/data
@@ -50,7 +50,7 @@ RUN mkdir -p /var/lib/oday/cache /var/lib/oday/dlt /var/run/oday \
     && chown -R 65532:65532 /var/lib/oday /var/run/oday \
     && python -m compileall -q \
       /app/apps/data_platform \
-      /app/scripts/data_platform \
+      /app/product_ops/data_platform \
       /opt/oday/deployment
 
 USER 65532:65532

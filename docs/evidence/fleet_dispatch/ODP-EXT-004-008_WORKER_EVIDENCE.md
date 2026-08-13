@@ -19,7 +19,7 @@ Proof boundary: deterministic fixture mode and approved mock live-provider mode.
 ## Repo-Side Evidence
 
 - Scheduled fetch creates durable job, idempotency, snapshot, and watermark fields through `modules.external_data.workers.scheduled_fetch.ExternalFetchScheduler`.
-- Backfill command is exposed by `scripts/external_data_backfill.py`.
+- Backfill command is exposed by `product_ops/external_data_backfill.py`.
 - Provider mock live boundary is exposed by `modules.external_data.providers.provider_mock.ListingProviderMockService`.
 - Provider auth, quota, freshness, license, lineage, idempotent backfill replay, circuit breaker, timeout, malformed payload, duplicate quarantine, fixture default, and export restriction assertions are covered in `tests/e2e/test_external_source_product_e2e.py`.
 - Freshness/geocode lineage remains covered by `tests/data/test_geo_pipeline.py`.
@@ -44,7 +44,7 @@ Authority refresh procedure:
   evidence-only merges move PR #82, do not treat that sample SHA as current.
 
 ```bash
-python3 scripts/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1
+python3 product_ops/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1
 ```
 
 Result: passed. Produced two `SUCCEEDED` manual-backfill runs with durable idempotency keys for `10:00-11:00` and `11:00-12:00`, `source_snapshot_ids: ["listing-2026-06-26"]`, and last-success watermarks through `2026-06-28T12:00:00+00:00`.

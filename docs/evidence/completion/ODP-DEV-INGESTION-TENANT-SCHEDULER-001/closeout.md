@@ -36,8 +36,8 @@ Evidence:
 Addressed all 3 review feedback items from Claude2:
 
 1. **`cloud_run_job_entrypoint.run_scheduler` exception handling and deployment manifests**:
-   - Wrapped `scheduler.run_once()` in a `try...except SchedulerTenantConfigurationError` block in `scripts/deployment/cloud_run_job_entrypoint.py` to emit a structured `failed` receipt and exit `EXIT_FAILED` instead of letting an unhandled exception escape.
-   - Added `ODP_SCHEDULED_INGESTION_TENANT_ID` and `ODP_TENANT_ID` to `API_ENV_FILE` serializer in `scripts/deploy_cloud_run_waji.sh` and workflow env blocks in `.github/workflows/deploy-dev.yml` and `.github/workflows/deploy-staging.yml`.
+   - Wrapped `scheduler.run_once()` in a `try...except SchedulerTenantConfigurationError` block in `product_ops/deployment/cloud_run_job_entrypoint.py` to emit a structured `failed` receipt and exit `EXIT_FAILED` instead of letting an unhandled exception escape.
+   - Added `ODP_SCHEDULED_INGESTION_TENANT_ID` and `ODP_TENANT_ID` to `API_ENV_FILE` serializer in `product_ops/deployment/deploy_cloud_run_waji.sh` and workflow env blocks in `.github/workflows/deploy-dev.yml` and `.github/workflows/deploy-staging.yml`.
 2. **`check_live_e2e_gate._enqueue_body` tenant context**:
    - Updated probe job payload in `delivery_toolchain/e2e/check_live_e2e_gate.py` to include `tenant_id` resolved from `config.operator_tenant` or environment (`ODP_SCHEDULED_INGESTION_TENANT_ID`/`ODP_TENANT_ID`), ensuring probe jobs execute successfully and persist ingestion runs.
 3. **Untenanted scheduler test updates**:
@@ -51,7 +51,7 @@ Addressed all 3 review feedback items from Claude2:
 python3 -m pytest tests/ops tests/reliability tests/e2e tests/integration
 # 100% GREEN (1,000+ tests passed across ops, reliability, e2e, integration)
 
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 # Clean syntax
 ```
 

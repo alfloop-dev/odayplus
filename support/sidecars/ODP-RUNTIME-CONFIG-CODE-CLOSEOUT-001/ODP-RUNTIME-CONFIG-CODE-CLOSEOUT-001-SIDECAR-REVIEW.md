@@ -58,7 +58,7 @@ The parent commit changes these repository-owned layers:
 | --- | --- | --- |
 | Shared runtime configuration | `shared/runtime_config.py` | Defines one release-identity precedence order and tenant resolution helper. |
 | Runtime consumers | API, Worker, Scheduler, Notifications, Cloud Run Job Entrypoint | Routes release identity reads through `get_release_identity()`. |
-| Deploy configuration | `scripts/deploy_cloud_run_waji.sh` | Requires a tenant value before deployment and writes both scheduler and generic tenant keys from the selected value. |
+| Deploy configuration | `product_ops/deployment/deploy_cloud_run_waji.sh` | Requires a tenant value before deployment and writes both scheduler and generic tenant keys from the selected value. |
 | Contract verification | `tests/ops/test_runtime_config_code_closeout.py`, `tests/ops/test_cloud_run_live_deployment.py` | Adds release hierarchy, role-consumer, tenant fail-closed, deploy precondition, and rollback-symbol coverage. |
 | Completion evidence | `docs/evidence/completion/ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001/` | Supplies implementation, verification, and closeout summaries. |
 
@@ -116,10 +116,10 @@ uv run pytest -q tests/ops/test_cloud_run_job_entrypoint.py
 uv run pytest -q tests/reliability/test_runtime_observability.py -k round8_oncall_adapter_authenticity_and_sha_enforced
 # 1 passed
 
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 # exit 0
 
-uv run ruff check shared/runtime_config.py apps/api/oday_api/main.py apps/scheduler/oday_scheduler/main.py apps/worker/oday_worker/main.py modules/notifications/infrastructure/adapters.py scripts/deployment/cloud_run_job_entrypoint.py tests/ops/test_runtime_config_code_closeout.py tests/ops/test_cloud_run_live_deployment.py
+uv run ruff check shared/runtime_config.py apps/api/oday_api/main.py apps/scheduler/oday_scheduler/main.py apps/worker/oday_worker/main.py modules/notifications/infrastructure/adapters.py product_ops/deployment/cloud_run_job_entrypoint.py tests/ops/test_runtime_config_code_closeout.py tests/ops/test_cloud_run_live_deployment.py
 # All checks passed
 
 git diff --check

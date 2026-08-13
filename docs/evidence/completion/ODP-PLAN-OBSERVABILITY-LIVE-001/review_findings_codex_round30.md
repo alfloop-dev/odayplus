@@ -9,7 +9,7 @@
 ## Verification performed
 
 - `pytest -q tests -k "observability or telemetry or alert or dlq"` — 79 passed.
-- `ruff check shared/observability tests/reliability scripts/deployment modules/notifications delivery_toolchain/e2e/generate_observability_evidence.py` — passed.
+- `ruff check shared/observability tests/reliability product_ops/deployment modules/notifications delivery_toolchain/e2e/generate_observability_evidence.py` — passed.
 - `git diff --check` and the pushed-head diff check — passed.
 - The local alert evidence is now labelled as a local simulation and its receipt
   is `FAILED`, which is internally honest for that narrow artifact.

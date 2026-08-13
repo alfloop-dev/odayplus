@@ -199,11 +199,11 @@ def repository_capability_checks(
         )
     )
 
-    deploy_script = root / "scripts/deploy_cloud_run_waji.sh"
+    deploy_script = root / "product_ops/deployment/deploy_cloud_run_waji.sh"
     deploy_text = deploy_script.read_text(encoding="utf-8") if deploy_script.exists() else ""
     worker_dockerfile = root / "infra/docker/worker.Dockerfile"
     scheduler_dockerfile = root / "infra/docker/scheduler.Dockerfile"
-    job_entrypoint = root / "scripts/deployment/cloud_run_job_entrypoint.py"
+    job_entrypoint = root / "product_ops/deployment/cloud_run_job_entrypoint.py"
     worker_text = (
         worker_dockerfile.read_text(encoding="utf-8") if worker_dockerfile.exists() else ""
     )
@@ -2912,7 +2912,7 @@ def _authoritative_task_container(
     Reading env across every container in the task template is the same bypass
     one level down: a job whose real task container binds nothing still proved
     the full secret set as long as a sidecar carried it. The deploy script
-    (`scripts/deploy_cloud_run_waji.sh`) creates single-container jobs, so a
+    (`product_ops/deployment/deploy_cloud_run_waji.sh`) creates single-container jobs, so a
     second container makes "which container runs the task" unanswerable from
     the description alone and the job is rejected rather than guessed at.
     """
@@ -2969,7 +2969,7 @@ def _usable_resource_number(value: str) -> bool:
 #:   a leading zero) or a project ID: 6 to 30 characters, opening with a
 #:   lowercase letter and never closing with a hyphen.
 #:
-#: Both forms stay accepted because `scripts/deploy_cloud_run_waji.sh` takes each
+#: Both forms stay accepted because `product_ops/deployment/deploy_cloud_run_waji.sh` takes each
 #: name from an operator-supplied `*_SECRET` variable, so a cross-project secret
 #: is a supported deployment and rejecting the path form would over-tighten a
 #: schema this task must keep supporting.
@@ -3283,7 +3283,7 @@ def _job_env_entries(
     Matching on the declared name makes each of those fail closed through the
     existing "no env binding is declared" and "job declares no plaintext
     `ODP_PRODUCTION_PROVIDER_IDS`" details, and it tightens nothing a real
-    description relies on: every name `scripts/deploy_cloud_run_waji.sh` sets is
+    description relies on: every name `product_ops/deployment/deploy_cloud_run_waji.sh` sets is
     an exact identifier. A blank or non-string name is skipped rather than
     rejected — it can never equal a required name, so it can never prove one.
 
@@ -3646,7 +3646,7 @@ def cloud_run_job_checks(
             "exact release SHA is present in image/env/labels",
         ),
         CheckResult(
-            "scripts/deployment/cloud_run_job_entrypoint.py" in description_text
+            "product_ops/deployment/cloud_run_job_entrypoint.py" in description_text
             and expected_mode in description_text,
             f"jobs-smoke:{kind}:entrypoint",
             f"bounded {expected_mode} entrypoint is configured",

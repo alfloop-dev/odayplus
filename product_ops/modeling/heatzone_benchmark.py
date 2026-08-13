@@ -745,8 +745,8 @@ def generate_data_handback_json(receipt: dict[str, Any]) -> dict[str, Any]:
             handback_type = "BENCHMARK_METRICS_NOT_MET"
         next_actions = [
             "Ingest real POS transaction history and store opening date authority into PG16 data plane",
-            "Run scripts/models/install_views.py to refresh model_ready.heatzone_training_view",
-            "Execute python3 scripts/models/heatzone_benchmark.py generate to re-evaluate Gate 1 receipt",
+            "Run product_ops/modeling/install_views.py to refresh model_ready.heatzone_training_view",
+            "Execute python3 product_ops/modeling/heatzone_benchmark.py generate to re-evaluate Gate 1 receipt",
         ]
 
     return {

@@ -12,7 +12,7 @@
 | File | Role |
 | --- | --- |
 | `models/sitescore/opening_outcome.py` | Benchmark evaluation, Gate 2 thresholds, handback payload, receipt builder |
-| `scripts/models/sitescore_outcome_benchmark.py` | CLI runner, PG16 inventory adapter, evidence markdown writer |
+| `product_ops/modeling/sitescore_outcome_benchmark.py` | CLI runner, PG16 inventory adapter, evidence markdown writer |
 | `tests/models/test_sitescore_opening_outcome.py` | 10 unit/integration tests |
 | `docs/evidence/models/sitescore_gate2_receipt.json` | Committed Gate 2 receipt |
 | `docs/evidence/models/sitescore_model_card.json` | Committed model card |
@@ -60,9 +60,9 @@ precedence now prefers the explicit `m6_covered`/`m12_covered` flag, then numeri
 ## Follow-up Findings (non-blocking, do not gate this approval)
 
 1. **The `pg16_query` path can never reach `ACTIVE`.**
-   `scripts/models/sitescore_outcome_benchmark.py:41-66` selects no `predicted_revenue`,
+   `product_ops/modeling/sitescore_outcome_benchmark.py:41-66` selects no `predicted_revenue`,
    `p10`, or `p90`, and `model_ready.candidate_site_view` (see
-   `scripts/models/sql/model_ready_views.sql`) exposes no such columns. Any real inventory
+   `product_ops/modeling/sql/model_ready_views.sql`) exposes no such columns. Any real inventory
    run therefore yields `prediction_coverage_ratio == 0.0` and terminates at
    `PREDICTION_EVIDENCE_MISSING`, regardless of how many mature labels exist. This is the
    safe direction (fail-closed) and the emitted handback action does name model predictions
@@ -108,7 +108,7 @@ or model-card byte changed. `c67633ec` itself was the owner's content-free merge
 ```bash
 python3 -m pytest -q tests -k "sitescore or opening_outcome or model_ready"   # 53 passed, 2 skipped, 1 failed
 python3 -m pytest -q tests/models/test_sitescore_opening_outcome.py           # 10 passed
-python3 -m ruff check models/sitescore scripts/models/sitescore_outcome_benchmark.py \
+python3 -m ruff check models/sitescore product_ops/modeling/sitescore_outcome_benchmark.py \
   tests/models/test_sitescore_opening_outcome.py                             # All checks passed
 git diff --check                                                             # exit 0
 ```
@@ -139,7 +139,7 @@ the reviewer performed the refresh directly. It is content-free with respect to 
 - `git merge-tree --write-tree HEAD origin/dev` returned a clean tree (exit 0, no conflicts)
   before the merge was taken.
 - After merging, `git diff --stat <merge-base> HEAD` over `models/sitescore/`,
-  `scripts/models/sitescore_outcome_benchmark.py`, `tests/models/`, and
+  `product_ops/modeling/sitescore_outcome_benchmark.py`, `tests/models/`, and
   `docs/evidence/models/` is byte-identical to the pre-merge diff (1184 insertions,
   8 files).
 - The reviewer authored no task content. The approval below therefore still stands on
@@ -162,9 +162,9 @@ task before this capability is ever activated.
    calibration if the gate is ever made passable.
 
 5. **`m6`/`m12` coverage measures store age, not M6/M12 outcome availability.**
-   `model_ready.candidate_site_view` (`scripts/models/sql/model_ready_views.sql:583-640`)
+   `model_ready.candidate_site_view` (`product_ops/modeling/sql/model_ready_views.sql:583-640`)
    carries a single `label_horizon_days = 90` label, `realized_90d_net_revenue`. The CLI
-   adapter (`scripts/models/sitescore_outcome_benchmark.py:41-52`) selects
+   adapter (`product_ops/modeling/sitescore_outcome_benchmark.py:41-52`) selects
    `(CURRENT_DATE - opened_on)` for **both** `m6_days` and `m12_days`, so
    `m6_coverage_ratio` / `m12_coverage_ratio` report the share of labeled stores at least
    180 / 365 days old — not the share with realized M6 / M12 outcomes. The model card
@@ -191,7 +191,7 @@ remediation at pushed head `e32667364395065a46c4d56427971ecdc3c189a5`.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models/test_sitescore_opening_outcome.py
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check models/sitescore scripts/models/sitescore_outcome_benchmark.py \
+.venv/bin/ruff check models/sitescore product_ops/modeling/sitescore_outcome_benchmark.py \
   tests/models/test_sitescore_opening_outcome.py
 git diff --check
 ```
@@ -267,7 +267,7 @@ the split outcome-backfill and prediction-source handback contracts at
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models/test_sitescore_opening_outcome.py
-.venv/bin/ruff check models/sitescore scripts/models/sitescore_outcome_benchmark.py \
+.venv/bin/ruff check models/sitescore product_ops/modeling/sitescore_outcome_benchmark.py \
   tests/models/test_sitescore_opening_outcome.py
 git diff --check
 ```
@@ -284,7 +284,7 @@ approval.
 
 ### B1 — PostgreSQL `NULL` outcomes are converted into legitimate zero labels
 
-`scripts/models/sitescore_outcome_benchmark.py:57-67` converts a database
+`product_ops/modeling/sitescore_outcome_benchmark.py:57-67` converts a database
 `realized_90d_net_revenue IS NULL` value to `0.0`. The evaluator correctly treats `None` as
 missing and `0.0` as a legitimate observed zero
 (`models/sitescore/opening_outcome.py:304-327`), so the adapter destroys the distinction at
@@ -321,7 +321,7 @@ receipt shape rather than supplying facts solely to satisfy `ModelCard.is_comple
 
 The handback calls its SQL an `executable_baseline_query`, but
 `models/sitescore/opening_outcome.py:180-229` and the CLI query
-(`scripts/models/sitescore_outcome_benchmark.py:40-52`) select only the 90-day outcome and
+(`product_ops/modeling/sitescore_outcome_benchmark.py:40-52`) select only the 90-day outcome and
 alias the identical store-age expression as both `m6_days` and `m12_days`.
 `model_ready.candidate_site_view` exposes `label_horizon_days = 90` and
 `realized_90d_net_revenue`, not realized 180/365-day labels. Age is a maturity
@@ -356,7 +356,7 @@ at review time; the task head had not yet merged to `dev`.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-PYTHONPATH=. .venv/bin/ruff check scripts/models models tests/models
+PYTHONPATH=. .venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 ```
 
@@ -499,7 +499,7 @@ pointed at that SHA.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 ```
 
@@ -614,7 +614,7 @@ pointed at that SHA, and the worktree contained no uncommitted owner implementat
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 ```
 
@@ -719,7 +719,7 @@ pointed at that SHA, and the worktree contained no uncommitted owner implementat
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 ```
 
@@ -829,7 +829,7 @@ pointed at that SHA, and the worktree contained no uncommitted owner implementat
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 ```
 
@@ -911,7 +911,7 @@ pointed at that SHA, and the worktree contained no uncommitted owner implementat
 pytest -q tests -k "sitescore or opening_outcome or model_ready"
 pytest tests -k "(sitescore or opening_outcome or model_ready) and not great_expectations_gate" -o addopts='' -q
 pytest -q tests/models -k "sitescore or opening_outcome"
-ruff check scripts/models models tests/models
+ruff check product_ops/modeling models tests/models
 git diff --check
 ```
 
@@ -1001,7 +1001,7 @@ diff; its only untracked entries were the orchestrator-seeded task context/state
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check 02e42083..b24af329
 ```
@@ -1094,7 +1094,7 @@ diff; its only untracked entries were the orchestrator-seeded task context/state
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check 38bb9cd7..8e7ad006
 ```
@@ -1182,7 +1182,7 @@ diff; its only untracked entries were the orchestrator-seeded task context/state
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check 378230c9..c2136d4c
 ```
@@ -1273,7 +1273,7 @@ orchestrator-seeded task context/state files.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check c2136d4c..f3584866
 ```
@@ -1360,7 +1360,7 @@ orchestrator-seeded task context/state files.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check f3584866..89bc4bd9
 ```
@@ -1456,7 +1456,7 @@ uncommitted owner implementation diff.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check 66f3e7ef..58be4d4e
 PYTHONPATH=. .venv/bin/python /tmp/odp_sitescore_58be4d4e_mutations.py
@@ -1545,7 +1545,7 @@ context and state files.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check 58be4d4e..e94db743
 PYTHONPATH=. .venv/bin/python <independent in-memory mutation probe>
@@ -1639,7 +1639,7 @@ pytest -q tests -k "sitescore or opening_outcome or model_ready"
 pytest -q tests -k "sitescore or opening_outcome or model_ready" \
   --ignore=tests/data/test_great_expectations_gate.py
 pytest -q tests/models -k "sitescore or opening_outcome"
-ruff check scripts/models models tests/models
+ruff check product_ops/modeling models tests/models
 git diff --check
 PYTHONPATH=. python3 <independent in-memory mutation probe>
 ```
@@ -1729,7 +1729,7 @@ PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready" \
   --ignore=tests/data/test_great_expectations_gate.py
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check 97043588..e269f95e
 PYTHONPATH=. .venv/bin/python <independent in-memory mutation probe>
@@ -1811,7 +1811,7 @@ context and state files.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check e269f95e..b11aeace
 PYTHONPATH=. .venv/bin/python <independent in-memory mutation probes>
@@ -1898,7 +1898,7 @@ context and state files.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check b11aeace..ebe994b1
 PYTHONPATH=. .venv/bin/python <independent in-memory mutation probes>
@@ -1977,7 +1977,7 @@ uncommitted implementation changes.
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check 62e662cf..fb42ef7a
 PYTHONPATH=. .venv/bin/python <independent committed-artifact verifier/hash probe>

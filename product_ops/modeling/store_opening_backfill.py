@@ -1,7 +1,7 @@
 """CLI runner for store opening date backfill (ODP-STORE-OPENING-001).
 
 Usage:
-    python -m scripts.models.store_opening_backfill \
+    python -m product_ops.modeling.store_opening_backfill \
         --tenant-id <UUID> \
         --snapshot-id <UUID> \
         --input-json <PATH> \

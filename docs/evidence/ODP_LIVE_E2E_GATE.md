@@ -13,11 +13,11 @@ Three gates, three different questions:
 
 | Gate | Question |
 | --- | --- |
-| `scripts/deployment/validate_cloud_run_live_deployment.py` | Is the *deployment topology* correct (preflight config, image signing, job receipts, candidate smoke)? |
+| `product_ops/deployment/validate_cloud_run_live_deployment.py` | Is the *deployment topology* correct (preflight config, image signing, job receipts, candidate smoke)? |
 | `delivery_toolchain/e2e/check_live_production_data.py` | Is the *data plane* real (direct PostgreSQL reconciliation against a commit-bound evidence manifest)? |
 | `delivery_toolchain/e2e/check_live_e2e_gate.py` | Does the *product path through the promoted release* work end to end over HTTP? |
 
-The live E2E gate runs inside `scripts/deploy_cloud_run_waji.sh` **after**
+The live E2E gate runs inside `product_ops/deployment/deploy_cloud_run_waji.sh` **after**
 `promote_service_traffic` and **before** `DEPLOYMENT_COMMITTED=true`. That
 placement is the fail-closed contract: the gate exercises exactly the revision
 users will get, and a non-zero exit falls through the script's `EXIT` trap so
@@ -40,7 +40,7 @@ release SHA.
    `deploymentMode` binds the served runtime to the env *this* deploy
    configured. `apps/api/oday_api/runtime_mode.deployment_mode()` reads the
    `ODP_DEPLOY_ENV`/`ODAY_ENV`/`ODP_ENV` triple that
-   `scripts/deploy_cloud_run_waji.sh` writes into the API env payload, so a dev
+   `product_ops/deployment/deploy_cloud_run_waji.sh` writes into the API env payload, so a dev
    deploy reports `deploymentMode=dev`. The deploy script therefore passes
    `--expected-deployment "${ODP_LIVE_E2E_DEPLOYMENT_MODE:-${ODP_DEPLOY_ENV}}"`
    and the gate has **no** default for it (`config:expected_deployment` blocks

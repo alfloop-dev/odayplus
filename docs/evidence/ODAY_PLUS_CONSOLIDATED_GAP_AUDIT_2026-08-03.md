@@ -173,7 +173,7 @@ materialization evidence，不解除任何產品 blocker。
 - 那 1,303 筆只涵蓋 `2026-06-19 ~ 2026-06-22`，**四個日曆天**
 - `modules/forecastops/model_contract.py`：
   `FORECASTOPS_HORIZON_WEEKS = (4, 8, 12, 24)`、`FORECASTOPS_MIN_HISTORY_DAYS = 28`
-- `scripts/models/forecast_training.py` 的 `expand_forecast_horizon_rows()`
+- `product_ops/modeling/forecast_training.py` 的 `expand_forecast_horizon_rows()`
   對每個 origin 取固定長度窗口，`len(window) != horizon_days` 就整筆跳過，
   且窗口必須是**連續日**
 

@@ -93,7 +93,7 @@ The parent task `ODP-PLAN-OBSERVABILITY-LIVE-001` must strictly satisfy all fail
    ```
 2. **Linting & Code Integrity**:
    ```bash
-   ruff check shared/observability tests/reliability scripts/deployment
+   ruff check shared/observability tests/reliability product_ops/deployment
    git diff --check
    ```
 3. **Negative Matrix Mutations**:

@@ -19,7 +19,7 @@ from models.sitescore.opening_outcome import (
 from models.sitescore.prediction_source import (
     build_sitescore_prediction_source_receipt,
 )
-from scripts.models.sitescore_outcome_benchmark import (
+from product_ops.modeling.sitescore_outcome_benchmark import (
     run_benchmark_from_inventory,
     write_evidence_markdown,
 )

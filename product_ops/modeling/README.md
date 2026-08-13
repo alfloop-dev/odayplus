@@ -1,6 +1,6 @@
 # Production Model Training and Release
 
-`scripts.models.release` turns canonical PostgreSQL model-ready views into
+`product_ops.modeling.release` turns canonical PostgreSQL model-ready views into
 bounded, immutable GCS dataset snapshots and governed MLflow model versions.
 It never creates training rows. Missing views, realized labels, eligible rows,
 temporal/segment validation, GCS, MLflow, exact commit lineage, or independent
@@ -14,8 +14,8 @@ the data-plane backfill:
 
 ```bash
 export ODAY_DATABASE_URL='postgresql://...remote production database...'
-python -m scripts.models.install_views inventory
-python -m scripts.models.install_views install
+python -m product_ops.modeling.install_views inventory
+python -m product_ops.modeling.install_views install
 ```
 
 `inventory` is read-only. `install` validates all required `core.transactions`,
@@ -115,8 +115,8 @@ label contract, and aggregate row counts only; it does not create snapshots,
 runs, artifacts, or aliases.
 
 ```bash
-python -m scripts.models.release inventory --model all
-python -m scripts.models.release inventory --model forecastops
+python -m product_ops.modeling.release inventory --model all
+python -m product_ops.modeling.release inventory --model forecastops
 ```
 
 The `all` command remains non-zero while any binding lacks its realized label.
@@ -124,7 +124,7 @@ The `all` command remains non-zero while any binding lacks its realized label.
 ## Bounded training
 
 ```bash
-python -m scripts.models.release train \
+python -m product_ops.modeling.release train \
   --model forecastops \
   --version 2026.07.24.1 \
   --start 2025-07-01T00:00:00Z \
@@ -166,7 +166,7 @@ time-stamped, and must come from a different actor.
 ```
 
 ```bash
-python -m scripts.models.release promote \
+python -m product_ops.modeling.release promote \
   --model forecastops \
   --version 2026.07.24.1 \
   --approval-file /secure-input/model-approval.json

@@ -1054,7 +1054,7 @@ def _open_connection(env: Mapping[str, str]) -> Any:
 
 
 class _QmarkQueryClient:
-    """Adapts a DBAPI connection to the scripts.models QueryClient protocol."""
+    """Adapts a DBAPI connection to the product_ops.modeling QueryClient protocol."""
 
     def __init__(self, connection: Any) -> None:
         self._conn = connection

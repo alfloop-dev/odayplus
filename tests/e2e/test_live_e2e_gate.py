@@ -1400,7 +1400,7 @@ def test_activation_thresholds_are_separate_policy_values_below_which_data_sits(
         PRODUCTION_MODEL_CONTRACTS,
         governed_disabled_services,
     )
-    from scripts.models.contracts import MODEL_SPECS
+    from product_ops.modeling.contracts import MODEL_SPECS
 
     for service in governed_disabled_services():
         binding = PRODUCTION_MODEL_CONTRACTS[service].governed_disabled_binding

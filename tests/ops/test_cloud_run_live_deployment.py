@@ -16,11 +16,11 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-VALIDATOR_PATH = ROOT / "scripts/deployment/validate_cloud_run_live_deployment.py"
-TRAFFIC_HELPER_PATH = ROOT / "scripts/deployment/cloud_run_traffic.py"
-TRAFFIC_SHELL_HELPER = ROOT / "scripts/deployment/cloud_run_release_traffic.sh"
-SCHEDULER_HELPER_PATH = ROOT / "scripts/deployment/cloud_scheduler_trigger.py"
-DEPLOY_SCRIPT = ROOT / "scripts/deploy_cloud_run_waji.sh"
+VALIDATOR_PATH = ROOT / "product_ops/deployment/validate_cloud_run_live_deployment.py"
+TRAFFIC_HELPER_PATH = ROOT / "product_ops/deployment/cloud_run_traffic.py"
+TRAFFIC_SHELL_HELPER = ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
+SCHEDULER_HELPER_PATH = ROOT / "product_ops/deployment/cloud_scheduler_trigger.py"
+DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 WORKFLOWS = (
     ROOT / ".github/workflows/deploy-dev.yml",
     ROOT / ".github/workflows/deploy-staging.yml",
@@ -237,16 +237,16 @@ def test_deploy_script_runs_repository_validators_with_locked_python() -> None:
     assert "for cmd in python3 uv gcloud docker; do" in text
     assert 'uv run --frozen python "$@"' in text
     for invocation in (
-        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py preflight",
-        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke",
+        "run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py preflight",
+        "run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py jobs-smoke",
         "run_locked_python "
-        "scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke",
-        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py smoke",
+        "product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke",
+        "run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke",
         "run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py",
     ):
         assert invocation in text
 
-    assert "python3 scripts/deployment/validate_cloud_run_live_deployment.py" not in text
+    assert "python3 product_ops/deployment/validate_cloud_run_live_deployment.py" not in text
     assert "python3 delivery_toolchain/e2e/check_live_e2e_gate.py" not in text
     assert text.count("python3 - ") == 2
     assert text.count("imports only Python's standard library") == 2
@@ -2001,9 +2001,9 @@ def test_dev_workflow_bootstraps_locked_dependencies_before_preflight() -> None:
     assert sync < preflight
     assert (
         "uv run --frozen python "
-        "scripts/deployment/validate_cloud_run_live_deployment.py preflight" in text
+        "product_ops/deployment/validate_cloud_run_live_deployment.py preflight" in text
     )
-    assert "python3 scripts/deployment/validate_cloud_run_live_deployment.py" not in text
+    assert "python3 product_ops/deployment/validate_cloud_run_live_deployment.py" not in text
 
 
 def test_provider_probe_timeout_band_matches_runtime_connector() -> None:
@@ -2712,7 +2712,7 @@ def test_worker_and_scheduler_images_use_bounded_job_entrypoint() -> None:
 
     for dockerfile in (worker, scheduler):
         assert (
-            'ENTRYPOINT ["python", "scripts/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
+            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
         )
         assert '"alembic>=1.13"' in dockerfile
         assert '"psycopg[binary,pool]>=3.2"' in dockerfile
@@ -2775,7 +2775,7 @@ def _job_container(
     return {
         "image": f"registry/{kind}:dev-{sha}",
         "command": ["python"],
-        "args": ["scripts/deployment/cloud_run_job_entrypoint.py", mode],
+        "args": ["product_ops/deployment/cloud_run_job_entrypoint.py", mode],
         "env": env,
     }
 
@@ -3597,7 +3597,7 @@ _OVER_INT64 = str(2**63)
 _LONG_OVER_INT64 = "1" + "0" * 29
 
 #: The two forms a Cloud Run secret binding may name a secret in. Both are kept
-#: accepted because `scripts/deploy_cloud_run_waji.sh` takes every name from an
+#: accepted because `product_ops/deployment/deploy_cloud_run_waji.sh` takes every name from an
 #: operator-supplied `*_SECRET` variable, so a cross-project secret is a
 #: deployment this proof must not fail.
 _CROSS_PROJECT_SECRET = f"projects/oday-plus-prod/secrets/{_POI_SECRET}"
@@ -4341,7 +4341,7 @@ def test_job_smoke_rejects_a_v2_binding_beside_a_padded_twin() -> None:
 def test_job_smoke_accepts_exact_env_names_beside_unrelated_ones() -> None:
     """Rejecting twins must not reject the names a real description carries.
 
-    Every env var `scripts/deploy_cloud_run_waji.sh` sets is an exact
+    Every env var `product_ops/deployment/deploy_cloud_run_waji.sh` sets is an exact
     identifier, and distinct names that merely share a prefix are not twins.
     """
 
@@ -4628,7 +4628,7 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
                                 {
                                     "image": "registry/scheduler:latest",
                                     "args": [
-                                        "scripts/deployment/cloud_run_job_entrypoint.py",
+                                        "product_ops/deployment/cloud_run_job_entrypoint.py",
                                         "scheduler",
                                     ],
                                     "env": [
@@ -5000,7 +5000,7 @@ def test_deploy_script_captures_job_proof_without_describe_latest() -> None:
     # The resolver runs under the locked interpreter like every other validator.
     assert (
         'execution_name="$(run_locked_python \\\n'
-        "    scripts/deployment/validate_cloud_run_live_deployment.py "
+        "    product_ops/deployment/validate_cloud_run_live_deployment.py "
         "resolve-latest-execution \\\n"
     ) in text
     # Both the success proof and the failure forensics share one resolver.

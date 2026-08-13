@@ -207,7 +207,7 @@ Item numbering matches T10 §7 so the two documents can be read side by side.
 - `.github/workflows/deploy-dev.yml` (L101-102) and `.github/workflows/deploy-staging.yml`
   (L84-85) supply `|| 'tenant-dev'` / `|| 'tenant-staging'`; pass the variables through
   unset instead.
-- This restores the fail-closed guard at `scripts/deploy_cloud_run_waji.sh:45-46` so an
+- This restores the fail-closed guard at `product_ops/deployment/deploy_cloud_run_waji.sh:45-46` so an
   unconfigured deployment fails rather than inventing a synthetic tenant partition.
 - **Blocked under current scope:** `.github/**` and `scripts/**` are outside all 7 globs,
   and *"deployment workflows unless coordinator amends exact scope"* is an explicit T11
@@ -256,7 +256,7 @@ Item numbering matches T10 §7 so the two documents can be read side by side.
 | Item | Primary surface | Track | In T11 ceiling? |
 |---|---|---|---|
 | 1 | Deployment variables + `ODP_AUTH_PRINCIPAL_MAP_SECRET` | B | No — non-file operator surface |
-| 2 | `.github/workflows/deploy-{dev,staging}.yml`, `scripts/deploy_cloud_run_waji.sh` | B | No — outside globs **and** in `forbidden_paths` |
+| 2 | `.github/workflows/deploy-{dev,staging}.yml`, `product_ops/deployment/deploy_cloud_run_waji.sh` | B | No — outside globs **and** in `forbidden_paths` |
 | 3 | `apps/api/oday_api/main.py` | B | No — only `app/routes/external_data.py` is writable |
 | 3′ | `apps/api/app/routes/external_data.py` (partial hardening) | A | Yes |
 | 4 | `delivery_toolchain/e2e/check_live_e2e_gate.py` | B | No — outside globs |

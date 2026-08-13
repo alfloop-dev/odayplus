@@ -73,6 +73,7 @@ delivery code must be created under `delivery_toolchain/`.
 | GitHub repository policy | `delivery_toolchain/github/` | none |
 | Configuration and design governance | `delivery_toolchain/governance/` | none |
 | E2E and product-release gates | `delivery_toolchain/e2e/` | none |
+| Product deployment, migration, and backfill | `product_ops/` | none |
 
 New automation must use canonical paths. Compatibility entrypoints may be
 removed after downstream callers have migrated and the announced support window

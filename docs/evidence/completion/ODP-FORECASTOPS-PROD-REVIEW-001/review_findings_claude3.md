@@ -14,10 +14,10 @@ This review covers the ForecastOps lane of PR #384 only:
 - `modules/forecastops/**`
 - `apps/api/app/routes/forecastops.py`
 - `apps/worker/oday_worker/handlers.py`
-- `scripts/models/forecast_training.py`, the `forecastops` entry in
-  `scripts/models/contracts.py`, the forecast branches of
-  `scripts/models/release.py`, and
-  `model_ready.forecast_training_view` in `scripts/models/sql/model_ready_views.sql`
+- `product_ops/modeling/forecast_training.py`, the `forecastops` entry in
+  `product_ops/modeling/contracts.py`, the forecast branches of
+  `product_ops/modeling/release.py`, and
+  `model_ready.forecast_training_view` in `product_ops/modeling/sql/model_ready_views.sql`
 - `shared/infrastructure/persistence/repositories.py` (`DurableForecastOpsRepository`)
 - the ForecastOps forecast/alert/handoff calls in
   `tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts`

@@ -117,7 +117,7 @@ root cause in §3 is the only surviving explanation.
    `ODP_SCHEDULED_INGESTION_TENANT_ID: tenant-dev` — so the repository variable
    is unset and the literal placeholder default is what the deployment actually
    ran with.
-2. `scripts/deploy_cloud_run_waji.sh:665-674` invokes the gate with no
+2. `product_ops/deployment/deploy_cloud_run_waji.sh:665-674` invokes the gate with no
    `--operator-tenant`, so `GateConfig.operator_tenant` is `""`.
 3. `check_live_e2e_gate._enqueue_body` (line 1315) therefore falls through to
    the environment: `config.operator_tenant or ODP_SCHEDULED_INGESTION_TENANT_ID
@@ -173,7 +173,7 @@ value from the principal-map secret rather than trust this document.
 
 ### 3.4 Where the misconfiguration actually is
 
-`scripts/deploy_cloud_run_waji.sh:45-46` deliberately fails closed when neither
+`product_ops/deployment/deploy_cloud_run_waji.sh:45-46` deliberately fails closed when neither
 `ODP_SCHEDULED_INGESTION_TENANT_ID` nor `ODP_TENANT_ID` is set. The workflow's
 `|| 'tenant-dev'` supplies a placeholder before the script can ever see the
 unset state, so **that fail-closed guard cannot fire in CI** and a placeholder
@@ -301,7 +301,7 @@ variables, and the principal-map secret. Items 1–2 alone turn `data:*` green;
 2. **Remove the placeholder default.** `.github/workflows/deploy-dev.yml:101-102`
    and `deploy-staging.yml:84-85` supply `|| 'tenant-dev'` / `'tenant-staging'`,
    which defeats the fail-closed guard at
-   `scripts/deploy_cloud_run_waji.sh:45-46`. Pass the variables through unset so
+   `product_ops/deployment/deploy_cloud_run_waji.sh:45-46`. Pass the variables through unset so
    an unconfigured deployment fails closed instead of inventing a tenant.
 3. **Bind the `external-fetch` enqueue tenant to the authenticated principal.**
    In `POST /api/v1/jobs` (`apps/api/oday_api/main.py:764`), apply to

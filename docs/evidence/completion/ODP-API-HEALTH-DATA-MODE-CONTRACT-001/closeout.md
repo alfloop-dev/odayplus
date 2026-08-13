@@ -19,7 +19,7 @@ Closeout verification on the reviewed implementation head:
 python3 -m pytest -q tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py
 passed (one StarletteDeprecationWarning)
 
-python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py
+python3 -m ruff check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py
 All checks passed!
 
 git diff --check origin/dev...HEAD

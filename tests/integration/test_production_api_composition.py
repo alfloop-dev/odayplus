@@ -351,7 +351,7 @@ def test_forecastops_alias_remains_a_required_fail_closed_binding(
 
 
 def test_training_and_runtime_share_canonical_production_model_names() -> None:
-    from scripts.models.contracts import MODEL_SPECS
+    from product_ops.modeling.contracts import MODEL_SPECS
 
     # Runtime alias resolution only covers non-governed-disabled services...
     assert {

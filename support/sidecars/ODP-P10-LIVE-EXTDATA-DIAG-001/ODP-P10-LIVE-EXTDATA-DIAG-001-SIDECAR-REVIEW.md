@@ -474,7 +474,7 @@ source re-read at origin/dev (all confirmed):
   delivery_toolchain/e2e/check_live_e2e_gate.py:1318-1321    -> operator_tenant or ENV chain
   apps/api/oday_api/main.py:772                   -> `if body.job_type == "forecast"` sole guard
   shared/.../operator_domains.py:_collection()    -> f"{collection}.tenant.{sha256}"
-  scripts/deploy_cloud_run_waji.sh:45-48          -> fail-closed guard present
+  product_ops/deployment/deploy_cloud_run_waji.sh:45-48          -> fail-closed guard present
   modules/external_data/.../ingestion_service.py:337-362 -> ScheduledIngestionTenantError
   apps/worker/oday_worker/handlers.py:92-120      -> NonRetryableJobError on empty tenant
 

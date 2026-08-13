@@ -78,8 +78,8 @@ because required marker is missing.
 |---|---|---|
 | Regression test | `pytest tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract -v` | **1 passed** |
 | Ops test suite | `pytest tests/ops/test_cloud_run_live_deployment.py --tb=no -q` | **356 passed, 1 failed** (see note) |
-| Ruff check | `ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py scripts/deployment/validate_cloud_run_live_deployment.py` | **All checks passed** |
-| Ruff format | `ruff format --diff apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py scripts/deployment/validate_cloud_run_live_deployment.py` | **3 files already formatted** |
+| Ruff check | `ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py product_ops/deployment/validate_cloud_run_live_deployment.py` | **All checks passed** |
+| Ruff format | `ruff format --diff apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py product_ops/deployment/validate_cloud_run_live_deployment.py` | **3 files already formatted** |
 | Git diff whitespace | `git diff origin/dev...HEAD --check` | **No output (exit 0)** |
 
 **Known failure in ops suite**: `test_deploy_preflight_imports_runtime_dependencies_via_locked_python` — requires `uv` binary which is absent in the sandbox. Pre-existing failure before this task; unrelated to queue-health changes.
@@ -105,7 +105,7 @@ B1 (task branch was `BEHIND` `dev`) and B2 (this document misstated the baseline
 `test_real_app_platform_health_job_queue_contract` re-implements the validator's `job_queue`
 gate expression inline (`any(marker in text for marker in ("worker", "cloud", "durable"))`)
 instead of calling the validator. If the required-marker tuple in
-`scripts/deployment/validate_cloud_run_live_deployment.py` (the `smoke:/platform/health:job_queue`
+`product_ops/deployment/validate_cloud_run_live_deployment.py` (the `smoke:/platform/health:job_queue`
 check) changes, this test would stay green while the real deploy gate diverges. The preferred
 fix is to extract that gate into a named predicate the test can call.
 
@@ -160,10 +160,10 @@ Round 7 executed the dev-refresh merge, audited PR #514 vs PR #510, and extracte
 | Check | Command | Result |
 |---|---|---|
 | Base refresh | `git merge origin/dev` (merging `abaf8129`) | Plain-merge of `origin/dev`; no rebase, no force-push |
-| Named predicate extraction | Extracted `is_valid_job_queue_health(job_queue: str)` in `scripts/deployment/validate_cloud_run_live_deployment.py` | Both deployment validator and regression test `test_real_app_platform_health_job_queue_contract` now share the identical predicate |
+| Named predicate extraction | Extracted `is_valid_job_queue_health(job_queue: str)` in `product_ops/deployment/validate_cloud_run_live_deployment.py` | Both deployment validator and regression test `test_real_app_platform_health_job_queue_contract` now share the identical predicate |
 | PR #514 Audit | Audited PR #514 (main-based canary PR) vs PR #510 | PR #510 confirmed as sole canonical dev-based queue-health delivery; PR #514 audited as conflicting main-based canary PR to be closed without merging |
 | Focused ops + reliability tests | `pytest tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract tests/reliability/test_health_endpoints.py` | **7 passed** |
-| Ruff check | `ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py scripts/deployment/validate_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py` | **All checks passed** |
+| Ruff check | `ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py product_ops/deployment/validate_cloud_run_live_deployment.py tests/reliability/test_health_endpoints.py` | **All checks passed** |
 
 ## Acceptance Alignment
 - [x] Based on current `origin/dev` (merged `abaf8129` in round 7) carrying only the authoritative queue-health fix

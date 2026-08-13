@@ -74,10 +74,10 @@ MIGRATION_COMPAT_RETRY_MAX_BACKOFF="${MIGRATION_COMPAT_RETRY_MAX_BACKOFF:-8}"
 MIGRATION_COMPAT_RETRY_DEADLINE="${MIGRATION_COMPAT_RETRY_DEADLINE:-120}"
 LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
-source scripts/deployment/cloud_run_release_traffic.sh
+source product_ops/deployment/cloud_run_release_traffic.sh
 
 echo "Running fail-closed live deployment preflight..."
-run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py preflight \
   --environment "${ODP_DEPLOY_ENV}" \
   --release-sha "${ODAY_RELEASE_SHA}" \
   --output "${PREFLIGHT_REPORT}"
@@ -311,7 +311,7 @@ capture_latest_execution() {
     return 1
   fi
   if ! execution_name="$(run_locked_python \
-    scripts/deployment/validate_cloud_run_live_deployment.py resolve-latest-execution \
+    product_ops/deployment/validate_cloud_run_live_deployment.py resolve-latest-execution \
     --executions="${list_file}" \
     --job="${job}")"; then
     return 1
@@ -338,7 +338,7 @@ capture_job_proof() {
     --project="${GCP_PROJECT}" \
     --format=json >"${description_file}"
   capture_latest_execution "${job}" "${execution_file}"
-  run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
+  run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
     --job-kind="${kind}" \
     --job-description="${description_file}" \
     --execution="${execution_file}" \
@@ -385,7 +385,7 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
   --env-vars-file="${API_ENV_FILE}" \
   --set-secrets="${API_SECRET_BINDINGS}" \
   --command=python \
-  --args="scripts/deployment/cloud_run_job_entrypoint.py,migrate" \
+  --args="product_ops/deployment/cloud_run_job_entrypoint.py,migrate" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=1800s \
@@ -405,7 +405,7 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
 # gate closed, before any candidate traffic and with the rollback trap armed.
 run_migration_compatibility_gate() {
   execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"
-  run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
+  run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
     --api-url "${OLD_API_URL}" \
     --web-url "${OLD_WEB_URL}" \
     --correlation-id "corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
@@ -454,7 +454,7 @@ gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
   --env-vars-file="${API_ENV_FILE}" \
   --set-secrets="${API_SECRET_BINDINGS}" \
   --command=python \
-  --args="scripts/deployment/cloud_run_job_entrypoint.py,scheduler" \
+  --args="product_ops/deployment/cloud_run_job_entrypoint.py,scheduler" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=600s \
@@ -471,7 +471,7 @@ gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}" \
   --env-vars-file="${API_ENV_FILE}" \
   --set-secrets="${API_SECRET_BINDINGS}" \
   --command=python \
-  --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,100" \
+  --args="product_ops/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,100" \
   --tasks=1 \
   --max-retries=3 \
   --task-timeout=900s \
@@ -523,7 +523,7 @@ upsert_scheduler_trigger() {
 # FAILED/CANCELLED/DLQ non-zero.
 execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"
 execute_job "worker" "${WORKER_CANDIDATE_JOB}" \
-  --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
+  --args="product_ops/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
 
 # This deterministic serializer imports only Python's standard library.
 python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<'PY'
@@ -613,7 +613,7 @@ if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
 fi
 
 echo "Running release-aware smoke checks against tagged candidate revisions..."
-run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py smoke \
+run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \

@@ -3,8 +3,8 @@
 # Cloud Run traffic helpers for deploy_cloud_run_waji.sh. This file only
 # defines functions so rollback behavior can be exercised independently.
 
-ODP_TRAFFIC_HELPER="${ODP_TRAFFIC_HELPER:-scripts/deployment/cloud_run_traffic.py}"
-ODP_SCHEDULER_HELPER="${ODP_SCHEDULER_HELPER:-scripts/deployment/cloud_scheduler_trigger.py}"
+ODP_TRAFFIC_HELPER="${ODP_TRAFFIC_HELPER:-product_ops/deployment/cloud_run_traffic.py}"
+ODP_SCHEDULER_HELPER="${ODP_SCHEDULER_HELPER:-product_ops/deployment/cloud_scheduler_trigger.py}"
 
 capture_service_traffic() {
   local service="$1"

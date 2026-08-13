@@ -161,7 +161,7 @@
       ],
       "writable_paths": [
         "scripts/data_plane/**",
-        "scripts/models/**",
+        "product_ops/modeling/**",
         "docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/**"
       ],
       "forbidden_paths": [
@@ -172,7 +172,7 @@
         "docs_archive/**",
         "docs/design/**",
         "docs/evidence/PACKAGE_10_*",
-        "scripts/deploy_cloud_run_waji.sh",
+        "product_ops/deployment/deploy_cloud_run_waji.sh",
         "tests/ops/**",
         ".orchestrator/**",
         ".github/**"
@@ -206,7 +206,7 @@
       ],
       "writable_paths": [
         "models/**",
-        "scripts/models/**",
+        "product_ops/modeling/**",
         "docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/**"
       ],
       "forbidden_paths": [

@@ -6,8 +6,8 @@ from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 from modules.listing.application.pipeline import ListingRepository
 from modules.listing.domain.intake_states import IntakeStage
 from modules.listing.domain.models import ListingDedupKey
-from scripts.models.contracts import ModelSpec
-from scripts.models.release import _temporal_split
+from product_ops.modeling.contracts import ModelSpec
+from product_ops.modeling.release import _temporal_split
 
 ROOT = Path(__file__).resolve().parents[2]
 ADR_DIR = ROOT / "docs" / "adr"
@@ -76,8 +76,8 @@ def test_deferred_oss_adr_cited_paths_exist() -> None:
         "modules/listing/domain/intake_states.py",
         "modules/learninghub/infrastructure/mlflow_adapter.py",
         "modules/adlift/domain/incrementality.py",
-        "scripts/models/release.py",
-        "scripts/models/contracts.py",
+        "product_ops/modeling/release.py",
+        "product_ops/modeling/contracts.py",
         "models/shared_ml/production_contracts.py",
         "apps/web/package.json",
     ]
@@ -194,7 +194,7 @@ def test_deferred_oss_adr_cited_symbols_and_signatures_resolve() -> None:
     # 5. Check PIT label maturity column
     assert hasattr(ModelSpec, "label_maturity_column")
     assert "label_maturity_column" in content
-    assert "scripts/models/contracts.py" in content
+    assert "product_ops/modeling/contracts.py" in content
 
     # 6. Check DATA_CONTRACT_NOT_MATURE reason code and absence of un-implemented CAPABILITY_DEFERRED
     found_reason = any(

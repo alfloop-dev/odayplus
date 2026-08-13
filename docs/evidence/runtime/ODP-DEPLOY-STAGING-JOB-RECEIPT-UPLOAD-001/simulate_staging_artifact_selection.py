@@ -54,7 +54,7 @@ PRE_FIX_PATHS = (
     ".odp_data/remote-staging-proof/*.json",
 )
 
-# Written by scripts/deploy_cloud_run_waji.sh on a green deploy, in either
+# Written by product_ops/deployment/deploy_cloud_run_waji.sh on a green deploy, in either
 # environment: the script is env-agnostic and reads ODP_DEPLOY_ENV only for
 # naming and gate expectations, not for which reports it emits.
 VALIDATOR_REPORTS = (

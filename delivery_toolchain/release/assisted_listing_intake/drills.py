@@ -162,7 +162,7 @@ def run_migration_reconciliation(workdir: Path, *, rows_per_tenant: int = 8) -> 
     stays intact for the restore drill.
     """
 
-    from scripts.migrations.assisted_listing_intake.migrate import IntakeMigrator
+    from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator
 
     workdir.mkdir(parents=True, exist_ok=True)
     staging_db = workdir / "migration-staging.sqlite3"

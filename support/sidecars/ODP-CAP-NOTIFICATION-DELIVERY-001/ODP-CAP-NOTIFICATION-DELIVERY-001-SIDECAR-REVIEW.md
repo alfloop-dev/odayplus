@@ -451,7 +451,7 @@ raises `ValueError: Production mode or on-call route requires a configured valid
 ONCALL_ENDPOINT_URL. Fail-closed gate enforced.` — so the gate is intact and the
 new branches specifically route around it.
 
-**Blast radius (P7).** `scripts/deployment/validate_cloud_run_live_deployment.py`
+**Blast radius (P7).** `product_ops/deployment/validate_cloud_run_live_deployment.py`
 L644–648 asserts the gate as part of the live check `observability:fail_closed_gates`:
 
 ```python

@@ -403,7 +403,7 @@ def _backfill_command(mode: str) -> list[str]:
     command = [
         sys.executable,
         "-m",
-        "scripts.data_platform.backfill",
+        "product_ops.data_platform.backfill",
     ]
     for kind in kinds:
         command.extend(["--kind", kind])

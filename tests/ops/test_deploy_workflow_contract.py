@@ -17,7 +17,7 @@ deploy would have dropped its Job receipts exactly as dev did.
 Replacing a glob with an explicit allowlist fixes that, but an allowlist is a
 second place that has to stay true: the deploy script decides which receipts
 exist, and nothing forces a workflow to keep up. These tests derive the expected
-file set from `scripts/deploy_cloud_run_waji.sh` and from each workflow's own
+file set from `product_ops/deployment/deploy_cloud_run_waji.sh` and from each workflow's own
 steps, then run it against every deploy workflow in one parametrised sweep. So
 adding a fourth Cloud Run Job kind, renaming a report, or landing a third
 environment workflow fails here instead of silently shipping another evidence
@@ -44,8 +44,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github/workflows"
-DEPLOY_SCRIPT = ROOT / "scripts/deploy_cloud_run_waji.sh"
-VALIDATOR_PATH = ROOT / "scripts/deployment/validate_cloud_run_live_deployment.py"
+DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
+VALIDATOR_PATH = ROOT / "product_ops/deployment/validate_cloud_run_live_deployment.py"
 
 DEPLOYMENT_REPORT_DIR = ".odp_data/deployment"
 
@@ -266,7 +266,7 @@ def test_every_deploy_workflow_runs_the_same_receipt_writing_script() -> None:
     stops being true, and the shared expectations below become a fiction.
     """
 
-    invocation = "./scripts/deploy_cloud_run_waji.sh"
+    invocation = "./product_ops/deployment/deploy_cloud_run_waji.sh"
     for workflow in DEPLOY_WORKFLOWS:
         runs = [step.get("run", "") for step in _steps(workflow)]
         assert any(invocation in run for run in runs), (
@@ -434,7 +434,7 @@ def test_uploaded_job_receipt_names_the_job_but_never_a_bound_value() -> None:
                     {
                         "image": f"registry/worker:dev-{sha}",
                         "command": ["python"],
-                        "args": ["scripts/deployment/cloud_run_job_entrypoint.py", "worker"],
+                        "args": ["product_ops/deployment/cloud_run_job_entrypoint.py", "worker"],
                         "env": [
                             {"name": "ODAY_RELEASE_SHA", "value": sha},
                             {

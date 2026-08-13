@@ -52,7 +52,7 @@ identity", and the backfill remains fail closed.
 - PG16 `core.stores.opened_on` non-null count after this task: **0 / 2442** (no
   backfill executed; no INSERT/UPDATE was issued against PG15 or PG16 by this task —
   all queries were read-only inventory).
-- `scripts/models/store_opening_backfill.py` was **not** run against any live database.
+- `product_ops/modeling/store_opening_backfill.py` was **not** run against any live database.
   The delivered engine (`apps/data_platform/store_opening.py`, ODP-STORE-OPENING-001,
   merged via PR #435) raises `MissingStoreOpeningAuthorityError` /
   `UnauthoritativeStoreOpeningError` on exactly this condition; fail-closed behavior,
@@ -103,7 +103,7 @@ No new code was required for this task. The approved activation path is already
 merged and reviewed (ODP-STORE-OPENING-001, PR #435):
 
 ```
-python -m scripts.models.store_opening_backfill \
+python -m product_ops.modeling.store_opening_backfill \
   --tenant-id <UUID> --snapshot-id <UUID> \
   --input-json <authority-records.json> \
   --eligible-stores-json <eligible-store-uuids.json> \
