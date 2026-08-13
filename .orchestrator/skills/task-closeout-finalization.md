@@ -55,18 +55,18 @@ must never be repeated by an `owned_finalize_dispatch` worker:
 TASK=<task-id>
 
 # 1. Open a fresh task branch from dev tip.
-./scripts/git/task_start.sh "$TASK"
+./delivery_toolchain/git/task_start.sh "$TASK"
 
 # 2. Edit files. Stage and commit via worker_commit.py — never raw
 #    `git add` / `git commit` for task work.
-python3 scripts/git/worker_commit.py \
+python3 delivery_toolchain/git/worker_commit.py \
   --task-id "$TASK" \
   --message-file /tmp/${TASK}-msg.txt \
   --scope <path1> <path2> ... \
   --index-file /tmp/git-index-task-$TASK
 
 # 3. Push and open PR with auto-merge.
-./scripts/git/task_finalize.sh "$TASK"
+./delivery_toolchain/git/task_finalize.sh "$TASK"
 
 # 4. Wait until GitHub reports the PR merged into dev, then run done.
 AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint message>"
@@ -110,7 +110,7 @@ worker left files staged (interrupted commit, crash) and you run
 narrow `git add` was followed by a `git commit` that captured 8
 unrelated foreground files left in the index.
 
-`scripts/git/worker_commit.py` mitigates this in three layers:
+`delivery_toolchain/git/worker_commit.py` mitigates this in three layers:
 
 1. `git restore --staged --` clears any stale staging before adding.
 2. Stages only what was passed via `--scope`; aborts if the resulting

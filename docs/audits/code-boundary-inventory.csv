@@ -163,6 +163,10 @@ archive/retired-dev-tools/2026-08-13/test_migrate_task_dependency_graph.py,archi
 archive/retired-dev-tools/2026-08-13/test_plan_execution_pack.py,archived,archived,false,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-13/validate_plan_execution_pack.py,archived,archived,false,,conditional,Repository archive retention policy permits permanent deletion.
 delivery_toolchain/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/git/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/git/check_commit_scope.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/git/check_commit_trailers.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/git/worker_commit.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/check_code_boundaries.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/test_check_code_boundaries.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -508,10 +512,6 @@ scripts/e2e/verify_deployment_health_backup_rollback.py,development_delivery_too
 scripts/e2e/worker_heartbeat.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/external_data_backfill.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/generate_assisted_listing_intake_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/git/check_commit_scope.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/git/check_commit_trailers.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/git/test_git_task_scripts.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
-scripts/git/worker_commit.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/load/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/load/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/load/assisted_listing_intake/runtime.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -849,6 +849,7 @@ tests/smoke/test_foundation_smoke.py,verification,verification_only,false,engine
 tests/solver/test_evolutionary_portfolio.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/solver/test_runtime_compat.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/test_scaffold.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/tooling/test_git_task_scripts.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/listing/test_identity_graph.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/listing/test_intake_state_machines.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/listing/test_xlsx_import.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.

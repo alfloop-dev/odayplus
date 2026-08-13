@@ -4,7 +4,7 @@
 Contract source: `.orchestrator/skills/task-closeout-finalization.md`
 § Commit Requirements, which declares these rules "enforced by
 `.githooks/commit-msg`". This module is the implementation behind both that
-hook and ``scripts/git/worker_commit.py``.
+hook and ``delivery_toolchain/git/worker_commit.py``.
 
 Rules:
 
@@ -21,7 +21,7 @@ Rules:
 
 Usage:
 
-    python3 scripts/git/check_commit_trailers.py <message-file> \\
+    python3 delivery_toolchain/git/check_commit_trailers.py <message-file> \\
       [--task-id ODP-X-001] [--files a.py b.py]
 
 Exit codes: 0 = valid, 1 = invalid, 2 = usage error.

@@ -1,4 +1,4 @@
-# `scripts/git/` — per-task git helpers
+# `delivery_toolchain/git/` — per-task git helpers
 
 Every worker wakeup prompt, `.orchestrator/skills/worker-anchor-commit.md`,
 `.orchestrator/skills/task-closeout-finalization.md`,
@@ -13,16 +13,16 @@ contract are decided.
 ```bash
 TASK=ODP-EXAMPLE-001
 
-./scripts/git/task_start.sh "$TASK"                 # branch task/$TASK from dev
+./delivery_toolchain/git/task_start.sh "$TASK"                 # branch task/$TASK from dev
 
 # edit files, then:
-python3 scripts/git/worker_commit.py \
+python3 delivery_toolchain/git/worker_commit.py \
   --task-id "$TASK" \
   --message-file /tmp/${TASK}-msg.txt \
   --scope <path1> <path2> ... \
   --index-file /tmp/git-index-task-$TASK
 
-./scripts/git/task_finalize.sh "$TASK"              # push + PR + auto-merge
+./delivery_toolchain/git/task_finalize.sh "$TASK"              # push + PR + auto-merge
 
 # wait for GitHub to merge the PR into dev, then:
 AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint>"
@@ -86,5 +86,5 @@ races another opener still recovers the existing PR number from `gh`'s output.
   not a conflicting rule.
 - `--dry-run` on `worker_commit.py` and `task_finalize.sh` runs every guard
   without touching the repo, origin, or GitHub.
-- Tests: `python3 -m pytest scripts/git/test_git_task_scripts.py`. They run
+- Tests: `python3 -m pytest delivery_toolchain/git/test_git_task_scripts.py`. They run
   against throwaway repos and never hit the network.

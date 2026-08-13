@@ -272,7 +272,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
     }:
         lifecycle_guardrails = (
             "這次是 owner dispatch。若工作已可送審，程序退出前必須先用 "
-            "scripts/git/task_finalize.sh 推送 task branch、建立 PR 並原子記錄 review submission；"
+            "delivery_toolchain/git/task_finalize.sh 推送 task branch、建立 PR 並原子記錄 review submission；"
             "不得直接 handoff／re_review 製造沒有遠端 PR 證明的 review。只寫『ready/awaiting review』"
             "但不完成正式提交，會被判定為 "
             "no-progress failure。若只完成一段增量，至少要留下新的 task branch commit 或實質 next 狀態。"
@@ -301,7 +301,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         branch_work_guardrails = (
             "進入 task 工作前，先確認你在正確的 branch 上：\n"
             f"- 預期 branch 名稱：`{branch_name}`（從 `{base_branch}` 開出的 per-task branch；task id kebab: `{task_id_kebab}`）。\n"
-            f"- 如果目前 branch 不對，優先使用 `./scripts/git/task_start.sh \"{task_id}\"`，不要手寫臨時 branch 規則。\n"
+            f"- 如果目前 branch 不對，優先使用 `./delivery_toolchain/git/task_start.sh \"{task_id}\"`，不要手寫臨時 branch 規則。\n"
             "- 如果 working tree 有未 commit diff 且不屬於這個 task，回報 blocker，不要 stash、不要繼續。\n"
             "- 任何跨檔案或 routing 接點的 task-owned 改動，到可描述的中間狀態就依 worker-anchor-commit 規則做 anchor commit。\n"
             f"- Anchor commit subject 建議：`{task_id}: anchor <scope>`；commit body 保留必要 trailers。"
@@ -314,7 +314,7 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "lane": lane,
         "base_branch": base_branch,
         "branch_name": branch_name,
-        "branch_start_command": f"./scripts/git/task_start.sh \"{task_id}\"" if task_id else "./scripts/git/task_start.sh <TASK-ID>",
+        "branch_start_command": f"./delivery_toolchain/git/task_start.sh \"{task_id}\"" if task_id else "./delivery_toolchain/git/task_start.sh <TASK-ID>",
         "anchor_commit_subject": f"{task_id}: anchor <scope>" if task_id else "<TASK-ID>: anchor <scope>",
         "reason": reason,
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",

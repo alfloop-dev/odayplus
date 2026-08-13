@@ -2329,7 +2329,7 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "## Workspace",
             "- You run inside an isolated per-task git worktree. It is NOT a staging area.",
             "- Confirm you are on the expected `task/<TASK-ID>` branch; use",
-            "  `./scripts/git/task_start.sh \"<TASK-ID>\"` if not.",
+            "  `./delivery_toolchain/git/task_start.sh \"<TASK-ID>\"` if not.",
             "- ai-status.json / current-work.md / ai-activity-log.jsonl are seeded here",
             "  (gitignored); do not edit them by hand — use the status commands.",
             "",
@@ -8461,7 +8461,7 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
                 task["depends_on"] = []
             message = (
                 "Review state repaired: no verified remote task PR was recorded. The owner must publish via "
-                "scripts/git/task_finalize.sh before review can be dispatched."
+                "delivery_toolchain/git/task_finalize.sh before review can be dispatched."
             )
         task["last_update"] = timestamp
         task["next"] = message

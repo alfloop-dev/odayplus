@@ -62,6 +62,7 @@ own boundary and product code must never depend on the wrapper.
 | Python SAST | `delivery_toolchain/security/sast_scan.py` | `scripts/security/sast_scan.py` |
 | Secret scanning | `delivery_toolchain/security/secret_scan.py` | `scripts/security/secret_scan.py` |
 | OpenAPI generation and drift | `delivery_toolchain/openapi/` | none |
+| Git task workflow and hooks | `delivery_toolchain/git/` | none |
 
 New automation must use canonical paths. Compatibility entrypoints may be
 removed after downstream callers have migrated and the announced support window

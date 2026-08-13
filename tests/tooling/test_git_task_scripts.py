@@ -11,18 +11,15 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-GIT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = GIT_DIR.parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+GIT_DIR = REPO_ROOT / "delivery_toolchain" / "git"
 
-sys.path.insert(0, str(GIT_DIR))
-
-from check_commit_scope import files_outside_scope, validate_scope  # noqa: E402
-from check_commit_trailers import validate_message  # noqa: E402
+from delivery_toolchain.git.check_commit_scope import files_outside_scope, validate_scope
+from delivery_toolchain.git.check_commit_trailers import validate_message
 
 TASK = "ODP-TEST-001"
 
@@ -79,7 +76,7 @@ def write_msg(tmp_path: Path, text: str) -> Path:
 
 def test_scope_covers_exact_paths_and_directories():
     assert files_outside_scope(["docs/a.md", "docs/sub/b.md"], ["docs"]) == []
-    assert files_outside_scope(["scripts/git/x.py"], ["scripts/git/x.py"]) == []
+    assert files_outside_scope(["delivery_toolchain/git/x.py"], ["delivery_toolchain/git/x.py"]) == []
 
 
 def test_scope_rejects_sibling_prefix_collision():
@@ -402,7 +399,7 @@ def test_task_finalize_requires_a_task_id(repo: Path):
 
 @pytest.mark.parametrize(
     "script",
-    ["scripts/git/task_start.sh", "scripts/git/task_finalize.sh", "scripts/git/install_hooks.sh", ".githooks/commit-msg"],
+    ["delivery_toolchain/git/task_start.sh", "delivery_toolchain/git/task_finalize.sh", "delivery_toolchain/git/install_hooks.sh", ".githooks/commit-msg"],
 )
 def test_shell_scripts_parse_and_are_executable(script):
     path = REPO_ROOT / script
@@ -416,9 +413,9 @@ def test_commit_msg_hook_blocks_a_bad_message(repo: Path):
     hooks.mkdir()
     (hooks / "commit-msg").write_text((REPO_ROOT / ".githooks" / "commit-msg").read_text(), encoding="utf-8")
     (hooks / "commit-msg").chmod(0o755)
-    scripts_git = repo / "scripts" / "git"
-    scripts_git.mkdir(parents=True)
-    (scripts_git / "check_commit_trailers.py").write_text(
+    tool_git = repo / "delivery_toolchain" / "git"
+    tool_git.mkdir(parents=True)
+    (tool_git / "check_commit_trailers.py").write_text(
         (GIT_DIR / "check_commit_trailers.py").read_text(), encoding="utf-8"
     )
     git(repo, "config", "core.hooksPath", ".githooks")

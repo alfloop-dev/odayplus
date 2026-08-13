@@ -2,7 +2,7 @@
 # Push the per-task branch, open (or re-use) its PR against dev, and turn on
 # auto-merge.
 #
-#   ./scripts/git/task_finalize.sh "ODP-EXAMPLE-001"
+#   ./delivery_toolchain/git/task_finalize.sh "ODP-EXAMPLE-001"
 #
 # This is the step the fleet was missing. Without it each worker improvised
 # its own closeout, so whether a green PR ever merged depended on which worker
@@ -28,7 +28,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-auto-merge] [--no-status-submit]
+Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-auto-merge] [--no-status-submit]
 
   <TASK-ID>        e.g. ODP-EXAMPLE-001 (branch task/ODP-EXAMPLE-001)
   --dry-run        print what would run; touch neither origin nor GitHub
@@ -71,14 +71,14 @@ CURRENT="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)"
 
 if [ "$CURRENT" != "$BRANCH" ]; then
   echo "task_finalize: on '$CURRENT' but expected '$BRANCH'." >&2
-  echo "task_finalize: run ./scripts/git/task_start.sh \"$TASK_ID\" first." >&2
+  echo "task_finalize: run ./delivery_toolchain/git/task_start.sh \"$TASK_ID\" first." >&2
   exit 1
 fi
 
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
   echo "task_finalize: refusing to open a PR with uncommitted tracked changes:" >&2
   git status --short --untracked-files=no >&2
-  echo "task_finalize: commit them via scripts/git/worker_commit.py first." >&2
+  echo "task_finalize: commit them via delivery_toolchain/git/worker_commit.py first." >&2
   exit 1
 fi
 
@@ -110,7 +110,7 @@ case "$HEAD_SUBJECT" in
   *"$TASK_ID"*) ;;
   *)
     echo "task_finalize: HEAD subject must include task id $TASK_ID." >&2
-    echo "task_finalize: commit with scripts/git/worker_commit.py before opening the PR." >&2
+    echo "task_finalize: commit with delivery_toolchain/git/worker_commit.py before opening the PR." >&2
     exit 1
     ;;
 esac
@@ -118,7 +118,7 @@ for FIELD in LLM-Agent Task-ID Reviewer; do
   VALUE="$(printf '%s\n' "$HEAD_BODY" | sed -n "s/^${FIELD}:[[:space:]]*//p" | head -1)"
   if [ -z "$VALUE" ]; then
     echo "task_finalize: HEAD body is missing required metadata: $FIELD." >&2
-    echo "task_finalize: commit with scripts/git/worker_commit.py before opening the PR." >&2
+    echo "task_finalize: commit with delivery_toolchain/git/worker_commit.py before opening the PR." >&2
     exit 1
   fi
   if [ "$FIELD" = "Task-ID" ] && [ "$VALUE" != "$TASK_ID" ]; then
@@ -167,7 +167,7 @@ trap 'rm -f "$BODY_FILE"' EXIT
   echo "Commits:"
   git log --no-merges --format='- %h %s' "$BASE_REF..HEAD"
   echo
-  echo "Opened by \`scripts/git/task_finalize.sh\`. Merging still requires the"
+  echo "Opened by \`delivery_toolchain/git/task_finalize.sh\`. Merging still requires the"
   echo "assigned reviewer's \`task-review-gate\` status plus required CI."
 } > "$BODY_FILE"
 

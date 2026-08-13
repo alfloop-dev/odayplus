@@ -127,8 +127,8 @@ boundaries:
       - scripts/chaos/**/*.py
       - scripts/e2e/*.py
       - scripts/e2e/**/*.py
-      - scripts/git/*.py
-      - scripts/git/**/*.py
+      - delivery_toolchain/git/*.py
+      - delivery_toolchain/git/**/*.py
       - scripts/load/*.py
       - scripts/load/**/*.py
       - delivery_toolchain/openapi/*.py

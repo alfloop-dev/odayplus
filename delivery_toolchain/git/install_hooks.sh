@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Point this clone's git hooks at the tracked .githooks/ directory.
 #
-#   ./scripts/git/install_hooks.sh
+#   ./delivery_toolchain/git/install_hooks.sh
 #
 # core.hooksPath is per-clone local config, so it cannot be committed; every
 # clone (and every `git worktree add`, which shares the config) needs this run

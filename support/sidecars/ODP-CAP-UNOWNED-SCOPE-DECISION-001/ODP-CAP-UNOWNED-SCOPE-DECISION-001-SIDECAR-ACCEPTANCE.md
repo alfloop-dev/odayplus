@@ -347,7 +347,7 @@ gh pr list --head task/<id> --state all --json number,state,mergeStateStatus
 
 ### 5.3 環境註記
 
-本 worktree 無 `scripts/git/`，`worker_commit.py` 不可用；commit 依
+本 worktree 無 `delivery_toolchain/git/`，`worker_commit.py` 不可用；commit 依
 `.orchestrator/skills/task-closeout-finalization.md` 的 foreground fallback 流程建立
 （`git restore --staged --` → 明列檔案 `git add` → `git diff --cached --name-only` → `git commit -F`）。
 

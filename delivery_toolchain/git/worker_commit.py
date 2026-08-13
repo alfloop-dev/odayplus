@@ -28,7 +28,7 @@ Guarantees, in order:
 
 Usage:
 
-    python3 scripts/git/worker_commit.py \\
+    python3 delivery_toolchain/git/worker_commit.py \\
       --task-id "$TASK" \\
       --message-file /tmp/${TASK}-msg.txt \\
       --scope <path1> <path2> ... \\
@@ -127,7 +127,7 @@ def commit(
     if branch in PROTECTED_BRANCHES and not allow_protected_branch:
         raise CommitRefused(
             f"refusing to commit onto protected branch {branch!r}. "
-            f"Run ./scripts/git/task_start.sh \"{task_id}\" first."
+            f"Run ./delivery_toolchain/git/task_start.sh \"{task_id}\" first."
         )
 
     message_path = Path(message_file)

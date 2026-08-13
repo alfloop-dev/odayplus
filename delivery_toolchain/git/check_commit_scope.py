@@ -8,11 +8,11 @@ This module is that check.
 
 It is used two ways:
 
-  * imported by ``scripts/git/worker_commit.py`` (the enforcing path), and
+  * imported by ``delivery_toolchain/git/worker_commit.py`` (the enforcing path), and
   * standalone, to audit an already-staged index:
 
-        python3 scripts/git/check_commit_scope.py \\
-          --task-id ODP-X-001 --scope docs/ scripts/git/
+        python3 delivery_toolchain/git/check_commit_scope.py \\
+          --task-id ODP-X-001 --scope docs/ delivery_toolchain/git/
 
 Exit codes: 0 = every staged path is in scope, 1 = leak detected, 2 = usage
 error.

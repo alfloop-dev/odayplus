@@ -5078,7 +5078,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
     if not remote_sha:
         raise SystemExit(
             f"Cannot submit {task_id} for review: origin/{branch} is missing. "
-            "Push the task branch with scripts/git/task_finalize.sh first."
+            "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
         )
 
     pr = run_gh_json_command(
@@ -5181,7 +5181,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if not isinstance(submission, dict) or not submission.get("remote_sha") or not submission.get("pr_number"):
         raise SystemExit(
             f"Cannot hand off {task_id} for review without verified remote PR evidence. "
-            "Run scripts/git/task_finalize.sh, then "
+            "Run delivery_toolchain/git/task_finalize.sh, then "
             f"AI_NAME={actor} ./scripts/ai-status.sh submit_review {task_id} <pr-number> <message>."
         )
     timestamp = iso_now()

@@ -165,7 +165,7 @@ git show dda55b91:docs/design/ODAY_PLUS_UNOWNED_CAPABILITY_SCOPE_DECISION_2026-0
 ls "$PANTHEON_STATUS_ROOT/ai-task-archive/tasks/" | grep -iE 'notification-delivery|model-release'
 ```
 
-環境註記：本 worktree 無 `scripts/git/`，`worker_commit.py` 不可用；
+環境註記：本 worktree 無 `delivery_toolchain/git/`，`worker_commit.py` 不可用；
 本 review commit 依 `task-closeout-finalization.md` 的 foreground fallback
 （`git restore --staged --` → 明列檔案 `git add` → `git diff --cached --name-only` → `git commit -F`）建立。
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Open (or re-enter) the per-task branch for a Pantheon task.
 #
-#   ./scripts/git/task_start.sh "ODP-EXAMPLE-001"
+#   ./delivery_toolchain/git/task_start.sh "ODP-EXAMPLE-001"
 #
 # Pantheon's branch model is per-task ephemeral branches cut from the tip of
 # the workflow target (`dev`), merged back by PR. Permanent `worker/<name>`
@@ -19,7 +19,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/git/task_start.sh <TASK-ID> [--allow-dirty] [--base <branch>]
+Usage: delivery_toolchain/git/task_start.sh <TASK-ID> [--allow-dirty] [--base <branch>]
 
   <TASK-ID>       e.g. ODP-EXAMPLE-001 (branch becomes task/ODP-EXAMPLE-001)
   --allow-dirty   do not refuse when tracked files are already modified
@@ -61,7 +61,7 @@ if [ "$ALLOW_DIRTY" -eq 0 ] && [ -n "$(git status --porcelain --untracked-files=
   cat >&2 <<EOF
 
 If these belong to $TASK_ID, commit them first:
-  python3 scripts/git/worker_commit.py --task-id "$TASK_ID" --message-file <msg> --scope <paths>
+  python3 delivery_toolchain/git/worker_commit.py --task-id "$TASK_ID" --message-file <msg> --scope <paths>
 If they belong to another task, this is an uncleaned handoff: record a blocker
 and stop. Do not stash and continue
 (see .orchestrator/skills/worker-anchor-commit.md).
@@ -117,11 +117,11 @@ fi
 # Deliberately does NOT run `git config core.hooksPath` here. That config is
 # shared by every linked worktree of the clone, so switching it on behalf of a
 # worker would change how *other* lanes' in-flight commits are validated.
-# Enabling the hook stays an explicit operator step (scripts/git/install_hooks.sh);
+# Enabling the hook stays an explicit operator step (delivery_toolchain/git/install_hooks.sh);
 # worker_commit.py validates the same rules in-process regardless.
 if [ -d "$ROOT/.githooks" ] && [ "$(git config --get core.hooksPath || true)" != ".githooks" ]; then
-  echo "task_start: note: commit-msg hook is not installed in this clone (./scripts/git/install_hooks.sh)"
+  echo "task_start: note: commit-msg hook is not installed in this clone (./delivery_toolchain/git/install_hooks.sh)"
 fi
 
 echo "task_start: HEAD $(git rev-parse --short HEAD) on $BRANCH"
-echo "task_start: next -> edit, then scripts/git/worker_commit.py, then scripts/git/task_finalize.sh \"$TASK_ID\""
+echo "task_start: next -> edit, then delivery_toolchain/git/worker_commit.py, then delivery_toolchain/git/task_finalize.sh \"$TASK_ID\""

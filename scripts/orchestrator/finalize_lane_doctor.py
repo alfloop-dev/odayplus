@@ -182,7 +182,7 @@ def classify_stranded_task(
             CAT_STALE_BASE,
             f"Task {task_id} PR branch is behind target base 'dev' or has conflicts.",
             f"Advance base for task {task_id} by rebasing/merging origin/dev onto task branch.",
-            f'./scripts/git/task_start.sh "{task_id}" && git merge origin/dev && ./scripts/git/task_finalize.sh "{task_id}"',
+            f'./delivery_toolchain/git/task_start.sh "{task_id}" && git merge origin/dev && ./delivery_toolchain/git/task_finalize.sh "{task_id}"',
         )
     if any(value in combined_next for value in ("unresolved", "unknown", "pending", "in_progress", "conclusive")):
         pr_ref = f"PR #{pr_number}" if pr_number else "task PR"
@@ -205,7 +205,7 @@ def classify_stranded_task(
             CAT_MISSING_PR,
             f"Task {task_id} is in finalize status but carries no open PR number.",
             f"Create the task PR for {task_id} via task_finalize.sh.",
-            f'./scripts/git/task_finalize.sh "{task_id}"',
+            f'./delivery_toolchain/git/task_finalize.sh "{task_id}"',
         )
     return (
         CAT_CI_UNRESOLVED,
