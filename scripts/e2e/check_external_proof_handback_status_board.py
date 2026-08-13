@@ -10,12 +10,18 @@ checker keeps that board synchronized with #132-#138 and prevents accidental
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 STATUS_BOARD_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_head_command, release_pr_label, release_pr_number
 
 ALLOWED_TASK_STATUSES = {
     "pending_external_handback",
@@ -48,8 +54,9 @@ def validate_status_board(queue: dict[str, Any], status_board: dict[str, Any]) -
     errors: list[str] = []
 
     release_target = status_board.get("release_target", {})
-    if release_target.get("pr") != 82:
-        errors.append("handback status board release_target.pr must be 82")
+    expected_pr = release_pr_number(QUEUE_PATH)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"handback status board release_target.pr must be {expected_pr}")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("handback status board must forbid hard-coded dev release refs")
     if status_board.get("source_of_truth") != "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json":
@@ -99,8 +106,8 @@ def validate_status_board(queue: dict[str, Any], status_board: dict[str, Any]) -
             errors.append(f"{prefix} status must be one of {sorted(ALLOWED_TASK_STATUSES)}, got {status!r}")
         if "check_external_proof_handback_artifact.py" not in str(entry.get("artifact_check_command", "")):
             errors.append(f"{prefix} artifact_check_command must run check_external_proof_handback_artifact.py")
-        if "gh pr view 82 --json headRefOid" not in str(entry.get("artifact_check_command", "")):
-            errors.append(f"{prefix} artifact_check_command must bind expected-sha to PR #82 headRefOid")
+        if release_pr_head_command(QUEUE_PATH) not in str(entry.get("artifact_check_command", "")):
+            errors.append(f"{prefix} artifact_check_command must bind expected-sha to {release_pr_label(QUEUE_PATH)} headRefOid")
         if not entry.get("next_action"):
             errors.append(f"{prefix} missing next_action")
 

@@ -9,17 +9,23 @@ cannot lose issue routing, handback commands, or closeout boundaries in prose.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 BOARD_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_head_command, release_pr_number, release_pr_view_command
 
 REQUIRED_BOARD_TOKENS = (
     "External Proof Fleet Pickup Board",
     "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
-    "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url",
+    "python3 scripts/e2e/check_external_proof_closeout_queue.py",
     "python3 scripts/e2e/check_external_proof_closeout_queue.py",
     "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
     "python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha",
@@ -57,10 +63,17 @@ def validate(queue_payload: dict[str, Any], board_text: str) -> list[str]:
     errors: list[str] = []
 
     release_target = queue_payload.get("release_target", {})
-    if release_target.get("pr") != 82:
-        errors.append("external proof queue release_target.pr must be 82")
+    expected_pr = release_pr_number(QUEUE_PATH)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"external proof queue release_target.pr must be {expected_pr}")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("external proof queue must forbid hard-coded dev release refs")
+
+    required_pr_command = release_pr_view_command(
+        QUEUE_PATH, "headRefOid", "isDraft", "state", "mergeStateStatus", "statusCheckRollup", "url"
+    )
+    if required_pr_command not in board_text:
+        errors.append(f"external proof pickup board missing token: {required_pr_command}")
 
     for token in REQUIRED_BOARD_TOKENS:
         if token not in board_text:
@@ -107,7 +120,7 @@ def validate(queue_payload: dict[str, Any], board_text: str) -> list[str]:
 
         acceptance_command = (
             'python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha '
-            '"$(gh pr view 82 --json headRefOid --jq .headRefOid)"'
+            f'"$({release_pr_head_command(QUEUE_PATH)})"'
         )
         if acceptance_command not in board_text:
             errors.append(f"external proof pickup board missing {prefix} acceptance command")

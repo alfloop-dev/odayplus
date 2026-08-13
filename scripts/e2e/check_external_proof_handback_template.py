@@ -10,12 +10,18 @@ map, and remote staging evidence.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_label, release_pr_number
 
 REQUIRED_COMMON_FIELDS = {
     "task_id",
@@ -65,15 +71,16 @@ def validate(queue: dict[str, Any], template: dict[str, Any]) -> list[str]:
         errors.append("template schema_version must be 1")
 
     release_target = template.get("release_target", {})
-    if release_target.get("pr") != 82:
-        errors.append("template release_target.pr must be 82")
+    expected_pr = release_pr_number(QUEUE_PATH)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"template release_target.pr must be {expected_pr}")
     if "headRefOid" not in str(release_target.get("authority", "")):
         errors.append("template release_target.authority must mention headRefOid")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("template release_target.must_not_hardcode_dev_hash must be true")
 
     global_text = "\n".join(str(rule) for rule in template.get("global_rules", []))
-    for token in ("Do not include secret values", "PR #82 headRefOid", "correlation_id", "redacted"):
+    for token in ("Do not include secret values", f"{release_pr_label(QUEUE_PATH)} headRefOid", "correlation_id", "redacted"):
         if token not in global_text:
             errors.append(f"template global_rules missing token: {token}")
 

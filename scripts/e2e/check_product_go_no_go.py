@@ -11,18 +11,23 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 GO_NO_GO_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md"
 EXTERNAL_QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_label, release_pr_number
 
 REQUIRED_DECISION_TOKENS = (
     "Decision status: conditional go for deterministic product E2E",
     "remote staging rollout remains conditional",
     "Human/Ops",
-    "PR #82",
     "headRefOid",
     "attached checks",
 )
@@ -110,6 +115,8 @@ def main() -> int:
 
     text = GO_NO_GO_PATH.read_text(encoding="utf-8")
     queue = load_json(EXTERNAL_QUEUE_PATH)
+    if release_pr_label(EXTERNAL_QUEUE_PATH) not in text:
+        errors.append(f"go/no-go packet must identify {release_pr_label(EXTERNAL_QUEUE_PATH)}")
 
     for token in REQUIRED_DECISION_TOKENS:
         if token not in text:
@@ -134,8 +141,9 @@ def main() -> int:
             errors.append(f"go/no-go external proof row cannot be marked complete: {row_prefix}")
 
     release_target = queue.get("release_target", {})
-    if release_target.get("pr") != 82:
-        errors.append("external proof queue release_target.pr must be 82")
+    expected_pr = release_pr_number(EXTERNAL_QUEUE_PATH)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"external proof queue release_target.pr must be {expected_pr}")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("external proof queue must forbid hard-coded dev release refs")
 

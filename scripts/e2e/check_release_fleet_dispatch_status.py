@@ -17,10 +17,17 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_number, release_pr_view_args
 
 LIVE_CHECKS = (
     ("external issue sync", ["python3", "scripts/e2e/check_external_proof_issue_sync.py", "--require-assignees"]),
@@ -43,43 +50,43 @@ ISSUE_HANDBACK_SCAN_COMMAND = [
 ]
 
 
-def current_pr82_payload() -> dict[str, Any]:
+def current_release_pr_payload() -> dict[str, Any]:
     raw = subprocess.check_output(
-        [
-            "gh",
-            "pr",
-            "view",
-            "82",
-            "--json",
-            "number,isDraft,state,headRefOid,mergeStateStatus,statusCheckRollup,url",
-        ],
+        release_pr_view_args(QUEUE_PATH, "number", "isDraft", "state", "headRefOid", "mergeStateStatus", "statusCheckRollup", "url"),
         cwd=ROOT,
         text=True,
     )
     return json.loads(raw)
 
 
+def current_pr82_payload() -> dict[str, Any]:
+    """Compatibility wrapper; the release queue selects the PR."""
+    return current_release_pr_payload()
+
+
 def validate_pr82_payload(pr_payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
-    if pr_payload.get("number") != 82:
-        errors.append("release PR number must be 82")
+    expected_pr = release_pr_number(QUEUE_PATH)
+    label = f"PR #{expected_pr}"
+    if pr_payload.get("number") != expected_pr:
+        errors.append(f"release PR number must be {expected_pr}")
     if pr_payload.get("state") != "OPEN":
-        errors.append("PR #82 must be OPEN")
+        errors.append(f"{label} must be OPEN")
     if pr_payload.get("mergeStateStatus") != "CLEAN":
-        errors.append("PR #82 mergeStateStatus must be CLEAN")
+        errors.append(f"{label} mergeStateStatus must be CLEAN")
     head = str(pr_payload.get("headRefOid", ""))
     if len(head) != 40 or any(ch not in "0123456789abcdef" for ch in head.lower()):
-        errors.append("PR #82 headRefOid must be a full SHA")
+        errors.append(f"{label} headRefOid must be a full SHA")
 
     checks = pr_payload.get("statusCheckRollup", [])
     if not checks:
-        errors.append("PR #82 must have attached checks")
+        errors.append(f"{label} must have attached checks")
     for check in checks:
         name = str(check.get("name", "<unnamed>"))
         status = check.get("status")
         conclusion = check.get("conclusion")
         if status != "COMPLETED" or conclusion != "SUCCESS":
-            errors.append(f"PR #82 check {name!r} must be COMPLETED/SUCCESS")
+            errors.append(f"{label} check {name!r} must be COMPLETED/SUCCESS")
     return errors
 
 
@@ -90,7 +97,7 @@ def run_check(label: str, command: list[str], *, env: dict[str, str]) -> dict[st
 
 
 def build_live_report() -> dict[str, Any]:
-    pr_payload = current_pr82_payload()
+    pr_payload = current_release_pr_payload()
     env = os.environ.copy()
     env.setdefault("PANTHEON_STATUS_ROOT", "/home/lupin/oday-plus")
     checks = [run_check(label, command, env=env) for label, command in LIVE_CHECKS]

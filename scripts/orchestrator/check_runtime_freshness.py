@@ -59,10 +59,6 @@ def current_branch(repo: Path) -> str | None:
     return _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 
-def is_detached(repo: Path) -> bool:
-    return current_branch(repo) == DETACHED_HEAD_SENTINEL
-
-
 def commits_behind(repo: Path, tracking_ref: str) -> int | None:
     out = _git(repo, "rev-list", "--count", f"HEAD..{tracking_ref}")
     if out is None:

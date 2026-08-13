@@ -58,7 +58,6 @@ def _table_counts(conn: sqlite3.Connection) -> dict[str, int]:
         for name in _table_names(conn)
     }
 
-
 def _table_checksums(conn: sqlite3.Connection) -> dict[str, str]:
     """Deterministic per-table content digests for restore verification."""
     checksums = {}
@@ -1535,7 +1534,3 @@ def run_uat(workdir: Path, *, report_path: Path | None = None, spec: str = "test
         "roles_note": "Spec exercises operator/manager role flows against the running product (see spec file for role fixtures).",
         "passed": passed,
     }
-
-
-def new_drill_id() -> str:
-    return str(uuid.uuid4())

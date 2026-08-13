@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,16 @@ BRIEF_INDEX = BRIEF_DIR / "README.md"
 DISPATCH_QUEUE = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json"
 KICKOFF_RUNBOOK = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md"
 ASSIGNMENT_LEDGER = ROOT / "docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import (
+    release_pr_head_command,
+    release_pr_label,
+    release_pr_number,
+    release_pr_view_command,
+)
 
 EXPECTED_ALIASES = {
     "ODP-EXT-001",
@@ -272,13 +283,13 @@ def render_kickoff_runbook(packet: dict[str, Any]) -> str:
         "",
         "## Operator Preflight",
         "",
-        "- Confirm PR #82 `headRefOid` and attached checks before starting work.",
+        f"- Confirm {release_pr_label(PACKET)} `headRefOid` and attached checks before starting work.",
         "- Do not claim live-provider, live-map, or remote-staging proof until the relevant task evidence is attached.",
         "- Keep deterministic fixture/source-stub tests as CI defaults.",
         "- Use each task's suggested branch and brief file as the handoff contract.",
         "- Execute any task-specific `execution_commands` before requesting review.",
         "- Treat this kickoff queue as historical implementation dispatch; current release blockers are routed through `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`.",
-        "- Before Product Validation accepts live provider, live map, or remote staging proof, use `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --output <handback.json>` and validate the completed handback with `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"`.",
+        f"- Before Product Validation accepts live provider, live map, or remote staging proof, use `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$({release_pr_head_command(PACKET)})\" --output <handback.json>` and validate the completed handback with `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$({release_pr_head_command(PACKET)})\"`.",
         "- Keep `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` synchronized with `python3 scripts/e2e/update_external_proof_handback_status_board.py`; verify it with `python3 scripts/e2e/check_external_proof_handback_status_board.py`.",
         "- Before closing #132-#138, run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`, `python3 scripts/e2e/check_external_proof_fleet_notifications.py`, and `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`.",
         "",
@@ -318,9 +329,9 @@ def render_kickoff_runbook(packet: dict[str, Any]) -> str:
             "For current live-provider, live-map, and remote-staging closeout, convert the implementation handback into the #132-#138 external-proof handback format:",
             "",
             "```bash",
-            "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" --output <handback.json>",
-            "python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
-            "python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\"",
+            f"python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$({release_pr_head_command(PACKET)})\" --output <handback.json>",
+            f"python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$({release_pr_head_command(PACKET)})\"",
+            f"python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha \"$({release_pr_head_command(PACKET)})\"",
             "python3 scripts/e2e/update_external_proof_handback_status_board.py --help",
             "python3 scripts/e2e/check_external_proof_handback_status_board.py",
             "python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees",
@@ -346,10 +357,11 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
     assignment_text = ASSIGNMENT_LEDGER.read_text(encoding="utf-8") if ASSIGNMENT_LEDGER.exists() else ""
 
     release_target = packet.get("release_target") or {}
-    if release_target.get("pr") != 82:
-        errors.append("release_target.pr must be 82")
+    expected_pr = release_pr_number(PACKET)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"release_target.pr must be {expected_pr}")
     if "headRefOid" not in str(release_target.get("authority", "")):
-        errors.append("release_target.authority must name PR #82 headRefOid")
+        errors.append(f"release_target.authority must name {release_pr_label(PACKET)} headRefOid")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("release_target.must_not_hardcode_dev_hash must be true")
 
@@ -390,14 +402,14 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
         errors.append(f"missing fleet assignment ledger: {ASSIGNMENT_LEDGER.relative_to(ROOT)}")
     else:
         for required_phrase in (
-            "Release authority: PR #82 `headRefOid` and attached checks.",
+            f"Release authority: {release_pr_label(PACKET)} `headRefOid` and attached checks.",
             "Dispatch packet: `docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json`.",
             "It is not completion evidence.",
             "Do not mark any dispatched task complete from this ledger alone.",
             "Do not claim provider-specific production credentials",
             "remote-staging live",
             "remote staging drill completion without runtime evidence",
-            "Release evidence must use PR #82 `headRefOid`",
+            f"Release evidence must use {release_pr_label(PACKET)} `headRefOid`",
             "PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
             "generate_external_proof_handback_skeleton.py",
             "check_external_proof_handback_artifact.py",
@@ -457,7 +469,7 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
             errors.append(f"{task_id} missing execution_commands")
         else:
             joined_commands = "\n".join(execution_commands)
-            for required_phrase in ("gh pr view 82", "headRefOid"):
+            for required_phrase in (release_pr_view_command(PACKET), "headRefOid"):
                 if required_phrase not in joined_commands:
                     errors.append(f"{task_id} execution_commands missing phrase: {required_phrase}")
         blocking_dependencies = task.get("blocking_dependencies", [])
@@ -467,7 +479,7 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
             joined_commands = "\n".join(execution_commands)
             for required_phrase in (
                 "scripts/e2e/check_remote_staging_proof.py",
-                "gh pr view 82",
+                release_pr_view_command(PACKET),
                 "headRefOid",
             ):
                 if required_phrase not in joined_commands:
@@ -497,7 +509,7 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
             "live-map proof",
             "remote-staging proof",
             "provider secrets",
-            "PR #82 headRefOid",
+            f"{release_pr_label(PACKET)} headRefOid",
         ):
             if required_phrase not in joined_rules:
                 errors.append(f"completion_rules missing phrase: {required_phrase}")

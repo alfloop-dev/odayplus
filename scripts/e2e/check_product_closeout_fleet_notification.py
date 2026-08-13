@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify PR #82 has a product closeout fleet update for the current head.
+"""Verify the release PR has a product closeout fleet update for the current head.
 
 The product closeout pickup board is static repo evidence. The PR comment is
 the live fleet-facing notification surface. This checker makes sure PR #82 has
@@ -13,15 +13,21 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import current_release_head, release_label, release_pr_view_args
 
 REQUIRED_COMMENT_TOKENS = (
     "Product closeout fleet update",
-    "Current release target: PR #82 headRefOid",
+    "Current release target:",
     "Ready lanes",
     "Waiting lanes",
     "Blocked or stale lanes",
@@ -35,22 +41,18 @@ def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def current_pr82_head() -> str:
+def load_release_pr_comments() -> dict[str, Any]:
     raw = subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
-        cwd=ROOT,
-        text=True,
-    )
-    return raw.strip()
-
-
-def load_pr82_comments() -> dict[str, Any]:
-    raw = subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "comments"],
+        release_pr_view_args(QUEUE_PATH, "comments"),
         cwd=ROOT,
         text=True,
     )
     return json.loads(raw)
+
+
+def load_pr82_comments() -> dict[str, Any]:
+    """Compatibility wrapper; the queue manifest selects the release PR."""
+    return load_release_pr_comments()
 
 
 def command_fragment(command: str) -> str:
@@ -73,12 +75,14 @@ def validate_notification(
         and expected_sha in str(comment.get("body", ""))
     ]
     if not matching_comments:
-        return [f"PR #82 missing product closeout fleet update for headRefOid {expected_sha}"]
+        return [f"{release_label(QUEUE_PATH)} missing product closeout fleet update for headRefOid {expected_sha}"]
 
     latest_match = matching_comments[-1]
     for token in REQUIRED_COMMENT_TOKENS:
         if token not in latest_match:
             errors.append(f"latest product closeout fleet update missing token: {token}")
+    if f"Current release target: {release_label(QUEUE_PATH)} headRefOid" not in latest_match:
+        errors.append("latest product closeout fleet update missing release target label")
 
     for entry in queue_payload.get("queue", []):
         task_id = str(entry.get("task_id", ""))
@@ -107,16 +111,16 @@ def validate_notification(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected-sha", help="expected PR #82 headRefOid; defaults to live gh pr view 82")
+    parser.add_argument("--expected-sha", help=f"expected {release_label(QUEUE_PATH)} headRefOid; defaults to live {release_pr_view_args(QUEUE_PATH, 'headRefOid')}.")
     parser.add_argument("--pr-json", type=Path, help="fixture PR comments JSON payload for deterministic tests")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    expected_sha = args.expected_sha or current_pr82_head()
+    expected_sha = args.expected_sha or current_release_head(root=ROOT, queue_path=QUEUE_PATH)
     queue_payload = load_json(QUEUE_PATH)
-    pr_payload = load_json(args.pr_json) if args.pr_json else load_pr82_comments()
+    pr_payload = load_json(args.pr_json) if args.pr_json else load_release_pr_comments()
 
     errors = validate_notification(queue_payload, pr_payload, expected_sha=expected_sha)
     if errors:

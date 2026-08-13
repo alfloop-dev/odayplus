@@ -10,11 +10,17 @@ provider, live map, or remote staging completion.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_label, release_pr_number, release_pr_view_command
 
 REQUIRED_TASK_IDS = {
     "ODP-EXT-PROD-001",
@@ -41,7 +47,6 @@ REQUIRED_BOUNDARY_TOKENS = (
 )
 
 REQUIRED_COMMAND_TOKENS = (
-    "gh pr view 82",
     "headRefOid",
     "check_remote_staging_proof.py",
     "PLAYWRIGHT_BASE_URL",
@@ -68,16 +73,17 @@ def validate(payload: dict[str, Any]) -> list[str]:
         errors.append("schema_version must be 1")
 
     release_target = payload.get("release_target", {})
-    if release_target.get("pr") != 82:
-        errors.append("release_target.pr must be 82")
+    expected_pr = release_pr_number(QUEUE_PATH)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"release_target.pr must be {expected_pr}")
     if "headRefOid" not in str(release_target.get("authority", "")):
-        errors.append("release_target.authority must use PR #82 headRefOid")
+        errors.append(f"release_target.authority must use {release_pr_label(QUEUE_PATH)} headRefOid")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("release_target.must_not_hardcode_dev_hash must be true")
 
     preflight = "\n".join(str(command) for command in payload.get("global_preflight", []))
     for required in (
-        "gh pr view 82",
+        release_pr_view_command(QUEUE_PATH),
         "check_product_release_gate.py",
         "check_external_proof_closeout_queue.py",
         "check_external_proof_live_blockers.py --require-assignees",
@@ -170,8 +176,8 @@ def validate(payload: dict[str, Any]) -> list[str]:
         if "labels" not in pickup_command or "body" not in pickup_command:
             errors.append(f"{prefix} pickup_command must request issue labels and body")
         release_authority = str(routing.get("release_authority", ""))
-        if "PR #82" not in release_authority or "headRefOid" not in release_authority:
-            errors.append(f"{prefix} fleet_routing.release_authority must use PR #82 headRefOid")
+        if release_pr_label(QUEUE_PATH) not in release_authority or "headRefOid" not in release_authority:
+            errors.append(f"{prefix} fleet_routing.release_authority must use {release_pr_label(QUEUE_PATH)} headRefOid")
         if not str(routing.get("escalation", "")).strip():
             errors.append(f"{prefix} fleet_routing.escalation must be non-empty")
 
@@ -185,8 +191,8 @@ def validate(payload: dict[str, Any]) -> list[str]:
             errors.append(f"{prefix} evidence_refs must be non-empty")
 
         command_text = "\n".join(str(command) for command in entry.get("allowed_commands", []))
-        if "gh pr view 82" not in command_text or "headRefOid" not in command_text:
-            errors.append(f"{prefix} allowed_commands must verify PR #82 headRefOid")
+        if release_pr_view_command(QUEUE_PATH) not in command_text or "headRefOid" not in command_text:
+            errors.append(f"{prefix} allowed_commands must verify {release_pr_label(QUEUE_PATH)} headRefOid")
         handback_text = "\n".join(str(command) for command in entry.get("handback_commands", []))
         for token in (
             "generate_external_proof_handback_skeleton.py",
@@ -194,7 +200,7 @@ def validate(payload: dict[str, Any]) -> list[str]:
             "check_external_proof_handback_template.py",
             "check_external_proof_handback_artifact.py",
             "--expected-sha",
-            "gh pr view 82",
+            release_pr_view_command(QUEUE_PATH),
             "headRefOid",
         ):
             if token and token not in handback_text:

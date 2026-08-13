@@ -17,12 +17,19 @@ import argparse
 import json
 import os
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_label, release_pr_number, release_pr_view_command
+
 MANIFEST_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md"
 STATUS_ROOT = (
     Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
@@ -245,14 +252,18 @@ def validate_queue(payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
 
     release_target = payload.get("release_target", {})
-    if release_target.get("pr") != 82:
-        errors.append("release_target.pr must be 82")
+    expected_pr = release_pr_number(QUEUE_PATH)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"release_target.pr must be {expected_pr}")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("release_target.must_not_hardcode_dev_hash must be true")
 
     preflight = payload.get("global_preflight", [])
-    if "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url" not in preflight:
-        errors.append("global_preflight must verify PR #82 head/checks")
+    required_pr_command = release_pr_view_command(
+        QUEUE_PATH, "headRefOid", "isDraft", "state", "mergeStateStatus", "statusCheckRollup", "url"
+    )
+    if required_pr_command not in preflight:
+        errors.append(f"global_preflight must verify {release_pr_label(QUEUE_PATH)} head/checks")
     if "python3 scripts/e2e/check_product_release_gate.py" not in preflight:
         errors.append("global_preflight must run the product release gate")
 
@@ -399,7 +410,7 @@ def validate_manifest_alignment(payload: dict[str, Any]) -> list[str]:
             row["blocking_type"],
         )
         for row in rows
-        if row["task_id"] != "PR #82" and row["task_id"] != "External proof queue"
+        if row["task_id"] != release_pr_label(QUEUE_PATH) and row["task_id"] != "External proof queue"
     )
 
     missing = queue_keys - manifest_keys

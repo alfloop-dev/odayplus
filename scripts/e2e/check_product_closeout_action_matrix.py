@@ -12,12 +12,19 @@ import argparse
 import importlib.util
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 ACTION_CHECKER_PATH = ROOT / "scripts/e2e/check_product_closeout_action.py"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_label
+
 DEFAULT_STATUS_ROOT = (
     Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
     if os.environ.get("PANTHEON_STATUS_ROOT")
@@ -45,13 +52,13 @@ def missing_status_message(path: Path) -> str:
     )
 
 
-def classify_errors(errors: list[str]) -> str:
+def classify_errors(errors: list[str], *, queue_path: Path = QUEUE_PATH) -> str:
     if not errors:
         return "ready"
     joined = "\n".join(errors)
     if " is not ready:" in joined:
         return "waiting"
-    if "PR #82 check" in joined or "mergeStateStatus must be CLEAN" in joined:
+    if f"{release_pr_label(queue_path)} check" in joined or "mergeStateStatus must be CLEAN" in joined:
         return "blocked_by_pr_checks"
     return "stale_or_invalid"
 
@@ -61,6 +68,7 @@ def evaluate_matrix(
     status_payload: dict[str, Any],
     *,
     pr_payload: dict[str, Any] | None,
+    queue_path: Path = QUEUE_PATH,
 ) -> list[dict[str, Any]]:
     action_checker = load_module(ACTION_CHECKER_PATH, "check_product_closeout_action")
     rows: list[dict[str, Any]] = []
@@ -76,6 +84,7 @@ def evaluate_matrix(
             actor=actor,
             action_type=action_type,
             pr_payload=pr_payload,
+            queue_path=queue_path,
         )
         rows.append(
             {
@@ -84,7 +93,7 @@ def evaluate_matrix(
                 "action_type": action_type,
                 "queue_status": str(entry.get("status")),
                 "blocking_type": str(entry.get("blocking_type")),
-                "readiness": classify_errors(errors),
+                "readiness": classify_errors(errors, queue_path=queue_path),
                 "errors": errors,
             }
         )
@@ -138,8 +147,8 @@ def main() -> int:
         print(missing_status_message(args.status_path))
         return 2
     status_payload = load_json(args.status_path)
-    pr_payload = action_checker.load_pr82_payload(args.pr_json, skip_live=args.skip_pr_check)
-    rows = evaluate_matrix(queue_payload, status_payload, pr_payload=pr_payload)
+    pr_payload = action_checker.load_release_pr_payload(args.pr_json, queue_path=args.queue, skip_live=args.skip_pr_check)
+    rows = evaluate_matrix(queue_payload, status_payload, pr_payload=pr_payload, queue_path=args.queue)
 
     if args.json:
         print(json.dumps({"rows": rows}, ensure_ascii=False, indent=2))

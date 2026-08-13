@@ -16,6 +16,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_view_command
 
 REQUIRED_FILES = {
     "product runner": "scripts/e2e/run_product_e2e.sh",
@@ -214,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
         "workflow_dispatch",
         "schedule:",
         "GH_TOKEN",
-        "gh pr view 82",
+        release_pr_view_command(QUEUE_PATH),
         "check_external_proof_issue_sync.py --require-assignees",
         "check_external_proof_fleet_notifications.py",
         "check_external_proof_live_blockers.py --require-assignees",

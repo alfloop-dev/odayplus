@@ -3,7 +3,7 @@
 
 The queue and issue bodies tell fleets what to do. This live checker verifies
 that each external-proof blocker also has a recent pickup comment tied to the
-current PR #82 `headRefOid`, so a new release-candidate commit cannot silently
+the current release PR `headRefOid`, so a new release-candidate commit cannot silently
 leave fleet instructions pointing at an older SHA.
 """
 
@@ -12,15 +12,22 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import current_release_head, release_label, release_pr_view_command
+
 REQUIRED_COMMENT_TOKENS = (
     "External proof fleet pickup update",
-    "Current release target: PR #82 headRefOid",
+    "Current release target:",
     "Required runtime evidence",
     "Minimum commands/proof to attach",
     "Handback flow",
@@ -40,15 +47,6 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def issue_number_from_url(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
-
-
-def current_pr82_head() -> str:
-    raw = subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
-        cwd=ROOT,
-        text=True,
-    )
-    return raw.strip()
 
 
 def load_issue(issue_number: str) -> dict[str, Any]:
@@ -91,13 +89,15 @@ def validate_notifications(
             if task_id in str(comment.get("body", "")) and expected_sha in str(comment.get("body", ""))
         ]
         if not matching_comments:
-            errors.append(f"{prefix} missing fleet pickup comment for PR #82 headRefOid {expected_sha}")
+            errors.append(f"{prefix} missing fleet pickup comment for {release_label(QUEUE_PATH)} headRefOid {expected_sha}")
             continue
 
         latest_match = matching_comments[-1]
         for token in REQUIRED_COMMENT_TOKENS:
             if token not in latest_match:
                 errors.append(f"{prefix} latest pickup comment missing token: {token}")
+        if f"Current release target: {release_label(QUEUE_PATH)} headRefOid" not in latest_match:
+            errors.append(f"{prefix} latest pickup comment missing release target label")
 
         for evidence in entry.get("required_evidence", []):
             if str(evidence) not in latest_match:
@@ -126,14 +126,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--expected-sha",
-        help="expected PR #82 headRefOid; defaults to live gh pr view 82",
+        help=f"expected {release_label(QUEUE_PATH)} headRefOid; defaults to live {release_pr_view_command(QUEUE_PATH)}",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    expected_sha = args.expected_sha or current_pr82_head()
+    expected_sha = args.expected_sha or current_release_head(root=ROOT, queue_path=QUEUE_PATH)
     queue_payload = load_json(QUEUE_PATH)
     issue_numbers = [
         issue_number_from_url(str(entry["tracking_issue"]))

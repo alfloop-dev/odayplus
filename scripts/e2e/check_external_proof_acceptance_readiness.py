@@ -11,12 +11,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 STATUS_BOARD_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_head_command, release_pr_label
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -95,8 +101,8 @@ def validate_readiness(
             errors.append(f"{prefix} missing skeleton generation command")
         if "check_external_proof_handback_artifact.py" not in row["acceptance_command"]:
             errors.append(f"{prefix} missing handback artifact acceptance command")
-        if "gh pr view 82 --json headRefOid" not in row["acceptance_command"]:
-            errors.append(f"{prefix} acceptance command must bind expected-sha to PR #82 headRefOid")
+        if release_pr_head_command(QUEUE_PATH) not in row["acceptance_command"]:
+            errors.append(f"{prefix} acceptance command must bind expected-sha to {release_pr_label(QUEUE_PATH)} headRefOid")
         if not row["completion_rule"]:
             errors.append(f"{prefix} missing completion_rule")
 

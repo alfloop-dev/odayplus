@@ -12,12 +12,19 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
+
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import current_release_head, release_label
 
 HANDBACK_TOKENS = (
     "release_head_ref_oid",
@@ -33,14 +40,6 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def issue_number_from_url(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
-
-
-def current_pr82_head() -> str:
-    return subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
 
 
 def load_issue(issue_number: str) -> dict[str, Any]:
@@ -172,7 +171,7 @@ def render_markdown(rows: list[dict[str, Any]], *, expected_sha: str, escalation
     lines = [
         "# External Proof Issue Handback Scan",
         "",
-        f"PR #82 headRefOid: `{expected_sha}`",
+        f"{release_label(QUEUE_PATH)} headRefOid: `{expected_sha}`",
         f"Escalation threshold: `{escalation_hours:g}h after latest pickup without handback`",
         "",
         "| Task | Issue | Issue State | Latest Pickup | Age | Status | Candidate Comments | Escalation Due |",
@@ -219,7 +218,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    expected_sha = args.expected_sha or current_pr82_head()
+    expected_sha = args.expected_sha or current_release_head(root=ROOT, queue_path=QUEUE_PATH)
     queue = load_json(QUEUE_PATH)
     issue_numbers = [issue_number_from_url(str(entry["tracking_issue"])) for entry in queue.get("queue", [])]
     issues_by_number = {issue_number: load_issue(issue_number) for issue_number in issue_numbers}

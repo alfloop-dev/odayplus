@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 
 from common import (
-    agent_config_for,
     apply_claude_oauth_token_file,
     command_exists,
     config_path,
@@ -19,24 +18,18 @@ from common import (
 from common import (
     claude_auth_ready as shared_claude_auth_ready,
 )
+from provider_runtime import inbox_fallback_enabled, provider_key, provider_settings
 
 from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.claude_code import ClaudeCodeAdapter
 
 
 def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
-    if provider_id:
-        return str(provider_id).strip() or "claude"
-    if agent_id:
-        agent = agent_config_for(config or {}, agent_id)
-        return str(agent.get("provider") or agent.get("id") or agent_id).strip() or "claude"
-    return "claude"
+    return provider_key(config, default="claude", agent_id=agent_id, provider_id=provider_id)
 
 
 def _provider_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
-    providers = (config or {}).get("providers", {}) or {}
-    key = _provider_key(config, provider_id=provider_id)
-    return providers.get(key) or providers.get("claude") or {}
+    return provider_settings(config, default="claude", provider_id=provider_id)
 
 
 def _runtime_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
@@ -75,8 +68,7 @@ def _configured_claude_cli(config: dict | None = None, provider_id: str | None =
 
 
 def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
-    provider = _provider_settings(config, provider_id)
-    return bool(provider.get("allow_inbox_fallback", True))
+    return inbox_fallback_enabled(config, default="claude", provider_id=provider_id)
 
 
 class ClaudeCLIAdapter(ClaudeCodeAdapter):

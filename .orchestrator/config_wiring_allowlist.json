@@ -6,7 +6,6 @@
     "github_bus.phase3.github_app.app_id_env": "See github_bus.phase3.github_app.",
     "github_bus.phase3.github_app.private_key_env": "See github_bus.phase3.github_app.",
     "github_bus.phase3.github_app.installation_id_env": "See github_bus.phase3.github_app.",
-    "github_bus.phase3.cloud_relay.enabled": "Cloud relay is phase 3 and unimplemented; nothing posts to it.",
     "branch_workflow.publish_branch_prefix": "The publish/release pipeline was never built. No code creates publish branches.",
     "branch_workflow.release_tag_prefix": "See branch_workflow.publish_branch_prefix.",
     "branch_workflow.prod_tag_prefix": "See branch_workflow.publish_branch_prefix.",

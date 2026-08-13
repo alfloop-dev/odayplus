@@ -14,6 +14,7 @@ from common import (
     spawn_background_process,
     worker_runtime_paths,
 )
+from provider_runtime import inbox_fallback_enabled, provider_env, provider_key, provider_settings
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.file_inbox import FileInboxAdapter
@@ -26,30 +27,15 @@ ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity
 
 
 def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
-    if provider_id:
-        return str(provider_id).strip() or "antigravity"
-    if agent_id:
-        agent = agent_config_for(config or {}, agent_id)
-        return str(agent.get("provider") or agent.get("id") or agent_id).strip() or "antigravity"
-    return "antigravity"
+    return provider_key(config, default="antigravity", agent_id=agent_id, provider_id=provider_id)
 
 
 def _provider_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
-    providers = (config or {}).get("providers", {}) or {}
-    key = _provider_key(config, provider_id=provider_id)
-    return providers.get(key) or providers.get("antigravity") or {}
+    return provider_settings(config, default="antigravity", provider_id=provider_id)
 
 
 def _provider_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
-    provider = _provider_settings(config, provider_id)
-    env: dict[str, str] = {}
-    for block_name in ("runtime", "antigravity"):
-        block = provider.get(block_name, {}) or {}
-        for key, value in (block.get("env", {}) or {}).items():
-            if value is None:
-                continue
-            env[str(key)] = os.path.expanduser(str(value))
-    return env
+    return provider_env(config, default="antigravity", provider_id=provider_id, blocks=("runtime", "antigravity"))
 
 
 def _antigravity_home(config: dict | None = None, provider_id: str | None = None) -> Path:
@@ -70,8 +56,7 @@ def _configured_cli(config: dict | None = None, provider_id: str | None = None) 
 
 
 def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
-    provider = _provider_settings(config, provider_id)
-    return bool(provider.get("allow_inbox_fallback", True))
+    return inbox_fallback_enabled(config, default="antigravity", provider_id=provider_id)
 
 
 def _auth_ready(config: dict | None = None, provider_id: str | None = None) -> bool:

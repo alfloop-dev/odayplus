@@ -14,6 +14,7 @@ import argparse
 import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import UTC, datetime
@@ -23,6 +24,12 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 SCAN_PATH = ROOT / "scripts/e2e/check_external_proof_issue_handback_scan.py"
+
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import current_release_head, release_label, release_pr_head_command
 
 
 def load_module(path: Path, name: str):
@@ -36,14 +43,6 @@ def load_module(path: Path, name: str):
 
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def current_pr82_head() -> str:
-    return subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
 
 
 def issue_number_from_url(url: str) -> str:
@@ -69,7 +68,7 @@ def render_escalation_comment(
     return f"""## External proof handback escalation - {generated_date}
 
 Task: `{task_id}` ({issue})
-Release target: PR #82 headRefOid `{expected_sha}`
+Release target: {release_label(QUEUE_PATH)} headRefOid `{expected_sha}`
 
 Status: `{scan_row['status']}`
 Latest pickup: `{scan_row.get('latest_pickup_created_at')}`
@@ -91,7 +90,7 @@ python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
 Product Validation cannot accept or close this blocker until the handback artifact passes:
 
 ```bash
-python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"
 ```
 """
 
@@ -173,7 +172,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    expected_sha = args.expected_sha or current_pr82_head()
+    expected_sha = args.expected_sha or current_release_head(root=ROOT, queue_path=QUEUE_PATH)
     queue = load_json(QUEUE_PATH)
     rows = build_scan_rows(expected_sha=expected_sha, escalation_hours=args.escalation_hours)
     selected = rows_to_escalate(queue, rows, force=args.force)

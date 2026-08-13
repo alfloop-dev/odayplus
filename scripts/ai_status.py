@@ -928,39 +928,6 @@ def load_logs() -> list[dict[str, Any]]:
     return logs
 
 
-def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
-    if not LOG_FILE.exists():
-        return []
-    try:
-        with LOG_FILE.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            file_size = handle.tell()
-            block_size = 1 << 16
-            buffer = bytearray()
-            line_count = 0
-            position = file_size
-            while position > 0 and line_count <= max_lines:
-                read_size = min(block_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                buffer[0:0] = chunk
-                line_count = buffer.count(b"\n")
-            tail = bytes(buffer)
-        if line_count > max_lines:
-            split_at = -1
-            extra = line_count - max_lines
-            for _ in range(extra):
-                split_at = tail.find(b"\n", split_at + 1)
-                if split_at == -1:
-                    break
-            if split_at != -1:
-                tail = tail[split_at + 1 :]
-        return tail.decode("utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-
-
 def load_planning_state() -> dict[str, Any] | None:
     if not PLANNING_STATE_FILE.exists():
         return None
@@ -2833,10 +2800,6 @@ def task_metadata_from_env() -> dict[str, Any]:
 
 def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
-
-
-def dependency_status_label(resolver: TaskResolver, dep_id: str) -> str:
-    return resolver.dependency_status(dep_id)
 
 
 def ensure_review_finalize_handoff(

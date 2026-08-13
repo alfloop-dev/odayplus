@@ -52,15 +52,6 @@ def health_payload() -> dict[str, str]:
     return {"status": "ok", "service": "oday-api"}
 
 
-def health_detail_payload(*, correlation_id: str) -> dict[str, str]:
-    return {
-        **health_payload(),
-        "version": API_VERSION,
-        "time": datetime.now(UTC).isoformat(),
-        "correlation_id": correlation_id,
-    }
-
-
 def release_sha_from_environment() -> str:
     """Resolve the exact runtime release identity.
 

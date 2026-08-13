@@ -408,12 +408,6 @@ def remote_branch_heads(remote: str = "origin") -> dict[str, str]:
     return heads
 
 
-def remote_branch_names(remote: str = "origin") -> frozenset[str]:
-    """Read remote head names once per short TTL instead of probing every task branch."""
-    heads = remote_branch_heads(remote)
-    return frozenset(heads.keys())
-
-
 def run_gh_process(
     args: list[str],
     *,
@@ -566,11 +560,6 @@ def coordination_bus_entry(bus_state: dict[str, Any], repo: str, feature_id: str
             "last_hash": None,
         },
     )
-
-
-def task_signature(task: dict[str, Any], fields: list[str]) -> str:
-    payload = {field: task.get(field) for field in fields}
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
 def build_template_body(config: dict[str, Any], template_key: str, variables: dict[str, Any]) -> str:

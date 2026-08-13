@@ -337,33 +337,6 @@ def coordination_responses_dir(config: dict[str, Any], repo_id: str | None) -> P
     return base / rel if not Path(rel).is_absolute() else Path(rel)
 
 
-def screen_docs_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("screen_docs_dir") or "docs/screens")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
-
-
-def bff_docs_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("bff_docs_dir") or "docs/bff")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
-
-
-def examples_dir(config: dict[str, Any], repo_id: str | None) -> Path | None:
-    base = repository_local_path(config, repo_id)
-    if base is None:
-        return None
-    repo = resolve_repository(config, repo_id or "")
-    rel = str(repo.get("examples_dir") or "docs/examples")
-    return base / rel if not Path(rel).is_absolute() else Path(rel)
-
-
 def iter_local_repositories(config: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for repo_id in repositories(config):

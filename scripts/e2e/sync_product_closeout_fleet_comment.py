@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Post the current product closeout action matrix to PR #82.
+"""Post the current product closeout action matrix to the release PR.
 
 This keeps the fleet-facing PR surface aligned with
 PRODUCT_RELEASE_CLOSEOUT_QUEUE.json and live ai-status.json. It does not perform
@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,17 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 ACTION_MATRIX_PATH = ROOT / "scripts/e2e/check_product_closeout_action_matrix.py"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import (
+    current_release_head,
+    release_label,
+    release_pr_comment_args,
+    release_pr_view_args,
+)
+
 DEFAULT_STATUS_ROOT = (
     Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
     if os.environ.get("PANTHEON_STATUS_ROOT")
@@ -39,15 +51,6 @@ def load_module(path: Path, name: str):
 
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def current_pr82_head() -> str:
-    raw = subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
-        cwd=ROOT,
-        text=True,
-    )
-    return raw.strip()
 
 
 def render_comment(queue_payload: dict[str, Any], rows: list[dict[str, Any]], *, release_sha: str) -> str:
@@ -85,7 +88,7 @@ def render_comment(queue_payload: dict[str, Any], rows: list[dict[str, Any]], *,
     lines = [
         "## Product closeout fleet update",
         "",
-        f"Current release target: PR #82 headRefOid `{release_sha}`.",
+        f"Current release target: {release_label(QUEUE_PATH)} headRefOid `{release_sha}`.",
         "",
         "Run the matrix before any lifecycle action:",
         "",
@@ -131,7 +134,7 @@ def render_from_inputs(*, status_path: Path, release_sha: str) -> str:
     queue_payload = load_json(QUEUE_PATH)
     status_payload = load_json(status_path)
     pr_payload = {
-        "number": 82,
+        "number": int(queue_payload["release_target"]["pr"]),
         "state": "OPEN",
         "headRefOid": release_sha,
         "mergeStateStatus": "CLEAN",
@@ -146,14 +149,14 @@ def apply_comment(body: str) -> None:
         handle.write(body)
         body_path = Path(handle.name)
     try:
-        subprocess.run(["gh", "pr", "comment", "82", "--body-file", str(body_path)], cwd=ROOT, check=True)
+        subprocess.run([*release_pr_comment_args(QUEUE_PATH), "--body-file", str(body_path)], cwd=ROOT, check=True)
     finally:
         body_path.unlink(missing_ok=True)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release-sha", help="PR #82 headRefOid; defaults to live gh pr view 82")
+    parser.add_argument("--release-sha", help=f"{release_label(QUEUE_PATH)} headRefOid; defaults to live {release_pr_view_args(QUEUE_PATH, 'headRefOid')}.")
     parser.add_argument(
         "--status-path",
         type=Path,
@@ -161,20 +164,20 @@ def parse_args() -> argparse.Namespace:
         help="ai-status.json path; defaults to PANTHEON_STATUS_ROOT/ai-status.json or repo ai-status.json",
     )
     parser.add_argument("--output", type=Path, help="write rendered comment body to this file")
-    parser.add_argument("--apply", action="store_true", help="post the rendered comment to PR #82")
+    parser.add_argument("--apply", action="store_true", help=f"post the rendered comment to {release_label(QUEUE_PATH)}")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    release_sha = args.release_sha or current_pr82_head()
+    release_sha = args.release_sha or current_release_head(root=ROOT, queue_path=QUEUE_PATH)
     body = render_from_inputs(status_path=args.status_path, release_sha=release_sha)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(body, encoding="utf-8")
     if args.apply:
         apply_comment(body)
-    print(f"rendered product closeout fleet comment for PR #82 headRefOid {release_sha}")
+    print(f"rendered product closeout fleet comment for {release_label(QUEUE_PATH)} headRefOid {release_sha}")
     return 0
 
 

@@ -9,12 +9,18 @@ release owner can trust the board without running the broader pytest suite.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
 BOARD_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_number, release_pr_view_command
 
 REQUIRED_BOARD_TOKENS = (
     "Product Release Closeout Pickup Board",
@@ -22,7 +28,7 @@ REQUIRED_BOARD_TOKENS = (
     "PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md",
-    "gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url",
+    "python3 scripts/e2e/check_product_closeout_queue.py",
     "python3 scripts/e2e/check_product_release_gate.py",
     "python3 scripts/e2e/check_product_closeout_queue.py --report",
     "python3 scripts/e2e/check_product_closeout_action.py",
@@ -99,10 +105,17 @@ def main() -> int:
         board_text = BOARD_PATH.read_text(encoding="utf-8")
 
     release_target = queue_payload.get("release_target", {})
-    if release_target.get("pr") != 82:
-        errors.append("closeout queue release_target.pr must be 82")
+    expected_pr = release_pr_number(QUEUE_PATH)
+    if release_target.get("pr") != expected_pr:
+        errors.append(f"closeout queue release_target.pr must be {expected_pr}")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("closeout queue must forbid hard-coded dev release refs")
+
+    required_pr_command = release_pr_view_command(
+        QUEUE_PATH, "headRefOid", "isDraft", "state", "mergeStateStatus", "statusCheckRollup", "url"
+    )
+    if required_pr_command not in board_text:
+        errors.append(f"pickup board missing token: {required_pr_command}")
 
     for token in REQUIRED_BOARD_TOKENS:
         if token not in board_text:

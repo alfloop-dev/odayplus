@@ -14,6 +14,7 @@ from common import (
     spawn_background_process,
     worker_runtime_paths,
 )
+from provider_runtime import inbox_fallback_enabled, provider_env, provider_key, provider_settings
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.file_inbox import FileInboxAdapter
@@ -23,31 +24,21 @@ GEMINI_OAUTH_CREDS_PATH = Path.home() / ".gemini" / "oauth_creds.json"
 
 
 def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
-    if provider_id:
-        return str(provider_id).strip() or "gemini"
-    if agent_id:
-        agent = agent_config_for(config or {}, agent_id)
-        return str(agent.get("provider") or agent.get("id") or agent_id).strip() or "gemini"
-    return "gemini"
+    return provider_key(config, default="gemini", agent_id=agent_id, provider_id=provider_id)
 
 
 def _provider_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
-    providers = (config or {}).get("providers", {}) or {}
-    key = _provider_key(config, provider_id=provider_id)
-    return providers.get(key) or providers.get("gemini") or {}
+    return provider_settings(config, default="gemini", provider_id=provider_id)
 
 
 def _provider_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
-    provider = _provider_settings(config, provider_id)
-    env: dict[str, str] = {}
-    for block_name in ("runtime", "gemini"):
-        block = provider.get(block_name, {}) or {}
-        for key, value in (block.get("env", {}) or {}).items():
-            if value is None:
-                continue
-            env[str(key)] = os.path.expanduser(str(value))
-    env.setdefault("GEMINI_CLI_TRUST_WORKSPACE", "true")
-    return env
+    return provider_env(
+        config,
+        default="gemini",
+        provider_id=provider_id,
+        blocks=("runtime", "gemini"),
+        defaults={"GEMINI_CLI_TRUST_WORKSPACE": "true"},
+    )
 
 
 def _gemini_home(config: dict | None = None, provider_id: str | None = None) -> Path:
@@ -72,8 +63,7 @@ def _configured_gemini_cli(config: dict | None = None, provider_id: str | None =
 
 
 def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
-    provider = _provider_settings(config, provider_id)
-    return bool(provider.get("allow_inbox_fallback", True))
+    return inbox_fallback_enabled(config, default="gemini", provider_id=provider_id)
 
 
 def _truthy_env(name: str, env: dict[str, str] | None = None) -> bool:

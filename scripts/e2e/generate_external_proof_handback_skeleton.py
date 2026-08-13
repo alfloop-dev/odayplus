@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,11 @@ ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
 EXAMPLE_SHA = "1111111111111111111111111111111111111111"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import current_release_head
 
 TASK_PROOF_GUIDANCE = {
     "ODP-EXT-PROD-001": (
@@ -136,11 +141,8 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
 
 
 def current_pr82_head() -> str:
-    return subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
-        cwd=ROOT,
-        text=True,
-    ).strip()
+    """Compatibility alias for older runbooks; resolution is manifest-driven."""
+    return current_release_head(root=ROOT, queue_path=QUEUE_PATH)
 
 
 def parse_args() -> argparse.Namespace:

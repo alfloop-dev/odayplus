@@ -14,11 +14,18 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_number, release_pr_view_args
+
 DEFAULT_STATUS_ROOT = (
     Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
     if os.environ.get("PANTHEON_STATUS_ROOT")
@@ -52,48 +59,53 @@ def issue_action_state(queue_status: str, live_status: str, action_type: str) ->
     return "not_ready"
 
 
-def load_pr82_payload(path: Path | None, *, skip_live: bool) -> dict[str, Any] | None:
+def load_release_pr_payload(
+    path: Path | None,
+    *,
+    queue_path: Path = QUEUE_PATH,
+    skip_live: bool,
+) -> dict[str, Any] | None:
     if path:
         return load_json(path)
     if skip_live:
         return None
     raw = subprocess.check_output(
-        [
-            "gh",
-            "pr",
-            "view",
-            "82",
-            "--json",
-            "number,state,isDraft,headRefOid,mergeStateStatus,statusCheckRollup,url",
-        ],
+        release_pr_view_args(queue_path, "number", "state", "isDraft", "headRefOid", "mergeStateStatus", "statusCheckRollup", "url"),
         cwd=ROOT,
         text=True,
     )
     return json.loads(raw)
 
 
-def validate_pr82(payload: dict[str, Any] | None) -> list[str]:
+def load_pr82_payload(path: Path | None, *, skip_live: bool) -> dict[str, Any] | None:
+    """Compatibility wrapper; the queue manifest selects the release PR."""
+    return load_release_pr_payload(path, skip_live=skip_live)
+
+
+def validate_pr82(payload: dict[str, Any] | None, *, queue_path: Path = QUEUE_PATH) -> list[str]:
     if payload is None:
         return []
     errors: list[str] = []
-    if payload.get("number") != 82:
-        errors.append("PR payload must describe PR #82")
+    expected_pr = release_pr_number(queue_path)
+    label = f"PR #{expected_pr}"
+    if payload.get("number") != expected_pr:
+        errors.append(f"PR payload must describe {label}")
     if payload.get("state") != "OPEN":
-        errors.append("PR #82 must be open")
+        errors.append(f"{label} must be open")
     head = payload.get("headRefOid")
     if not isinstance(head, str) or not SHA_RE.match(head):
-        errors.append("PR #82 headRefOid must be a 40-character git SHA")
+        errors.append(f"{label} headRefOid must be a 40-character git SHA")
     if payload.get("mergeStateStatus") != "CLEAN":
-        errors.append(f"PR #82 mergeStateStatus must be CLEAN, got {payload.get('mergeStateStatus')!r}")
+        errors.append(f"{label} mergeStateStatus must be CLEAN, got {payload.get('mergeStateStatus')!r}")
 
     checks = payload.get("statusCheckRollup")
     if not isinstance(checks, list) or not checks:
-        errors.append("PR #82 must have attached status checks")
+        errors.append(f"{label} must have attached status checks")
         return errors
     for check in checks:
         name = str(check.get("name", "<unnamed>"))
         if check.get("status") != "COMPLETED" or check.get("conclusion") != "SUCCESS":
-            errors.append(f"PR #82 check {name!r} must be COMPLETED/SUCCESS")
+            errors.append(f"{label} check {name!r} must be COMPLETED/SUCCESS")
     return errors
 
 
@@ -125,6 +137,7 @@ def validate_closeout_action(
     actor: str,
     action_type: str,
     pr_payload: dict[str, Any] | None,
+    queue_path: Path = QUEUE_PATH,
 ) -> list[str]:
     errors: list[str] = []
     entries = matching_queue_entries(
@@ -170,7 +183,7 @@ def validate_closeout_action(
         if action_type != "go_no_go" and "scripts/ai_status.py" not in allowed_text:
             errors.append(f"{task_id} closeout action must use scripts/ai_status.py")
 
-    errors.extend(validate_pr82(pr_payload))
+    errors.extend(validate_pr82(pr_payload, queue_path=queue_path))
     return errors
 
 
@@ -195,7 +208,7 @@ def main() -> int:
     args = parse_args()
     queue_payload = load_json(args.queue)
     status_payload = load_json(args.status_path)
-    pr_payload = load_pr82_payload(args.pr_json, skip_live=args.skip_pr_check)
+    pr_payload = load_release_pr_payload(args.pr_json, queue_path=args.queue, skip_live=args.skip_pr_check)
     errors = validate_closeout_action(
         queue_payload,
         status_payload,
@@ -203,6 +216,7 @@ def main() -> int:
         actor=args.actor,
         action_type=args.action_type,
         pr_payload=pr_payload,
+        queue_path=args.queue,
     )
     if errors:
         print("Product closeout action preflight failed:")

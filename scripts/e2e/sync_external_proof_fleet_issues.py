@@ -3,7 +3,7 @@
 
 The source of truth is PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json. This tool
 keeps #132-#138 issue bodies and fleet pickup comments aligned with the current
-PR #82 headRefOid, so a new release-candidate commit cannot leave external
+the release PR headRefOid, so a new release-candidate commit cannot leave external
 proof workers following stale handoff instructions.
 """
 
@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 import tempfile
 import time
 from datetime import UTC, datetime
@@ -21,6 +22,17 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import (
+    current_release_head,
+    release_label,
+    release_pr_head_command,
+    release_pr_view_command,
+)
+
 
 def load_queue(path: Path = QUEUE_PATH) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -28,15 +40,6 @@ def load_queue(path: Path = QUEUE_PATH) -> dict[str, Any]:
 
 def issue_number_from_url(url: str) -> str:
     return url.rstrip("/").rsplit("/", 1)[-1]
-
-
-def current_pr82_head() -> str:
-    raw = subprocess.check_output(
-        ["gh", "pr", "view", "82", "--json", "headRefOid", "--jq", ".headRefOid"],
-        cwd=ROOT,
-        text=True,
-    )
-    return raw.strip()
 
 
 def shell_block(command: str) -> str:
@@ -90,8 +93,8 @@ def render_issue_body(entry: dict[str, Any]) -> str:
             ),
             "- Run `python3 scripts/e2e/check_external_proof_handback_status_board.py` after updating intake status.",
             "- Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` before closing this issue so unaccepted handbacks keep open release-blocker issues.",
-            '- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before accepting or closing this issue.',
-            '- After all #132-#138 handbacks are submitted, Product Validation runs `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before release closeout.',
+            f'- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before accepting or closing this issue.',
+            f'- After all #132-#138 handbacks are submitted, Product Validation runs `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before release closeout.',
             "- Before go/no-go, Product Validation runs `python3 scripts/e2e/check_product_go_no_go.py` and confirms `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` still marks #132-#138 as pending external proof.",
             "",
             f"Owner: `{entry['owner']}`",
@@ -121,7 +124,7 @@ def render_pickup_comment(entry: dict[str, Any], release_sha: str) -> str:
     generated_date = datetime.now(UTC).date().isoformat()
     return f"""## External proof fleet pickup update - {generated_date}
 
-Current release target: PR #82 headRefOid `{release_sha}`.
+Current release target: {release_label(QUEUE_PATH)} headRefOid `{release_sha}`.
 
 Task: `{task_id}`
 
@@ -245,7 +248,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--release-sha",
-        help="PR #82 headRefOid to embed; defaults to live gh pr view 82",
+        help=f"release PR headRefOid to embed; defaults to live {release_pr_view_command(QUEUE_PATH)}",
     )
     parser.add_argument(
         "--task",
@@ -273,7 +276,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    release_sha = args.release_sha or current_pr82_head()
+    release_sha = args.release_sha or current_release_head(root=ROOT, queue_path=QUEUE_PATH)
     queue_payload = load_queue()
     task_ids = set(args.tasks) if args.tasks else None
     entries = select_entries(queue_payload, task_ids)
@@ -293,7 +296,7 @@ def main() -> int:
 
     for entry in entries:
         issue_number = issue_number_from_url(str(entry["tracking_issue"]))
-        print(f"{action} {entry['task_id']} -> issue #{issue_number} at PR #82 headRefOid {release_sha}")
+        print(f"{action} {entry['task_id']} -> issue #{issue_number} at {release_label(QUEUE_PATH)} headRefOid {release_sha}")
     return 0
 
 

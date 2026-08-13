@@ -13,11 +13,18 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = ROOT / ".github/workflows/external-proof-followup.yml"
+QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 WORKFLOW_NAME = "External Proof Follow-up"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _release_target import release_pr_view_command
 
 REQUIRED_WORKFLOW_TOKENS = (
     "External Proof Follow-up",
@@ -26,7 +33,6 @@ REQUIRED_WORKFLOW_TOKENS = (
     "GH_TOKEN",
     "issues: write",
     "pull-requests: read",
-    "gh pr view 82",
     "check_external_proof_issue_sync.py --require-assignees",
     "check_external_proof_fleet_notifications.py",
     "check_external_proof_live_blockers.py --require-assignees",
@@ -44,7 +50,7 @@ def validate_local_workflow(path: Path = WORKFLOW_PATH) -> list[str]:
     if not path.exists():
         return [f"missing workflow file: {path.relative_to(ROOT)}"]
     text = path.read_text(encoding="utf-8")
-    for token in REQUIRED_WORKFLOW_TOKENS:
+    for token in (*REQUIRED_WORKFLOW_TOKENS, release_pr_view_command(QUEUE_PATH)):
         if token not in text:
             errors.append(f"workflow missing token: {token}")
     return errors

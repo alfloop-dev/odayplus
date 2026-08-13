@@ -7,10 +7,9 @@ equivalent service time used to evaluate the approved SLO envelope.
 
 from __future__ import annotations
 
-import math
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from statistics import quantiles
@@ -215,13 +214,3 @@ def run_capacity(db_path: Path, *, volume: int = 240, concurrency: int = 20) -> 
         not measured_misses
     )
     return report
-
-
-def sample_dict(sample: Sample) -> dict:
-    return asdict(sample)
-
-
-def scaled_duration(wall_seconds: float, scale: float) -> float:
-    if not math.isfinite(scale) or scale <= 0:
-        raise ValueError("scale must be finite and positive")
-    return wall_seconds * scale
