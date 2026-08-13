@@ -166,6 +166,48 @@ def validate_artifact_profiles(manifest: dict[str, Any]) -> list[str]:
     return errors
 
 
+def validate_removal_bundles(
+    classified: list[ClassifiedFile],
+    manifest: dict[str, Any],
+) -> list[str]:
+    """Ensure each removable scope is physically contained by its declared roots."""
+
+    errors: list[str] = []
+    boundaries = set(manifest.get("boundaries", {}))
+    for bundle_name, bundle in manifest.get("removal_bundles", {}).items():
+        if not isinstance(bundle, dict):
+            errors.append(f"removal bundle {bundle_name} must be a mapping")
+            continue
+        code_scopes = {str(scope) for scope in bundle.get("code_scopes", [])}
+        verification_scopes = {
+            str(scope) for scope in bundle.get("verification_scopes", [])
+        }
+        roots = tuple(str(root) for root in bundle.get("roots", []))
+        unknown = (code_scopes | verification_scopes) - boundaries
+        if unknown:
+            errors.append(f"removal bundle {bundle_name} has unknown scopes: {sorted(unknown)}")
+        if not roots:
+            errors.append(f"removal bundle {bundle_name} must declare roots")
+            continue
+
+        for entry in classified:
+            in_bundle = entry.boundary in code_scopes or (
+                entry.boundary == "verification"
+                and entry.verified_scope in verification_scopes
+            )
+            inside_root = entry.path.startswith(roots)
+            if entry.boundary in code_scopes and not inside_root:
+                errors.append(
+                    f"removal bundle {bundle_name} misses {entry.path} ({entry.boundary})"
+                )
+            if inside_root and not in_bundle:
+                errors.append(
+                    f"removal bundle {bundle_name} root contains foreign scope: "
+                    f"{entry.path} ({entry.boundary})"
+                )
+    return errors
+
+
 def module_aliases(path: str) -> set[str]:
     source_path = PurePosixPath(path)
     if source_path.suffix != ".py":
@@ -291,6 +333,7 @@ def validate_repository(
     paths = discover_code_files(root, extensions)
     classified, errors = classify_files(paths, manifest)
     errors.extend(validate_artifact_profiles(manifest))
+    errors.extend(validate_removal_bundles(classified, manifest))
     if not errors:
         errors.extend(validate_import_boundaries(root, classified, manifest))
     if check_inventory and not errors:

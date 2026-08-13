@@ -131,6 +131,29 @@ def test_verification_ownership_uses_specific_rule_before_default() -> None:
     }
 
 
+def test_removal_bundle_rejects_foreign_code_and_missed_scope() -> None:
+    manifest = manifest_fixture()
+    manifest["removal_bundles"] = {
+        "tooling": {
+            "code_scopes": ["tooling"],
+            "roots": ["tooling/"],
+            "verification_scopes": ["tooling"],
+        }
+    }
+    classified = [
+        guard.ClassifiedFile("tooling/helper.py", "tooling", "delivery_only", False),
+        guard.ClassifiedFile("tooling/product.py", "product", "product_required", True),
+        guard.ClassifiedFile("elsewhere/tool.py", "tooling", "delivery_only", False),
+    ]
+
+    errors = guard.validate_removal_bundles(classified, manifest)
+
+    assert errors == [
+        "removal bundle tooling root contains foreign scope: tooling/product.py (product)",
+        "removal bundle tooling misses elsewhere/tool.py (tooling)",
+    ]
+
+
 def test_invalid_python_is_reported(tmp_path: Path) -> None:
     path = tmp_path / "broken.py"
     path.write_text("def broken(:\n", encoding="utf-8")

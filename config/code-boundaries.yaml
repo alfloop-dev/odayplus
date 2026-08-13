@@ -180,6 +180,9 @@ verification_ownership:
     - scope: development_delivery_tooling
       include:
         - delivery_toolchain/**/test_*.py
+        - infra/terraform/**/test_*.py
+        - infra/terraform/**/tests/*.py
+        - infra/terraform/**/tests/**/*.py
         - tests/e2e/*.py
         - tests/e2e/**/*.py
         - tests/security/*.py
@@ -195,6 +198,36 @@ verification_ownership:
         - tests/performance/**/*.py
         - tests/reliability/*.py
         - tests/reliability/**/*.py
+
+removal_bundles:
+  development_platform:
+    description: Internal supervisor/control-plane code and its stable operator entrypoints.
+    code_scopes:
+      - development_platform_system
+    roots:
+      - .orchestrator/
+      - scripts/
+    verification_scopes:
+      - development_platform_system
+  delivery_toolchain:
+    description: Build, CI, release, security, E2E, and repository-governance tooling.
+    code_scopes:
+      - development_delivery_tooling
+    roots:
+      - delivery_toolchain/
+      - infra/terraform/
+    verification_scopes:
+      - development_delivery_tooling
+  product_operations:
+    description: Separately operated product deployment, migration, and data/model maintenance commands.
+    code_scopes:
+      - product_operations_tooling
+    roots:
+      - product_ops/
+      - infra/db/migrations/
+      - infra/k8s/data-platform/
+    verification_scopes:
+      - product_operations_tooling
 
 artifact_profiles:
   production:

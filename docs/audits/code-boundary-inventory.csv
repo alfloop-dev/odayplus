@@ -270,7 +270,7 @@ infra/mlflow/__init__.py,product_system,product_required,true,,engineering;opera
 infra/mlflow/entrypoint.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 infra/mlflow/healthcheck.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 infra/mlflow/runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
-infra/terraform/tests/test_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+infra/terraform/tests/test_contract.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 infra/terraform/validate_contract.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 models/model_ready/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 models/model_ready/contracts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.

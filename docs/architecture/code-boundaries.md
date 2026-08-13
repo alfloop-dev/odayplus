@@ -60,6 +60,19 @@ The delivery boundary intentionally has no `scripts/**/*.py` catch-all. A new
 delivery command placed under `scripts/` is unclassified and fails CI; new
 delivery code must be created under `delivery_toolchain/`.
 
+## Removal bundles
+
+| Bundle | Physical code roots | Associated verification |
+|---|---|---|
+| Development platform | `.orchestrator/`, `scripts/` | `verified_scope=development_platform_system` |
+| Delivery toolchain | `delivery_toolchain/`, `infra/terraform/` | `verified_scope=development_delivery_tooling` |
+| Product operations | `product_ops/`, product migration/runtime infra | `verified_scope=product_operations_tooling` |
+
+The boundary check fails if a bundle root contains foreign Python code or if a
+declared removable scope escapes its roots. `scripts/` is retained only because
+the deployed supervisor still exposes stable status/health entrypoints there;
+it is wholly part of the development-platform removal bundle.
+
 ## Migration status
 
 | Capability | Canonical implementation | Temporary compatibility path |
