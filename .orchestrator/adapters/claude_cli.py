@@ -6,14 +6,9 @@ from common import (
     apply_claude_oauth_token_file,
     command_exists,
     config_path,
-    delivery_runtime_env,
     delivery_workspace_root,
-    new_runtime_id,
     preserve_github_cli_auth_env,
-    runtime_log_path,
     shell_quote,
-    spawn_background_process,
-    worker_runtime_paths,
 )
 from common import (
     claude_auth_ready as shared_claude_auth_ready,
@@ -176,45 +171,22 @@ class ClaudeCLIAdapter(ClaudeCodeAdapter):
         if mcp_config:
             command.extend(["--mcp-config", str(config_path(self.config, "claude_mcp_config"))])
 
-        run_id = new_runtime_id(provider_id)
-        log_path = runtime_log_path(provider_id, request.agent_id)
-        runtime_paths = worker_runtime_paths(self.config, run_id)
-        env.update(delivery_runtime_env(self.config, request.metadata))
         env.update(
             {
-                "ORCH_RUN_ID": run_id,
-                "ORCH_TASK_ID": request.task_id or "",
-                "ORCH_AGENT_ID": request.agent_id,
-                "ORCH_PROVIDER": provider_id,
-                "ORCH_REASON": request.reason or "",
                 "ORCH_CONTEXT_FILES": "\n".join(request.context_files),
                 "ORCH_TARGET_FILES": "\n".join(request.target_files),
             }
         )
-        process, _ = spawn_background_process(
-            command,
-            cwd=workspace_root,
-            log_path=log_path,
-            env=env,
-            run_id=run_id,
-            heartbeat_path=runtime_paths["heartbeat_path"],
-            status_path=runtime_paths["status_path"],
-        )
-        return DeliveryResult(
-            ok=True,
-            adapter=self.name,
+        return self.spawn_cli_delivery(
+            request,
+            provider_id=provider_id,
             mode="claude_cli",
-            target=request.agent_id,
-            auto_delivered=True,
-            manual_confirmation_required=False,
-            notes="Claude CLI wake-up started in the background.",
+            display_name=request.agent_id,
             command=command,
-            log_path=str(log_path),
-            pid=process.pid,
-            run_id=run_id,
+            notes="Claude CLI wake-up started in the background.",
+            workspace_root=workspace_root,
+            env_overrides=env,
             metadata={
                 "shell_command": shell_quote(command),
-                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
-                "runner_status_path": str(runtime_paths["status_path"]),
             },
         )

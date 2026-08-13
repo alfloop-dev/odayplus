@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import os
 import re
 from pathlib import Path
 
 from common import (
     config_path,
-    delivery_runtime_env,
-    new_runtime_id,
     run_command,
-    runtime_log_path,
     shell_quote,
-    spawn_background_process,
-    worker_runtime_paths,
 )
 from provider_runtime import configured_provider_binary, github_auth_token
 
@@ -131,44 +125,17 @@ class CopilotCloudAdapter(BaseAdapter):
             command.append(str(extra_arg))
         command.append(request.message)
 
-        run_id = new_runtime_id("copilot-cloud")
-        log_path = runtime_log_path("copilot-cloud", request.agent_id)
-        runtime_paths = worker_runtime_paths(self.config, run_id)
-        env = os.environ.copy()
-        env.update(delivery_runtime_env(self.config, request.metadata))
-        env.update(
-            {
-                "ORCH_RUN_ID": run_id,
-                "ORCH_TASK_ID": request.task_id or "",
-                "ORCH_AGENT_ID": request.agent_id,
-                "ORCH_PROVIDER": "copilot_cloud",
-            }
-        )
-        process, _ = spawn_background_process(
-            command,
-            cwd=root,
-            log_path=log_path,
-            env=env,
-            run_id=run_id,
-            heartbeat_path=runtime_paths["heartbeat_path"],
-            status_path=runtime_paths["status_path"],
-        )
-        return DeliveryResult(
-            ok=True,
-            adapter=self.name,
+        return self.spawn_cli_delivery(
+            request,
+            provider_id="copilot_cloud",
+            runtime_provider_id="copilot-cloud",
             mode="copilot_cloud",
-            target=request.agent_id,
-            auto_delivered=True,
-            manual_confirmation_required=False,
-            notes="GitHub cloud agent submission started in the background.",
+            display_name=request.agent_id,
             command=command,
-            log_path=str(log_path),
-            pid=process.pid,
-            run_id=run_id,
+            notes="GitHub cloud agent submission started in the background.",
+            workspace_root=root,
             metadata={
                 "shell_command": shell_quote(command),
                 "repo": repo,
-                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
-                "runner_status_path": str(runtime_paths["status_path"]),
             },
         )

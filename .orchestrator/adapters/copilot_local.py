@@ -5,18 +5,12 @@ import os
 from pathlib import Path
 
 from common import (
-    delivery_runtime_env,
     delivery_workspace_root,
-    new_runtime_id,
-    runtime_log_path,
     shell_quote,
-    spawn_background_process,
-    worker_runtime_paths,
 )
 from provider_runtime import configured_provider_binary, github_auth_token
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.file_inbox import FileInboxAdapter
 
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
 COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
@@ -115,31 +109,13 @@ class CopilotLocalAdapter(BaseAdapter):
         cli = _configured_copilot_cli(self.config)
         auth_ready = _copilot_auth_ready(self.config)
         if not cli or not auth_ready:
-            if not _allow_inbox_fallback(self.config):
-                reason = (
-                    "Copilot CLI is unavailable; inbox fallback is disabled for this provider."
-                    if not cli
-                    else "Copilot CLI is not authenticated; inbox fallback is disabled for this provider."
-                )
-                return DeliveryResult(
-                    ok=False,
-                    adapter=self.name,
-                    mode="copilot_local",
-                    target=request.agent_id,
-                    auto_delivered=False,
-                    manual_confirmation_required=False,
-                    error=reason,
-                    notes=reason,
-                )
-            fallback = FileInboxAdapter(config=self.config, provider_capabilities=self.provider_capabilities)
-            result = fallback.deliver(request)
-            result.adapter = self.name
-            result.mode = "file_inbox"
-            if not cli:
-                result.notes = f"{result.notes}. Copilot CLI is unavailable, so inbox fallback was used."
-            else:
-                result.notes = f"{result.notes}. Copilot CLI is not authenticated, so inbox fallback was used."
-            return result
+            return self.unavailable_or_inbox(
+                request,
+                self.capability(request.agent_id),
+                mode="copilot_local",
+                target=request.agent_id,
+                allow_inbox_fallback=_allow_inbox_fallback(self.config),
+            )
 
         provider = self.config.get("providers", {}).get("copilot", {})
         local = provider.get("local", {})
@@ -167,48 +143,25 @@ class CopilotLocalAdapter(BaseAdapter):
         for extra_arg in local.get("extra_args", []) or []:
             command.append(str(extra_arg))
 
-        run_id = new_runtime_id("copilot")
-        log_path = runtime_log_path("copilot", request.agent_id)
-        runtime_paths = worker_runtime_paths(self.config, run_id)
-        env = os.environ.copy()
-        env.update(delivery_runtime_env(self.config, request.metadata))
-        if not any(env.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
+        env: dict[str, str] = {}
+        if not any(
+            os.environ.get(name)
+            for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+        ):
             gh_token = _gh_auth_token(self.config)
             if gh_token:
                 env["GH_TOKEN"] = gh_token
-        env.update(
-            {
-                "ORCH_RUN_ID": run_id,
-                "ORCH_TASK_ID": request.task_id or "",
-                "ORCH_AGENT_ID": request.agent_id,
-                "ORCH_PROVIDER": "copilot",
-            }
-        )
-        process, _ = spawn_background_process(
-            command,
-            cwd=workspace_root,
-            log_path=log_path,
-            env=env,
-            run_id=run_id,
-            heartbeat_path=runtime_paths["heartbeat_path"],
-            status_path=runtime_paths["status_path"],
-        )
-        return DeliveryResult(
-            ok=True,
-            adapter=self.name,
+        return self.spawn_cli_delivery(
+            request,
+            provider_id="copilot",
             mode="copilot_local",
-            target=request.agent_id,
-            auto_delivered=True,
-            manual_confirmation_required=False,
-            notes="Copilot CLI autopilot wake-up started in the background.",
+            display_name=request.agent_id,
             command=command,
-            log_path=str(log_path),
-            pid=process.pid,
-            run_id=run_id,
+            notes="Copilot CLI autopilot wake-up started in the background.",
+            workspace_root=workspace_root,
+            env_overrides=env,
             metadata={
                 "shell_command": shell_quote(command),
                 "model_preference": model_preference,
-                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
-                "runner_status_path": str(runtime_paths["status_path"]),
             },
         )
