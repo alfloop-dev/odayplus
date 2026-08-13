@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.check_pr_merge_eligibility import check_merge_eligibility
+from delivery_toolchain.github.check_pr_merge_eligibility import check_merge_eligibility
 
 
 def test_positive_merge_eligible(temp_env: dict[str, Path]) -> None:

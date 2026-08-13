@@ -127,7 +127,7 @@ for FIELD in LLM-Agent Task-ID Reviewer; do
   fi
 done
 
-# gh resolution mirrors scripts/check_pr_merge_eligibility.get_gh_executable:
+# gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
 # .orchestrator/bin/gh is a broker shim, not the real CLI.
 resolve_gh() {
   local found

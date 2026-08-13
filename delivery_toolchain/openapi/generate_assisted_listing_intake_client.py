@@ -7,16 +7,16 @@ import json
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from delivery_toolchain.openapi.generate_client import render
-from scripts.build_validate_assisted_listing_intake_openapi import (
+from delivery_toolchain.openapi.build_validate_assisted_listing_intake import (
     DEFAULT_BASE,
     DEFAULT_OVERLAYS,
     apply_overlay,
     load_yaml,
 )
+from delivery_toolchain.openapi.generate_client import render
 
 SCHEMA_DIR = ROOT / "packages/schemas/assisted_listing_intake"
 ARTIFACT = SCHEMA_DIR / "openapi-effective.json"

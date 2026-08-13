@@ -144,7 +144,7 @@ def _write_termination_receipt(payload: dict[str, Any]) -> None:
 
 
 def _validator_sql() -> str:
-    path = REPO_ROOT / "scripts/validate_assisted_listing_intake_schema.sql"
+    path = REPO_ROOT / "delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql"
     return "\n".join(
         line for line in path.read_text(encoding="utf-8").splitlines()
         if not line.lstrip().startswith("\\")

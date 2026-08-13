@@ -170,16 +170,23 @@ delivery_toolchain/git/__init__.py,development_delivery_tooling,delivery_only,fa
 delivery_toolchain/git/check_commit_scope.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/git/check_commit_trailers.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/git/worker_commit.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/github/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/github/apply_branch_protection.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/github/check_pr_merge_eligibility.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/check_code_boundaries.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/governance/check_config_wiring.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/test_check_code_boundaries.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
+delivery_toolchain/governance/validate_assisted_listing_intake_design.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/load/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/load/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/load/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/load/assisted_listing_intake/runtime.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/openapi/build_validate_assisted_listing_intake.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/check_drift.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/export_openapi.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/openapi/generate_assisted_listing_intake_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/generate_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/openapi_diff.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -470,10 +477,6 @@ pipelines/quality/great_expectations_gate.py,product_system,product_required,tru
 pipelines/training/__init__.py,product_system,product_required,true,engineering;operations;production,false,Product capability is retired through a product migration.
 pipelines/training/model_training.py,product_system,product_required,true,engineering;operations;production,false,Product capability is retired through a product migration.
 scripts/ai_status.py,development_platform_system,development_only,false,engineering,true,The internal development platform is retired or moved to its own repository.
-scripts/apply_branch_protection.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/build_validate_assisted_listing_intake_openapi.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/check_config_wiring.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/check_pr_merge_eligibility.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/data_platform/__init__.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/data_platform/backfill.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/deployment/cloud_run_job_entrypoint.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
@@ -522,7 +525,6 @@ scripts/e2e/update_external_proof_handback_status_board.py,development_delivery_
 scripts/e2e/verify_deployment_health_backup_rollback.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/e2e/worker_heartbeat.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/external_data_backfill.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
-scripts/generate_assisted_listing_intake_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/migrations/assisted_listing_intake/migrate.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/models/__init__.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/models/avm_benchmark.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
@@ -548,16 +550,11 @@ scripts/orchestrator/test_check_task_dependency_resolvability.py,verification,ve
 scripts/orchestrator/test_diagnose_finalize_lane_remediation.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_finalize_lane_doctor.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_rollout_supervisor_runtime.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
-scripts/security/generate_sbom.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/security/sast_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/security/secret_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/supervisor_runtime_health.py,development_platform_system,development_only,false,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/supervisor_watchdog_install.py,development_platform_system,development_only,false,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/test_ai_status.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
-scripts/test_check_config_wiring.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/test_supervisor_runtime_health.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/test_supervisor_watchdog_install.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
-scripts/validate_assisted_listing_intake_design.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 services/control-plane/router/contract.py,product_system,product_required,true,engineering;operations;production,false,Product capability is retired through a product migration.
 services/execution/lean-runtime/consumer.py,product_system,product_required,true,engineering;operations;production,false,Product capability is retired through a product migration.
 services/provider-gateway/app.py,product_system,product_required,true,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -842,7 +839,6 @@ tests/security/test_operator_security_platform.py,verification,verification_only
 tests/security/test_operator_shell_security.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_opsboard_auth_boundary.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_opsboard_jwks_auth.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
-tests/security/test_pr_merge_eligibility.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_rbac_abac.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_release_security_gate.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/security/test_security_acceptance_suite.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -852,7 +848,9 @@ tests/smoke/test_foundation_smoke.py,verification,verification_only,false,engine
 tests/solver/test_evolutionary_portfolio.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/solver/test_runtime_compat.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/test_scaffold.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/tooling/test_config_wiring.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/tooling/test_git_task_scripts.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/tooling/test_pr_merge_eligibility.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/listing/test_identity_graph.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/listing/test_intake_state_machines.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/unit/listing/test_xlsx_import.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.

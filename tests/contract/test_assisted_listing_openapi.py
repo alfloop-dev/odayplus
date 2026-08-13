@@ -7,8 +7,12 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
+from delivery_toolchain.openapi.generate_assisted_listing_intake_client import (
+    ARTIFACT,
+    CLIENT,
+    build,
+)
 from delivery_toolchain.openapi.generate_client import render
-from scripts.generate_assisted_listing_intake_client import ARTIFACT, CLIENT, build
 
 EXPECTED_OPERATIONS = {
     "listIntakes", "submitUrlIntake", "submitIntakeBatch", "getIntake",

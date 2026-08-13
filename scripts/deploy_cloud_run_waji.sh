@@ -258,7 +258,7 @@ build_publish_sign() {
 
   if command -v cosign >/dev/null 2>&1; then
     cosign sign --yes "${image}"
-    CI=true ./scripts/security/sign_images.sh verify "${image}"
+    CI=true ./delivery_toolchain/security/sign_images.sh verify "${image}"
   else
     echo "Error: cosign is required for a production deployment." >&2
     exit 1
@@ -568,7 +568,7 @@ docker build \
 docker push "${WEB_IMAGE}"
 
 cosign sign --yes "${WEB_IMAGE}"
-CI=true ./scripts/security/sign_images.sh verify "${WEB_IMAGE}"
+CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
 
 echo "Deploying immutable Web candidate without production traffic..."
 gcloud run deploy "${WEB_SERVICE}" \

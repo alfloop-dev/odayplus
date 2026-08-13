@@ -96,13 +96,13 @@ config 用小寫（`codex2`）而 board 用大寫（`Codex2`），派工與審�
 ### 4.1 config wiring guard — 通過，且原先的疑慮不成立
 
 ```
-$ python3 scripts/check_config_wiring.py
+$ python3 delivery_toolchain/governance/check_config_wiring.py
 All 245 config keys are read by code or allowlisted.
 exit=0
 ```
 
 初版風險評估曾標記「rollout 後若現行 config 有未接線設定，CI 會開始失敗」。
-**該疑慮不成立**：`scripts/check_config_wiring.py:26` 讀的是
+**該疑慮不成立**：`delivery_toolchain/governance/check_config_wiring.py:26` 讀的是
 `.orchestrator/config.example.json`（committed），不是生產用的 `config.json`。
 這是 repo 內的規範檢查，與 live config 無關。
 
@@ -175,7 +175,7 @@ git -C "$RUNTIME" checkout -q origin/dev
 # 6. 驗證
 git -C "$RUNTIME" rev-parse HEAD
 grep -c "task_pr_base_branch" "$RUNTIME/.orchestrator/github_bus.py"   # 應為 >=1
-python3 "$RUNTIME/scripts/check_config_wiring.py"
+python3 "$RUNTIME/delivery_toolchain/governance/check_config_wiring.py"
 
 # 7. 重啟 supervisor
 ```

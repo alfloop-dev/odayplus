@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import sys
 import unittest
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-import check_config_wiring as guard
+from delivery_toolchain.governance import check_config_wiring as guard
 
 
 class ConfigWiringAuditTests(unittest.TestCase):

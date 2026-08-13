@@ -22,10 +22,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / ".orchestrator" / "config.example.json"
 ALLOWLIST_PATH = ROOT / ".orchestrator" / "config_wiring_allowlist.json"
-SOURCE_DIRS = (ROOT / ".orchestrator", ROOT / "scripts")
+SOURCE_DIRS = (
+    ROOT / ".orchestrator",
+    ROOT / "delivery_toolchain",
+    ROOT / "development_platform",
+    ROOT / "scripts",
+)
 SOURCE_SUFFIXES = (".py", ".sh")
 
 # Containers whose children are data -- agent ids, provider ids, label lists --
@@ -159,7 +164,7 @@ def main() -> int:
             "_comment": (
                 "Settings declared in config.example.json that no code reads yet. "
                 "Each entry needs a reason. Wire the setting and delete the entry, "
-                "or delete the setting. See scripts/check_config_wiring.py."
+                "or delete the setting. See delivery_toolchain/governance/check_config_wiring.py."
             ),
             "unwired": {key: allowlist.get(key, "TODO: state why this is not wired yet") for key in unwired},
         }

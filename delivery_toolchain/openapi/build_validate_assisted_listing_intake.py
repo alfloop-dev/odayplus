@@ -20,7 +20,7 @@ from jsonpath_ng.ext import parse as parse_jsonpath
 from jsonpath_ng.jsonpath import Fields, Index
 from openapi_spec_validator import validate_spec
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_PATH = ROOT / "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml"
 
 def _manifest_openapi_order() -> list[Path]:

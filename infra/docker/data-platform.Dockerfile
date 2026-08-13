@@ -42,8 +42,8 @@ COPY scripts/data_platform /app/scripts/data_platform
 COPY shared /app/shared
 COPY infra/db/migrations /app/infra/db/migrations
 COPY docs/data /app/docs/data
-COPY scripts/validate_assisted_listing_intake_schema.sql \
-  /app/scripts/validate_assisted_listing_intake_schema.sql
+COPY delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql \
+  /app/delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql
 COPY infra/k8s/data-platform/runtime /opt/oday/deployment
 
 RUN mkdir -p /var/lib/oday/cache /var/lib/oday/dlt /var/run/oday \

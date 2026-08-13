@@ -1,5 +1,5 @@
 {
-  "_comment": "Settings declared in config.example.json that no code reads yet. Each entry needs a reason. Wire the setting and delete the entry, or delete the setting. Enforced by scripts/check_config_wiring.py, which also fails when an entry here becomes wired, so this file cannot drift out of date. This list is the backlog of governance the config promises but the system does not implement.",
+  "_comment": "Settings declared in config.example.json that no code reads yet. Each entry needs a reason. Wire the setting and delete the entry, or delete the setting. Enforced by delivery_toolchain/governance/check_config_wiring.py, which also fails when an entry here becomes wired, so this file cannot drift out of date. This list is the backlog of governance the config promises but the system does not implement.",
   "unwired": {
     "github_bus.phase3.github_app": "GitHub App auth mode is phase 3 and unimplemented; the bus authenticates through the gh CLI.",
     "github_bus.phase3.github_app.enabled": "See github_bus.phase3.github_app.",

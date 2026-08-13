@@ -79,7 +79,7 @@ races another opener still recovers the existing PR number from `gh`'s output.
 ## Notes
 
 - `.orchestrator/bin/gh` is a broker shim, not the real CLI. `task_finalize.sh`
-  resolves `gh` the same way `scripts/check_pr_merge_eligibility.py` does.
+  resolves `gh` the same way `delivery_toolchain/github/check_pr_merge_eligibility.py` does.
 - `check_commit_trailers.py` enforces a **72**-character subject limit, the
   value `.orchestrator/auto_commit_archive.py` builds its messages against.
   `task-closeout-finalization.md` recommends ≤ 70; that is stricter guidance,

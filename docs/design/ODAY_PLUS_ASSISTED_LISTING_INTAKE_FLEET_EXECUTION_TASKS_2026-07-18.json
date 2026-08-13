@@ -50,7 +50,7 @@
         "Prove clean install, upgrade, downgrade boundary, catalog constraints, tenant isolation, and rollback behavior on PostgreSQL 16."
       ],
       "verification": [
-        "python scripts/validate_assisted_listing_intake_design.py --reviewed-commit e644bd0e01a3f9134ee0230490577db4f67b0aa9 --current-pr-head e644bd0e01a3f9134ee0230490577db4f67b0aa9 --base-commit e2ef2156375c733747d968346fd85ca54cc751c1 --strict-review-target",
+        "python delivery_toolchain/governance/validate_assisted_listing_intake_design.py --reviewed-commit e644bd0e01a3f9134ee0230490577db4f67b0aa9 --current-pr-head e644bd0e01a3f9134ee0230490577db4f67b0aa9 --base-commit e2ef2156375c733747d968346fd85ca54cc751c1 --strict-review-target",
         "uv run pytest tests/contract/test_assisted_listing_intake_schema.py tests/security/test_assisted_listing_intake_rls.py -q",
         "git diff --check origin/dev...HEAD"
       ]
@@ -132,7 +132,7 @@
         "Add request/response and generated-client drift tests for every operation."
       ],
       "verification": [
-        "python scripts/build_validate_assisted_listing_intake_openapi.py",
+        "python delivery_toolchain/openapi/build_validate_assisted_listing_intake.py",
         "uv run pytest tests/contract/test_operator_assisted_listing_api.py tests/contract/test_assisted_listing_openapi.py -q",
         "npm run typecheck --workspace=@oday-plus/openapi-client",
         "git diff --check origin/dev...HEAD"

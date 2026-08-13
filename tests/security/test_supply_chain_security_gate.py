@@ -11,30 +11,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_legacy_python_entrypoints_reexport_canonical_commands() -> None:
-    from delivery_toolchain.security.generate_sbom import generate_sbom
-    from delivery_toolchain.security.sast_scan import main as sast_main
-    from delivery_toolchain.security.secret_scan import scan_file
-    from scripts.security.generate_sbom import generate_sbom as legacy_generate_sbom
-    from scripts.security.sast_scan import main as legacy_sast_main
-    from scripts.security.secret_scan import scan_file as legacy_scan_file
-
-    assert legacy_generate_sbom is generate_sbom
-    assert legacy_sast_main is sast_main
-    assert legacy_scan_file is scan_file
-
-
-def test_legacy_secret_scan_entrypoint_remains_executable() -> None:
-    result = subprocess.run(
-        [str(ROOT / "scripts/security/secret_scan.py")],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
 def test_postcss_advisory_resolved() -> None:
     lockfile_path = ROOT / "package-lock.json"
     assert lockfile_path.exists()
@@ -119,7 +95,7 @@ def test_sbom_and_provenance_present_and_valid() -> None:
 
 
 def test_sign_images_script_executable() -> None:
-    script_path = ROOT / "scripts/security/sign_images.sh"
+    script_path = ROOT / "delivery_toolchain/security/sign_images.sh"
     assert script_path.exists()
     assert (script_path.stat().st_mode & 0o111) != 0, "sign_images.sh must be executable"
 
@@ -185,7 +161,7 @@ def test_vulnerable_fixtures_rejected_negative(tmp_path: Path) -> None:
 
 def test_unsigned_images_rejected_negative() -> None:
     # Run sign_images.sh verify on a bogus image name in CI mode and expect non-zero exit code
-    script_path = ROOT / "scripts/security/sign_images.sh"
+    script_path = ROOT / "delivery_toolchain/security/sign_images.sh"
     res = subprocess.run(
         [
             "env",

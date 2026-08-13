@@ -171,7 +171,7 @@ Git 歷史與 runbook 只用來確認使用情況，不作主要分類依據。
 
 - `.orchestrator/github_webhook_server.py`：github bus 有 consumer，但目前主機沒有
   installed service 啟動它；
-- `scripts/apply_branch_protection.py`：會改 repository setting，active reference
+- `delivery_toolchain/github/apply_branch_protection.py`：會改 repository setting，active reference
   主要來自舊 evidence。
 
 在取得 owner 決策前保留，逐檔表標為 `owner_usage_review`，不冒然刪除。

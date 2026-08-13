@@ -44,9 +44,9 @@ This document records explicit textual corrections to `ODP-SD-INTAKE-001`. It do
     "docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml",
     "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_RELIABILITY_PRIVACY_CONTRACT.md",
     "docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md",
-    "scripts/validate_assisted_listing_intake_design.py",
-    "scripts/build_validate_assisted_listing_intake_openapi.py",
-    "scripts/validate_assisted_listing_intake_schema.sql",
+    "delivery_toolchain/governance/validate_assisted_listing_intake_design.py",
+    "delivery_toolchain/openapi/build_validate_assisted_listing_intake.py",
+    "delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql",
     ".github/workflows/assisted-intake-design-validation.yml"
   ],
   "precedence": [

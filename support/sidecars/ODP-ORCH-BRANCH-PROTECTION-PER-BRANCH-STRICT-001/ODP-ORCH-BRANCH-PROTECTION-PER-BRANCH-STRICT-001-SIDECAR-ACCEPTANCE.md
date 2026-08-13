@@ -18,7 +18,7 @@ canonical policy, approve the parent implementation, change live GitHub
 settings, or close the parent task.
 
 Only this Markdown file belongs to the sidecar. The parent owns all changes to
-`.github/branch-protection/policy.json`, `scripts/apply_branch_protection.py`,
+`.github/branch-protection/policy.json`, `delivery_toolchain/github/apply_branch_protection.py`,
 and `tests/security/test_branch_protection_policy.py`.
 
 ## Problem statement and target invariant

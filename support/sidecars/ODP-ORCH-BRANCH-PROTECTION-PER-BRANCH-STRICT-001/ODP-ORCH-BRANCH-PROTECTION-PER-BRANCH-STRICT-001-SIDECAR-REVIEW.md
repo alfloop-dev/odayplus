@@ -28,7 +28,7 @@ The parent diff has three task-owned files:
 | File | Review-relevant change |
 | --- | --- |
 | `.github/branch-protection/policy.json` | Adds a `branches.dev.strict: false` delta while leaving shared required contexts and admin enforcement at the top level. |
-| `scripts/apply_branch_protection.py` | Resolves a shallow per-branch overlay before building each branch payload; `strict` defaults to `true` when no override exists. |
+| `delivery_toolchain/github/apply_branch_protection.py` | Resolves a shallow per-branch overlay before building each branch payload; `strict` defaults to `true` when no override exists. |
 | `tests/security/test_branch_protection_policy.py` | Adds four regression cases covering overlay preservation, an unlisted branch, a policy without overlays, and the shipped dev/main policy split. |
 
 GitHub reports the parent PR diff as 71 additions and 7 deletions across these
