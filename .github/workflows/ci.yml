@@ -127,7 +127,7 @@ jobs:
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
       # and any breaking change not listed in
-      # scripts/openapi/approved_breaking_changes.json (ODP-PGAP-API-001).
+      # delivery_toolchain/openapi/approved_breaking_changes.json (ODP-PGAP-API-001).
       - name: Check API contract drift
         run: make api-contract
         env:

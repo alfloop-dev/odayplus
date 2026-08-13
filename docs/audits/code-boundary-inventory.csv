@@ -166,6 +166,11 @@ delivery_toolchain/__init__.py,development_delivery_tooling,delivery_only,false,
 delivery_toolchain/governance/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/check_code_boundaries.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/test_check_code_boundaries.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
+delivery_toolchain/openapi/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/openapi/check_drift.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/openapi/export_openapi.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/openapi/generate_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/openapi/openapi_diff.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/generate_sbom.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/sast_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -523,10 +528,6 @@ scripts/models/release.py,product_operations_tooling,operations_required,false,e
 scripts/models/sitescore_outcome_benchmark.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/models/storage.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/models/store_opening_backfill.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
-scripts/openapi/check_drift.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/openapi/export_openapi.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/openapi/generate_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/openapi/openapi_diff.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/orchestrator/backfill_task_archive_snapshots.py,development_platform_system,development_only,false,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/check_runtime_freshness.py,development_platform_system,development_only,false,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/check_task_dependency_resolvability.py,development_platform_system,development_only,false,engineering,true,The internal development platform is retired or moved to its own repository.

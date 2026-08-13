@@ -131,8 +131,8 @@ boundaries:
       - scripts/git/**/*.py
       - scripts/load/*.py
       - scripts/load/**/*.py
-      - scripts/openapi/*.py
-      - scripts/openapi/**/*.py
+      - delivery_toolchain/openapi/*.py
+      - delivery_toolchain/openapi/**/*.py
       - scripts/release/*.py
       - scripts/release/**/*.py
       - scripts/security/*.py

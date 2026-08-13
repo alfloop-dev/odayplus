@@ -95,7 +95,7 @@ flowchart TD
 | Idempotency authority | A committed result survives the supported process/replica lifecycle without duplicate writes | Retry after restart/second replica and write-count assertion |
 | Error exporter | Mask sensitive values in all formats and neutralize spreadsheet formula prefixes | Golden JSON/CSV/XLSX tests using secrets, email, phone, and `= + - @` payloads |
 | Audit authority | Commit success/failure and security-relevant denials are attributable to tenant, actor, batch, and receipt | Audit assertions with no unmasked sensitive payloads |
-| OpenAPI/client artifact | All three routes and their schemas are checked in and reproducible | `scripts/openapi/check_drift.py` exits 0 |
+| OpenAPI/client artifact | All three routes and their schemas are checked in and reproducible | `delivery_toolchain/openapi/check_drift.py` exits 0 |
 
 ## 4. Parent acceptance checklist
 
@@ -229,7 +229,7 @@ uv run pytest -q \
   tests/contract/test_xlsx_import_api.py
 
 uv run pytest -q tests/contract/test_openapi_artifact_and_client.py
-uv run python scripts/openapi/check_drift.py
+uv run python delivery_toolchain/openapi/check_drift.py
 
 uv run ruff check \
   modules/external_data/application/xlsx_import.py \

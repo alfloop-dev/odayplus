@@ -31,8 +31,8 @@ work is tracked as a follow-up and must be done per-route with its tests.
 
 Usage::
 
-    python3 scripts/openapi/generate_client.py           # write
-    python3 scripts/openapi/generate_client.py --check    # fail if stale
+    python3 delivery_toolchain/openapi/generate_client.py           # write
+    python3 delivery_toolchain/openapi/generate_client.py --check    # fail if stale
 """
 
 from __future__ import annotations
@@ -52,13 +52,13 @@ HEADER = """/**
  * GENERATED FILE — DO NOT EDIT.
  *
  * Source:    packages/openapi-client/openapi.json
- * Generator: scripts/openapi/generate_client.py
+ * Generator: delivery_toolchain/openapi/generate_client.py
  *
  * Regenerate with:
- *   python3 scripts/openapi/export_openapi.py     # refresh the artifact from the app
- *   python3 scripts/openapi/generate_client.py    # refresh this file
+ *   python3 delivery_toolchain/openapi/export_openapi.py     # refresh the artifact from the app
+ *   python3 delivery_toolchain/openapi/generate_client.py    # refresh this file
  *
- * CI runs `scripts/openapi/check_drift.py`, which fails if this file does not
+ * CI runs `delivery_toolchain/openapi/check_drift.py`, which fails if this file does not
  * match the artifact, or the artifact does not match the live API.
  */
 
@@ -222,7 +222,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not ARTIFACT_PATH.exists():
         print(f"ERROR: {ARTIFACT_PATH.relative_to(REPO_ROOT)} is missing.", file=sys.stderr)
-        print("Run: python3 scripts/openapi/export_openapi.py", file=sys.stderr)
+        print("Run: python3 delivery_toolchain/openapi/export_openapi.py", file=sys.stderr)
         return 1
 
     payload = render(json.loads(ARTIFACT_PATH.read_text(encoding="utf-8")))
@@ -230,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         if not OUTPUT_PATH.exists():
             print(f"ERROR: {OUTPUT_PATH.relative_to(REPO_ROOT)} is missing.", file=sys.stderr)
-            print("Run: python3 scripts/openapi/generate_client.py", file=sys.stderr)
+            print("Run: python3 delivery_toolchain/openapi/generate_client.py", file=sys.stderr)
             return 1
         if OUTPUT_PATH.read_text(encoding="utf-8") != payload:
             print(
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
                 "artifact changed but the client was not regenerated.",
                 file=sys.stderr,
             )
-            print("Run: python3 scripts/openapi/generate_client.py", file=sys.stderr)
+            print("Run: python3 delivery_toolchain/openapi/generate_client.py", file=sys.stderr)
             return 1
         print(f"OK: {OUTPUT_PATH.relative_to(REPO_ROOT)} matches the artifact.")
         return 0

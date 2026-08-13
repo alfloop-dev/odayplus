@@ -61,11 +61,11 @@ security: bootstrap dependency-audit
 # Regenerate after an intentional API change with:
 #   make api-contract-refresh
 api-contract: bootstrap
-	$(UV) run python scripts/openapi/check_drift.py --base-ref $${ODP_API_BASE_REF:-origin/dev}
+	$(UV) run python delivery_toolchain/openapi/check_drift.py --base-ref $${ODP_API_BASE_REF:-origin/dev}
 
 api-contract-refresh: bootstrap
-	$(UV) run python scripts/openapi/export_openapi.py
-	$(UV) run python scripts/openapi/generate_client.py
+	$(UV) run python delivery_toolchain/openapi/export_openapi.py
+	$(UV) run python delivery_toolchain/openapi/generate_client.py
 
 node-check:
 	@if [[ -f package-lock.json ]]; then \

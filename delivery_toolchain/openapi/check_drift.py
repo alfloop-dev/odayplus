@@ -12,7 +12,7 @@ than rediscovering them one push at a time.
    Catches a contract change that never reached the TypeScript client.
 3. **Breaking changes** — the artifact is diffed against its merge-base
    revision. A breaking change fails the build unless its signature is listed
-   in ``scripts/openapi/approved_breaking_changes.json``.
+   in ``delivery_toolchain/openapi/approved_breaking_changes.json``.
 
 The approval file is the deliberate escape hatch: breaking changes are
 sometimes correct, and a gate with no path forward gets disabled. Adding a
@@ -21,9 +21,9 @@ precisely the conversation the gate exists to force.
 
 Usage::
 
-    python3 scripts/openapi/check_drift.py                 # all checks
-    python3 scripts/openapi/check_drift.py --base-ref dev  # diff against a ref
-    python3 scripts/openapi/check_drift.py --skip-diff     # freshness only
+    python3 delivery_toolchain/openapi/check_drift.py                 # all checks
+    python3 delivery_toolchain/openapi/check_drift.py --base-ref dev  # diff against a ref
+    python3 delivery_toolchain/openapi/check_drift.py --skip-diff     # freshness only
 """
 
 from __future__ import annotations
@@ -39,10 +39,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.openapi.openapi_diff import diff_openapi  # noqa: E402
+from delivery_toolchain.openapi.openapi_diff import diff_openapi  # noqa: E402
 
 ARTIFACT_REL = "packages/openapi-client/openapi.json"
-APPROVALS_PATH = REPO_ROOT / "scripts" / "openapi" / "approved_breaking_changes.json"
+APPROVALS_PATH = REPO_ROOT / "delivery_toolchain" / "openapi" / "approved_breaking_changes.json"
 
 
 def _run(*args: str) -> tuple[int, str]:
@@ -88,14 +88,14 @@ def _base_artifact(base_ref: str) -> dict[str, Any] | None:
 
 
 def check_artifact_fresh() -> bool:
-    from scripts.openapi.export_openapi import main as export_main
+    from delivery_toolchain.openapi.export_openapi import main as export_main
 
     print("[1/3] OpenAPI artifact freshness")
     return export_main(["--check"]) == 0
 
 
 def check_client_fresh() -> bool:
-    from scripts.openapi.generate_client import main as generate_main
+    from delivery_toolchain.openapi.generate_client import main as generate_main
 
     print("[2/3] Generated client freshness")
     return generate_main(["--check"]) == 0

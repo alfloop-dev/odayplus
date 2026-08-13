@@ -8,9 +8,9 @@ drift into describing an API the server does not serve.
 
 Usage::
 
-    python3 scripts/openapi/export_openapi.py            # write the artifact
-    python3 scripts/openapi/export_openapi.py --check     # fail if stale
-    python3 scripts/openapi/export_openapi.py --stdout    # print, write nothing
+    python3 delivery_toolchain/openapi/export_openapi.py            # write the artifact
+    python3 delivery_toolchain/openapi/export_openapi.py --check     # fail if stale
+    python3 delivery_toolchain/openapi/export_openapi.py --stdout    # print, write nothing
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         if not ARTIFACT_PATH.exists():
             print(f"ERROR: {ARTIFACT_PATH.relative_to(REPO_ROOT)} is missing.", file=sys.stderr)
-            print("Run: python3 scripts/openapi/export_openapi.py", file=sys.stderr)
+            print("Run: python3 delivery_toolchain/openapi/export_openapi.py", file=sys.stderr)
             return 1
         current = ARTIFACT_PATH.read_text(encoding="utf-8")
         if current != payload:
@@ -95,7 +95,7 @@ def main(argv: list[str] | None = None) -> int:
                 "but the artifact was not regenerated.",
                 file=sys.stderr,
             )
-            print("Run: python3 scripts/openapi/export_openapi.py", file=sys.stderr)
+            print("Run: python3 delivery_toolchain/openapi/export_openapi.py", file=sys.stderr)
             return 1
         print(f"OK: {ARTIFACT_PATH.relative_to(REPO_ROOT)} matches the live schema.")
         return 0

@@ -75,10 +75,10 @@ apps/api/app/routes/netplan.py
   ├─ + class NetPlanUpdateScenarioPayload        (route file :39)
   └─ + @router.put("/scenarios/{scenario_id}")   (route file :161)
         │
-        ▼  scripts/openapi/export_openapi.py  (build_schema → serialize)
+        ▼  delivery_toolchain/openapi/export_openapi.py  (build_schema → serialize)
    packages/openapi-client/openapi.json          ← STALE at ffea80eb
         │
-        ▼  scripts/openapi/generate_client.py  (render)
+        ▼  delivery_toolchain/openapi/generate_client.py  (render)
    packages/openapi-client/src/generated/types.ts ← consistent with the STALE artifact
         │
         ▼  consumed by 15+ web modules via "@oday-plus/openapi-client"
@@ -90,7 +90,7 @@ Both CI gates sit on this chain; the first one to run is the one that failed:
 | Gate | Where | Behaviour at `ffea80eb` |
 | --- | --- | --- |
 | `tests/contract/test_openapi_artifact_and_client.py` | `product` job, step *Test product code* | **FAIL** — `test_artifact_is_checked_in_and_matches_the_live_app` |
-| `make api-contract` (`scripts/openapi/check_drift.py`) | `product` job, step *Check API contract drift* | **Not reached** — the step is after the failing pytest step |
+| `make api-contract` (`delivery_toolchain/openapi/check_drift.py`) | `product` job, step *Check API contract drift* | **Not reached** — the step is after the failing pytest step |
 
 Note the trap: `test_generated_client_matches_the_artifact` **passes** at
 `ffea80eb`, because the client is faithfully generated from the *stale* artifact.
@@ -173,8 +173,8 @@ Run in a scratch worktree detached at `ffea80eb` (removed afterwards; nothing
 was pushed and no parent branch was modified):
 
 ```bash
-python scripts/openapi/export_openapi.py      # -> Wrote packages/openapi-client/openapi.json (224 paths).
-python scripts/openapi/generate_client.py     # -> Wrote packages/openapi-client/src/generated/types.ts.
+python delivery_toolchain/openapi/export_openapi.py      # -> Wrote packages/openapi-client/openapi.json (224 paths).
+python delivery_toolchain/openapi/generate_client.py     # -> Wrote packages/openapi-client/src/generated/types.ts.
 ```
 
 Measured result — the delta is additive-only and confined to the two generated
@@ -192,7 +192,7 @@ Post-regeneration gates, both re-run in that scratch worktree:
 pytest tests/contract/test_openapi_artifact_and_client.py
   17 tests, 0 failures        (was 17 tests, 1 failure)
 
-python scripts/openapi/check_drift.py --base-ref origin/dev
+python delivery_toolchain/openapi/check_drift.py --base-ref origin/dev
   [1/3] artifact freshness   OK
   [2/3] client freshness     OK
   [3/3] breaking-change diff + PUT /api/v1/netplan/scenarios/{scenario_id}: new operation.
@@ -206,7 +206,7 @@ Parent-owner action:
    Do not hand-edit either file — `test_generated_client_is_marked_do_not_edit`
    and the freshness checks exist precisely to catch that.
 2. Commit both generated files inside the task scope.
-3. No `scripts/openapi/approved_breaking_changes.json` entry is required; the
+3. No `delivery_toolchain/openapi/approved_breaking_changes.json` entry is required; the
    gate already classifies the new route as additive.
 4. Push and let PR `#703` re-run. Do not call parent `done` until `#703` is
    green and merged.
@@ -295,8 +295,8 @@ python -m pytest tests/contract/test_openapi_artifact_and_client.py -q
 # junitxml: tests=17 failures=1  -> test_artifact_is_checked_in_and_matches_the_live_app  exit 1
 
 # proven remediation
-python scripts/openapi/export_openapi.py      # 224 paths
-python scripts/openapi/generate_client.py
+python delivery_toolchain/openapi/export_openapi.py      # 224 paths
+python delivery_toolchain/openapi/generate_client.py
 git diff --stat                                # 2 files, +192 -1
 
 # contract suite — after regeneration
@@ -304,7 +304,7 @@ python -m pytest tests/contract/test_openapi_artifact_and_client.py -q
 # junitxml: tests=17 failures=0  exit 0
 
 # full contract gate — after regeneration
-python scripts/openapi/check_drift.py --base-ref origin/dev
+python delivery_toolchain/openapi/check_drift.py --base-ref origin/dev
 # API contract gate: PASS   (1 additive, 0 breaking)   exit 0
 ```
 

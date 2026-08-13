@@ -160,7 +160,7 @@ flowchart TD
    - Pytest OpenAPI 契約與客戶端測試：`python3 -m pytest tests/contract/test_openapi_artifact_and_client.py`（17 passed）
    - Pytest 效能與 Soak 測試：`python3 -m pytest tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution`（1 passed）
    - Vitest 前端組件測試：`npm --workspace=apps/web run test -- UserRoleManagementController GovernanceWorkspace` 或在 `apps/web` 目錄執行 `npx vitest UserRoleManagementController GovernanceWorkspace`（13 passed: 7 passed + 6 passed；在 root 目錄直接執行 `npx vitest` 會因缺少 Vite JSX context 導致 0 tests 並報錯）
-   - OpenAPI Schema 漂移檢查：`python3 scripts/openapi/check_drift.py`（PASS）
+   - OpenAPI Schema 漂移檢查：`python3 delivery_toolchain/openapi/check_drift.py`（PASS）
 
 ---
 

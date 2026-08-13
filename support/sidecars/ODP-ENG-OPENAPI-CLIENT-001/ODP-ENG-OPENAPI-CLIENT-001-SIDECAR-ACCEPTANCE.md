@@ -44,7 +44,7 @@ The parent delta contains only these files:
 | `docs/evidence/completion/ODP-ENG-OPENAPI-CLIENT-001/implementation.md` | Parent scope, provenance, and acceptance summary |
 | `docs/evidence/completion/ODP-ENG-OPENAPI-CLIENT-001/verification.md` | Parent command receipts |
 | `packages/openapi-client/src/index.ts` | Comment correction identifying the actual hand-written DTO location |
-| `scripts/openapi/generate_client.py` | Matching generator documentation correction |
+| `delivery_toolchain/openapi/generate_client.py` | Matching generator documentation correction |
 
 The parent commits document and verify implementation already present at the
 base; they do not introduce a new exporter, drift classifier, generated
@@ -66,13 +66,13 @@ artifact, generated emitter, or client call-site migration.
 FastAPI composed app: apps.api.oday_api.main.create_app()
                          |
                          v
-scripts/openapi/export_openapi.py
+delivery_toolchain/openapi/export_openapi.py
                          |
                          v
 packages/openapi-client/openapi.json
                          |
                          v
-scripts/openapi/generate_client.py
+delivery_toolchain/openapi/generate_client.py
                          |
                          v
 packages/openapi-client/src/generated/types.ts
@@ -80,7 +80,7 @@ packages/openapi-client/src/generated/types.ts
                          +--------------------------+
                          |                          |
                          v                          v
-packages/openapi-client/src/index.ts       scripts/openapi/check_drift.py
+packages/openapi-client/src/index.ts       delivery_toolchain/openapi/check_drift.py
   generated re-exports +                    freshness + base diff
   hand-written success DTOs                 + approved-break registry
                          |                          |
@@ -92,7 +92,7 @@ packages/openapi-client/src/index.ts       scripts/openapi/check_drift.py
 | --- | --- | --- |
 | `apps.api.oday_api.main.create_app()` | Upstream schema authority | Export freshness is meaningful only against the composed application, not a hand-authored schema fragment. |
 | `packages/openapi-client/openapi.json` | Versioned generated artifact | Input to the TypeScript emitter and baseline for API diff classification. |
-| `scripts/openapi/approved_breaking_changes.json` | Reviewed escape hatch | An intentional breaking signature needs a reason, task ID, and reviewer-visible diff. |
+| `delivery_toolchain/openapi/approved_breaking_changes.json` | Reviewed escape hatch | An intentional breaking signature needs a reason, task ID, and reviewer-visible diff. |
 | `packages/openapi-client/src/generated/types.ts` | Generated TypeScript surface | Must remain byte-reproducible from the OpenAPI artifact and marked `DO NOT EDIT`. |
 | `packages/openapi-client/src/index.ts` | Public package boundary | Re-exports generated types and contains the still-hand-written success-response DTOs and client behavior. |
 | `apps/web` | Downstream package consumer | Typecheck demonstrates compatibility across the current web call sites. |
@@ -132,7 +132,7 @@ exact parent review SHA `f4ab00f5` after fetching current `origin/dev` at
 
 | Command | Refreshed receipt |
 | --- | --- |
-| `python3 scripts/openapi/check_drift.py --base-ref origin/dev` | **PASS**; all three stages passed with 0 additive, 0 approved breaking, and 0 unapproved breaking changes |
+| `python3 delivery_toolchain/openapi/check_drift.py --base-ref origin/dev` | **PASS**; all three stages passed with 0 additive, 0 approved breaking, and 0 unapproved breaking changes |
 | `node ./node_modules/typescript/bin/tsc --noEmit -p packages/openapi-client/tsconfig.json` | **PASS**; exit 0 |
 | `node ./node_modules/typescript/bin/tsc --noEmit -p apps/web/tsconfig.json` | **PASS**; exit 0 |
 | `python3 -m pytest tests/contract/test_openapi_artifact_and_client.py` | **PASS**; `17 passed in 29.55s` |
@@ -160,7 +160,7 @@ Run these commands on the exact parent review SHA after applying any evidence
 fix commit:
 
 ```bash
-python3 scripts/openapi/check_drift.py --base-ref origin/dev
+python3 delivery_toolchain/openapi/check_drift.py --base-ref origin/dev
 node ./node_modules/typescript/bin/tsc \
   --noEmit -p packages/openapi-client/tsconfig.json
 node ./node_modules/typescript/bin/tsc \

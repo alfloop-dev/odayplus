@@ -16,7 +16,7 @@
  * `./generated/types` is generated from `openapi.json`, which is exported from
  * the live app. It is re-exported wholesale below and is the source of truth
  * for request DTOs, the error envelope, and the versioned path map. Never edit
- * it; run `scripts/openapi/generate_client.py`.
+ * it; run `delivery_toolchain/openapi/generate_client.py`.
  *
  * Two categories of type are still hand-written here:
  *

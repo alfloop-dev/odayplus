@@ -16,10 +16,10 @@ from typing import Any
 
 import pytest
 
-from scripts.openapi import check_drift, export_openapi, generate_client
-from scripts.openapi.export_openapi import ARTIFACT_PATH, build_schema, serialize
-from scripts.openapi.generate_client import OUTPUT_PATH, render
-from scripts.openapi.openapi_diff import diff_openapi
+from delivery_toolchain.openapi import check_drift, export_openapi, generate_client
+from delivery_toolchain.openapi.export_openapi import ARTIFACT_PATH, build_schema, serialize
+from delivery_toolchain.openapi.generate_client import OUTPUT_PATH, render
+from delivery_toolchain.openapi.openapi_diff import diff_openapi
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -108,9 +108,9 @@ def _sandbox_emitter(tmp_path: Path, generated: str) -> Path:
     run the real CLI against stale content without writing into the checked-in
     tree, which a killed test run would otherwise leave dirty.
     """
-    scripts_dir = tmp_path / "scripts" / "openapi"
-    scripts_dir.mkdir(parents=True)
-    shutil.copy(generate_client.__file__, scripts_dir / "generate_client.py")
+    tool_dir = tmp_path / "delivery_toolchain" / "openapi"
+    tool_dir.mkdir(parents=True)
+    shutil.copy(generate_client.__file__, tool_dir / "generate_client.py")
 
     artifact = tmp_path / "packages" / "openapi-client" / "openapi.json"
     artifact.parent.mkdir(parents=True)
@@ -119,7 +119,7 @@ def _sandbox_emitter(tmp_path: Path, generated: str) -> Path:
     output = tmp_path / "packages" / "openapi-client" / "src" / "generated" / "types.ts"
     output.parent.mkdir(parents=True)
     output.write_text(generated, encoding="utf-8")
-    return scripts_dir / "generate_client.py"
+    return tool_dir / "generate_client.py"
 
 
 def _run_check(script: Path) -> subprocess.CompletedProcess[str]:
@@ -314,9 +314,12 @@ def test_diffing_the_real_artifact_against_itself_is_clean() -> None:
 
 def test_approved_breaking_changes_file_is_valid_and_reviewed() -> None:
     payload = json.loads(
-        (REPO_ROOT / "scripts" / "openapi" / "approved_breaking_changes.json").read_text(
-            encoding="utf-8"
-        )
+        (
+            REPO_ROOT
+            / "delivery_toolchain"
+            / "openapi"
+            / "approved_breaking_changes.json"
+        ).read_text(encoding="utf-8")
     )
     assert isinstance(payload["approved"], list)
     for entry in payload["approved"]:

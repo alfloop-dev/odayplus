@@ -219,7 +219,7 @@ cd /tmp/odp-xlsx-base-8585f2b2
 
 # 3. The blocking CI gate (.github/workflows/ci.yml "Check API contract drift")
 cd /tmp/odp-xlsx-pin-f0309f29
-/home/lupin/.local/bin/uv run python scripts/openapi/check_drift.py; echo "exit=$?"
+/home/lupin/.local/bin/uv run python delivery_toolchain/openapi/check_drift.py; echo "exit=$?"
 
 # 4. Lint
 /home/lupin/.local/bin/uv run ruff check --output-format=concise \
@@ -243,7 +243,7 @@ cd - && git worktree remove /tmp/odp-xlsx-pin-f0309f29 \
 | 1 | `pytest` on the parent's two test files | **8 passed** — matches the `Verified:` trailer exactly |
 | 2a | `pytest tests/contract/test_openapi_artifact_and_client.py` @ `f0309f29` | **FAILED** `test_artifact_is_checked_in_and_matches_the_live_app` |
 | 2b | same file @ `8585f2b2` (merge-base) | **17 passed** — so 2a is a regression, not pre-existing |
-| 3 | `scripts/openapi/check_drift.py` | **`API contract gate: FAIL`**, real exit code **1**. `[1/3] artifact freshness` ERROR; `[2/3]` OK; `[3/3]` 0 breaking |
+| 3 | `delivery_toolchain/openapi/check_drift.py` | **`API contract gate: FAIL`**, real exit code **1**. `[1/3] artifact freshness` ERROR; `[2/3]` OK; `[3/3]` 0 breaking |
 | 4 | `ruff check` | **9 errors** (2× B904, 3× I001, 3× F401, 1× B007) |
 | 5 | `git diff --numstat 8585f2b2 f0309f29` | 6 files, **1413 insertions, 0 deletions** |
 | — | `git merge-base --is-ancestor f0309f29 origin/dev` | exit **1** — parent has not landed |
@@ -253,7 +253,7 @@ cd - && git worktree remove /tmp/odp-xlsx-pin-f0309f29 \
 > [!NOTE]
 > Reviewer reproduction notes: `pytest` and `ruff` are not on `PATH` in a task
 > worktree — invoke through `uv` exactly as written. The first `uv run` in a
-> fresh worktree provisions a `.venv` (234 packages, ~2 s). `scripts/openapi/check_drift.py`
+> fresh worktree provisions a `.venv` (234 packages, ~2 s). `delivery_toolchain/openapi/check_drift.py`
 > emits MLflow bootstrap noise on stderr; ignore it and read the final gate line.
 > Note that piping `check_drift.py` into `tail` masks its exit status — redirect
 > to a file if you need the real code.
@@ -520,10 +520,10 @@ The three new operations (`previewXlsxBatch`, `commitXlsxBatch`,
 `xlsx/preview` across `*.json`/`*.yaml`/`*.ts` returns nothing.
 
 ```
-$ uv run python scripts/openapi/check_drift.py; echo "exit=$?"
+$ uv run python delivery_toolchain/openapi/check_drift.py; echo "exit=$?"
 [1/3] OpenAPI artifact freshness
 ERROR: packages/openapi-client/openapi.json is stale — the API changed but the artifact was not regenerated.
-Run: python3 scripts/openapi/export_openapi.py
+Run: python3 delivery_toolchain/openapi/export_openapi.py
 [2/3] Generated client freshness
 OK: packages/openapi-client/src/generated/types.ts matches the artifact.
 [3/3] Breaking-change diff against origin/dev
@@ -546,7 +546,7 @@ The `Verified:` trailer on `f0309f29` reads
 a *pre-existing* repo test that the change breaks, which a task-scoped test
 selection cannot surface.
 
-**Suggested remedy:** run `python3 scripts/openapi/export_openapi.py`, regenerate
+**Suggested remedy:** run `python3 delivery_toolchain/openapi/export_openapi.py`, regenerate
 the client, and commit both artifacts; then re-run `make api-contract` and at
 minimum `pytest tests/contract` before opening the PR. Cheap to fix, but it is a
 hard merge blocker today.
@@ -881,7 +881,7 @@ This sidecar review packet is **round 1** and ready for review.
   regression and not pre-existing. The probe scripts were deleted after running;
   nothing in this branch executes.
 - **Cheapest path for the parent owner**: B6 is a single command
-  (`python3 scripts/openapi/export_openapi.py` + regenerate the client) and clears
+  (`python3 delivery_toolchain/openapi/export_openapi.py` + regenerate the client) and clears
   the merge blocker. B3 is a deletion (drop `_IDEMPOTENCY_STORE`, keep the route's
   `replay()`). B2 is a substitution (call `map_and_validate_rows` in commit). B1,
   B4 and B5 need real work.

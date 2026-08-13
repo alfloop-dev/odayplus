@@ -2,7 +2,7 @@
   "$comment": [
     "Approved breaking API changes (ODP-PGAP-API-001).",
     "",
-    "scripts/openapi/check_drift.py fails CI on any breaking change to",
+    "delivery_toolchain/openapi/check_drift.py fails CI on any breaking change to",
     "packages/openapi-client/openapi.json whose signature is not listed here.",
     "",
     "Add an entry only when the break is intentional AND existing callers have a",
