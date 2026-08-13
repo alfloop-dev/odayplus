@@ -18,7 +18,8 @@
     "docs/design/emgi/v0.3/SOURCE_01_DATA_SOURCES.md",
     "docs/design/emgi/v0.3/SOURCE_02_OSS_PRIORITIES_RECEIPTS.md",
     "docs/design/emgi/v0.3/REVIEW_MANIFEST.yaml",
-    "docs/design/emgi/v0.3/RELATION_OWNERSHIP_BASELINE.yaml"
+    "docs/design/emgi/v0.3/RELATION_OWNERSHIP_BASELINE.yaml",
+    "docs/design/emgi/v0.3/EXECUTION_01_RULES_AND_INVENTORY.md"
   ],
   "global_rules": [
     "Start from a freshly fetched origin/dev at 0d1603cf347e30c9cf2f25f0eecc10673ac55015 or a later explicitly recorded dev SHA.",
@@ -51,13 +52,48 @@
         "emgi.coverage.v3"
       ]
     },
-    {"id": "G1_GENERATED_REGISTRY", "requires_tasks": ["EMGI-INTEGRATION-REGISTRY-001"]},
-    {"id": "G2_SCHEMA_AND_RELATION_ASSEMBLY", "requires_tasks": ["EMGI-INTEGRATION-REGISTRY-001"]},
-    {"id": "G3_REAL_SOURCE_REPLAY", "requires_tasks": ["EMGI-INTEGRATION-LIVE-READBACK-001"]},
-    {"id": "G4_100_ADDRESS_END_TO_END", "requires_tasks": ["EMGI-INTEGRATION-LIVE-READBACK-001"]},
-    {"id": "G5_1000_ADDRESS_REGRESSION", "requires_tasks": ["EMGI-INTEGRATION-LIVE-READBACK-001"]},
-    {"id": "G6_SHADOW_MODEL_AND_DECISION_EVIDENCE", "requires_tasks": ["EMGI-RELEASE-001"]},
-    {"id": "G7_GOVERNED_RELEASE", "requires_tasks": ["EMGI-RELEASE-001"]}
+    {
+      "id": "G1_GENERATED_REGISTRY",
+      "requires_tasks": [
+        "EMGI-INTEGRATION-REGISTRY-001"
+      ]
+    },
+    {
+      "id": "G2_SCHEMA_AND_RELATION_ASSEMBLY",
+      "requires_tasks": [
+        "EMGI-INTEGRATION-REGISTRY-001"
+      ]
+    },
+    {
+      "id": "G3_REAL_SOURCE_REPLAY",
+      "requires_tasks": [
+        "EMGI-INTEGRATION-LIVE-READBACK-001"
+      ]
+    },
+    {
+      "id": "G4_100_ADDRESS_END_TO_END",
+      "requires_tasks": [
+        "EMGI-INTEGRATION-LIVE-READBACK-001"
+      ]
+    },
+    {
+      "id": "G5_1000_ADDRESS_REGRESSION",
+      "requires_tasks": [
+        "EMGI-INTEGRATION-LIVE-READBACK-001"
+      ]
+    },
+    {
+      "id": "G6_SHADOW_MODEL_AND_DECISION_EVIDENCE",
+      "requires_tasks": [
+        "EMGI-RELEASE-001"
+      ]
+    },
+    {
+      "id": "G7_GOVERNED_RELEASE",
+      "requires_tasks": [
+        "EMGI-RELEASE-001"
+      ]
+    }
   ],
   "completion_rule": [
     "Implementation exists and is scoped to owned paths.",
@@ -68,13 +104,80 @@
     "PR is merged to dev.",
     "Orchestrator records terminal closeout."
   ],
-  "task_files": [
-    {"path": "tasks/kernel.json", "groups": ["Kernel"], "task_count": 9},
-    {"path": "tasks/safety.json", "groups": ["Safety"], "task_count": 4},
-    {"path": "tasks/sources-survey.json", "groups": ["Sources", "Survey"], "task_count": 9},
-    {"path": "tasks/domains-data-products.json", "groups": ["Data Products", "Domains"], "task_count": 11},
-    {"path": "tasks/api-models.json", "groups": ["API and UI", "Models"], "task_count": 6},
-    {"path": "tasks/integration-verification-release.json", "groups": ["Integration", "Release", "Verification"], "task_count": 6}
+  "detailed_task_files": [
+    {
+      "path": "tasks/kernel-a.json",
+      "groups": [
+        "Kernel"
+      ],
+      "task_count": 5
+    },
+    {
+      "path": "tasks/kernel-b.json",
+      "groups": [
+        "Kernel"
+      ],
+      "task_count": 4
+    },
+    {
+      "path": "tasks/safety.json",
+      "groups": [
+        "Safety"
+      ],
+      "task_count": 4
+    }
+  ],
+  "remaining_task_authority": {
+    "path": "docs/design/emgi/v0.3/EXECUTION_01_RULES_AND_INVENTORY.md",
+    "task_count": 32,
+    "note": "The human-readable binding inventory contains the complete responsibility, contract dependency, and verification summary for all remaining tasks."
+  },
+  "task_catalog": [
+    {"id":"EMGI-KRN-MEAS-001","group":"Kernel","depends_on":[]},
+    {"id":"EMGI-KRN-DATASET-001","group":"Kernel","depends_on":[]},
+    {"id":"EMGI-KRN-SCOPE-001","group":"Kernel","depends_on":["EMGI-KRN-DATASET-001"]},
+    {"id":"EMGI-KRN-OBS-001","group":"Kernel","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-SCOPE-001"]},
+    {"id":"EMGI-KRN-TIME-001","group":"Kernel","depends_on":[]},
+    {"id":"EMGI-KRN-MANIFEST-001","group":"Kernel","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-OBS-001","EMGI-KRN-TIME-001"]},
+    {"id":"EMGI-KRN-RELATION-001","group":"Kernel","depends_on":[]},
+    {"id":"EMGI-KRN-READINESS-001","group":"Kernel","depends_on":["EMGI-KRN-MEAS-001"]},
+    {"id":"EMGI-KRN-COVERAGE-001","group":"Kernel","depends_on":["EMGI-KRN-OBS-001","EMGI-KRN-TIME-001","EMGI-KRN-MEAS-001"]},
+    {"id":"EMGI-SAFE-GEO-001","group":"Safety","depends_on":["EMGI-KRN-MEAS-001"]},
+    {"id":"EMGI-SAFE-HEATZONE-001","group":"Safety","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-READINESS-001"]},
+    {"id":"EMGI-SAFE-SITESCORE-001","group":"Safety","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-READINESS-001"]},
+    {"id":"EMGI-SAFE-PIT-001","group":"Safety","depends_on":["EMGI-KRN-TIME-001","EMGI-KRN-COVERAGE-001","EMGI-KRN-MANIFEST-001","EMGI-KRN-RELATION-001"]},
+    {"id":"EMGI-SRC-RIS-NLSC-001","group":"Sources","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-SCOPE-001","EMGI-KRN-OBS-001"]},
+    {"id":"EMGI-SRC-TGOS-001","group":"Sources","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-OBS-001"]},
+    {"id":"EMGI-SRC-OPEN-POI-001","group":"Sources","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-OBS-001"]},
+    {"id":"EMGI-SRC-MOF-MOI-001","group":"Sources","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-OBS-001"]},
+    {"id":"EMGI-SRC-OSM-TDX-001","group":"Sources","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-OBS-001","EMGI-KRN-TIME-001"]},
+    {"id":"EMGI-SRC-LISTING-001","group":"Sources","depends_on":["EMGI-KRN-OBS-001","EMGI-KRN-SCOPE-001"]},
+    {"id":"EMGI-SRC-MOBILITY-001","group":"Sources","depends_on":["EMGI-KRN-TIME-001","EMGI-KRN-COVERAGE-001"]},
+    {"id":"EMGI-SRC-CWA-EVENTS-001","group":"Sources","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-OBS-001"]},
+    {"id":"EMGI-SURVEY-001","group":"Survey","depends_on":["EMGI-KRN-SCOPE-001","EMGI-KRN-OBS-001","EMGI-KRN-READINESS-001"]},
+    {"id":"EMGI-DOM-GEO-001","group":"Domains","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-MANIFEST-001","EMGI-SRC-RIS-NLSC-001","EMGI-SRC-TGOS-001"]},
+    {"id":"EMGI-DOM-POI-COMP-001","group":"Domains","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-COVERAGE-001","EMGI-SRC-OPEN-POI-001","EMGI-SRC-MOF-MOI-001"]},
+    {"id":"EMGI-DOM-PROPERTY-RENT-001","group":"Domains","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-COVERAGE-001","EMGI-SRC-MOF-MOI-001","EMGI-SRC-LISTING-001"]},
+    {"id":"EMGI-DOM-TRANSPORT-001","group":"Domains","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-COVERAGE-001","EMGI-SRC-OSM-TDX-001"]},
+    {"id":"EMGI-DOM-FEASIBILITY-001","group":"Domains","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-READINESS-001","EMGI-SURVEY-001"]},
+    {"id":"EMGI-DOM-ECONOMICS-001","group":"Domains","depends_on":["EMGI-KRN-MEAS-001","EMGI-KRN-READINESS-001"]},
+    {"id":"EMGI-DP-COVERAGE-001","group":"Data Products","depends_on":["EMGI-KRN-COVERAGE-001","EMGI-KRN-MANIFEST-001","EMGI-KRN-READINESS-001"]},
+    {"id":"EMGI-DP-MARKET-CELL-001","group":"Data Products","depends_on":["EMGI-DOM-GEO-001","EMGI-DOM-POI-COMP-001","EMGI-DOM-PROPERTY-RENT-001","EMGI-DP-COVERAGE-001"]},
+    {"id":"EMGI-DP-CATCHMENT-001","group":"Data Products","depends_on":["EMGI-DOM-TRANSPORT-001","EMGI-DOM-GEO-001"]},
+    {"id":"EMGI-DP-SITE-CONTEXT-001","group":"Data Products","depends_on":["EMGI-DP-COVERAGE-001","EMGI-DP-MARKET-CELL-001","EMGI-DP-CATCHMENT-001","EMGI-DOM-FEASIBILITY-001"]},
+    {"id":"EMGI-DP-ACQUISITION-001","group":"Data Products","depends_on":["EMGI-DP-COVERAGE-001","EMGI-DP-SITE-CONTEXT-001"]},
+    {"id":"EMGI-API-001","group":"API and UI","depends_on":["EMGI-KRN-MANIFEST-001","EMGI-KRN-READINESS-001"]},
+    {"id":"EMGI-UI-001","group":"API and UI","depends_on":["EMGI-API-001"]},
+    {"id":"EMGI-MODEL-HEATZONE-V3-001","group":"Models","depends_on":["EMGI-DP-MARKET-CELL-001","EMGI-DP-CATCHMENT-001","EMGI-KRN-MANIFEST-001"]},
+    {"id":"EMGI-MODEL-SITESCORE-V3-001","group":"Models","depends_on":["EMGI-DP-SITE-CONTEXT-001","EMGI-DOM-ECONOMICS-001","EMGI-SAFE-SITESCORE-001","EMGI-KRN-MANIFEST-001"]},
+    {"id":"EMGI-MODEL-UNCERTAINTY-001","group":"Models","depends_on":["EMGI-MODEL-HEATZONE-V3-001","EMGI-MODEL-SITESCORE-V3-001"]},
+    {"id":"EMGI-MODEL-VALIDATION-001","group":"Models","depends_on":["EMGI-MODEL-UNCERTAINTY-001","EMGI-KRN-COVERAGE-001"]},
+    {"id":"EMGI-INTEGRATION-REGISTRY-001","group":"Integration","depends_on":["EMGI-KRN-DATASET-001","EMGI-KRN-SCOPE-001","EMGI-KRN-OBS-001","EMGI-KRN-MANIFEST-001","EMGI-KRN-RELATION-001"]},
+    {"id":"EMGI-INTEGRATION-CROSSREPO-001","group":"Integration","depends_on":[]},
+    {"id":"EMGI-INTEGRATION-ROUTING-001","group":"Integration","depends_on":["EMGI-DOM-TRANSPORT-001","EMGI-TEST-CORPUS-001"]},
+    {"id":"EMGI-TEST-CORPUS-001","group":"Verification","depends_on":[]},
+    {"id":"EMGI-INTEGRATION-LIVE-READBACK-001","group":"Verification","depends_on":["EMGI-INTEGRATION-REGISTRY-001","EMGI-TEST-CORPUS-001"]},
+    {"id":"EMGI-RELEASE-001","group":"Release","depends_on":["EMGI-INTEGRATION-LIVE-READBACK-001","EMGI-MODEL-VALIDATION-001","EMGI-INTEGRATION-CROSSREPO-001","EMGI-UI-001","EMGI-DP-ACQUISITION-001"]}
   ],
   "task_count": 45
 }
