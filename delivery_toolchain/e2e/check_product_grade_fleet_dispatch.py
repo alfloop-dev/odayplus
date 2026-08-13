@@ -190,7 +190,7 @@ def render_report(packet: dict[str, Any]) -> str:
         [
             "## Task Brief Commands",
             "",
-            "Run `python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task <task-id>` for one fleet task.",
+            "Run `python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task <task-id>` for one fleet task.",
             "",
             "| Task | Suggested Branch | Acceptance Count | Handoff Artifact Count |",
             "|---|---|---:|---:|",
@@ -239,7 +239,7 @@ def render_dispatch_queue(packet: dict[str, Any]) -> dict[str, Any]:
                 "brief_path": str(brief_path(task["id"]).relative_to(ROOT)),
                 "suggested_branch": task["suggested_branch"],
                 "dispatch_command": (
-                    f"python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task {task['id']}"
+                    f"python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task {task['id']}"
                 ),
                 "minimum_completion_signal": {
                     "implementation_evidence": task["implementation_evidence"],
@@ -289,9 +289,9 @@ def render_kickoff_runbook(packet: dict[str, Any]) -> str:
         "- Use each task's suggested branch and brief file as the handoff contract.",
         "- Execute any task-specific `execution_commands` before requesting review.",
         "- Treat this kickoff queue as historical implementation dispatch; current release blockers are routed through `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`.",
-        f"- Before Product Validation accepts live provider, live map, or remote staging proof, use `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$({release_pr_head_command(PACKET)})\" --output <handback.json>` and validate the completed handback with `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$({release_pr_head_command(PACKET)})\"`.",
-        "- Keep `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` synchronized with `python3 scripts/e2e/update_external_proof_handback_status_board.py`; verify it with `python3 scripts/e2e/check_external_proof_handback_status_board.py`.",
-        "- Before closing #132-#138, run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees`, `python3 scripts/e2e/check_external_proof_fleet_notifications.py`, and `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`.",
+        f"- Before Product Validation accepts live provider, live map, or remote staging proof, use `python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$({release_pr_head_command(PACKET)})\" --output <handback.json>` and validate the completed handback with `python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$({release_pr_head_command(PACKET)})\"`.",
+        "- Keep `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` synchronized with `python3 delivery_toolchain/e2e/update_external_proof_handback_status_board.py`; verify it with `python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py`.",
+        "- Before closing #132-#138, run `python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees`, `python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py`, and `python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees`.",
         "",
         "## Fleet Pickup Sequence",
         "",
@@ -329,14 +329,14 @@ def render_kickoff_runbook(packet: dict[str, Any]) -> str:
             "For current live-provider, live-map, and remote-staging closeout, convert the implementation handback into the #132-#138 external-proof handback format:",
             "",
             "```bash",
-            f"python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$({release_pr_head_command(PACKET)})\" --output <handback.json>",
-            f"python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$({release_pr_head_command(PACKET)})\"",
-            f"python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha \"$({release_pr_head_command(PACKET)})\"",
-            "python3 scripts/e2e/update_external_proof_handback_status_board.py --help",
-            "python3 scripts/e2e/check_external_proof_handback_status_board.py",
-            "python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees",
-            "python3 scripts/e2e/check_external_proof_fleet_notifications.py",
-            "python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees",
+            f"python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha \"$({release_pr_head_command(PACKET)})\" --output <handback.json>",
+            f"python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha \"$({release_pr_head_command(PACKET)})\"",
+            f"python3 delivery_toolchain/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha \"$({release_pr_head_command(PACKET)})\"",
+            "python3 delivery_toolchain/e2e/update_external_proof_handback_status_board.py --help",
+            "python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py",
+            "python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees",
+            "python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py",
+            "python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees",
             "```",
             "",
             "A document-only PR must not close any `ready_for_fleet` queue entry.",
@@ -478,7 +478,7 @@ def validate_packet(packet: dict[str, Any]) -> list[str]:
         if task_id in {"ODP-PV-STAGE-001", "ODP-PV-STAGE-002"}:
             joined_commands = "\n".join(execution_commands)
             for required_phrase in (
-                "scripts/e2e/check_remote_staging_proof.py",
+                "delivery_toolchain/e2e/check_remote_staging_proof.py",
                 release_pr_view_command(PACKET),
                 "headRefOid",
             ):

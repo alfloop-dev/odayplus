@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_external_proof_acceptance_readiness.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py"
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 STATUS_BOARD = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
 

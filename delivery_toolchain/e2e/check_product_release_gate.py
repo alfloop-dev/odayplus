@@ -24,35 +24,35 @@ if str(E2E_DIR) not in sys.path:
 from _release_target import release_pr_view_command
 
 REQUIRED_FILES = {
-    "product runner": "scripts/e2e/run_product_e2e.sh",
+    "product runner": "delivery_toolchain/e2e/run_product_e2e.sh",
     "deterministic env doc": "docs/testing/PRODUCT_E2E_ENVIRONMENT.md",
     "expansion evidence": "docs/evidence/e2e/EXPANSION_E2E_EVIDENCE.md",
     "ops price ad evidence": "docs/evidence/e2e/OPS_INTERVENTION_PRICE_AD_E2E_EVIDENCE.md",
     "avm netplan learning audit evidence": "docs/evidence/e2e/AVM_NETPLAN_LEARNING_AUDIT_E2E_EVIDENCE.md",
     "raw playwright results": "docs/evidence/e2e/raw_playwright_results.json",
     "raw pytest results": "docs/evidence/e2e/raw_pytest_results.json",
-    "playwright result recorder": "scripts/e2e/record_playwright_results.py",
-    "python acceptance runner": "scripts/e2e/run_python_e2e_tests.py",
-    "e2e receipt validation library": "scripts/e2e/product_e2e_receipt.py",
-    "e2e receipt generator": "scripts/e2e/generate_product_e2e_receipt.py",
+    "playwright result recorder": "delivery_toolchain/e2e/record_playwright_results.py",
+    "python acceptance runner": "delivery_toolchain/e2e/run_python_e2e_tests.py",
+    "e2e receipt validation library": "delivery_toolchain/e2e/product_e2e_receipt.py",
+    "e2e receipt generator": "delivery_toolchain/e2e/generate_product_e2e_receipt.py",
     "product e2e execution receipt": "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json",
     "readiness report": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
     "go no-go": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
-    "go no-go checker": "scripts/e2e/check_product_go_no_go.py",
+    "go no-go checker": "delivery_toolchain/e2e/check_product_go_no_go.py",
     "release gate registry": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
     "release gate registry guide": "docs/evidence/gates/README.md",
-    "release gate registry checker": "scripts/e2e/check_release_gate_registry.py",
-    "product-grade gate reconciliation checker": "scripts/e2e/check_product_grade_gate_reconciliation.py",
+    "release gate registry checker": "delivery_toolchain/e2e/check_release_gate_registry.py",
+    "product-grade gate reconciliation checker": "delivery_toolchain/e2e/check_product_grade_gate_reconciliation.py",
     "closeout manifest": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md",
     "closeout playbook": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md",
     "closeout queue": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json",
     "closeout pickup board": "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md",
-    "closeout pickup board checker": "scripts/e2e/check_product_closeout_pickup_board.py",
-    "closeout action checker": "scripts/e2e/check_product_closeout_action.py",
-    "closeout action matrix checker": "scripts/e2e/check_product_closeout_action_matrix.py",
-    "product closeout fleet comment syncer": "scripts/e2e/sync_product_closeout_fleet_comment.py",
-    "product closeout fleet notification checker": "scripts/e2e/check_product_closeout_fleet_notification.py",
-    "release fleet dispatch status checker": "scripts/e2e/check_release_fleet_dispatch_status.py",
+    "closeout pickup board checker": "delivery_toolchain/e2e/check_product_closeout_pickup_board.py",
+    "closeout action checker": "delivery_toolchain/e2e/check_product_closeout_action.py",
+    "closeout action matrix checker": "delivery_toolchain/e2e/check_product_closeout_action_matrix.py",
+    "product closeout fleet comment syncer": "delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py",
+    "product closeout fleet notification checker": "delivery_toolchain/e2e/check_product_closeout_fleet_notification.py",
+    "release fleet dispatch status checker": "delivery_toolchain/e2e/check_release_fleet_dispatch_status.py",
     "external proof closeout queue": "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json",
     "external proof handback status board": "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json",
     "external proof handback template": "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json",
@@ -72,23 +72,23 @@ REQUIRED_FILES = {
     "poi source fixture": "tests/fixtures/source_data/external/poi_snapshot.valid.json",
     "competitor source fixture": "tests/fixtures/source_data/external/competitor_store_snapshot.valid.json",
     "compose e2e stack": "infra/docker/docker-compose.e2e.yml",
-    "remote staging proof checker": "scripts/e2e/check_remote_staging_proof.py",
-    "external proof closeout queue checker": "scripts/e2e/check_external_proof_closeout_queue.py",
-    "external proof fleet pickup board checker": "scripts/e2e/check_external_proof_fleet_pickup_board.py",
-    "external proof handback template checker": "scripts/e2e/check_external_proof_handback_template.py",
-    "external proof handback artifact checker": "scripts/e2e/check_external_proof_handback_artifact.py",
-    "external proof handback bundle checker": "scripts/e2e/check_external_proof_handback_bundle.py",
-    "external proof handback status board checker": "scripts/e2e/check_external_proof_handback_status_board.py",
-    "external proof handback status board updater": "scripts/e2e/update_external_proof_handback_status_board.py",
-    "external proof acceptance readiness checker": "scripts/e2e/check_external_proof_acceptance_readiness.py",
-    "external proof live blocker checker": "scripts/e2e/check_external_proof_live_blockers.py",
-    "external proof fleet notification checker": "scripts/e2e/check_external_proof_fleet_notifications.py",
-    "external proof fleet issue syncer": "scripts/e2e/sync_external_proof_fleet_issues.py",
-    "external proof handback skeleton generator": "scripts/e2e/generate_external_proof_handback_skeleton.py",
-    "external proof issue sync checker": "scripts/e2e/check_external_proof_issue_sync.py",
-    "external proof issue handback scanner": "scripts/e2e/check_external_proof_issue_handback_scan.py",
-    "external proof escalation comment syncer": "scripts/e2e/sync_external_proof_escalation_comments.py",
-    "external proof follow-up workflow checker": "scripts/e2e/check_external_proof_followup_workflow.py",
+    "remote staging proof checker": "delivery_toolchain/e2e/check_remote_staging_proof.py",
+    "external proof closeout queue checker": "delivery_toolchain/e2e/check_external_proof_closeout_queue.py",
+    "external proof fleet pickup board checker": "delivery_toolchain/e2e/check_external_proof_fleet_pickup_board.py",
+    "external proof handback template checker": "delivery_toolchain/e2e/check_external_proof_handback_template.py",
+    "external proof handback artifact checker": "delivery_toolchain/e2e/check_external_proof_handback_artifact.py",
+    "external proof handback bundle checker": "delivery_toolchain/e2e/check_external_proof_handback_bundle.py",
+    "external proof handback status board checker": "delivery_toolchain/e2e/check_external_proof_handback_status_board.py",
+    "external proof handback status board updater": "delivery_toolchain/e2e/update_external_proof_handback_status_board.py",
+    "external proof acceptance readiness checker": "delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py",
+    "external proof live blocker checker": "delivery_toolchain/e2e/check_external_proof_live_blockers.py",
+    "external proof fleet notification checker": "delivery_toolchain/e2e/check_external_proof_fleet_notifications.py",
+    "external proof fleet issue syncer": "delivery_toolchain/e2e/sync_external_proof_fleet_issues.py",
+    "external proof handback skeleton generator": "delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py",
+    "external proof issue sync checker": "delivery_toolchain/e2e/check_external_proof_issue_sync.py",
+    "external proof issue handback scanner": "delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py",
+    "external proof escalation comment syncer": "delivery_toolchain/e2e/sync_external_proof_escalation_comments.py",
+    "external proof follow-up workflow checker": "delivery_toolchain/e2e/check_external_proof_followup_workflow.py",
     "external proof follow-up workflow": ".github/workflows/external-proof-followup.yml",
     "remote staging workflow": ".github/workflows/deploy-staging.yml",
 }
@@ -201,7 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         "ODP_STAGING_DEPLOY_URL",
         "ODP_STAGING_API_URL",
         "ODP_STAGING_SECRET_OWNER",
-        "scripts/e2e/check_remote_staging_proof.py",
+        "delivery_toolchain/e2e/check_remote_staging_proof.py",
         "actions/upload-artifact@v4",
     ):
         if required_token not in staging_workflow_text:
@@ -233,7 +233,7 @@ def main(argv: list[str] | None = None) -> int:
         if required_token not in external_followup_workflow_text:
             errors.append(f"external proof follow-up workflow missing token: {required_token}")
 
-    checker_status, output = run_checker("scripts/e2e/check_external_proof_followup_workflow.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_external_proof_followup_workflow.py")
     if checker_status != 0:
         errors.append(f"external proof follow-up workflow check failed: {output}")
 
@@ -243,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.expected_sha:
         registry_arguments.extend(["--expected-sha", args.expected_sha])
     registry_status, output = run_checker(
-        "scripts/e2e/check_release_gate_registry.py",
+        "delivery_toolchain/e2e/check_release_gate_registry.py",
         *registry_arguments,
     )
     if registry_status != 0:
@@ -253,12 +253,12 @@ def main(argv: list[str] | None = None) -> int:
     # surface. This used to be a standalone checker, which meant the release
     # gate could pass while the quoted blocker/ACK counts had drifted apart.
     reconciliation_status, output = run_checker(
-        "scripts/e2e/check_product_grade_gate_reconciliation.py", "--skip-runtime"
+        "delivery_toolchain/e2e/check_product_grade_gate_reconciliation.py", "--skip-runtime"
     )
     if reconciliation_status != 0:
         errors.append(f"product-grade gate reconciliation check failed: {output}")
 
-    runner = ROOT / "scripts/e2e/run_product_e2e.sh"
+    runner = ROOT / "delivery_toolchain/e2e/run_product_e2e.sh"
     runner_text = runner.read_text(encoding="utf-8") if runner.exists() else ""
     for spec in REQUIRED_RUNNER_SPECS:
         if spec not in runner_text:
@@ -286,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if str(ROOT) not in sys.path:
             sys.path.insert(0, str(ROOT))
-        from scripts.e2e.product_e2e_receipt import (
+        from delivery_toolchain.e2e.product_e2e_receipt import (
             validate_acceptance_scenarios_and_inventory,
             validate_receipt_packet,
         )
@@ -298,35 +298,35 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         errors.append(f"acceptance scenario/inventory validator error: {exc}")
 
-    checker_status, output = run_checker("scripts/e2e/check_product_closeout_queue.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_product_closeout_queue.py")
     if checker_status != 0:
         errors.append(f"closeout queue check failed: {output}")
 
-    checker_status, output = run_checker("scripts/e2e/check_product_closeout_pickup_board.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_product_closeout_pickup_board.py")
     if checker_status != 0:
         errors.append(f"closeout pickup board check failed: {output}")
 
-    checker_status, output = run_checker("scripts/e2e/check_product_grade_fleet_dispatch.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py")
     if checker_status != 0:
         errors.append(f"product-grade fleet dispatch check failed: {output}")
 
-    checker_status, output = run_checker("scripts/e2e/check_external_proof_closeout_queue.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_external_proof_closeout_queue.py")
     if checker_status != 0:
         errors.append(f"external proof closeout queue check failed: {output}")
 
-    checker_status, output = run_checker("scripts/e2e/check_external_proof_fleet_pickup_board.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_external_proof_fleet_pickup_board.py")
     if checker_status != 0:
         errors.append(f"external proof fleet pickup board check failed: {output}")
 
-    checker_status, output = run_checker("scripts/e2e/check_external_proof_handback_template.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_external_proof_handback_template.py")
     if checker_status != 0:
         errors.append(f"external proof handback template check failed: {output}")
 
-    checker_status, output = run_checker("scripts/e2e/check_external_proof_handback_status_board.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_external_proof_handback_status_board.py")
     if checker_status != 0:
         errors.append(f"external proof handback status board check failed: {output}")
 
-    checker_status, output = run_checker("scripts/e2e/check_product_go_no_go.py")
+    checker_status, output = run_checker("delivery_toolchain/e2e/check_product_go_no_go.py")
     if checker_status != 0:
         errors.append(f"product go/no-go guard check failed: {output}")
 

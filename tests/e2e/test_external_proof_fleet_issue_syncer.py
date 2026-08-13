@@ -7,9 +7,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SYNCER = ROOT / "scripts/e2e/sync_external_proof_fleet_issues.py"
-ISSUE_CHECKER = ROOT / "scripts/e2e/check_external_proof_issue_sync.py"
-NOTIFICATION_CHECKER = ROOT / "scripts/e2e/check_external_proof_fleet_notifications.py"
+SYNCER = ROOT / "delivery_toolchain/e2e/sync_external_proof_fleet_issues.py"
+ISSUE_CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_issue_sync.py"
+NOTIFICATION_CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_fleet_notifications.py"
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 EXPECTED_SHA = "f14244f4e0f71a949816062839b5cd121fc9696f"
 

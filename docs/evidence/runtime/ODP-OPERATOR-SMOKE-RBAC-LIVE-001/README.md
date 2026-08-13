@@ -7,7 +7,7 @@ Owner: Antigravity5 · Reviewer: Codex8 · Date: 2026-08-02
 Deploy Dev runs [30745285034](https://github.com/alfloop-dev/odayplus/actions/runs/30745285034) and [30747676117](https://github.com/alfloop-dev/odayplus/actions/runs/30747676117) failed in candidate smoke / post-promotion live E2E gate assertions against the authenticated operator smoke principal (`oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com`, OIDC subject `110296401444439097904`).
 
 ### Failure Symptoms
-The candidate smoke and live E2E gate (`scripts/e2e/check_live_e2e_gate.py`) issue HTTP requests to verify the promoted release:
+The candidate smoke and live E2E gate (`delivery_toolchain/e2e/check_live_e2e_gate.py`) issue HTTP requests to verify the promoted release:
 1. `GET /api/v1/operator/bootstrap` (requires `operator_console:view`) -> Returned `200 OK`
 2. `GET /api/v1/learninghub/models` (requires `model:view`) -> Returned `403 Forbidden` (`dependency: auth`)
 3. `GET /api/v1/external-data/ingestion-runs` (requires `integration:view`) -> Returned `403 Forbidden` (`dependency: auth`)

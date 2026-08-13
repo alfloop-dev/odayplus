@@ -52,16 +52,16 @@ jobs:
       - name: Verify live external proof handoff state
         run: |
           set -euo pipefail
-          python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
-          python3 scripts/e2e/check_external_proof_fleet_notifications.py
-          python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
-          python3 scripts/e2e/check_external_proof_handback_status_board.py
+          python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees
+          python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py
+          python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees
+          python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py
 
       - name: Scan external proof handbacks
         id: scan
         run: |
           set +e
-          python3 scripts/e2e/check_external_proof_issue_handback_scan.py \
+          python3 delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py \
             --expected-sha "$EXPECTED_SHA" \
             --escalation-hours "$ESCALATION_HOURS" \
             --report \
@@ -86,7 +86,7 @@ jobs:
           if [ "$APPLY_ESCALATIONS" = "true" ]; then
             args+=(--apply)
           fi
-          python3 scripts/e2e/sync_external_proof_escalation_comments.py "${args[@]}"
+          python3 delivery_toolchain/e2e/sync_external_proof_escalation_comments.py "${args[@]}"
 
       - name: Upload follow-up reports
         if: always()

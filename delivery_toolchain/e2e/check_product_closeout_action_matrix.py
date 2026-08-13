@@ -17,7 +17,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
-ACTION_CHECKER_PATH = ROOT / "scripts/e2e/check_product_closeout_action.py"
+ACTION_CHECKER_PATH = ROOT / "delivery_toolchain/e2e/check_product_closeout_action.py"
 E2E_DIR = Path(__file__).resolve().parent
 if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))

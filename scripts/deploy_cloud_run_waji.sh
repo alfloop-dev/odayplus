@@ -666,7 +666,7 @@ if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
     "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
   exit 1
 fi
-run_locked_python scripts/e2e/check_live_e2e_gate.py \
+run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "${LIVE_E2E_API_URL}" \
   --web-url "${LIVE_E2E_WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \

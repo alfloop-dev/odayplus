@@ -59,7 +59,7 @@ live control plane 與維運程式；其餘是產品維運、release/build 工�
   它們服務產品，但不是產品 request runtime。
 - `development_platform_system`：`.orchestrator/**`、`scripts/ai_status.py` 與
   orchestrator rollout/doctor；這是內部開發平台，不是終端產品。
-- `development_delivery_tooling`：`scripts/e2e/**`、Build、CI、release、OpenAPI、
+- `development_delivery_tooling`：`delivery_toolchain/e2e/**`、Build、CI、release、OpenAPI、
   security、Git utilities；全部屬開發工具。
 - `verification`：所有測試；不計入任何 deployed system code。
 
@@ -110,9 +110,9 @@ Git 歷史與 runbook 只用來確認使用情況，不作主要分類依據。
 
 ### Build/CI/release 工具
 
-- `scripts/e2e/check_product_release_gate.py` 主要 subprocess 呼叫其他 checker，
+- `delivery_toolchain/e2e/check_product_release_gate.py` 主要 subprocess 呼叫其他 checker，
   再掃描 workflow/docs token；它是 release governance aggregator，不是產品 runtime。
-- `scripts/e2e/check_release_fleet_dispatch_status.py` 同樣聚合六個 checker 與報表。
+- `delivery_toolchain/e2e/check_release_fleet_dispatch_status.py` 同樣聚合六個 checker 與報表。
 - external-proof 約二十支 CLI 共用同一 release queue/status/template；保留多個 CLI
   是操作介面需求，但 JSON/GitHub/module/retry transport 不應各自重寫。
 
@@ -128,7 +128,7 @@ Git 歷史與 runbook 只用來確認使用情況，不作主要分類依據。
    現在只保留 `approval_queue.approval_signature`。
 4. **Provider CLI/auth lookup 重複**：Copilot local/cloud 與 provider permissions
    已改共用 `provider_runtime.py` 的 binary/token resolver。
-5. **E2E transport helper cloning**：新增 `scripts/e2e/_support.py`，已遷移四個
+5. **E2E transport helper cloning**：新增 `delivery_toolchain/e2e/_support.py`，已遷移四個
    external-proof checker 的 JSON/issue URL/GitHub issue loader、三個 dynamic module
    loader 使用點與 escalation retry policy。這一批移除 100+ 行重複 mechanics，
    checker 保留各自 domain validation。

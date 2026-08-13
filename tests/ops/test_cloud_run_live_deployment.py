@@ -242,12 +242,12 @@ def test_deploy_script_runs_repository_validators_with_locked_python() -> None:
         "run_locked_python "
         "scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke",
         "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py smoke",
-        "run_locked_python scripts/e2e/check_live_e2e_gate.py",
+        "run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py",
     ):
         assert invocation in text
 
     assert "python3 scripts/deployment/validate_cloud_run_live_deployment.py" not in text
-    assert "python3 scripts/e2e/check_live_e2e_gate.py" not in text
+    assert "python3 delivery_toolchain/e2e/check_live_e2e_gate.py" not in text
     assert text.count("python3 - ") == 2
     assert text.count("imports only Python's standard library") == 2
 
@@ -5029,7 +5029,7 @@ def test_deploy_script_runs_the_live_e2e_gate_before_committing_the_release() ->
     """ODP-LIVE-E2E-001: a red live E2E gate must fall through to the rollback trap."""
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    gate = text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
     web_cut = text.index('promote_service_traffic "${WEB_SERVICE}"')
     committed = text.index("DEPLOYMENT_COMMITTED=true")
 
@@ -5058,7 +5058,7 @@ def test_live_e2e_gate_urls_are_resolved_before_the_gate_invocation() -> None:
         'LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"'
     )
     guard = text.index('if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then')
-    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    gate = text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
 
     assert resolve < guard < gate
     assert '--api-url "${LIVE_E2E_API_URL}"' in text
@@ -5164,7 +5164,7 @@ def test_live_e2e_gate_refuses_to_run_without_a_deployment_mode() -> None:
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     guard = text.index('if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then')
-    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    gate = text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
 
     assert guard < gate
     assert _deploy_script_expected_deployment({"ODP_DEPLOY_ENV": "staging"}) == "staging"

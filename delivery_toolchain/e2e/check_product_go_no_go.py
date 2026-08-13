@@ -75,7 +75,7 @@ FORBIDDEN_COMPLETION_TOKENS = (
     "External proof queue reviewed | Confirm `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`",
     "External proof handback artifacts validated | For each submitted #132-#138 handback",
     "External proof handback bundle validated | After all #132-#138 handbacks are submitted",
-    "External proof issue sync reviewed | Run `python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees`",
+    "External proof issue sync reviewed | Run `python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees`",
 )
 
 REQUIRED_EXTERNAL_TASK_IDS = (

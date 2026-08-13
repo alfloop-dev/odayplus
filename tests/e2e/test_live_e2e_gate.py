@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_live_e2e_gate.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_live_e2e_gate.py"
 EXPECTED_SHA = "b" * 40
 API_URL = "https://oday-api.dev.alfloop.internal"
 WEB_URL = "https://oday-web.dev.alfloop.internal"

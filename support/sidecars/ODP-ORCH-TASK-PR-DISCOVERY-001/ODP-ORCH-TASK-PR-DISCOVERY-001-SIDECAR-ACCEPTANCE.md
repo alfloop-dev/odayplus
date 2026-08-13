@@ -103,7 +103,7 @@ The parent task fixes and this sidecar support artifact were verified with the f
 python3 -m unittest discover -s .orchestrator -p "test_github_bus.py"
 
 # 2. Release Gate Registry Audit
-python3 scripts/e2e/check_release_gate_registry.py
+python3 delivery_toolchain/e2e/check_release_gate_registry.py
 
 # 3. Scope-Bounded Formatting & Whitespace Audit
 git diff --check origin/dev...HEAD
@@ -118,7 +118,7 @@ git diff --stat origin/dev...HEAD
 - `git diff --check origin/dev...HEAD`: clean (0 whitespace errors).
 - `git diff --stat origin/dev...HEAD`: 1 file changed, sidecar artifact only.
 
-> **Not re-run in this sidecar**: `python3 scripts/e2e/generate_product_e2e_receipt.py`. Regenerating the receipt would mutate canonical evidence under `docs/evidence/e2e/`, which is outside this support slice's scope restriction. The receipt is instead verified by inspection — see § 2.3.
+> **Not re-run in this sidecar**: `python3 delivery_toolchain/e2e/generate_product_e2e_receipt.py`. Regenerating the receipt would mutate canonical evidence under `docs/evidence/e2e/`, which is outside this support slice's scope restriction. The receipt is instead verified by inspection — see § 2.3.
 
 ### Base Advance Audit & Verification Log (2026-08-06, round 2)
 - **Base Advance Target**: Merged current `origin/dev` tip (`71d44d03`) into `task/ODP-ORCH-TASK-PR-DISCOVERY-001-SIDECAR-ACCEPTANCE`. This supersedes the round-1 log entry against `c879004a`, which went stale when `dev` advanced 99 commits and left PR #634 `BEHIND`.

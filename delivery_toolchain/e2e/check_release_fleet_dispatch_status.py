@@ -30,21 +30,21 @@ if str(E2E_DIR) not in sys.path:
 from _release_target import release_pr_number, release_pr_view_args
 
 LIVE_CHECKS = (
-    ("external issue sync", ["python3", "scripts/e2e/check_external_proof_issue_sync.py", "--require-assignees"]),
-    ("external fleet notifications", ["python3", "scripts/e2e/check_external_proof_fleet_notifications.py"]),
-    ("external live blockers", ["python3", "scripts/e2e/check_external_proof_live_blockers.py", "--require-assignees"]),
-    ("external handback board", ["python3", "scripts/e2e/check_external_proof_handback_status_board.py"]),
-    ("product closeout PR notification", ["python3", "scripts/e2e/check_product_closeout_fleet_notification.py"]),
+    ("external issue sync", ["python3", "delivery_toolchain/e2e/check_external_proof_issue_sync.py", "--require-assignees"]),
+    ("external fleet notifications", ["python3", "delivery_toolchain/e2e/check_external_proof_fleet_notifications.py"]),
+    ("external live blockers", ["python3", "delivery_toolchain/e2e/check_external_proof_live_blockers.py", "--require-assignees"]),
+    ("external handback board", ["python3", "delivery_toolchain/e2e/check_external_proof_handback_status_board.py"]),
+    ("product closeout PR notification", ["python3", "delivery_toolchain/e2e/check_product_closeout_fleet_notification.py"]),
     (
         "product closeout action matrix",
-        ["python3", "scripts/e2e/check_product_closeout_action_matrix.py", "--json"],
+        ["python3", "delivery_toolchain/e2e/check_product_closeout_action_matrix.py", "--json"],
     ),
 )
 
-READINESS_REPORT_COMMAND = ["python3", "scripts/e2e/check_external_proof_acceptance_readiness.py", "--report"]
+READINESS_REPORT_COMMAND = ["python3", "delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py", "--report"]
 ISSUE_HANDBACK_SCAN_COMMAND = [
     "python3",
-    "scripts/e2e/check_external_proof_issue_handback_scan.py",
+    "delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py",
     "--report",
     "--fail-on-escalation",
 ]

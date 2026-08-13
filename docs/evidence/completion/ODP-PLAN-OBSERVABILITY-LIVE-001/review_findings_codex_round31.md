@@ -9,7 +9,7 @@
 ## Verification performed
 
 - `pytest -q tests -k "observability or telemetry or alert or dlq"` — 79 passed.
-- `ruff check shared/observability tests/reliability scripts/deployment modules/notifications scripts/e2e/generate_observability_evidence.py` — passed.
+- `ruff check shared/observability tests/reliability scripts/deployment modules/notifications delivery_toolchain/e2e/generate_observability_evidence.py` — passed.
 - `git diff --check` and `git diff --check 1d78bd76..38ad83cc` — passed.
 - Independent caller-minted authority mutation — returned
   `(True, 'DELIVERED', None)`.

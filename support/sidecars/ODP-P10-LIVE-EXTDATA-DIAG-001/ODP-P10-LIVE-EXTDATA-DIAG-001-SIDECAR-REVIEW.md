@@ -471,7 +471,7 @@ read delivery_toolchain/load/assisted_listing_intake/runtime.py:39-54,153
 source re-read at origin/dev (all confirmed):
   .github/workflows/deploy-dev.yml:101-102        -> || 'tenant-dev'
   .github/workflows/deploy-staging.yml:84-85      -> || 'tenant-staging'
-  scripts/e2e/check_live_e2e_gate.py:1318-1321    -> operator_tenant or ENV chain
+  delivery_toolchain/e2e/check_live_e2e_gate.py:1318-1321    -> operator_tenant or ENV chain
   apps/api/oday_api/main.py:772                   -> `if body.job_type == "forecast"` sole guard
   shared/.../operator_domains.py:_collection()    -> f"{collection}.tenant.{sha256}"
   scripts/deploy_cloud_run_waji.sh:45-48          -> fail-closed guard present

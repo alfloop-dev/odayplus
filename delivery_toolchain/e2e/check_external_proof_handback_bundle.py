@@ -18,7 +18,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
-ARTIFACT_CHECKER_PATH = ROOT / "scripts/e2e/check_external_proof_handback_artifact.py"
+ARTIFACT_CHECKER_PATH = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_artifact.py"
 
 
 def load_artifact_checker():

@@ -495,10 +495,10 @@
         "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
         "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
         "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html",
-        "scripts/e2e/check_product_grade_ci_gates.py"
+        "delivery_toolchain/e2e/check_product_grade_ci_gates.py"
       ],
       "screen_contract_authority": {
-        "path": "scripts/e2e/check_product_grade_ci_gates.py",
+        "path": "delivery_toolchain/e2e/check_product_grade_ci_gates.py",
         "access": "read_only",
         "expected_screen_label_count": 40,
         "required_viewports": [
@@ -774,7 +774,7 @@
     "corrections_applied": [
       "section 2 dependency graph now matches the json for T41 static phase and for T50 depending on T40 T41 and T42",
       "T00 writable_paths now includes the orchestrator task brief path its own acceptance requires",
-      "T40 now names scripts/e2e/check_product_grade_ci_gates.py as read-only screen contract authority including the canonical label equivalence map",
+      "T40 now names delivery_toolchain/e2e/check_product_grade_ci_gates.py as read-only screen contract authority including the canonical label equivalence map",
       "T40 acceptance and GAP-06 now require all three enforced viewports 390 1024 and 1440",
       "T00 acceptance now requires writable path ceilings for the six update_existing tasks that declared none"
     ],

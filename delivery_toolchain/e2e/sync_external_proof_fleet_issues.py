@@ -81,27 +81,27 @@ def render_issue_body(entry: dict[str, Any]) -> str:
             "- Product Validation tracks intake status in `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`.",
             (
                 "- Generate a task-specific starter with "
-                f"`python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task {task_id} "
+                f"`python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task {task_id} "
                 "--release-sha-from-pr --output <handback.json>`."
             ),
-            "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
-            "- Run `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report` to see the current missing-evidence report and acceptance commands.",
-            "- `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete` is expected to fail until all #132-#138 handbacks and the bundle status are accepted.",
+            "- Run `python3 delivery_toolchain/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
+            "- Run `python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --report` to see the current missing-evidence report and acceptance commands.",
+            "- `python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --strict-complete` is expected to fail until all #132-#138 handbacks and the bundle status are accepted.",
             (
                 "- Run "
-                f"`python3 scripts/e2e/update_external_proof_handback_status_board.py --task {task_id} "
+                f"`python3 delivery_toolchain/e2e/update_external_proof_handback_status_board.py --task {task_id} "
                 "--status handback_submitted --handback <handback.json>` when Product Validation receives a handback."
             ),
-            "- Run `python3 scripts/e2e/check_external_proof_handback_status_board.py` after updating intake status.",
-            "- Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` before closing this issue so unaccepted handbacks keep open release-blocker issues.",
-            f'- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before accepting or closing this issue.',
-            f'- After all #132-#138 handbacks are submitted, Product Validation runs `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before release closeout.',
+            "- Run `python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py` after updating intake status.",
+            "- Run `python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees` before closing this issue so unaccepted handbacks keep open release-blocker issues.",
+            f'- Run `python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before accepting or closing this issue.',
+            f'- After all #132-#138 handbacks are submitted, Product Validation runs `python3 delivery_toolchain/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before release closeout.',
             "",
             "### Canonical handback commands",
             "```bash",
             handback_commands,
             "```",
-            "- Before go/no-go, Product Validation runs `python3 scripts/e2e/check_product_go_no_go.py` and confirms `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` still marks #132-#138 as pending external proof.",
+            "- Before go/no-go, Product Validation runs `python3 delivery_toolchain/e2e/check_product_go_no_go.py` and confirms `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` still marks #132-#138 as pending external proof.",
             "",
             f"Owner: `{entry['owner']}`",
             f"Reviewer: `{entry['reviewer']}`",
@@ -143,9 +143,9 @@ Task: `{task_id}`
 ### Handback flow
 ```bash
 {handback_commands}
-python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
-python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete
-python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
+python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --report
+python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --strict-complete
+python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees
 ```
 
 `--strict-complete` is expected to fail until every #132-#138 handback and the bundle status are accepted.

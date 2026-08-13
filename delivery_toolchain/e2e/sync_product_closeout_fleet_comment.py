@@ -21,7 +21,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_RELEASE_CLOSEOUT_QUEUE.json"
-ACTION_MATRIX_PATH = ROOT / "scripts/e2e/check_product_closeout_action_matrix.py"
+ACTION_MATRIX_PATH = ROOT / "delivery_toolchain/e2e/check_product_closeout_action_matrix.py"
 E2E_DIR = Path(__file__).resolve().parent
 if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
@@ -75,7 +75,7 @@ def render_comment(queue_payload: dict[str, Any], rows: list[dict[str, Any]], *,
                 "  ```bash",
                 (
                     "  PANTHEON_STATUS_ROOT=/home/lupin/oday-plus "
-                    f"python3 scripts/e2e/check_product_closeout_action.py --task {task_id} "
+                    f"python3 delivery_toolchain/e2e/check_product_closeout_action.py --task {task_id} "
                     f"--actor {actor} --action-type {action_type}"
                 ),
                 "  ```",
@@ -93,7 +93,7 @@ def render_comment(queue_payload: dict[str, Any], rows: list[dict[str, Any]], *,
         "Run the matrix before any lifecycle action:",
         "",
         "```bash",
-        "PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 scripts/e2e/check_product_closeout_action_matrix.py",
+        "PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/check_product_closeout_action_matrix.py",
         "```",
         "",
         "### Ready lanes",

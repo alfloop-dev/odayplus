@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from scripts.e2e.product_e2e_receipt import (
+from delivery_toolchain.e2e.product_e2e_receipt import (
     DELETED_SPEC_REFERENCES,
     E2E_SCENARIOS,
     EVIDENCE_COMMIT_ALLOWLIST,
@@ -31,7 +31,7 @@ from scripts.e2e.product_e2e_receipt import (
     validate_receipt_packet,
     verify_evidence_relationship,
 )
-from scripts.e2e.run_python_e2e_tests import run_python_tests
+from delivery_toolchain.e2e.run_python_e2e_tests import run_python_tests
 
 ROOT = Path(__file__).resolve().parents[2]
 

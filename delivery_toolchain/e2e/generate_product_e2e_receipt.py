@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.e2e.product_e2e_receipt import (
+from delivery_toolchain.e2e.product_e2e_receipt import (
     RAW_PLAYWRIGHT_PATH,
     RAW_PYTEST_PATH,
     RECEIPT_PATH,

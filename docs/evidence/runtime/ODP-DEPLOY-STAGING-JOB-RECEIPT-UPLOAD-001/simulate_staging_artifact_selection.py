@@ -72,7 +72,7 @@ RAW_GCLOUD_DUMPS = tuple(
     for kind in ("migration", "scheduler", "worker")
     for dump in ("job", "execution", "execution-list")
 )
-# Written by scripts/e2e/check_remote_staging_proof.py in Deploy Staging only.
+# Written by delivery_toolchain/e2e/check_remote_staging_proof.py in Deploy Staging only.
 STAGING_PROOF = (f".odp_data/remote-staging-proof/staging-{RUN_ID}.json",)
 DECOYS = (
     ".odp_data/deployment/api-env.json",

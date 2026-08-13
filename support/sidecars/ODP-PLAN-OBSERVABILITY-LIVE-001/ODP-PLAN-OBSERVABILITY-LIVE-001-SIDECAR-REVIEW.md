@@ -43,7 +43,7 @@ The immutable PR file list shows the following relevant layers:
 - alert authority and delivery adapters: `modules/notifications/`
 - monitoring specifications: `infra/monitoring/`
 - runbook and evidence: `docs/runbooks/`, `docs/evidence/`
-- deployment validation and evidence generation: `scripts/deployment/validate_cloud_run_live_deployment.py`, `scripts/e2e/generate_observability_evidence.py`
+- deployment validation and evidence generation: `scripts/deployment/validate_cloud_run_live_deployment.py`, `delivery_toolchain/e2e/generate_observability_evidence.py`
 - focused reliability and deployment tests: `tests/reliability/test_runtime_observability.py`, `tests/ops/test_cloud_run_live_deployment.py`
 
 The current parent branch ref has moved beyond the immutable PR head during later orchestration. Reviewers should use PR `#558`'s `headRefOid` (`f6c34497...`) and merge commit (`ddded7ed...`) for implementation provenance, not the mutable branch tip.
@@ -79,7 +79,7 @@ Focused repository checks are recorded in the task commit and handoff after exec
 Focused results on `2026-08-08`:
 
 - `/home/lupin/oday-plus-supervisor-live/.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` — passed, exit `0`; collect-only inventory confirms `85` selected tests.
-- `/home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check shared/observability tests/reliability scripts/deployment modules/notifications scripts/e2e/generate_observability_evidence.py` — `All checks passed!`
+- `/home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check shared/observability tests/reliability scripts/deployment modules/notifications delivery_toolchain/e2e/generate_observability_evidence.py` — `All checks passed!`
 - `git diff --check` — passed.
 - `jq` assertions for the durable `LOCAL_TEST_ONLY` receipt and PR `#558`'s historical 117-test E2E receipt — passed.
 
@@ -91,7 +91,7 @@ round. Every claim above was re-checked against the merged tree:
 - `git merge-base --is-ancestor f6c34497... origin/dev` and `... ddded7ed... origin/dev` — both still ancestors, exit `0`.
 - `gh pr view 558 --json number,state,headRefOid,mergeCommit,mergedAt,statusCheckRollup` — `MERGED` into `dev` at `2026-08-02T03:31:52Z`; head `f6c34497...`, merge commit `ddded7ed...`; `orchestrator`, `product`, `performance-gate`, `product-e2e-gate`, `task-review-gate` all `SUCCESS`.
 - `/home/lupin/oday-plus-supervisor-live/.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` — `85` tests, all passed, exit `0`.
-- `/home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check shared/observability tests/reliability scripts/deployment modules/notifications scripts/e2e/generate_observability_evidence.py` — `All checks passed!`
+- `/home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check shared/observability tests/reliability scripts/deployment modules/notifications delivery_toolchain/e2e/generate_observability_evidence.py` — `All checks passed!`
 - `git diff --check` — clean.
 - `jq` on `docs/evidence/watch_window_receipt.json` — still `LOCAL_TEST_ONLY` with `verified_points_count: 0`, empty series, zero provider proof hash, and nested `readback_verified: false`.
 - `docs/evidence/completion/ODP-PGAP-OBS-001/evidence.md` — on-call receipt still `status: FAILED`, `http_status: 0`.

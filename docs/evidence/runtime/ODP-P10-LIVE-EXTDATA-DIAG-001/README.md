@@ -54,7 +54,7 @@ Gate `worker` block: `job_id=06cb31de-f047-4a16-bc74-d97deb709a0e`,
 `worker_probe_provider_id=admin_boundary.official_dataset`.
 
 `_check_worker_and_audit` runs *before* `_check_source_data`
-(`scripts/e2e/check_live_e2e_gate.py`), so the two rows above describe the same
+(`delivery_toolchain/e2e/check_live_e2e_gate.py`), so the two rows above describe the same
 deploy, seconds apart: the probes that succeeded at 14:07 are precisely the runs
 the readback could not find at 14:08.
 
@@ -278,7 +278,7 @@ older rows. T11 should confirm it while it has database access.
 ## 7. T11 handoff — exact scope
 
 Hand to a task with write access to `.github/workflows/**`,
-`apps/api/oday_api/main.py`, `scripts/e2e/check_live_e2e_gate.py`, deployment
+`apps/api/oday_api/main.py`, `delivery_toolchain/e2e/check_live_e2e_gate.py`, deployment
 variables, and the principal-map secret. Items 1–2 alone turn `data:*` green;
 3–4 stop the class of defect from recurring silently.
 

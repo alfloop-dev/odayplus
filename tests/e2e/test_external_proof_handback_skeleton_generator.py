@@ -8,8 +8,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
-GENERATOR = ROOT / "scripts/e2e/generate_external_proof_handback_skeleton.py"
-CHECKER = ROOT / "scripts/e2e/check_external_proof_handback_artifact.py"
+GENERATOR = ROOT / "delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_artifact.py"
 EXAMPLE_SHA = "1111111111111111111111111111111111111111"
 
 TASK_GUIDANCE_TOKENS = {

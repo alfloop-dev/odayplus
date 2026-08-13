@@ -4,7 +4,7 @@ import importlib.util
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_external_proof_fleet_notifications.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_fleet_notifications.py"
 EXPECTED_SHA = "b54ac63b1d04c47597f1114e28962ce77ec5c952"
 
 
@@ -34,8 +34,8 @@ def queue_payload() -> dict:
                     'PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1',
                 ],
                 "handback_commands": [
-                    "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr --output <handback.json>",
-                    'python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"',
+                    "python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr --output <handback.json>",
+                    'python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"',
                 ],
                 "completion_rule": "Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.",
             }
@@ -60,11 +60,11 @@ Task: `ODP-MAP-STAGE-001`
 
 ### Handback flow
 ```bash
-python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr --output <handback.json>
-python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
-python3 scripts/e2e/check_external_proof_acceptance_readiness.py --strict-complete
-python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
+python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr --output <handback.json>
+python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --report
+python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --strict-complete
+python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees
 ```
 
 `--strict-complete` is expected to fail until every #132-#138 handback and the bundle status are accepted.
@@ -121,7 +121,7 @@ def test_validate_notifications_rejects_missing_required_evidence_or_command() -
         "generate_external_proof_handback_skeleton.py",
     )
     broken = broken.replace(
-        "python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report\n", ""
+        "python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --report\n", ""
     )
 
     errors = checker.validate_notifications(
@@ -134,7 +134,7 @@ def test_validate_notifications_rejects_missing_required_evidence_or_command() -
     )
     assert any("missing command fragment: PLAYWRIGHT_BASE_URL=" in error for error in errors)
     assert any(
-        "missing handback command fragment: python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task"
+        "missing handback command fragment: python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task"
         in error
         for error in errors
     )

@@ -142,7 +142,7 @@ in the ceiling. This is why Item 3 below cannot be completed in-ceiling as diagn
 requirement this packet previously dropped, restored here verbatim:
 
 > *"Hand to a task with write access to `.github/workflows/**`,
-> `apps/api/oday_api/main.py`, `scripts/e2e/check_live_e2e_gate.py`, deployment variables,
+> `apps/api/oday_api/main.py`, `delivery_toolchain/e2e/check_live_e2e_gate.py`, deployment variables,
 > and the principal-map secret. Items 1–2 alone turn `data:*` green; 3–4 stop the class of
 > defect from recurring silently."*
 
@@ -243,7 +243,7 @@ Item numbering matches T10 §7 so the two documents can be read side by side.
 #### Item 4 — Remove guessing behaviour from the E2E gate script
 **Track B · requires coordinator scope amendment · `scripts/**`**
 
-- In `scripts/e2e/check_live_e2e_gate.py:1315` (`_enqueue_body`), drop the fallback chain
+- In `delivery_toolchain/e2e/check_live_e2e_gate.py:1315` (`_enqueue_body`), drop the fallback chain
   (`ODP_SCHEDULED_INGESTION_TENANT_ID` / `ODP_TENANT_ID` / `"tenant-e2e"`).
 - Derive the probe payload tenant strictly from the authenticated identity the gate already
   holds, so the probe cannot write anywhere the same credential cannot read.
@@ -259,7 +259,7 @@ Item numbering matches T10 §7 so the two documents can be read side by side.
 | 2 | `.github/workflows/deploy-{dev,staging}.yml`, `scripts/deploy_cloud_run_waji.sh` | B | No — outside globs **and** in `forbidden_paths` |
 | 3 | `apps/api/oday_api/main.py` | B | No — only `app/routes/external_data.py` is writable |
 | 3′ | `apps/api/app/routes/external_data.py` (partial hardening) | A | Yes |
-| 4 | `scripts/e2e/check_live_e2e_gate.py` | B | No — outside globs |
+| 4 | `delivery_toolchain/e2e/check_live_e2e_gate.py` | B | No — outside globs |
 | Tests | `tests/**` focused on the diagnosed path | A | Yes |
 | Evidence | `docs/evidence/runtime/ODP-P10-LIVE-EXTDATA-REMEDIATE-001/**` | A | Yes |
 
@@ -307,7 +307,7 @@ there.
 | **D5′** | `apps/api/app/routes/external_data.py` (**Track A**) | Application layer | `trigger_ingestion_run` tenant derivation hardened | Partial hardening reported as closing Item 3 |
 | **D6** | Worker handler (`apps/worker/oday_worker/**`) (**Track A**) | Execution layer | `IngestionRunRecord` written to the authenticated partition | Writes landing in `tenant-dev` or an unscoped partition |
 | **D7** | Workflow manifests (`deploy-dev.yml`, `deploy-staging.yml`) (**Track B — amendment required**) | CI/CD infrastructure | `\|\| 'tenant-dev'` fallback removed **after** D11 lands | Committed under T11's current scope; or landed before D11, breaking deploys |
-| **D8** | Gate script (`scripts/e2e/check_live_e2e_gate.py`) (**Track B — amendment required**) | Validation infrastructure | `_enqueue_body` derives tenant from the auth principal | Committed under T11's current scope; or landed before D5 |
+| **D8** | Gate script (`delivery_toolchain/e2e/check_live_e2e_gate.py`) (**Track B — amendment required**) | Validation infrastructure | `_enqueue_body` derives tenant from the auth principal | Committed under T11's current scope; or landed before D5 |
 | **D9** | Downstream task T30 (`ODP-P10-DEV-REDEPLOY-VERIFY-001`, `blocked`) | Fleet dispatch | T30 unblocked only after T11 completes and merges | T30 triggered before a T11 candidate deployment |
 | **D10** | Independent reviewer (`Antigravity6`) | Quality gate | Exact-head review and evidence validation pass | Merging without exact-head approval |
 | **D11** | **Coordinator scope amendment** for `.github/workflows/**`, `apps/api/oday_api/main.py`, `scripts/**`, deployment variables, principal-map secret | T11 dispatch precondition | T11 `writable_paths` amended (or a separately-scoped task created) so Items 1/2/3/4 have a lawful home | T11 dispatched to execute Items 1–4 with the current 7-glob ceiling unchanged |
@@ -472,7 +472,7 @@ Its most consequential finding is not a checklist item but a scope contradiction
 
 > **T11's declared writable ceiling excludes three of the four surfaces its own acceptance
 > criteria require.** T10 §7 said so explicitly — *"hand to a task with write access to
-> `.github/workflows/**`, `apps/api/oday_api/main.py`, `scripts/e2e/check_live_e2e_gate.py`,
+> `.github/workflows/**`, `apps/api/oday_api/main.py`, `delivery_toolchain/e2e/check_live_e2e_gate.py`,
 > deployment variables, and the principal-map secret"* — and the two items T10 identifies as
 > sufficient to turn `data:*` green (Items 1 and 2) are both outside the ceiling, with
 > deployment workflows named in `forbidden_paths`.

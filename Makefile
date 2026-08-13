@@ -80,7 +80,7 @@ node-check:
 	fi
 
 release-gate-registry:
-	python3 scripts/e2e/check_release_gate_registry.py
+	python3 delivery_toolchain/e2e/check_release_gate_registry.py
 
 # Dispatch preflight for Control Pack 3.1: every task `depends_on` entry must
 # resolve through the live board or the official archive. Supervisor state lives
@@ -98,11 +98,11 @@ task-dependency-check:
 		--archive-dir "$(ODP_SUPERVISOR_ARCHIVE_DIR)"
 
 product-e2e-gate: release-gate-registry
-	python3 scripts/e2e/check_product_release_gate.py --dev-merge
-	scripts/e2e/run_product_e2e.sh
+	python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
+	delivery_toolchain/e2e/run_product_e2e.sh
 
 product-release-gate:
-	python3 scripts/e2e/check_product_release_gate.py --require-go $(if $(EXPECTED_SHA),--expected-sha $(EXPECTED_SHA))
+	python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go $(if $(EXPECTED_SHA),--expected-sha $(EXPECTED_SHA))
 
 ci: bootstrap boundary-check lint security test smoke node-check
 

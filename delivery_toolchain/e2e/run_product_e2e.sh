@@ -74,7 +74,7 @@ done < <(
 "${COMPOSE[@]}" down --remove-orphans --volumes
 "${COMPOSE[@]}" up -d --build
 
-python3 scripts/e2e/seed_product_e2e_data.py \
+python3 delivery_toolchain/e2e/seed_product_e2e_data.py \
   --wait \
   --api-url "http://127.0.0.1:${API_PORT}" \
   --source-stub-url "http://127.0.0.1:${SOURCE_STUB_PORT}" \
@@ -119,7 +119,7 @@ PLAYWRIGHT_JSON_OUTPUT_NAME="$PLAYWRIGHT_PAYLOAD" \
 playwright_status=$?
 PLAYWRIGHT_ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-python3 scripts/e2e/record_playwright_results.py \
+python3 delivery_toolchain/e2e/record_playwright_results.py \
   --payload "$PLAYWRIGHT_PAYLOAD" \
   --output "$PLAYWRIGHT_ARTIFACT" \
   --source-sha "$TESTED_SOURCE_SHA" \
@@ -134,10 +134,10 @@ python3 scripts/e2e/record_playwright_results.py \
   --retries 0
 playwright_record_status=$?
 
-"${PYTHON_COMMAND[@]}" scripts/e2e/run_python_e2e_tests.py
+"${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/run_python_e2e_tests.py
 pytest_status=$?
 
-"${PYTHON_COMMAND[@]}" scripts/e2e/generate_product_e2e_receipt.py
+"${PYTHON_COMMAND[@]}" delivery_toolchain/e2e/generate_product_e2e_receipt.py
 receipt_status=$?
 
 "${COMPOSE[@]}" ps >"${DIAGNOSTICS_DIR}/compose-ps.txt"

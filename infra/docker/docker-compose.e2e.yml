@@ -69,7 +69,7 @@ services:
 
   worker:
     image: odayplus/api:e2e
-    command: ["python", "scripts/e2e/worker_heartbeat.py", "--interval", "15"]
+    command: ["python", "delivery_toolchain/e2e/worker_heartbeat.py", "--interval", "15"]
     environment:
       ODP_ENV: e2e
       ODP_PERSISTENCE: durable

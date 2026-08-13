@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SYNCER = ROOT / "scripts/e2e/sync_external_proof_escalation_comments.py"
+SYNCER = ROOT / "delivery_toolchain/e2e/sync_external_proof_escalation_comments.py"
 EXPECTED_SHA = "8629bf521c17b2c473a90dec49b43ba8737d09aa"
 
 
@@ -26,8 +26,8 @@ def queue_entry() -> dict:
             "provider attribution and terms URL visible",
         ],
         "handback_commands": [
-            "python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr --output <handback.json>",
-            'python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"',
+            "python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr --output <handback.json>",
+            'python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"',
         ],
         "fleet_routing": {
             "escalation": "Platform/Ops owns staging tile endpoint configuration; Product Validation reviews remote smoke and fallback proof before closure."

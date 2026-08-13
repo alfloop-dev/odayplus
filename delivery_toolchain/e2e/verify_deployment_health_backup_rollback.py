@@ -81,7 +81,7 @@ def main() -> int:
         seed = run(
             [
                 sys.executable,
-                "scripts/e2e/seed_product_e2e_data.py",
+                "delivery_toolchain/e2e/seed_product_e2e_data.py",
                 "--wait",
                 "--api-url",
                 api_url,

@@ -39,7 +39,7 @@ Addressed all 3 review feedback items from Claude2:
    - Wrapped `scheduler.run_once()` in a `try...except SchedulerTenantConfigurationError` block in `scripts/deployment/cloud_run_job_entrypoint.py` to emit a structured `failed` receipt and exit `EXIT_FAILED` instead of letting an unhandled exception escape.
    - Added `ODP_SCHEDULED_INGESTION_TENANT_ID` and `ODP_TENANT_ID` to `API_ENV_FILE` serializer in `scripts/deploy_cloud_run_waji.sh` and workflow env blocks in `.github/workflows/deploy-dev.yml` and `.github/workflows/deploy-staging.yml`.
 2. **`check_live_e2e_gate._enqueue_body` tenant context**:
-   - Updated probe job payload in `scripts/e2e/check_live_e2e_gate.py` to include `tenant_id` resolved from `config.operator_tenant` or environment (`ODP_SCHEDULED_INGESTION_TENANT_ID`/`ODP_TENANT_ID`), ensuring probe jobs execute successfully and persist ingestion runs.
+   - Updated probe job payload in `delivery_toolchain/e2e/check_live_e2e_gate.py` to include `tenant_id` resolved from `config.operator_tenant` or environment (`ODP_SCHEDULED_INGESTION_TENANT_ID`/`ODP_TENANT_ID`), ensuring probe jobs execute successfully and persist ingestion runs.
 3. **Untenanted scheduler test updates**:
    - Updated `tests/ops/test_cloud_run_job_entrypoint.py`, `tests/reliability/test_runtime_observability.py`, `tests/reliability/test_cross_flow_gate.py`, and `tests/e2e/test_live_e2e_gate.py` to construct `ODayScheduler` / `JobRecord` with explicit `tenant_id` or set `ODP_SCHEDULED_INGESTION_TENANT_ID` in `monkeypatch`.
 4. **Base rebase**:

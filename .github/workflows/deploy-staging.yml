@@ -145,7 +145,7 @@ jobs:
           ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
           ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
         run: |
-          python3 scripts/e2e/check_remote_staging_proof.py \
+          python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
             --expected-sha "$ODAY_RELEASE_SHA" \
             --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
             --output ".odp_data/remote-staging-proof/staging-${GITHUB_RUN_ID}.json"
@@ -171,8 +171,8 @@ jobs:
           # secret selectors verbatim and must never leave the runner. Every file
           # named below is written by
           # `scripts/deployment/validate_cloud_run_live_deployment.py`,
-          # `scripts/e2e/check_live_e2e_gate.py`, or
-          # `scripts/e2e/check_remote_staging_proof.py`, and carries redacted
+          # `delivery_toolchain/e2e/check_live_e2e_gate.py`, or
+          # `delivery_toolchain/e2e/check_remote_staging_proof.py`, and carries redacted
           # check results only. The staging proof keeps the run-scoped name the
           # checker step above writes. `tests/ops/test_deploy_workflow_contract.py`
           # holds both this list and Deploy Dev's to the receipts those scripts

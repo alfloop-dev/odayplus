@@ -105,7 +105,7 @@ was open at the top, so any future JSON written there would ship unreviewed.
 
 **The contents are redacted by construction.** Each allowlisted file is
 written by `scripts/deployment/validate_cloud_run_live_deployment.py` (or
-`scripts/e2e/check_live_e2e_gate.py`) and carries `secret_values_redacted:
+`delivery_toolchain/e2e/check_live_e2e_gate.py`) and carries `secret_values_redacted:
 true`. A receipt holds the job kind, job name, execution name, selected
 provider IDs, required and bound secret *env-var names*, and the check list —
 never a bound value. `_secret_binding_proof` reports *how* a binding is

@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run E2E deployment health, backup, restore, and rollback proof
-        run: python3 scripts/e2e/verify_deployment_health_backup_rollback.py
+        run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
 
   deploy:
     needs: e2e-operational-evidence
@@ -175,7 +175,7 @@ jobs:
           # block and secret selectors verbatim and must never leave the runner. Every
           # file named below is written by
           # `scripts/deployment/validate_cloud_run_live_deployment.py` (or
-          # `scripts/e2e/check_live_e2e_gate.py`) and carries
+          # `delivery_toolchain/e2e/check_live_e2e_gate.py`) and carries
           # `secret_values_redacted: true`: check names, outcomes, and env-var *names*
           # only, never a bound value. `tests/ops/test_deploy_workflow_contract.py`
           # holds this list to the receipts the deploy script actually produces.

@@ -264,7 +264,7 @@ def validate_queue(payload: dict[str, Any]) -> list[str]:
     )
     if required_pr_command not in preflight:
         errors.append(f"global_preflight must verify {release_pr_label(QUEUE_PATH)} head/checks")
-    if "python3 scripts/e2e/check_product_release_gate.py" not in preflight:
+    if "python3 delivery_toolchain/e2e/check_product_release_gate.py" not in preflight:
         errors.append("global_preflight must run the product release gate")
 
     text = json.dumps(payload, ensure_ascii=False)

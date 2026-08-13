@@ -594,7 +594,7 @@
       "expires_at": null,
       "tool_name": "Bash",
       "risk_class": "needs_review",
-      "suggested_rule": "Bash(docker compose -p oday-plus-e2e -f infra/docker/docker-compose.e2e.yml down --remove-orphans --volumes 2>&1 | tail -2 && docker compose -p oday-plus-e2e -f infra/docker/docker-compose.e2e.yml up -d --build 2>&1 | tail -3 && set -a && source .env.e2e.example && set +a && python3 scripts/e2e/seed_product_e2e_data.py --wait --api-url \"http://127.0.0.1:${ODP_E2E_API_PORT:-8099}\" --source-stub-url \"http://127.0.0.1:${ODP_E2E_SOURCE_STUB_PORT:-8077}\" --web-url \"http://127.0.0.1:${ODP_E2E_WEB_PORT:-3100}\" --diagnostics-dir .odp_data/e2e-diagnostics 2>&1 | tail -3)",
+      "suggested_rule": "Bash(docker compose -p oday-plus-e2e -f infra/docker/docker-compose.e2e.yml down --remove-orphans --volumes 2>&1 | tail -2 && docker compose -p oday-plus-e2e -f infra/docker/docker-compose.e2e.yml up -d --build 2>&1 | tail -3 && set -a && source .env.e2e.example && set +a && python3 delivery_toolchain/e2e/seed_product_e2e_data.py --wait --api-url \"http://127.0.0.1:${ODP_E2E_API_PORT:-8099}\" --source-stub-url \"http://127.0.0.1:${ODP_E2E_SOURCE_STUB_PORT:-8077}\" --web-url \"http://127.0.0.1:${ODP_E2E_WEB_PORT:-3100}\" --diagnostics-dir .odp_data/e2e-diagnostics 2>&1 | tail -3)",
       "tool_input_signature": "1c61e36b51e08154b96c61ef5d4d02bdfede25d905932b83d3546585034708d7",
       "tool_input_preview": "docker compose -p oday-plus-e2e -f infra/docker/docker-compose.e2e.yml down --remove-orphans --volumes 2>&1 | tail -2 && docker compose -p oday-plus-e2e -f infra/docker/docker-compose.e2e.yml up -d --build 2>&1 | tail -3",
       "evidence_ref": ".orchestrator/evidence/apr_20260727t195431z_d557cd32-request.json",

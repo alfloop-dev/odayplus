@@ -21,7 +21,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
-SCAN_PATH = ROOT / "scripts/e2e/check_external_proof_issue_handback_scan.py"
+SCAN_PATH = ROOT / "delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py"
 
 E2E_DIR = Path(__file__).resolve().parent
 if str(E2E_DIR) not in sys.path:
@@ -63,7 +63,7 @@ Candidate handback comments after pickup: `{len(scan_row.get('candidate_handback
 ### Handback commands
 ```bash
 {handback_commands}
-python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
+python3 delivery_toolchain/e2e/check_external_proof_acceptance_readiness.py --report
 ```
 
 ### Escalation owner
@@ -72,7 +72,7 @@ python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report
 Product Validation cannot accept or close this blocker until the handback artifact passes:
 
 ```bash
-python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"
+python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"
 ```
 """
 

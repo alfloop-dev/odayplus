@@ -593,7 +593,7 @@ should assert a `danger` trigger is retrievable via `get_inbox(severity="danger"
 `grep` across the tree at `2ab1ad64` finds callers of the five helpers only in
 `service.py` (definitions) and `tests/reliability/test_notifications.py`.
 `NotificationService(...)` is constructed outside the module in exactly one
-non-test place — `scripts/e2e/generate_observability_evidence.py` L75 — and
+non-test place — `delivery_toolchain/e2e/generate_observability_evidence.py` L75 — and
 `get_notification_adapter` in two scripts
 (`generate_observability_evidence.py` L74, `validate_cloud_run_live_deployment.py` L382/L646).
 
@@ -1598,7 +1598,7 @@ inbox screen, and it will be empty of everything this capability delivers.
 #### F13 (N, promoted from F3) — the one production consumer discards the outcome
 
 Rounds 1–4 stated that `NotificationService` is constructed "outside the module
-in exactly one non-test place — `scripts/e2e/generate_observability_evidence.py`
+in exactly one non-test place — `delivery_toolchain/e2e/generate_observability_evidence.py`
 L75". **That is incomplete**, and the missing site is the one that matters:
 
 ```python
@@ -1838,7 +1838,7 @@ git grep -l "ODP-CAP-NOTIFICATION-DELIVERY-001-SIDECAR-REVIEW" origin/dev
 | 5b | in-app adapter/method grep | only `modules/notifications/` + `tests/reliability/test_notifications.py` |
 | 5c | `from modules.notifications` in `apps/api/` | **no hits** — the API layer never imports the module |
 | 5d | `shell/notifications` routes | L328 GET inbox · L352/374 preferences · **L403 POST acknowledgement** — a real inbox API over a *different* store (**corrects round 4's F9 wording**) |
-| 6 | production service consumers | `scripts/e2e/generate_observability_evidence.py:75` **and** `apps/worker/assisted_listing_intake/worker.py:159` — the second was missed by rounds 1–4 (**F13**) |
+| 6 | production service consumers | `delivery_toolchain/e2e/generate_observability_evidence.py:75` **and** `apps/worker/assisted_listing_intake/worker.py:159` — the second was missed by rounds 1–4 (**F13**) |
 | 7 | archived-id guard | `scripts/ai_status.py:4608` — absorb path mechanically closed |
 | 8a | parent evidence dir on `dev` | 3 files, none mentioning F3/F6/F7/F9/F10 |
 | 8b | `git grep -l <this packet> origin/dev` | **no files** — never landed |

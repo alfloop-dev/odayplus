@@ -80,11 +80,11 @@ uv run pytest tests/e2e/test_external_source_product_e2e.py -q
 Result: passed, `9 passed`.
 
 ```bash
-python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-004
-python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-005
-python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-006
-python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-007
-python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-008
+python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-004
+python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-005
+python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-006
+python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-007
+python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-008
 ```
 
 Result: passed. Each command emitted the expected fleet execution brief.

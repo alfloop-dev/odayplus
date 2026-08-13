@@ -195,7 +195,7 @@ Triggers: see `rollback_triggers.yaml` (§5.1). On any trigger:
 ```bash
 python3 -m pytest tests/ops/test_assisted_listing_intake_release.py -q
 npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts
-python3 scripts/e2e/check_product_release_gate.py
-python3 scripts/e2e/check_product_grade_ci_gates.py --require-go --report
+python3 delivery_toolchain/e2e/check_product_release_gate.py
+python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --require-go --report
 git diff --check origin/dev...HEAD
 ```

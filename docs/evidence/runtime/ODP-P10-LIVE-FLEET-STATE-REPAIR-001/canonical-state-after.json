@@ -282,7 +282,7 @@
         "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
         "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
         "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/extracted/Oday Plus Operator Console.dc.html",
-        "scripts/e2e/check_product_grade_ci_gates.py"
+        "delivery_toolchain/e2e/check_product_grade_ci_gates.py"
       ],
       "target_context_paths": [
         "docs/evidence/PACKAGE_10_LIVE_COMPLETION_GAP_ANALYSIS_2026-08-09.md",
@@ -306,7 +306,7 @@
         "docs/evidence/PACKAGE_10_*"
       ],
       "acceptance_count": 6,
-      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. Dependency: ODP-P10-DEV-REDEPLOY-VERIFY-001 (blocked). No promoted Package 10 release exists to audit: run 31316767710 was rolled back by the fail-closed gate, so public traffic still serves rollback release 8ec12c02. Screen-contract authority is scripts/e2e/check_product_grade_ci_gates.py, read-only: EXPECTED_SCREEN_LABEL_COUNT=40, REQUIRED_VISUAL_VIEWPORTS 390/1024/1440, and CANONICAL_LABEL_IMPLEMENTATIONS, which records deliberate canonical deviations from the archived HTML; a strict label diff that ignores it produces false mismatches and must not open a remediation task. Resume when: T30 is done and a Package 10 release is actually promoted and retained; then audit all 40 contracts at all three viewports on that exact SHA.",
+      "next": "Gate authority: Deploy Dev run 31316767710 at 9c95ecc3e1f2d0885bb4078070a116e852487f69, live-e2e-gate generated 2026-08-09T14:07:16Z, correlation corr-live-e2e-9c95ecc3e1f2-1786284436, ok=false 43/50, blocking_dependencies=[external-data, mlflow]; identical 7-blocker set to the pack anchor 4d89bea6. Deploy Dev run 31319450627 at 5baa0931 was in flight at repair time. Dependency: ODP-P10-DEV-REDEPLOY-VERIFY-001 (blocked). No promoted Package 10 release exists to audit: run 31316767710 was rolled back by the fail-closed gate, so public traffic still serves rollback release 8ec12c02. Screen-contract authority is delivery_toolchain/e2e/check_product_grade_ci_gates.py, read-only: EXPECTED_SCREEN_LABEL_COUNT=40, REQUIRED_VISUAL_VIEWPORTS 390/1024/1440, and CANONICAL_LABEL_IMPLEMENTATIONS, which records deliberate canonical deviations from the archived HTML; a strict label diff that ignores it produces false mismatches and must not open a remediation task. Resume when: T30 is done and a Package 10 release is actually promoted and retained; then audit all 40 contracts at all three viewports on that exact SHA.",
       "last_update": "2026-08-09T15:07:36Z"
     },
     {

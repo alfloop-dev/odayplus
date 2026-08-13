@@ -730,7 +730,7 @@
       ],
       "execution_commands": [
         "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
-        "export ODP_STAGING_DEPLOY_URL=\"https://<staging-web-host>\"\nexport ODP_STAGING_API_URL=\"https://<staging-api-host>\"\nexport ODP_STAGING_SECRET_OWNER=\"<team-or-person>\"\npython3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-001\""
+        "export ODP_STAGING_DEPLOY_URL=\"https://<staging-web-host>\"\nexport ODP_STAGING_API_URL=\"https://<staging-api-host>\"\nexport ODP_STAGING_SECRET_OWNER=\"<team-or-person>\"\npython3 delivery_toolchain/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-001\""
       ],
       "blocking_dependencies": [
         "GitHub staging environment variables/secrets are configured outside the repository",
@@ -770,8 +770,8 @@
       "execution_commands": [
         "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
         "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" \\\nODP_API_BASE_URL=\"$ODP_STAGING_API_URL\" \\\nnpx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000",
-        "python3 scripts/e2e/verify_deployment_health_backup_rollback.py \\\n  --correlation-id \"corr-odp-pv-stage-002\"",
-        "python3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-002-version\""
+        "python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py \\\n  --correlation-id \"corr-odp-pv-stage-002\"",
+        "python3 delivery_toolchain/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-002-version\""
       ],
       "blocking_dependencies": [
         "ODP-PV-STAGE-001 has passed against the same staging target",

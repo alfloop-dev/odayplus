@@ -11,7 +11,7 @@ It is deliberately complementary to the two gates that already exist:
 * ``scripts/deployment/validate_cloud_run_live_deployment.py`` proves the
   *deployment topology* (preflight config, Cloud Run job receipts, candidate
   revision smoke);
-* ``scripts/e2e/check_live_production_data.py`` proves the *data plane* by
+* ``delivery_toolchain/e2e/check_live_production_data.py`` proves the *data plane* by
   reading PostgreSQL directly and reconciling it against a commit-bound
   evidence manifest.
 
@@ -50,7 +50,7 @@ from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT = ROOT / ".odp_data" / "live-e2e-gate" / "live-e2e-gate-report.json"
-LIVE_DATA_GATE = ROOT / "scripts" / "e2e" / "check_live_production_data.py"
+LIVE_DATA_GATE = ROOT / "delivery_toolchain" / "e2e" / "check_live_production_data.py"
 
 API_URL_ENV = "ODP_LIVE_E2E_API_URL"
 WEB_URL_ENV = "ODP_LIVE_E2E_WEB_URL"

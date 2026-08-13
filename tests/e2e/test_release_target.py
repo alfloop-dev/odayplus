@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.e2e._release_target import (
+from delivery_toolchain.e2e._release_target import (
     release_pr_head_command,
     release_pr_label,
     release_pr_number,

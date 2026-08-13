@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
-CHECKER = ROOT / "scripts/e2e/check_external_proof_closeout_queue.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_external_proof_closeout_queue.py"
 
 
 def test_external_proof_closeout_queue_is_validated_by_checker() -> None:

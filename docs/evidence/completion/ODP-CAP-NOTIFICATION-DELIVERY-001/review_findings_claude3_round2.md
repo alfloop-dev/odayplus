@@ -67,7 +67,7 @@ The deliberate behaviour change flagged in the response — an unknown
 `NOTIFICATION_ADAPTER_TYPE` now always raises instead of being ignored when
 `require_oncall` was true — is the correct fail-closed reading and has no
 callers at risk: the only two non-test callers
-(`scripts/e2e/generate_observability_evidence.py`,
+(`delivery_toolchain/e2e/generate_observability_evidence.py`,
 `scripts/deployment/validate_cloud_run_live_deployment.py:646`) never set
 `NOTIFICATION_ADAPTER_TYPE`, and the latter's `get_notification_adapter(endpoint_url="")`
 fail-closed assertion still raises `ValueError` as it expects.

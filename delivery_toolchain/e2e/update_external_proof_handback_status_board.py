@@ -18,8 +18,8 @@ ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
 STATUS_BOARD_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
-ARTIFACT_CHECKER_PATH = ROOT / "scripts/e2e/check_external_proof_handback_artifact.py"
-STATUS_CHECKER_PATH = ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
+ARTIFACT_CHECKER_PATH = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_artifact.py"
+STATUS_CHECKER_PATH = ROOT / "delivery_toolchain/e2e/check_external_proof_handback_status_board.py"
 E2E_DIR = Path(__file__).resolve().parent
 if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))

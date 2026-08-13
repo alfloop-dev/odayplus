@@ -86,7 +86,7 @@ RTM coverage rows；它修正的是原 ledger 把技術比較器與真實管理�
 
 - Scope: 建立 Gate 0–6 machine-readable registry、schema、owner、日期、
   evidence URI、exact release SHA 與 fail-closed validator。
-- Writable: `docs/evidence/**`, `scripts/e2e/**`, `tests/e2e/**`.
+- Writable: `docs/evidence/**`, `delivery_toolchain/e2e/**`, `tests/e2e/**`.
 - Acceptance:
   registry 可驗證每個 Gate；缺 evidence、owner、SHA、日期或未知狀態時
   validator 非零退出；現況不得被誤判為全通過。
@@ -95,7 +95,7 @@ RTM coverage rows；它修正的是原 ledger 把技術比較器與真實管理�
 
 - Scope: 移除五個已刪除 spec 的 stale acceptance references，將 release gate
   由 static string presence 改成 executable scenario/result validation。
-- Writable: `tests/e2e/**`, `scripts/e2e/**`, acceptance evidence docs.
+- Writable: `tests/e2e/**`, `delivery_toolchain/e2e/**`, acceptance evidence docs.
 - Acceptance:
   不引用不存在檔案；16 個 canonical spec／107 tests inventory 一致；
   缺 execution receipt 時 release gate fail closed。
