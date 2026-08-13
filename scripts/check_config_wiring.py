@@ -33,6 +33,7 @@ SOURCE_SUFFIXES = (".py", ".sh")
 DATA_CONTAINERS = frozenset(
     {
         "agents",
+        "account_pools",
         "providers",
         "reviewers",
         "owner_fallbacks",

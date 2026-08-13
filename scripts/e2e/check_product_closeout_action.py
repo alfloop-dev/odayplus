@@ -4,7 +4,7 @@
 The closeout queue and pickup board say who should do which action. This script
 checks one intended action before an owner/reviewer/Human-Ops command is run:
 queue routing, live ai-status state, evidence refs, allowed command text, and
-PR #82 attached checks.
+the manifest-selected release PR's attached checks.
 """
 
 from __future__ import annotations
@@ -77,12 +77,7 @@ def load_release_pr_payload(
     return json.loads(raw)
 
 
-def load_pr82_payload(path: Path | None, *, skip_live: bool) -> dict[str, Any] | None:
-    """Compatibility wrapper; the queue manifest selects the release PR."""
-    return load_release_pr_payload(path, skip_live=skip_live)
-
-
-def validate_pr82(payload: dict[str, Any] | None, *, queue_path: Path = QUEUE_PATH) -> list[str]:
+def validate_release_pr(payload: dict[str, Any] | None, *, queue_path: Path = QUEUE_PATH) -> list[str]:
     if payload is None:
         return []
     errors: list[str] = []
@@ -183,7 +178,7 @@ def validate_closeout_action(
         if action_type != "go_no_go" and "scripts/ai_status.py" not in allowed_text:
             errors.append(f"{task_id} closeout action must use scripts/ai_status.py")
 
-    errors.extend(validate_pr82(pr_payload, queue_path=queue_path))
+    errors.extend(validate_release_pr(pr_payload, queue_path=queue_path))
     return errors
 
 
@@ -199,8 +194,8 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_STATUS_ROOT / "ai-status.json",
         help="ai-status.json path; defaults to PANTHEON_STATUS_ROOT/ai-status.json or repo ai-status.json",
     )
-    parser.add_argument("--pr-json", type=Path, help="Fixture PR #82 JSON payload for deterministic tests")
-    parser.add_argument("--skip-pr-check", action="store_true", help="skip live PR #82 validation")
+    parser.add_argument("--pr-json", type=Path, help="Fixture release PR JSON payload for deterministic tests")
+    parser.add_argument("--skip-pr-check", action="store_true", help="skip live release PR validation")
     return parser.parse_args()
 
 

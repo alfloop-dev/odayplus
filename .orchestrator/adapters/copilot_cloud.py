@@ -5,7 +5,6 @@ import re
 from pathlib import Path
 
 from common import (
-    command_exists,
     config_path,
     delivery_runtime_env,
     new_runtime_id,
@@ -15,14 +14,18 @@ from common import (
     spawn_background_process,
     worker_runtime_paths,
 )
+from provider_runtime import configured_provider_binary, github_auth_token
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
 
 def _configured_gh_cli(config: dict | None = None) -> str | None:
-    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
-    runtime = provider.get("cloud", {})
-    return command_exists(runtime.get("cli") or "gh")
+    return configured_provider_binary(
+        config,
+        provider_id="copilot",
+        section="cloud",
+        default="gh",
+    )
 
 
 def _parse_version(text: str) -> tuple[int, ...]:
@@ -30,14 +33,6 @@ def _parse_version(text: str) -> tuple[int, ...]:
     if not match:
         return ()
     return tuple(int(part) for part in match.groups())
-
-
-def _gh_auth_token(binary: str | None) -> str | None:
-    if not binary:
-        return None
-    result = run_command([binary, "auth", "token"])
-    token = (result.stdout or "").strip()
-    return token or None
 
 
 def _repo_slug(root: Path) -> str | None:
@@ -80,7 +75,7 @@ class CopilotCloudAdapter(BaseAdapter):
                 host="GitHub CLI coding agent",
                 notes=f"`gh` is installed but too old for cloud agent support ({'.'.join(map(str, version))}).",
             )
-        supported = bool(_gh_auth_token(gh))
+        supported = bool(github_auth_token(gh))
         return DeliveryCapability(
             adapter=self.name,
             supported=supported,

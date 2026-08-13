@@ -59,6 +59,7 @@ def render_issue_body(entry: dict[str, Any]) -> str:
     routing = entry["fleet_routing"]
     required_evidence = "\n".join(f"- [ ] {item}" for item in entry["required_evidence"])
     allowed_commands = "\n\n".join(shell_block(str(command)) for command in entry["allowed_commands"])
+    handback_commands = "\n".join(str(command) for command in entry["handback_commands"])
     evidence_refs = "\n".join(f"- `{ref}`" for ref in entry["evidence_refs"])
 
     return "\n".join(
@@ -81,7 +82,7 @@ def render_issue_body(entry: dict[str, Any]) -> str:
             (
                 "- Generate a task-specific starter with "
                 f"`python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task {task_id} "
-                "--release-sha-from-pr82 --output <handback.json>`."
+                "--release-sha-from-pr --output <handback.json>`."
             ),
             "- Run `python3 scripts/e2e/check_external_proof_handback_template.py` before requesting Product Validation acceptance.",
             "- Run `python3 scripts/e2e/check_external_proof_acceptance_readiness.py --report` to see the current missing-evidence report and acceptance commands.",
@@ -95,6 +96,11 @@ def render_issue_body(entry: dict[str, Any]) -> str:
             "- Run `python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees` before closing this issue so unaccepted handbacks keep open release-blocker issues.",
             f'- Run `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before accepting or closing this issue.',
             f'- After all #132-#138 handbacks are submitted, Product Validation runs `python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$({release_pr_head_command(QUEUE_PATH)})"` before release closeout.',
+            "",
+            "### Canonical handback commands",
+            "```bash",
+            handback_commands,
+            "```",
             "- Before go/no-go, Product Validation runs `python3 scripts/e2e/check_product_go_no_go.py` and confirms `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` still marks #132-#138 as pending external proof.",
             "",
             f"Owner: `{entry['owner']}`",

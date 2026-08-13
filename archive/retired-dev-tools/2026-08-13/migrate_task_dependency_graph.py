@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migrate dangling task dependency graph entries in ai-status.json.
+"""Archived one-shot dangling-dependency migration.
 
 Control Pack ``ODP-PLAN-EXECUTION-CONTROL-PACK-001`` and
 ``check_task_dependency_resolvability.py`` require every task dependency to
@@ -196,4 +196,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

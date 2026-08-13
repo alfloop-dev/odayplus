@@ -6,7 +6,7 @@ import os
 from collections.abc import Iterable
 from typing import Any
 
-from common import agent_config_for
+from common import agent_config_for, command_exists, run_command
 
 
 def provider_key(
@@ -60,3 +60,25 @@ def inbox_fallback_enabled(
     provider_id: str | None = None,
 ) -> bool:
     return bool(provider_settings(config, default=default, provider_id=provider_id).get("allow_inbox_fallback", True))
+
+
+def configured_provider_binary(
+    config: dict[str, Any] | None,
+    *,
+    provider_id: str,
+    section: str,
+    default: str,
+) -> str | None:
+    """Resolve an executable from one provider configuration section."""
+    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {})
+    runtime = provider.get(section, {}) or {}
+    return command_exists(runtime.get("cli") or default)
+
+
+def github_auth_token(binary: str | None) -> str | None:
+    """Return the token exposed by an authenticated GitHub CLI."""
+    if not binary:
+        return None
+    result = run_command([binary, "auth", "token"])
+    token = (result.stdout or "").strip()
+    return token or None

@@ -382,7 +382,7 @@ def validate_handback(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("handback", nargs="+", type=Path, help="Completed external proof handback JSON file(s).")
-    parser.add_argument("--expected-sha", help="Require each handback to cite this PR #82 headRefOid.")
+    parser.add_argument("--expected-sha", help="Require each handback to cite the release PR headRefOid.")
     args = parser.parse_args()
 
     queue = load_json(QUEUE_PATH)

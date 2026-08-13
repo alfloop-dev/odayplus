@@ -20,7 +20,7 @@ E2E_DIR = Path(__file__).resolve().parent
 if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
 
-from _release_target import release_pr_label, release_pr_number, release_pr_view_command
+from _release_target import release_pr_number
 
 REQUIRED_TASK_IDS = {
     "ODP-EXT-PROD-001",
@@ -77,13 +77,15 @@ def validate(payload: dict[str, Any]) -> list[str]:
     if release_target.get("pr") != expected_pr:
         errors.append(f"release_target.pr must be {expected_pr}")
     if "headRefOid" not in str(release_target.get("authority", "")):
-        errors.append(f"release_target.authority must use {release_pr_label(QUEUE_PATH)} headRefOid")
+        errors.append("release_target.authority must use the manifest-selected PR headRefOid")
     if release_target.get("must_not_hardcode_dev_hash") is not True:
         errors.append("release_target.must_not_hardcode_dev_hash must be true")
 
     preflight = "\n".join(str(command) for command in payload.get("global_preflight", []))
     for required in (
-        release_pr_view_command(QUEUE_PATH),
+        "gh pr view",
+        ".release_target.pr",
+        "headRefOid",
         "check_product_release_gate.py",
         "check_external_proof_closeout_queue.py",
         "check_external_proof_live_blockers.py --require-assignees",
@@ -176,8 +178,8 @@ def validate(payload: dict[str, Any]) -> list[str]:
         if "labels" not in pickup_command or "body" not in pickup_command:
             errors.append(f"{prefix} pickup_command must request issue labels and body")
         release_authority = str(routing.get("release_authority", ""))
-        if release_pr_label(QUEUE_PATH) not in release_authority or "headRefOid" not in release_authority:
-            errors.append(f"{prefix} fleet_routing.release_authority must use {release_pr_label(QUEUE_PATH)} headRefOid")
+        if "release_target.pr" not in release_authority or "headRefOid" not in release_authority:
+            errors.append(f"{prefix} fleet_routing.release_authority must use manifest release_target.pr headRefOid")
         if not str(routing.get("escalation", "")).strip():
             errors.append(f"{prefix} fleet_routing.escalation must be non-empty")
 
@@ -191,8 +193,8 @@ def validate(payload: dict[str, Any]) -> list[str]:
             errors.append(f"{prefix} evidence_refs must be non-empty")
 
         command_text = "\n".join(str(command) for command in entry.get("allowed_commands", []))
-        if release_pr_view_command(QUEUE_PATH) not in command_text or "headRefOid" not in command_text:
-            errors.append(f"{prefix} allowed_commands must verify {release_pr_label(QUEUE_PATH)} headRefOid")
+        if not all(token in command_text for token in ("gh pr view", ".release_target.pr", "headRefOid")):
+            errors.append(f"{prefix} allowed_commands must verify the manifest-selected release PR headRefOid")
         handback_text = "\n".join(str(command) for command in entry.get("handback_commands", []))
         for token in (
             "generate_external_proof_handback_skeleton.py",
@@ -200,7 +202,7 @@ def validate(payload: dict[str, Any]) -> list[str]:
             "check_external_proof_handback_template.py",
             "check_external_proof_handback_artifact.py",
             "--expected-sha",
-            release_pr_view_command(QUEUE_PATH),
+            ".release_target.pr",
             "headRefOid",
         ):
             if token and token not in handback_text:

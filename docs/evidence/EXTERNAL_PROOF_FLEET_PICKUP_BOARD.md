@@ -1,7 +1,7 @@
 # External Proof Fleet Pickup Board
 
 Generated: 2026-06-30  
-Release target: PR #82 `headRefOid` and attached checks  
+Release target: manifest-selected release PR `headRefOid` and attached checks
 Source of truth: `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`
 
 ## Purpose
@@ -15,9 +15,9 @@ Product Validation closes any release blocker.
 ## Required Preflight
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 python3 scripts/e2e/check_external_proof_closeout_queue.py
-python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_external_proof_handback_template.py
 python3 scripts/e2e/check_external_proof_handback_status_board.py
@@ -29,11 +29,11 @@ python3 scripts/e2e/check_external_proof_fleet_pickup_board.py
 python3 scripts/e2e/check_product_go_no_go.py
 ```
 
-When PR #82 changes `headRefOid`, Product Validation refreshes the live GitHub
+When manifest-selected release PR changes `headRefOid`, Product Validation refreshes the live GitHub
 handoff surface before asking fleets to continue:
 
 ```bash
-python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply
+python3 scripts/e2e/sync_external_proof_fleet_issues.py --release-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)" --apply
 python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
 python3 scripts/e2e/check_external_proof_fleet_notifications.py
 ```
@@ -42,13 +42,13 @@ python3 scripts/e2e/check_external_proof_fleet_notifications.py
 
 | Task | Issue | Fleet lane | Required pickup labels | Skeleton command | Acceptance command |
 |---|---:|---|---|---|---|
-| `ODP-EXT-PROD-001` | #132 | Platform/Ops external provider fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-001 --release-sha-from-pr82 --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` |
-| `ODP-EXT-PROD-002` | #133 | Data Partnerships / Legal external provider fleet | `product-e2e`, `external-proof`, `data-partnerships`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-002 --release-sha-from-pr82 --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` |
-| `ODP-EXT-PROD-003` | #134 | Platform/Ops external provider fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-003 --release-sha-from-pr82 --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` |
-| `ODP-MAP-STAGE-001` | #135 | Platform/Ops live map fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr82 --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` |
-| `ODP-MAP-STAGE-002` | #136 | Platform/Ops live map fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-002 --release-sha-from-pr82 --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` |
-| `ODP-PV-STAGE-001` | #137 | Platform/Ops remote staging fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-001 --release-sha-from-pr82 --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` |
-| `ODP-PV-STAGE-002` | #138 | Platform/Ops remote staging fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-002 --release-sha-from-pr82 --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` |
+| `ODP-EXT-PROD-001` | #132 | Platform/Ops external provider fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-001 --release-sha-from-pr --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"` |
+| `ODP-EXT-PROD-002` | #133 | Data Partnerships / Legal external provider fleet | `product-e2e`, `external-proof`, `data-partnerships`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-002 --release-sha-from-pr --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"` |
+| `ODP-EXT-PROD-003` | #134 | Platform/Ops external provider fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-EXT-PROD-003 --release-sha-from-pr --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"` |
+| `ODP-MAP-STAGE-001` | #135 | Platform/Ops live map fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-001 --release-sha-from-pr --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"` |
+| `ODP-MAP-STAGE-002` | #136 | Platform/Ops live map fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-MAP-STAGE-002 --release-sha-from-pr --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"` |
+| `ODP-PV-STAGE-001` | #137 | Platform/Ops remote staging fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-001 --release-sha-from-pr --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"` |
+| `ODP-PV-STAGE-002` | #138 | Platform/Ops remote staging fleet | `product-e2e`, `external-proof`, `platform-ops`, `release-blocker` | `python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task ODP-PV-STAGE-002 --release-sha-from-pr --output <handback.json>` | `python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"` |
 
 ## What Each Lane Must Prove
 
@@ -66,7 +66,7 @@ python3 scripts/e2e/check_external_proof_fleet_notifications.py
 
 ### Remote Staging Proof
 
-- `ODP-PV-STAGE-001`: `ODP_STAGING_DEPLOY_URL`, `ODP_STAGING_API_URL`, `ODP_STAGING_SECRET_OWNER`, `ODAY_RELEASE_SHA`, `/platform/health`, and `/platform/version.release_sha` matching PR #82 `headRefOid`.
+- `ODP-PV-STAGE-001`: `ODP_STAGING_DEPLOY_URL`, `ODP_STAGING_API_URL`, `ODP_STAGING_SECRET_OWNER`, `ODAY_RELEASE_SHA`, `/platform/health`, and `/platform/version.release_sha` matching manifest-selected release PR `headRefOid`.
 - `ODP-PV-STAGE-002`: product smoke against `ODP_STAGING_DEPLOY_URL`, API smoke against `ODP_STAGING_API_URL`, backup artifact, restore target, rollback result, and post-drill health/version proof.
 
 ## Queue-Exact Required Evidence
@@ -102,7 +102,7 @@ python3 scripts/e2e/check_external_proof_fleet_notifications.py
 - staging map tile URL configured
 - provider attribution and terms URL visible
 - remote staging smoke proves map list/ranking/detail fallback remains usable during tile outage
-- proof report references current PR #82 headRefOid
+- proof report references current release_target.pr headRefOid
 - Completion rule: Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke.
 
 ### `ODP-MAP-STAGE-002`
@@ -110,7 +110,7 @@ python3 scripts/e2e/check_external_proof_fleet_notifications.py
 - staging geocoder URL configured
 - geocoder outage fallback remains usable
 - attribution/terms approval is visible
-- proof report references current PR #82 headRefOid
+- proof report references current release_target.pr headRefOid
 - Completion rule: Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke.
 
 ### `ODP-PV-STAGE-001`
@@ -120,7 +120,7 @@ python3 scripts/e2e/check_external_proof_fleet_notifications.py
 - ODP_STAGING_SECRET_OWNER configured
 - ODAY_RELEASE_SHA injected
 - /platform/health reachable
-- /platform/version.release_sha equals current PR #82 headRefOid
+- /platform/version.release_sha equals current release_target.pr headRefOid
 - redacted remote staging proof report artifact
 - Completion rule: Do not close until the checker passes against the configured remote staging target.
 
@@ -145,51 +145,51 @@ fails if any command fragment is missing.
 ### `ODP-EXT-PROD-001`
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 uv run pytest tests/e2e/test_external_source_product_e2e.py -k "live_provider_mode_product_e2e or auth_quota_and_freshness" -q
 ```
 
 ### `ODP-EXT-PROD-002`
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 uv run pytest tests/e2e/test_external_source_product_e2e.py -q
 ```
 
 ### `ODP-EXT-PROD-003`
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 uv run pytest tests/data/test_geo_pipeline.py -q
 ```
 
 ### `ODP-MAP-STAGE-001`
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/operator-network-listings.spec.ts --project=chromium --retries=1
 ```
 
 ### `ODP-MAP-STAGE-002`
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" npx playwright test tests/e2e/operator-network-listings.spec.ts --project=chromium --retries=1
 ```
 
 ### `ODP-PV-STAGE-001`
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
-python3 scripts/e2e/check_remote_staging_proof.py --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --correlation-id "corr-odp-pv-stage-001"
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+python3 scripts/e2e/check_remote_staging_proof.py --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)" --correlation-id "corr-odp-pv-stage-001"
 ```
 
 ### `ODP-PV-STAGE-002`
 
 ```bash
-gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
+gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 PLAYWRIGHT_BASE_URL="$ODP_STAGING_DEPLOY_URL" ODP_API_BASE_URL="$ODP_STAGING_API_URL" npx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000
-python3 scripts/e2e/check_remote_staging_proof.py --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --correlation-id "corr-odp-pv-stage-002-version"
+python3 scripts/e2e/check_remote_staging_proof.py --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)" --correlation-id "corr-odp-pv-stage-002-version"
 ```
 
 ## Product Validation Close Rule
@@ -198,14 +198,14 @@ Do not close #132-#138 from local fixtures, mock-live proof, deterministic CI,
 or document-only evidence. A closeout requires:
 
 - the issue still has required labels and assignees;
-- the handback cites the current PR #82 `headRefOid`;
+- the handback cites the current manifest-selected release PR `headRefOid`;
 - all artifacts are redacted and declare `contains_secret_values: false`;
 - every required evidence item maps to an artifact id;
 - `completion_attestation.decision` is `accepted`;
 - the handback passes:
 
 ```bash
-python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"
 ```
 
 The release go/no-go packet must still show these issues as pending external
@@ -245,7 +245,7 @@ editing JSON by hand:
 ```bash
 python3 scripts/e2e/update_external_proof_handback_status_board.py --task <task-id> --status handback_submitted --handback <handback.json>
 python3 scripts/e2e/update_external_proof_handback_status_board.py --task <task-id> --status needs_revision --handback <handback.json> --next-action "<specific correction>"
-python3 scripts/e2e/update_external_proof_handback_status_board.py --task <task-id> --status accepted --handback <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/update_external_proof_handback_status_board.py --task <task-id> --status accepted --handback <handback.json> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"
 ```
 
 Before closing any #132-#138 issue, verify that live GitHub blocker state still
@@ -255,7 +255,7 @@ matches the handback status board:
 python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
 ```
 
-When PR #82 gets a new `headRefOid`, verify every fleet issue has a pickup
+When manifest-selected release PR gets a new `headRefOid`, verify every fleet issue has a pickup
 comment for that current release head:
 
 ```bash
@@ -296,5 +296,5 @@ When all seven handbacks are ready, validate the complete set before release
 closeout:
 
 ```bash
-python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view "$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)" --json headRefOid --jq .headRefOid)"
 ```

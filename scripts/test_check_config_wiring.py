@@ -97,13 +97,19 @@ class ConfigWiringAuditTests(unittest.TestCase):
     def test_data_container_children_are_not_settings(self) -> None:
         # Agent ids are data. Requiring code to mention every deployed agent by
         # name would make the guard fire on every roster change.
-        config = {"agents": {"antigravity4": {"model": "x"}}, "providers": {"codex": {}}}
+        config = {
+            "agents": {"antigravity4": {"model": "x"}},
+            "providers": {"codex": {}},
+            "account_pools": {"codex_primary": {"state": "healthy", "max_concurrent": 2}},
+        }
 
         paths = {".".join(p) for p in guard.iter_setting_paths(config)}
 
         self.assertIn("agents", paths)
         self.assertNotIn("agents.antigravity4", paths)
         self.assertNotIn("providers.codex", paths)
+        self.assertIn("account_pools", paths)
+        self.assertNotIn("account_pools.codex_primary", paths)
 
 
 class RepositoryConfigIsWiredTests(unittest.TestCase):

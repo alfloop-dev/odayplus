@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Archived with the one-shot migration it covered.
 from __future__ import annotations
 
 import importlib.util

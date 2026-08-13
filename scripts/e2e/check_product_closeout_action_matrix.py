@@ -9,7 +9,6 @@ ready, which are correctly waiting for a handoff, and which are stale.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import sys
@@ -24,25 +23,13 @@ if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
 
 from _release_target import release_pr_label
+from _support import load_json, load_module
 
 DEFAULT_STATUS_ROOT = (
     Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
     if os.environ.get("PANTHEON_STATUS_ROOT")
     else ROOT
 )
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"unable to load module from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def missing_status_message(path: Path) -> str:
@@ -133,8 +120,8 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_STATUS_ROOT / "ai-status.json",
         help="ai-status.json path; defaults to PANTHEON_STATUS_ROOT/ai-status.json or repo ai-status.json",
     )
-    parser.add_argument("--pr-json", type=Path, help="Fixture PR #82 JSON payload for deterministic tests")
-    parser.add_argument("--skip-pr-check", action="store_true", help="skip live PR #82 validation")
+    parser.add_argument("--pr-json", type=Path, help="Fixture release PR JSON payload for deterministic tests")
+    parser.add_argument("--skip-pr-check", action="store_true", help="skip live release PR validation")
     parser.add_argument("--json", action="store_true", help="emit JSON instead of Markdown")
     return parser.parse_args()
 

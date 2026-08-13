@@ -102,7 +102,7 @@ def validate_bundle(paths: list[Path], *, expected_sha: str | None) -> list[str]
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("handbacks", nargs="+", type=Path, help="Handback JSON files or directories containing JSON files.")
-    parser.add_argument("--expected-sha", help="Require every handback to cite this PR #82 headRefOid.")
+    parser.add_argument("--expected-sha", help="Require every handback to cite the release PR headRefOid.")
     return parser.parse_args()
 
 

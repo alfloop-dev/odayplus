@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Aggregate live fleet-dispatch readiness for PR #82.
+"""Aggregate live fleet-dispatch readiness for the manifest-selected release PR.
 
 This is the release-owner view of "has the work actually been sent to fleets?"
 It does not replace the specialized checkers; it runs them together and renders
 one status report covering:
 
-- PR #82 release head and attached checks;
+- release PR head and attached checks;
 - external-proof issue sync/comments/blocker state for #132-#138;
 - product closeout PR comment for owner/reviewer/Human-Ops lifecycle actions;
 - current product closeout action matrix.
@@ -59,12 +59,7 @@ def current_release_pr_payload() -> dict[str, Any]:
     return json.loads(raw)
 
 
-def current_pr82_payload() -> dict[str, Any]:
-    """Compatibility wrapper; the release queue selects the PR."""
-    return current_release_pr_payload()
-
-
-def validate_pr82_payload(pr_payload: dict[str, Any]) -> list[str]:
+def validate_release_pr_payload(pr_payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     expected_pr = release_pr_number(QUEUE_PATH)
     label = f"PR #{expected_pr}"
@@ -112,7 +107,7 @@ def build_live_report() -> dict[str, Any]:
 
 
 def validate_report(report: dict[str, Any]) -> list[str]:
-    errors = validate_pr82_payload(report.get("pr", {}))
+    errors = validate_release_pr_payload(report.get("pr", {}))
     for check in report.get("checks", []):
         if check.get("returncode") != 0:
             label = check.get("label", "<unknown>")

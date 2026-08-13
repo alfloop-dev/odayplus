@@ -22,9 +22,6 @@ E2E_DIR = Path(__file__).resolve().parent
 if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
 
-from _release_target import release_pr_head_command, release_pr_label
-
-
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -101,8 +98,14 @@ def validate_readiness(
             errors.append(f"{prefix} missing skeleton generation command")
         if "check_external_proof_handback_artifact.py" not in row["acceptance_command"]:
             errors.append(f"{prefix} missing handback artifact acceptance command")
-        if release_pr_head_command(QUEUE_PATH) not in row["acceptance_command"]:
-            errors.append(f"{prefix} acceptance command must bind expected-sha to {release_pr_label(QUEUE_PATH)} headRefOid")
+        if not all(
+            token in row["acceptance_command"]
+            for token in ("--expected-sha", "gh pr view", ".release_target.pr", "headRefOid")
+        ):
+            errors.append(
+                f"{prefix} acceptance command must bind expected-sha to the "
+                "manifest-selected release PR headRefOid"
+            )
         if not row["completion_rule"]:
             errors.append(f"{prefix} missing completion_rule")
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the development-plan execution control pack.
+"""Archived validator for the 2026-07-31 execution control packet.
 
 The JSON packet is the machine-readable expansion of the 19 unresolved
 ODP-PLAN task contracts.  An optional live ai-status path also verifies that

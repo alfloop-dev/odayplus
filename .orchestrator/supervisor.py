@@ -9793,8 +9793,8 @@ def requeue_task_for_ci_repair(
     task["ci_repair_last_requeued_ts"] = datetime.now(UTC).timestamp()
     if clear_approval:
         task.pop("approved_head", None)
-    write_json(config_path(config, "status_file"), status)
-    sync_status_pipeline(config)
+    if not commit_canonical_task_transition(config, status):
+        return False
     write_activity_log(
         config,
         {

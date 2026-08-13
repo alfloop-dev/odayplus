@@ -8,7 +8,7 @@ verifies:
 - staging URLs are present;
 - secret ownership metadata is present;
 - `/platform/health` is reachable;
-- `/platform/version.release_sha` matches the supplied PR #82 head SHA.
+- `/platform/version.release_sha` matches the supplied release PR head SHA.
 
 No secret values are printed.
 """
@@ -126,7 +126,7 @@ def run_checks(args: argparse.Namespace) -> tuple[list[CheckResult], dict[str, A
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected-sha", required=True, help="PR #82 headRefOid expected on staging.")
+    parser.add_argument("--expected-sha", required=True, help="Release PR headRefOid expected on staging.")
     parser.add_argument("--correlation-id", default="", help="Correlation id for staging smoke requests.")
     parser.add_argument("--timeout", type=float, default=10.0, help="HTTP timeout in seconds.")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="JSON report path.")

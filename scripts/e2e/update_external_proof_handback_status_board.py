@@ -9,8 +9,8 @@ handback artifact passes the same checker used by the release gate.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,11 @@ TEMPLATE_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json"
 STATUS_BOARD_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
 ARTIFACT_CHECKER_PATH = ROOT / "scripts/e2e/check_external_proof_handback_artifact.py"
 STATUS_CHECKER_PATH = ROOT / "scripts/e2e/check_external_proof_handback_status_board.py"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _support import load_json, load_module
 
 EDITABLE_STATUSES = {
     "pending_external_handback",
@@ -27,19 +32,6 @@ EDITABLE_STATUSES = {
     "needs_revision",
     "accepted",
 }
-
-
-def load_module(path: Path, module_name: str):
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"unable to load module from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -181,7 +173,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", required=True, help="External proof task id, e.g. ODP-MAP-STAGE-001.")
     parser.add_argument("--status", required=True, choices=sorted(EDITABLE_STATUSES))
     parser.add_argument("--handback", type=Path, help="Handback JSON path for submitted/needs_revision/accepted.")
-    parser.add_argument("--expected-sha", help="Expected PR #82 headRefOid for accepted handbacks.")
+    parser.add_argument("--expected-sha", help="Expected release PR headRefOid for accepted handbacks.")
     parser.add_argument("--next-action", help="Override the task next_action text.")
     parser.add_argument("--status-board", type=Path, default=STATUS_BOARD_PATH, help="Status board JSON to update.")
     parser.add_argument("--check-only", action="store_true", help="Validate the update without writing the file.")

@@ -2,7 +2,7 @@
 """Verify the release PR has a product closeout fleet update for the current head.
 
 The product closeout pickup board is static repo evidence. The PR comment is
-the live fleet-facing notification surface. This checker makes sure PR #82 has
+the live fleet-facing notification surface. This checker makes sure the manifest-selected release PR has
 a recent comment tied to the active `headRefOid` and containing every active
 closeout queue action, so a release-candidate SHA change cannot leave owners,
 reviewers, or Human/Ops following stale pickup instructions.
@@ -48,11 +48,6 @@ def load_release_pr_comments() -> dict[str, Any]:
         text=True,
     )
     return json.loads(raw)
-
-
-def load_pr82_comments() -> dict[str, Any]:
-    """Compatibility wrapper; the queue manifest selects the release PR."""
-    return load_release_pr_comments()
 
 
 def command_fragment(command: str) -> str:

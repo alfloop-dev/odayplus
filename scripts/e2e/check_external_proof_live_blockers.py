@@ -13,14 +13,19 @@ routed until Product Validation accepts the handback artifact.
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
+import sys
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 QUEUE_PATH = ROOT / "docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json"
 STATUS_BOARD_PATH = ROOT / "docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json"
+E2E_DIR = Path(__file__).resolve().parent
+if str(E2E_DIR) not in sys.path:
+    sys.path.insert(0, str(E2E_DIR))
+
+from _support import issue_number_from_url, load_github_issue, load_json
 
 ACTIVE_HANDOFF_STATUSES = {
     "pending_external_handback",
@@ -29,32 +34,15 @@ ACTIVE_HANDOFF_STATUSES = {
 }
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def issue_number_from_url(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1]
-
-
 def normalize_label_names(issue: dict[str, Any]) -> set[str]:
     return {str(label.get("name")) for label in issue.get("labels", [])}
 
 
-def load_issue(issue_number: str) -> dict[str, Any]:
-    raw = subprocess.check_output(
-        [
-            "gh",
-            "issue",
-            "view",
-            issue_number,
-            "--json",
-            "number,title,labels,assignees,url,state",
-        ],
-        cwd=ROOT,
-        text=True,
-    )
-    return json.loads(raw)
+load_issue = partial(
+    load_github_issue,
+    root=ROOT,
+    fields="number,title,labels,assignees,url,state",
+)
 
 
 def validate_live_blockers(

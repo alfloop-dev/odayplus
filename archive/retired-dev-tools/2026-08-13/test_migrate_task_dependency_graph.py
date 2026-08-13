@@ -1,4 +1,4 @@
-"""Tests for the orchestrator task dependency graph migration script."""
+"""Archived tests for the one-shot dependency graph migration."""
 
 from __future__ import annotations
 
@@ -168,4 +168,3 @@ def test_run_migration_fixes_dangling_graph(tmp_path: Path) -> None:
 
     failures_after = check(load_board(board_path), load_archive(archive_dir))
     assert failures_after == []
-

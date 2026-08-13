@@ -49,7 +49,7 @@ TASK_PROOF_GUIDANCE = {
     ),
     "ODP-PV-STAGE-001": (
         "ODP_STAGING_DEPLOY_URL, ODP_STAGING_API_URL, ODP_STAGING_SECRET_OWNER, ODAY_RELEASE_SHA, "
-        "/platform/health, /platform/version.release_sha, and PR #82 headRefOid match"
+        "/platform/health, /platform/version.release_sha, and the release PR headRefOid match"
     ),
     "ODP-PV-STAGE-002": (
         "same staging target dependency, product smoke, API smoke, backup artifact, restore target, "
@@ -140,8 +140,7 @@ def build_skeleton(task_id: str, *, release_sha: str) -> dict[str, Any]:
     }
 
 
-def current_pr82_head() -> str:
-    """Compatibility alias for older runbooks; resolution is manifest-driven."""
+def current_manifest_release_head() -> str:
     return current_release_head(root=ROOT, queue_path=QUEUE_PATH)
 
 
@@ -151,12 +150,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--release-sha",
         default=EXAMPLE_SHA,
-        help="Release SHA to place in the skeleton. Use PR #82 headRefOid for real handbacks.",
+        help="Release SHA to place in the skeleton. Use the release PR headRefOid for real handbacks.",
     )
     parser.add_argument(
-        "--release-sha-from-pr82",
+        "--release-sha-from-pr",
         action="store_true",
-        help="Read PR #82 headRefOid from GitHub and use it as the skeleton release SHA.",
+        help="Read the release PR headRefOid from GitHub and use it as the skeleton release SHA.",
     )
     parser.add_argument("--output", type=Path, help="Write a single-task skeleton to this JSON file.")
     parser.add_argument("--output-dir", type=Path, help="Write skeleton file(s) into this directory.")
@@ -172,7 +171,7 @@ def main() -> int:
     if args.output and args.output_dir:
         raise SystemExit("--output and --output-dir are mutually exclusive")
 
-    release_sha = current_pr82_head() if args.release_sha_from_pr82 else args.release_sha
+    release_sha = current_manifest_release_head() if args.release_sha_from_pr else args.release_sha
     skeletons = {task_id: build_skeleton(task_id, release_sha=release_sha) for task_id in task_ids}
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

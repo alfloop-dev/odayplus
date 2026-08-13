@@ -6623,6 +6623,37 @@ class AutomaticRecoveryTests(unittest.TestCase):
             self.assertEqual(saved["status"], "in_progress")
             self.assertNotIn("approved_head", saved)
 
+    def test_ci_failure_requeue_fails_closed_on_stale_status_snapshot(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "AUTO-CI-STALE-001",
+                    "status": "review_approved",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                return_value=False,
+            ) as commit,
+            mock.patch.object(supervisor, "write_activity_log") as activity_log,
+        ):
+            changed = supervisor.requeue_task_for_ci_repair(
+                self.config,
+                "AUTO-CI-STALE-001",
+                message="CI failed; repair queued.",
+                clear_approval=True,
+            )
+
+        self.assertFalse(changed)
+        commit.assert_called_once_with(self.config, status)
+        activity_log.assert_not_called()
+
 
 class WorkerPreemptionSyncTests(unittest.TestCase):
     def setUp(self) -> None:

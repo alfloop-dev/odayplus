@@ -156,12 +156,12 @@ def test_skeleton_generator_writes_single_output_file(tmp_path) -> None:
     assert payload["release_head_ref_oid"] == EXAMPLE_SHA
 
 
-def test_skeleton_generator_can_use_current_pr82_head(monkeypatch, tmp_path) -> None:
+def test_skeleton_generator_can_use_current_manifest_release_head(monkeypatch, tmp_path) -> None:
     generator = load_generator_module()
     current_sha = "2222222222222222222222222222222222222222"
     output = tmp_path / "handbacks"
 
-    monkeypatch.setattr(generator, "current_pr82_head", lambda: current_sha)
+    monkeypatch.setattr(generator, "current_manifest_release_head", lambda: current_sha)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -171,7 +171,7 @@ def test_skeleton_generator_can_use_current_pr82_head(monkeypatch, tmp_path) -> 
             "ALL",
             "--output-dir",
             str(output),
-            "--release-sha-from-pr82",
+            "--release-sha-from-pr",
         ],
     )
 

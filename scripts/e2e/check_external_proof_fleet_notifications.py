@@ -10,9 +10,8 @@ leave fleet instructions pointing at an older SHA.
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
 import sys
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
 
 from _release_target import current_release_head, release_label, release_pr_view_command
+from _support import issue_number_from_url, load_github_issue, load_json
 
 REQUIRED_COMMENT_TOKENS = (
     "External proof fleet pickup update",
@@ -41,28 +41,11 @@ REQUIRED_COMMENT_TOKENS = (
 )
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def issue_number_from_url(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1]
-
-
-def load_issue(issue_number: str) -> dict[str, Any]:
-    raw = subprocess.check_output(
-        [
-            "gh",
-            "issue",
-            "view",
-            issue_number,
-            "--json",
-            "number,title,state,comments,url",
-        ],
-        cwd=ROOT,
-        text=True,
-    )
-    return json.loads(raw)
+load_issue = partial(
+    load_github_issue,
+    root=ROOT,
+    fields="number,title,state,comments,url",
+)
 
 
 def validate_notifications(

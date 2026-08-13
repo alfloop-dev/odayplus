@@ -5,16 +5,15 @@ import os
 from pathlib import Path
 
 from common import (
-    command_exists,
     delivery_runtime_env,
     delivery_workspace_root,
     new_runtime_id,
-    run_command,
     runtime_log_path,
     shell_quote,
     spawn_background_process,
     worker_runtime_paths,
 )
+from provider_runtime import configured_provider_binary, github_auth_token
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.file_inbox import FileInboxAdapter
@@ -24,15 +23,21 @@ COPILOT_CONFIG_PATH = COPILOT_CONFIG_DIR / "config.json"
 
 
 def _configured_copilot_cli(config: dict | None = None) -> str | None:
-    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
-    runtime = provider.get("local", {})
-    return command_exists(runtime.get("cli") or "copilot")
+    return configured_provider_binary(
+        config,
+        provider_id="copilot",
+        section="local",
+        default="copilot",
+    )
 
 
 def _configured_gh_cli(config: dict | None = None) -> str | None:
-    provider = ((config or {}).get("providers", {}).get("copilot", {}) or {})
-    runtime = provider.get("cloud", {})
-    return command_exists(runtime.get("cli") or "gh")
+    return configured_provider_binary(
+        config,
+        provider_id="copilot",
+        section="cloud",
+        default="gh",
+    )
 
 
 def _allow_inbox_fallback(config: dict | None = None) -> bool:
@@ -41,12 +46,7 @@ def _allow_inbox_fallback(config: dict | None = None) -> bool:
 
 
 def _gh_auth_token(config: dict | None = None) -> str | None:
-    gh = _configured_gh_cli(config)
-    if not gh:
-        return None
-    result = run_command([gh, "auth", "token"])
-    token = (result.stdout or "").strip()
-    return token or None
+    return github_auth_token(_configured_gh_cli(config))
 
 
 def _copilot_config_auth_ready() -> bool:

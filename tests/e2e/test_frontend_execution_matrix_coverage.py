@@ -240,7 +240,7 @@ def test_frontend_completion_audit_cites_lanes_and_runtime_evidence() -> None:
         assert stale_recommendation not in audit_text
 
 
-def test_release_evidence_documents_use_pr82_head_as_authoritative_candidate() -> None:
+def test_release_evidence_documents_use_manifest_release_head_as_authoritative_candidate() -> None:
     evidence_docs = [
         FLEET_DISPATCH,
         COMPLETION_AUDIT,

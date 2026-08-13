@@ -78,6 +78,22 @@ def durable_store_required(message: str) -> HTTPException:
     )
 
 
+def reset_allowed_guard(*, allow_reset: bool, resource_label: str) -> Callable[[], None]:
+    """Build the shared fail-closed dependency for product reset endpoints."""
+
+    def require_reset_allowed() -> None:
+        if not allow_reset:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "code": "PRODUCTION_RESET_DENIED",
+                    "message": f"{resource_label} reset is disabled in live mode",
+                },
+            )
+
+    return require_reset_allowed
+
+
 def read_operator_context(
     request: Request,
     *,

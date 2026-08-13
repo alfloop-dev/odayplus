@@ -28,6 +28,7 @@ from common import (
     utc_now,
     write_json,
 )
+from provider_runtime import configured_provider_binary, github_auth_token
 
 WORKSPACE_SETTINGS_PATH = ROOT / ".vscode" / "settings.json"
 CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
@@ -347,16 +348,8 @@ def _provider_runtime_env(config: dict[str, Any], provider_id: str) -> dict[str,
     return env
 
 
-def _gh_auth_token(binary: str | None) -> str | None:
-    if not binary:
-        return None
-    result = run_command([binary, "auth", "token"])
-    token = (result.stdout or "").strip()
-    return token or None
-
-
 def _gh_auth_ready(binary: str | None) -> bool:
-    return bool(_gh_auth_token(binary))
+    return bool(github_auth_token(binary))
 
 
 def _copilot_config_auth_ready() -> bool:
@@ -370,16 +363,11 @@ def _copilot_config_auth_ready() -> bool:
 
 
 def _copilot_auth_ready(gh_binary: str | None) -> bool:
-    if _gh_auth_token(gh_binary):
+    if github_auth_token(gh_binary):
         return True
     if any(os.environ.get(name) for name in ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")):
         return True
     return _copilot_config_auth_ready()
-
-
-def _configured_provider_binary(config: dict[str, Any], provider: str, section: str, default: str) -> str | None:
-    provider_settings = (config.get("providers", {}).get(provider, {}) or {}).get(section, {})
-    return command_exists(provider_settings.get("cli") or default)
 
 
 def _custom_agents_info() -> dict[str, Any]:
@@ -643,7 +631,9 @@ def _claude_provider_report(
 ) -> dict[str, Any]:
     provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
     runtime_env = _provider_runtime_env(config, provider_id)
-    provider_binary = _configured_provider_binary(config, provider_id, "runtime", "claude")
+    provider_binary = configured_provider_binary(
+        config, provider_id=provider_id, section="runtime", default="claude"
+    )
     provider_auth_ready = claude_auth_ready(provider_binary, env=runtime_env, refresh_if_needed=False)
     # Auth readiness is read off credential files and never executes the binary,
     # so on its own it cannot tell a working CLI from a wrapper whose target is
@@ -722,7 +712,9 @@ def _gemini_provider_report(
     gemini_runtime = provider_config.get("gemini", {}) or {}
     runtime_approval_mode = (provider_config.get("approval", {}) or {}).get("default_approval_mode")
     selected_model = str(gemini_runtime.get("model") or "").strip() or None
-    provider_binary = _configured_provider_binary(config, provider_id, "gemini", "gemini")
+    provider_binary = configured_provider_binary(
+        config, provider_id=provider_id, section="gemini", default="gemini"
+    )
     probe = cli_probe(provider_binary)
     provider_settings = _gemini_settings(config, provider_id)
     oauth_creds_path = _gemini_oauth_creds_path(config, provider_id)
@@ -809,8 +801,12 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_gemini = desired_gemini_settings(config, "gemini")
     codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
     codex_binary = command_exists(codex_profile.get("cli") or "codex")
-    gemini_binary = _configured_provider_binary(config, "gemini", "gemini", "gemini")
-    copilot_binary = _configured_provider_binary(config, "copilot", "local", "copilot")
+    gemini_binary = configured_provider_binary(
+        config, provider_id="gemini", section="gemini", default="gemini"
+    )
+    copilot_binary = configured_provider_binary(
+        config, provider_id="copilot", section="local", default="copilot"
+    )
     copilot_probe = cli_probe(copilot_binary)
     gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
     gh_version = _gh_version(gh_binary)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Synchronize granular execution-pack criteria into live Supervisor tasks.
+"""Archived synchronizer for the 2026-07-31 execution packet.
 
 This script deliberately invokes the repository's official ai-status CLI.  It
 does not edit ai-status.json or derived task briefs directly.

@@ -4,16 +4,16 @@
 This is a live observability helper for Product Validation. It does not accept
 or reject handbacks; it tells release owners whether fleets have submitted any
 candidate handback material after the latest pickup comment for the current PR
-#82 headRefOid.
+release PR headRefOid.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 import sys
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,7 @@ if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
 
 from _release_target import current_release_head, release_label
+from _support import issue_number_from_url, load_github_issue, load_json
 
 HANDBACK_TOKENS = (
     "release_head_ref_oid",
@@ -34,21 +35,11 @@ HANDBACK_TOKENS = (
 )
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def issue_number_from_url(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1]
-
-
-def load_issue(issue_number: str) -> dict[str, Any]:
-    raw = subprocess.check_output(
-        ["gh", "issue", "view", issue_number, "--json", "number,title,state,comments,url"],
-        cwd=ROOT,
-        text=True,
-    )
-    return json.loads(raw)
+load_issue = partial(
+    load_github_issue,
+    root=ROOT,
+    fields="number,title,state,comments,url",
+)
 
 
 def parse_github_time(value: Any) -> datetime | None:
@@ -199,7 +190,7 @@ def validate_scan(rows: list[dict[str, Any]], *, fail_on_escalation: bool) -> li
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected-sha", help="expected PR #82 headRefOid; defaults to live gh pr view")
+    parser.add_argument("--expected-sha", help="expected release PR headRefOid; defaults to live gh pr view")
     parser.add_argument(
         "--escalation-hours",
         type=float,

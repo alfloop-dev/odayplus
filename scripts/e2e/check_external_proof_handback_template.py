@@ -21,7 +21,7 @@ E2E_DIR = Path(__file__).resolve().parent
 if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
 
-from _release_target import release_pr_label, release_pr_number
+from _release_target import release_pr_number
 
 REQUIRED_COMMON_FIELDS = {
     "task_id",
@@ -80,7 +80,12 @@ def validate(queue: dict[str, Any], template: dict[str, Any]) -> list[str]:
         errors.append("template release_target.must_not_hardcode_dev_hash must be true")
 
     global_text = "\n".join(str(rule) for rule in template.get("global_rules", []))
-    for token in ("Do not include secret values", f"{release_pr_label(QUEUE_PATH)} headRefOid", "correlation_id", "redacted"):
+    for token in (
+        "Do not include secret values",
+        "manifest-selected release PR headRefOid",
+        "correlation_id",
+        "redacted",
+    ):
         if token not in global_text:
             errors.append(f"template global_rules missing token: {token}")
 

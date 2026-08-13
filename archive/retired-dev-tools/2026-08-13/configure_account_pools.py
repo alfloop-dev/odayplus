@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Migrate a Supervisor runtime config from alias-based to account-pool scheduling.
+"""Archived one-shot account-pool migration.
 
 The roster reflects the operational inventory: all Antigravity aliases share
 one account; Codex is split by the configured credential homes.  The script is

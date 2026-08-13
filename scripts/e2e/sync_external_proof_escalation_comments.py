@@ -11,8 +11,6 @@ needs attention.
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import json
 import subprocess
 import sys
 import tempfile
@@ -30,23 +28,7 @@ if str(E2E_DIR) not in sys.path:
     sys.path.insert(0, str(E2E_DIR))
 
 from _release_target import current_release_head, release_label, release_pr_head_command
-
-
-def load_module(path: Path, name: str):
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"unable to load module from {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def issue_number_from_url(url: str) -> str:
-    return url.rstrip("/").rsplit("/", 1)[-1]
+from _support import issue_number_from_url, load_json, load_module, run_gh_with_retry
 
 
 def render_escalation_comment(
@@ -139,13 +121,13 @@ def post_issue_comment(issue_number: str, body: str) -> None:
 
 
 def run_gh(args: list[str], *, attempts: int = 3) -> None:
-    for attempt in range(1, attempts + 1):
-        result = subprocess.run(args, cwd=ROOT, check=False)
-        if result.returncode == 0:
-            return
-        if attempt == attempts:
-            raise subprocess.CalledProcessError(result.returncode, args)
-        time.sleep(2 * attempt)
+    run_gh_with_retry(
+        args,
+        root=ROOT,
+        attempts=attempts,
+        runner=subprocess.run,
+        sleeper=time.sleep,
+    )
 
 
 def escalation_comment_already_posted(issue: dict[str, Any], *, task_id: str, expected_sha: str) -> bool:
@@ -162,7 +144,7 @@ def escalation_comment_already_posted(issue: dict[str, Any], *, task_id: str, ex
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expected-sha", help="expected PR #82 headRefOid; defaults to live gh pr view")
+    parser.add_argument("--expected-sha", help="expected release PR headRefOid; defaults to live gh pr view")
     parser.add_argument("--escalation-hours", type=float, default=24.0)
     parser.add_argument("--force", action="store_true", help="render/post all pending rows even if not overdue")
     parser.add_argument("--apply", action="store_true", help="post escalation comments to GitHub issues")
