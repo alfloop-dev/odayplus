@@ -1,0 +1,80 @@
+{
+  "schema": "oday-plus.emgi-parallel-execution-tasks.v0.3",
+  "generated_at": "2026-08-13T14:00:00+08:00",
+  "status": "approved_for_dispatch",
+  "target_repository": "alfloop-dev/odayplus",
+  "target_branch": "dev",
+  "baseline_ref": "origin/dev",
+  "baseline_sha": "0d1603cf347e30c9cf2f25f0eecc10673ac55015",
+  "source_docs": [
+    "docs/design/ODAY_PLUS_EMGI_DESIGN_PACKAGE_INDEX_2026-08-13.md",
+    "docs/design/emgi/v0.3/PRODUCT_01_SCOPE_PRINCIPLES.md",
+    "docs/design/emgi/v0.3/PRODUCT_02_USERS_SPACE_SCOPE.md",
+    "docs/design/emgi/v0.3/PRODUCT_03_DOMAINS_DATA_PRODUCTS.md",
+    "docs/design/emgi/v0.3/PRODUCT_04_API_GOVERNANCE_ADRS.md",
+    "docs/design/emgi/v0.3/SYSTEM_01_BASELINE_ARCHITECTURE_CONTRACTS.md",
+    "docs/design/emgi/v0.3/SYSTEM_02_SOURCES_DOMAINS_MATERIALIZATION.md",
+    "docs/design/emgi/v0.3/SYSTEM_03_EXECUTION_RELEASE.md",
+    "docs/design/emgi/v0.3/SOURCE_01_DATA_SOURCES.md",
+    "docs/design/emgi/v0.3/SOURCE_02_OSS_PRIORITIES_RECEIPTS.md",
+    "docs/design/emgi/v0.3/REVIEW_MANIFEST.yaml",
+    "docs/design/emgi/v0.3/RELATION_OWNERSHIP_BASELINE.yaml"
+  ],
+  "global_rules": [
+    "Start from a freshly fetched origin/dev at 0d1603cf347e30c9cf2f25f0eecc10673ac55015 or a later explicitly recorded dev SHA.",
+    "Use task/<task-id> branches and open PRs to dev.",
+    "The owner and reviewer must be different identities; owners cannot self-finalize.",
+    "Task dependencies are contract or integration-gate dependencies, not human calendar sequencing.",
+    "Central registries, contract locks, aggregate OpenAPI bundles, ordered migrations, and relation registries are generated-only surfaces.",
+    "Missing, partial, stale, unlicensed, unauthorized, quarantined, truncated, saturated, and source-error states never silently become zero.",
+    "A numeric zero requires valid negative evidence and complete search or entity-partition coverage.",
+    "Feature, label, and training evidence are separate manifests.",
+    "Taiwan business time uses Asia/Taipei unless a store-specific timezone says otherwise.",
+    "HeatZone and SiteScore v1 heuristics remain shadow-only and cannot issue binding decisions.",
+    "Technical source readiness and policy readiness are separate; policy warnings do not block technical adapter work but publication remains gated.",
+    "Documentation, fixtures, mocks, static checks, or local-only tests do not close runtime tasks.",
+    "Source and runtime tasks prove durable persistence, restart readback, API readback, lineage, coverage, and consumer readback.",
+    "Every task writes exact completion evidence under docs/evidence/completion/<task-id>/."
+  ],
+  "integration_gates": [
+    {
+      "id": "G0_CONTRACT_LOCK",
+      "requires": [
+        "emgi.measurement-envelope.v3",
+        "emgi.dataset-registry.v3",
+        "emgi.scope-principal.v3",
+        "emgi.source-observation.v3",
+        "emgi.time-contract.v3",
+        "emgi.manifests.v3",
+        "emgi.relation-ownership.v1",
+        "emgi.decision-readiness.v3",
+        "emgi.coverage.v3"
+      ]
+    },
+    {"id": "G1_GENERATED_REGISTRY", "requires_tasks": ["EMGI-INTEGRATION-REGISTRY-001"]},
+    {"id": "G2_SCHEMA_AND_RELATION_ASSEMBLY", "requires_tasks": ["EMGI-INTEGRATION-REGISTRY-001"]},
+    {"id": "G3_REAL_SOURCE_REPLAY", "requires_tasks": ["EMGI-INTEGRATION-LIVE-READBACK-001"]},
+    {"id": "G4_100_ADDRESS_END_TO_END", "requires_tasks": ["EMGI-INTEGRATION-LIVE-READBACK-001"]},
+    {"id": "G5_1000_ADDRESS_REGRESSION", "requires_tasks": ["EMGI-INTEGRATION-LIVE-READBACK-001"]},
+    {"id": "G6_SHADOW_MODEL_AND_DECISION_EVIDENCE", "requires_tasks": ["EMGI-RELEASE-001"]},
+    {"id": "G7_GOVERNED_RELEASE", "requires_tasks": ["EMGI-RELEASE-001"]}
+  ],
+  "completion_rule": [
+    "Implementation exists and is scoped to owned paths.",
+    "Focused tests and negative contract tests pass.",
+    "Source/runtime replay evidence exists where applicable.",
+    "Evidence records exact source SHA, commands, environment, results, limitations, and rollback.",
+    "Independent reviewer approves.",
+    "PR is merged to dev.",
+    "Orchestrator records terminal closeout."
+  ],
+  "task_files": [
+    {"path": "tasks/kernel.json", "groups": ["Kernel"], "task_count": 9},
+    {"path": "tasks/safety.json", "groups": ["Safety"], "task_count": 4},
+    {"path": "tasks/sources-survey.json", "groups": ["Sources", "Survey"], "task_count": 9},
+    {"path": "tasks/domains-data-products.json", "groups": ["Data Products", "Domains"], "task_count": 11},
+    {"path": "tasks/api-models.json", "groups": ["API and UI", "Models"], "task_count": 6},
+    {"path": "tasks/integration-verification-release.json", "groups": ["Integration", "Release", "Verification"], "task_count": 6}
+  ],
+  "task_count": 45
+}
