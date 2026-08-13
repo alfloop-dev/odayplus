@@ -17,88 +17,103 @@ updated_at: 2026-08-13
 
 This package is the binding implementation handoff for **External Market & Geographic Intelligence (EMGI)** in ODay Plus.
 
-It consolidates the previously proposed product definition, source-feasibility blueprint, repository inspection, current implementation defects, official web-source verification, and open-source project review into a single contract stack that Codex, Claude, Antigravity, and other workers can implement in parallel.
+It consolidates the previously proposed product definition, source-feasibility blueprint, the broader ODay Plus specification, current repository inspection, official source verification, and open-source project review into a contract stack that Codex, Claude, Antigravity, and other workers can implement in parallel.
 
-The package does **not** claim that the current HeatZone, SiteScore, market-intelligence data products, external providers, or source coverage are already production-ready. It defines the target contracts, the fail-closed migration path, and the exact work boundaries required to make those claims true.
+It does **not** claim that the current HeatZone, SiteScore, market-intelligence data products, external providers, source coverage, or investment recommendations are production-ready.
 
-## 2. Binding Documents and Precedence
+## 2. Binding Order
 
-When documents conflict, apply them in this order:
+When documents conflict, apply:
 
-1. `ODAY_PLUS_EXTERNAL_MARKET_AND_GEOGRAPHIC_INTELLIGENCE_PRODUCT_AND_DATA_PRODUCT_DEFINITION_v0.3.0.md`
-2. `ODAY_PLUS_EMGI_SOURCE_FEASIBILITY_AND_IMPLEMENTATION_BLUEPRINT_v0.3.0.md`
-3. `ODAY_PLUS_EMGI_SOURCE_AND_OPEN_SOURCE_DECISION_MATRIX_2026-08-13.md`
-4. `ODAY_PLUS_EMGI_REVIEW_MANIFEST.yaml`
-5. `ODAY_PLUS_EMGI_LLM_PARALLEL_EXECUTION_TASKS_2026-08-13.json`
-6. `ODAY_PLUS_EMGI_LLM_PARALLEL_EXECUTION_TASKS_2026-08-13.md`
+1. `docs/design/emgi/v0.3/PRODUCT_01_SCOPE_PRINCIPLES.md`
+2. `docs/design/emgi/v0.3/PRODUCT_02_USERS_SPACE_SCOPE.md`
+3. `docs/design/emgi/v0.3/PRODUCT_03_DOMAINS_DATA_PRODUCTS.md`
+4. `docs/design/emgi/v0.3/PRODUCT_04_API_GOVERNANCE_ADRS.md`
+5. `docs/design/emgi/v0.3/SYSTEM_01_BASELINE_ARCHITECTURE_CONTRACTS.md`
+6. `docs/design/emgi/v0.3/SYSTEM_02_SOURCES_DOMAINS_MATERIALIZATION.md`
+7. `docs/design/emgi/v0.3/SYSTEM_03_EXECUTION_RELEASE.md`
+8. `docs/design/emgi/v0.3/SOURCE_01_DATA_SOURCES.md`
+9. `docs/design/emgi/v0.3/SOURCE_02_OSS_PRIORITIES_RECEIPTS.md`
+10. `docs/design/emgi/v0.3/REVIEW_MANIFEST.yaml`
+11. `docs/design/emgi/v0.3/RELATION_OWNERSHIP_BASELINE.yaml`
+12. `docs/design/emgi/v0.3/tasks/manifest.json`
+13. `docs/design/emgi/v0.3/EXECUTION_01_RULES_AND_INVENTORY.md`
 
-The machine-readable task JSON is authoritative for dispatch fields, owned paths, contract dependencies, acceptance clauses, and verification commands. The Markdown task guide explains intent and integration gates.
+The task manifest is authoritative for all 45 task IDs and dependency edges. `kernel-a.json`, `kernel-b.json`, and `safety.json` additionally define detailed owned paths, contracts, acceptance clauses, and verification commands for the 13 highest-risk contract/safety tasks. `EXECUTION_01_RULES_AND_INVENTORY.md` is the binding responsibility and verification authority for the remaining 32 tasks.
 
-## 3. Documents in This Commit
+## 3. Checked-in Files
 
-| File | Role |
-|---|---|
-| `ODAY_PLUS_EXTERNAL_MARKET_AND_GEOGRAPHIC_INTELLIGENCE_PRODUCT_AND_DATA_PRODUCT_DEFINITION_v0.3.0.md` | Product boundary, users, jobs, data products, readiness, non-goals, ADRs |
-| `ODAY_PLUS_EMGI_SOURCE_FEASIBILITY_AND_IMPLEMENTATION_BLUEPRINT_v0.3.0.md` | Current-repo findings, target architecture, canonical contracts, migration and release gates |
-| `ODAY_PLUS_EMGI_SOURCE_AND_OPEN_SOURCE_DECISION_MATRIX_2026-08-13.md` | Verified source strategy, open-source adoption, role/dependency rules, policy warnings |
-| `ODAY_PLUS_EMGI_LLM_PARALLEL_EXECUTION_TASKS_2026-08-13.md` | Human-readable multi-LLM dispatch and completion rules |
-| `ODAY_PLUS_EMGI_LLM_PARALLEL_EXECUTION_TASKS_2026-08-13.json` | Machine-readable task graph |
-| `ODAY_PLUS_EMGI_REVIEW_MANIFEST.yaml` | Normative stack, known conflicts, superseded assumptions, review gates |
-| `ODAY_PLUS_EMGI_RELATION_OWNERSHIP_BASELINE.yaml` | Current and target relation ownership, grain, writer, and collision controls |
+```text
+docs/design/ODAY_PLUS_EMGI_DESIGN_PACKAGE_INDEX_2026-08-13.md
+docs/design/emgi/v0.3/
+  PRODUCT_01_SCOPE_PRINCIPLES.md
+  PRODUCT_02_USERS_SPACE_SCOPE.md
+  PRODUCT_03_DOMAINS_DATA_PRODUCTS.md
+  PRODUCT_04_API_GOVERNANCE_ADRS.md
+  SYSTEM_01_BASELINE_ARCHITECTURE_CONTRACTS.md
+  SYSTEM_02_SOURCES_DOMAINS_MATERIALIZATION.md
+  SYSTEM_03_EXECUTION_RELEASE.md
+  SOURCE_01_DATA_SOURCES.md
+  SOURCE_02_OSS_PRIORITIES_RECEIPTS.md
+  EXECUTION_01_RULES_AND_INVENTORY.md
+  REVIEW_MANIFEST.yaml
+  RELATION_OWNERSHIP_BASELINE.yaml
+  tasks/
+    manifest.json
+    kernel-a.json
+    kernel-b.json
+    safety.json
+```
 
 ## 4. Superseded Assumptions
 
-This package supersedes the following assumptions from the v0.1.0 drafts or current baseline implementation:
+- 12-week, Sprint 0–5, sequential PR scheduling.
+- One scope enum mixing ownership, sharing, sensitivity, and purpose.
+- Fake tenant ownership for national public data.
+- Provider registry rows as proof of live datasets.
+- Missing values becoming zero or confidence one.
+- Same-H3 counts named as 500-meter or travel-time features.
+- Table names used as source snapshot IDs.
+- Platform ingestion success treated as per-tenant/per-store coverage.
+- UTC used to cut Taiwan business days.
+- One relation name used for current candidate scoring and opened-store training.
+- Model gates that ignore downstream rent, CAPEX, margin, feasibility, and cannibalization defaults.
+- HeatZone or SiteScore heuristics treated as binding production decisions.
+- Purchasing nationwide paid data before baseline and incremental-value evidence.
+- Blocking API, UI, domain, data-product, and test work on live-source completion.
 
-- A 12-week, Sprint 0-5, sequential PR plan.
-- A single `Dataset Scope` enum that mixes ownership, sharing, sensitivity, and purpose.
-- Treating platform-wide public data as a fake tenant-owned dataset.
-- Treating a provider registry row as proof that a concrete dataset is live.
-- Treating missing POI, competitor, listing, rent, geocode, or confidence values as numeric zero or confidence one.
-- Treating a same-H3 count as a 500-meter or travel-time feature.
-- Treating table names as immutable source snapshot IDs.
-- Treating one successful platform ingestion partition as complete coverage for every tenant and every store.
-- Cutting Taiwan business days in UTC.
-- Using the same relation name for current candidate scoring rows and historical opened-store training outcomes.
-- Letting a model-input gate validate only demand features while downstream GO/WAIT/REJECT uses unvalidated rent, CAPEX, margin, feasibility, and cannibalization defaults.
-- Treating the existing HeatZone and SiteScore heuristic paths as binding production decision systems.
-- Buying telecom mobility, national traffic, or a full listing feed before a low-cost baseline and incremental value experiment exist.
-- Waiting for one source or one backend before API, UI, tests, domain logic, and data products can start.
+## 5. Non-Negotiable Rules
 
-## 5. Non-Negotiable Implementation Rules
+1. Start from exact reviewed `dev` SHA or a newer fetched `dev`; never stale `main`.
+2. Every task targets `dev`; owner and reviewer differ.
+3. Central registry, aggregate OpenAPI, contract lock, relation ownership, and ordered migration surfaces are generated or assembled only by designated integration tasks.
+4. Missing, stale, partial, unlicensed, unauthorized, quarantined, source-error, saturated, and truncated states never silently become zero.
+5. Zero requires negative evidence and proven search/partition completeness.
+6. Business time, effective time, knowledge time, feature time, label time, and build time are separate.
+7. Feature manifests never contain future label evidence.
+8. A model score may exist while the decision is not ready.
+9. Physical feasibility and economics fail closed before binding GO/WAIT/REJECT.
+10. Existing HeatZone and SiteScore heuristics remain shadow-only until v3 gates pass.
+11. Technical readiness and policy readiness are separate; policy warnings do not block technical research or shadow evaluation.
+12. Discovery sources publish observations, not unquestioned truth.
+13. Source disagreement and upstream dependency are preserved.
+14. Cross-brand data is analytical-only unless explicitly granted.
+15. Runtime completion requires durable persistence, restart readback, API readback, lineage, coverage, DQ, consumer evidence, independent review, and merge.
 
-1. **Start from the exact reviewed `dev` SHA or a later fetched `dev`; never start from stale `main`.**
-2. Every task branch targets `dev` and uses `task/<task-id>` unless the orchestrator applies an equivalent governed convention.
-3. An owner cannot approve or finalize its own task.
-4. Central registries, aggregate OpenAPI bundles, contract locks, and ordered migrations are generated or assembled by their designated integration tasks only.
-5. Missing, partial, stale, unlicensed, unauthorized, quarantined, truncated, and source-error states never silently become zero.
-6. A zero aggregate is valid only when negative evidence and search or partition completeness are proven.
-7. Feature-time, knowledge-time, label-time, and business-time are separate contracts.
-8. Feature source manifests never contain future label evidence.
-9. A model score can exist while a decision is not ready. Incomplete economics or physical feasibility must block binding recommendation.
-10. HeatZone and SiteScore baseline heuristics remain shadow-only until their v3 contracts and release gates pass.
-11. Source technical readiness and policy readiness are separate. Policy warnings do not block technical adapter research, fixtures, replay, or shadow evaluation; publication remains gated.
-12. Discovery adapters may include API, files, partner feeds, browser capture, crawlers, watchers, and surveys. They publish observations, not unquestioned truth.
-13. External source disagreements and upstream dependency are preserved. Duplicate downstream copies do not count as independent evidence.
-14. Cross-brand data is analytical-only unless an explicit management or display grant exists.
-15. Runtime completion requires durable persistence, restart readback, API readback, lineage, coverage, DQ, and consumer evidence—not only unit tests or fixture success.
+## 6. Current Baseline Facts
 
-## 6. Current Baseline Facts Workers Must Not Re-Discover Incorrectly
+At `0d1603cf347e30c9cf2f25f0eecc10673ac55015`:
 
-At reviewed baseline `0d1603cf347e30c9cf2f25f0eecc10673ac55015`:
+- `modules/market_intelligence` does not exist.
+- `modules/external_data` has reusable control-plane and ingestion scaffolding.
+- Geo, HeatZone, and SiteScore paths contain unsafe missing/default behavior.
+- Source snapshots are tenant-first.
+- The provider registry is metadata-only.
+- Relation names/grains require single-writer reconciliation.
+- Learning Hub already provides governed dataset/model release primitives.
+- The repo already includes dlt, Dagster, DuckDB, H3, MLflow, CatBoost, LightGBM, Great Expectations, Evidently, and optimization libraries; do not create a duplicate platform without an ADR.
 
-- `modules/market_intelligence` does not yet exist.
-- `modules/external_data` contains useful control-plane, ingestion, snapshot, source-policy, and geo scaffolding that must be migrated and composed rather than replaced wholesale.
-- `GeoFeatureSnapshot` and the HeatZone/SiteScore input paths contain missing-to-zero and default-confidence behavior that must be removed or isolated.
-- `SourceSnapshotService` is tenant-first and derives object identity and paths from tenant scope.
-- `provider_registry.py` explicitly describes itself as metadata-only; it is not live-dataset proof.
-- The dbt landing zone and model installer contain relations whose names and grains must be reconciled under single-writer ownership.
-- The Learning Hub already supports dataset snapshots, model artifacts, temporal validation, approval, and governed release. EMGI should extend those contracts rather than create another model registry.
-- `pyproject.toml` already includes dlt, Dagster, dbt-compatible data tooling, ML libraries, PostGIS/H3 dependencies, Great Expectations, Evidently, MLflow, CatBoost, LightGBM, and optimization libraries. Do not add a second orchestration or registry stack without an approved ADR.
-
-## 7. Safe First Dispatch Set
-
-The following tasks have no implementation dependency on a live external provider and may start immediately after the package is merged:
+## 7. Immediate Dispatch
 
 ```text
 EMGI-KRN-MEAS-001
@@ -115,11 +130,9 @@ EMGI-SAFE-SITESCORE-001
 EMGI-TEST-CORPUS-001
 ```
 
-Source, domain, API, UI, and data-product tasks may also start from the contract fixtures declared in the task graph. They do not wait for the real connectors.
+Source, domain, API, UI, model, data-product, and verification tasks may start from contract fixtures in parallel. They do not wait for live connectors.
 
 ## 8. Integration Gates
-
-Only these gates serialize the fleet:
 
 ```text
 G0 CONTRACT_LOCK
@@ -132,25 +145,12 @@ G6 SHADOW_MODEL_AND_DECISION_EVIDENCE
 G7 GOVERNED_RELEASE
 ```
 
-A task dependency should normally point to a contract version or one of these gates—not to an arbitrary previous PR.
-
 ## 9. Definition of Done
 
-A task is complete only when:
+A branch, local test, fixture, commit, or opened PR is not completion. Completion requires implementation, negative and contract tests, exact evidence, durable readback where applicable, independent approval, merge to `dev`, and orchestrator terminal closeout.
 
-- the intended implementation exists;
-- focused tests pass;
-- contract and negative tests pass;
-- evidence records exact SHA, commands, environment, results, limitations, and rollback;
-- source or runtime work proves durable restart readback where applicable;
-- an independent reviewer approves;
-- the PR is merged to `dev`;
-- the orchestrator records terminal completion.
+## 10. Research Basis
 
-A branch, commit, locally green test, generated fixture, or opened PR is not completion.
+The package preserves and revises `ODP-EMGI-PRODUCT-001@0.1.0` and `ODP-EMGI-IMPLEMENTATION-001@0.1.0`, aligns them with the broader ODay Plus specification and current repository, and records source/OSS findings reviewed on 2026-08-13.
 
-## 10. Source Basis
-
-The v0.3.0 package preserves and revises the uploaded v0.1.0 product definition and implementation blueprint, and aligns them with the broader ODay Plus system specification, the current repository baseline, official source documentation reviewed on 2026-08-13, and the open-source projects named in the source decision matrix.
-
-Research facts and provider terms remain subject to re-verification at implementation time. Each source task must store a dated feasibility receipt rather than treating this document as a permanent substitute for the upstream contract.
+Provider terms, releases, endpoints, quotas, coverage, and licenses must be re-verified in each source task's dated feasibility receipt.
