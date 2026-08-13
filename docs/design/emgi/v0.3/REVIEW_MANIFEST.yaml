@@ -1,0 +1,132 @@
+schema: oday-plus.emgi-review-manifest.v0.3
+doc_id: ODP-EMGI-REVIEW-MANIFEST-003
+status: approved_for_parallel_implementation
+reviewed_at: '2026-08-13T14:00:00+08:00'
+target:
+  repository: alfloop-dev/odayplus
+  branch: dev
+  baseline_sha: 0d1603cf347e30c9cf2f25f0eecc10673ac55015
+normative_stack:
+- order: 1
+  path: docs/design/emgi/v0.3/PRODUCT_01_SCOPE_PRINCIPLES.md
+  role: product_scope_principles
+- order: 2
+  path: docs/design/emgi/v0.3/PRODUCT_02_USERS_SPACE_SCOPE.md
+  role: users_spatial_scope
+- order: 3
+  path: docs/design/emgi/v0.3/PRODUCT_03_DOMAINS_DATA_PRODUCTS.md
+  role: domains_data_products
+- order: 4
+  path: docs/design/emgi/v0.3/PRODUCT_04_API_GOVERNANCE_ADRS.md
+  role: api_governance_adrs_acceptance
+- order: 5
+  path: docs/design/emgi/v0.3/SYSTEM_01_BASELINE_ARCHITECTURE_CONTRACTS.md
+  role: baseline_architecture_contracts
+- order: 6
+  path: docs/design/emgi/v0.3/SYSTEM_02_SOURCES_DOMAINS_MATERIALIZATION.md
+  role: sources_domains_materialization
+- order: 7
+  path: docs/design/emgi/v0.3/SYSTEM_03_EXECUTION_RELEASE.md
+  role: execution_release_index
+- order: 8
+  path: docs/design/emgi/v0.3/SOURCE_01_DATA_SOURCES.md
+  role: source_decisions
+- order: 9
+  path: docs/design/emgi/v0.3/SOURCE_02_OSS_PRIORITIES_RECEIPTS.md
+  role: oss_and_feasibility_receipts
+- order: 10
+  path: docs/design/emgi/v0.3/RELATION_OWNERSHIP_BASELINE.yaml
+  role: relation_grain_writer_authority
+- order: 11
+  path: docs/design/emgi/v0.3/tasks/manifest.json
+  role: machine_readable_dispatch_authority
+- order: 12
+  path: docs/design/emgi/v0.3/EXECUTION_01_RULES_AND_INVENTORY.md
+  role: dispatch_explanation
+supersedes:
+- ODP-EMGI-PRODUCT-001@0.1.0
+- ODP-EMGI-IMPLEMENTATION-001@0.1.0
+- 12-week Sprint 0-5 sequential execution plan
+- EMGI-001 through EMGI-015 human-sequential PR dependency model
+binding_decisions:
+- EMGI remains in the odayplus monorepo; oday-data-platform publishes versioned analytical contracts only.
+- modules/external_data remains the source control plane; modules/market_intelligence is a new canonical market domain.
+- Missing, partial, stale, unlicensed, unauthorized, quarantined, truncated, saturated, and source-error states never silently become zero.
+- Zero aggregates require valid negative evidence and complete search or partition coverage.
+- Provider, Dataset, DatasetVersion, Adapter, ContentBlob, Observation, SearchExecution, and DataProduct are separate identities.
+- Owner, sharing, sensitivity, and purpose are orthogonal scope dimensions.
+- Global and licensed-shared ingestion use governed scope principals, not fake tenant ownership.
+- Feature, label, and training manifests are separate; runtime feature manifests never include future labels.
+- Taiwan business dates use Asia/Taipei or the store-specific timezone, not UTC date truncation.
+- Every relation has one authoritative writer and one declared grain.
+- HeatZone and SiteScore baseline heuristics are shadow-only until v3 release gates pass.
+- Physical feasibility and decision economics are independent hard gates from market potential.
+- SiteScore v3 separates market potential, target-format counterfactual, ramp, cannibalization, economics, and decision policy.
+- Data acquisition is value-of-information driven; paid nationwide sources are not prerequisites.
+- Technical source readiness and policy readiness are separate.
+- Source dependency is preserved so copied upstream observations are not counted as independent evidence.
+- API, UI, tests, domains, and data products may start from contract fixtures in parallel with connectors.
+known_current_conflicts:
+- id: EMGI-CONFLICT-001
+  surface: modules/external_data/geo/pipeline.py
+  problem: unresolved geocode becomes 0,0 and missing values become numeric zero
+  required_task: EMGI-SAFE-GEO-001
+- id: EMGI-CONFLICT-002
+  surface: modules/heatzone
+  problem: heuristic scoring interprets missing competitors as a competition gap and uses unvalidated constants
+  required_task: EMGI-SAFE-HEATZONE-001
+- id: EMGI-CONFLICT-003
+  surface: modules/sitescore/domain/scoring.py
+  problem: model-input gate and decision-economics inputs are inconsistent; defaults can alter recommendation
+  required_task: EMGI-SAFE-SITESCORE-001
+- id: EMGI-CONFLICT-004
+  surface: model_ready candidate-site relations
+  problem: same relation name can represent different grains and writers
+  required_task: EMGI-KRN-RELATION-001
+- id: EMGI-CONFLICT-005
+  surface: source snapshot and external-fetch scope
+  problem: tenant-first ownership conflicts with platform and licensed-shared datasets
+  required_task: EMGI-KRN-SCOPE-001
+- id: EMGI-CONFLICT-006
+  surface: PIT labels and coverage
+  problem: platform run success can be misread as tenant/store/date completeness
+  required_task: EMGI-KRN-COVERAGE-001
+- id: EMGI-CONFLICT-007
+  surface: business date
+  problem: UTC date truncation misclassifies Taiwan transactions
+  required_task: EMGI-KRN-TIME-001
+- id: EMGI-CONFLICT-008
+  surface: source snapshots
+  problem: content identity and repeated observation are conflated
+  required_task: EMGI-KRN-OBS-001
+dispatch_rules:
+  base_ref: origin/dev@0d1603cf347e30c9cf2f25f0eecc10673ac55015
+  branch_pattern: task/<task-id>
+  target_branch: dev
+  self_review: forbidden
+  tree_guard: block
+  central_files: generated_only
+  evidence_path: docs/evidence/completion/<task-id>/
+  completion:
+  - implementation
+  - focused_tests
+  - negative_contract_tests
+  - runtime_or_replay_evidence_as_applicable
+  - independent_review
+  - merge_to_dev
+  - orchestrator_terminal_closeout
+integration_gates:
+- G0_CONTRACT_LOCK
+- G1_GENERATED_REGISTRY
+- G2_SCHEMA_AND_RELATION_ASSEMBLY
+- G3_REAL_SOURCE_REPLAY
+- G4_100_ADDRESS_END_TO_END
+- G5_1000_ADDRESS_REGRESSION
+- G6_SHADOW_MODEL_AND_DECISION_EVIDENCE
+- G7_GOVERNED_RELEASE
+production_non_claims:
+- The package does not claim that a live official population, POI, rent, mobility, traffic, or listing connector is already complete.
+- The package does not claim that HeatZone or SiteScore is production-ready.
+- The package does not claim that existing opened_on data is authoritative or sufficient.
+- The package does not claim that the current payback formula represents complete unit economics.
+- The package does not grant legal approval for automated retrieval or publication.
