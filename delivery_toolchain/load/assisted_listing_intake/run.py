@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from scripts.load.assisted_listing_intake.runtime import run_capacity
+from delivery_toolchain.load.assisted_listing_intake.runtime import run_capacity
 
 
 def main() -> int:

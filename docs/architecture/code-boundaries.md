@@ -63,6 +63,7 @@ own boundary and product code must never depend on the wrapper.
 | Secret scanning | `delivery_toolchain/security/secret_scan.py` | `scripts/security/secret_scan.py` |
 | OpenAPI generation and drift | `delivery_toolchain/openapi/` | none |
 | Git task workflow and hooks | `delivery_toolchain/git/` | none |
+| Release, load, and chaos validation | `delivery_toolchain/{release,load,chaos}/` | none |
 
 New automation must use canonical paths. Compatibility entrypoints may be
 removed after downstream callers have migrated and the announced support window

@@ -27,7 +27,7 @@ infra/assisted-listing-intake/live_runtime_evidence.yaml (human-recorded
 via task PR — there is no CLI override).
 
 Usage:
-    python3 scripts/release/assisted_listing_intake/run.py --phase all \
+    python3 delivery_toolchain/release/assisted_listing_intake/run.py --phase all \
         --output-dir docs/evidence/completion/ODP-INTAKE-RELEASE-001
 """
 
@@ -44,7 +44,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 
-from scripts.release.assisted_listing_intake.config import (  # noqa: E402
+from delivery_toolchain.release.assisted_listing_intake.config import (  # noqa: E402
     ReleaseConfigError,
     load_release_config,
 )
@@ -80,7 +80,7 @@ def _load_existing(output_dir: Path, name: str) -> dict[str, Any] | None:
 
 
 def run_readiness(config, output_dir: Path) -> dict[str, Any]:
-    from scripts.release.assisted_listing_intake.gates import (
+    from delivery_toolchain.release.assisted_listing_intake.gates import (
         check_feature_flags,
         check_production_readiness,
         check_release_authority,
@@ -111,7 +111,7 @@ def run_cutover_gate(
     *,
     fresh_phase_names: set[str] | None = None,
 ) -> dict[str, Any]:
-    from scripts.release.assisted_listing_intake.gates import (
+    from delivery_toolchain.release.assisted_listing_intake.gates import (
         check_feature_flags,
         check_live_runtime_evidence,
         check_release_authority,
@@ -294,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
         work_dir = args.work_dir
         work_dir.mkdir(parents=True, exist_ok=True)
 
-    from scripts.release.assisted_listing_intake import drills
+    from delivery_toolchain.release.assisted_listing_intake import drills
 
     results: dict[str, dict[str, Any]] = {}
     exit_code = 0
@@ -325,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 _write(output_dir, "restore", results["restore"])
             elif phase == "canary":
-                from scripts.release.assisted_listing_intake.gates import (
+                from delivery_toolchain.release.assisted_listing_intake.gates import (
                     check_live_runtime_evidence,
                     check_release_authority,
                 )
@@ -362,7 +362,7 @@ def main(argv: list[str] | None = None) -> int:
         if scratch_ctx is not None:
             scratch_ctx.cleanup()
 
-    from scripts.release.assisted_listing_intake.gates import check_live_runtime_evidence
+    from delivery_toolchain.release.assisted_listing_intake.gates import check_live_runtime_evidence
 
     live = check_live_runtime_evidence(config)
     failed = [name for name, result in results.items() if not result.get("passed")]

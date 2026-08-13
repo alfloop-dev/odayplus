@@ -163,6 +163,9 @@ archive/retired-dev-tools/2026-08-13/test_migrate_task_dependency_graph.py,archi
 archive/retired-dev-tools/2026-08-13/test_plan_execution_pack.py,archived,archived,false,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-13/validate_plan_execution_pack.py,archived,archived,false,,conditional,Repository archive retention policy permits permanent deletion.
 delivery_toolchain/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/chaos/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/chaos/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/chaos/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/git/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/git/check_commit_scope.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/git/check_commit_trailers.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -170,11 +173,21 @@ delivery_toolchain/git/worker_commit.py,development_delivery_tooling,delivery_on
 delivery_toolchain/governance/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/check_code_boundaries.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/test_check_code_boundaries.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
+delivery_toolchain/load/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/load/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/load/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/load/assisted_listing_intake/runtime.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/check_drift.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/export_openapi.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/generate_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/openapi/openapi_diff.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/assisted_listing_intake/config.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/assisted_listing_intake/drills.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/assisted_listing_intake/gates.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/generate_sbom.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/sast_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -459,8 +472,6 @@ pipelines/training/model_training.py,product_system,product_required,true,engine
 scripts/ai_status.py,development_platform_system,development_only,false,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/apply_branch_protection.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/build_validate_assisted_listing_intake_openapi.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/chaos/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/chaos/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/check_config_wiring.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/check_pr_merge_eligibility.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/data_platform/__init__.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
@@ -512,9 +523,6 @@ scripts/e2e/verify_deployment_health_backup_rollback.py,development_delivery_too
 scripts/e2e/worker_heartbeat.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/external_data_backfill.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/generate_assisted_listing_intake_client.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/load/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/load/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/load/assisted_listing_intake/runtime.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/migrations/assisted_listing_intake/migrate.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/models/__init__.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 scripts/models/avm_benchmark.py,product_operations_tooling,operations_required,false,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
@@ -540,11 +548,6 @@ scripts/orchestrator/test_check_task_dependency_resolvability.py,verification,ve
 scripts/orchestrator/test_diagnose_finalize_lane_remediation.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_finalize_lane_doctor.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_rollout_supervisor_runtime.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
-scripts/release/assisted_listing_intake/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/release/assisted_listing_intake/config.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/release/assisted_listing_intake/drills.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/release/assisted_listing_intake/gates.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
-scripts/release/assisted_listing_intake/run.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/security/generate_sbom.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/security/sast_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 scripts/security/secret_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."

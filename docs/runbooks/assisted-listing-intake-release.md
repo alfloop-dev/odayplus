@@ -24,7 +24,7 @@ fail-closed cutover gate.
 ## 2. The release harness
 
 ```bash
-python3 scripts/release/assisted_listing_intake/run.py --phase all \
+python3 delivery_toolchain/release/assisted_listing_intake/run.py --phase all \
   --output-dir docs/evidence/completion/ODP-INTAKE-RELEASE-001 \
   --uat-report <playwright-json-report>
 ```
@@ -86,7 +86,7 @@ Phases run in this fixed order; each emits `<phase>.json` evidence:
    ```bash
    PLAYWRIGHT_JSON_OUTPUT_NAME=/tmp/uat-report.json \
      npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts --reporter=json
-   python3 scripts/release/assisted_listing_intake/run.py --phase uat \
+   python3 delivery_toolchain/release/assisted_listing_intake/run.py --phase uat \
      --uat-report /tmp/uat-report.json --output-dir docs/evidence/completion/ODP-INTAKE-RELEASE-001
    ```
 

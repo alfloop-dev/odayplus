@@ -13,7 +13,7 @@ import os
 from datetime import UTC, date, datetime
 from typing import Any
 
-from scripts.release.assisted_listing_intake.config import (
+from delivery_toolchain.release.assisted_listing_intake.config import (
     EXPECTED_FLAG_KEYS,
     PRODUCTION_CANARY_UNITS,
     REQUIRED_LIVE_TARGETS,

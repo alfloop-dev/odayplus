@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.load.assisted_listing_intake.runtime import Sample, run_capacity, summarize
+from delivery_toolchain.load.assisted_listing_intake.runtime import Sample, run_capacity, summarize
 
 pytestmark = pytest.mark.performance
 

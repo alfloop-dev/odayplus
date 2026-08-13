@@ -123,18 +123,18 @@ boundaries:
       - delivery_toolchain/*.py
       - delivery_toolchain/**/*.py
       - scripts/*.py
-      - scripts/chaos/*.py
-      - scripts/chaos/**/*.py
+      - delivery_toolchain/chaos/*.py
+      - delivery_toolchain/chaos/**/*.py
       - scripts/e2e/*.py
       - scripts/e2e/**/*.py
       - delivery_toolchain/git/*.py
       - delivery_toolchain/git/**/*.py
-      - scripts/load/*.py
-      - scripts/load/**/*.py
+      - delivery_toolchain/load/*.py
+      - delivery_toolchain/load/**/*.py
       - delivery_toolchain/openapi/*.py
       - delivery_toolchain/openapi/**/*.py
-      - scripts/release/*.py
-      - scripts/release/**/*.py
+      - delivery_toolchain/release/*.py
+      - delivery_toolchain/release/**/*.py
       - scripts/security/*.py
       - scripts/security/**/*.py
       - scripts/ops/*.py

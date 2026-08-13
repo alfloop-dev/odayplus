@@ -397,8 +397,8 @@
       "owned_paths": [
         "tests/performance/assisted_listing_intake/",
         "tests/reliability/assisted_listing_intake/",
-        "scripts/load/assisted_listing_intake/",
-        "scripts/chaos/assisted_listing_intake/",
+        "delivery_toolchain/load/assisted_listing_intake/",
+        "delivery_toolchain/chaos/assisted_listing_intake/",
         "docs/evidence/completion/ODP-INTAKE-LOAD-001/"
       ],
       "acceptance": [
@@ -409,7 +409,7 @@
       ],
       "verification": [
         "uv run pytest tests/performance/assisted_listing_intake tests/reliability/assisted_listing_intake -q",
-        "python3 -m ruff check tests/performance/assisted_listing_intake tests/reliability/assisted_listing_intake scripts/load/assisted_listing_intake scripts/chaos/assisted_listing_intake",
+        "python3 -m ruff check tests/performance/assisted_listing_intake tests/reliability/assisted_listing_intake delivery_toolchain/load/assisted_listing_intake delivery_toolchain/chaos/assisted_listing_intake",
         "git diff --check origin/dev...HEAD"
       ]
     },
@@ -436,7 +436,7 @@
       ],
       "owned_paths": [
         "infra/assisted-listing-intake/",
-        "scripts/release/assisted_listing_intake/",
+        "delivery_toolchain/release/assisted_listing_intake/",
         "tests/e2e/operator-assisted-listing-intake.spec.ts",
         "docs/runbooks/assisted-listing-intake-release.md",
         "docs/evidence/completion/ODP-INTAKE-RELEASE-001/"

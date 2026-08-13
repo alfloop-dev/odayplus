@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from scripts.release.assisted_listing_intake.config import (
+from delivery_toolchain.release.assisted_listing_intake.config import (
     EXPECTED_FLAG_KEYS,
     ReleaseConfig,
 )
@@ -595,8 +595,8 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
     mechanism step and captures the required evidence packet fields.
     """
 
+    from delivery_toolchain.release.assisted_listing_intake.gates import build_intake_flag_registry
     from modules.external_data.application.source_snapshots import SourceSnapshotService
-    from scripts.release.assisted_listing_intake.gates import build_intake_flag_registry
     from shared.audit.events import AuditEvent
     from shared.auth.feature_flags import FeatureFlagRegistry
     from shared.domain.events import DomainEvent

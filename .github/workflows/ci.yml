@@ -188,7 +188,7 @@ jobs:
             status=0
             uv run pytest -m performance tests/performance || status=$?
             capacity_status=0
-            uv run python scripts/load/assisted_listing_intake/run.py \
+            uv run python delivery_toolchain/load/assisted_listing_intake/run.py \
               --volume 120 --concurrency 20 --observe-only \
               --output "performance-reports/assisted_intake_capacity_attempt_${attempt}.json" \
               || capacity_status=$?
