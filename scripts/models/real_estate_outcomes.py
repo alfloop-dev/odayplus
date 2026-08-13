@@ -8,6 +8,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from models.model_ready.contracts import (
+    ModelTrainingConfigurationError,
+    require_production_database_url,
+)
 from modules.external_data.providers.taiwan_real_estate import (
     GOVERNMENT_OPEN_DATA_LICENSE_V1,
     MAX_DOWNLOAD_BYTES,
@@ -20,10 +24,6 @@ from modules.external_data.providers.taiwan_real_estate import (
     OfficialRealEstateTransaction,
     ParsedOfficialRealEstateBatch,
     parse_official_real_estate,
-)
-from scripts.models.contracts import (
-    ModelTrainingConfigurationError,
-    require_production_database_url,
 )
 
 MIGRATION_PATH = (

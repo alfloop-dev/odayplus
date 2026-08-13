@@ -78,6 +78,7 @@ ignore = ["E501", "E402"]
 [tool.pytest.ini_options]
 testpaths = [
     ".orchestrator",
+    "delivery_toolchain",
     "scripts",
     "tests",
     "modules",

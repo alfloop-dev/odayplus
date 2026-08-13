@@ -10,14 +10,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from models.model_ready.contracts import MODEL_SPECS, require_production_database_url
+from models.model_ready.storage import ModelReadySource, PostgresModelReadySource
 from models.shared_ml.model_ready_receipt import (
     RECEIPT_KIND,
     RECEIPT_PATH,
     RECEIPT_SCHEMA_VERSION,
     compute_receipt_sha256,
 )
-from scripts.models.contracts import MODEL_SPECS, require_production_database_url
-from scripts.models.storage import ModelReadySource, PostgresModelReadySource
 
 PRODUCTION_CAPABILITIES = ("forecastops", "avm", "sitescore", "heatzone")
 

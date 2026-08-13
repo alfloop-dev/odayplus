@@ -5,11 +5,12 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
-.PHONY: help bootstrap lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
+.PHONY: help bootstrap boundary-check lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
 
 help:
 	@printf "ODay Plus developer commands\n\n"
 	@printf "  make bootstrap   Prepare ignored local config needed by tests\n"
+	@printf "  make boundary-check  Enforce product/development/removal boundaries\n"
 	@printf "  make lint        Run Python lint checks\n"
 	@printf "  make test        Run CI-safe Python tests\n"
 	@printf "  make smoke       Run fast foundation smoke tests\n"
@@ -30,8 +31,11 @@ bootstrap:
 		printf "Using existing %s\n" "$(LOCAL_CONFIG)"; \
 	fi
 
+boundary-check:
+	$(UV) run python delivery_toolchain/governance/check_code_boundaries.py
+
 lint: bootstrap
-	$(UV) run ruff check .
+	$(UV) run ruff check .orchestrator delivery_toolchain scripts tests modules apps shared models solver pipelines infra
 
 test: bootstrap
 	$(UV) run pytest -m "$(PYTEST_MARK_EXPR)"
@@ -100,7 +104,7 @@ product-e2e-gate: release-gate-registry
 product-release-gate:
 	python3 scripts/e2e/check_product_release_gate.py --require-go $(if $(EXPECTED_SHA),--expected-sha $(EXPECTED_SHA))
 
-ci: bootstrap lint security test smoke node-check
+ci: bootstrap boundary-check lint security test smoke node-check
 
 clean:
 	rm -rf .pytest_cache .ruff_cache htmlcov .coverage .coverage.*

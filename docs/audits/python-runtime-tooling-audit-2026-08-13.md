@@ -1,5 +1,12 @@
 # Python 程式碼與責任邊界盤點 — 2026-08-13
 
+> This file preserves the original `.orchestrator` / `scripts` / `apps/api` /
+> `tests` audit scope. Repository-wide classification is now governed by
+> [`config/code-boundaries.yaml`](../../config/code-boundaries.yaml) and the
+> generated [`code-boundary-inventory.csv`](code-boundary-inventory.csv), which
+> cover product domain packages, workers, pipelines, services, evidence, and
+> archive code as well.
+
 基準：branch `task/ODP-ORCH-AGENT-LOAD-BALANCE-001`，起始 commit
 `61d90cca`。範圍是 `.orchestrator/`、`scripts/`、`apps/api/`、`tests/`
 的 active Python；`archive/` 不算 active code。逐檔結果在
