@@ -13,7 +13,23 @@ script/tool，但 supervisor 會直接載入它；它是開發平台的 live run
 runtime/tool，逐檔分類與報告總數互相矛盾。
 
 本次改成以程式實際責任、import/call path、讀寫狀態與外部副作用分類，
-不是以目錄名稱或開發紀錄分類：
+不是以目錄名稱或開發紀錄分類。分類採兩層：第一層先回答「是不是產品」，
+第二層才描述 runtime/tool 的具體責任。
+
+| 第一層範圍 | 檔案 | 行數 | 算不算產品本身 |
+|---|---:|---:|---|
+| **產品系統** | **41** | **17,201** | **是；正式 BFF request-serving runtime** |
+| 產品維運工具 | 20 | 12,939 | 否；操作產品部署、資料與模型 |
+| 開發平台系統 | 53 | 34,991 | 否；內部 orchestrator/control plane，是另一套系統 |
+| 開發／交付工具 | 67 | 19,020 | 否；Build、CI、release、OpenAPI、安全與 Git 工具 |
+| 測試驗證 | 240 | 112,936 | 否；verification only |
+| **合計** | **421** | **197,087** | |
+
+逐檔 CSV 新增 `system_scope` 與 `is_product_runtime`。只有
+`system_scope=product_system` 的 41 個檔案會標記
+`is_product_runtime=true`；其餘 380 個一律不算產品 runtime。
+
+第二層責任如下：
 
 | 邊界 | 檔案 | 行數 | 定義 |
 |---|---:|---:|---|
@@ -28,6 +44,17 @@ runtime/tool，逐檔分類與報告總數互相矛盾。
 因此不能再把 `.orchestrator + scripts + BFF` 當成一個「被開發的產品」。
 產品的 request-serving BFF 是 17,201 行；開發平台本身是另一套 34,991 行的
 live control plane 與維運程式；其餘是產品維運、release/build 工具與測試。
+
+### 第一層分類規則
+
+- `product_system`：只有 `apps/api/**` 的 BFF request path 與 composition。
+- `product_operations_tooling`：deployment、migration、backfill、data/model jobs；
+  它們服務產品，但不是產品 request runtime。
+- `development_platform_system`：`.orchestrator/**`、`scripts/ai_status.py` 與
+  orchestrator rollout/doctor；這是內部開發平台，不是終端產品。
+- `development_delivery_tooling`：`scripts/e2e/**`、Build、CI、release、OpenAPI、
+  security、Git utilities；全部屬開發工具。
+- `verification`：所有測試；不計入任何 deployed system code。
 
 ## 盤點方法
 
