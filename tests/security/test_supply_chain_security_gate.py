@@ -190,7 +190,7 @@ def test_invalid_provenance_rejected_negative(tmp_path: Path) -> None:
 
     # Verify that comparing it to current_generate_sbom fails
     sys.path.insert(0, str(ROOT))
-    from scripts.security.generate_sbom import generate_sbom as current_generate_sbom
+    from delivery_toolchain.security.generate_sbom import generate_sbom as current_generate_sbom
 
     current_sbom = current_generate_sbom()
     assert current_sbom.get("components") != data.get("components"), (
@@ -214,7 +214,7 @@ def test_leaked_test_secrets_rejected_negative() -> None:
         )
 
         sys.path.insert(0, str(ROOT))
-        from scripts.security.secret_scan import scan_file
+        from delivery_toolchain.security.secret_scan import scan_file
 
         violations_a = scan_file(secret_file_a)
         assert len(violations_a) > 0, "Should detect AWS key leak without pragma"

@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from scripts.apply_branch_protection import branch_policy, build_payload
+from delivery_toolchain.github.apply_branch_protection import (
+    branch_policy,
+    build_payload,
+)
 
 POLICY_PATH = Path(__file__).resolve().parents[2] / ".github/branch-protection/policy.json"
 
