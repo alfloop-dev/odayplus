@@ -166,6 +166,10 @@ delivery_toolchain/__init__.py,development_delivery_tooling,delivery_only,false,
 delivery_toolchain/governance/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/check_code_boundaries.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/governance/test_check_code_boundaries.py,verification,verification_only,false,engineering,true,The corresponding maintained code and its support obligation have been removed.
+delivery_toolchain/security/__init__.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/security/generate_sbom.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/security/sast_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/security/secret_scan.py,development_delivery_tooling,delivery_only,false,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 docs/evidence/completion/ODP-ORCH-ANTIGRAVITY-ROTATION-FIX-001/repro_p0_findings.py,evidence_artifact,evidence_only,false,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-DEPLOY-JOB-RECEIPT-UPLOAD-001/simulate_artifact_selection.py,evidence_artifact,evidence_only,false,,conditional,The evidence retention period and audit obligations have ended.
 docs/evidence/runtime/ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001/mutate_upload_contract.py,evidence_artifact,evidence_only,false,,conditional,The evidence retention period and audit obligations have ended.

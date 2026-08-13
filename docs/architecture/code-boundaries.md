@@ -53,3 +53,15 @@ python3 delivery_toolchain/governance/check_code_boundaries.py --write-inventory
 Legacy locations are migrated incrementally. A compatibility wrapper may keep
 an old command/import stable, but the canonical implementation must live in its
 own boundary and product code must never depend on the wrapper.
+
+## Migration status
+
+| Capability | Canonical implementation | Temporary compatibility path |
+|---|---|---|
+| SBOM generation | `delivery_toolchain/security/generate_sbom.py` | `scripts/security/generate_sbom.py` |
+| Python SAST | `delivery_toolchain/security/sast_scan.py` | `scripts/security/sast_scan.py` |
+| Secret scanning | `delivery_toolchain/security/secret_scan.py` | `scripts/security/secret_scan.py` |
+
+New automation must use canonical paths. Compatibility entrypoints may be
+removed after downstream callers have migrated and the announced support window
+has ended.

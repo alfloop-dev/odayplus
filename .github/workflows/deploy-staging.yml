@@ -98,13 +98,13 @@ jobs:
         run: uv python install 3.12
 
       - name: Run Secret Scan
-        run: python3 scripts/security/secret_scan.py
+        run: python3 delivery_toolchain/security/secret_scan.py
 
       - name: Run Python SAST Scan
-        run: python3 scripts/security/sast_scan.py
+        run: python3 delivery_toolchain/security/sast_scan.py
 
       - name: Generate SBOM
-        run: python3 scripts/security/generate_sbom.py
+        run: python3 delivery_toolchain/security/generate_sbom.py
 
       - name: Validate release authority, WIF, and live runtime
         run: |

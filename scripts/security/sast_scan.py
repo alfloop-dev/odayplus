@@ -1,47 +1,17 @@
 #!/usr/bin/env python3
-"""SAST check using Bandit for Python security auditing."""
+"""Compatibility entrypoint for the canonical delivery-toolchain command."""
 
-from __future__ import annotations
-
-import subprocess
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
+from delivery_toolchain.security.sast_scan import main  # noqa: E402
 
-def main() -> int:
-    print("Starting Python SAST scan...")
-    # Skip B301 (pickle), B310 (urllib urlopen), and B324 (md5 for mocks/non-security hashes)
-    cmd = [
-        "uv",
-        "run",
-        "--with",
-        "bandit",
-        "bandit",
-        "-r",
-        "modules",
-        "apps",
-        "shared",
-        "solver",
-        "-x",
-        ".venv,apps/data_platform/.venv",
-        "-ll",
-        "--skip",
-        "B301,B310,B324,B104",
-    ]
-    result = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
-    print(result.stdout)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
-
-    if result.returncode == 0:
-        print("SAST scan passed successfully.")
-    else:
-        print(f"SAST scan failed with exit code {result.returncode}")
-
-    return result.returncode
+__all__ = ["main"]
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
