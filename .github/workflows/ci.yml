@@ -14,6 +14,55 @@ on:
     types: [checks_requested]
 
 jobs:
+  change-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.classify.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify change scope
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base_sha="$PR_BASE_SHA"
+              head_sha="$PR_HEAD_SHA"
+              ;;
+            merge_group)
+              base_sha="$MERGE_GROUP_BASE_SHA"
+              head_sha="$MERGE_GROUP_HEAD_SHA"
+              ;;
+            push)
+              base_sha="$PUSH_BEFORE_SHA"
+              head_sha="$PUSH_AFTER_SHA"
+              ;;
+            *)
+              echo "scope=product_or_mixed" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+            echo "scope=product_or_mixed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$base_sha" "$head_sha" > changed-paths.txt
+          python3 delivery_toolchain/governance/classify_change_review_scope.py \
+            --paths-file changed-paths.txt > scope.json
+          scope="$(python3 -c "import json; print(json.load(open('scope.json'))['scope'])")"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
   orchestrator:
     runs-on: ubuntu-latest
     steps:
@@ -51,6 +100,8 @@ jobs:
         run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts
 
   product:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -153,6 +204,8 @@ jobs:
   # the 150-request volume exactly as ratified, and runs the measurement three
   # times in separate processes so a single pass cannot be a lucky sample.
   performance-gate:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -217,6 +270,8 @@ jobs:
           if-no-files-found: warn
 
   product-e2e-gate:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

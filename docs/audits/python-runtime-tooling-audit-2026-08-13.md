@@ -12,6 +12,32 @@
 的 active Python；`archive/` 不算 active code。逐檔結果在
 [`python-inventory-2026-08-13.csv`](python-inventory-2026-08-13.csv)。
 
+## 2026-08-14 執行更正
+
+本文件以下內容保留 2026-08-13 的稽核快照；不能再當作目前 active
+tooling 的數字或介面說明。依程式碼、設定、GitHub workflow 與完整 E2E
+測試重新核對後，已執行下列退休：
+
+- PR #82 已合併，且它的 follow-up workflow 仍直接呼叫 `gh pr view 82`。
+  因此「數字 82 不再是 executable interface」的舊結論不正確。已刪除該
+  workflow、26 支 external-proof／closeout／fleet 專屬 checker，及 21 支
+  對應測試；保留並縮小 `check_product_release_gate.py`，使其只驗證通用產品
+  E2E packet 與 Gate 0–6 registry。
+- GitHub webhook ingress 沒有 service、workflow 或啟用設定；server、JSONL
+  consumer、狀態欄位與範例設定已退休。GitHub polling 與 issue-comment
+  polling 仍是 active runtime。
+- 支援範圍收斂為設定中實際使用的 Antigravity、Claude、Codex 與
+  `file_inbox` fallback。未配置且沒有 active agent 的 VS Code、Gemini、
+  Copilot、`claude_code` adapter 已移除；Antigravity 的 Gemini 模型池並非
+  Gemini adapter，仍保留。
+- `archive/retired-dev-tools/` 的 16 支、4,204 行 Python 依
+  `config/code-boundaries.yaml` 屬 conditional archive retention，維持原樣，
+  不算作立即刪除量。
+
+這次刪除總共移除 10,000+ 行 campaign 與其驗證程式；這個數字包含測試，
+不能與舊有「約 6,900 行 active code」估算混用。後者是已退休所有條件的
+情境估計，不是保證刪除承諾。
+
 ## 結論
 
 先前的盤點確實沒有把邊界分乾淨。特別是 `scripts/ai_status.py` 被歸在

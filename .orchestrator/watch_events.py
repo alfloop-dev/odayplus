@@ -169,8 +169,6 @@ def compute_events(previous: dict[str, Any], current: dict[str, Any], config: di
     events: list[dict[str, Any]] = []
     previous_tasks = previous.get("tasks", {})
     current_tasks = current.get("tasks", {})
-    {value.lower() for value in config.get("events", {}).get("review_statuses", ["review"])}
-
     for task_id, task in current_tasks.items():
         old_task = previous_tasks.get(task_id)
         if not old_task:

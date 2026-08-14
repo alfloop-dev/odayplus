@@ -21,7 +21,6 @@ from common import (
     execution_context_files,
     load_config,
     load_json,
-    load_jsonl,
     load_status,
     render_template,
     run_command,
@@ -88,7 +87,6 @@ def default_bus_state() -> dict[str, Any]:
         "last_error": None,
         "processed_review_ids": [],
         "processed_comment_ids": [],
-        "processed_webhook_deliveries": [],
         "poll_cursors": {
             "pr_reviews": 0,
             "issue_comments": 0,
@@ -107,7 +105,6 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("tasks", {})
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
-    merged.setdefault("processed_webhook_deliveries", [])
     merged.setdefault("poll_cursors", {})
     merged["poll_cursors"].setdefault("pr_reviews", 0)
     merged["poll_cursors"].setdefault("issue_comments", 0)
@@ -138,7 +135,6 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     state["last_sync_at"] = utc_now()
     state["processed_review_ids"] = state.get("processed_review_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
-    state["processed_webhook_deliveries"] = state.get("processed_webhook_deliveries", [])[-MAX_PROCESSED_IDS:]
     write_json(config_path(config, "github_bus_state"), state)
 
 
@@ -1932,92 +1928,6 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
     return changed
 
 
-def consume_webhook_events(
-    config: dict[str, Any],
-    bus_state: dict[str, Any],
-    status: dict[str, Any],
-    repo: str,
-    runtime_state: dict[str, Any],
-) -> bool:
-    path = config_path(config, "github_webhook_events")
-    if not path.exists():
-        return False
-
-    seen = set(bus_state.get("processed_webhook_deliveries", []))
-    changed = False
-    for event in load_jsonl(path):
-        delivery = event.get("delivery")
-        if not delivery or delivery in seen:
-            continue
-        kind = event.get("event")
-        payload = event.get("payload") or {}
-        if kind == "issue_comment":
-            issue = payload.get("issue") or {}
-            comment = payload.get("comment") or {}
-            actor = ((comment.get("user") or {}).get("login") or "").strip()
-            command = parse_command(comment.get("body") or "")
-            if command:
-                issue_number = issue.get("number")
-                task = None
-                for task_id, entry in bus_state.get("tasks", {}).items():
-                    issue_ref = entry.get("ops_issue") or {}
-                    if issue_ref.get("number") == issue_number:
-                        task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
-                        break
-                if task and issue_number:
-                    changed = process_issue_command(config, bus_state, status, repo, int(issue_number), task, command, actor) or changed
-                elif issue_number:
-                    for entry in (bus_state.get("coordination") or {}).values():
-                        issue_ref = (entry or {}).get("issue") or {}
-                        if issue_ref.get("number") != issue_number:
-                            continue
-                        changed = process_coordination_issue_command(
-                            config,
-                            bus_state,
-                            status,
-                            str(entry.get("repo") or repo),
-                            int(issue_number),
-                            command,
-                            actor,
-                            runtime_state,
-                        ) or changed
-                        break
-        elif kind == "pull_request_review":
-            review = payload.get("review") or {}
-            pr = payload.get("pull_request") or {}
-            actor = ((review.get("user") or {}).get("login") or "").strip()
-            pr_number = pr.get("number")
-            if pr_number:
-                for task_id, entry in bus_state.get("tasks", {}).items():
-                    review_ref = entry.get("review_pr") or {}
-                    if review_ref.get("number") != pr_number:
-                        continue
-                    task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
-                    if not task:
-                        continue
-                    state_value = str(review.get("state") or "").upper()
-                    body = trim_text(review.get("body"), 240)
-                    if state_value == "APPROVED":
-                        run_ai_status("approve", task_id, f"GitHub PR approved via webhook PR #{pr_number} by @{actor}.", actor=str(task.get("reviewer") or "").strip() or None)
-                        changed = True
-                    elif state_value == "CHANGES_REQUESTED":
-                        detail = f"GitHub PR requested changes via webhook PR #{pr_number} by @{actor}."
-                        if body:
-                            detail += f" {body}"
-                        run_ai_status("reopen", task_id, detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                        changed = True
-                    elif state_value == "COMMENTED":
-                        note = f"GitHub PR comment via webhook PR #{pr_number} by @{actor}."
-                        if body:
-                            note += f" {body}"
-                        run_ai_status("note", task_id, note, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                        changed = True
-                    break
-        seen.add(delivery)
-    bus_state["processed_webhook_deliveries"] = list(seen)
-    return changed
-
-
 def push_cloud_relay_digest(config: dict[str, Any], status: dict[str, Any], runtime_state: dict[str, Any], bus_state: dict[str, Any]) -> None:
     digest = {
         "objective": status.get("objective"),
@@ -2196,8 +2106,6 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
         changed = False
         changed = sync_outbound(config, bus_state, status, runtime_state, repo) or changed
         changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
-        status = load_status(config)
-        changed = consume_webhook_events(config, bus_state, status, repo, runtime_state) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
         status = load_status(config)

@@ -9730,7 +9730,6 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 "approval_queue": tmp_root / ".orchestrator" / "approval-queue.json",
                 "sidecar_catalog": tmp_root / ".orchestrator" / "sidecar_catalog.json",
                 "github_bus_state": tmp_root / ".orchestrator" / "github-bus-state.json",
-                "github_webhook_events": tmp_root / ".orchestrator" / "github-webhook-events.jsonl",
                 "github_relay_state": tmp_root / ".orchestrator" / "github-relay-state.json",
                 "provider_capabilities": tmp_root / ".orchestrator" / "provider_capabilities.json",
                 "claude_mcp_config": tmp_root / ".orchestrator" / "claude-approval-broker.mcp.json",

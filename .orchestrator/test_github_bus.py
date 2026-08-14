@@ -10,6 +10,7 @@ from unittest import mock
 
 import github_bus
 import github_cloud_relay
+from common import load_jsonl
 from github_command_parser import GitHubCommand
 
 
@@ -1055,7 +1056,7 @@ class GitHubCoordinationCommandTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(reply, "Queued `pantheon-bff-worker` for `F-042`.")
-        queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
+        queue = load_jsonl(Path(self.config["paths"]["event_queue"]))
         self.assertEqual(len(queue), 1)
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "pantheon-bff-worker")
 
@@ -1073,7 +1074,7 @@ class GitHubCoordinationCommandTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(reply, "Queued engine worker for `F-042`.")
-        queue = github_bus.load_jsonl(Path(self.config["paths"]["event_queue"]))
+        queue = load_jsonl(Path(self.config["paths"]["event_queue"]))
         self.assertEqual(len(queue), 1)
         self.assertEqual(queue[0]["metadata"]["coordination"]["worker_kind"], "engine-worker")
 

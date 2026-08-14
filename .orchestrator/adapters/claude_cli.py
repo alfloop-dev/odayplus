@@ -16,7 +16,7 @@ from common import (
 from provider_runtime import inbox_fallback_enabled, provider_key, provider_settings
 
 from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
-from adapters.claude_code import ClaudeCodeAdapter
+from adapters.file_inbox import FileInboxAdapter
 
 
 def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
@@ -66,7 +66,7 @@ def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = 
     return inbox_fallback_enabled(config, default="claude", provider_id=provider_id)
 
 
-class ClaudeCLIAdapter(ClaudeCodeAdapter):
+class ClaudeCLIAdapter(FileInboxAdapter):
     name = "claude_cli"
 
     def capability(self, agent_id: str) -> DeliveryCapability:

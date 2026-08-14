@@ -1434,16 +1434,6 @@ def log_event(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
     )
 
 
-def _approval_timeout_seconds(config: dict[str, Any]) -> float:
-    provider_id = _approval_provider(config)
-    return float(
-        config.get("providers", {})
-        .get(provider_id, {})
-        .get("broker", {})
-        .get("approval_wait_seconds", 3600)
-    )
-
-
 def _approval_context(payload: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     provider_id = _approval_provider(config)
     return {

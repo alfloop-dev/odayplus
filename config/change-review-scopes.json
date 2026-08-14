@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "development_tooling": {
+    "description": "Internal development platform, delivery tooling, their verification, and CI workflow definitions. These changes retain commit, PR, CI, and merge requirements but do not require a product reviewer.",
+    "include_prefixes": [
+      ".orchestrator/",
+      ".github/workflows/",
+      "development_platform/",
+      "delivery_toolchain/",
+      "docs/audits/",
+      "infra/terraform/",
+      "tests/e2e/",
+      "tests/security/",
+      "tests/tooling/"
+    ],
+    "include_paths": [
+      "config/change-review-scopes.json",
+      "docs/audits/code-boundary-inventory.csv",
+      "scripts/ai_status.py",
+      "scripts/supervisor_runtime_health.py",
+      "scripts/supervisor_watchdog_install.py"
+    ],
+    "include_path_prefixes": [
+      "scripts/orchestrator/"
+    ]
+  }
+}
