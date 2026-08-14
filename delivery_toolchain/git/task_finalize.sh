@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
-# Push the per-task branch, open (or re-use) its PR against dev, and turn on
-# auto-merge.
+# Push the per-task branch, open (or re-use) its PR against dev, and submit it
+# for review.
 #
 #   ./delivery_toolchain/git/task_finalize.sh "ODP-EXAMPLE-001"
 #
-# This is the step the fleet was missing. Without it each worker improvised
-# its own closeout, so whether a green PR ever merged depended on which worker
-# happened to remember `gh pr merge --auto` -- #650/#660 had it, #661/#664 did
-# not. Centralising it here also keeps the base branch out of the agent's
-# hands: `.orchestrator/permission_broker.py` denies bare `gh pr create` to
+# This keeps PR publication and the base branch out of the agent's hands:
+# `.orchestrator/permission_broker.py` denies bare `gh pr create` to
 # agents precisely because an agent-chosen `--base` can route work straight at
 # the promotion target and bypass dev CI. This script always bases task PRs on
 # the branch-workflow target.
 #
-# Enabling auto-merge does NOT bypass review: `task-review-gate` is a required
-# check that only the assigned reviewer stamps (scripts/ai_status.py), and
-# .github/workflows/merge-queue-review-gate.yml re-asserts it for queued PRs.
-# Auto-merge simply stops an approved, green PR from sitting there forever.
+# Auto-merge is deliberately not armed here. GitHubBus is the single lifecycle
+# owner for that mutation and only arms a task PR after canonical reviewer
+# approval. Publishing and merging must not race through two independent
+# implementations.
 #
 # Closeout is still not complete here. Wait for GitHub to report the PR merged
 # into dev, then run:
@@ -28,12 +25,11 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-auto-merge] [--no-status-submit]
+Usage: delivery_toolchain/git/task_finalize.sh <TASK-ID> [--dry-run] [--base <branch>] [--no-status-submit]
 
   <TASK-ID>        e.g. ODP-EXAMPLE-001 (branch task/ODP-EXAMPLE-001)
   --dry-run        print what would run; touch neither origin nor GitHub
   --base <branch>  PR target (default: $PANTHEON_TASK_PR_BASE or dev)
-  --no-auto-merge  push and open the PR, but leave auto-merge off
   --no-status-submit  do not atomically move a tracked task to review (only for
                       supervisor housekeeping PRs which have no board task)
 EOF
@@ -41,15 +37,12 @@ EOF
 
 TASK_ID=""
 DRY_RUN=0
-AUTO_MERGE=1
 STATUS_SUBMIT=1
 BASE_BRANCH="${PANTHEON_TASK_PR_BASE:-dev}"
-MERGE_METHOD="${PANTHEON_TASK_PR_MERGE_METHOD:-merge}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    --no-auto-merge) AUTO_MERGE=0; shift ;;
     --no-status-submit) STATUS_SUBMIT=0; shift ;;
     --base) BASE_BRANCH="${2:-}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -185,7 +178,6 @@ run git push --set-upstream origin "refs/heads/$BRANCH:refs/heads/$BRANCH"
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "dry-run: $GH pr list --head $BRANCH --base $BASE_BRANCH --state open --json number,url,isDraft"
   echo "dry-run: $GH pr create --base $BASE_BRANCH --head $BRANCH --title $SUBJECT --body-file $BODY_FILE"
-  [ "$AUTO_MERGE" -eq 1 ] && echo "dry-run: $GH pr merge <number> --auto --$MERGE_METHOD"
   echo "task_finalize: dry-run complete"
   exit 0
 fi
@@ -223,29 +215,12 @@ if [ -z "$PR_NUMBER" ]; then
   exit 1
 fi
 
-# A draft PR can never auto-merge and is skipped by
-# .orchestrator/auto_merge_green_prs.py, which is how approved work stalls.
+# A draft PR cannot enter the assigned-reviewer flow, so publication makes an
+# adopted draft ready before recording the canonical review submission.
 IS_DRAFT="$("$GH" pr view "$PR_NUMBER" --json isDraft --jq '.isDraft' 2>/dev/null || echo false)"
 if [ "$IS_DRAFT" = "true" ]; then
   echo "task_finalize: PR #$PR_NUMBER is a draft; marking ready for review"
   "$GH" pr ready "$PR_NUMBER" || echo "task_finalize: warning: gh pr ready failed" >&2
-fi
-
-if [ "$AUTO_MERGE" -eq 1 ]; then
-  MERGED_SET=0
-  for method in "$MERGE_METHOD" merge squash rebase; do
-    if "$GH" pr merge "$PR_NUMBER" --auto "--$method" >/dev/null 2>&1; then
-      echo "task_finalize: auto-merge enabled on #$PR_NUMBER (--$method)"
-      MERGED_SET=1
-      break
-    fi
-  done
-  if [ "$MERGED_SET" -eq 0 ]; then
-    # Not fatal: .orchestrator/auto_merge_green_prs.py also sweeps green,
-    # reviewer-approved task PRs, so the PR is still on a merge path.
-    echo "task_finalize: warning: could not enable auto-merge on #$PR_NUMBER" >&2
-    echo "task_finalize: the auto-merge guard will still pick it up once green + approved." >&2
-  fi
 fi
 
 PR_URL="$("$GH" pr view "$PR_NUMBER" --json url --jq '.url' 2>/dev/null || true)"

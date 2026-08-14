@@ -22,7 +22,7 @@ python3 delivery_toolchain/git/worker_commit.py \
   --scope <path1> <path2> ... \
   --index-file /tmp/git-index-task-$TASK
 
-./delivery_toolchain/git/task_finalize.sh "$TASK"              # push + PR + auto-merge
+./delivery_toolchain/git/task_finalize.sh "$TASK"              # push + PR + submit review
 
 # wait for GitHub to merge the PR into dev, then:
 AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint>"
@@ -34,7 +34,7 @@ AI_NAME=<Owner> ./scripts/ai-status.sh done "$TASK" "<checkpoint>"
 | `worker_commit.py` | The only sanctioned way to make a task commit. Private index, explicit scope, leak check, message check, protected-branch guard, no empty commits. |
 | `check_commit_scope.py` | Rejects a staged set that leaks outside `--scope`. Importable and standalone. |
 | `check_commit_trailers.py` | Validates subject shape/length and the `LLM-Agent` / `Task-ID` / `Reviewer` trailers. Backs both `worker_commit.py` and the hook. |
-| `task_finalize.sh` | Push the branch, open (or re-use) the PR against `dev`, undraft it, enable auto-merge. |
+| `task_finalize.sh` | Push the branch, open (or re-use) the PR against `dev`, undraft it, and atomically submit review evidence. |
 | `install_hooks.sh` | Point `core.hooksPath` at `.githooks/` (per-clone local config, so it cannot be committed). |
 
 `install_hooks.sh` is deliberately an explicit operator step: `core.hooksPath`
@@ -65,11 +65,10 @@ route work straight at the promotion target and bypass dev CI.
 `task_finalize.sh` always uses the branch-workflow target (`dev`, override
 with `PANTHEON_TASK_PR_BASE`), which is what that policy protects.
 
-**Auto-merge is not a review bypass.** `task-review-gate` is a required check
-that only the assigned reviewer stamps (`scripts/ai_status.py`), and
-`.github/workflows/merge-queue-review-gate.yml` re-asserts it for queued PRs.
-Auto-merge only stops an approved, green PR from sitting open forever — the
-gap that left #661/#664 without auto-merge while #650/#660 had it.
+**Auto-merge has one owner.** `task_finalize.sh` never arms it. GitHubBus does
+so only after canonical reviewer approval; `task-review-gate` and
+`.github/workflows/merge-queue-review-gate.yml` still enforce the reviewed
+head before GitHub's merge queue performs the merge.
 
 **PR discovery by head branch.** GitHub allows at most one open PR per
 `(head, base)` pair; a title search misses worker-opened PRs and causes
