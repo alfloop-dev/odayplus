@@ -240,8 +240,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
         adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
         with (
-            mock.patch("adapters.claude_cli._configured_claude_cli", return_value=None),
-            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=False),
+            mock.patch("adapters.claude_cli.configured_provider_binary", return_value=None),
+            mock.patch("adapters.claude_cli.claude_auth_ready", return_value=False),
         ):
             result = adapter.deliver(request)
         self.assertFalse(result.ok)
@@ -290,8 +290,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                     {"HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config"), "GH_CONFIG_DIR": ""},
                     clear=False,
                 ),
-                mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
-                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch("adapters.claude_cli.configured_provider_binary", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli.claude_auth_ready", return_value=True),
                 mock.patch(
                     "adapters.base.spawn_background_process",
                     return_value=(fake_process, Path("/tmp/claude2.log")),
@@ -330,8 +330,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             fake_process = mock.Mock(pid=1234)
 
             with (
-                mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
-                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch("adapters.claude_cli.configured_provider_binary", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli.claude_auth_ready", return_value=True),
                 mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
             ):
                 result = adapter.deliver(request)

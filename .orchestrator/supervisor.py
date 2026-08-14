@@ -101,11 +101,14 @@ from dispatch_policy import (
 )
 from github_bus import sync_github_bus
 from provider_permissions import (
-    codex_config_health,
-    write_provider_capabilities,
-)
-from provider_permissions import (
     provider_capabilities as build_provider_capabilities,
+)
+from provider_permissions import write_provider_capabilities
+from provider_runtime import (
+    codex_config_health,
+    provider_config,
+    provider_config_entry,
+    provider_section,
 )
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
@@ -818,25 +821,8 @@ def resolve_agent_model_preference(config: dict[str, Any], agent: dict[str, Any]
     return None
 
 
-def provider_config_entry_for(config: dict[str, Any], provider: str | None) -> tuple[str, dict[str, Any]]:
-    providers = config.get("providers", {}) or {}
-    raw = str(provider or "").strip()
-    if not raw:
-        return "", {}
-    normalized = normalize_agent_id(raw)
-    candidates = [raw, normalized, raw.replace("_", "-"), raw.replace("-", "_")]
-    for candidate in candidates:
-        if candidate in providers and isinstance(providers[candidate], dict):
-            return candidate, providers[candidate]
-    return normalized, {}
-
-
-def provider_config_for(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
-    return provider_config_entry_for(config, provider)[1]
-
-
 def provider_runtime_config_block_reason(config: dict[str, Any], provider: str | None) -> str | None:
-    provider_key, provider_cfg = provider_config_entry_for(config, provider)
+    provider_key, provider_cfg = provider_config_entry(config, provider)
     if str(provider_cfg.get("delivery_mode") or "").strip().lower() != "codex":
         return None
     health = codex_config_health(config, provider_key or str(provider or "codex"))
@@ -849,7 +835,7 @@ def provider_dispatch_group_id(config: dict[str, Any], provider: str | None) -> 
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
         return ""
-    provider_cfg = provider_config_for(config, provider)
+    provider_cfg = provider_config(config, provider)
     group = (
         provider_cfg.get("quota_group")
         or provider_cfg.get("dispatch_group")
@@ -1147,12 +1133,6 @@ def select_dispatch_agent_id(
     for slot_id in slot_ids:
         if slot_id in active_slots:
             continue
-        quota_limit = account_pool_effective_concurrency(config, state, slot_id)
-        quota_group = agent_quota_group_id(config, slot_id)
-        if quota_limit and quota_group:
-            quota_counts = active_quota_group_counts(config, state, active_statuses)
-            if quota_counts.get(quota_group, 0) >= quota_limit:
-                continue
         if agent_auto_dispatch_block_reason(config, state, slot_id, provider_report):
             continue
         return slot_id
@@ -4772,8 +4752,9 @@ def provider_auth_identity_hash(config: dict[str, Any], provider: str | None) ->
     group_id = provider_dispatch_group_id(config, provider_id) or provider_id
     if group_id != "codex" and provider_id != "codex":
         return None
-    provider_cfg = provider_config_for(config, provider_id) or provider_config_for(config, "codex")
-    configured_home = str(provider_cfg.get("codex_home") or "").strip()
+    provider_cfg = provider_config(config, provider_id) or provider_config(config, "codex")
+    codex_profile = provider_section(config, provider_id=provider_id, section="codex", default="codex")
+    configured_home = str(codex_profile.get("codex_home") or provider_cfg.get("codex_home") or "").strip()
     codex_home = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
     auth = load_json(codex_home / "auth.json", default={})
     if not isinstance(auth, dict):
@@ -5618,19 +5599,11 @@ def first_viable_agent(
         if is_human_gate_agent(name):
             continue
         if name in known:
-            if agent_dispatch_disabled(config, name):
+            block_reason = agent_auto_dispatch_block_reason(
+                config, state, name, provider_report=provider_report
+            )
+            if block_reason:
                 continue
-            normalized = normalize_agent_id(name)
-            agent_cfg = (config.get("agents", {}) or {}).get(normalized) or (config.get("agents", {}) or {}).get(name)
-            provider_key = str((agent_cfg or {}).get("provider") or normalized or name)
-            if provider_runtime_config_block_reason(config, provider_key):
-                continue
-            if state is not None:
-                if agent_dispatch_paused(config, state, name):
-                    continue
-                block_reason = agent_auto_dispatch_block_reason(config, state, name, provider_report=provider_report)
-                if block_reason:
-                    continue
             if agent_account_pool_id(config, name) in excluded_pool_ids:
                 continue
             if task is not None and not agent_can_take_task(config, name, task):
@@ -5653,7 +5626,7 @@ def first_viable_agent(
 
 def agent_auto_dispatch_block_reason(
     config: dict[str, Any],
-    state: dict[str, Any],
+    state: dict[str, Any] | None,
     agent_id: str | None,
     provider_report: dict[str, Any] | None = None,
 ) -> str | None:
@@ -5661,23 +5634,30 @@ def agent_auto_dispatch_block_reason(
     normalized_agent = normalize_agent_id(agent_id or "")
     if not normalized_agent:
         return "missing target agent"
-    if agent_dispatch_paused(config, state, normalized_agent):
+    dispatch_paused = (
+        agent_dispatch_paused(config, state, normalized_agent)
+        if state is not None
+        else agent_dispatch_disabled(config, normalized_agent)
+    )
+    if dispatch_paused:
         return f"dispatch is paused or disabled for {display_name_for(config, normalized_agent) or normalized_agent}"
-    pool_block_reason = account_pool_dispatch_block_reason(config, normalized_agent, runtime_state=state)
-    if pool_block_reason:
-        return pool_block_reason
+    if state is not None:
+        pool_block_reason = account_pool_dispatch_block_reason(config, normalized_agent, runtime_state=state)
+        if pool_block_reason:
+            return pool_block_reason
     settings = ready_dispatch_settings(config)
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
-    quota_limit = account_pool_effective_concurrency(config, state, normalized_agent)
-    quota_group = agent_quota_group_id(config, normalized_agent)
-    if quota_limit and quota_group:
-        active_quota_counts = active_quota_group_counts(config, state, active_statuses)
-        active_count = active_quota_counts.get(quota_group, 0)
-        if active_count >= quota_limit:
-            return (
-                f"quota group {quota_group} already has {active_count}/{quota_limit} "
-                "active worker(s)"
-            )
+    if state is not None:
+        quota_limit = account_pool_effective_concurrency(config, state, normalized_agent)
+        quota_group = agent_quota_group_id(config, normalized_agent)
+        if quota_limit and quota_group:
+            active_quota_counts = active_quota_group_counts(config, state, active_statuses)
+            active_count = active_quota_counts.get(quota_group, 0)
+            if active_count >= quota_limit:
+                return (
+                    f"quota group {quota_group} already has {active_count}/{quota_limit} "
+                    "active worker(s)"
+                )
     agent = (config.get("agents", {}) or {}).get(normalized_agent)
     provider_key = str((agent or {}).get("provider") or normalized_agent)
     config_block_reason = provider_runtime_config_block_reason(config, provider_key)
@@ -5713,7 +5693,7 @@ def agent_auto_dispatch_block_reason(
         if provider_capability.get("auth_ready") is False:
             return f"{provider_id} authentication is not ready"
 
-    if settings.get("worker_os_duplicate_guard", True):
+    if state is not None and settings.get("worker_os_duplicate_guard", True):
         slot_ids = logical_worker_slot_ids(config, normalized_agent)
         if slot_ids:
             occupied_slots = {

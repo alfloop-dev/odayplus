@@ -8,14 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback.
-    tomllib = None  # type: ignore[assignment]
-
 from common import (
     ROOT,
-    apply_claude_oauth_token_file,
     claude_auth_ready,
     claude_credentials_path,
     command_exists,
@@ -29,8 +23,20 @@ from common import (
     write_json,
 )
 from provider_runtime import (
+    claude_runtime_env as _provider_runtime_env,
+)
+from provider_runtime import (
+    codex_config_health,
     configured_provider_binary,
     github_auth_token,
+    provider_config,
+    provider_section,
+)
+from provider_runtime import (
+    codex_config_path as _codex_config_path,
+)
+from provider_runtime import (
+    codex_home as _codex_home,
 )
 from provider_runtime import (
     gemini_auth_ready as _gemini_auth_ready,
@@ -59,7 +65,6 @@ CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
 CLAUDE_LOCAL_EXAMPLE_PATH = ROOT / ".claude" / "settings.local.example.json"
 GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
 CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
-CODEX_ALLOWED_SERVICE_TIERS = ("fast", "flex")
 CLI_PROBE_TIMEOUT_SECONDS = 15.0
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
@@ -81,71 +86,6 @@ def _workspace_settings() -> dict[str, Any]:
 
 def _claude_local_settings() -> dict[str, Any]:
     return load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
-
-
-def _codex_home(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
-    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {}).get("codex", {}) or {}
-    home = str(provider.get("codex_home") or provider.get("config_home") or "").strip()
-    return Path(os.path.expanduser(home)) if home else Path.home() / ".codex"
-
-
-def _codex_config_path(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
-    return _codex_home(config, provider_id) / "config.toml"
-
-
-def codex_config_health(config: dict[str, Any] | None = None, provider_id: str = "codex") -> dict[str, Any]:
-    path = _codex_config_path(config, provider_id)
-    result: dict[str, Any] = {
-        "valid": True,
-        "path": str(path),
-        "checks": {"service_tier": None},
-        "allowed_service_tiers": list(CODEX_ALLOWED_SERVICE_TIERS),
-    }
-    if not path.exists():
-        result["notes"] = "Codex config file is absent; CLI defaults apply."
-        return result
-    if tomllib is None:
-        result["notes"] = "Python tomllib is unavailable; Codex config schema preflight skipped."
-        return result
-
-    try:
-        payload = tomllib.loads(path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as exc:
-        result.update(
-            {
-                "valid": False,
-                "error": f"Codex config {path} cannot be parsed: {exc}",
-            }
-        )
-        return result
-
-    service_tier = payload.get("service_tier")
-    result["checks"]["service_tier"] = service_tier
-    if service_tier in (None, ""):
-        return result
-    if not isinstance(service_tier, str):
-        result.update(
-            {
-                "valid": False,
-                "error": (
-                    f"Codex config {path} has non-string service_tier={service_tier!r}; "
-                    f"installed Codex CLI accepts {', '.join(CODEX_ALLOWED_SERVICE_TIERS)}."
-                ),
-            }
-        )
-        return result
-    normalized = service_tier.strip().lower()
-    if normalized not in CODEX_ALLOWED_SERVICE_TIERS:
-        result.update(
-            {
-                "valid": False,
-                "error": (
-                    f"Codex config {path} has unsupported service_tier={service_tier!r}; "
-                    f"installed Codex CLI accepts {', '.join(CODEX_ALLOWED_SERVICE_TIERS)}."
-                ),
-            }
-        )
-    return result
 
 
 def _code_cli_info() -> dict[str, Any]:
@@ -240,21 +180,6 @@ def _gh_version(binary: str | None) -> tuple[int, int, int] | None:
     if not match:
         return None
     return tuple(int(part) for part in match.groups())
-
-
-def _provider_runtime_env(config: dict[str, Any], provider_id: str) -> dict[str, str]:
-    env = dict(os.environ)
-    runtime = (config.get("providers", {}).get(provider_id, {}) or {}).get("runtime", {}) or {}
-    home = str(runtime.get("home") or "").strip()
-    if home:
-        env["HOME"] = os.path.expanduser(home)
-    extra_env = runtime.get("env", {}) or {}
-    for key, value in extra_env.items():
-        if value is None:
-            continue
-        env[str(key)] = os.path.expanduser(str(value))
-    apply_claude_oauth_token_file(env, runtime)
-    return env
 
 
 def _gh_auth_ready(binary: str | None) -> bool:
@@ -498,8 +423,9 @@ def desired_claude_local_settings(config: dict[str, Any], current: dict[str, Any
 
 
 def desired_gemini_settings(config: dict[str, Any], provider_id: str = "gemini") -> dict[str, Any]:
-    approval = config.get("providers", {}).get(provider_id, {}).get("approval", {})
-    gemini_runtime = config.get("providers", {}).get(provider_id, {}).get("gemini", {}) or {}
+    provider = provider_config(config, provider_id, default="gemini")
+    approval = provider.get("approval", {})
+    gemini_runtime = provider_section(config, provider_id=provider_id, section="gemini", default="gemini")
     model = str(gemini_runtime.get("model") or "").strip()
     approval_mode = str(approval.get("default_approval_mode", "auto_edit") or "auto_edit")
     settings_approval_mode = "auto_edit" if approval_mode == "yolo" else approval_mode
@@ -538,7 +464,7 @@ def _claude_provider_report(
     workspace_settings: dict[str, Any],
     claude_applied: bool,
 ) -> dict[str, Any]:
-    provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
+    provider_settings = provider_config(config, provider_id, default="claude")
     runtime_env = _provider_runtime_env(config, provider_id)
     provider_binary = configured_provider_binary(
         config, provider_id=provider_id, section="runtime", default="claude"
@@ -617,9 +543,9 @@ def _gemini_provider_report(
     workspace_settings: dict[str, Any],
     gemini_applied: bool,
 ) -> dict[str, Any]:
-    provider_config = (config.get("providers", {}).get(provider_id, {}) or {})
-    gemini_runtime = provider_config.get("gemini", {}) or {}
-    runtime_approval_mode = (provider_config.get("approval", {}) or {}).get("default_approval_mode")
+    provider_runtime_config = provider_config(config, provider_id, default="gemini")
+    gemini_runtime = provider_section(config, provider_id=provider_id, section="gemini", default="gemini")
+    runtime_approval_mode = (provider_runtime_config.get("approval", {}) or {}).get("default_approval_mode")
     selected_model = str(gemini_runtime.get("model") or "").strip() or None
     provider_binary = configured_provider_binary(
         config, provider_id=provider_id, section="gemini", default="gemini"
@@ -642,7 +568,7 @@ def _gemini_provider_report(
     return {
         "installed": installed,
         "host_layer": "VS Code extension + CLI" if gemini_path and provider_binary else ("CLI" if provider_binary else "VS Code extension"),
-        "delivery_mode": (config.get("providers", {}).get(provider_id, {}) or {}).get("delivery_mode", "gemini"),
+        "delivery_mode": provider_runtime_config.get("delivery_mode", "gemini"),
         "approval_mode": runtime_approval_mode
         or provider_settings.get("general", {}).get("defaultApprovalMode")
         or "default",
@@ -791,8 +717,8 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     )
 
     def codex_provider_report(provider_id: str) -> dict[str, Any]:
-        provider_settings = config.get("providers", {}).get(provider_id, {}) or {}
-        profile = provider_settings.get("codex", {}) or codex_profile
+        provider_settings = provider_config(config, provider_id, default="codex")
+        profile = provider_section(config, provider_id=provider_id, section="codex", default="codex") or codex_profile
         provider_binary = command_exists(profile.get("cli")) if profile.get("cli") else codex_binary
         probe = cli_probe(provider_binary)
         # Codex has no inbox or extension fallback: every dispatch shells out to

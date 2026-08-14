@@ -7,7 +7,69 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from common import agent_config_for, command_exists, load_json, run_command
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback.
+    tomllib = None  # type: ignore[assignment]
+
+from common import (
+    agent_config_for,
+    apply_claude_oauth_token_file,
+    command_exists,
+    load_json,
+    normalize_agent_id,
+    preserve_github_cli_auth_env,
+    run_command,
+)
+
+CODEX_ALLOWED_SERVICE_TIERS = ("fast", "flex")
+
+
+def provider_config_entry(
+    config: dict[str, Any] | None,
+    provider_id: str | None,
+    *,
+    default: str | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Return the canonical provider key and settings from one resolver.
+
+    Provider ids appear as display names, normalized ids, and historical
+    hyphen/underscore variants. Every consumer must resolve those aliases in
+    the same order. ``default`` opts adapters into their historical fallback;
+    callers that validate an explicit provider omit it and fail closed.
+    """
+    providers = (config or {}).get("providers", {}) or {}
+    requested = str(provider_id or "").strip()
+
+    def candidates(value: str) -> list[str]:
+        normalized = normalize_agent_id(value)
+        return list(
+            dict.fromkeys(
+                candidate
+                for candidate in (
+                    value,
+                    normalized,
+                    value.replace("_", "-"),
+                    value.replace("-", "_"),
+                    normalized.replace("_", "-"),
+                )
+                if candidate
+            )
+        )
+
+    for candidate in candidates(requested):
+        entry = providers.get(candidate)
+        if isinstance(entry, dict):
+            return candidate, entry
+
+    fallback = str(default or "").strip()
+    if fallback and fallback != requested:
+        for candidate in candidates(fallback):
+            entry = providers.get(candidate)
+            if isinstance(entry, dict):
+                return candidate, entry
+
+    return normalize_agent_id(requested or fallback), {}
 
 
 def provider_key(
@@ -17,23 +79,34 @@ def provider_key(
     agent_id: str | None = None,
     provider_id: str | None = None,
 ) -> str:
+    requested = ""
     if provider_id:
-        return str(provider_id).strip() or default
-    if agent_id:
+        requested = str(provider_id).strip()
+    elif agent_id:
         agent = agent_config_for(config or {}, agent_id)
-        return str(agent.get("provider") or agent.get("id") or agent_id).strip() or default
-    return default
+        requested = str(agent.get("provider") or agent.get("id") or agent_id).strip()
+    return provider_config_entry(config, requested, default=default)[0] or default
 
 
-def provider_settings(
+def provider_config(
+    config: dict[str, Any] | None,
+    provider_id: str | None,
+    *,
+    default: str | None = None,
+) -> dict[str, Any]:
+    return provider_config_entry(config, provider_id, default=default)[1]
+
+
+def provider_section(
     config: dict[str, Any] | None,
     *,
-    default: str,
-    provider_id: str | None = None,
+    provider_id: str | None,
+    section: str,
+    default: str | None = None,
 ) -> dict[str, Any]:
-    providers = (config or {}).get("providers", {}) or {}
-    key = provider_key(config, default=default, provider_id=provider_id)
-    return providers.get(key) or providers.get(default) or {}
+    """Return one provider subsection through the canonical resolver."""
+    value = provider_config(config, provider_id, default=default).get(section, {}) or {}
+    return value if isinstance(value, dict) else {}
 
 
 def provider_env(
@@ -44,7 +117,7 @@ def provider_env(
     blocks: Iterable[str] = ("runtime",),
     defaults: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    provider = provider_settings(config, default=default, provider_id=provider_id)
+    provider = provider_config(config, provider_id, default=default)
     env: dict[str, str] = dict(defaults or {})
     for block_name in blocks:
         block = provider.get(block_name, {}) or {}
@@ -60,7 +133,7 @@ def inbox_fallback_enabled(
     default: str,
     provider_id: str | None = None,
 ) -> bool:
-    return bool(provider_settings(config, default=default, provider_id=provider_id).get("allow_inbox_fallback", True))
+    return bool(provider_config(config, provider_id, default=default).get("allow_inbox_fallback", True))
 
 
 def configured_provider_binary(
@@ -71,9 +144,92 @@ def configured_provider_binary(
     default: str,
 ) -> str | None:
     """Resolve an executable from one provider configuration section."""
-    provider = ((config or {}).get("providers", {}).get(provider_id, {}) or {})
-    runtime = provider.get(section, {}) or {}
+    runtime = provider_section(config, provider_id=provider_id, section=section)
     return command_exists(runtime.get("cli") or default)
+
+
+def claude_runtime_env(
+    config: dict[str, Any] | None,
+    provider_id: str = "claude",
+) -> dict[str, str]:
+    """Build the one process environment used by Claude probes and workers."""
+    base_env = dict(os.environ)
+    env = dict(base_env)
+    runtime = provider_section(config, provider_id=provider_id, section="runtime", default="claude")
+    home = str(runtime.get("home") or "").strip()
+    if home:
+        env["HOME"] = os.path.expanduser(home)
+    for key, value in (runtime.get("env", {}) or {}).items():
+        if value is not None:
+            env[str(key)] = os.path.expanduser(str(value))
+    preserve_github_cli_auth_env(env, base_env)
+    apply_claude_oauth_token_file(env, runtime)
+    return env
+
+
+def codex_home(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
+    provider = provider_config(config, provider_id, default="codex")
+    profile = provider_section(config, provider_id=provider_id, section="codex", default="codex")
+    home = str(
+        profile.get("codex_home")
+        or profile.get("config_home")
+        or provider.get("codex_home")
+        or ""
+    ).strip()
+    return Path(os.path.expanduser(home)) if home else Path.home() / ".codex"
+
+
+def codex_config_path(config: dict[str, Any] | None = None, provider_id: str = "codex") -> Path:
+    return codex_home(config, provider_id) / "config.toml"
+
+
+def codex_config_health(config: dict[str, Any] | None = None, provider_id: str = "codex") -> dict[str, Any]:
+    """Validate dispatch-critical Codex config without probing capabilities."""
+    path = codex_config_path(config, provider_id)
+    result: dict[str, Any] = {
+        "valid": True,
+        "path": str(path),
+        "checks": {"service_tier": None},
+        "allowed_service_tiers": list(CODEX_ALLOWED_SERVICE_TIERS),
+    }
+    if not path.exists():
+        result["notes"] = "Codex config file is absent; CLI defaults apply."
+        return result
+    if tomllib is None:
+        result["notes"] = "Python tomllib is unavailable; Codex config schema preflight skipped."
+        return result
+    try:
+        payload = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        result.update({"valid": False, "error": f"Codex config {path} cannot be parsed: {exc}"})
+        return result
+
+    service_tier = payload.get("service_tier")
+    result["checks"]["service_tier"] = service_tier
+    if service_tier in (None, ""):
+        return result
+    if not isinstance(service_tier, str):
+        result.update(
+            {
+                "valid": False,
+                "error": (
+                    f"Codex config {path} has non-string service_tier={service_tier!r}; "
+                    f"installed Codex CLI accepts {', '.join(CODEX_ALLOWED_SERVICE_TIERS)}."
+                ),
+            }
+        )
+        return result
+    if service_tier.strip().lower() not in CODEX_ALLOWED_SERVICE_TIERS:
+        result.update(
+            {
+                "valid": False,
+                "error": (
+                    f"Codex config {path} has unsupported service_tier={service_tier!r}; "
+                    f"installed Codex CLI accepts {', '.join(CODEX_ALLOWED_SERVICE_TIERS)}."
+                ),
+            }
+        )
+    return result
 
 
 def github_auth_token(binary: str | None) -> str | None:
@@ -86,7 +242,7 @@ def github_auth_token(binary: str | None) -> str | None:
 
 
 def gemini_home(config: dict[str, Any] | None = None, provider_id: str = "gemini") -> Path:
-    runtime = provider_settings(config, default="gemini", provider_id=provider_id).get("gemini", {}) or {}
+    runtime = provider_section(config, provider_id=provider_id, section="gemini", default="gemini")
     home = str(runtime.get("config_home") or runtime.get("home") or "").strip()
     return Path(os.path.expanduser(home)) if home else Path.home()
 
