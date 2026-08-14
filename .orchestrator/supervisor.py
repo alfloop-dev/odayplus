@@ -9772,21 +9772,32 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
 
 def requeue_task_for_ci_repair(
     config: dict[str, Any],
-    task_id: str,
+    status: dict[str, Any],
+    task: dict[str, Any],
     *,
     message: str,
     clear_approval: bool,
+    requeued_head: str | None = None,
+    now_ts: float | None = None,
 ) -> bool:
-    """Return a CI-stalled task to its owner for an automatic repair run."""
-    status = load_status(config)
-    task = next(
-        (item for item in status.get("tasks", []) or [] if str(item.get("id") or "") == task_id),
-        None,
-    )
+    """Atomically return a CI-stalled task to its owner for repair.
+
+    The caller must pass the task object from ``status``.  Keeping every CI
+    marker and lifecycle mutation on that one snapshot avoids a direct
+    pre-write followed by a second load/commit, which could otherwise publish
+    a partial transition or overwrite a concurrent status revision.
+    """
+    task_id = str(task.get("id") or "")
+    status_tasks = status.get("tasks", []) or []
     # Sidecars are still real worker tasks.  They may be support-only, but a
     # failed CI check must return them to their owner just like mainline work;
     # only human gates and explicitly non-dispatchable tasks stay fail-closed.
-    if not isinstance(task, dict) or task_is_human_gate(task) or bool(task.get("non_dispatchable")):
+    if (
+        not task_id
+        or not any(item is task for item in status_tasks)
+        or task_is_human_gate(task)
+        or bool(task.get("non_dispatchable"))
+    ):
         return False
     if str(task.get("status") or "").lower() != "review_approved":
         return False
@@ -9795,7 +9806,11 @@ def requeue_task_for_ci_repair(
     task["next"] = message
     task.pop("ci_pending_since_ts", None)
     task.pop("ci_pending_since", None)
-    task["ci_repair_last_requeued_ts"] = datetime.now(UTC).timestamp()
+    task["ci_repair_last_requeued_ts"] = (
+        datetime.now(UTC).timestamp() if now_ts is None else now_ts
+    )
+    if requeued_head is not None:
+        task["ci_repair_requeued_head"] = requeued_head
     if clear_approval:
         task.pop("approved_head", None)
     if not commit_canonical_task_transition(config, status):
@@ -10145,28 +10160,29 @@ def dispatch_ready_tasks(
                                 f"CI status for task {task_id} has been pending for over 30 minutes; "
                                 "owner requeued to refresh CI automatically."
                             )
-                            task["ci_repair_requeued_head"] = approved_key
-                            task["ci_repair_last_requeued_ts"] = now_ts
-                            status_path = config_path(config, "status_file")
-                            write_json(status_path, status)
-                            if requeue_task_for_ci_repair(
+                            if not requeue_task_for_ci_repair(
                                 config,
-                                task_id,
+                                status,
+                                task,
                                 message=msg,
                                 clear_approval=False,
+                                requeued_head=approved_key,
+                                now_ts=now_ts,
                             ):
-                                changed = True
+                                return changed
+                            changed = True
+                            continue
                     if status_dirty:
                         if not commit_canonical_task_transition(config, status):
                             return changed
 
                     continue
                 elif ci_status == "failure":
-                    task.pop("ci_pending_since_ts", None)
                     msg = f"CI checks for task {task_id} failed; owner requeued to repair CI before re-review."
                     if requeue_task_for_ci_repair(
                         config,
-                        task_id,
+                        status,
+                        task,
                         message=msg,
                         clear_approval=True,
                     ):
