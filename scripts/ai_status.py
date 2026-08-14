@@ -89,9 +89,10 @@ LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-# Worker processes inherit PANTHEON_CONFIG_PATH from Supervisor. Interactive
-# commands use the checkout's bootstrapped config.json. The status-root local
-# overlay is still consulted for older dispatch receipts during migration.
+# Worker processes inherit PANTHEON_CONFIG_PATH from Supervisor. An explicitly
+# selected runtime config is self-contained and must never inherit a checkout
+# or status-root overlay. Interactive commands without that environment value
+# retain the legacy overlays during migration.
 STATUS_ROOT_CONFIG_LOCAL_FILE = STATUS_ROOT / ".orchestrator" / "config.local.json"
 PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
 ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
@@ -599,7 +600,9 @@ def actor_reference_problem(name: str | None) -> str | None:
 
 
 def local_config_overlay_paths() -> list[Path]:
-    """Local overlays to merge on top of CONFIG_FILE, in application order."""
+    """Legacy local overlays for interactive commands without an explicit config."""
+    if str(os.environ.get(orchestrator_common.CONFIG_PATH_ENV_VAR) or "").strip():
+        return []
     config_file = active_config_file()
     paths: list[Path] = []
     if config_file.name == "config.json":
@@ -619,11 +622,7 @@ def active_config_file() -> Path:
 def _config_fingerprint() -> tuple[Any, ...]:
     fingerprint: list[Any] = []
     config_file = active_config_file()
-    for path in (
-        config_file,
-        config_file.with_name("config.local.json"),
-        STATUS_ROOT_CONFIG_LOCAL_FILE,
-    ):
+    for path in (config_file, *local_config_overlay_paths()):
         try:
             stat = path.stat()
         except OSError:
@@ -640,10 +639,9 @@ def merged_orchestrator_config() -> dict[str, Any]:
     """The config as the live Supervisor sees it.
 
     Dispatchability is decided by `common.load_config()`, which deep-merges
-    `.orchestrator/config.json` with `.orchestrator/config.local.json`. That
-    function is used verbatim when this process points at the same config path,
-    so the two can never drift; otherwise the same deep-merge is applied to
-    whatever `CONFIG_FILE` resolves to.
+    `.orchestrator/config.json` with legacy local overlays only when no explicit
+    runtime config was selected. `PANTHEON_CONFIG_PATH` is the Supervisor's
+    authoritative, self-contained config and therefore disables every overlay.
 
     Cached against the config files' mtime/size, because actor validation is on
     the hot path of every command.

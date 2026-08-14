@@ -4345,6 +4345,44 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
 
         self.assertEqual(names, {"LateWorker"})
 
+    def test_explicit_runtime_config_ignores_status_root_overlay(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-runtime-config-overlay-") as temp_dir:
+            root = Path(temp_dir)
+            runtime = self._write_config(
+                root,
+                {"agents": {"runtime": {"display_name": "RuntimeWorker", "provider": "codex"}}},
+                name="supervisor-runtime.json",
+            )
+            status_overlay = self._write_config(
+                root / "status" / ".orchestrator",
+                {
+                    "agents": {
+                        "shadow": {"display_name": "ShadowWorker", "provider": "codex"}
+                    },
+                    "ready_dispatcher": {
+                        "max_tasks_per_agent_by_agent": {"codex": 9},
+                        "target_workload": 9,
+                    },
+                },
+                name="config.local.json",
+            )
+            with (
+                mock.patch.dict(
+                    ai_status.os.environ,
+                    {"PANTHEON_CONFIG_PATH": str(runtime)},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    ai_status,
+                    "STATUS_ROOT_CONFIG_LOCAL_FILE",
+                    status_overlay,
+                ),
+            ):
+                ai_status._MERGED_CONFIG_CACHE.clear()
+                names = ai_status.configured_agent_names()
+
+        self.assertEqual(names, {"RuntimeWorker"})
+
     def test_codex3_is_its_own_worker_not_an_alias_of_codex(self) -> None:
         """The retired `codex3 -> Codex` alias would silently reassign a real worker."""
         self.assertNotIn("codex3", ai_status.AGENT_ALIASES)
