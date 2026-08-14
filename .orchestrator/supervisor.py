@@ -118,6 +118,7 @@ from runtime_state import (
     load_event_queue,
     load_runtime_state,
     queue_event_record,
+    replace_event_queue,
     save_runtime_state,
 )
 from task_archive import TaskResolver
@@ -1175,10 +1176,6 @@ def build_request(
         target_files=event.get("target_files", []),
         metadata=metadata,
     )
-
-
-def queue_status(state: dict[str, Any], event_id: str) -> dict[str, Any]:
-    return queue_event_record(state, event_id)
 
 
 def request_snapshot(request: DeliveryRequest) -> dict[str, Any]:
@@ -3275,7 +3272,7 @@ def process_queue(
         ]
         if queue_event_is_orphaned(config, event, existing_record, related_workers):
             continue
-        record = queue_status(state, event_id)
+        record = queue_event_record(state, event_id)
         if record.get("status") in {"started", "manual_pending", "completed", "failed"}:
             continue
         if record.get("status") == "retry_backoff":
@@ -3961,8 +3958,6 @@ def queue_discussion_planning_event(
     agent = agent_config_for(config, agent_name)
     target_files = discussion_planning_target_files(planning_state, agent_name)
     queue_payload = {
-        "event_id": new_runtime_id("evt"),
-        "created_at": utc_now(),
         "event_key": (
             f"discussion:{planning_state.get('session_id')}:{agent_name}:{reason}:"
             f"round-{planning_state.get('current_round', 0)}:{planning_state.get('consensus_status', 'not_started')}"
@@ -3983,7 +3978,7 @@ def queue_discussion_planning_event(
             }
         },
     }
-    enqueue_event(config, queue_payload)
+    queue_payload = enqueue_event(config, queue_payload)
     write_activity_log(
         config,
         {
@@ -6421,7 +6416,7 @@ def requeue_stale_manual_pending_worker(
     queue_event_id = str(worker.get("queue_event_id") or "").strip()
     state.setdefault("workers", {}).pop(run_id, None)
     if queue_event_id:
-        record = queue_status(state, queue_event_id)
+        record = queue_event_record(state, queue_event_id)
         record["status"] = "queued"
         record.pop("processed_at", None)
         record.pop("error", None)
@@ -6996,7 +6991,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 refresh_worker_lease(config, worker, now)
                 poll_counts["lease_refreshes"] += 1
                 if worker.get("queue_event_id"):
-                    record = queue_status(state, worker["queue_event_id"])
+                    record = queue_event_record(state, worker["queue_event_id"])
                     record["lease_owner"] = worker.get("run_id")
                     record["lease_expires_at"] = queue_lease_expiry(config, now)
         if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
@@ -7203,7 +7198,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     },
                 )
                 if worker.get("queue_event_id"):
-                    queue_status(state, worker["queue_event_id"])["status"] = "manual_pending"
+                    queue_event_record(state, worker["queue_event_id"])["status"] = "manual_pending"
                 changed = True
             continue
 
@@ -7948,7 +7943,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             refresh_worker_lease(config, worker, now)
             counts["lease_refreshes"] += 1
             if worker.get("queue_event_id"):
-                record = queue_status(state, worker["queue_event_id"])
+                record = queue_event_record(state, worker["queue_event_id"])
                 record["lease_owner"] = worker.get("run_id")
                 record["lease_expires_at"] = queue_lease_expiry(config, now)
             changed = True
@@ -9112,7 +9107,7 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
             continue
         if item.get("queue_event_id") == queue_event_id and item.get("status") in active_statuses:
             return
-    record = queue_status(state, queue_event_id)
+    record = queue_event_record(state, queue_event_id)
     record["status"] = status
     record["processed_at"] = utc_now()
     record["lease_released_at"] = record["processed_at"]
@@ -9120,12 +9115,6 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
         record["lease_owner"] = worker.get("run_id")
     if error:
         record["error"] = error
-
-
-def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
-    path = config_path(config, "event_queue")
-    payload = "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in events)
-    path.write_text(payload, encoding="utf-8")
 
 
 def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
@@ -9170,7 +9159,7 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
         skip_message = stale_dispatch_skip_message(config, event, task_map)
 
         if skip_message and not has_active_worker:
-            completed = queue_status(state, event_id)
+            completed = queue_event_record(state, event_id)
             completed["status"] = "completed"
             completed["processed_at"] = completed.get("processed_at") or utc_now()
             completed["skip_reason"] = "stale_dispatch_event"
@@ -9205,7 +9194,7 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
 
     state.setdefault("queue", {}).setdefault("events", {})
     state["queue"]["events"] = {event_id: record for event_id, record in queue_events.items() if event_id in kept_ids}
-    save_event_queue(config, kept)
+    replace_event_queue(config, original_events=events, retained_events=kept)
     return True
 
 

@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import fcntl
+import json
+import os
+import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
@@ -15,6 +18,7 @@ from common import (
     config_path,
     load_json,
     load_jsonl,
+    new_runtime_id,
     summarize_failure_reason,
     utc_now,
     write_json,
@@ -623,8 +627,85 @@ def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:
     return load_jsonl(config_path(config, "event_queue"))
 
 
-def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> None:
-    append_jsonl(config_path(config, "event_queue"), event)
+EVENT_REQUIRED_FIELDS = ("target_agent", "provider", "reason", "message")
+
+
+@contextmanager
+def event_queue_transaction_lock(queue_path: Path):
+    lock_path = queue_path.with_name(f"{queue_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Validate and complete the only event envelope accepted by the queue."""
+    if not isinstance(event, dict):
+        raise TypeError("queue event must be an object")
+    payload = deepcopy(event)
+    for field in EVENT_REQUIRED_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"queue event field {field} must be a non-empty string")
+        payload[field] = value.strip()
+    payload["event_id"] = str(payload.get("event_id") or new_runtime_id("evt")).strip()
+    payload["created_at"] = str(payload.get("created_at") or utc_now()).strip()
+    for field in ("context_files", "target_files"):
+        value = payload.get(field)
+        if value is None:
+            payload[field] = []
+        elif not isinstance(value, list):
+            raise TypeError(f"queue event {field} must be a list")
+    metadata = payload.get("metadata")
+    if metadata is None:
+        payload["metadata"] = {}
+    elif not isinstance(metadata, dict):
+        raise TypeError("queue event metadata must be an object")
+    return payload
+
+
+def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    """Normalize and append one delivery event under the queue transaction lock."""
+    payload = normalize_event(event)
+    path = config_path(config, "event_queue")
+    with event_queue_transaction_lock(path):
+        append_jsonl(path, payload)
+    return payload
+
+
+def replace_event_queue(
+    config: dict[str, Any],
+    *,
+    original_events: list[dict[str, Any]],
+    retained_events: list[dict[str, Any]],
+) -> None:
+    """Atomically compact a queue snapshot without dropping later appends."""
+    path = config_path(config, "event_queue")
+    original_ids = {str(event.get("event_id") or "") for event in original_events}
+    retained_ids = {str(event.get("event_id") or "") for event in retained_events}
+    with event_queue_transaction_lock(path):
+        current_events = load_jsonl(path)
+        concurrent_events = [
+            event
+            for event in current_events
+            if str(event.get("event_id") or "") not in original_ids
+            and str(event.get("event_id") or "") not in retained_ids
+        ]
+        payload = [*retained_events, *concurrent_events]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        serialized = "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in payload)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, delete=False
+        ) as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        os.replace(temp_path, path)
 
 
 def queue_event_record(state: dict[str, Any], event_id: str) -> dict[str, Any]:
