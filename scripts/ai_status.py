@@ -57,6 +57,7 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+import common as orchestrator_common
 from multi_repo_registry import (
     repository_local_path,
     repository_slug,
@@ -88,12 +89,9 @@ LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-# The live Supervisor reads its fleet through common.load_config(), which deep-
-# merges `.orchestrator/config.json` with the gitignored `.orchestrator/
-# config.local.json` overlay. Worker worktrees only get the tracked half, so the
-# status-root copy is consulted as well; in the live checkout both paths are the
-# same file and the merge is a no-op.
-CONFIG_LOCAL_FILE = ROOT / ".orchestrator" / "config.local.json"
+# Worker processes inherit PANTHEON_CONFIG_PATH from Supervisor. Interactive
+# commands use the checkout's bootstrapped config.json. The status-root local
+# overlay is still consulted for older dispatch receipts during migration.
 STATUS_ROOT_CONFIG_LOCAL_FILE = STATUS_ROOT / ".orchestrator" / "config.local.json"
 PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
 ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
@@ -600,57 +598,32 @@ def actor_reference_problem(name: str | None) -> str | None:
     return None
 
 
-def _fallback_deep_merge(base: Any, overlay: Any) -> Any:
-    """Local copy of common.deep_merge for environments without the orchestrator package."""
-    if isinstance(base, dict) and isinstance(overlay, dict):
-        merged = deepcopy(base)
-        for key, value in overlay.items():
-            merged[key] = _fallback_deep_merge(merged[key], value) if key in merged else deepcopy(value)
-        return merged
-    if isinstance(base, list) and isinstance(overlay, list):
-        return deepcopy(overlay)
-    return deepcopy(overlay)
-
-
-def _orchestrator_common() -> Any | None:
-    try:
-        import common as orchestrator_common
-    except Exception:  # pragma: no cover - lean environments without the package
-        return None
-    return orchestrator_common
-
-
 def local_config_overlay_paths() -> list[Path]:
     """Local overlays to merge on top of CONFIG_FILE, in application order."""
-    paths: list[Path] = [CONFIG_FILE.with_name("config.local.json")]
+    config_file = active_config_file()
+    paths: list[Path] = []
+    if config_file.name == "config.json":
+        paths.append(config_file.with_name("config.local.json"))
     if STATUS_ROOT_CONFIG_LOCAL_FILE not in paths:
         paths.append(STATUS_ROOT_CONFIG_LOCAL_FILE)
     return [path for path in paths if path.exists()]
 
 
-def _read_config_json(path: Path) -> dict[str, Any]:
-    """Tolerant JSON read used only by the actor-authority path.
-
-    Deliberately independent of `load_json_file()`: actor validation runs inside
-    almost every command, so it must not be perturbed by tests or callers that
-    patch the general-purpose reader.
-    """
-    try:
-        text = path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return {}
-    if not text:
-        return {}
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+def active_config_file() -> Path:
+    """Resolve Supervisor's config after startup has published its CLI choice."""
+    configured = str(os.environ.get(orchestrator_common.CONFIG_PATH_ENV_VAR) or "").strip()
+    path = Path(os.path.expanduser(configured)) if configured else CONFIG_FILE
+    return path if path.is_absolute() else ROOT / path
 
 
 def _config_fingerprint() -> tuple[Any, ...]:
     fingerprint: list[Any] = []
-    for path in (CONFIG_FILE, CONFIG_FILE.with_name("config.local.json"), STATUS_ROOT_CONFIG_LOCAL_FILE):
+    config_file = active_config_file()
+    for path in (
+        config_file,
+        config_file.with_name("config.local.json"),
+        STATUS_ROOT_CONFIG_LOCAL_FILE,
+    ):
         try:
             stat = path.stat()
         except OSError:
@@ -679,26 +652,10 @@ def merged_orchestrator_config() -> dict[str, Any]:
     if _MERGED_CONFIG_CACHE.get("fingerprint") == fingerprint:
         return _MERGED_CONFIG_CACHE["payload"]
 
-    common = _orchestrator_common()
-    merge = getattr(common, "deep_merge", None) or _fallback_deep_merge
-    applied: set[Path] = set()
-
-    if common is not None and CONFIG_FILE == getattr(common, "DEFAULT_CONFIG_PATH", None):
-        loaded = common.load_config()
-        payload: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
-        local_path = getattr(common, "LOCAL_CONFIG_PATH", None)
-        if local_path is not None:
-            applied.add(local_path)
-    else:
-        payload = _read_config_json(CONFIG_FILE)
-
-    for overlay_path in local_config_overlay_paths():
-        if overlay_path in applied:
-            continue
-        overlay = _read_config_json(overlay_path)
-        if overlay:
-            payload = merge(payload, overlay)
-            applied.add(overlay_path)
+    payload = orchestrator_common.load_config(
+        active_config_file(),
+        overlay_paths=tuple(local_config_overlay_paths()),
+    )
 
     _MERGED_CONFIG_CACHE["fingerprint"] = fingerprint
     _MERGED_CONFIG_CACHE["payload"] = payload
@@ -950,15 +907,8 @@ def load_json_file(path: Path, default: Any) -> Any:
         return deepcopy(default)
 
 
-def load_config() -> dict[str, Any]:
-    config_source = CONFIG_FILE
-    if not config_source.exists():
-        example = ORCHESTRATOR_DIR / "config.example.json"
-        if example.exists():
-            config_source = example
-    payload = load_json_file(config_source, {})
-    if not isinstance(payload, dict):
-        return {}
+def status_runtime_config() -> dict[str, Any]:
+    payload = deepcopy(merged_orchestrator_config())
     paths = payload.setdefault("paths", {})
     if isinstance(paths, dict):
         paths.update(
@@ -1340,7 +1290,7 @@ def parse_bool_env(name: str) -> bool | None:
 
 def delivery_gate_settings() -> dict[str, bool]:
     settings = dict(DEFAULT_DELIVERY_GATES)
-    config = load_config()
+    config = status_runtime_config()
     payload = config.get("delivery_gates", {})
     if isinstance(payload, dict):
         for key in DEFAULT_DELIVERY_GATES:
@@ -1363,7 +1313,7 @@ def delivery_gate_settings() -> dict[str, bool]:
 
 def commit_convention_settings() -> dict[str, Any]:
     settings = deepcopy(DEFAULT_COMMIT_CONVENTIONS)
-    config = load_config()
+    config = status_runtime_config()
     payload = config.get("commit_conventions", {})
     if isinstance(payload, dict):
         subject_required = payload.get("subject_must_include_task_id")
@@ -2339,7 +2289,7 @@ def is_approved_head_satisfied(
         return True
 
     try:
-        config = load_config()
+        config = status_runtime_config()
         repository_id = task_primary_repository_id(config, task) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
@@ -2456,7 +2406,7 @@ def collect_done_delivery_metadata(
     )
     commit_rules["subject_must_include_task_id"] = True
     commit_rules["required_body_fields"] = ["LLM-Agent", "Task-ID", "Reviewer"]
-    config = load_config()
+    config = status_runtime_config()
     task_id = str(task.get("id") or "").strip()
     approved_head = str(approved_head or task.get("approved_head") or "").strip()
     if not approved_head:
@@ -4017,7 +3967,7 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
 
 
 def coordination_repo_root(repo_id: str) -> Path | None:
-    config = load_config()
+    config = status_runtime_config()
     root = repository_local_path(config, repo_id)
     if isinstance(root, Path):
         return root
@@ -4397,7 +4347,7 @@ def build_dashboard_bundle(
     planning = planning_state or {}
     orchestrator = orchestrator_state or {}
     approvals = approval_state or {}
-    config = load_config()
+    config = status_runtime_config()
     dispatch_policy = build_dispatch_policy_summary(config)
     resolver = task_resolver(state)
     task_map = resolver.active_task_map()
@@ -4673,7 +4623,7 @@ def build_dashboard_bundle(
 
 
 def write_dashboard_bundle(state: dict[str, Any]) -> None:
-    config = load_config()
+    config = status_runtime_config()
     planning_state = load_planning_state()
     try:
         orchestrator_state = load_runtime_state(config)
@@ -4737,7 +4687,7 @@ def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict
 
 def sync_docs_site(state: dict[str, Any]) -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
-    config = load_config()
+    config = status_runtime_config()
     try:
         runtime_state = load_runtime_state(config)
     except KeyError:
@@ -5059,7 +5009,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
     if not task_id or not pr_number.isdigit():
         raise SystemExit("Review submission requires a task id and numeric PR number")
 
-    config = load_config()
+    config = status_runtime_config()
     repository_id = task_primary_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
     branch = f"task/{task_id}"
@@ -6065,7 +6015,7 @@ def resolve_task_checkout_sha(
         return None
 
     try:
-        config = load_config()
+        config = status_runtime_config()
         repository_id = task_primary_repository_id(config, task_dict) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
@@ -6152,7 +6102,7 @@ def get_repository_slug_safe() -> str:
         return env_slug
     # 2. Try loading config
     try:
-        config = load_config()
+        config = status_runtime_config()
         slug = repository_slug(config, "pantheon")
         if slug:
             return slug

@@ -53,6 +53,7 @@ from approval_queue import (
 )
 from branch_drift_alarms import check_branch_drift
 from common import (
+    CONFIG_PATH_ENV_VAR,
     PROVIDER_CLI_FAMILY,
     PROVIDER_LAUNCHER_MISSING_PATTERN,
     agent_config_for,
@@ -71,6 +72,7 @@ from common import (
     preserve_github_cli_auth_env,
     provider_launcher_missing_cli,
     relpath,
+    resolve_path,
     selected_shared_files,
     shell_quote,
     spawn_background_process,
@@ -10452,6 +10454,10 @@ def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
+    selected_config_path = resolve_path(args.config)
+    if selected_config_path is None:
+        raise RuntimeError(f"Unable to resolve orchestrator config path: {args.config}")
+    os.environ[CONFIG_PATH_ENV_VAR] = str(selected_config_path)
     config = load_config(args.config)
     if args.clear_provider_pause:
         state = load_runtime_state(config)

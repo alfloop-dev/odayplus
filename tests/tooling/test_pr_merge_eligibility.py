@@ -197,7 +197,30 @@ def test_fail_closed_unresolved_reviewer(temp_env: dict[str, Path]) -> None:
     )
 
     assert eligible is False
-    assert any("No configured GitHub handles" in err for err in errors)
+    assert any("Failed to load config file" in err for err in errors)
+
+
+def test_missing_config_does_not_fall_back_to_neighboring_example(
+    temp_env: dict[str, Path],
+) -> None:
+    missing = temp_env["config"].with_name("missing-config.json")
+    missing.with_name("config.example.json").write_text(
+        temp_env["config"].read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    eligible, errors = check_merge_eligibility(
+        pr_number=82,
+        branch_name="task/ODP-OC-R5-012",
+        repo_slug="alfloop-dev/odayplus",
+        status_path=temp_env["status"],
+        config_path=missing,
+        policy_path=temp_env["policy"],
+        gh_runner=lambda args, repo=None: "[]",
+    )
+
+    assert eligible is False
+    assert any("does not exist" in err for err in errors)
 
 
 def test_fail_closed_unresolved_task(temp_env: dict[str, Path]) -> None:

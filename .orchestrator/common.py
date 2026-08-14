@@ -17,9 +17,11 @@ import uuid
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
 from task_archive import TaskResolver
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +32,8 @@ CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.m
 WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
+CONFIG_SCHEMA_PATH = ORCHESTRATOR_DIR / "config.schema.json"
+CONFIG_PATH_ENV_VAR = "PANTHEON_CONFIG_PATH"
 STATUS_ROOT_ENV_VAR = "PANTHEON_STATUS_ROOT"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
 DEFAULT_PLANNING_SHARED_FILES = [
@@ -143,6 +147,58 @@ def deep_merge(base: Any, overlay: Any) -> Any:
     return deepcopy(overlay)
 
 
+class ConfigError(RuntimeError):
+    """The orchestrator configuration is missing, malformed or outside its contract."""
+
+
+@lru_cache(maxsize=1)
+def config_validator() -> Draft202012Validator:
+    try:
+        schema = json.loads(CONFIG_SCHEMA_PATH.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"Unable to load config schema {CONFIG_SCHEMA_PATH}: {exc}") from exc
+    return Draft202012Validator(schema)
+
+
+def validate_config(config: Any, *, source: str | Path) -> dict[str, Any]:
+    """Validate one base, overlay or merged config and return it unchanged."""
+    if not isinstance(config, dict):
+        raise ConfigError(f"Orchestrator config {source} must contain a JSON object")
+    errors = sorted(
+        config_validator().iter_errors(config),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        details: list[str] = []
+        for error in errors[:10]:
+            location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+            details.append(f"{location}: {error.message}")
+        if len(errors) > 10:
+            details.append(f"... and {len(errors) - 10} more validation errors")
+        raise ConfigError(f"Invalid orchestrator config {source}: " + "; ".join(details))
+    return config
+
+
+def load_config_document(path: Path) -> dict[str, Any]:
+    """Read and validate a single config document without any fallback source."""
+    if not path.is_file():
+        raise ConfigError(
+            f"Orchestrator config does not exist: {path}. "
+            "Run `make bootstrap` for a development checkout or pass --config explicitly."
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            raise ConfigError(f"Orchestrator config is empty: {path}")
+        payload = json.loads(text)
+    except ConfigError:
+        raise
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"Unable to parse orchestrator config {path}: {exc}") from exc
+    return validate_config(payload, source=path)
+
+
 def resolve_path(value: str | Path | None) -> Path | None:
     if value is None:
         return None
@@ -167,18 +223,40 @@ def evidence_dir(config: dict[str, Any]) -> Path:
     return path
 
 
-def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
-    config_file = resolve_path(config_path) if config_path else DEFAULT_CONFIG_PATH
+def load_config(
+    config_path: str | Path | None = None,
+    *,
+    overlay_paths: list[str | Path] | tuple[str | Path, ...] | None = None,
+) -> dict[str, Any]:
+    """Load the one authoritative config plus explicit local overlays.
+
+    The tracked example is bootstrap input only and is never a runtime
+    fallback. The repository's default config gets its sibling local overlay;
+    an explicitly selected external config is self-contained unless callers
+    explicitly provide overlay paths.
+    """
+    selected_path = config_path
+    if selected_path is None:
+        selected_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip() or None
+    config_file = resolve_path(selected_path) if selected_path else DEFAULT_CONFIG_PATH
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
-    config = load_json(config_file, default={})
-    if not config and (config_path is None or resolve_path(config_path) == DEFAULT_CONFIG_PATH):
-        example_file = ORCHESTRATOR_DIR / "config.example.json"
-        if example_file.exists():
-            config = load_json(example_file, default={})
-    if LOCAL_CONFIG_PATH.exists():
-        config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
-    return config
+    config = load_config_document(config_file)
+    selected_overlays: tuple[str | Path, ...]
+    if overlay_paths is not None:
+        selected_overlays = tuple(overlay_paths)
+    elif config_file == DEFAULT_CONFIG_PATH:
+        selected_overlays = (LOCAL_CONFIG_PATH,)
+    else:
+        selected_overlays = ()
+    applied = [config_file]
+    for raw_overlay_path in selected_overlays:
+        overlay_path = resolve_path(raw_overlay_path)
+        if overlay_path is None or not overlay_path.exists():
+            continue
+        config = deep_merge(config, load_config_document(overlay_path))
+        applied.append(overlay_path)
+    return validate_config(config, source=" + ".join(str(path) for path in applied))
 
 
 def config_path(config: dict[str, Any], key: str, default: str | None = None) -> Path:
@@ -253,10 +331,15 @@ def anchor_config_paths(config: dict[str, Any], root: Path) -> dict[str, Any]:
 
 def load_config_for_status_root(root: Path) -> dict[str, Any]:
     """Load ``root``'s orchestrator config with every relative path anchored to it."""
-    config = load_json(root / ".orchestrator" / "config.json", default={})
-    local_path = root / ".orchestrator" / "config.local.json"
-    if local_path.exists():
-        config = deep_merge(config, load_json(local_path, default={}))
+    selected_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip()
+    if selected_path:
+        config = load_config(selected_path)
+    else:
+        local_path = root / ".orchestrator" / "config.local.json"
+        config = load_config(
+            root / ".orchestrator" / "config.json",
+            overlay_paths=(local_path,),
+        )
     return anchor_config_paths(config, root)
 
 
@@ -297,6 +380,9 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         "ORCH_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
+    config_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip()
+    if config_path:
+        result[CONFIG_PATH_ENV_VAR] = config_path
     actor_name = str((metadata or {}).get("target_display_name") or "").strip()
     if actor_name:
         # The live Supervisor has already authorized this dispatch target from

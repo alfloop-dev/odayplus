@@ -175,7 +175,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                 mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
                 mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
             ):
-                config = ai_status.load_config()
+                config = ai_status.status_runtime_config()
 
         self.assertEqual(config["paths"]["status_file"], str(status_root / "ai-status.json"))
         self.assertEqual(config["paths"]["activity_log"], str(status_root / "ai-activity-log.jsonl"))
@@ -2444,7 +2444,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ai-status-dashboard-bundle-") as temp_dir:
             output_path = Path(temp_dir) / "dashboard-bundle.json"
             with mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", output_path):
-                with mock.patch.object(ai_status, "load_config", return_value=config):
+                with mock.patch.object(ai_status, "status_runtime_config", return_value=config):
                     with mock.patch.object(ai_status, "load_planning_state", return_value=planning_state):
                         with mock.patch.object(ai_status, "load_runtime_state", return_value=orchestrator_state) as load_runtime_state:
                             with mock.patch.object(ai_status, "load_json_file", return_value=approval_state) as load_json_file:
@@ -2592,7 +2592,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Claude": 1}}}
 
         with (
-            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "status_runtime_config", return_value=config),
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
@@ -2659,7 +2659,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         }
 
         with (
-            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "status_runtime_config", return_value=config),
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
@@ -3479,7 +3479,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
     def test_get_repository_slug_safe_config(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
-            with mock.patch.object(ai_status, "load_config", return_value={"repository": "foo/bar"}), \
+            with mock.patch.object(ai_status, "status_runtime_config", return_value={"repository": "foo/bar"}), \
                  mock.patch.object(ai_status, "repository_slug", return_value="foo/bar"):
                 self.assertEqual(ai_status.get_repository_slug_safe(), "foo/bar")
 
@@ -4317,7 +4317,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
                 )
 
     def test_live_path_delegates_to_common_load_config(self) -> None:
-        """When pointed at the real config path, use Supervisor's loader verbatim."""
+        """Actor authority always uses Supervisor's canonical loader."""
         import common
 
         self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
@@ -4326,8 +4326,24 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         ) as load_config:
             ai_status._MERGED_CONFIG_CACHE.clear()
             names = ai_status.configured_agent_names()
-        load_config.assert_called_once_with()
+        load_config.assert_called_once_with(ai_status.CONFIG_FILE, overlay_paths=())
         self.assertIn("Nessie9", names)
+
+    def test_runtime_config_env_is_resolved_after_module_import(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-runtime-config-") as temp_dir:
+            runtime = self._write_config(
+                Path(temp_dir),
+                {"agents": {"late": {"display_name": "LateWorker", "provider": "codex"}}},
+                name="supervisor-runtime.json",
+            )
+            with mock.patch.dict(
+                ai_status.os.environ,
+                {"PANTHEON_CONFIG_PATH": str(runtime)},
+                clear=False,
+            ):
+                names = ai_status.configured_agent_names()
+
+        self.assertEqual(names, {"LateWorker"})
 
     def test_codex3_is_its_own_worker_not_an_alias_of_codex(self) -> None:
         """The retired `codex3 -> Codex` alias would silently reassign a real worker."""

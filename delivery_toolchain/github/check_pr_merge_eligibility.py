@@ -22,6 +22,11 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+from common import load_config  # noqa: E402
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -142,19 +147,10 @@ def check_merge_eligibility(
 
     # 5. Load reviewers GitHub handles from config
     try:
-        config_data = load_json_file(config_path)
+        config_data = load_config(config_path)
     except Exception as exc:
-        # Try fallback if not present
-        fallback_path = config_path.parent / "config.example.json"
-        if fallback_path.exists():
-            try:
-                config_data = load_json_file(fallback_path)
-            except Exception as fallback_exc:
-                errors.append(f"Failed to load config or example config: {fallback_exc}")
-                return False, errors
-        else:
-            errors.append(f"Failed to load config file: {exc}")
-            return False, errors
+        errors.append(f"Failed to load config file: {exc}")
+        return False, errors
 
     reviewers_map = config_data.get("github_bus", {}).get("reviewers", {}) or {}
     allowed_handles: list[str] = []

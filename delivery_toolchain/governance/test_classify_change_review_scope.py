@@ -38,3 +38,18 @@ def test_product_or_unknown_path_requires_product_review() -> None:
 
 def test_empty_change_is_not_automatically_approved() -> None:
     assert scope.classify_paths([], manifest_fixture())["scope"] == "product_or_mixed"
+
+
+def test_supervisor_runtime_docs_and_ai_status_tests_are_tooling() -> None:
+    manifest = scope.load_manifest()
+
+    result = scope.classify_paths(
+        [
+            "docs/runbooks/supervisor-runtime-rollout.md",
+            "scripts/test_ai_status.py",
+        ],
+        manifest,
+    )
+
+    assert result["scope"] == "development_tooling"
+    assert result["non_tooling_paths"] == []

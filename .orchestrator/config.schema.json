@@ -1,0 +1,1034 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ajoe734/oday-plus/.orchestrator/config.schema.json",
+  "title": "ODay Plus orchestrator configuration",
+  "description": "Authoritative contract for Supervisor, worker and governance configuration. Fixed objects reject unknown keys; named fleet maps accept validated dynamic entries.",
+  "type": "object",
+  "properties": {
+    "account_pools": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^\\S(?:.*\\S)?$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "max_concurrent": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "agents": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^\\S(?:.*\\S)?$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "account_pool": {
+            "type": "string"
+          },
+          "adapter": {
+            "type": "string"
+          },
+          "dispatch_slot_for_pool": {
+            "type": "string"
+          },
+          "dispatch_slot_for": {
+            "type": "string"
+          },
+          "disabled": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "file_inbox_path": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "quota_group": {
+            "type": "string"
+          },
+          "slot_id": {
+            "type": "string"
+          },
+          "wake_template": {
+            "type": "string"
+          },
+          "worker_slots": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "approvals": {
+      "type": "object",
+      "properties": {
+        "stale_pending_seconds": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "branch_workflow": {
+      "type": "object",
+      "properties": {
+        "dev_branch": {
+          "type": "string"
+        },
+        "drift_alarms": {
+          "type": "object",
+          "properties": {
+            "dev_must_not_diverge_from_main_more_than_minutes": {
+              "type": "integer"
+            },
+            "task_pr_must_merge_within_minutes": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "main_branch": {
+          "type": "string"
+        },
+        "task_branch_prefix": {
+          "type": "string"
+        },
+        "task_pr": {
+          "type": "object",
+          "properties": {
+            "auto_merge": {
+              "type": "boolean"
+            },
+            "target_branch": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "coordination": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "lovable": {
+          "type": "object",
+          "properties": {
+            "project_url": {
+              "type": "string"
+            },
+            "project_url_env": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "repositories": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "default_branch": {
+                "type": "string"
+              },
+              "local_path": {
+                "type": "string"
+              },
+              "repo": {
+                "type": [
+                  "null",
+                  "string"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "worker_routes": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "requires_human_approval": {
+                "type": "boolean"
+              },
+              "target_agent": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "events": {
+      "type": "object",
+      "properties": {
+        "enqueue_runtime_events": {
+          "type": "boolean"
+        },
+        "pending_handoff_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "review_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status_targets": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "waiting_status_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "watch_assignee_changes": {
+          "type": "boolean"
+        },
+        "watch_handoffs": {
+          "type": "boolean"
+        },
+        "watch_reviewer_changes": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "github_bus": {
+      "type": "object",
+      "properties": {
+        "archive_housekeeping_auto_merge": {
+          "type": "boolean"
+        },
+        "close_resolved_issues": {
+          "type": "boolean"
+        },
+        "command_timeout_seconds": {
+          "type": "integer"
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "default_branch": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "labels": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "offline_backoff_seconds": {
+          "type": "integer"
+        },
+        "phase3": {
+          "type": "object",
+          "properties": {
+            "cloud_relay": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "token_env": {
+                  "type": "string"
+                },
+                "url_env": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "poll_interval_seconds": {
+          "type": "integer"
+        },
+        "remote_ref_snapshot_max_stale_seconds": {
+          "type": "integer"
+        },
+        "remote_ref_snapshot_ttl_seconds": {
+          "type": "integer"
+        },
+        "repo": {
+          "type": "null"
+        },
+        "reviewers": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "templates": {
+          "type": "object",
+          "properties": {
+            "ops_issue": {
+              "type": "string"
+            },
+            "review_pr": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "paths": {
+      "type": "object",
+      "properties": {
+        "activity_log": {
+          "type": "string"
+        },
+        "approval_queue": {
+          "type": "string"
+        },
+        "claude_mcp_config": {
+          "type": "string"
+        },
+        "current_work": {
+          "type": "string"
+        },
+        "dashboard": {
+          "type": "string"
+        },
+        "event_queue": {
+          "type": "string"
+        },
+        "evidence_dir": {
+          "type": "string"
+        },
+        "github_bus_state": {
+          "type": "string"
+        },
+        "github_relay_state": {
+          "type": "string"
+        },
+        "provider_capabilities": {
+          "type": "string"
+        },
+        "state_file": {
+          "type": "string"
+        },
+        "status_file": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "permission_broker": {
+      "type": "object",
+      "properties": {
+        "allowed_workspace_roots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "provider_guardrails": {
+      "type": "object",
+      "properties": {
+        "auth_pause_seconds": {
+          "type": "integer"
+        },
+        "capacity_pause_seconds": {
+          "type": "integer"
+        },
+        "pause_on_auth_failure": {
+          "type": "boolean"
+        },
+        "pause_on_capacity_failure": {
+          "type": "boolean"
+        },
+        "quota_terminal_hint_max_seconds": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "providers": {
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^\\S(?:.*\\S)?$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "account_group": {
+            "type": "string"
+          },
+          "allow_inbox_fallback": {
+            "type": "boolean"
+          },
+          "antigravity": {
+            "type": "object",
+            "properties": {
+              "cli": {
+                "type": "string"
+              },
+              "account_group": {
+                "type": "string"
+              },
+              "config_home": {
+                "type": "string"
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": {
+                  "pattern": "^\\S(?:.*\\S)?$"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "home": {
+                "type": "string"
+              },
+              "include_directories": {
+                "type": "boolean"
+              },
+              "model_rotation": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "fallback_model": {
+                    "type": "string"
+                  },
+                  "primary_model": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "model": {
+                "type": "string"
+              },
+              "print_timeout": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "approval": {
+            "type": "object",
+            "properties": {
+              "allow_dangerous_skip": {
+                "type": "boolean"
+              },
+              "ask_for_approval": {
+                "type": "string"
+              },
+              "copilot_allow_dangerous_skip": {
+                "type": "boolean"
+              },
+              "dangerously_bypass": {
+                "type": "boolean"
+              },
+              "dangerously_skip_permissions": {
+                "type": "boolean"
+              },
+              "default_approval_mode": {
+                "type": "string"
+              },
+              "enable_permanent_tool_approval": {
+                "type": "boolean"
+              },
+              "auto_add_to_policy_by_default": {
+                "type": "boolean"
+              },
+              "disable_yolo_mode": {
+                "type": "boolean"
+              },
+              "disable_always_allow": {
+                "type": "boolean"
+              },
+              "workspace_agent_yolo_mode": {
+                "type": "boolean"
+              },
+              "disable_bypass_permissions": {
+                "type": "boolean"
+              },
+              "orchestrator_only": {
+                "type": "boolean"
+              },
+              "rule_default_mode": {
+                "type": "string"
+              },
+              "sandbox_mode": {
+                "type": "string"
+              },
+              "workspace_permission_mode": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "broker": {
+            "type": "object",
+            "properties": {
+              "approval_wait_seconds": {
+                "type": "integer"
+              },
+              "http_host": {
+                "type": "string"
+              },
+              "http_port": {
+                "type": "integer"
+              },
+              "persist_allow_by_default": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          },
+          "codex": {
+            "type": "object",
+            "properties": {
+              "ask_for_approval": {
+                "type": "string"
+              },
+              "api_key_env": {
+                "type": "string"
+              },
+              "cli": {
+                "type": "string"
+              },
+              "codex_home": {
+                "type": "string"
+              },
+              "config_home": {
+                "type": "string"
+              },
+              "dangerously_bypass": {
+                "type": "boolean"
+              },
+              "model": {
+                "type": "string"
+              },
+              "sandbox_mode": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "codex_home": {
+            "type": "string"
+          },
+          "delivery_mode": {
+            "type": "string"
+          },
+          "dispatch_group": {
+            "type": "string"
+          },
+          "file_inbox": {
+            "type": "object",
+            "properties": {
+              "open_in_vscode": {
+                "type": "boolean"
+              },
+              "agent_paths": {
+                "type": "object",
+                "propertyNames": {
+                  "pattern": "^\\S(?:.*\\S)?$"
+                },
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "quota_group": {
+            "type": "string"
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "auto_permission_mode": {
+                "type": "string"
+              },
+              "cli": {
+                "type": "string"
+              },
+              "enable_auto_mode_if_supported": {
+                "type": "boolean"
+              },
+              "include_hook_events": {
+                "type": "boolean"
+              },
+              "home": {
+                "type": "string"
+              },
+              "env": {
+                "type": "object",
+                "propertyNames": {
+                  "pattern": "^\\S(?:.*\\S)?$"
+                },
+                "additionalProperties": {
+                  "type": [
+                    "boolean",
+                    "number",
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "mcp_config": {
+                "type": "string"
+              },
+              "output_format": {
+                "type": "string"
+              },
+              "oauth_token_file": {
+                "type": "string"
+              },
+              "oauth_token_path": {
+                "type": "string"
+              },
+              "permission_mode": {
+                "type": "string"
+              },
+              "permission_prompt_tool": {
+                "type": "string"
+              },
+              "resume_permission_mode_after_approval": {
+                "type": "string"
+              },
+              "resume_use_allowed_tools_from_approval": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "ready_dispatcher": {
+      "type": "object",
+      "properties": {
+        "active_worker_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dependency_done_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "disabled_agents": {
+          "type": "array",
+          "items": {}
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "finalize_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_active_workers_per_task": {
+          "type": "integer"
+        },
+        "max_dispatches_per_tick": {
+          "type": "integer"
+        },
+        "owned_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "review_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reviewer_failover": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "worker_terminal_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "schema": {
+      "type": "object",
+      "properties": {
+        "artifacts_field": {
+          "type": "string"
+        },
+        "assignee_field": {
+          "type": "string"
+        },
+        "handoffs_path": {
+          "type": "string"
+        },
+        "last_update_field": {
+          "type": "string"
+        },
+        "next_field": {
+          "type": "string"
+        },
+        "reviewer_field": {
+          "type": "string"
+        },
+        "status_field": {
+          "type": "string"
+        },
+        "task_id_field": {
+          "type": "string"
+        },
+        "tasks_path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "supervisor": {
+      "type": "object",
+      "properties": {
+        "auto_refresh_provider_capabilities": {
+          "type": "boolean"
+        },
+        "external_command_timeout_seconds": {
+          "type": "integer"
+        },
+        "heartbeat_warn_after_seconds": {
+          "type": "number"
+        },
+        "max_worker_history": {
+          "type": "integer"
+        },
+        "poll_interval_seconds": {
+          "type": "number"
+        },
+        "stall_after_seconds": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "watchdog": {
+      "type": "object",
+      "properties": {
+        "backoff_schedule_seconds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "circuit_cooldown_seconds": {
+          "type": "integer"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "heartbeat_stale_seconds": {
+          "type": "integer"
+        },
+        "max_active_workers": {
+          "type": "integer"
+        },
+        "max_disk_used_percent": {
+          "type": "number"
+        },
+        "max_load_1m": {
+          "type": "number"
+        },
+        "max_restarts_per_hour": {
+          "type": "integer"
+        },
+        "max_restarts_per_window": {
+          "type": "integer"
+        },
+        "metrics_file": {
+          "type": "string"
+        },
+        "min_disk_free_gb": {
+          "type": "number"
+        },
+        "min_memory_available_mb": {
+          "type": "integer"
+        },
+        "restart_budget_window_seconds": {
+          "type": "integer"
+        },
+        "safe_mode_seconds": {
+          "type": "integer"
+        },
+        "state_file": {
+          "type": "string"
+        },
+        "supervisor_command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "watcher": {
+      "type": "object",
+      "properties": {
+        "max_seen_events": {
+          "type": "integer"
+        },
+        "poll_interval_seconds": {
+          "type": "number"
+        },
+        "replay_on_start": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_reassignment": {
+      "type": "object",
+      "properties": {
+        "after_attempts": {
+          "type": "integer"
+        },
+        "eligible_statuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "owner_fallbacks": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "reassign_on_terminal_failure": {
+          "type": "boolean"
+        },
+        "reviewer_fallbacks": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "^\\S(?:.*\\S)?$"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_retry": {
+      "type": "object",
+      "properties": {
+        "backoff_schedule_seconds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "fallback_mode": {
+          "type": "string"
+        },
+        "jitter_seconds": {
+          "type": "integer"
+        },
+        "max_attempts": {
+          "type": "integer"
+        },
+        "transient_error_patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_runtime": {
+      "type": "object",
+      "properties": {
+        "heartbeat_grace_seconds": {
+          "type": "integer"
+        },
+        "heartbeat_stale_seconds": {
+          "type": "integer"
+        },
+        "queue_lease_seconds": {
+          "type": "integer"
+        },
+        "runner_heartbeat_interval_seconds": {
+          "type": "integer"
+        },
+        "worker_lease_seconds": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_tree_guard": {
+      "type": "object",
+      "properties": {
+        "auto_restore_enabled": {
+          "type": "boolean"
+        },
+        "auto_restore_globs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "blocking_globs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "worker_worktrees": {
+      "type": "object",
+      "properties": {
+        "base_ref": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "execution_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "git_network_timeout_seconds": {
+          "type": "integer"
+        },
+        "recover_clean_diverged_worktrees": {
+          "type": "boolean"
+        },
+        "reuse_existing": {
+          "type": "boolean"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "minProperties": 1
+}

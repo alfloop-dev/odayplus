@@ -70,7 +70,8 @@
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
     "capacity_pause_seconds": 900,
-    "auth_pause_seconds": 900
+    "auth_pause_seconds": 900,
+    "quota_terminal_hint_max_seconds": 3600
   },
   "worker_tree_guard": {
     "enabled": false,
@@ -99,6 +100,8 @@
     "root": "/tmp/pantheon-worker-worktrees",
     "base_ref": "origin/main",
     "reuse_existing": true,
+    "recover_clean_diverged_worktrees": true,
+    "git_network_timeout_seconds": 30,
     "execution_reasons": [
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
@@ -315,12 +318,6 @@
       "review_pr": ".orchestrator/templates/github_review_pr.md"
     },
     "phase3": {
-      "github_app": {
-        "enabled": false,
-        "app_id_env": "PANTHEON_GITHUB_APP_ID",
-        "private_key_env": "PANTHEON_GITHUB_APP_PRIVATE_KEY",
-        "installation_id_env": "PANTHEON_GITHUB_INSTALLATION_ID"
-      },
       "cloud_relay": {
         "enabled": false,
         "url_env": "PANTHEON_GITHUB_RELAY_URL",
@@ -597,64 +594,15 @@
   "branch_workflow": {
     "enabled": true,
     "task_branch_prefix": "task/",
-    "publish_branch_prefix": "publish/",
-    "release_tag_prefix": "release/",
-    "prod_tag_prefix": "prod/",
-    "archive_tag_prefix": "archive/",
     "dev_branch": "dev",
     "main_branch": "main",
-    "nightly_publish": {
-      "enabled": true,
-      "cron_utc": "0 3 * * *",
-      "version_format": "vYYYY.MM.DD.N",
-      "skip_if_no_new_commits": true
-    },
-    "environments": {
-      "dev": {
-        "branch": "dev",
-        "auto_deploy": true,
-        "deploy_trigger": "on_push",
-        "url_env": "ODP_DEV_DEPLOY_URL"
-      },
-      "staging": {
-        "branch": "main",
-        "auto_deploy": true,
-        "deploy_trigger": "on_push",
-        "url_env": "ODP_STAGING_DEPLOY_URL"
-      }
-    },
-    "promote": {
-      "source_branch": "dev",
-      "target_branch": "main",
-      "trigger": "ci_green",
-      "require_dev_ci_green": true,
-      "soak_days": 0,
-      "regression_label_prefix": "regression/",
-      "block_labels": [
-        "hold-promote",
-        "regression"
-      ],
-      "promote_pr_label": "auto-promote",
-      "auto_merge": true,
-      "auto_revert_on_red_main_ci": true
-    },
     "task_pr": {
       "target_branch": "dev",
-      "auto_merge": true,
-      "required_status_checks": [
-        "CI / test"
-      ],
-      "max_open_hours": 24
+      "auto_merge": true
     },
     "drift_alarms": {
       "task_pr_must_merge_within_minutes": 120,
-      "publish_must_promote_within_minutes": 30,
       "dev_must_not_diverge_from_main_more_than_minutes": 60
-    },
-    "orchestrator_sync_webhook": {
-      "enabled": false,
-      "url_env": "PANTHEON_ORCHESTRATOR_SYNC_URL",
-      "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET"
     }
   }
 }
