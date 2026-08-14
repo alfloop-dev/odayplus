@@ -14,6 +14,33 @@ on:
     types: [checks_requested]
 
 jobs:
+  change-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.classify.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify pull request scope
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "scope=product_or_mixed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-paths.txt
+          python3 delivery_toolchain/governance/classify_change_review_scope.py \
+            --paths-file changed-paths.txt > scope.json
+          scope="$(python3 -c "import json; print(json.load(open('scope.json'))['scope'])")"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
   orchestrator:
     runs-on: ubuntu-latest
     steps:
@@ -51,6 +78,8 @@ jobs:
         run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts
 
   product:
+    needs: change-scope
+    if: ${{ github.event_name != 'pull_request' || needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -153,6 +182,8 @@ jobs:
   # the 150-request volume exactly as ratified, and runs the measurement three
   # times in separate processes so a single pass cannot be a lucky sample.
   performance-gate:
+    needs: change-scope
+    if: ${{ github.event_name != 'pull_request' || needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -217,6 +248,8 @@ jobs:
           if-no-files-found: warn
 
   product-e2e-gate:
+    needs: change-scope
+    if: ${{ github.event_name != 'pull_request' || needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
