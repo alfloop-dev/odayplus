@@ -15,7 +15,7 @@ owner: "Platform/Ops"
 - `config.example.json` 只供 `make bootstrap` 建立開發用、gitignored 的 `config.json`，runtime 缺檔時不會 fallback 到 example。
 - 正式服務必須用 `--config /absolute/path/to/runtime.json`；Supervisor 會以 `PANTHEON_CONFIG_PATH` 把同一路徑傳給 worker、permission broker 與 `ai_status.py`。
 - 只有預設的 `.orchestrator/config.json` 會自動套用同目錄 `config.local.json`；外部正式 config 預設為 self-contained。
-- rollout 前執行 `make config-check`，並用 `check_orchestrator_config.py --config <runtime.json>` 驗證正式檔。缺檔、非標準 JSON、未知鍵與錯誤型別一律 fail closed。
+- rollout 前依序執行 `check_orchestrator_config.py` 與 `check_config_wiring.py`，並用 `check_orchestrator_config.py --config <runtime.json>` 驗證正式檔。缺檔、非標準 JSON、未知鍵與錯誤型別一律 fail closed。
 - schema 中的固定設定必須有 production code 讀取；不再使用 dead-key allowlist。
 
 ## 1. 為什麼需要這份 runbook
@@ -105,8 +105,9 @@ config 用小寫（`codex2`）而 board 用大寫（`Codex2`），派工與審�
 ### 4.1 config contract 與 wiring guard
 
 ```
-$ make config-check
+$ uv run python delivery_toolchain/governance/check_orchestrator_config.py
 Validated 3 config documents and their merged runtime views.
+$ uv run python delivery_toolchain/governance/check_config_wiring.py
 All 148 config keys are read by production code.
 exit=0
 ```

@@ -94,7 +94,9 @@ jobs:
         run: uv run ruff check .orchestrator delivery_toolchain scripts
 
       - name: Check config wiring
-        run: make config-check
+        run: |
+          uv run python delivery_toolchain/governance/check_orchestrator_config.py
+          uv run python delivery_toolchain/governance/check_config_wiring.py
 
       - name: Test orchestrator code
         run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts
