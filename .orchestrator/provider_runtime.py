@@ -109,6 +109,30 @@ def provider_section(
     return value if isinstance(value, dict) else {}
 
 
+def provider_uses_claude_cli(
+    config: dict[str, Any] | None,
+    provider_id: str | None,
+) -> bool:
+    """Return whether a provider belongs to the Claude approval/runtime lane."""
+    normalized = normalize_agent_id(provider_id or "")
+    if not normalized:
+        return False
+    delivery_mode = str(provider_config(config, provider_id).get("delivery_mode") or "").strip()
+    return delivery_mode == "claude_cli" if delivery_mode else normalized.startswith("claude")
+
+
+def claude_approval_provider(config: dict[str, Any] | None) -> str:
+    """Resolve the provider identity used by Claude hooks and approval records."""
+    provider_id = normalize_agent_id(os.environ.get("ORCH_PROVIDER") or "claude") or "claude"
+    provider = provider_config(config, provider_id)
+    delivery_mode = str(provider.get("delivery_mode") or "").strip()
+    if delivery_mode and delivery_mode != "claude_cli":
+        return "claude"
+    if provider or provider_id.startswith("claude"):
+        return provider_id
+    return "claude"
+
+
 def provider_env(
     config: dict[str, Any] | None,
     *,

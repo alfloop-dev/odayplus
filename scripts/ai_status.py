@@ -100,7 +100,6 @@ APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
 DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
 DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
-DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
 
 KNOWN_AGENTS = {
     "Claude": {
@@ -214,17 +213,6 @@ AGENT_ALIASES = {
 
 RETIRED_AGENT_REPLACEMENTS = {}
 
-STATUS_LABELS = {
-    "todo": "todo",
-    "in_progress": "in_progress",
-    "review": "review",
-    "review_approved": "review_approved",
-    "blocked": "blocked",
-    "done": "done",
-}
-
-DEPENDENCY_DONE_STATUSES = {"done"}
-ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 EXTERNAL_TASK_ID_TOKENS = {
     "DATASOURCE",

@@ -37,6 +37,8 @@ from common import (
     write_json,
 )
 from provider_permissions import CLAUDE_LOCAL_SETTINGS_PATH, _verified_claude_policy
+from provider_runtime import claude_approval_provider as _approval_provider
+from provider_runtime import provider_config
 from runtime_state import load_approval_state, load_runtime_state
 
 SAFE_BASH_PATTERNS = [
@@ -228,14 +230,6 @@ SAFE_AGENT_RUN_PATTERNS = (
     re.compile(r"\brun\s+`?wc\b"),
 )
 
-SAFE_PYTHON_ONE_LINER_MARKERS = (
-    "print(",
-    "with open(",
-)
-SAFE_PYTHON_JSON_LOAD_MARKERS = (
-    "json.load",
-    "json.loads",
-)
 UNSAFE_PYTHON_ONE_LINER_MARKERS = (
     ".write(",
     "write_text(",
@@ -1143,9 +1137,9 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
         "tool_name": tool_name,
         "tool_input": tool_input,
         "evaluated_at": utc_now(),
-        "policy_default_mode": (
-            config.get("providers", {}).get(provider_id, {}).get("approval", {}).get("rule_default_mode", "acceptEdits")
-        ),
+        "policy_default_mode": provider_config(config, provider_id)
+        .get("approval", {})
+        .get("rule_default_mode", "acceptEdits"),
     }
 
 
@@ -1192,17 +1186,6 @@ def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None
             "risk_class": "safe_read",
         }
     return None
-
-
-def _approval_provider(config: dict[str, Any]) -> str:
-    provider_id = str(os.environ.get("ORCH_PROVIDER") or "claude").strip().lower() or "claude"
-    provider = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode and delivery_mode != "claude_cli":
-        return "claude"
-    if provider or provider_id.startswith("claude"):
-        return provider_id
-    return "claude"
 
 
 def resolve_hook_config() -> tuple[dict[str, Any], Path, str]:
