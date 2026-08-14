@@ -710,9 +710,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_gemini = desired_gemini_settings(config, "gemini")
     codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
     codex_binary = command_exists(codex_profile.get("cli") or "codex")
-    gemini_binary = configured_provider_binary(
-        config, provider_id="gemini", section="gemini", default="gemini"
-    )
     copilot_binary = configured_provider_binary(
         config, provider_id="copilot", section="local", default="copilot"
     )
