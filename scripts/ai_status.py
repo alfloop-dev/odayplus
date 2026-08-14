@@ -3630,8 +3630,6 @@ def detect_truth_mismatches(
     orchestrator_state: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     task_map = {task["id"]: task for task in state.get("tasks", [])}
-    orchestrator = orchestrator_state or {}
-    provider_guardrails = orchestrator.get("provider_guardrails") if isinstance(orchestrator.get("provider_guardrails"), dict) else {}
     live_workers = [
         worker
         for worker in workers
