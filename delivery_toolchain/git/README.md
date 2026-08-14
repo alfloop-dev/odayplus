@@ -3,7 +3,7 @@
 Every worker wakeup prompt, `.orchestrator/skills/worker-anchor-commit.md`,
 `.orchestrator/skills/task-closeout-finalization.md`,
 `.orchestrator/auto_commit_archive.py`, `.orchestrator/watch_events.py` and
-`scripts/orchestrator/diagnose_finalize_lane_remediation.py` all instruct
+`scripts/orchestrator/finalize_lane_doctor.py` all instruct
 workers to run the scripts in this directory. They are the single place where
 the branch prefix, the PR base, the staging rules and the commit-message
 contract are decided.
