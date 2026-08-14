@@ -1,0 +1,92 @@
+schema: odayplus.external-data-disposition.v0.4
+status: binding
+platform_repository: alfloop-dev/oday-data-platform
+consumer_repository: alfloop-dev/odayplus
+freeze_rules:
+  forbidden_new:
+  - provider connector
+  - provider credential
+  - source scheduler
+  - raw source store
+  - canonical market table
+  - direct provider call
+  allowed:
+  - security fix
+  - assisted workflow
+  - generated client
+  - read facade
+  - cutover instrumentation
+  - deletion after acceptance
+paths:
+- path: modules/external_data/application/assisted_intake.py
+  disposition: KEEP_PRODUCT_WORKFLOW
+  target: modules/external_data/application/assisted_intake.py
+- path: modules/external_data/application/xlsx_import.py
+  disposition: KEEP_PRODUCT_WORKFLOW
+  target: modules/external_data/application/xlsx_import.py
+- path: modules/external_data/security/assisted_listing_retrieval.py
+  disposition: KEEP_PRODUCT_WORKFLOW
+  target: modules/external_data/security/assisted_listing_retrieval.py
+- path: modules/external_data/application/listing_feed_adapter.py
+  disposition: SPLIT
+  target: platform listing source adapter + ODay intake bridge
+- path: modules/external_data/application/listing_feed_store.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/sources/listings
+- path: modules/external_data/application/external_contracts.py
+  disposition: SPLIT
+  target: platform contracts + generated ODay client
+- path: modules/external_data/application/ingestion_service.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external
+- path: modules/external_data/application/ingestion_store.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/evidence
+- path: modules/external_data/application/source_snapshots.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/evidence
+- path: modules/external_data/connectors/external.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/sources
+- path: modules/external_data/connectors/provider_connectivity.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/registry
+- path: modules/external_data/connectors/provider_registry.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/registry
+- path: modules/external_data/connectors/store_opening.py
+  disposition: SPLIT
+  target: platform operational-start observation + ODay approval
+- path: modules/external_data/providers/live.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/sources
+- path: modules/external_data/providers/provider_mock.py
+  disposition: MOVE_PLATFORM
+  target: tests/source fixtures
+- path: modules/external_data/providers/taiwan_real_estate.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/external/sources/moi_rental
+- path: modules/external_data/providers/weather_demographics.py
+  disposition: MOVE_PLATFORM
+  target: platform CWA/RIS sources
+- path: modules/external_data/geo/pipeline.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/market/geography
+- path: modules/external_data/workers/scheduled_fetch.py
+  disposition: MOVE_PLATFORM
+  target: src/oday_data_platform/defs/external
+- path: modules/external_data/api
+  disposition: ADAPT_FACADE
+  target: product diagnostics/read facade
+- path: modules/external_data/infrastructure
+  disposition: SPLIT
+  target: platform persistence + ODay generated client facade
+- path: modules/external_data/domain
+  disposition: SPLIT
+  target: platform source domain + ODay workflow domain
+- path: modules/external_data/tests
+  disposition: SPLIT
+  target: producer tests move; workflow/consumer tests remain
+- path: modules/external_data/__init__.py
+  disposition: ADAPT_FACADE
+  target: export product-safe interfaces only
