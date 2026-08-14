@@ -320,22 +320,23 @@ def commit_on_task_branch(repo: Path, tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
-def test_task_finalize_dry_run_plans_push_pr_and_auto_merge(repo: Path, tmp_path: Path):
+def test_task_finalize_dry_run_plans_publish_without_auto_merge(repo: Path, tmp_path: Path):
     commit_on_task_branch(repo, tmp_path)
     result = task_finalize(repo, TASK, "--dry-run")
     assert result.returncode == 0, result.stderr
     assert "dry-run: git push" in result.stdout
     assert "pr create --base dev" in result.stdout
-    assert "--auto" in result.stdout
+    assert "pr merge" not in result.stdout
+    assert "--auto" not in result.stdout
     # Nothing reached origin.
     assert "task" not in run(["git", "ls-remote", "--heads", "origin"], repo).stdout
 
 
-def test_task_finalize_no_auto_merge_flag(repo: Path, tmp_path: Path):
+def test_task_finalize_rejects_retired_no_auto_merge_flag(repo: Path, tmp_path: Path):
     commit_on_task_branch(repo, tmp_path)
     result = task_finalize(repo, TASK, "--dry-run", "--no-auto-merge")
-    assert result.returncode == 0, result.stderr
-    assert "--auto" not in result.stdout
+    assert result.returncode == 2
+    assert "unknown option --no-auto-merge" in result.stderr
 
 
 def test_task_finalize_refuses_wrong_branch(repo: Path):

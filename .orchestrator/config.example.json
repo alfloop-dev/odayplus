@@ -261,7 +261,7 @@
     "repo": null,
     "default_branch": "main",
     "offline_backoff_seconds": 300,
-    "auto_request_reviewers": true,
+    "archive_housekeeping_auto_merge": true,
     "close_resolved_issues": true,
     "labels": {
       "review": [

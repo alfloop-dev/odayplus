@@ -231,11 +231,10 @@ class GitHubBusCommandTests(unittest.TestCase):
         )
         self.assertEqual(bus_state["poll_cursors"]["coordination_comments"], 2)
 
-    def test_upsert_review_pr_create_uses_create_label_flags(self) -> None:
+    def test_upsert_review_pr_records_missing_pr_without_creating(self) -> None:
         config = {
             "github_bus": {
                 "default_branch": "master",
-                "auto_request_reviewers": True,
                 "reviewers": {"Claude": ["ajoe734"]},
                 "labels": {"review": ["pantheon-bus", "pantheon-review"]},
                 "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
@@ -289,9 +288,56 @@ class GitHubBusCommandTests(unittest.TestCase):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
 
         self.assertTrue(changed)
-        args = run_gh.call_args.args[0]
-        self.assertIn("--label", args)
-        self.assertNotIn("--add-label", args)
+        run_gh.assert_not_called()
+        review_pr = bus_state["tasks"]["LIN-001"]["review_pr"]
+        self.assertEqual(review_pr["state"], "missing_pr")
+        self.assertIsNone(review_pr["number"])
+
+    def test_missing_pr_is_rechecked_and_adopted_after_publisher_creates_it(self) -> None:
+        config = {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+        task = {
+            "id": "ODP-PR-OWNER-001",
+            "title": "Single PR publisher",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+        branch = "task/ODP-PR-OWNER-001"
+        found = {"number": 812, "url": "https://example.test/pull/812"}
+        bus_state = {"tasks": {}}
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", side_effect=[None, found]),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+            mock.patch.object(github_bus, "run_gh") as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            first = github_bus.upsert_review_pr(
+                config, bus_state, {"tasks": []}, "o/r", task
+            )
+            second = github_bus.upsert_review_pr(
+                config, bus_state, {"tasks": []}, "o/r", task
+            )
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        run_gh.assert_not_called()
+        edit.assert_called_once()
+        self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["state"], "open")
+        self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["number"], 812)
 
     def test_upsert_review_pr_skips_unpublished_remote_branch(self) -> None:
         config = {
@@ -506,11 +552,10 @@ class GitHubBusCommandTests(unittest.TestCase):
             )
 
         self.assertTrue(changed)
-        create_args = run_gh.call_args.args[0]
-        self.assertEqual(create_args[create_args.index("--head") + 1], task_branch)
+        run_gh.assert_not_called()
         branch_has_diff.assert_called_once_with("dev", task_branch, expected_head_sha=remote_sha)
         review_pr = bus_state["tasks"][task_id]["review_pr"]
-        self.assertEqual(review_pr["state"], "open")
+        self.assertEqual(review_pr["state"], "missing_pr")
         self.assertEqual(review_pr["head_sha"], remote_sha)
         self.assertEqual(review_pr["remote_ref"], f"refs/heads/{task_branch}")
 
@@ -573,8 +618,8 @@ class GitHubBusCommandTests(unittest.TestCase):
 
         self.assertTrue(changed)
         branch_has_diff.assert_called_once_with("dev", task_branch, expected_head_sha=remote_sha)
-        self.assertEqual(run_gh.call_args.args[0][0:2], ["pr", "create"])
-        self.assertEqual(bus_state["tasks"][task_id]["review_pr"]["state"], "open")
+        run_gh.assert_not_called()
+        self.assertEqual(bus_state["tasks"][task_id]["review_pr"]["state"], "missing_pr")
 
     def test_upsert_review_pr_recovers_false_unpublished_state_from_task_origin_ref(self) -> None:
         task_id = "ODP-API-HEALTH-DATA-MODE-CONTRACT-001"
@@ -661,10 +706,10 @@ class GitHubBusCommandTests(unittest.TestCase):
             )
 
         self.assertTrue(changed)
-        create_args = run_gh.call_args.args[0]
-        self.assertEqual(create_args[create_args.index("--head") + 1], task_branch)
+        run_gh.assert_not_called()
+        self.assertEqual(bus_state["tasks"][task_id]["review_pr"]["state"], "missing_pr")
         review_pr = bus_state["tasks"][task_id]["review_pr"]
-        self.assertEqual(review_pr["state"], "open")
+        self.assertEqual(review_pr["state"], "missing_pr")
         self.assertEqual(review_pr["head_sha"], remote_sha)
         self.assertEqual(review_pr["remote_ref"], f"refs/heads/{task_branch}")
 
@@ -784,23 +829,6 @@ class FindExistingReviewPrTests(unittest.TestCase):
     def test_returns_none_when_nothing_matches(self) -> None:
         with mock.patch.object(github_bus, "gh_json", return_value=[]):
             self.assertIsNone(github_bus.find_existing_pr("repo", "ODP-X", "task/ODP-X"))
-
-    def test_adopts_the_pr_url_gh_reports_as_already_existing(self) -> None:
-        message = (
-            'Warning: 54 uncommitted changes\n'
-            'a pull request for branch "task/ODP-X" into branch "dev" already exists: '
-            "https://github.com/alfloop-dev/odayplus/pull/554"
-        )
-
-        url = github_bus._existing_pr_url_from_error(message)
-
-        self.assertEqual(url, "https://github.com/alfloop-dev/odayplus/pull/554")
-        self.assertEqual(github_bus.parse_number_from_url(url), 554)
-
-    def test_unrelated_gh_failures_are_not_mistaken_for_an_existing_pr(self) -> None:
-        self.assertIsNone(github_bus._existing_pr_url_from_error("connection reset by peer"))
-        self.assertIsNone(github_bus._existing_pr_url_from_error(""))
-
 
 class GitHubBusProcessTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -1393,7 +1421,7 @@ class TaskPRBaseBranchTests(unittest.TestCase):
 
         self.assertEqual(github_bus.task_pr_base_branch(config), "main")
 
-    def test_upsert_review_pr_creates_against_branch_workflow_target(self) -> None:
+    def test_upsert_review_pr_missing_message_names_branch_workflow_target(self) -> None:
         config = {
             "github_bus": {
                 "default_branch": "main",
@@ -1437,21 +1465,21 @@ class TaskPRBaseBranchTests(unittest.TestCase):
                     "",
                 ),
             ) as run_gh,
-            mock.patch.object(github_bus, "write_activity_log"),
+            mock.patch.object(github_bus, "write_activity_log") as activity_log,
         ):
             changed = github_bus.upsert_review_pr(config, bus_state, status, "ajoe734/pantheon", task)
 
         self.assertTrue(changed)
-        args = run_gh.call_args.args[0]
-        # A task PR must never be opened straight against the promotion target:
-        # it has to land on dev and reach main only through dev CI.
-        self.assertEqual(args[args.index("--base") + 1], "dev")
+        run_gh.assert_not_called()
+        event = activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "github_review_pr_missing")
+        self.assertIn("no open PR against `dev`", event["message"])
 
 
 class PrBackedStatusCoverageTests(unittest.TestCase):
-    """A task approved inside one poll interval must still get its PR.
+    """A task approved inside one poll interval must still reconcile its PR.
 
-    Keying PR creation on `review` alone drops any task that leaves that status
+    Keying PR adoption on `review` alone drops any task that leaves that status
     before the next poll: the supervisor then reads `unknown` CI because no PR
     exists, fails closed on finalize, and nothing ever goes back to create it.
     """
@@ -1520,6 +1548,19 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
     TASK_ID = "ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
     BRANCH = "task/ODP-ORCH-REVIEWBUS-AUTOMERGE-001"
     REPO = "alfloop-dev/odayplus"
+
+    def test_pr_publish_and_auto_merge_have_one_owner_each(self) -> None:
+        root = Path(github_bus.__file__).resolve().parents[1]
+        bus_source = Path(github_bus.__file__).read_text(encoding="utf-8")
+        finalize_source = (root / "delivery_toolchain/git/task_finalize.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertNotIn('["pr", "create"', bus_source)
+        self.assertEqual(bus_source.count('run_gh(["pr", "merge"'), 1)
+        self.assertNotIn(" --auto", finalize_source)
+        self.assertFalse((root / ".orchestrator/auto_merge_green_prs.py").exists())
+        self.assertFalse((root / ".orchestrator/auto-merge-guard.sh").exists())
 
     def _config(self, *, auto_merge: bool = True) -> dict:
         return {
@@ -1599,7 +1640,7 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         return [call.args[0] for call in run_gh.call_args_list]
 
     def test_draft_pr_is_undrafted_then_armed(self) -> None:
-        """ReviewBus opens its PRs as drafts, and GitHub refuses auto-merge on a draft."""
+        """GitHub refuses auto-merge when the publisher leaves an adopted PR as draft."""
 
         changed, entry, run_gh, log = self._arm(self._pr())
 
@@ -1722,6 +1763,11 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 "enable_review_pr_auto_merge",
                 side_effect=lambda c, b, r, t: armed.append(t["id"]) or False,
             ),
+            mock.patch.object(
+                github_bus,
+                "sync_archive_housekeeping_auto_merge",
+                return_value=False,
+            ),
             mock.patch.object(github_bus, "write_activity_log"),
         ):
             github_bus.sync_outbound(config, {"tasks": {}}, {"tasks": tasks, "blockers": []}, {}, self.REPO)
@@ -1754,6 +1800,54 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
                 {"branch_workflow": {"enabled": False, "task_pr": {"auto_merge": True}}}
             )
         )
+
+    def test_archive_housekeeping_pr_uses_same_auto_merge_mutation(self) -> None:
+        head = "task/OPS-ARCHIVE-AUTO-COMMIT-20260814T120000Z"
+        url = f"https://github.com/{self.REPO}/pull/812"
+        listed = {
+            "number": 812,
+            "state": "OPEN",
+            "isDraft": False,
+            "baseRefName": "dev",
+            "headRefName": head,
+            "url": url,
+            "mergeStateStatus": "BLOCKED",
+        }
+        viewed = {**listed, "autoMergeRequest": None}
+
+        def fake_gh_json(args: list[str]):
+            return [listed] if args[:2] == ["pr", "list"] else viewed
+
+        bus_state: dict = {}
+        with (
+            mock.patch.object(github_bus, "gh_json", side_effect=fake_gh_json),
+            mock.patch.object(
+                github_bus,
+                "run_gh",
+                return_value=subprocess.CompletedProcess(["gh"], 0, "", ""),
+            ) as run_gh,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.sync_archive_housekeeping_auto_merge(
+                self._config(), bus_state, self.REPO
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(self._gh_calls(run_gh)[0][:2], ["pr", "merge"])
+        self.assertIn("--auto", self._gh_calls(run_gh)[0])
+        entry = bus_state["housekeeping_prs"][head]
+        self.assertEqual(entry["auto_merge"]["state"], "enabled")
+
+    def test_archive_housekeeping_auto_merge_switch_fails_closed(self) -> None:
+        config = self._config()
+        config["github_bus"]["archive_housekeeping_auto_merge"] = False
+        with mock.patch.object(github_bus, "gh_json") as gh_json:
+            changed = github_bus.sync_archive_housekeeping_auto_merge(
+                config, {}, self.REPO
+            )
+
+        self.assertFalse(changed)
+        gh_json.assert_not_called()
 
     def test_cloud_relay_is_safe_off_by_default(self) -> None:
         config = {
