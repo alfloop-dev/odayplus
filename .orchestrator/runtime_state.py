@@ -642,7 +642,7 @@ def event_queue_transaction_lock(queue_path: Path):
             fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
-def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
+def _normalize_event(event: dict[str, Any]) -> dict[str, Any]:
     """Validate and complete the only event envelope accepted by the queue."""
     if not isinstance(event, dict):
         raise TypeError("queue event must be an object")
@@ -670,7 +670,7 @@ def normalize_event(event: dict[str, Any]) -> dict[str, Any]:
 
 def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
     """Normalize and append one delivery event under the queue transaction lock."""
-    payload = normalize_event(event)
+    payload = _normalize_event(event)
     path = config_path(config, "event_queue")
     with event_queue_transaction_lock(path):
         append_jsonl(path, payload)

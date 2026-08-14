@@ -59,6 +59,29 @@ class ProviderRuntimeTests(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertIn("unsupported service_tier", result["error"])
 
+    def test_claude_lane_detection_uses_canonical_provider_alias(self) -> None:
+        config = {
+            "providers": {
+                "claude-alt": {"delivery_mode": "claude_cli"},
+                "codex": {"delivery_mode": "codex"},
+            }
+        }
+
+        self.assertTrue(provider_runtime.provider_uses_claude_cli(config, "Claude_Alt"))
+        self.assertFalse(provider_runtime.provider_uses_claude_cli(config, "codex"))
+
+    def test_approval_provider_falls_back_when_runtime_lane_is_not_claude(self) -> None:
+        config = {
+            "providers": {
+                "claude": {"delivery_mode": "claude_cli"},
+                "codex": {"delivery_mode": "codex"},
+            }
+        }
+        with mock.patch.dict(os.environ, {"ORCH_PROVIDER": "codex"}, clear=False):
+            provider_id = provider_runtime.claude_approval_provider(config)
+
+        self.assertEqual(provider_id, "claude")
+
 
 if __name__ == "__main__":
     unittest.main()

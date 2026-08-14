@@ -26,6 +26,7 @@ from common import (
     utc_now,
     write_activity_log,
 )
+from provider_runtime import provider_config
 from runtime_state import enqueue_event, load_runtime_state, save_runtime_state
 from task_archive import DEFAULT_RECENT_LIMIT, recent_terminal_summaries
 
@@ -360,9 +361,9 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
             "type": "wake_queued",
             "task_id": event.get("task_id"),
             "target_agent": display_name_for(config, agent["id"]),
-            "delivery_mode": config.get("providers", {}).get(agent.get("provider", agent["id"]), {}).get(
-                "delivery_mode", agent.get("adapter", "file_inbox")
-            ),
+            "delivery_mode": provider_config(
+                config, agent.get("provider", agent["id"])
+            ).get("delivery_mode", agent.get("adapter", "file_inbox")),
             "message": f"Wake-up queued for supervisor: {event.get('reason')}",
             "queue_event_id": queue_payload["event_id"],
         },

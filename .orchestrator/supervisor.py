@@ -57,7 +57,6 @@ from common import (
     PROVIDER_CLI_FAMILY,
     PROVIDER_LAUNCHER_MISSING_PATTERN,
     agent_config_for,
-    command_exists,
     config_path,
     display_name_for,
     execution_context_files,
@@ -69,7 +68,6 @@ from common import (
     load_status,
     new_runtime_id,
     normalize_agent_id,
-    preserve_github_cli_auth_env,
     provider_launcher_missing_cli,
     relpath,
     resolve_path,
@@ -105,10 +103,13 @@ from provider_permissions import (
 )
 from provider_permissions import write_provider_capabilities
 from provider_runtime import (
+    claude_runtime_env,
     codex_config_health,
+    configured_provider_binary,
     provider_config,
     provider_config_entry,
     provider_section,
+    provider_uses_claude_cli,
 )
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
@@ -136,20 +137,6 @@ STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 # that recovers within minutes — a longer cooldown (e.g. trusting the error's
 # "Resets in Xh" hint) falsely locks an already-recovered pool for hours.
 ROTATION_PROBE_COOLDOWN_SECONDS = 1800
-BLOCKED_OWNER_RESCUE_KEYWORDS = (
-    "auth",
-    "authentication",
-    "credential",
-    "credentials",
-    "token",
-    "permission",
-    "quota",
-    "rate limit",
-    "push",
-    "pr push",
-)
-
-
 SESSION_ID_PATTERNS = [
     re.compile(r'"session_id"\s*:\s*"([^"]+)"'),
     re.compile(r'"sessionId"\s*:\s*"([^"]+)"'),
@@ -215,7 +202,6 @@ NO_PROGRESS_WORKER_EXIT_REASON = (
     "Worker exited successfully without the required task lifecycle transition or meaningful progress."
 )
 PLANNING_STATE_FILE = THIS_DIR / "planning-state.json"
-PLANNING_PHASE_DIR = THIS_DIR.parent / "docs" / "02-architecture" / "consensus" / "phase1"
 _UNSET = object()
 
 
@@ -805,7 +791,7 @@ def resolve_agent_model_preference(config: dict[str, Any], agent: dict[str, Any]
         return explicit
 
     provider_id = str(agent.get("provider") or agent.get("id") or "").strip()
-    provider = config.get("providers", {}).get(provider_id, {})
+    provider = provider_config(config, provider_id)
     model_preference = provider.get("model_preference", {})
     if not isinstance(model_preference, dict):
         return None
@@ -1166,9 +1152,9 @@ def build_request(
     return DeliveryRequest(
         agent_id=agent["id"],
         provider=agent.get("provider", agent["id"]),
-        delivery_mode=config.get("providers", {}).get(agent.get("provider", agent["id"]), {}).get(
-            "delivery_mode", agent.get("adapter", "file_inbox")
-        ),
+        delivery_mode=provider_config(
+            config, agent.get("provider", agent["id"])
+        ).get("delivery_mode", agent.get("adapter", "file_inbox")),
         message=event["message"],
         task_id=event.get("task_id"),
         reason=event.get("reason"),
@@ -3985,9 +3971,9 @@ def queue_discussion_planning_event(
             "type": "planning_wake_queued",
             "task_id": queue_payload["task_id"],
             "target_agent": display_name_for(config, agent["id"]),
-            "delivery_mode": config.get("providers", {}).get(agent.get("provider", agent["id"]), {}).get(
-                "delivery_mode", agent.get("adapter", "file_inbox")
-            ),
+            "delivery_mode": provider_config(
+                config, agent.get("provider", agent["id"])
+            ).get("delivery_mode", agent.get("adapter", "file_inbox")),
             "message": f"Discussion planning wake-up queued for {agent_name}: {reason}",
             "queue_event_id": queue_payload["event_id"],
         },
@@ -5299,7 +5285,7 @@ def successful_worker_exit_outcome(
 def worker_retry_settings(config: dict[str, Any], provider: str | None) -> dict[str, Any]:
     retry = dict(config.get("worker_retry", {}) or {})
     if provider:
-        retry.update(config.get("providers", {}).get(provider, {}).get("retry", {}) or {})
+        retry.update(provider_config(config, provider).get("retry", {}) or {})
     retry.setdefault("enabled", True)
     retry.setdefault("max_attempts", 5)
     retry.setdefault("backoff_schedule_seconds", [5, 15, 30, 60, 120])
@@ -5500,7 +5486,7 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
         display = str(agent.get("display_name") or agent.get("name") or agent_id).strip()
         provider = str(agent.get("provider") or "").strip()
         if provider:
-            prov_cfg = (config.get("providers", {}) or {}).get(provider) or (config.get("providers", {}) or {}).get(normalize_agent_id(provider))
+            prov_cfg = provider_config(config, provider)
             if isinstance(prov_cfg, dict) and (prov_cfg.get("enabled") is False or prov_cfg.get("disabled") is True):
                 return True
         return bool(
@@ -6616,37 +6602,9 @@ def _claude_resume_allowed_tools(approval: dict[str, Any] | None) -> list[str]:
     return []
 
 
-def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -> bool:
-    normalized = normalize_agent_id(provider_id or "")
-    if not normalized:
-        return False
-    provider = (config.get("providers", {}) or {}).get(normalized, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode:
-        return delivery_mode == "claude_cli"
-    return normalized.startswith("claude")
-
-
-def _claude_runtime_env(config: dict[str, Any], provider_id: str | None) -> dict[str, str]:
-    provider = (config.get("providers", {}) or {}).get(normalize_agent_id(provider_id or ""), {}) or {}
-    runtime = provider.get("runtime", {}) or {}
-    base_env = dict(os.environ)
-    env = dict(base_env)
-    home = str(runtime.get("home") or "").strip()
-    if home:
-        env["HOME"] = os.path.expanduser(home)
-    extra_env = runtime.get("env", {}) or {}
-    for key, value in extra_env.items():
-        if value is None:
-            continue
-        env[str(key)] = os.path.expanduser(str(value))
-    preserve_github_cli_auth_env(env, base_env)
-    return env
-
-
 def worker_supports_approval_resume(config: dict[str, Any], worker: dict[str, Any]) -> bool:
     return bool(
-        _provider_uses_claude_cli(config, worker.get("provider"))
+        provider_uses_claude_cli(config, worker.get("provider"))
         and (worker.get("session_id") or worker.get("resume_token"))
     )
 
@@ -6712,7 +6670,7 @@ def correlate_deferred_tool_approval(
 
     Returns the adopted approval, or None when there is nothing to adopt.
     """
-    if not _provider_uses_claude_cli(config, worker.get("provider")):
+    if not provider_uses_claude_cli(config, worker.get("provider")):
         return None
     receipt = _deferred_tool_use_receipt(worker)
     if receipt is None:
@@ -6799,9 +6757,10 @@ def resume_claude_worker(
     if not session_id:
         return None
     provider_id = normalize_agent_id(worker.get("provider") or "claude")
-    provider = (config.get("providers", {}) or {}).get(provider_id) or config.get("providers", {}).get("claude", {}) or {}
-    runtime = provider.get("runtime", {})
-    cli = command_exists(runtime.get("cli") or "claude")
+    runtime = provider_section(config, provider_id=provider_id, section="runtime", default="claude")
+    cli = configured_provider_binary(
+        config, provider_id=provider_id, section="runtime", default="claude"
+    )
     if not cli:
         return None
     command = [
@@ -6837,7 +6796,7 @@ def resume_claude_worker(
     if mcp_config:
         command.extend(["--mcp-config", str(config_path(config, "claude_mcp_config"))])
     log_path = config_path(config, "state_file").parent / "logs" / f"{new_runtime_id(f'{provider_id}-resume')}.log"
-    env = _claude_runtime_env(config, provider_id)
+    env = claude_runtime_env(config, provider_id)
     repo_root = config_path(config, "status_file").parents[0]
     request_metadata = (worker.get("request_snapshot") or {}).get("metadata", {}) if isinstance(worker.get("request_snapshot"), dict) else {}
     workspace_root = Path(str(worker.get("workspace_path") or request_metadata.get("workspace_path") or repo_root)).expanduser().resolve()
@@ -7206,7 +7165,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             latest = resolved[-1]
             if latest.get("approval_id") != worker.get("last_approval_id"):
                 worker["last_approval_id"] = latest.get("approval_id")
-                if latest.get("decision") == "allow" and _provider_uses_claude_cli(config, worker.get("provider")):
+                if latest.get("decision") == "allow" and provider_uses_claude_cli(config, worker.get("provider")):
                     resumed = resume_claude_worker(config, worker, provider_report, approval=latest)
                     write_activity_log(
                         config,
@@ -7910,7 +7869,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             counts["marker_updates"] += 1
             changed = True
         status_before_log_update = worker.get("status")
-        if _provider_uses_claude_cli(config, worker.get("provider")):
+        if provider_uses_claude_cli(config, worker.get("provider")):
             update_from_log(config, worker)
             if _deferred_tool_use_receipt(worker) is not None:
                 try:

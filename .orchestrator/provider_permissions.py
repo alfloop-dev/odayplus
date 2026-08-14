@@ -62,9 +62,7 @@ from provider_runtime import (
 
 WORKSPACE_SETTINGS_PATH = ROOT / ".vscode" / "settings.json"
 CLAUDE_LOCAL_SETTINGS_PATH = ROOT / ".claude" / "settings.local.json"
-CLAUDE_LOCAL_EXAMPLE_PATH = ROOT / ".claude" / "settings.local.example.json"
 GEMINI_SETTINGS_PATH = Path.home() / ".gemini" / "settings.json"
-CODEX_CONFIG_PATH = Path.home() / ".codex" / "config.toml"
 CLI_PROBE_TIMEOUT_SECONDS = 15.0
 EXTENSIONS_DIR = Path.home() / ".vscode-server" / "extensions"
 COPILOT_CONFIG_DIR = Path.home() / ".copilot"
@@ -242,7 +240,7 @@ def _workspace_setting(settings: dict[str, Any], key: str) -> Any:
 
 
 def _verified_claude_policy(config: dict[str, Any]) -> dict[str, Any]:
-    approval = config.get("providers", {}).get("claude", {}).get("approval", {})
+    approval = provider_config(config, "claude").get("approval", {})
     safe_allow = [
         "Bash(pwd)",
         "Bash(ls *)",
@@ -363,8 +361,8 @@ def _verified_claude_hooks() -> dict[str, Any]:
 
 
 def desired_workspace_settings(config: dict[str, Any]) -> dict[str, Any]:
-    claude_approval = config.get("providers", {}).get("claude", {}).get("approval", {})
-    gemini_approval = config.get("providers", {}).get("gemini", {}).get("approval", {})
+    claude_approval = provider_config(config, "claude").get("approval", {})
+    gemini_approval = provider_config(config, "gemini").get("approval", {})
     return {
         "claudeCode.initialPermissionMode": claude_approval.get("workspace_permission_mode", "acceptEdits"),
         "claudeCode.allowDangerouslySkipPermissions": to_bool(claude_approval.get("allow_dangerous_skip", False)),
@@ -634,18 +632,19 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     desired_workspace = desired_workspace_settings(config)
     desired_claude = desired_claude_local_settings(config, current=claude_local)
     desired_gemini = desired_gemini_settings(config, "gemini")
-    codex_profile = config.get("providers", {}).get("codex", {}).get("codex", {})
+    codex_profile = provider_section(config, provider_id="codex", section="codex")
     codex_binary = command_exists(codex_profile.get("cli") or "codex")
     copilot_binary = configured_provider_binary(
         config, provider_id="copilot", section="local", default="copilot"
     )
     copilot_probe = cli_probe(copilot_binary)
-    gh_binary = command_exists(config.get("providers", {}).get("copilot", {}).get("cloud", {}).get("cli") or "gh")
+    copilot_cloud = provider_section(config, provider_id="copilot", section="cloud")
+    gh_binary = command_exists(copilot_cloud.get("cli") or "gh")
     gh_version = _gh_version(gh_binary)
     gh_auth_ready = _gh_auth_ready(gh_binary)
     copilot_auth_ready = _copilot_auth_ready(gh_binary)
     copilot_cli_usable = bool(copilot_binary) and not cli_is_dead(copilot_probe) and bool(copilot_auth_ready)
-    copilot_settings = config.get("providers", {}).get("copilot", {})
+    copilot_settings = provider_config(config, "copilot")
     copilot_model_preference = copilot_settings.get("model_preference", {})
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
