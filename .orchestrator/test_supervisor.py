@@ -131,6 +131,10 @@ class StatusWriteConcurrencyTests(unittest.TestCase):
         # preemption, and reassignment must not regain a direct snapshot write
         # that can skip derived-state synchronization.
         self.assertEqual(source.count("write_status_snapshot_if_current("), 2)
+        # The one physical status write belongs inside the CAS writer. CI
+        # repair previously added a second write before its canonical commit,
+        # publishing marker-only partial transitions.
+        self.assertEqual(source.count("write_json(status_path, status)"), 1)
 
     def test_stale_supervisor_snapshot_cannot_overwrite_newer_cli_revision(self) -> None:
         with tempfile.TemporaryDirectory(prefix="pantheon-status-cas-") as tmp:
@@ -6593,7 +6597,8 @@ class AutomaticRecoveryTests(unittest.TestCase):
                 self.assertTrue(
                     supervisor.requeue_task_for_ci_repair(
                         config,
-                        "AUTO-CI-001",
+                        status,
+                        status["tasks"][0],
                         message="CI failed; repair queued.",
                         clear_approval=True,
                     )
@@ -6601,6 +6606,64 @@ class AutomaticRecoveryTests(unittest.TestCase):
             saved = json.loads(status_path.read_text(encoding="utf-8"))["tasks"][0]
             self.assertEqual(saved["status"], "in_progress")
             self.assertNotIn("approved_head", saved)
+
+    def test_ci_pending_requeue_commits_markers_and_lifecycle_once(self) -> None:
+        now_ts = 1_786_665_600.0
+        approved_head = "a" * 40
+        task = {
+            "id": "AUTO-CI-ATOMIC-001",
+            "status": "review_approved",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "approved_head": approved_head,
+            "ci_pending_since_ts": now_ts - 2000,
+            "ci_pending_since": "2026-08-14T00:00:00Z",
+        }
+        status = {"tasks": [task]}
+        with (
+            mock.patch.object(
+                supervisor,
+                "commit_canonical_task_transition",
+                return_value=True,
+            ) as commit,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.requeue_task_for_ci_repair(
+                self.config,
+                status,
+                task,
+                message="CI pending; repair queued.",
+                clear_approval=False,
+                requeued_head=approved_head,
+                now_ts=now_ts,
+            )
+
+        self.assertTrue(changed)
+        commit.assert_called_once_with(self.config, status)
+        self.assertIs(status["tasks"][0], task)
+        self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["ci_repair_requeued_head"], approved_head)
+        self.assertEqual(task["ci_repair_last_requeued_ts"], now_ts)
+        self.assertNotIn("ci_pending_since_ts", task)
+        self.assertNotIn("ci_pending_since", task)
+
+    def test_ci_requeue_rejects_task_outside_canonical_snapshot(self) -> None:
+        task = {"id": "AUTO-CI-DETACHED-001", "status": "review_approved"}
+        status = {"tasks": []}
+        with mock.patch.object(
+            supervisor,
+            "commit_canonical_task_transition",
+        ) as commit:
+            changed = supervisor.requeue_task_for_ci_repair(
+                self.config,
+                status,
+                task,
+                message="Must not commit a detached task object.",
+                clear_approval=False,
+            )
+
+        self.assertFalse(changed)
+        commit.assert_not_called()
 
     def test_ci_failure_requeues_sidecar_owner_too(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6627,7 +6690,8 @@ class AutomaticRecoveryTests(unittest.TestCase):
                 self.assertTrue(
                     supervisor.requeue_task_for_ci_repair(
                         config,
-                        "AUTO-CI-SIDECAR-001",
+                        status,
+                        status["tasks"][0],
                         message="CI failed; sidecar owner repair queued.",
                         clear_approval=True,
                     )
@@ -6648,7 +6712,6 @@ class AutomaticRecoveryTests(unittest.TestCase):
             ]
         }
         with (
-            mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(
                 supervisor,
                 "commit_canonical_task_transition",
@@ -6658,7 +6721,8 @@ class AutomaticRecoveryTests(unittest.TestCase):
         ):
             changed = supervisor.requeue_task_for_ci_repair(
                 self.config,
-                "AUTO-CI-STALE-001",
+                status,
+                status["tasks"][0],
                 message="CI failed; repair queued.",
                 clear_approval=True,
             )
