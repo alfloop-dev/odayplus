@@ -8,7 +8,6 @@
     "event_queue": ".orchestrator/event-queue.jsonl",
     "approval_queue": ".orchestrator/approval-queue.json",
     "github_bus_state": ".orchestrator/github-bus-state.json",
-    "github_webhook_events": ".orchestrator/github-webhook-events.jsonl",
     "github_relay_state": ".orchestrator/github-relay-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
@@ -321,12 +320,6 @@
         "app_id_env": "PANTHEON_GITHUB_APP_ID",
         "private_key_env": "PANTHEON_GITHUB_APP_PRIVATE_KEY",
         "installation_id_env": "PANTHEON_GITHUB_INSTALLATION_ID"
-      },
-      "webhook": {
-        "enabled": false,
-        "host": "127.0.0.1",
-        "port": 8776,
-        "secret_env": "PANTHEON_GITHUB_WEBHOOK_SECRET"
       },
       "cloud_relay": {
         "enabled": false,

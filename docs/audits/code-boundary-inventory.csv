@@ -24,7 +24,6 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/github_bus.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/github_cloud_relay.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/github_command_parser.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
-.orchestrator/github_webhook_server.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/lovable_task_publisher.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/model_rotation.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/multi_repo_registry.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
