@@ -9,6 +9,15 @@ owner: "Platform/Ops"
 
 # Supervisor Runtime Rollout
 
+## 0. 設定檔 contract（2026-08-14 起）
+
+- `.orchestrator/config.schema.json` 是唯一欄位與型別 contract；固定 object 拒絕未知鍵，worker、provider、account pool 等具名 map 才允許動態 id。
+- `config.example.json` 只供 `make bootstrap` 建立開發用、gitignored 的 `config.json`，runtime 缺檔時不會 fallback 到 example。
+- 正式服務必須用 `--config /absolute/path/to/runtime.json`；Supervisor 會以 `PANTHEON_CONFIG_PATH` 把同一路徑傳給 worker、permission broker 與 `ai_status.py`。
+- 只有預設的 `.orchestrator/config.json` 會自動套用同目錄 `config.local.json`；外部正式 config 預設為 self-contained。
+- rollout 前執行 `make config-check`，並用 `check_orchestrator_config.py --config <runtime.json>` 驗證正式檔。缺檔、非標準 JSON、未知鍵與錯誤型別一律 fail closed。
+- schema 中的固定設定必須有 production code 讀取；不再使用 dead-key allowlist。
+
 ## 1. 為什麼需要這份 runbook
 
 合併進 `dev` **不等於生效**。實際執行 fleet 的 supervisor 是另一份 checkout，
@@ -93,21 +102,18 @@ config 用小寫（`codex2`）而 board 用大寫（`Codex2`），派工與審�
 
 ## 4. 預檢結果（2026-08-04 已執行）
 
-### 4.1 config wiring guard — 通過，且原先的疑慮不成立
+### 4.1 config contract 與 wiring guard
 
 ```
-$ python3 delivery_toolchain/governance/check_config_wiring.py
-All 245 config keys are read by code or allowlisted.
+$ make config-check
+Validated 3 config documents and their merged runtime views.
+All 148 config keys are read by production code.
 exit=0
 ```
 
-初版風險評估曾標記「rollout 後若現行 config 有未接線設定，CI 會開始失敗」。
-**該疑慮不成立**：`delivery_toolchain/governance/check_config_wiring.py:26` 讀的是
-`.orchestrator/config.example.json`（committed），不是生產用的 `config.json`。
-這是 repo 內的規範檢查，與 live config 無關。
-
-注意此檢查是**雙向**的：宣告了沒接線會失敗，allowlist 中的項目變成已接線也會失敗，
-所以清單不會悄悄過期。
+現在的 guard 直接讀 authoritative schema，且同時驗證 bootstrap config、local overlay
+與傳入的正式 runtime config。任何未接線設定都必須刪除或先完成程式實作，不能放入
+allowlist 延後處理。
 
 ### 4.2 dev tip orchestrator 測試 — 通過
 
