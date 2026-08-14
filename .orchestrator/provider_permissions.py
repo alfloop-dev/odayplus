@@ -75,12 +75,6 @@ def _find_extension(prefix: str) -> tuple[Path | None, str | None]:
     return path, version
 
 
-def _load_package_json(path: Path | None) -> dict[str, Any]:
-    if not path:
-        return {}
-    return load_json(path / "package.json", default={}) or {}
-
-
 def _workspace_settings() -> dict[str, Any]:
     return load_json(WORKSPACE_SETTINGS_PATH, default={}) or {}
 
@@ -154,12 +148,6 @@ def codex_config_health(config: dict[str, Any] | None = None, provider_id: str =
     return result
 
 
-def _read_text(path: Path) -> str:
-    if not path.exists():
-        return ""
-    return path.read_text(encoding="utf-8", errors="ignore")
-
-
 def _code_cli_info() -> dict[str, Any]:
     binary = command_exists("code")
     if not binary:
@@ -175,12 +163,6 @@ def _code_cli_info() -> dict[str, Any]:
         "code_chat_available": code_chat_available,
         "notes": "Verified via local CLI help output.",
     }
-
-
-def _command_help_contains(command: list[str], needle: str) -> bool:
-    result = run_command(command)
-    output = (result.stdout or "") + (result.stderr or "")
-    return needle in output
 
 
 def cli_probe(binary: str | None) -> dict[str, Any]:
@@ -258,16 +240,6 @@ def _gh_version(binary: str | None) -> tuple[int, int, int] | None:
     if not match:
         return None
     return tuple(int(part) for part in match.groups())
-
-
-def _json_command(command: list[str]) -> dict[str, Any]:
-    result = run_command(command)
-    if result.returncode != 0 or not result.stdout:
-        return {}
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return {}
 
 
 def _provider_runtime_env(config: dict[str, Any], provider_id: str) -> dict[str, str]:
@@ -752,7 +724,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
     copilot_cli_usable = bool(copilot_binary) and not cli_is_dead(copilot_probe) and bool(copilot_auth_ready)
     copilot_settings = config.get("providers", {}).get("copilot", {})
     copilot_model_preference = copilot_settings.get("model_preference", {})
-    bool(gemini_path or gemini_binary)
     copilot_installed = bool(copilot_path or copilot_binary or gh_binary)
 
     claude_applied = (
@@ -777,10 +748,6 @@ def provider_capabilities(config: dict[str, Any] | None = None) -> dict[str, Any
         )
     )
 
-    (
-        codex_profile.get("ask_for_approval", "never") == "never"
-        and codex_profile.get("sandbox_mode", "workspace-write") == "workspace-write"
-    )
     copilot_applied = (
         _workspace_setting(workspace_settings, "github.copilot.chat.backgroundAgent.enabled")
         == desired_workspace["github.copilot.chat.backgroundAgent.enabled"]

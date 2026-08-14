@@ -9,8 +9,6 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/adapters/copilot_local.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/adapters/file_inbox.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/adapters/gemini.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
-.orchestrator/adapters/vscode_chat.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
-.orchestrator/adapters/vscode_command.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/approval_queue.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/auth_loader.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/auto_commit_archive.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.

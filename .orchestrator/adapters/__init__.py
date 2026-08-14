@@ -9,13 +9,9 @@ from adapters.copilot_cloud import CopilotCloudAdapter
 from adapters.copilot_local import CopilotLocalAdapter
 from adapters.file_inbox import FileInboxAdapter
 from adapters.gemini import GeminiAdapter
-from adapters.vscode_chat import VSCodeChatAdapter
-from adapters.vscode_command import VSCodeCommandAdapter
 
 ADAPTERS: dict[str, type[BaseAdapter]] = {
     "file_inbox": FileInboxAdapter,
-    "vscode_chat": VSCodeChatAdapter,
-    "vscode_command": VSCodeCommandAdapter,
     "claude_cli": ClaudeCLIAdapter,
     "claude_code": ClaudeCodeAdapter,
     "copilot_local": CopilotLocalAdapter,
