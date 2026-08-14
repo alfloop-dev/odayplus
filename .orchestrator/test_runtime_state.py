@@ -26,6 +26,54 @@ class LoadRuntimeStateTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
+    def _queue_event(self, task_id: str) -> dict:
+        return {
+            "task_id": task_id,
+            "target_agent": "codex",
+            "provider": "codex",
+            "reason": "test",
+            "message": f"Work on {task_id}",
+        }
+
+    def test_enqueue_event_owns_envelope_defaults_and_storage(self) -> None:
+        event = self._queue_event("QUEUE-001")
+
+        payload = runtime_state.enqueue_event(self.config, event)
+
+        self.assertNotIn("event_id", event)
+        self.assertTrue(payload["event_id"].startswith("evt-"))
+        self.assertTrue(payload["created_at"])
+        self.assertEqual(payload["context_files"], [])
+        self.assertEqual(payload["target_files"], [])
+        self.assertEqual(payload["metadata"], {})
+        self.assertEqual(
+            runtime_state.load_event_queue(self.config),
+            [payload],
+        )
+
+    def test_enqueue_event_rejects_invalid_envelope_before_writing(self) -> None:
+        event = self._queue_event("QUEUE-002")
+        event.pop("target_agent")
+
+        with self.assertRaisesRegex(ValueError, "target_agent"):
+            runtime_state.enqueue_event(self.config, event)
+
+        self.assertEqual(runtime_state.load_event_queue(self.config), [])
+
+    def test_replace_event_queue_preserves_events_appended_after_snapshot(self) -> None:
+        first = runtime_state.enqueue_event(self.config, self._queue_event("QUEUE-OLD"))
+        original = runtime_state.load_event_queue(self.config)
+        second = runtime_state.enqueue_event(self.config, self._queue_event("QUEUE-NEW"))
+
+        runtime_state.replace_event_queue(
+            self.config,
+            original_events=original,
+            retained_events=[],
+        )
+
+        self.assertEqual(runtime_state.load_event_queue(self.config), [second])
+        self.assertNotEqual(first["event_id"], second["event_id"])
+
     def test_load_runtime_state_drops_suspended_worker_without_queue_event(self) -> None:
         self._write_json(
             self.root / "state.json",

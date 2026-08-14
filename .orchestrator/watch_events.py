@@ -20,7 +20,6 @@ from common import (
     load_config,
     load_json,
     load_status,
-    new_runtime_id,
     render_template,
     resolve_path,
     snapshot_task,
@@ -343,8 +342,6 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
     event["context_files"] = context_files
     message = render_wakeup_message(config, event, target_agent)
     queue_payload = {
-        "event_id": new_runtime_id("evt"),
-        "created_at": utc_now(),
         "event_key": event.get("key"),
         "task_id": event.get("task_id"),
         "target_agent": agent["id"],
@@ -356,7 +353,7 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
         "target_files": event.get("task", {}).get("artifacts") or [],
         "metadata": {"handoff": event.get("handoff"), "task": event.get("task", {})},
     }
-    enqueue_event(config, queue_payload)
+    queue_payload = enqueue_event(config, queue_payload)
     write_activity_log(
         config,
         {

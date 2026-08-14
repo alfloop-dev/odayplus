@@ -1760,8 +1760,6 @@ def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
     }
     message = render_wakeup_message(config, event, target_agent)
     payload = {
-        "event_id": f"github-{task['id']}-{_iso_now_dt().strftime('%Y%m%dT%H%M%SZ')}",
-        "created_at": utc_now(),
         "event_key": event["key"],
         "task_id": task.get("id"),
         "target_agent": agent_config_for(config, target_agent)["id"],
@@ -1773,7 +1771,7 @@ def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
         "target_files": task.get("artifacts") or [],
         "metadata": {"task": {"id": task.get("id")}},
     }
-    enqueue_event(config, payload)
+    payload = enqueue_event(config, payload)
     write_activity_log(
         config,
         {
