@@ -109,7 +109,7 @@ product-e2e-gate: release-gate-registry
 product-release-gate:
 	python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go $(if $(EXPECTED_SHA),--expected-sha $(EXPECTED_SHA))
 
-ci: bootstrap config-check lint security test smoke node-check boundary-check
+ci: bootstrap lint security test smoke node-check config-check boundary-check
 
 clean:
 	rm -rf .pytest_cache .ruff_cache htmlcov .coverage .coverage.*
