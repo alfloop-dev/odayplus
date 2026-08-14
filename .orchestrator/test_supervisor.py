@@ -11568,6 +11568,24 @@ class AgentLoadBalancingTests(unittest.TestCase):
                 supervisor.first_viable_agent(self.CONFIG, ["Antigravity"], exclude={"Antigravity"})
             )
 
+    def test_viability_uses_capability_report_without_runtime_state(self) -> None:
+        report = {
+            "providers": {
+                "antigravity": {
+                    "local_cli_worker_supported": False,
+                }
+            }
+        }
+
+        chosen = supervisor.first_viable_agent(
+            self.CONFIG,
+            ["Antigravity"],
+            exclude=set(),
+            provider_report=report,
+        )
+
+        self.assertIsNone(chosen)
+
     def test_open_task_counts_ignore_finished_work(self) -> None:
         status = {
             "tasks": [

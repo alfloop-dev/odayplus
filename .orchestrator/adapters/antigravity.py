@@ -6,10 +6,16 @@ from pathlib import Path
 import model_rotation
 from common import (
     agent_config_for,
-    command_exists,
     delivery_workspace_root,
 )
-from provider_runtime import inbox_fallback_enabled, provider_env, provider_key, provider_settings
+from provider_runtime import (
+    configured_provider_binary,
+    inbox_fallback_enabled,
+    provider_config,
+    provider_env,
+    provider_key,
+    provider_section,
+)
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
@@ -20,21 +26,8 @@ from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, Deli
 ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
 
 
-def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
-    return provider_key(config, default="antigravity", agent_id=agent_id, provider_id=provider_id)
-
-
-def _provider_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
-    return provider_settings(config, default="antigravity", provider_id=provider_id)
-
-
-def _provider_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
-    return provider_env(config, default="antigravity", provider_id=provider_id, blocks=("runtime", "antigravity"))
-
-
 def _antigravity_home(config: dict | None = None, provider_id: str | None = None) -> Path:
-    provider = _provider_settings(config, provider_id)
-    runtime = provider.get("antigravity", {})
+    runtime = provider_section(config, provider_id=provider_id, section="antigravity", default="antigravity")
     home = str(runtime.get("config_home") or runtime.get("home") or "").strip()
     return Path(os.path.expanduser(home)) if home else Path.home()
 
@@ -43,18 +36,16 @@ def _oauth_token_path(config: dict | None = None, provider_id: str | None = None
     return _antigravity_home(config, provider_id) / ANTIGRAVITY_OAUTH_TOKEN_REL
 
 
-def _configured_cli(config: dict | None = None, provider_id: str | None = None) -> str | None:
-    provider = _provider_settings(config, provider_id)
-    runtime = provider.get("antigravity", {})
-    return command_exists(runtime.get("cli") or "agy")
-
-
-def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
-    return inbox_fallback_enabled(config, default="antigravity", provider_id=provider_id)
-
-
 def _auth_ready(config: dict | None = None, provider_id: str | None = None) -> bool:
-    env = {**os.environ, **_provider_env(config, provider_id)}
+    env = {
+        **os.environ,
+        **provider_env(
+            config,
+            default="antigravity",
+            provider_id=provider_id,
+            blocks=("runtime", "antigravity"),
+        ),
+    }
     if env.get("GEMINI_API_KEY"):
         return True
     return _oauth_token_path(config, provider_id).exists()
@@ -64,9 +55,13 @@ class AntigravityAdapter(BaseAdapter):
     name = "antigravity"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        provider_id = _provider_key(self.config, agent_id=agent_id)
-        allow_inbox_fallback = _allow_inbox_fallback(self.config, provider_id)
-        cli = _configured_cli(self.config, provider_id)
+        provider_id = provider_key(self.config, default="antigravity", agent_id=agent_id)
+        allow_inbox_fallback = inbox_fallback_enabled(
+            self.config, default="antigravity", provider_id=provider_id
+        )
+        cli = configured_provider_binary(
+            self.config, provider_id=provider_id, section="antigravity", default="agy"
+        )
         auth_ready = _auth_ready(self.config, provider_id)
         supported = bool(cli and auth_ready)
         if cli and auth_ready:
@@ -90,7 +85,9 @@ class AntigravityAdapter(BaseAdapter):
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
-        provider_id = _provider_key(self.config, agent_id=request.agent_id, provider_id=request.provider)
+        provider_id = provider_key(
+            self.config, default="antigravity", agent_id=request.agent_id, provider_id=request.provider
+        )
         capability = self.capability(request.agent_id)
         if not capability.supported or not capability.can_auto_deliver:
             return self.unavailable_or_inbox(
@@ -100,13 +97,19 @@ class AntigravityAdapter(BaseAdapter):
                 target=agent_config_for(self.config, request.agent_id).get(
                     "display_name", request.agent_id
                 ),
-                allow_inbox_fallback=_allow_inbox_fallback(self.config, provider_id),
+                allow_inbox_fallback=inbox_fallback_enabled(
+                    self.config, default="antigravity", provider_id=provider_id
+                ),
             )
 
-        provider = _provider_settings(self.config, provider_id)
-        settings = provider.get("antigravity", {})
+        provider = provider_config(self.config, provider_id, default="antigravity")
+        settings = provider_section(
+            self.config, provider_id=provider_id, section="antigravity", default="antigravity"
+        )
         approval = provider.get("approval", {})
-        cli = _configured_cli(self.config, provider_id) or settings.get("cli") or "agy"
+        cli = configured_provider_binary(
+            self.config, provider_id=provider_id, section="antigravity", default="agy"
+        ) or settings.get("cli") or "agy"
         agent_cfg = agent_config_for(self.config, request.agent_id)
         display_name = str(agent_cfg.get("display_name") or request.agent_id)
         workspace_root = delivery_workspace_root(self.config, request.metadata)
@@ -138,7 +141,9 @@ class AntigravityAdapter(BaseAdapter):
                 command.extend(["--add-dir", str(expanded if expanded.is_absolute() else root / expanded)])
         command.extend(["--prompt", request.message])
 
-        env_overrides = _provider_env(self.config, provider_id)
+        env_overrides = provider_env(
+            self.config, default="antigravity", provider_id=provider_id, blocks=("runtime", "antigravity")
+        )
         home = _antigravity_home(self.config, provider_id)
         if home != Path.home():
             env_overrides["HOME"] = str(home)

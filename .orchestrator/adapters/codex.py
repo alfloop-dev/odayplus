@@ -7,6 +7,7 @@ from common import (
     command_exists,
     delivery_workspace_root,
 )
+from provider_runtime import provider_key, provider_section
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
@@ -30,25 +31,11 @@ def _normalize_codex_model_name(model: str) -> str:
 class CodexAdapter(BaseAdapter):
     name = "codex"
 
-    def _provider_settings(self, agent_id: str) -> tuple[dict, dict]:
-        """Return (provider_block, codex_settings) for the given agent_id.
-
-        Looks up the provider key from the agent config first, then falls back
-        to the literal agent_id, then to "codex".  This lets codex2 / codex3
-        carry their own provider blocks with separate api_key_env values.
-        """
-        agent_cfg = agent_config_for(self.config, agent_id)
-        provider_key = agent_cfg.get("provider") or agent_id or "codex"
-        provider = (
-            self.config.get("providers", {}).get(provider_key)
-            or self.config.get("providers", {}).get("codex")
-            or {}
-        )
-        codex_settings = provider.get("codex", {})
-        return provider, codex_settings
-
     def capability(self, agent_id: str) -> DeliveryCapability:
-        _provider, codex_settings = self._provider_settings(agent_id)
+        provider_id = provider_key(self.config, default="codex", agent_id=agent_id)
+        codex_settings = provider_section(
+            self.config, provider_id=provider_id, section="codex", default="codex"
+        )
         configured_cli = codex_settings.get("cli") or "codex"
         cli = command_exists(configured_cli) or command_exists("codex")
         supported = bool(cli)
@@ -78,7 +65,15 @@ class CodexAdapter(BaseAdapter):
                 notes=capability.notes,
             )
 
-        _provider, codex_settings = self._provider_settings(request.agent_id)
+        provider_id = provider_key(
+            self.config,
+            default="codex",
+            agent_id=request.agent_id,
+            provider_id=request.provider,
+        )
+        codex_settings = provider_section(
+            self.config, provider_id=provider_id, section="codex", default="codex"
+        )
         agent_cfg = agent_config_for(self.config, request.agent_id)
         display_name = str(agent_cfg.get("display_name") or request.agent_id)
         cli = codex_settings.get("cli") or "codex"
@@ -118,7 +113,7 @@ class CodexAdapter(BaseAdapter):
         remove_env = CODEX_INHERITED_SESSION_ENV + (() if api_key_env else ("OPENAI_API_KEY",))
         return self.spawn_cli_delivery(
             request,
-            provider_id=request.provider or "codex",
+            provider_id=provider_id,
             runtime_provider_id="codex",
             mode="codex",
             display_name=display_name,

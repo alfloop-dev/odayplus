@@ -1,78 +1,34 @@
 from __future__ import annotations
 
-import os
-
 from common import (
-    apply_claude_oauth_token_file,
-    command_exists,
+    claude_auth_ready,
     config_path,
     delivery_workspace_root,
-    preserve_github_cli_auth_env,
     shell_quote,
 )
-from common import (
-    claude_auth_ready as shared_claude_auth_ready,
+from provider_runtime import (
+    claude_runtime_env,
+    configured_provider_binary,
+    inbox_fallback_enabled,
+    provider_key,
+    provider_section,
 )
-from provider_runtime import inbox_fallback_enabled, provider_key, provider_settings
 
 from adapters.base import DeliveryCapability, DeliveryRequest, DeliveryResult
 from adapters.file_inbox import FileInboxAdapter
-
-
-def _provider_key(config: dict | None, agent_id: str | None = None, provider_id: str | None = None) -> str:
-    return provider_key(config, default="claude", agent_id=agent_id, provider_id=provider_id)
-
-
-def _provider_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
-    return provider_settings(config, default="claude", provider_id=provider_id)
-
-
-def _runtime_settings(config: dict | None = None, provider_id: str | None = None) -> dict:
-    return _provider_settings(config, provider_id).get("runtime", {}) or {}
-
-
-def _spawn_env(config: dict | None = None, provider_id: str | None = None) -> dict[str, str]:
-    base_env = dict(os.environ)
-    env = dict(base_env)
-    runtime = _runtime_settings(config, provider_id)
-    home = str(runtime.get("home") or "").strip()
-    if home:
-        env["HOME"] = os.path.expanduser(home)
-    extra_env = runtime.get("env", {}) or {}
-    for key, value in extra_env.items():
-        if value is None:
-            continue
-        env[str(key)] = os.path.expanduser(str(value))
-    preserve_github_cli_auth_env(env, base_env)
-    apply_claude_oauth_token_file(env, runtime)
-    return env
-
-
-def _claude_auth_ready(
-    cli: str | None,
-    *,
-    env: dict[str, str] | None = None,
-    refresh_if_needed: bool = True,
-) -> bool:
-    return shared_claude_auth_ready(cli, env=env, refresh_if_needed=refresh_if_needed)
-
-
-def _configured_claude_cli(config: dict | None = None, provider_id: str | None = None) -> str | None:
-    runtime = _runtime_settings(config, provider_id)
-    return command_exists(runtime.get("cli") or "claude")
-
-
-def _allow_inbox_fallback(config: dict | None = None, provider_id: str | None = None) -> bool:
-    return inbox_fallback_enabled(config, default="claude", provider_id=provider_id)
 
 
 class ClaudeCLIAdapter(FileInboxAdapter):
     name = "claude_cli"
 
     def capability(self, agent_id: str) -> DeliveryCapability:
-        provider_id = _provider_key(self.config, agent_id=agent_id)
-        cli = _configured_claude_cli(self.config, provider_id)
-        auth_ready = _claude_auth_ready(cli, env=_spawn_env(self.config, provider_id), refresh_if_needed=False)
+        provider_id = provider_key(self.config, default="claude", agent_id=agent_id)
+        cli = configured_provider_binary(
+            self.config, provider_id=provider_id, section="runtime", default="claude"
+        )
+        auth_ready = claude_auth_ready(
+            cli, env=claude_runtime_env(self.config, provider_id), refresh_if_needed=False
+        )
         if cli and auth_ready:
             return DeliveryCapability(
                 adapter=self.name,
@@ -86,7 +42,7 @@ class ClaudeCLIAdapter(FileInboxAdapter):
                 notes="Uses non-interactive Claude CLI sessions with the local approval broker hooks.",
             )
         missing_reason = "Claude CLI is not installed" if not cli else "Claude CLI is installed but not authenticated"
-        if not _allow_inbox_fallback(self.config, provider_id):
+        if not inbox_fallback_enabled(self.config, default="claude", provider_id=provider_id):
             return DeliveryCapability(
                 adapter=self.name,
                 supported=bool(cli),
@@ -112,12 +68,16 @@ class ClaudeCLIAdapter(FileInboxAdapter):
         )
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
-        provider_id = _provider_key(self.config, agent_id=request.agent_id, provider_id=request.provider)
-        cli = _configured_claude_cli(self.config, provider_id)
-        env = _spawn_env(self.config, provider_id)
-        auth_ready = _claude_auth_ready(cli, env=env)
+        provider_id = provider_key(
+            self.config, default="claude", agent_id=request.agent_id, provider_id=request.provider
+        )
+        cli = configured_provider_binary(
+            self.config, provider_id=provider_id, section="runtime", default="claude"
+        )
+        env = claude_runtime_env(self.config, provider_id)
+        auth_ready = claude_auth_ready(cli, env=env)
         if not cli or not auth_ready:
-            if not _allow_inbox_fallback(self.config, provider_id):
+            if not inbox_fallback_enabled(self.config, default="claude", provider_id=provider_id):
                 reason = (
                     "Claude CLI is unavailable; inbox fallback is disabled for this provider."
                     if not cli
@@ -142,8 +102,9 @@ class ClaudeCLIAdapter(FileInboxAdapter):
                 result.notes = f"{result.notes}. Claude CLI is not authenticated, so inbox fallback was used."
             return result
 
-        provider = _provider_settings(self.config, provider_id)
-        runtime = provider.get("runtime", {})
+        runtime = provider_section(
+            self.config, provider_id=provider_id, section="runtime", default="claude"
+        )
         workspace_root = delivery_workspace_root(self.config, request.metadata)
         output_format = runtime.get("output_format", "stream-json")
         command = [

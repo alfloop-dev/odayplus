@@ -476,7 +476,7 @@ def _deliver(config, tmp_path):
     )
     process = mock.Mock()
     process.pid = 4321
-    with mock.patch("adapters.antigravity.command_exists", return_value="/usr/bin/agy"), \
+    with mock.patch("adapters.antigravity.configured_provider_binary", return_value="/usr/bin/agy"), \
             mock.patch("adapters.antigravity._auth_ready", return_value=True), \
             mock.patch("adapters.antigravity.delivery_workspace_root", return_value=pathlib.Path(tmp_path)), \
             mock.patch("adapters.base.runtime_log_path", return_value=pathlib.Path(tmp_path) / "agy.log"), \
