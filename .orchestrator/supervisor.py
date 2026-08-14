@@ -8252,15 +8252,20 @@ def review_submission_is_complete(config: dict[str, Any], task: dict[str, Any]) 
     if not isinstance(submission, dict):
         return False
     task_id = str(task.get("id") or "").strip()
-    expected_branch = f"task/{task_id}"
+    github = task.get("github") if isinstance(task.get("github"), dict) else {}
+    explicit_branch = str(github.get("head_branch") or task.get("branch") or "").strip()
+    expected_branch = explicit_branch or f"task/{task_id}"
     expected_base = str((config.get("branch_workflow") or {}).get("dev_branch") or "dev").strip()
     try:
         pr_number = int(submission.get("pr_number") or 0)
     except (TypeError, ValueError):
         pr_number = 0
+    task_ref = task_id.lower().replace("_", "-")
+    branch_ref = expected_branch.strip("/").lower().replace("_", "-")
     return bool(
         task_id
         and pr_number > 0
+        and (branch_ref == task_ref or branch_ref.endswith(f"/{task_ref}"))
         and str(submission.get("branch") or "") == expected_branch
         and str(submission.get("base_branch") or "") == expected_base
         and re.fullmatch(r"[0-9a-fA-F]{40}|[0-9a-fA-F]{64}", str(submission.get("remote_sha") or ""))

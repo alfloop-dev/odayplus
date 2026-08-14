@@ -420,6 +420,19 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         issues = supervisor.task_assignment_integrity_issues(config, {"workers": {}}, task)
         self.assertIn("owner_reviewer_same_account_pool", issues)
 
+    def test_review_submission_accepts_task_scoped_explicit_branch(self) -> None:
+        task = {
+            "id": "HEATZONE-LATENCY-FIXTURE-FIX",
+            "branch": "agent/heatzone-latency-fixture-fix",
+            "review_submission": {
+                "pr_number": 826,
+                "branch": "agent/heatzone-latency-fixture-fix",
+                "base_branch": "dev",
+                "remote_sha": "a" * 40,
+            },
+        }
+        self.assertTrue(supervisor.review_submission_is_complete({"branch_workflow": {"dev_branch": "dev"}}, task))
+
     def test_assignment_integrity_audits_non_dispatchable_actor_identity_without_dispatch_eligibility(self) -> None:
         config = self._config()
         task = {
