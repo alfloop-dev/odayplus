@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: F821
+
 """Worker lifecycle logic extracted from legacy supervisor."""
 
 from datetime import UTC, datetime

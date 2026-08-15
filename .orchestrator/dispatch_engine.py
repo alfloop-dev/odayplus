@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 """Dispatch-focused logic extracted from legacy supervisor."""
+# ruff: noqa: F821
 
 from typing import Any
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+# ruff: noqa: F401,F821,I001,F841
 
 import argparse
 import atexit

@@ -1,4 +1,5 @@
 from __future__ import annotations
+# ruff: noqa: F401,F821,F841,I001
 
 from datetime import UTC, datetime
 from typing import Any

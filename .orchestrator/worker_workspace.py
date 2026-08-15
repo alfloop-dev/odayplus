@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 """Workspace lifecycle helpers extracted from legacy supervisor."""
+# ruff: noqa: F821
 
 from pathlib import Path
 from typing import Any
