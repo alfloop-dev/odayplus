@@ -15,7 +15,8 @@
   "permission_broker": {
     "allowed_workspace_roots": [
       ".",
-      "../execute-plans"
+      "../execute-plans",
+      "../oday-data-platform"
     ]
   },
   "watcher": {

@@ -120,6 +120,35 @@ def coordination_config(config: dict[str, Any]) -> dict[str, Any]:
 
 def repositories(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     merged = deepcopy(DEFAULT_REPOSITORIES)
+    # ODay Plus is the supervisor/status repository. EMGI producer tasks live
+    # in the sibling data-platform checkout and must be routable without
+    # pretending their authority documents belong to the status repository.
+    merged.setdefault(
+        "odayplus",
+        {
+            "display_name": "odayplus",
+            "repo": "alfloop-dev/odayplus",
+            "local_path": ".",
+            "default_branch": "dev",
+            "artifact_prefixes": ["odayplus/"],
+            "coordination_dir": ".coordination",
+            "requests_dir": ".coordination/requests",
+            "responses_dir": ".coordination/responses",
+        },
+    )
+    merged.setdefault(
+        "oday_data_platform",
+        {
+            "display_name": "oday-data-platform",
+            "repo": "alfloop-dev/oday-data-platform",
+            "local_path": "../oday-data-platform",
+            "default_branch": "dev",
+            "artifact_prefixes": ["oday-data-platform/"],
+            "coordination_dir": ".coordination",
+            "requests_dir": ".coordination/requests",
+            "responses_dir": ".coordination/responses",
+        },
+    )
     for repo_id, override in (coordination_config(config).get("repositories", {}) or {}).items():
         current = merged.setdefault(repo_id, {})
         current.update(deepcopy(override or {}))
