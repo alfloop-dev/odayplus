@@ -1,0 +1,39 @@
+{
+  "contract_id": "transaction_event",
+  "records": [
+    {
+      "source_transaction_id": "TX10023",
+      "source_store_id": "S001",
+      "source_machine_id": "M-ABC123",
+      "member_source_id": "member-token-001",
+      "event_time": "2026-06-26T08:15:00+08:00",
+      "payment_time": "2026-06-26T08:15:30+08:00",
+      "gross_amount": 150.0,
+      "discount_amount": 20.0,
+      "net_amount": 130.0,
+      "currency": "TWD",
+      "payment_method": "LINE Pay",
+      "transaction_status": "succeeded",
+      "price_version": "PV-2026Q2"
+    },
+    {
+      "source_transaction_id": "TX10024",
+      "source_store_id": "S001",
+      "event_time": "2026-06-26T09:00:00+08:00",
+      "gross_amount": 0.0,
+      "net_amount": 0.0,
+      "currency": "TWD",
+      "transaction_status": "failed"
+    },
+    {
+      "source_transaction_id": "TX10025",
+      "source_store_id": "S001",
+      "event_time": "2026-06-26T10:00:00+08:00",
+      "gross_amount": 130.0,
+      "net_amount": 130.0,
+      "currency": "TWD",
+      "transaction_status": "refunded",
+      "refund_reference_id": "TX10023"
+    }
+  ]
+}

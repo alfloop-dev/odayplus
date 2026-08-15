@@ -1,0 +1,309 @@
+# CI Workflow config. To run the full CI suite locally, use: make ci
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  # A merge queue tests each candidate on a temporary ref built from the target
+  # branch plus the queued PRs, and it waits for the *required* checks to report
+  # against that ref. Without this trigger the jobs below never run there, every
+  # queued PR times out and is ejected, and the queue silently blocks all merges.
+  merge_group:
+    types: [checks_requested]
+
+jobs:
+  change-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.classify.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify change scope
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base_sha="$PR_BASE_SHA"
+              head_sha="$PR_HEAD_SHA"
+              ;;
+            merge_group)
+              base_sha="$MERGE_GROUP_BASE_SHA"
+              head_sha="$MERGE_GROUP_HEAD_SHA"
+              ;;
+            push)
+              base_sha="$PUSH_BEFORE_SHA"
+              head_sha="$PUSH_AFTER_SHA"
+              ;;
+            *)
+              echo "scope=product_or_mixed" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+            echo "scope=product_or_mixed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$base_sha" "$head_sha" > changed-paths.txt
+          python3 delivery_toolchain/governance/classify_change_review_scope.py \
+            --paths-file changed-paths.txt > scope.json
+          scope="$(python3 -c "import json; print(json.load(open('scope.json'))['scope'])")"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
+  orchestrator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
+
+      - name: Enforce product and development code boundaries
+        run: uv run python delivery_toolchain/governance/check_code_boundaries.py
+
+      - name: Lint orchestrator code
+        run: uv run ruff check .orchestrator delivery_toolchain scripts
+
+      - name: Check config wiring
+        run: |
+          uv run python delivery_toolchain/governance/check_orchestrator_config.py
+          uv run python delivery_toolchain/governance/check_config_wiring.py
+
+      - name: Test orchestrator code
+        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts
+
+  product:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oday_product_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      INTAKE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oday_product_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the API contract gate diffs the OpenAPI artifact
+          # against its merge base with the target branch. The default shallow
+          # clone has no merge base, which would make the breaking-change check
+          # silently skip rather than fail.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          uv sync
+          npm ci
+
+      - name: Prepare local config
+        run: make bootstrap
+
+      - name: Lint product code
+        run: uv run ruff check tests modules apps shared models solver pipelines infra
+
+      # `not performance` deselects exactly one test:
+      # tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution.
+      # It is a wall-clock SLO measurement, so it is enforced by the dedicated
+      # performance-gate job below instead of being measured on a runner that is
+      # already loaded by ~1900 other tests and a Postgres service container.
+      # `-n auto` is what makes this step tolerable. It was 17 of the job's 21
+      # minutes, run serially, and with a merge queue every PR pays it at least
+      # twice: once on the PR and again on the queue's ref.
+      #
+      # Measured on one machine, same commit, same marker filter, fleet running
+      # in both cases so the load is comparable:
+      #   serial   2145.7s   100% pass
+      #   -n 4      905.6s   100% pass    -> 2.37x
+      # Not the theoretical 4x, because the session-scoped `intake_pg_server`
+      # fixture starts one bundled PostgreSQL per xdist worker. That is also why
+      # it is safe: each worker gets its own mkdtemp data directory, so they
+      # cannot corrupt one another. Tests that bind fixed ports are excluded by
+      # the `requires_live_env` marker already applied above.
+      - name: Test product code
+        run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models -n auto
+
+      - name: Test official real-estate outcomes on PostgreSQL 16
+        run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
+
+      # Blocks: an API change that never reached the checked-in OpenAPI
+      # artifact, an artifact change that never reached the generated client,
+      # and any breaking change not listed in
+      # delivery_toolchain/openapi/approved_breaking_changes.json (ODP-PGAP-API-001).
+      - name: Check API contract drift
+        run: make api-contract
+        env:
+          ODP_API_BASE_REF: ${{ github.base_ref && format('origin/{0}', github.base_ref) || 'origin/dev' }}
+
+      - name: Run security checks
+        run: make security
+
+      - name: Run Node workspace checks
+        run: make node-check
+
+  # ODP-CI-PERFORMANCE-GATE-ISOLATION-001.
+  #
+  # The load/soak P95 budget is a timing measurement, so its result is only
+  # meaningful on a runner it owns. Sharing the `product` runner made it report
+  # that runner's residual load: run 30380735899 failed at P95 7.518s, and the
+  # rerun of the identical head sha ef048b0f failed again at P95 6.956s, while
+  # the same code measures ~1.1s in an unloaded process. Rerunning until green
+  # would have been luck, and relaxing the budget would have deleted the SLO.
+  #
+  # This job is the blocking enforcement point instead. It keeps the 3.0s P95
+  # budget, the zero-failure assertion, the concurrency waves (10/20/50), and
+  # the 150-request volume exactly as ratified, and runs the measurement three
+  # times in separate processes so a single pass cannot be a lucky sample.
+  performance-gate:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
+
+      # No Node, no Postgres service, no other test module imported into the
+      # process: the runner stays clean so the measurement is reproducible.
+      - name: Enforce load and soak P95 budget
+        run: |
+          set -uo pipefail
+          mkdir -p performance-reports
+          for attempt in 1 2 3; do
+            echo "::group::performance gate attempt ${attempt}"
+            # The API load/soak test is a strict ratified P95 gate. The durable
+            # SQLite queue measurement is also collected each run, but its
+            # wall-clock SLO is an observation on a shared runner: thread and
+            # SQLite lock scheduling are not product latency. Its report is
+            # retained for the dedicated performance environment.
+            rm -f /tmp/load_soak_performance_report.json
+            status=0
+            uv run pytest -m performance tests/performance || status=$?
+            capacity_status=0
+            uv run python delivery_toolchain/load/assisted_listing_intake/run.py \
+              --volume 120 --concurrency 20 --observe-only \
+              --output "performance-reports/assisted_intake_capacity_attempt_${attempt}.json" \
+              || capacity_status=$?
+            if [[ "${status}" -eq 0 && "${capacity_status}" -ne 0 ]]; then
+              status="${capacity_status}"
+            fi
+            if [[ -f /tmp/load_soak_performance_report.json ]]; then
+              cp /tmp/load_soak_performance_report.json \
+                "performance-reports/load_soak_performance_report_attempt_${attempt}.json"
+            fi
+            echo "::endgroup::"
+            if [[ "${status}" -ne 0 ]]; then
+              echo "Performance gate failed on attempt ${attempt} (exit ${status})."
+              exit "${status}"
+            fi
+          done
+
+      # Uploaded on failure too: a red gate must hand over the measured P95,
+      # throughput, and error list rather than just an assertion string.
+      - name: Upload performance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-soak-performance-reports
+          path: performance-reports/
+          if-no-files-found: warn
+
+  product-e2e-gate:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Receipt validation proves the complete evidence-only ancestry from
+          # the tested source commit, which is unavailable in a depth-1 clone.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install product E2E dependencies
+        run: |
+          uv sync --frozen
+          npm ci
+          npx playwright install --with-deps chromium
+
+      # A reviewed task PR must prove its current source through the complete
+      # deterministic E2E runner. It must not manufacture production release
+      # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
+      # dev -> main promotion separately requires an authentic GO decision.
+      - name: Run product E2E dev merge gate
+        run: make product-e2e-gate

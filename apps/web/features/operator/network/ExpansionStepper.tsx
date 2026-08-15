@@ -1,0 +1,123 @@
+"use client";
+
+import styles from "../networkFindAreas.module.css";
+
+export type ExpansionStepState = "completed" | "current" | "next" | "blocked";
+
+export type ExpansionStep = {
+  id: string;
+  label: string;
+  state: ExpansionStepState;
+  tabIndex: number;
+  entityId?: string | null;
+  summary: string;
+};
+
+const stepLabels: Record<string, { zh: string; en: string }> = {
+  candidate: { zh: "候選點", en: "Candidate" },
+  compare: { zh: "比較", en: "Compare" },
+  find: { zh: "找區域", en: "Find Areas" },
+  radar: { zh: "物件雷達", en: "Listing Radar" },
+  review: { zh: "審核", en: "Review" },
+  sitescore: { zh: "SiteScore", en: "SiteScore" },
+};
+
+export function ExpansionStepper({
+  activeTab,
+  onStepSelect,
+  steps,
+}: {
+  activeTab: number;
+  onStepSelect: (tabIndex: number) => void;
+  steps: ExpansionStep[];
+}) {
+  if (!steps.length) {
+    return null;
+  }
+
+  return (
+    <section
+      className={styles.expansionStepper}
+      aria-label="Network Golden Flow"
+      data-screen-label="Network Expansion Flow Stepper"
+      data-testid="network-expansion-stepper"
+    >
+      <div className={styles.flowHeader}>
+        <span>EXPANSION FLOW · 找點流程</span>
+        <strong>{steps.find((step) => activeTab === step.tabIndex)?.summary ?? steps[0]?.summary}</strong>
+        <em>{nextActionLabel(steps)}</em>
+      </div>
+      <div className={styles.expansionStepGrid}>
+        {steps.map((step, index) => {
+          const isBlocked = step.state === "blocked";
+          const label = stepLabels[step.id] ?? { zh: step.label, en: step.label };
+          return (
+            <button
+              aria-current={activeTab === step.tabIndex ? "step" : undefined}
+              className={styles.expansionStep}
+              data-state={step.state}
+              data-testid={`network-step-${step.id}`}
+              disabled={isBlocked}
+              key={step.id}
+              onClick={() => onStepSelect(step.tabIndex)}
+              title={step.summary}
+              type="button"
+            >
+              <span className={styles.expansionStepIndex} aria-hidden="true">
+                {step.state === "completed" ? "✓" : step.state === "blocked" ? "!" : index + 1}
+              </span>
+              <span className={styles.expansionStepBody}>
+                <strong>{label.zh}</strong>
+                <small>{label.en}</small>
+              </span>
+              <span className={styles.expansionStepState}>
+                {step.state === "blocked" ? "缺資料" : step.entityId ?? stateLabel(step.state)}
+              </span>
+              <span className={styles.srOnly}>{step.state}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className={styles.flowChain} aria-label="Current Network flow">
+        <span>目前流程</span>
+        {steps.map((step, index) => (
+          <button
+            aria-current={activeTab === step.tabIndex ? "step" : undefined}
+            disabled={step.state === "blocked"}
+            key={step.id}
+            onClick={() => onStepSelect(step.tabIndex)}
+            type="button"
+          >
+            {stepLabels[step.id]?.zh ?? step.label}
+            {index < steps.length - 1 ? <i aria-hidden="true">→</i> : null}
+          </button>
+        ))}
+      </div>
+      {steps.some((step) => step.state === "blocked") ? (
+        <div className={styles.flowBlockNotice} role="status">
+          <span aria-hidden="true">!</span>
+          {steps.find((step) => step.state === "blocked")?.summary}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function nextActionLabel(steps: ExpansionStep[]) {
+  const currentIndex = steps.findIndex((step) => step.state === "current");
+  const next = currentIndex >= 0 ? steps[currentIndex + 1] : steps.find((step) => step.state === "next");
+  if (next && next.state !== "blocked") {
+    return `下一步：${next.summary}`;
+  }
+  if (next?.state === "blocked") {
+    return `下一步受阻：${next.summary}`;
+  }
+  return "流程資料同步中";
+}
+
+function stateLabel(state: ExpansionStepState) {
+  if (state === "completed") return "完成";
+  if (state === "current") return "目前";
+  if (state === "next") return "下一步";
+  return "缺資料";
+}

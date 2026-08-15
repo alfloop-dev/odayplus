@@ -1,0 +1,54 @@
+# Assisted Listing Intake v1 — live runtime evidence register.
+#
+# Machine-readable record of the LIVE (staging/production) runtime evidence
+# that runbook §4 requires before governed cutover can unblock: cutover
+# unblocks only when every §12 row is approved, this register records live
+# staging runtime evidence, and canary units 3-7 each have a current passing
+# result. While any condition is unmet, the cutover gate stays BLOCKED.
+#
+# DO NOT flip `recorded` from automation. Recording live evidence is a
+# human release-authority action, committed via a task PR exactly like a
+# §12 approval (see docs/runbooks/assisted-listing-intake-release.md §4).
+# The harness fails closed on drift: `recorded: true` without
+# recorded_by/recorded_at/evidence_ref, a missing required target, or a
+# completed target without its own evidence_ref is treated as a broken
+# record and blocks the release.
+
+record_version: 1
+task_ref: ODP-INTAKE-RELEASE-001
+design_ref: "ODP-SD-INTAKE-001 v0.2.1"
+
+# Human release-authority attestation. All four fields are required when
+# recorded flips to true.
+recorded: false
+recorded_by: null
+recorded_at: null
+evidence_ref: null
+
+# Error-budget attestation for canary units 4-7 (required once recorded).
+error_budget_intact: null
+
+# Each target below must reach `status: completed` with its own
+# completed_at + evidence_ref before `recorded: true` is valid. These are
+# the not_executed_targets the staging-surrogate drills declare as
+# release gates.
+targets:
+  - target: production_shadow_window_7d_or_10k_rows
+    status: pending
+    completed_at: null
+    evidence_ref: null
+  - target: live_staging_e2e_gcs_cloud_tasks_pubsub
+    status: pending
+    completed_at: null
+    evidence_ref: null
+  - target: cloud_sql_pitr_and_regional_failover
+    status: pending
+    completed_at: null
+    evidence_ref: null
+
+# Live production canary unit results (units 3-7), recorded by the human
+# release authority as each live unit completes. Each entry requires
+# unit + passed + completed_at + evidence_ref. The harness accepts a
+# production unit as passed ONLY from a recorded live result here —
+# never from a staging-surrogate execution.
+canary_units: []

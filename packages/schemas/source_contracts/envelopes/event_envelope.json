@@ -1,0 +1,27 @@
+{
+  "contract_id": "event_envelope",
+  "title": "Event Stream Exchange Envelope",
+  "kind": "envelope",
+  "doc_ref": "ODP-DATA-02 §6.1",
+  "source_system": "*",
+  "source_dataset": "*",
+  "canonical_target": "",
+  "mapping_id": "",
+  "integration_mode": "event_stream",
+  "envelope": "event",
+  "allow_unknown": true,
+  "invariants": [
+    {"rule": "time_order", "earlier": "event_time", "later": "observation_time", "code": "invalid_time"}
+  ],
+  "fields": [
+    {"name": "event_id", "type": "string", "required": true, "description": "Unique event id, e.g. evt_20260626_000001."},
+    {"name": "event_type", "type": "string", "required": true, "description": "Domain event type, e.g. machine.status.changed."},
+    {"name": "event_version", "type": "string", "required": true, "description": "Event schema version."},
+    {"name": "source_system", "type": "string", "required": true, "description": "Producing system code."},
+    {"name": "idempotency_key", "type": "string", "required": true, "description": "Replay de-duplication key."},
+    {"name": "correlation_id", "type": "string", "required": false, "description": "Cross-event tracing id."},
+    {"name": "event_time", "type": "timestamp", "required": true, "description": "When the event actually occurred."},
+    {"name": "observation_time", "type": "timestamp", "required": true, "description": "When the producer observed it."},
+    {"name": "payload", "type": "json", "required": true, "description": "Event payload object."}
+  ]
+}

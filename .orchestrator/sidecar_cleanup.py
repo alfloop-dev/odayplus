@@ -5,10 +5,11 @@ import argparse
 import json
 import shutil
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, TextIO
+from typing import Any, TextIO
 from urllib.parse import quote
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,11 +131,11 @@ class ExecutionResult:
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc).replace(microsecond=0)
+    return datetime.now(UTC).replace(microsecond=0)
 
 
 def _format_timestamp(value: datetime) -> str:
-    return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _parse_timestamp(value: Any) -> datetime | None:
@@ -148,8 +149,8 @@ def _parse_timestamp(value: Any) -> datetime | None:
     except ValueError:
         return None
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _load_json(path: Path) -> Any | None:
@@ -233,8 +234,8 @@ def _coerce_datetime(value: datetime | str | None) -> datetime:
         return _utc_now()
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
     parsed = _parse_timestamp(value)
     if not parsed:
         raise ValueError(f"Could not parse timestamp: {value}")

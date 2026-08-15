@@ -1,0 +1,15 @@
+name: oday_plus
+version: "0.1.0"
+config-version: 2
+
+profile: oday_plus
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+models:
+  oday_plus:
+    model_ready:
+      +materialized: view
+      +schema: model_ready

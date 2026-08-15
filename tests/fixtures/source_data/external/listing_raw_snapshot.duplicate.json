@@ -1,0 +1,30 @@
+{
+  "contract_id": "listing_raw_snapshot",
+  "snapshot_id": "listing-dup-2026-06-28",
+  "records": [
+    {
+      "source_listing_id": "LST-DUP-001",
+      "address_raw": "台北市大安區復興南路二段100號1樓",
+      "rent_amount": 45000.0,
+      "currency": "TWD",
+      "area_ping": 25.5,
+      "floor": "1F",
+      "available_from": "2026-07-01",
+      "listing_status": "active",
+      "confidence": 0.8,
+      "snapshot_id": "listing-dup-2026-06-28"
+    },
+    {
+      "source_listing_id": "LST-DUP-001",
+      "address_raw": "台北市大安區復興南路二段100號1樓",
+      "rent_amount": 45000.0,
+      "currency": "TWD",
+      "area_ping": 25.5,
+      "floor": "1F",
+      "available_from": "2026-07-01",
+      "listing_status": "active",
+      "confidence": 0.8,
+      "snapshot_id": "listing-dup-2026-06-28"
+    }
+  ]
+}

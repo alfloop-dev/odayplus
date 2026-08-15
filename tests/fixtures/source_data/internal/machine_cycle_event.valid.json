@@ -1,0 +1,23 @@
+{
+  "contract_id": "machine_cycle_event",
+  "records": [
+    {
+      "source_cycle_id": "CY-0001",
+      "source_store_id": "S001",
+      "source_machine_id": "M-ABC123",
+      "cycle_start_time": "2026-06-26T08:10:00+08:00",
+      "cycle_end_time": "2026-06-26T08:40:00+08:00",
+      "cycle_type": "wash",
+      "duration_sec": 1800,
+      "cycle_status": "completed",
+      "transaction_reference_id": "TX10023"
+    },
+    {
+      "source_cycle_id": "CY-0002",
+      "source_store_id": "S001",
+      "source_machine_id": "M-ABC124",
+      "cycle_start_time": "2026-06-26T09:00:00+08:00",
+      "cycle_status": "started"
+    }
+  ]
+}

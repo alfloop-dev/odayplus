@@ -1,0 +1,54 @@
+{
+  "algorithm": "UNAVAILABLE",
+  "approvals": [],
+  "baseline": "UNAVAILABLE",
+  "calibration_summary": {
+    "interval_bounds_coverage_ratio": 0.0,
+    "matched_mean_realized_revenue": 0.0,
+    "matched_prediction_count": 0,
+    "mean_realized_revenue": 0.0,
+    "measured_90d_mae": null,
+    "p80_coverage_ratio": 0.0,
+    "prediction_coverage_ratio": 0.0,
+    "unmatched_mean_realized_revenue": 0.0
+  },
+  "created_at": "2026-08-01T14:59:51.147392+00:00",
+  "dataset_snapshot_id": "UNAVAILABLE",
+  "explainability_method": "UNAVAILABLE",
+  "feature_set_id": "UNVERIFIED",
+  "intended_use": "Human-reviewed candidate site opening revenue & propensity prioritization",
+  "known_biases": [
+    "Historical opening outcomes reflect store format expansion patterns."
+  ],
+  "label_set_id": "UNVERIFIED",
+  "limitations": [
+    "Requires at least 200 mature opening outcome labels with complete M6/M12 post-opening transactions.",
+    "Governed-disabled when label count, M6/M12 window coverage, or interval bound coverage thresholds fail."
+  ],
+  "metrics_summary": {
+    "interval_bounds_coverage_ratio": 0.0,
+    "m12_coverage_ratio": 0.0,
+    "m6_coverage_ratio": 0.0,
+    "matched_prediction_count": 0.0,
+    "mature_label_count": 0.0,
+    "normalized_mae": 0.0,
+    "p80_coverage": 0.0,
+    "prediction_coverage_ratio": 0.0
+  },
+  "model_name": "sitescore_propensity",
+  "model_version": "UNVERIFIED",
+  "not_intended_use": "Automatic site lease execution, store opening without human approval",
+  "owner": "sitescore-platform-team",
+  "privacy_review": "UNVERIFIED",
+  "release_status": "GOVERNED_DISABLED",
+  "risk_level": "R4",
+  "rollback_conditions": [
+    "Normalized MAE > 0.25 on 30-day rolling window",
+    "M6 or M12 window coverage ratio drops below 70%"
+  ],
+  "security_review": "UNVERIFIED",
+  "segment_metrics": [],
+  "training_period": "UNAVAILABLE",
+  "validation_period": "UNAVAILABLE",
+  "validation_run_id": "UNVERIFIED"
+}

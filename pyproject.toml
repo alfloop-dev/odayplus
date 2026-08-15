@@ -6,11 +6,52 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "bjoe734", email = "bjoe734@gmail.com" }]
-dependencies = []
+dependencies = [
+    # API
+    "fastapi>=0.115",
+    "pyyaml>=6.0.3",
+    "pydantic>=2.8",
+    "uvicorn[standard]>=0.30",
+    # ML
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14",
+    # Solver / geospatial
+    "h3>=4.5.0",
+    "ortools>=9.15.6755",
+    # Data
+    "duckdb>=1.0",
+    "dlt[postgres]>=1.20,<2",
+    "sqlalchemy>=2.0",
+    "psycopg[binary,pool]>=3.2,<4",
+    "google-cloud-storage>=2.19,<4",
+    # HTTP client for the live listing-feed adapter (runtime code path).
+    "httpx>=0.27",
+    # OIDC/JWKS verification for production identity-provider access tokens.
+    "cryptography>=45,<49",
+    "mlflow>=3.7,<4",
+    "catboost>=1.2.8,<2",
+    "lightgbm>=4.6,<5",
+    "statsforecast>=2,<3",
+    "mlforecast>=1,<2",
+    "lifelines>=0.30,<1",
+    "cvxpy>=1.7,<2",
+    "pyomo>=6.9,<7",
+    "great-expectations>=1.8,<2",
+    "evidently>=0.7,<1",
+    "dagster>=1.12,<2",
+    "optuna>=4.9,<5",
+    "pymoo>=0.6.1,<0.7",
+]
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.23",
+    "jsonpath-ng>=1.8.0",
+    "openapi-spec-validator>=0.9.0",
+    "pgserver>=0.1.3",
     "pytest>=8",
+    "pytest-xdist>=3.6",
     "ruff>=0.6",
 ]
 
@@ -23,8 +64,32 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# E501 (line-too-long) and E402 (import-not-at-top) are pervasive in the existing
+# script-style orchestrator code (sys.path bootstrapping, long log/format strings).
+# Ignore them repo-wide so CI lints for real bugs (pyflakes/bugbear/pyupgrade)
+# rather than failing on legacy style.
+ignore = ["E501", "E402"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI routes use callable defaults (Query/Header) -> B008; keep `str, Enum`
+# for stable OpenAPI enum serialization that the contract test pins -> UP042.
+"apps/api/app/routes/listings.py" = ["B008", "UP042"]
 
 [tool.pytest.ini_options]
-testpaths = [".orchestrator", "scripts"]
+testpaths = [
+    ".orchestrator",
+    "delivery_toolchain",
+    "scripts",
+    "tests",
+    "modules",
+    "apps",
+    "shared",
+    "models",
+]
 python_files = ["test_*.py"]
 addopts = "-q"
+pythonpath = ["."]
+markers = [
+    "requires_live_env: test needs a live multi-repo / CLI / local-path environment and is excluded from CI (run with -m 'not requires_live_env')",
+    "performance: wall-clock SLO measurement that must own its runner; excluded from the shared product suite and enforced by the dedicated CI performance-gate job (run with -m performance)",
+]

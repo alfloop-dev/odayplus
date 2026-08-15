@@ -2,18 +2,14 @@ from __future__ import annotations
 
 import os
 
-from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 from common import (
     agent_config_for,
     command_exists,
-    delivery_runtime_env,
     delivery_workspace_root,
-    new_runtime_id,
-    runtime_log_path,
-    spawn_background_process,
-    worker_runtime_paths,
 )
+from provider_runtime import provider_key, provider_section
 
+from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
 CODEX_INHERITED_SESSION_ENV = (
     "CODEX_THREAD_ID",
@@ -23,28 +19,23 @@ CODEX_INHERITED_SESSION_ENV = (
 )
 
 
+def _normalize_codex_model_name(model: str) -> str:
+    """Map historical aliases to supported Codex model identifiers."""
+    value = str(model or "").strip()
+    normalized = value.lower()
+    if normalized in {"codex-5.3-spark", "5.3-spark", "codex-5.3"}:
+        return "gpt-5.3-codex-spark"
+    return value
+
+
 class CodexAdapter(BaseAdapter):
     name = "codex"
 
-    def _provider_settings(self, agent_id: str) -> tuple[dict, dict]:
-        """Return (provider_block, codex_settings) for the given agent_id.
-
-        Looks up the provider key from the agent config first, then falls back
-        to the literal agent_id, then to "codex".  This lets codex2 / codex3
-        carry their own provider blocks with separate api_key_env values.
-        """
-        agent_cfg = agent_config_for(self.config, agent_id)
-        provider_key = agent_cfg.get("provider") or agent_id or "codex"
-        provider = (
-            self.config.get("providers", {}).get(provider_key)
-            or self.config.get("providers", {}).get("codex")
-            or {}
-        )
-        codex_settings = provider.get("codex", {})
-        return provider, codex_settings
-
     def capability(self, agent_id: str) -> DeliveryCapability:
-        _provider, codex_settings = self._provider_settings(agent_id)
+        provider_id = provider_key(self.config, default="codex", agent_id=agent_id)
+        codex_settings = provider_section(
+            self.config, provider_id=provider_id, section="codex", default="codex"
+        )
         configured_cli = codex_settings.get("cli") or "codex"
         cli = command_exists(configured_cli) or command_exists("codex")
         supported = bool(cli)
@@ -74,7 +65,15 @@ class CodexAdapter(BaseAdapter):
                 notes=capability.notes,
             )
 
-        _provider, codex_settings = self._provider_settings(request.agent_id)
+        provider_id = provider_key(
+            self.config,
+            default="codex",
+            agent_id=request.agent_id,
+            provider_id=request.provider,
+        )
+        codex_settings = provider_section(
+            self.config, provider_id=provider_id, section="codex", default="codex"
+        )
         agent_cfg = agent_config_for(self.config, request.agent_id)
         display_name = str(agent_cfg.get("display_name") or request.agent_id)
         cli = codex_settings.get("cli") or "codex"
@@ -90,22 +89,15 @@ class CodexAdapter(BaseAdapter):
             codex_settings.get("sandbox_mode", "workspace-write"),
             "--skip-git-repo-check",
         ]
+        model = _normalize_codex_model_name(codex_settings.get("model"))
+        if model:
+            command.extend(["--model", model])
         if codex_settings.get("dangerously_bypass"):
             command.append("--dangerously-bypass-approvals-and-sandbox")
         command.append(request.message)
 
         # Build env: inherit current environment, then apply overrides.
-        spawn_env: dict[str, str] = dict(os.environ)
-        spawn_env.update(delivery_runtime_env(self.config, request.metadata))
-        for key in CODEX_INHERITED_SESSION_ENV:
-            spawn_env.pop(key, None)
-        spawn_env["AI_NAME"] = display_name
-        spawn_env["ORCH_AGENT_ID"] = request.agent_id
-        spawn_env["ORCH_PROVIDER"] = request.provider
-        if request.task_id:
-            spawn_env["ORCH_TASK_ID"] = request.task_id
-        if request.reason:
-            spawn_env["ORCH_REASON"] = request.reason
+        env_overrides: dict[str, str] = {}
 
         api_key_env = codex_settings.get("api_key_env", "").strip()
         codex_home = codex_settings.get("codex_home", "").strip()
@@ -114,40 +106,20 @@ class CodexAdapter(BaseAdapter):
             if api_key_env != "OPENAI_API_KEY":
                 api_key_value = os.environ.get(api_key_env, "")
                 if api_key_value:
-                    spawn_env["OPENAI_API_KEY"] = api_key_value
-        else:
-            spawn_env.pop("OPENAI_API_KEY", None)
+                    env_overrides["OPENAI_API_KEY"] = api_key_value
         if codex_home:
-            spawn_env["CODEX_HOME"] = os.path.expanduser(codex_home)
+            env_overrides["CODEX_HOME"] = os.path.expanduser(codex_home)
 
-        run_id = new_runtime_id("codex")
-        spawn_env["ORCH_RUN_ID"] = run_id
-        log_path = runtime_log_path("codex", request.agent_id)
-        runtime_paths = worker_runtime_paths(self.config, run_id)
-        process, _ = spawn_background_process(
-            command,
-            cwd=workspace_root,
-            log_path=log_path,
-            env=spawn_env,
-            run_id=run_id,
-            heartbeat_path=runtime_paths["heartbeat_path"],
-            status_path=runtime_paths["status_path"],
-        )
-
-        return DeliveryResult(
-            ok=True,
-            adapter=self.name,
+        remove_env = CODEX_INHERITED_SESSION_ENV + (() if api_key_env else ("OPENAI_API_KEY",))
+        return self.spawn_cli_delivery(
+            request,
+            provider_id=provider_id,
+            runtime_provider_id="codex",
             mode="codex",
-            target=display_name,
-            auto_delivered=True,
-            manual_confirmation_required=False,
-            notes="Codex CLI wake-up started in the background.",
+            display_name=display_name,
             command=command,
-            log_path=str(log_path),
-            pid=process.pid,
-            run_id=run_id,
-            metadata={
-                "heartbeat_path": str(runtime_paths["heartbeat_path"]),
-                "runner_status_path": str(runtime_paths["status_path"]),
-            },
+            notes="Codex CLI wake-up started in the background.",
+            workspace_root=workspace_root,
+            env_overrides=env_overrides,
+            remove_env=remove_env,
         )

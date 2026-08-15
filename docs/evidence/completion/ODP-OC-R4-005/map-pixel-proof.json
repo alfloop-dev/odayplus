@@ -1,0 +1,50 @@
+{
+  "generatedAt": "2026-07-14T09:01:30.898Z",
+  "source": "Playwright WebGL readPixels against the product Network embedded HeatZoneMap canvas",
+  "productDesktop": {
+    "suffix": "desktop",
+    "viewport": {
+      "width": 1472,
+      "height": 982
+    },
+    "productUrl": "http://127.0.0.1:3115/operator?ws=network",
+    "mapBefore": {
+      "width": 888,
+      "height": 508,
+      "hasVisiblePixels": true,
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
+    },
+    "mapAfter": {
+      "width": 888,
+      "height": 478,
+      "hasVisiblePixels": true,
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
+    },
+    "selectedZoneAfter": "HZ-02"
+  },
+  "productConstrained": {
+    "suffix": "constrained",
+    "viewport": {
+      "width": 390,
+      "height": 900
+    },
+    "productUrl": "http://127.0.0.1:3115/operator?ws=network",
+    "mapBefore": {
+      "width": 552,
+      "height": 490,
+      "hasVisiblePixels": true,
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
+    },
+    "mapAfter": {
+      "width": 552,
+      "height": 466,
+      "hasVisiblePixels": true,
+      "sampledPixels": 38400,
+      "nonWhiteSampleCount": 38400
+    },
+    "selectedZoneAfter": "HZ-02"
+  }
+}

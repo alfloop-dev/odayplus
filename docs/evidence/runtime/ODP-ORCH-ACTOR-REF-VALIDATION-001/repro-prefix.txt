@@ -1,0 +1,40 @@
+## Reproduction against pre-fix ai_status.py (commit 647970da)
+
+Command under test:
+  ai_status.command_blocker(state, ['REPRO-ACTOR-001', 'deploy blocked', <154-char sentence>])
+
+Result: the sentence was accepted as an actor reference and normalized into a fleet agent.
+
+  blockers[0].waiting_for = 'Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SEC'...
+  KNOWN_AGENTS entry created = True
+  KNOWN_AGENTS[<sentence>] = {'capability_lane': ['gcp', 'ci-cd', 'runtime-packaging', 'worker-ops'], 'default_branch': 'feat/cannot run deploy dev until pr #484 (task/odp-deploy-job-secret-binding-selection-001, claude2) is codex6-approved, ci-passed, and merged to dev.-branch', 'target_workload': 5}
+
+  durable agents[] roster now contains 16 entries:
+    - 'Claude'
+    - 'Codex2'
+    - 'Claude2'
+    - 'Antigravity'
+    - 'Antigravity2'
+    - 'Antigravity3'
+    - 'Antigravity4'
+    - 'Antigravity5'
+    - 'Antigravity6'
+    - 'Antigravity7'
+    - 'Gemini'
+    - 'Gemini2'
+    - 'Codex'
+    - 'Copilot'
+    - 'Human/Ops'
+    - 'Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-...'
+
+  durable workload keys now contain the sentence: True
+
+----------------------------------------------------------------------
+## Same input against the fixed ai_status.py on this branch
+
+$ AI_NAME=Claude ./scripts/ai-status.sh blocker ODP-ORCH-ACTOR-REF-VALIDATION-001 'deploy blocked' \
+    'Cannot run Deploy Dev until PR #484 is Codex6-approved, CI-passed, and merged to dev'
+Invalid waiting-for: actor reference is 84 characters (max 40); this looks like prose, not an agent name
+  received: 'Cannot run Deploy Dev until PR #484 is Codex6-approved, CI-passed, and merged...'
+  Pass an agent name here and put the explanation in the message argument.
+exit=1 — nothing was written to ai-status.json

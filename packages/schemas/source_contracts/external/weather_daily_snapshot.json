@@ -1,0 +1,22 @@
+{
+  "contract_id": "weather_daily_snapshot",
+  "title": "Weather Daily Snapshot",
+  "kind": "external",
+  "doc_ref": "ODP-DATA-03 §6 (CONN-WEATHER)",
+  "source_system": "SRC-EXT-WEATHER",
+  "source_dataset": "weather_daily_snapshot",
+  "canonical_target": "weather_daily",
+  "mapping_id": "MAP-EXT-WEATHER-v1",
+  "integration_mode": "batch_snapshot",
+  "envelope": "batch",
+  "acquisition_method": "api",
+  "fields": [
+    {"name": "station_id", "type": "string", "required": true, "description": "Weather station identifier."},
+    {"name": "date", "type": "string", "required": true, "description": "Date formatted as YYYY-MM-DD."},
+    {"name": "temperature_max", "type": "number", "required": false, "description": "Maximum temperature in Celsius."},
+    {"name": "temperature_min", "type": "number", "required": false, "description": "Minimum temperature in Celsius."},
+    {"name": "precipitation", "type": "number", "required": false, "minimum": 0, "description": "Precipitation in millimeters."},
+    {"name": "humidity_avg", "type": "number", "required": false, "minimum": 0, "maximum": 100, "description": "Average relative humidity percentage."},
+    {"name": "snapshot_id", "type": "string", "required": true, "description": "Source snapshot id for reproducibility."}
+  ]
+}

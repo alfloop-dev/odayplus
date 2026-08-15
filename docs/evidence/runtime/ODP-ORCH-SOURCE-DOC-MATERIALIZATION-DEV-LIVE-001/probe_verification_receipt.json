@@ -1,0 +1,104 @@
+{
+  "task_id": "ODP-ORCH-SOURCE-DOC-MATERIALIZATION-DEV-LIVE-001",
+  "timestamp": "2026-08-03T11:35:11Z",
+  "dev_head_sha": "5a1aee5b",
+  "deploy_receipts": [
+    {
+      "file": ".orchestrator/common.py",
+      "sha256_before": "ad818a1235232e9011137cd9bcc446a2597b457bb313e03da36e2fdedfd8e3c4",
+      "sha256_after": "ad818a1235232e9011137cd9bcc446a2597b457bb313e03da36e2fdedfd8e3c4",
+      "inode_before": 897557,
+      "inode_after": 897539,
+      "mode": "664",
+      "rollback_cmd": "install -m 664 /home/lupin/oday-plus-supervisor-live/.orchestrator/backups/ODP-ORCH-SOURCE-DOC-MATERIALIZATION-DEV-LIVE-001/common.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/common.py",
+      "status": "published_atomically"
+    },
+    {
+      "file": ".orchestrator/supervisor.py",
+      "sha256_before": "b5097527978b908a28f9d7e97cd1bb401052e7b1befce27c47765515e2a69317",
+      "sha256_after": "b5097527978b908a28f9d7e97cd1bb401052e7b1befce27c47765515e2a69317",
+      "inode_before": 897558,
+      "inode_after": 897557,
+      "mode": "664",
+      "rollback_cmd": "install -m 664 /home/lupin/oday-plus-supervisor-live/.orchestrator/backups/ODP-ORCH-SOURCE-DOC-MATERIALIZATION-DEV-LIVE-001/supervisor.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py",
+      "status": "published_atomically"
+    },
+    {
+      "file": ".orchestrator/github_bus.py",
+      "sha256_before": "86047ea8aee65c183017478bded8f3116fffc856cb486d532f14364d521340a4",
+      "sha256_after": "86047ea8aee65c183017478bded8f3116fffc856cb486d532f14364d521340a4",
+      "inode_before": 897559,
+      "inode_after": 897558,
+      "mode": "664",
+      "rollback_cmd": "install -m 664 /home/lupin/oday-plus-supervisor-live/.orchestrator/backups/ODP-ORCH-SOURCE-DOC-MATERIALIZATION-DEV-LIVE-001/github_bus.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/github_bus.py",
+      "status": "published_atomically"
+    },
+    {
+      "file": "scripts/ai_status.py",
+      "sha256_before": "5283abf71f317b5b12fa55bc6697befcf2b5de6fced62d81837684c4a0f24ec5",
+      "sha256_after": "5283abf71f317b5b12fa55bc6697befcf2b5de6fced62d81837684c4a0f24ec5",
+      "inode_before": 897560,
+      "inode_after": 897559,
+      "mode": "775",
+      "rollback_cmd": "install -m 775 /home/lupin/oday-plus-supervisor-live/.orchestrator/backups/ODP-ORCH-SOURCE-DOC-MATERIALIZATION-DEV-LIVE-001/ai_status.py.bak /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py",
+      "status": "published_atomically"
+    },
+    {
+      "file": "scripts/ai-status.sh",
+      "sha256_before": "7cfb4dc9661cf5bd3d0a1e45036532f935e8a3e621337f6b7f772a1cdb4a491e",
+      "sha256_after": "7cfb4dc9661cf5bd3d0a1e45036532f935e8a3e621337f6b7f772a1cdb4a491e",
+      "inode_before": 897561,
+      "inode_after": 897560,
+      "mode": "775",
+      "rollback_cmd": "install -m 775 /home/lupin/oday-plus-supervisor-live/.orchestrator/backups/ODP-ORCH-SOURCE-DOC-MATERIALIZATION-DEV-LIVE-001/ai-status.sh.bak /home/lupin/oday-plus-supervisor-live/scripts/ai-status.sh",
+      "status": "published_atomically"
+    }
+  ],
+  "probe_receipts": {
+    "source_docs": [
+      "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+      "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+      "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json"
+    ],
+    "manifest_owner": [
+      {
+        "relative_path": "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+        "canonical_source_path": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-source-doc-materialization-dev-live-001.lease_20260803T112327Z_c99f502b.lease_20260803T113256Z_74e099c9/docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+        "sha256": "ed0e4e29fdbb0197fdcd1d932057a93072921ad7de8180a5dbb0f30272e6c93b"
+      },
+      {
+        "relative_path": "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "canonical_source_path": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-source-doc-materialization-dev-live-001.lease_20260803T112327Z_c99f502b.lease_20260803T113256Z_74e099c9/docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "sha256": "24efa4645b5ee6231b220b7027ce90bbae4d577ecd6ac818f295d7e3251b14d7"
+      },
+      {
+        "relative_path": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+        "canonical_source_path": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-source-doc-materialization-dev-live-001.lease_20260803T112327Z_c99f502b.lease_20260803T113256Z_74e099c9/docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+        "sha256": "2e84b7d29cd897845eb2e2d0f30ac62e6e60b4afd0a1b64ad5a68e4445358ec1"
+      }
+    ],
+    "manifest_reviewer": [
+      {
+        "relative_path": "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+        "canonical_source_path": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-source-doc-materialization-dev-live-001.lease_20260803T112327Z_c99f502b.lease_20260803T113256Z_74e099c9/docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+        "sha256": "ed0e4e29fdbb0197fdcd1d932057a93072921ad7de8180a5dbb0f30272e6c93b"
+      },
+      {
+        "relative_path": "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "canonical_source_path": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-source-doc-materialization-dev-live-001.lease_20260803T112327Z_c99f502b.lease_20260803T113256Z_74e099c9/docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+        "sha256": "24efa4645b5ee6231b220b7027ce90bbae4d577ecd6ac818f295d7e3251b14d7"
+      },
+      {
+        "relative_path": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+        "canonical_source_path": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-source-doc-materialization-dev-live-001.lease_20260803T112327Z_c99f502b.lease_20260803T113256Z_74e099c9/docs_archive/00_source_zips/operator_console/r7-20260720-package-10/manifest.json",
+        "sha256": "2e84b7d29cd897845eb2e2d0f30ac62e6e60b4afd0a1b64ad5a68e4445358ec1"
+      }
+    ],
+    "manifest_equal": true,
+    "owner_readable": true,
+    "reviewer_readable": true,
+    "sha_matches": true,
+    "fail_closed_security_checks_passed": true
+  },
+  "status": "PASS"
+}

@@ -1,0 +1,620 @@
+{
+  "schema": "oday-plus.operator-console-r4-fleet-execution-tasks.v1",
+  "generated_at": "2026-07-14T05:20:00Z",
+  "status": "execution_in_progress",
+  "target_branch": "dev",
+  "baseline_ref": "origin/dev",
+  "objective": "Deliver a production-grade API-backed durable Operator Console matching canonical archived package 6 R4 across every page and workflow.",
+  "source_truth": {
+    "received_path_encoded": "/home/lupin/oday-plus/Oday%20Plus%20%E7%87%9F%E9%81%8B%E7%AE%A1%E7%90%86%E5%BE%8C%E5%8F%B0%20%286%29.zip",
+    "received_path_decoded": "/home/lupin/oday-plus/Oday Plus 營運管理後台 (6).zip",
+    "working_archive": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/Oday Plus 營運管理後台 (6).zip",
+    "latest_pointer": "docs_archive/00_source_zips/operator_console/LATEST.json",
+    "archive_manifest": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/manifest.json",
+    "archive_zip_sha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+    "interactive_html_sha256": "65d359f4abaf82b39eb16f67da8e91e7ad1b030628bc15f8f45ce7c18c0e2f48",
+    "interactive_html_md5": "78b65c33fac19dc33ba241e640df5cd1",
+    "demo_state_version": "oday-plus-r4-20260707",
+    "audit": "docs/evidence/OPERATOR_CONSOLE_DESIGN_PARITY_AUDIT_2026-07-13.md",
+    "package_diff": "docs/evidence/OPERATOR_CONSOLE_DESIGN_PACKAGE_6_DIFF_2026-07-13.md",
+    "comparison_to_package_5": "identical_extracted_payload",
+    "design_delta_count": 0,
+    "artifact_status": "resolved_archived_and_published",
+    "repository_delivery_task": "ODP-OC-R4-014",
+    "repository_target_branch": "dev",
+    "fleet_preflight_required": true
+  },
+  "execution_snapshot": {
+    "captured_at": "2026-07-14T05:20:00Z",
+    "origin_main": "52fc9cd3270d8cf591ecca2ebc767cf6dc289d11",
+    "origin_dev": "08cd7869",
+    "completed": ["ODP-OC-R4-000", "ODP-OC-R4-001", "ODP-OC-R4-002", "ODP-OC-R4-003", "ODP-OC-R4-013"],
+    "in_progress": ["ODP-OC-R4-004", "ODP-OC-R4-005", "ODP-OC-R4-014"],
+    "dependency_gated": ["ODP-OC-R4-006", "ODP-OC-R4-007", "ODP-OC-R4-008", "ODP-OC-R4-009", "ODP-OC-R4-010", "ODP-OC-R4-011", "ODP-OC-R4-012"],
+    "source_rule": "Every implementation and review worktree must sync latest origin/dev and run the canonical archive Fleet Source Preflight before visual completion."
+  },
+  "existing_prerequisites": [
+    {"id": "ODP-FIN-FE-001", "scope": "Growth API binding"},
+    {"id": "ODP-FIN-FE-002", "scope": "Network read API binding"},
+    {"id": "ODP-FIN-FE-003", "scope": "Shell command palette and task center"},
+    {"id": "ODP-FIN-FE-004", "scope": "Real HeatZone map"},
+    {"id": "ODP-FIN-LIVE-001", "scope": "Live-readiness runbook"}
+  ],
+  "completion_rule": [
+    "/operator is React and contains no design iframe.",
+    "All five workspaces and all R4 panels are reachable and API-backed.",
+    "Every write survives reload and creates the required decision and audit evidence.",
+    "Server RBAC tenant scope idempotency privacy and correlation requirements pass tests.",
+    "Local and staging product E2E pass without skipped product gates.",
+    "The dev revision is promoted to main with rollback evidence."
+  ],
+  "global_guardrails": [
+    "Use the origin/dev project layout and compose existing FIN task work.",
+    "Do not import or embed prototype HTML in product components.",
+    "Do not represent fixture fallback as live data.",
+    "All writes require Idempotency-Key and X-Correlation-Id.",
+    "High-risk decisions require reason evidence actor role model version and dataset snapshot.",
+    "Return evidence under docs/evidence/completion/<task-id>/."
+  ],
+  "tasks": [
+    {
+      "id": "ODP-OC-R4-000",
+      "title": "Lock R4 design baseline and page acceptance matrix",
+      "summary_zh": "歷史任務：以 package 5 固化 R4 設計、hash、頁面清單與 branch truth；package 6 provenance 由 R4-013 更新。",
+      "priority": "P0",
+      "suggested_fleet": "design-truth",
+      "suggested_owner": "Claude2",
+      "suggested_reviewer": "Codex2",
+      "depends_on": [],
+      "owned_paths": [
+        "docs/design/OPERATOR_CONSOLE_R4_IMPLEMENTATION_MATRIX.md",
+        "docs/evidence/OPERATOR_CONSOLE_R4_BASELINE_RECEIPT.json"
+      ],
+      "do_not_touch": ["apps/", "modules/", "packages/"],
+      "deliverables": [
+        "R4 screen and dialog inventory with stable selectors",
+        "Archive checksum and demo version receipt",
+        "Current main versus origin/dev truth table",
+        "Original package 5 source-provenance statement"
+      ],
+      "acceptance": [
+        "Every R4 screen maps to exactly one implementation task and E2E assertion.",
+        "The receipt records md5 78b65c33fac19dc33ba241e640df5cd1 and oday-plus-r4-20260707.",
+        "The historical receipt remains traceable and is superseded for source provenance by R4-013.",
+        "Reviewer can identify design source branch source and release blockers without chat history."
+      ],
+      "verification": ["jq empty docs/evidence/OPERATOR_CONSOLE_R4_BASELINE_RECEIPT.json"],
+      "evidence_return": ["implementation.md", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-001",
+      "title": "Converge active Operator work and establish modular R4 contracts",
+      "summary_zh": "以 origin/dev 為基線整合既有 FIN 分支，固定 React route、模組化 Operator API、R4 DTO、持久化 seed 與 adapter 契約。",
+      "priority": "P0",
+      "suggested_fleet": "integration-contract",
+      "suggested_owner": "Antigravity",
+      "suggested_reviewer": "Claude",
+      "depends_on": ["ODP-OC-R4-000", "ODP-FIN-FE-001", "ODP-FIN-FE-002", "ODP-FIN-FE-003", "ODP-FIN-FE-004"],
+      "owned_paths": [
+        "apps/web/src/app/operator/page.tsx",
+        "apps/web/features/operator/index.ts",
+        "packages/openapi-client/",
+        "apps/api/app/routes/operator.py",
+        "apps/api/app/routes/operator_modules/",
+        "modules/opsboard/",
+        "infra/db/migrations/",
+        "tests/fixtures/operator_console/"
+      ],
+      "do_not_touch": ["apps/web/public/operator-design/", "apps/web/features/map/HeatZoneMap.tsx"],
+      "deliverables": [
+        "One canonical React route and no product iframe",
+        "Operator subrouters/services split by shell store growth network governance",
+        "Typed read/write DTOs and generated client methods",
+        "Durable R4 seed using A-100x L-202x CS-100x identifiers",
+        "Fixture live stale and permission metadata in all read envelopes"
+      ],
+      "required_contracts": [
+        "bootstrap today search notifications tasks",
+        "store summaries issues evidence workflows",
+        "growth opportunities segments priceops drafts outcomes",
+        "network zones listings candidates scores comparisons reviews rebalance",
+        "govern approvals decisions audit exports sla data-quality models connectors users"
+      ],
+      "acceptance": [
+        "/operator renders OperatorConsole from apps/web/src/app and contains no iframe.",
+        "Domain fleets can edit separate route and service files without touching a monolithic operator.py.",
+        "R4 seed reset is deterministic and write reload tests use durable storage.",
+        "OpenAPI client compiles and every write contract includes required headers and reason policy."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "uv run pytest tests/contract/test_operator_api.py tests/integration"
+      ],
+      "evidence_return": ["implementation.md", "contract-diff.md", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-002",
+      "title": "Complete API-backed Shell and role-aware Today",
+      "summary_zh": "完成 Shell、角色權限、搜尋、通知、核准、Task Center 與六角色 Today；所有數字與 deep link 由 API envelope 驅動。",
+      "priority": "P0",
+      "suggested_fleet": "shell-today",
+      "suggested_owner": "Codex2",
+      "suggested_reviewer": "Claude2",
+      "depends_on": ["ODP-OC-R4-001"],
+      "owned_paths": [
+        "apps/web/features/operator/OperatorConsole.tsx",
+        "apps/web/features/operator/TodayWorkspace.tsx",
+        "apps/web/features/operator/operator.module.css",
+        "apps/api/app/routes/operator_modules/shell.py",
+        "modules/opsboard/application/operator_shell.py",
+        "tests/e2e/operator-shell-today.spec.ts"
+      ],
+      "do_not_touch": ["GrowthWorkspace.tsx", "NetworkFindAreasWorkspace.tsx", "GovernanceWorkspace.tsx"],
+      "deliverables": [
+        "Server-permission-driven workspace navigation",
+        "Working global search notifications approvals and task center",
+        "Role-specific Today KPI queue approval observation risk and audit regions",
+        "Entity deep links preserving workspace tab and selection"
+      ],
+      "acceptance": [
+        "All six roles receive distinct allowed workspaces and Today content from bootstrap/today APIs.",
+        "Search and queue selections open the exact entity and tab.",
+        "Header counts match API results after writes without full session reset.",
+        "Keyboard navigation and Ctrl/Cmd+K pass accessibility tests."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npx playwright test tests/e2e/operator-shell-today.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "desktop.png", "mobile.png", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-003",
+      "title": "Implement Store Ops R4 four-light summary and durable issue lifecycle",
+      "summary_zh": "補齊全店四燈摘要與快速篩選，並把 Issue queue、Evidence、Triage 到 Outcome/Close 全流程接到可持久化 API。",
+      "priority": "P0",
+      "suggested_fleet": "store-ops",
+      "suggested_owner": "Antigravity2",
+      "suggested_reviewer": "Claude2",
+      "depends_on": ["ODP-OC-R4-001"],
+      "owned_paths": [
+        "apps/web/features/operator/DesignAlignedWorkspaces.tsx",
+        "apps/web/features/operator/store/",
+        "apps/web/features/operator/StoreOpsWorkflowDialogs.tsx",
+        "apps/web/features/operator/storeOpsViewModel.ts",
+        "apps/web/features/operator/storeOps*.module.css",
+        "apps/api/app/routes/operator_modules/store_ops.py",
+        "modules/opsboard/application/store_ops.py",
+        "tests/e2e/operator-store-ops.spec.ts"
+      ],
+      "do_not_touch": ["OperatorConsole.tsx", "GrowthWorkspace.tsx", "NetworkFindAreasWorkspace.tsx"],
+      "deliverables": [
+        "R4 red orange yellow green summary and source distribution",
+        "Quick chips that filter Issue Queue and expose a clear-filter state",
+        "Issue detail forecast band evidence tabs action rail and audit timeline",
+        "Durable triage assign action field-report outcome escalate reply transfer restart and camera-purpose writes"
+      ],
+      "acceptance": [
+        "The four-light chips deterministically change the API query and visible queue.",
+        "ISS-1024 can complete a valid lifecycle and reload shows persisted state.",
+        "Invalid transitions return 409 and duplicate idempotency keys do not duplicate audit rows.",
+        "Camera evidence remains locked until a permitted purpose is recorded and audited."
+      ],
+      "verification": [
+        "uv run pytest tests/contract/test_operator_api.py -k store",
+        "npx playwright test tests/e2e/operator-store-ops.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "api-proof.json", "store-ops.png", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-004",
+      "title": "Implement Growth R4 create entries builder and lifecycle",
+      "summary_zh": "在既有 Growth API binding 上補三個建立入口、五步 Draft Builder、衝突 Gate、送審與成效生命週期。",
+      "priority": "P0",
+      "suggested_fleet": "growth",
+      "suggested_owner": "Antigravity5",
+      "suggested_reviewer": "Antigravity6",
+      "depends_on": ["ODP-OC-R4-001", "ODP-FIN-FE-001"],
+      "owned_paths": [
+        "apps/web/features/operator/GrowthWorkspace.tsx",
+        "apps/web/features/operator/growth/",
+        "apps/web/features/operator/growthViewModel.ts",
+        "apps/api/app/routes/operator_modules/growth.py",
+        "modules/opsboard/application/growth.py",
+        "tests/e2e/operator-growth.spec.ts"
+      ],
+      "do_not_touch": ["OperatorConsole.tsx", "NetworkFindAreasWorkspace.tsx", "GovernanceWorkspace.tsx"],
+      "deliverables": [
+        "Off-peak promotion member recall and PriceOps test entry cards",
+        "Five-step builder for setup audience/time impact risk/conflict and approval",
+        "Server conflict checks for overlap PriceOps budget fatigue and approval",
+        "Pending Approval through Scheduled Running Observing Outcome Ready lifecycle"
+      ],
+      "acceptance": [
+        "All three entry cards prefill and persist the correct draft type.",
+        "Blocked conflict states cannot submit and return actionable server reasons.",
+        "Approval creates a Govern item and approval result advances the Growth state.",
+        "Effective ineffective and inconclusive outcomes persist and write Decision Log/Audit Trail."
+      ],
+      "verification": [
+        "uv run pytest tests/contract -k growth",
+        "npx playwright test tests/e2e/operator-growth.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "api-proof.json", "growth-builder.png", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-005",
+      "title": "Implement Network R4 expansion stepper and Listing Radar",
+      "summary_zh": "建立 R4 六步 Golden Flow、統一 A/L/CS 資料，完成 Listing Radar 的轉候選、重複合併與硬規封存。",
+      "priority": "P0",
+      "suggested_fleet": "network-intake",
+      "suggested_owner": "Antigravity7",
+      "suggested_reviewer": "Antigravity",
+      "depends_on": ["ODP-OC-R4-001", "ODP-FIN-FE-002", "ODP-FIN-FE-004"],
+      "owned_paths": [
+        "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+        "apps/web/features/operator/network/NetworkShell.tsx",
+        "apps/web/features/operator/network/ExpansionStepper.tsx",
+        "apps/web/features/operator/network/ListingRadarPanel.tsx",
+        "apps/api/app/routes/operator_modules/network_listings.py",
+        "modules/opsboard/application/network_listings.py",
+        "tests/e2e/operator-network-listings.spec.ts"
+      ],
+      "do_not_touch": ["apps/web/features/map/HeatZoneMap.tsx", "GrowthWorkspace.tsx", "GovernanceWorkspace.tsx"],
+      "deliverables": [
+        "Clickable Find Areas to Review stepper with current completed next and blocked states",
+        "R4 zone/listing/candidate identifiers and consistent rent/address values",
+        "Zone selection chip persisted into Listing Radar filters",
+        "Listing conversion dedupe merge hard-rule archive and compliance states"
+      ],
+      "acceptance": [
+        "HZ-01 to L-2024 to CS-1001 can be completed through product UI and APIs.",
+        "Converting L-2024 creates CS-1001 once and navigates to Candidate.",
+        "L-2029 merges into L-2025 without deleting source evidence and L-2030 archives with reason.",
+        "The real HeatZone map remains nonblank and synchronized with selected zone/lens."
+      ],
+      "verification": [
+        "uv run pytest tests/contract -k 'listing or network'",
+        "npx playwright test tests/e2e/operator-network-listings.spec.ts tests/e2e/e2e-map.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "api-proof.json", "network-stepper.png", "map-pixel-proof.json", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-006",
+      "title": "Implement Candidate data gate SiteScore and Compare",
+      "summary_zh": "補 Candidate 資料完整度 Gate、可重跑 SiteScore job、R4 評分卡與比較推薦；缺資料時必須真正鎖住評分。",
+      "priority": "P0",
+      "suggested_fleet": "network-score",
+      "suggested_owner": "Antigravity4",
+      "suggested_reviewer": "Antigravity5",
+      "depends_on": ["ODP-OC-R4-005"],
+      "owned_paths": [
+        "apps/web/features/operator/network/CandidatePanel.tsx",
+        "apps/web/features/operator/network/SiteScorePanel.tsx",
+        "apps/web/features/operator/network/ComparePanel.tsx",
+        "apps/api/app/routes/operator_modules/network_scoring.py",
+        "modules/opsboard/application/network_scoring.py",
+        "tests/e2e/operator-network-scoring.spec.ts"
+      ],
+      "do_not_touch": ["NetworkShell.tsx", "ListingRadarPanel.tsx", "RebalancePanel.tsx"],
+      "deliverables": [
+        "Eleven-field data completeness gate with blocking and confidence rules",
+        "Draft Need Data Ready Scoring Evaluated Shortlisted lifecycle",
+        "Single and batch SiteScore jobs with persisted model/snapshot results",
+        "R4 comparison recommendation and submit-best action"
+      ],
+      "acceptance": [
+        "Missing address/geocode/rent/area/floor/hard-rule data blocks scoring server-side.",
+        "CS-1001 returns GO 82 with SiteScore v2.3 and FS-20260704-0600.",
+        "CS-1002 WAIT 76 and CS-1004 REJECT 49 expose the R4 conditions and reasons.",
+        "Batch scoring sorts persisted results and Compare recommends GO/alternate/avoid consistently."
+      ],
+      "verification": [
+        "uv run pytest tests/contract -k 'candidate or sitescore'",
+        "npx playwright test tests/e2e/operator-network-scoring.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "api-proof.json", "candidate-gate.png", "sitescore.png", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-007",
+      "title": "Implement Network Review decision and atomic governance sync",
+      "summary_zh": "完成 R4 Review Decision dialog、角色入口與原因規則，讓 Candidate、Review、Approval、Decision、Audit 在同一交易同步。",
+      "priority": "P0",
+      "suggested_fleet": "network-review",
+      "suggested_owner": "Claude",
+      "suggested_reviewer": "Codex2",
+      "depends_on": ["ODP-OC-R4-006", "ODP-OC-R4-009"],
+      "owned_paths": [
+        "apps/web/features/operator/network/ReviewPanel.tsx",
+        "apps/web/features/operator/network/ReviewDecisionDialog.tsx",
+        "apps/api/app/routes/operator_modules/network_reviews.py",
+        "modules/opsboard/application/network_reviews.py",
+        "tests/e2e/operator-network-review.spec.ts"
+      ],
+      "do_not_touch": ["CandidatePanel.tsx", "SiteScorePanel.tsx", "GovernanceWorkspace.tsx"],
+      "deliverables": [
+        "Approve GO Approve WAIT Return Reject and Override decision UI",
+        "Required reason WAIT conditions and override risk confirmation",
+        "Reachable decision path for authorized Ops/Govern roles",
+        "Atomic candidate review approval decision and audit synchronization"
+      ],
+      "acceptance": [
+        "Expansion role can prepare/submit but cannot decide.",
+        "Authorized reviewer can reach the review from Network or Govern without role-navigation dead ends.",
+        "GO maps to Approved WAIT to On Hold Return to Need Data and Reject to Rejected.",
+        "A failed transaction leaves all five records unchanged and idempotent replay creates no duplicates."
+      ],
+      "verification": [
+        "uv run pytest tests/contract -k review",
+        "npx playwright test tests/e2e/operator-network-review.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "transaction-proof.json", "review-dialog.png", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-008",
+      "title": "Implement durable Rebalance AVM and NetPlan workflow",
+      "summary_zh": "把低效重配從展示資料改為 API-backed AVM job、三案 NetPlan 比較、送審與後續執行邊界。",
+      "priority": "P1",
+      "suggested_fleet": "network-rebalance",
+      "suggested_owner": "Antigravity6",
+      "suggested_reviewer": "Claude2",
+      "depends_on": ["ODP-OC-R4-005"],
+      "owned_paths": [
+        "apps/web/features/operator/network/RebalancePanel.tsx",
+        "apps/api/app/routes/operator_modules/network_rebalance.py",
+        "modules/opsboard/application/network_rebalance.py",
+        "tests/e2e/operator-network-rebalance.spec.ts"
+      ],
+      "do_not_touch": ["NetworkShell.tsx", "CandidatePanel.tsx", "ReviewPanel.tsx"],
+      "deliverables": [
+        "Low-efficiency queue four-light history and 90-day trend",
+        "Queued running ready failed AVM job states with P10/P50/P90",
+        "Keep/Improve Move Exit NetPlan scenarios with constraints and evidence",
+        "Audited scenario selection and review submission"
+      ],
+      "acceptance": [
+        "AVM and NetPlan results are service outputs with model/snapshot metadata rather than UI constants.",
+        "A selected scenario persists and reloads with evidence and owner.",
+        "Submitting review creates Govern approval and does not falsely mark relocation executed.",
+        "Unavailable model/runtime fails closed with an explicit retryable state."
+      ],
+      "verification": [
+        "uv run pytest tests/contract -k 'rebalance or avm or netplan'",
+        "npx playwright test tests/e2e/operator-network-rebalance.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "api-proof.json", "rebalance.png", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-009",
+      "title": "Expose and bind the complete Govern workspace",
+      "summary_zh": "讓 Approval、Decision、Audit、Evidence Package、SLA、Data Quality、Model、Connector、Users 全部可達並接 API。",
+      "priority": "P0",
+      "suggested_fleet": "governance",
+      "suggested_owner": "Claude",
+      "suggested_reviewer": "Antigravity",
+      "depends_on": ["ODP-OC-R4-001", "ODP-OC-R4-003", "ODP-OC-R4-004"],
+      "owned_paths": [
+        "apps/web/features/operator/GovernanceWorkspace.tsx",
+        "apps/web/features/operator/governance/",
+        "apps/web/features/operator/governance.module.css",
+        "apps/api/app/routes/operator_modules/governance.py",
+        "modules/opsboard/application/governance.py",
+        "tests/e2e/operator-governance.spec.ts"
+      ],
+      "do_not_touch": ["OperatorConsole.tsx", "GrowthWorkspace.tsx", "apps/web/features/operator/network/"],
+      "deliverables": [
+        "Nine reachable governance tabs with URL/deep-link state",
+        "Approval queue decision log and immutable audit filters",
+        "Evidence Package export jobs and retained download records",
+        "SLA data-quality model connector and user/role administration read models"
+      ],
+      "acceptance": [
+        "No governance value builder remains unreachable from UI navigation.",
+        "Return/reject require reason and approval policies are enforced server-side.",
+        "Evidence export records scope range format actor correlation and retention policy.",
+        "Store and Growth decisions plus pending Network approvals appear consistently after reload."
+      ],
+      "verification": [
+        "uv run pytest tests/contract -k govern",
+        "npx playwright test tests/e2e/operator-governance.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "api-proof.json", "govern-tabs.png", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-010",
+      "title": "Harden auth tenant isolation idempotency privacy and observability",
+      "summary_zh": "對所有新增 Operator endpoint 套用真實 auth/RBAC、tenant scope、重放去重、不可變稽核、Camera 目的綁定與可觀測性。",
+      "priority": "P0",
+      "suggested_fleet": "security-platform",
+      "suggested_owner": "Codex2",
+      "suggested_reviewer": "Claude2",
+      "depends_on": ["ODP-OC-R4-003", "ODP-OC-R4-004", "ODP-OC-R4-007", "ODP-OC-R4-008", "ODP-OC-R4-009"],
+      "owned_paths": [
+        "modules/opsboard/auth/",
+        "shared/audit/",
+        "shared/observability/",
+        "apps/api/oday_api/security/",
+        "tests/security/",
+        "tests/integration/operator_*"
+      ],
+      "do_not_touch": ["apps/web/features/operator/"],
+      "deliverables": [
+        "Auth and permission dependency on every Operator route",
+        "Tenant and store scope enforcement",
+        "Idempotency replay registry for every write",
+        "Structured correlation metrics audit and privacy logging"
+      ],
+      "acceptance": [
+        "Protected reads return 401 unauthenticated and 403 for unauthorized scopes.",
+        "Cross-tenant entity IDs cannot be inferred read or mutated.",
+        "Every write is traceable by correlation ID and replay-safe.",
+        "Restricted evidence logs contain no media secret or sensitive payload and always include purpose audit."
+      ],
+      "verification": [
+        "uv run pytest tests/security tests/integration -k operator",
+        "uv run pytest tests/contract/test_operator_api.py"
+      ],
+      "evidence_return": ["implementation.md", "security-matrix.md", "replay-proof.json", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-011",
+      "title": "Make full R4 product E2E visual and accessibility gates mandatory",
+      "summary_zh": "建立逐頁、逐角色、跨工作流的產品 E2E；product gate 預設進 CI，並驗證桌面／窄版、視覺、鍵盤、map pixel 與 reload。",
+      "priority": "P0",
+      "suggested_fleet": "validation",
+      "suggested_owner": "Antigravity3",
+      "suggested_reviewer": "Antigravity4",
+      "depends_on": ["ODP-OC-R4-002", "ODP-OC-R4-003", "ODP-OC-R4-004", "ODP-OC-R4-006", "ODP-OC-R4-007", "ODP-OC-R4-008", "ODP-OC-R4-009", "ODP-OC-R4-010"],
+      "owned_paths": [
+        "tests/e2e/operator-*.spec.ts",
+        "tests/e2e/e2e-operator-console.spec.ts",
+        "playwright.config.ts",
+        ".github/workflows/ci.yml",
+        "docs/evidence/completion/ODP-OC-R4-011/"
+      ],
+      "do_not_touch": ["apps/web/features/operator/", "apps/api/app/routes/"],
+      "deliverables": [
+        "Page and role coverage matrix",
+        "R4 golden-flow browser E2E",
+        "API read/write header reload and audit assertions",
+        "Desktop constrained-width mobile accessibility and map pixel proofs",
+        "Non-skippable CI product gate"
+      ],
+      "acceptance": [
+        "CI fails when an iframe exists or API read/write proof is absent.",
+        "Store Growth Network Review Rebalance and Govern writes survive reload.",
+        "All six role allow/deny paths and reason gates are covered.",
+        "No major accessibility violations or incoherent overlap occurs at required viewports.",
+        "Map canvas is nonblank and interactive in deterministic test mode."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm run build --workspace=@oday-plus/web",
+        "npx playwright test tests/e2e/operator-*.spec.ts tests/e2e/e2e-map.spec.ts",
+        "ODP_OPERATOR_PRODUCT_GATE=1 npx playwright test tests/e2e/e2e-operator-console.spec.ts -g ODP-OC-PROD-014"
+      ],
+      "evidence_return": ["implementation.md", "coverage.json", "playwright-report.zip", "screenshots/", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-012",
+      "title": "Deploy verify and cut over R4 Operator Console",
+      "summary_zh": "在 staging 執行 migration／seed／auth／runtime 驗證、保存 rollback revision，通過完整 gate 後把 dev 推進 main。",
+      "priority": "P0",
+      "suggested_fleet": "release",
+      "suggested_owner": "Codex",
+      "suggested_reviewer": "Claude2",
+      "depends_on": ["ODP-OC-R4-011", "ODP-FIN-LIVE-001"],
+      "owned_paths": [
+        "infra/",
+        "cloudbuild*.yaml",
+        ".github/workflows/promote-dev-to-main.yml",
+        "docs/evidence/completion/ODP-OC-R4-012/",
+        "docs/evidence/OPERATOR_CONSOLE_IMPLEMENTATION_TRUTH_STATUS.md"
+      ],
+      "do_not_touch": ["apps/web/features/operator/", "apps/api/app/routes/operator_modules/"],
+      "deliverables": [
+        "Staging revision migration and runtime-mode receipt",
+        "OAuth/RBAC and durable DB smoke proof",
+        "Full staging browser E2E report",
+        "Rollback command and prior healthy revision",
+        "dev to main promotion receipt"
+      ],
+      "acceptance": [
+        "Staging /operator serves React with no iframe and reports the expected revision.",
+        "A real staging write reload audit flow succeeds with redacted evidence.",
+        "Rollback is rehearsed or safely dry-run with exact commands and revision IDs.",
+        "Main contains the accepted dev implementation and all required checks are green.",
+        "Final truth status distinguishes fixture simulated staging and live provider evidence."
+      ],
+      "verification": [
+        "ODP_OPERATOR_PRODUCT_GATE=1 npx playwright test tests/e2e/e2e-operator-console.spec.ts -g ODP-OC-PROD-014",
+        "npx playwright test tests/e2e/operator-*.spec.ts"
+      ],
+      "evidence_return": ["implementation.md", "staging-revision.json", "migration.log", "e2e-report.zip", "rollback.md", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-013",
+      "title": "Refresh R4 baseline provenance to canonical package 6",
+      "summary_zh": "更新既有 R4 implementation matrix 與 baseline receipt，改引用已歸檔的 package 6，證明相對 package 5 的 design delta 為 0，並移除過時缺件敘述。",
+      "priority": "P0",
+      "suggested_fleet": "design-provenance",
+      "suggested_owner": "Claude2",
+      "suggested_reviewer": "Codex2",
+      "depends_on": ["ODP-OC-R4-000"],
+      "owned_paths": [
+        "docs/design/OPERATOR_CONSOLE_R4_IMPLEMENTATION_MATRIX.md",
+        "docs/evidence/OPERATOR_CONSOLE_R4_BASELINE_RECEIPT.json"
+      ],
+      "do_not_touch": ["apps/", "modules/", "packages/", "docs_archive/00_source_zips/operator_console/"],
+      "deliverables": [
+        "Implementation matrix source header pointing to canonical package 6",
+        "Machine-readable receipt with package and extracted-file hashes",
+        "Package 6 versus package 5 zero-design-delta statement",
+        "Thirty-two screen labels mapped without changing functional scope"
+      ],
+      "acceptance": [
+        "Both outputs refer to docs_archive/00_source_zips/operator_console/r4-20260707-package-6.",
+        "The receipt records ZIP SHA-256 db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76.",
+        "The receipt records interactive HTML SHA-256 65d359f4abaf82b39eb16f67da8e91e7ad1b030628bc15f8f45ce7c18c0e2f48 and demo version oday-plus-r4-20260707.",
+        "All five extracted hashes match the archive manifest and design_delta_count is zero.",
+        "No output says the latest Operator Console design artifact is missing.",
+        "No application code or R4-001 through R4-012 functional scope changes."
+      ],
+      "verification": [
+        "jq empty docs/evidence/OPERATOR_CONSOLE_R4_BASELINE_RECEIPT.json",
+        "rg -n 'package-6|db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76|design_delta_count' docs/design/OPERATOR_CONSOLE_R4_IMPLEMENTATION_MATRIX.md docs/evidence/OPERATOR_CONSOLE_R4_BASELINE_RECEIPT.json"
+      ],
+      "evidence_return": ["implementation.md", "verification.md", "acceptance.md"]
+    },
+    {
+      "id": "ODP-OC-R4-014",
+      "title": "Publish canonical R4 package 6 and Fleet execution packet to dev",
+      "summary_zh": "把 package 6 原始 ZIP、完整 extracted payload、manifest、逐頁 audit 與 Fleet task pack 正式提交到 dev，確保每個獨立 worktree 可直接核對設計，不再只依賴摘要。",
+      "priority": "P0",
+      "suggested_fleet": "design-source-delivery",
+      "suggested_owner": "Codex",
+      "suggested_reviewer": "Claude2",
+      "depends_on": ["ODP-OC-R4-013"],
+      "owned_paths": [
+        "docs_archive/00_source_zips/operator_console/",
+        "docs_archive/README.md",
+        "docs/design/OPERATOR_CONSOLE_R4_FLEET_EXECUTION_TASKS_2026-07-13.md",
+        "docs/design/OPERATOR_CONSOLE_R4_FLEET_EXECUTION_TASKS_2026-07-13.json",
+        "docs/evidence/OPERATOR_CONSOLE_DESIGN_PARITY_AUDIT_2026-07-13.md",
+        "docs/evidence/OPERATOR_CONSOLE_DESIGN_PACKAGE_6_DIFF_2026-07-13.md"
+      ],
+      "do_not_touch": ["apps/", "modules/", "packages/", "infra/"],
+      "deliverables": [
+        "Exact package 6 ZIP and all five extracted files tracked on dev",
+        "LATEST.json archive README and machine-readable package manifest",
+        "Complete Fleet MD/JSON task pack and page-by-page audit",
+        "Mandatory source preflight for implementation and review worktrees"
+      ],
+      "acceptance": [
+        "A fresh origin/dev worktree can read the canonical ZIP extracted HTML manifest audit and task pack.",
+        "The tracked ZIP SHA-256 is db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76.",
+        "All five extracted hashes match manifest.json and the design exposes 32 unique screen labels.",
+        "R4-004 and R4-005 are instructed to sync the delivered source before further visual implementation.",
+        "No app module package infrastructure or runtime file changes."
+      ],
+      "verification": [
+        "unzip -t 'docs_archive/00_source_zips/operator_console/r4-20260707-package-6/Oday Plus 營運管理後台 (6).zip'",
+        "jq empty docs_archive/00_source_zips/operator_console/LATEST.json docs_archive/00_source_zips/operator_console/r4-20260707-package-6/manifest.json docs/design/OPERATOR_CONSOLE_R4_FLEET_EXECUTION_TASKS_2026-07-13.json",
+        "git diff --check origin/dev...HEAD"
+      ],
+      "evidence_return": ["implementation.md", "verification.md", "acceptance.md"]
+    }
+  ],
+  "waves": [
+    {"wave": 0, "tasks": ["ODP-OC-R4-000"]},
+    {"wave": 0.5, "tasks": ["ODP-OC-R4-013"]},
+    {"wave": 0.75, "tasks": ["ODP-OC-R4-014"]},
+    {"wave": 1, "tasks": ["ODP-OC-R4-001"]},
+    {"wave": 2, "tasks": ["ODP-OC-R4-002", "ODP-OC-R4-003", "ODP-OC-R4-004", "ODP-OC-R4-005", "ODP-OC-R4-008"]},
+    {"wave": 3, "tasks": ["ODP-OC-R4-006", "ODP-OC-R4-009"]},
+    {"wave": 4, "tasks": ["ODP-OC-R4-007"]},
+    {"wave": 5, "tasks": ["ODP-OC-R4-010"]},
+    {"wave": 6, "tasks": ["ODP-OC-R4-011"]},
+    {"wave": 7, "tasks": ["ODP-OC-R4-012"]}
+  ]
+}

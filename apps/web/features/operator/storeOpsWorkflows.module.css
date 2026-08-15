@@ -1,0 +1,272 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(17, 26, 43, 0.46);
+}
+
+.dialog,
+.drawer {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  color: var(--operator-text, #142033);
+  background: var(--operator-surface, #ffffff);
+  border: 1px solid var(--operator-border, #dbe3ec);
+  border-radius: 8px;
+  box-shadow: var(--operator-shadow, 0 16px 42px rgba(21, 32, 51, 0.12));
+}
+
+.drawer {
+  align-self: stretch;
+  justify-self: end;
+  width: min(560px, calc(100vw - 32px));
+  max-height: none;
+  margin-left: auto;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid var(--operator-border, #dbe3ec);
+}
+
+.headerTitle {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--operator-muted, #66748a);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.header h2 {
+  margin: 0;
+  font-size: 20px;
+  line-height: 1.2;
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.issueContext {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 14px 20px;
+  background: var(--operator-soft, #f6f9fc);
+  border-bottom: 1px solid var(--operator-border, #dbe3ec);
+}
+
+.issueText {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.issueText span {
+  color: var(--operator-muted, #66748a);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.issueText strong {
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.issueText p {
+  margin: 0;
+  color: var(--operator-muted, #66748a);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.issueBadges {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.form {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--operator-muted, #66748a);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  min-width: 0;
+  color: var(--operator-text, #142033);
+  font: inherit;
+  font-weight: 500;
+  background: #ffffff;
+  border: 1px solid var(--operator-border-strong, #c7d1dd);
+  border-radius: 8px;
+  outline: 0;
+}
+
+.field input,
+.field select {
+  height: 38px;
+  padding: 0 10px;
+}
+
+.field textarea {
+  min-height: 94px;
+  padding: 10px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus {
+  border-color: var(--operator-focus, #4f8df7);
+  box-shadow: 0 0 0 3px rgba(79, 141, 247, 0.14);
+}
+
+.field small {
+  color: var(--operator-muted, #66748a);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.fullWidth {
+  grid-column: 1 / -1;
+}
+
+.checkGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  padding: 10px;
+  color: var(--operator-text, #142033);
+  background: #ffffff;
+  border: 1px solid var(--operator-border, #dbe3ec);
+  border-radius: 8px;
+}
+
+.checkbox input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+
+.checkbox span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.checkbox small {
+  color: var(--operator-muted, #66748a);
+  font-weight: 500;
+}
+
+.warning,
+.error {
+  padding: 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.warning {
+  color: #5f3b00;
+  background: #fff6df;
+  border: 1px solid #f2d28b;
+}
+
+.error {
+  color: #9f1730;
+  background: #fff0f3;
+  border: 1px solid #f4b4c0;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+@media (max-width: 720px) {
+  .overlay {
+    align-items: stretch;
+    padding: 12px;
+  }
+
+  .dialog,
+  .drawer {
+    width: 100%;
+    max-height: none;
+  }
+
+  .issueContext,
+  .grid,
+  .checkGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .issueBadges,
+  .actions {
+    justify-content: flex-start;
+  }
+}

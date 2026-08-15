@@ -73,6 +73,93 @@ class JsonLoadResilienceTests(unittest.TestCase):
         sleep.assert_called_once()
 
 
+class ConfigContractTests(unittest.TestCase):
+    def _write(self, root: Path, name: str, payload: dict) -> Path:
+        path = root / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_missing_runtime_config_never_falls_back_to_example(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            missing = Path(tmpdir) / "config.json"
+            with self.assertRaisesRegex(common.ConfigError, "does not exist"):
+                common.load_config(missing)
+
+    def test_unknown_fixed_key_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(
+                Path(tmpdir),
+                "runtime.json",
+                {"supervisor": {"poll_interval_seconds": 30, "typo_seconds": 1}},
+            )
+            with self.assertRaisesRegex(common.ConfigError, "typo_seconds"):
+                common.load_config(path)
+
+    def test_json_comments_are_rejected_in_runtime_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runtime.json"
+            path.write_text('{\n  // not runtime JSON\n  "supervisor": {}\n}\n', encoding="utf-8")
+            with self.assertRaisesRegex(common.ConfigError, "Unable to parse"):
+                common.load_config(path)
+
+    def test_dynamic_agent_name_still_validates_agent_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            valid = self._write(
+                root,
+                "valid.json",
+                {"agents": {"codex_future": {"display_name": "CodexFuture", "provider": "codex"}}},
+            )
+            invalid = self._write(
+                root,
+                "invalid.json",
+                {"agents": {"codex_future": {"display_name": "CodexFuture", "typo": True}}},
+            )
+
+            self.assertEqual(common.load_config(valid)["agents"]["codex_future"]["provider"], "codex")
+            with self.assertRaisesRegex(common.ConfigError, "typo"):
+                common.load_config(invalid)
+
+    def test_explicit_overlay_is_deep_merged_by_the_canonical_loader(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            base = self._write(
+                root,
+                "runtime.json",
+                {"supervisor": {"poll_interval_seconds": 30, "stall_after_seconds": 600}},
+            )
+            overlay = self._write(
+                root,
+                "runtime.local.json",
+                {"supervisor": {"poll_interval_seconds": 60}},
+            )
+
+            merged = common.load_config(base, overlay_paths=(overlay,))
+
+        self.assertEqual(merged["supervisor"]["poll_interval_seconds"], 60)
+        self.assertEqual(merged["supervisor"]["stall_after_seconds"], 600)
+
+    def test_runtime_config_environment_selects_the_same_config_for_helpers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = self._write(
+                Path(tmpdir),
+                "supervisor-runtime.json",
+                {"supervisor": {"poll_interval_seconds": 45}},
+            )
+            with mock.patch.dict(
+                common.os.environ,
+                {common.CONFIG_PATH_ENV_VAR: str(runtime)},
+                clear=False,
+            ):
+                loaded = common.load_config()
+                worker_env = common.delivery_runtime_env(
+                    {"paths": {"status_file": str(Path(tmpdir) / "ai-status.json")}}
+                )
+
+        self.assertEqual(loaded["supervisor"]["poll_interval_seconds"], 45)
+        self.assertEqual(worker_env[common.CONFIG_PATH_ENV_VAR], str(runtime))
+
+
 class FailureSummaryTests(unittest.TestCase):
     def test_summarize_failure_reason_treats_claude_credit_balance_as_quota(self) -> None:
         result = common.summarize_failure_reason("Credit balance is too low", "Claude")

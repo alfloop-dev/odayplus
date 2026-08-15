@@ -1,0 +1,27 @@
+{
+  "contract_id": "geocode_result_snapshot",
+  "title": "Geocode Result Snapshot",
+  "kind": "external",
+  "doc_ref": "ODP-DATA-03 §6 (CONN-GEO-GEOCODE), §9.4; ODP-DATA-05 §6.5",
+  "source_system": "SRC-EXT-GEOCODE",
+  "source_dataset": "geocode_result_snapshot",
+  "canonical_target": "address_location",
+  "mapping_id": "MAP-EXT-GEOCODE-v1",
+  "integration_mode": "api_lookup",
+  "envelope": "batch",
+  "acquisition_method": "api",
+  "schema_version": "geocode-v1",
+  "fields": [
+    {"name": "source_geocode_id", "type": "string", "required": true, "description": "Provider geocode request/result id."},
+    {"name": "address_raw", "type": "string", "required": true, "description": "Raw address submitted to the geocoder."},
+    {"name": "latitude", "type": "number", "required": true, "minimum": -90, "description": "Resolved latitude."},
+    {"name": "longitude", "type": "number", "required": true, "minimum": -180, "description": "Resolved longitude."},
+    {"name": "geocode_precision", "type": "string", "required": true, "enum": ["rooftop", "street", "district", "centroid", "manual"], "description": "Geocode precision tier."},
+    {"name": "confidence", "type": "number", "required": false, "minimum": 0, "description": "Geocode confidence (0-1)."},
+    {"name": "admin_city", "type": "string", "required": false, "description": "Resolved administrative city."},
+    {"name": "admin_district", "type": "string", "required": false, "description": "Resolved administrative district."},
+    {"name": "geocode_provider", "type": "string", "required": false, "description": "Geocode provider name."},
+    {"name": "observed_at", "type": "timestamp", "required": false, "description": "Geocode observation time."},
+    {"name": "snapshot_id", "type": "string", "required": true, "description": "Source snapshot id for reproducibility."}
+  ]
+}

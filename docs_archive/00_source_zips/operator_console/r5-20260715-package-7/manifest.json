@@ -1,0 +1,70 @@
+{
+  "schema": "oday-plus.operator-console-design-archive-manifest.v1",
+  "archived_at": "2026-07-15T00:00:00Z",
+  "source_filename": "Oday Plus 營運管理後台 (7).zip",
+  "source_path_encoded": "/home/lupin/oday-plus/Oday%20Plus%20%E7%87%9F%E9%81%8B%E7%AE%A1%E7%90%86%E5%BE%8C%E5%8F%B0%20%287%29.zip",
+  "source_path_decoded": "/home/lupin/oday-plus/Oday Plus 營運管理後台 (7).zip",
+  "archive_integrity": {
+    "copy_matches_source": true,
+    "unzip_test": "passed",
+    "size_bytes": 340326,
+    "sha256": "fa1a980d1d0c3fe2102e11ac009a57a1fe25bdb5539f9bd03378c2a628a9b552",
+    "md5": "bb9a69aa2c1492fb141b7d5965e9abb4"
+  },
+  "design_identity": {
+    "version": "R5",
+    "demo_state_version": "oday-plus-r5-20260714",
+    "screen_label_count": 37,
+    "previous_screen_label_count": 32,
+    "added_screen_label_count": 5,
+    "removed_screen_label_count": 0
+  },
+  "files": [
+    {
+      "path": "extracted/.thumbnail",
+      "size_bytes": 193226,
+      "sha256": "8026c5edd37ea24d3e5a61635661502c7cd2da47d4addece0f382508a73f7907"
+    },
+    {
+      "path": "extracted/Oday Plus Operator Console R5 Design Summary.dc.html",
+      "size_bytes": 18987,
+      "sha256": "ccd1b997f29fd5f04566d078dc5dc381836a6e7ade372debae0be620b2008292"
+    },
+    {
+      "path": "extracted/Oday Plus Operator Console.dc.html",
+      "size_bytes": 507580,
+      "sha256": "1e1bcfa329842216422b1d3ae2a44e7014dc8005cc156e2dcc978a6e4a5c3a2d",
+      "md5": "e2f46d5d2216c0d66f5368c22fa142a6"
+    },
+    {
+      "path": "extracted/oday-map.js",
+      "size_bytes": 4627,
+      "sha256": "95d92ba75a28ff24d025242bf0edf11fb6474ee6212344dd4e5e2b934f114b6d"
+    },
+    {
+      "path": "extracted/support.js",
+      "size_bytes": 60151,
+      "sha256": "e0650b109ec8f78ccc370fa27762b0c485cee4f208156a671f346e8544fc2214"
+    }
+  ],
+  "comparison_to_package_6": {
+    "package_6_zip_sha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+    "comparison": "material_design_change",
+    "identical_file_count": 2,
+    "changed_file_count": 2,
+    "added_file_count": 1,
+    "removed_file_count": 1,
+    "added_screen_labels": [
+      "Network URL 收件佇列",
+      "Dialog 從網址新增物件",
+      "Dialog 收件處理詳情",
+      "Dialog 欄位修正",
+      "Dialog 收件決策確認"
+    ],
+    "removed_screen_labels": [],
+    "design_delta_count": 5
+  },
+  "known_source_issues": [
+    "The R5 summary header and interactive HTML identify demo state oday-plus-r5-20260714, but one legacy summary paragraph still mentions oday-plus-r4-20260707. The interactive HTML and R5 header are authoritative."
+  ]
+}

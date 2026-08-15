@@ -35,7 +35,7 @@ def coordination_issue_title(feature: dict[str, Any]) -> str:
 
 
 def coordination_issue_labels(config: dict[str, Any], feature: dict[str, Any]) -> list[str]:
-    labels = list((((config.get("github_bus") or {}).get("labels") or {}).get("coordination") or []))
+    labels = list(((config.get("github_bus") or {}).get("labels") or {}).get("coordination") or [])
     for label in feature.get("state_labels", []) or []:
         if label not in labels:
             labels.append(label)

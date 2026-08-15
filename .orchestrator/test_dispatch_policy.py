@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from dispatch_policy import (
     DEFAULT_ACTIVE_WORKER_STATUSES,
     DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS,
@@ -72,8 +71,6 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["dependency_done_statuses"] == ["done"]
     assert settings["worker_terminal_statuses"] == ["review", "done", "review_approved"]
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
-    assert settings["max_tasks_per_agent"] is None
-    assert settings["max_tasks_per_agent_by_agent"] == {}
     assert settings["max_dispatches_per_tick"] == 4
     assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
 
@@ -89,7 +86,6 @@ def test_ready_dispatch_settings_preserves_configured_values() -> None:
                 "review_statuses": ["needs_review"],
                 "finalize_statuses": ["approved"],
                 "owned_statuses": ["queued"],
-                "max_tasks_per_agent": 2,
                 "max_dispatches_per_tick": 8,
             }
         }
@@ -98,7 +94,6 @@ def test_ready_dispatch_settings_preserves_configured_values() -> None:
     assert settings["review_statuses"] == ["needs_review"]
     assert settings["finalize_statuses"] == ["approved"]
     assert settings["owned_statuses"] == ["queued"]
-    assert settings["max_tasks_per_agent"] == 2
     assert settings["max_dispatches_per_tick"] == 8
 
 
@@ -128,7 +123,6 @@ def test_ready_dispatch_settings_preserves_current_sidecar_and_queue_knobs() -> 
                 "sidecar_only_agents": ["Copilot"],
                 "disabled_agents": ["Gemini"],
                 "orphaned_queue_event_grace_seconds": 90,
-                "helper_claim": {"enabled": False},
             }
         }
     )
@@ -136,4 +130,3 @@ def test_ready_dispatch_settings_preserves_current_sidecar_and_queue_knobs() -> 
     assert settings["sidecar_only_agents"] == ["Copilot"]
     assert settings["disabled_agents"] == ["Gemini"]
     assert settings["orphaned_queue_event_grace_seconds"] == 90
-    assert settings["helper_claim"] == {"enabled": False}

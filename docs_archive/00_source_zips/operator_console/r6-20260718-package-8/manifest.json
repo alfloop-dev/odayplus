@@ -1,0 +1,77 @@
+{
+  "schema": "oday-plus.operator-console-design-archive-manifest.v1",
+  "archived_at": "2026-07-19T00:00:00Z",
+  "source_filename": "Oday Plus 營運管理後台 (8).zip",
+  "source_path_encoded": "/home/lupin/oday-plus/Oday%20Plus%20%E7%87%9F%E9%81%8B%E7%AE%A1%E7%90%86%E5%BE%8C%E5%8F%B0%20%288%29.zip",
+  "source_path_decoded": "/home/lupin/oday-plus/Oday Plus 營運管理後台 (8).zip",
+  "archive_integrity": {
+    "copy_matches_source": true,
+    "unzip_test": "passed",
+    "size_bytes": 4935507,
+    "sha256": "cacd5f3ac659e5a52be4380f469c0c20082c1dd23cd430fafd1a3a60002a97f0",
+    "md5": "ecc03d72bac67213a98d0af21c3a2cb6"
+  },
+  "design_identity": {
+    "version": "R6",
+    "demo_state_version": "oday-plus-r6-20260718",
+    "screen_label_count": 39,
+    "previous_screen_label_count": 37,
+    "added_screen_label_count": 3,
+    "removed_screen_label_count": 1
+  },
+  "review": {
+    "document": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW.md",
+    "disposition": "CHANGES_REQUESTED",
+    "evidence_root": "docs/evidence/design_review/assisted_listing_intake_r6"
+  },
+  "files": [
+    {
+      "path": "extracted/.thumbnail",
+      "size_bytes": 23000,
+      "sha256": "3b0a45c0212905436afb397f8bccbd0234117be9cfcb3b94c87be7db74b153f9"
+    },
+    {
+      "path": "extracted/Oday Plus Operator Console R6 Design Summary.dc.html",
+      "size_bytes": 19614,
+      "sha256": "62aec73a584987aced432e5beeb0c8fa23094b311bbdc4a1107be9ee470d1b09"
+    },
+    {
+      "path": "extracted/Oday Plus Operator Console.dc.html",
+      "size_bytes": 564801,
+      "sha256": "9531c3cca31fdf247a2a216c661a19a7f1f900ec7a8274f60abc9694e4d25af5",
+      "md5": "386cb7f2baed06b92daf20019d4daff2"
+    },
+    {
+      "path": "extracted/Oday Plus 營運管理後台 R6.html",
+      "size_bytes": 6931844,
+      "sha256": "e70c34de63fd862f444c18c9721d4e80ebb887090c4c2eff7015c7b6fe28e153"
+    },
+    {
+      "path": "extracted/docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE.md",
+      "size_bytes": 6327,
+      "sha256": "27c259e9a5145f54477c9a7205a5b0dbc6d4cd22e340dc9a50b0dff8f7579ac9"
+    },
+    {
+      "path": "extracted/oday-map.js",
+      "size_bytes": 4629,
+      "sha256": "528949f5fdd73d4a8ead3dc3a5491b416ebf7c43a42a6f347728326e5d2f15db"
+    },
+    {
+      "path": "extracted/support.js",
+      "size_bytes": 66404,
+      "sha256": "c60c49083997f51a592df118c0068475337afd20b8cfd8e1cd9d5eb0c7e254f6"
+    }
+  ],
+  "comparison_to_package_7": {
+    "package_7_zip_sha256": "fa1a980d1d0c3fe2102e11ac009a57a1fe25bdb5539f9bd03378c2a628a9b552",
+    "comparison": "material_design_change",
+    "added_screen_labels": [
+      "Dialog Promotion 核准",
+      "Intake 收件處理詳情頁",
+      "Intake 狀態矩陣"
+    ],
+    "removed_screen_labels": [
+      "Dialog 收件處理詳情"
+    ]
+  }
+}

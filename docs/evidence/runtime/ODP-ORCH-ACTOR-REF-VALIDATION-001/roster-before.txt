@@ -1,0 +1,58 @@
+=== agents[] roster (30 entries) ===
+OK  'Claude'   referenced_by=['blocker[3]:owner', 'handoff[20]:to', 'task:ODP-ORCH-ACTOR-REF-VALIDATION-001:owner']
+OK  'Claude2'   referenced_by=['blocker[10]:waiting_for', 'blocker[11]:owner', 'blocker[12]:owner', 'blocker[14]:owner']
+OK  'Antigravity'   referenced_by=['blocker[0]:waiting_for', 'handoff[0]:from', 'handoff[10]:from', 'handoff[11]:to']
+OK  'Antigravity2'   referenced_by=[]
+OK  'Antigravity3'   referenced_by=['blocker[10]:owner', 'blocker[7]:waiting_for', 'blocker[8]:owner', 'blocker[9]:owner']
+OK  'Antigravity4'   referenced_by=[]
+OK  'Antigravity5'   referenced_by=['handoff[26]:from', 'task:ODP-DEPLOY-WORKER-JOB-EXECUTION-001:reviewer']
+OK  'Antigravity6'   referenced_by=[]
+OK  'Antigravity7'   referenced_by=[]
+OK  'Gemini'   referenced_by=[]
+OK  'Gemini2'   referenced_by=[]
+OK  'Codex'   referenced_by=['blocker[0]:owner', 'blocker[12]:waiting_for', 'blocker[14]:waiting_for', 'blocker[1]:owner']
+OK  'Codex2'   referenced_by=['handoff[27]:from', 'handoff[28]:from', 'task:ODP-ORCH-ACTOR-REF-VALIDATION-001:reviewer', 'task:ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001:reviewer']
+OK  'Copilot'   referenced_by=[]
+OK  'Human/Ops'   referenced_by=['blocker[13]:waiting_for', 'blocker[4]:waiting_for', 'task:ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001:waiting_for']
+OK  'Claude3'   referenced_by=['blocker[13]:owner', 'task:ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001:owner']
+OK  'Antigravity4/user'   referenced_by=[]
+OK  'Codex4'   referenced_by=[]
+OK  'Codex5'   referenced_by=['blocker[4]:owner', 'blocker[5]:owner', 'task:ODP-PRODUCTION-MODEL-REGISTRY-001:owner']
+OK  'Codex6'   referenced_by=['blocker[2]:waiting_for', 'handoff[25]:from', 'task:ODP-LIVE-RUNTIME-DEV-COMPOSE-001:reviewer', 'task:ODP-P10-DEV-REDEPLOY-VERIFY-001:reviewer']
+OK  'Codex7'   referenced_by=[]
+OK  'Codex8'   referenced_by=['handoff[21]:from', 'handoff[22]:from', 'handoff[23]:from', 'handoff[24]:from']
+OK  'Codex9'   referenced_by=['blocker[1]:waiting_for', 'task:ODP-LIVE-RUNTIME-DEV-COMPOSE-001:owner', 'task:ODP-RUNTIME-GCP-001:reviewer']
+BAD 'ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001'   referenced_by=[]
+BAD 'ODP-P10-FLEET-CONFLICT-REAUDIT-001'   referenced_by=[]
+BAD 'Human/Data owner: authoritative ForecastOps daily-history backfill'   referenced_by=['blocker[5]:waiting_for', 'task:ODP-PRODUCTION-MODEL-REGISTRY-001:waiting_for']
+BAD 'Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001, Claude2) is Codex6-approved, CI-passed, and merged to dev. origin/dev currently at dda726155a. Task branch 8396c464 clean and at origin. Worktree now clean (removed redundant scratch file). Awaiting unblock from Claude2/Codex6.'   referenced_by=['blocker[8]:waiting_for']
+BAD 'Remediation task for migration-compatibility-smoke timeout'   referenced_by=['blocker[9]:waiting_for']
+OK  'CodexCoordinator'   referenced_by=['blocker[11]:waiting_for']
+BAD "STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da36766878e3cb59 (revision 8). Two gates are open at once and both need Codex2/coordinator action, not more owner work: (1) re-review of the STOP GATE 7 fixes on this anchor - exact allowlist in attempt_state_dirty() plus the withdrawn byte-identical claim, both with independent reproduction receipts under preflight/; (2) a fresh EXACT-HEAD LIFT for this head before any live window may open - the 04:26:08Z lift named 05c3f59d only, and revisions 6, 7 and 8 have each changed the driver since. NOTHING WAS EXECUTED on this wake and no live retry was attempted; re-verified fail-closed at 2026-07-29T05:2xZ: MainPID 1197865 (02:37:14Z, active), KillMode=control-group, drop-in dir 0 entries, ~/.config/systemd/user 7 entries unchanged, no odp-killmode-probe or odp-rollout unit loaded, dead-man timer and service inactive, /tmp/odp-rollout-driver absent, timeline root = README.md + attempt-1-abort-killmode-probe/ only, both supervisor.py f0b419cb..., live queue empty and 0 control-queue entries for this task. Worktree clean, HEAD == origin/task/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 == 6ca4726c. Note also the standing precondition that is not in anyone's control: the driver aborts in preflight (22/24) when no unrelated live peer worker exists, which is the intended fail-closed behaviour - the window can only be opened while a second worker is genuinely running."   referenced_by=['blocker[15]:waiting_for']
+
+=== workload keys (25) ===
+OK  'Claude'
+OK  'Claude2'
+OK  'Antigravity'
+OK  'Antigravity2'
+OK  'Antigravity3'
+OK  'Antigravity4'
+OK  'Antigravity5'
+OK  'Antigravity6'
+OK  'Antigravity7'
+OK  'Gemini'
+OK  'Gemini2'
+OK  'Codex'
+OK  'Codex2'
+OK  'Copilot'
+OK  'Human/Ops'
+OK  'Codex8'
+OK  'Codex9'
+OK  'Codex5'
+OK  'Codex6'
+OK  'Claude3'
+BAD 'Human/Data owner: authoritative ForecastOps daily-history backfill'
+BAD 'Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001, Claude2) is Codex6-approved, CI-passed, and merged to dev. origin/dev currently at dda726155a. Task branch 8396c464 clean and at origin. Worktree now clean (removed redundant scratch file). Awaiting unblock from Claude2/Codex6.'
+BAD 'Remediation task for migration-compatibility-smoke timeout'
+OK  'CodexCoordinator'
+BAD "STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da36766878e3cb59 (revision 8). Two gates are open at once and both need Codex2/coordinator action, not more owner work: (1) re-review of the STOP GATE 7 fixes on this anchor - exact allowlist in attempt_state_dirty() plus the withdrawn byte-identical claim, both with independent reproduction receipts under preflight/; (2) a fresh EXACT-HEAD LIFT for this head before any live window may open - the 04:26:08Z lift named 05c3f59d only, and revisions 6, 7 and 8 have each changed the driver since. NOTHING WAS EXECUTED on this wake and no live retry was attempted; re-verified fail-closed at 2026-07-29T05:2xZ: MainPID 1197865 (02:37:14Z, active), KillMode=control-group, drop-in dir 0 entries, ~/.config/systemd/user 7 entries unchanged, no odp-killmode-probe or odp-rollout unit loaded, dead-man timer and service inactive, /tmp/odp-rollout-driver absent, timeline root = README.md + attempt-1-abort-killmode-probe/ only, both supervisor.py f0b419cb..., live queue empty and 0 control-queue entries for this task. Worktree clean, HEAD == origin/task/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 == 6ca4726c. Note also the standing precondition that is not in anyone's control: the driver aborts in preflight (22/24) when no unrelated live peer worker exists, which is the intended fail-closed behaviour - the window can only be opened while a second worker is genuinely running."

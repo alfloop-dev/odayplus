@@ -1,0 +1,7 @@
+$ cp /home/lupin/oday-plus-supervisor-live/.orchestrator/config.json .orchestrator/config.json  # gitignored runtime config required by 3 tests
+$ python3 -m unittest discover -s .orchestrator -p 'test_supervisor.py'
+.....
+----------------------------------------------------------------------
+Ran 224 tests in 1.024s
+
+OK

@@ -1,0 +1,393 @@
+{
+  "schema": "oday-plus.package10-wave-ack.v1",
+  "task_id": "ODP-P10-CAN-001-R3A",
+  "status": "pass",
+  "program_status": "no_go_pending_CAN001_R3",
+  "prepared_at": "2026-07-26T12:52:59.556Z",
+  "worktree": "/home/lupin/oday-plus-package10-final",
+  "branch": "fix/package10-final-20260725",
+  "initial_pickup_head": "e472abdaeea979a8e293d9a2042ebdce74398a7f",
+  "addendum_pickup_head": "da7da895a5c73fd7c0bd23329c6ceac2e431e8ed",
+  "current_head": "da7da895a5c73fd7c0bd23329c6ceac2e431e8ed",
+  "persistence_state": "product_commit_pushed_ack_pending",
+  "commit_sha": "ded04ac49504a1d948831eb5077625bef415ab50",
+  "pushed_ref": "origin/fix/package10-final-20260725",
+  "coordinator_review": "approved",
+  "authority": {
+    "parent_execution_contract": [
+      "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.md",
+      "docs/design/PACKAGE_10_CANONICAL_RUNTIME_EXECUTION_TASKS_2026-07-26.json"
+    ],
+    "runtime_audit": [
+      "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md",
+      "docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.json"
+    ],
+    "dispatch": [
+      "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.md",
+      "docs/evidence/fleet_dispatch/PACKAGE_10_CANONICAL_RUNTIME_FLEET_DISPATCH_2026-07-26.json"
+    ],
+    "conflict_audit": [
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.md",
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CONFLICT-VISUAL-AUDIT.json"
+    ],
+    "prior_ack": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-PROGRAM-RECOVERY-001.json",
+    "committed_addendum": [
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.md",
+      "docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-CAN-001-R3A-ORPHAN-SHELL-ADDENDUM.json"
+    ],
+    "addendum_commit": "da7da895a5c73fd7c0bd23329c6ceac2e431e8ed"
+  },
+  "scope_result": {
+    "executable_pages": {
+      "expected": 3,
+      "actual": 3,
+      "paths": [
+        "apps/web/src/app/operator/page.tsx",
+        "apps/web/src/app/intake/[intakeId]/page.tsx",
+        "apps/web/src/app/franchisee/page.tsx"
+      ]
+    },
+    "retired_page_paths": 38,
+    "retired_route_remnants": 2,
+    "retired_feature_roots": 10,
+    "retired_parent_shell_paths": 14,
+    "retired_legacy_e2e_specs": 18,
+    "retained_canonical_e2e_specs": 16,
+    "retired_addendum_paths": 7,
+    "retired_addendum_exports": "all absent",
+    "retired_css_selector_families": [
+      "odp-shell",
+      "odp-skip-link",
+      "odp-header",
+      "odp-env-badge",
+      "odp-iconbtn",
+      "odp-sidebar",
+      "odp-navlink",
+      "odp-main"
+    ],
+    "retained_generic_css": [
+      ".odp-select"
+    ],
+    "retained_operator_runtime": true,
+    "retained_intake_runtime_unchanged": true,
+    "retained_api_auth_handlers_unchanged": true,
+    "retained_franchisee_runtime": true
+  },
+  "migrations": [
+    {
+      "from": "apps/web/features/map/HeatZoneMap.tsx",
+      "to": "apps/web/features/operator/network/HeatZoneMap.tsx",
+      "result": "pass",
+      "note": "Uses isOperatorProductionMode with an explicit-true override."
+    },
+    {
+      "from": "apps/web/features/map/map.module.css",
+      "to": "apps/web/features/operator/network/heatZoneMap.module.css",
+      "result": "pass"
+    },
+    {
+      "from": "apps/web/features/expansion/data.ts map-facing declarations",
+      "to": "apps/web/features/operator/network/mapTypes.ts",
+      "result": "pass",
+      "symbols": [
+        "HeatZone",
+        "Listing",
+        "CandidateSite"
+      ]
+    },
+    {
+      "from": "apps/web/features/operator/networkFindAreasLoader.ts",
+      "to": "apps/web/features/operator/network/networkFindAreasLoader.ts",
+      "result": "pass",
+      "note": "API adapters and fail-closed binding behavior preserved."
+    },
+    {
+      "from": "apps/web/features/shell/HomeWorkspace.tsx formatStamp",
+      "to": "apps/web/features/shell/formatStamp.ts",
+      "result": "pass",
+      "note": "FranchiseeWorkspace import migrated before source retirement."
+    }
+  ],
+  "modified_paths": [
+    "apps/README.md",
+    "apps/web/README.md",
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+    "apps/web/features/operator/OperatorConsole.tsx",
+    "apps/web/features/shell/FranchiseeWorkspace.tsx",
+    "apps/web/next.config.mjs",
+    "apps/web/src/app/__tests__/productionRoutes.test.ts",
+    "apps/web/src/app/error.tsx",
+    "apps/web/src/app/global-error.tsx",
+    "apps/web/src/app/layout.tsx",
+    "apps/web/src/app/not-found.tsx",
+    "packages/domain-types/src/nav.ts",
+    "packages/domain-types/src/roles.ts",
+    "packages/ui/README.md",
+    "packages/ui/package.json",
+    "packages/ui/src/index.ts",
+    "packages/ui/src/styles/shell.css"
+  ],
+  "created_paths": [
+    "apps/web/features/operator/network/HeatZoneMap.tsx",
+    "apps/web/features/operator/network/heatZoneMap.module.css",
+    "apps/web/features/operator/network/mapTypes.ts",
+    "apps/web/features/operator/network/networkFindAreasLoader.ts",
+    "apps/web/features/shell/formatStamp.ts",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json"
+  ],
+  "deleted_paths": [
+    "apps/web/features/adlift/AdLiftWorkspace.tsx",
+    "apps/web/features/adlift/data.ts",
+    "apps/web/features/audit/AuditWorkspace.tsx",
+    "apps/web/features/audit/audit.module.css",
+    "apps/web/features/audit/data.ts",
+    "apps/web/features/avm/AvmWorkspace.tsx",
+    "apps/web/features/avm/avm.module.css",
+    "apps/web/features/avm/data.ts",
+    "apps/web/features/expansion/AccessibleDrawer.tsx",
+    "apps/web/features/expansion/ExpansionWorkspace.tsx",
+    "apps/web/features/expansion/__tests__/ProductionAssistedIntake.test.tsx",
+    "apps/web/features/expansion/data.ts",
+    "apps/web/features/expansion/expansion.module.css",
+    "apps/web/features/intervention/InterventionWorkspace.tsx",
+    "apps/web/features/intervention/data.ts",
+    "apps/web/features/intervention/intervention.module.css",
+    "apps/web/features/learninghub/LearningHubWorkspace.tsx",
+    "apps/web/features/learninghub/data.ts",
+    "apps/web/features/learninghub/learninghub.module.css",
+    "apps/web/features/map/HeatZoneMap.tsx",
+    "apps/web/features/map/map.module.css",
+    "apps/web/features/netplan/NetPlanWorkspace.tsx",
+    "apps/web/features/netplan/data.ts",
+    "apps/web/features/netplan/netplan.module.css",
+    "apps/web/features/operations/OperationsWorkspace.tsx",
+    "apps/web/features/operations/ProductionDataState.tsx",
+    "apps/web/features/operations/__tests__/ProductionDataRemoval.test.tsx",
+    "apps/web/features/operations/data.ts",
+    "apps/web/features/operations/operations.module.css",
+    "apps/web/features/operations/productionDataState.module.css",
+    "apps/web/features/operator/networkFindAreasLoader.ts",
+    "apps/web/features/priceops/PriceOpsWorkspace.tsx",
+    "apps/web/features/priceops/data.ts",
+    "apps/web/features/shell/AcknowledgeButton.tsx",
+    "apps/web/features/shell/AdminWorkspace.tsx",
+    "apps/web/features/shell/AssignTaskForm.tsx",
+    "apps/web/features/shell/HomeWorkspace.tsx",
+    "apps/web/features/shell/NotificationsWorkspace.tsx",
+    "apps/web/features/shell/OfflineBanner.tsx",
+    "apps/web/features/shell/PreferencesForm.tsx",
+    "apps/web/features/shell/RoleWorkspacesForm.tsx",
+    "apps/web/features/shell/SearchKeyboardNav.tsx",
+    "apps/web/features/shell/SearchWorkspace.tsx",
+    "apps/web/features/shell/SettingsForm.tsx",
+    "apps/web/features/shell/SettingsWorkspace.tsx",
+    "apps/web/features/shell/TaskCenterWorkspace.tsx",
+    "apps/web/src/app/OpsBoardFrame.tsx",
+    "apps/web/src/app/adlift/page.tsx",
+    "apps/web/src/app/admin/audit/page.tsx",
+    "apps/web/src/app/admin/page.tsx",
+    "apps/web/src/app/audit/page.tsx",
+    "apps/web/src/app/avm/page.tsx",
+    "apps/web/src/app/expansion/page.tsx",
+    "apps/web/src/app/interventions/page.tsx",
+    "apps/web/src/app/learning/page.tsx",
+    "apps/web/src/app/map/page.tsx",
+    "apps/web/src/app/netplan/page.tsx",
+    "apps/web/src/app/notifications/page.tsx",
+    "apps/web/src/app/operations/page.tsx",
+    "apps/web/src/app/page.tsx",
+    "apps/web/src/app/pricing/page.tsx",
+    "apps/web/src/app/search/page.tsx",
+    "apps/web/src/app/settings/page.tsx",
+    "apps/web/src/app/tasks/page.tsx",
+    "apps/web/src/app/w/ai/models/[modelName]/[version]/page.tsx",
+    "apps/web/src/app/w/ai/models/[modelName]/page.tsx",
+    "apps/web/src/app/w/ai/models/page.tsx",
+    "apps/web/src/app/w/ai/releases/[releaseId]/page.tsx",
+    "apps/web/src/app/w/ai/releases/page.tsx",
+    "apps/web/src/app/w/audit/decisions/[decisionId]/page.tsx",
+    "apps/web/src/app/w/audit/decisions/page.tsx",
+    "apps/web/src/app/w/audit/evidence/page.tsx",
+    "apps/web/src/app/w/dealroom/cases/[caseId]/page.tsx",
+    "apps/web/src/app/w/dealroom/cases/page.tsx",
+    "apps/web/src/app/w/expansion/candidates/page.tsx",
+    "apps/web/src/app/w/expansion/heatzone/page.tsx",
+    "apps/web/src/app/w/expansion/listings/error.tsx",
+    "apps/web/src/app/w/expansion/listings/loading.tsx",
+    "apps/web/src/app/w/expansion/listings/page.tsx",
+    "apps/web/src/app/w/expansion/page.tsx",
+    "apps/web/src/app/w/expansion/sitescore/[reportId]/page.tsx",
+    "apps/web/src/app/w/expansion/sitescore/page.tsx",
+    "apps/web/src/app/w/network/scenarios/[scenarioId]/page.tsx",
+    "apps/web/src/app/w/network/scenarios/page.tsx",
+    "apps/web/src/app/w/operations/alerts/page.tsx",
+    "apps/web/src/app/w/operations/forecast/[storeId]/page.tsx",
+    "apps/web/src/app/w/operations/forecast/page.tsx",
+    "packages/ui/src/components/AppShell.tsx",
+    "packages/ui/src/components/GlobalHeader.tsx",
+    "packages/ui/src/components/ModulePlaceholder.tsx",
+    "packages/ui/src/components/ShellContext.tsx",
+    "packages/ui/src/components/Sidebar.tsx",
+    "packages/ui/src/nav/filterNav.ts",
+    "packages/ui/src/nav/routes.ts",
+    "tests/e2e/e2e-api-bound-ui.spec.ts",
+    "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+    "tests/e2e/e2e-avm-netplan.spec.ts",
+    "tests/e2e/e2e-exp.spec.ts",
+    "tests/e2e/e2e-expansion-product.spec.ts",
+    "tests/e2e/e2e-intervention-price-ad.spec.ts",
+    "tests/e2e/e2e-learning-audit.spec.ts",
+    "tests/e2e/e2e-map-a11y.spec.ts",
+    "tests/e2e/e2e-map-live-boundary.spec.ts",
+    "tests/e2e/e2e-map-resilience.spec.ts",
+    "tests/e2e/e2e-map-tooltip-evidence.spec.ts",
+    "tests/e2e/e2e-map.spec.ts",
+    "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+    "tests/e2e/e2e-ops.spec.ts",
+    "tests/e2e/e2e-pgap-ux-001.spec.ts",
+    "tests/e2e/opsboard-shell.spec.ts",
+    "tests/e2e/shell-product-mobile.spec.ts",
+    "tests/e2e/shell-product.spec.ts"
+  ],
+  "gates": {
+    "web_unit": {
+      "command": "npm test --workspace=@oday-plus/web",
+      "status": "pass",
+      "result": "33 files, 216 tests",
+      "note": "Expected happy-dom 401 and AbortError teardown logs emitted with exit code 0."
+    },
+    "root_typecheck": {
+      "command": "npm run typecheck",
+      "status": "pass",
+      "workspaces": [
+        "@oday-plus/web",
+        "@oday-plus/design-tokens",
+        "@oday-plus/domain-types",
+        "@oday-plus/openapi-client",
+        "@oday-plus/ui",
+        "@oday-plus/ui-domain"
+      ],
+      "note": "An earlier web-only run saw stale .next route types; moving the generated cache resolved it and source typechecking passed."
+    },
+    "root_build": {
+      "command": "npm run build",
+      "status": "pass",
+      "canonical_pages": [
+        "/operator",
+        "/intake/[intakeId]",
+        "/franchisee"
+      ],
+      "retained_handlers": [
+        "/api/v1",
+        "/api/v1/[...path]",
+        "/auth/callback",
+        "/auth/logout",
+        "/auth/session",
+        "/avm/[...path]",
+        "/login"
+      ],
+      "warnings": "Three pre-existing autoprefixer start/end compatibility warnings match the recovery checkpoint baseline."
+    },
+    "canonical_chromium_collect": {
+      "command": "npx playwright test <16 committed canonical specs> --project=chromium --list",
+      "status": "pass",
+      "result": "107 tests in 16 files",
+      "canonical_spec_diff": "unchanged"
+    },
+    "static_route_import_orphan_navigation": {
+      "status": "pass",
+      "result": "pages=3; parent retirement complete; addendum paths 7/7 absent; exports/imports/CSS clean including nested selectors; .odp-select retained; active OpsBoard/R0 wording clean in R3A scope; canonical E2E 16/16; legacy E2E 0/18",
+      "verification_command": "rg --pcre2 -n '^\\s*\\.odp-(?:shell|skip-link|header|env-badge|iconbtn|sidebar|navlink|main)(?:\\b|__)' packages/ui/src/styles/shell.css",
+      "coordinator_rejection": "Initial gate regex anchored directly on the class and missed an indented .odp-skip-link selector inside prefers-reduced-motion.",
+      "remediation": "Removed the orphan reduced-motion block and reran the selector gate with optional leading whitespace; zero retired selectors remain."
+    },
+    "forbidden_path_diff": {
+      "status": "pass",
+      "result": "0 changes under intake internals, apps/api, docs_archive, or 16 canonical E2E specs"
+    },
+    "git_diff_check": {
+      "command": "git diff --check",
+      "status": "pass"
+    }
+  },
+  "coordinator_review_history": [
+    {
+      "decision": "rejected",
+      "issue": "packages/ui/src/styles/shell.css retained an indented .odp-skip-link selector inside @media (prefers-reduced-motion: reduce).",
+      "remediation": "Deleted the orphan media block, strengthened the exact selector regex to allow leading whitespace, and reran the static selector gate plus git diff --check.",
+      "result": "remediated_pending_rereview"
+    },
+    {
+      "decision": "approved",
+      "reviewed_at": "2026-07-26T13:00:55Z",
+      "result": "independent unit, typecheck, build, Chromium collect, scope, static, redirect, and diff gates passed; product commit pushed"
+    }
+  ],
+  "coordinator_validation": {
+    "status": "pass",
+    "reviewed_at": "2026-07-26T12:59:50Z",
+    "scope_inventory": "modified/deleted/created paths exactly match ACK arrays",
+    "forbidden_path_diff": "zero changes to intake internals, apps/api, docs_archive, and 16 canonical E2E specs",
+    "web_unit": "33 files, 216 tests",
+    "root_typecheck": "pass",
+    "root_build": "pass with the same three baseline autoprefixer warnings",
+    "canonical_chromium_collect": "107 tests in 16 files",
+    "static_gate": "pass after coordinator rejected and worker removed nested .odp-skip-link",
+    "runtime_redirect_probe": {
+      "legacy_routes": "308 to canonical /operator workspace targets",
+      "canonical_routes": "307 to /login with returnTo while unauthenticated"
+    },
+    "git_diff_check": "pass"
+  },
+  "other_llm_conflicts": [
+    {
+      "id": "r3a_inventory_omitted_orphan_ui_shell",
+      "source": "Original committed ODP-P10-CAN-001-R3A path inventory",
+      "issue": "The original inventory omitted seven orphan packages/ui OpsBoard shell and navigation files that had zero production callers after OpsBoardFrame retirement.",
+      "resolution": "Coordinator committed ODP-P10-CAN-001-R3A-ADD-001 at da7da895; this wave deleted all seven paths, removed their exports and shell-only CSS, retained .odp-select and generic components, and reran all addendum gates."
+    },
+    {
+      "id": "origin_dev_operator_console_overlap",
+      "source": "origin/dev c72804b8 merging ff817675",
+      "issue": "The merge reverts retirement of the whole OperatorConsole and declares fix/package10-final the canonical in-place R7 uplift, creating high-overlap rebase risk.",
+      "resolution": "R3A retained the Package 10 OperatorConsole and retired only path-contract old OpsBoard routes, features, and shell. A future rebase must not let the origin/dev restored older OperatorConsole overwrite this branch's canonical runtime."
+    },
+    {
+      "id": "route_only_retirement_claim",
+      "source": "Prior other-LLM completion claims",
+      "issue": "Route deletion had been treated as complete visual retirement while feature roots, shell visuals, navigation, loaders, specs, and later-discovered packages/ui shell code remained.",
+      "resolution": "R3A now proves page, feature, shell, loader, navigation, spec, export, import, CSS, and orphan retirement through executable gates."
+    },
+    {
+      "id": "audit_target_naming_conflict",
+      "source": "Earlier audit prose",
+      "issue": "Audit prose named HeatZoneMap.module.css and productionBindings.ts while the approved path contract requires heatZoneMap.module.css and network/networkFindAreasLoader.ts.",
+      "resolution": "Used the exact committed path_contracts.ODP-P10-CAN-001-R3A destinations and verified their production imports."
+    },
+    {
+      "id": "smoke_ack_stale_next",
+      "source": "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-FLEET-SMOKE-001.json",
+      "issue": "The health-only ACK points to CAN-003.",
+      "resolution": "Treated as stale sequencing evidence; the committed recovery dispatch correctly starts at CAN-001-R3A."
+    },
+    {
+      "id": "r3b_listing_radar_scope_omission",
+      "source": "R3B writable path contract and coordinator active-wording scan",
+      "issue": "apps/web/features/operator/network/ListingRadarPanel.tsx is in the production intake graph and still contains Package 7 baseline wording, but it is not in the original R3B writable paths.",
+      "resolution": "R3A leaves the file unchanged because it is outside this wave. Coordinator must commit an R3B addendum that authorizes wording cleanup before R3B pickup."
+    }
+  ],
+  "unresolved": [
+    {
+      "id": "r3b_intake_canonicalization",
+      "status": "blocked_by_serial_sequence",
+      "detail": "Package 10 continuous intake detail integration, internal orphan retirement, and remaining Package 7 wording in the intake production graph remain assigned to ODP-P10-CAN-001-R3B and were not modified in R3A."
+    },
+    {
+      "id": "future_rebase_overlap",
+      "status": "coordinator_action_required",
+      "detail": "Rebase onto origin/dev c72804b8 requires conflict-by-conflict preservation of this branch's canonical OperatorConsole and R3A retirement."
+    }
+  ],
+  "next": "Commit and push this ACK, then coordinator may transfer ownership to ODP-P10-CAN-001-R3B."
+}

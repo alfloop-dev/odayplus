@@ -1,0 +1,868 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING, Any
+from urllib.parse import unquote, urlparse
+
+from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
+
+from ..runtime import (
+    LearningHubRuntimeConfigurationError,
+    learninghub_production_required,
+)
+from .repositories import InMemoryLearningHubRepository, LearningHubRepository
+
+if TYPE_CHECKING:
+    from mlflow.entities.model_registry import ModelVersion as MlflowModelVersion
+    from mlflow.tracking import MlflowClient
+
+
+_TAG_PREFIX = "oday.model_version."
+_TAG_SCHEMA_VERSION = "1"
+# Governance projection carried on every released MLflow model version. The
+# values live in ``ModelVersion.monitoring_config`` so a release writes them
+# atomically with the rest of the model contract; the runtime resolves them
+# from MLflow tags without reading the durable registry.
+_GOVERNANCE_TAG_KEYS = (
+    "release_id",
+    "release_revision",
+    "approval_id",
+    "release_scope",
+    "requested_by",
+    "release_approved_by",
+    "model_card_checksum",
+    "validation_run_id",
+    "validation_status",
+)
+_LINEAGE_ARTIFACT_ROOT = "oday-lineage/model-versions"
+_STAGE_TO_MLFLOW = {
+    ModelStage.DEV: "None",
+    ModelStage.SHADOW: "Staging",
+    ModelStage.CANARY: "Staging",
+    ModelStage.PRODUCTION: "Production",
+    ModelStage.RETIRED: "Archived",
+    ModelStage.ROLLED_BACK: "Archived",
+    ModelStage.BLOCKED: "Archived",
+}
+_MLFLOW_TO_STAGE = {
+    "None": ModelStage.DEV,
+    "Staging": ModelStage.CANARY,
+    "Production": ModelStage.PRODUCTION,
+    "Archived": ModelStage.RETIRED,
+}
+
+
+class MlflowAliasSynchronizationError(RuntimeError):
+    """Raised when the remote and durable alias projections cannot be kept aligned."""
+
+
+@dataclass
+class MlflowRegistryAdapter:
+    """Project the Learning Hub model contract onto an OSS MLflow registry."""
+
+    repository: LearningHubRepository
+    tracking_uri: str | None = None
+    experiment_name: str = "oday-plus-learninghub"
+    client: MlflowClient | None = field(default=None, repr=False)
+    runtime_mode: str | None = None
+    _local_tracking_dir: TemporaryDirectory[str] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        production_required = learninghub_production_required(self.runtime_mode)
+        configured_uri = self.tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
+        if production_required:
+            _require_remote_tracking_uri(configured_uri)
+        if self.client is None:
+            from mlflow.tracking import MlflowClient
+
+            if configured_uri is None:
+                storage_path = getattr(self.repository, "storage_path", None)
+                if storage_path is not None:
+                    repository_database = Path(storage_path)
+                    database = repository_database.with_name(
+                        f"{repository_database.stem}.mlflow.sqlite3"
+                    )
+                elif isinstance(self.repository, InMemoryLearningHubRepository):
+                    self._local_tracking_dir = TemporaryDirectory(prefix="oday-plus-mlflow-")
+                    database = Path(self._local_tracking_dir.name) / "mlflow.db"
+                else:
+                    raise RuntimeError(
+                        "MLFLOW_TRACKING_URI is required when the Learning Hub "
+                        "repository has no stable storage_path"
+                    )
+                configured_uri = f"sqlite:///{database}"
+
+            self.tracking_uri = configured_uri
+            self.client = MlflowClient(tracking_uri=configured_uri)
+        elif configured_uri is not None:
+            self.tracking_uri = configured_uri
+
+    def require_production_binding(self) -> None:
+        _require_remote_tracking_uri(self.tracking_uri)
+        if self.client is None:
+            raise LearningHubRuntimeConfigurationError(
+                "Learning Hub production requires an injected MLflow client"
+            )
+
+    def validate_production_model_version(self, model_version: ModelVersion) -> None:
+        self.require_production_binding()
+        _validate_production_model_lineage(model_version)
+
+    def register_model_version(self, model_version: ModelVersion) -> ModelVersion:
+        if learninghub_production_required(self.runtime_mode):
+            self.validate_production_model_version(model_version)
+        client = self._require_client()
+        self._ensure_registered_model(model_version.model_name)
+
+        existing = self._find_model_version(model_version.model_name, model_version.version)
+        if existing is not None:
+            self._assert_immutable_lineage(existing, model_version)
+            mlflow_version = existing
+            run_id = existing.run_id
+        else:
+            run_id = self._resolve_run(model_version)
+            tags = self._lineage_tags(model_version, mlflow_run_id=run_id)
+            mlflow_version = client.create_model_version(
+                name=model_version.model_name,
+                source=model_version.artifact_uri,
+                run_id=run_id,
+                tags=tags,
+                description=(
+                    f"ODay Plus domain model version {model_version.model_name}:"
+                    f"{model_version.version}"
+                ),
+            )
+
+        if run_id is None:
+            raise ValueError(
+                f"MLflow model version {model_version.model_name}:{model_version.version} "
+                "has no run lineage"
+            )
+
+        tags = self._lineage_tags(model_version, mlflow_run_id=run_id)
+        self._write_run_lineage(run_id, model_version, tags)
+        self._write_model_version_tags(
+            model_version.model_name,
+            str(mlflow_version.version),
+            tags,
+        )
+        self._transition_mlflow_stage(
+            model_version.model_name,
+            str(mlflow_version.version),
+            model_version.stage,
+        )
+        for alias in model_version.aliases:
+            client.set_registered_model_alias(
+                model_version.model_name,
+                alias.value,
+                str(mlflow_version.version),
+            )
+
+        restored = self._to_domain(
+            client.get_model_version(model_version.model_name, str(mlflow_version.version))
+        )
+        self.repository.save_model_version(restored)
+        for alias in restored.aliases:
+            self.repository.set_alias(restored.model_name, alias, restored.version)
+        return self.repository.get_model_version(restored.model_name, restored.version) or restored
+
+    def transition_stage(
+        self,
+        *,
+        model_name: str,
+        version: str,
+        stage: ModelStage,
+    ) -> ModelVersion:
+        mlflow_version = self._require_model_version(model_name, version)
+        self._transition_mlflow_stage(model_name, str(mlflow_version.version), stage)
+        self._require_client().set_model_version_tag(
+            model_name,
+            str(mlflow_version.version),
+            self._tag("stage"),
+            stage.value,
+        )
+        restored = self._to_domain(
+            self._require_client().get_model_version(model_name, str(mlflow_version.version))
+        )
+        return self.repository.save_model_version(restored)
+
+    def set_alias(self, *, model_name: str, alias: ModelAlias, version: str) -> ModelVersion:
+        mlflow_version = self._require_model_version(model_name, version)
+        client = self._require_client()
+        remote_before = self._get_remote_alias(model_name, alias)
+        durable_before = self.repository.get_alias(model_name, alias)
+        self._assert_alias_precondition(
+            model_name=model_name,
+            alias=alias,
+            remote=remote_before,
+            durable=durable_before,
+        )
+
+        try:
+            client.set_registered_model_alias(
+                model_name,
+                alias.value,
+                str(mlflow_version.version),
+            )
+            restored = self._to_domain(
+                client.get_model_version_by_alias(model_name, alias.value)
+            )
+            if restored.version != version:
+                raise MlflowAliasSynchronizationError(
+                    f"MLflow alias {model_name}:{alias.value} resolved to "
+                    f"{restored.version}, expected {version}"
+                )
+            durable = self.repository.set_alias(model_name, alias, restored.version)
+            if durable.version != version:
+                raise MlflowAliasSynchronizationError(
+                    f"durable alias {model_name}:{alias.value} resolved to "
+                    f"{durable.version}, expected {version}"
+                )
+            return durable
+        except Exception as exc:
+            compensation_errors = self._restore_alias(
+                model_name=model_name,
+                alias=alias,
+                remote=remote_before,
+                durable=durable_before,
+            )
+            detail = (
+                f"; compensation failed: {', '.join(compensation_errors)}"
+                if compensation_errors
+                else "; prior alias restored"
+            )
+            raise MlflowAliasSynchronizationError(
+                f"failed to synchronize alias {model_name}:{alias.value} -> {version}{detail}"
+            ) from exc
+
+    def clear_alias(self, *, model_name: str, alias: ModelAlias) -> None:
+        client = self._require_client()
+        remote_before = self._get_remote_alias(model_name, alias)
+        durable_before = self.repository.get_alias(model_name, alias)
+        self._assert_alias_precondition(
+            model_name=model_name,
+            alias=alias,
+            remote=remote_before,
+            durable=durable_before,
+        )
+
+        try:
+            if remote_before is not None:
+                client.delete_registered_model_alias(model_name, alias.value)
+            self.repository.clear_alias(model_name, alias)
+        except Exception as exc:
+            compensation_errors = self._restore_alias(
+                model_name=model_name,
+                alias=alias,
+                remote=remote_before,
+                durable=durable_before,
+            )
+            detail = (
+                f"; compensation failed: {', '.join(compensation_errors)}"
+                if compensation_errors
+                else "; prior alias restored"
+            )
+            raise MlflowAliasSynchronizationError(
+                f"failed to clear alias {model_name}:{alias.value}{detail}"
+            ) from exc
+
+    def get_by_alias(self, *, model_name: str, alias: ModelAlias) -> ModelVersion | None:
+        mlflow_version = self._get_remote_alias(model_name, alias)
+        return self._to_domain(mlflow_version) if mlflow_version is not None else None
+
+    def sync_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
+        """Write approval/lineage tags and verify the runtime-visible projection."""
+
+        restored = self._write_release_metadata(model_version)
+        if (
+            restored.approved_by != model_version.approved_by
+            or restored.approved_at != model_version.approved_at
+            or restored.rollback_target != model_version.rollback_target
+        ):
+            raise MlflowAliasSynchronizationError(
+                "MLflow release metadata verification failed for "
+                f"{model_version.model_name}:{model_version.version}"
+            )
+        if model_version.monitoring_config.get("release_id"):
+            self.assert_release_governance(
+                model_name=model_version.model_name,
+                version=model_version.version,
+                expected=release_governance_values(model_version),
+            )
+        return restored
+
+    def restore_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
+        """Rewrite a durable pre-release snapshot back onto MLflow.
+
+        Compensation must undo *metadata*, not only stages and aliases: a failed
+        release that already wrote approval, approval-id, model-card, and
+        validation tags would otherwise leave MLflow advertising an approval
+        that was never committed. Verification failure is reported to the caller
+        so the saga is recorded as ``COMPENSATION_FAILED`` instead of silently
+        drifting.
+        """
+
+        restored = self._write_release_metadata(model_version)
+        if (
+            restored.approved_by != model_version.approved_by
+            or restored.approved_at != model_version.approved_at
+            or restored.rollback_target != model_version.rollback_target
+            or dict(restored.monitoring_config) != dict(model_version.monitoring_config)
+        ):
+            raise MlflowAliasSynchronizationError(
+                "MLflow release metadata restore verification failed for "
+                f"{model_version.model_name}:{model_version.version}"
+            )
+        return restored
+
+    def assert_release_governance(
+        self,
+        *,
+        model_name: str,
+        version: str,
+        expected: Mapping[str, str],
+        alias: ModelAlias | None = None,
+    ) -> None:
+        """Fail closed unless MLflow carries the full approved release projection."""
+
+        tags = self._require_model_version(model_name, version).tags
+        missing = sorted(
+            key for key in _GOVERNANCE_TAG_KEYS if not str(tags.get(self._tag(key), "")).strip()
+        )
+        if missing:
+            raise MlflowAliasSynchronizationError(
+                f"MLflow model version {model_name}:{version} is missing required "
+                "release governance tags: " + ", ".join(missing)
+            )
+        mismatched = sorted(
+            f"{key}={tags.get(self._tag(key))!r}!={str(value)!r}"
+            for key, value in expected.items()
+            if str(tags.get(self._tag(key), "")) != str(value)
+        )
+        if mismatched:
+            raise MlflowAliasSynchronizationError(
+                f"MLflow release governance tags disagree for {model_name}:{version}: "
+                + ", ".join(mismatched)
+            )
+        if alias is not None:
+            resolved = self.get_by_alias(model_name=model_name, alias=alias)
+            if resolved is None or resolved.version != version:
+                raise MlflowAliasSynchronizationError(
+                    f"MLflow alias {model_name}:{alias.value} does not resolve to the "
+                    f"governed release version {version}"
+                )
+
+    def _write_release_metadata(self, model_version: ModelVersion) -> ModelVersion:
+        mlflow_version = self._require_model_version(
+            model_version.model_name,
+            model_version.version,
+        )
+        run_id = mlflow_version.run_id or model_version.run_id
+        if not run_id:
+            raise ValueError(
+                f"MLflow model version {model_version.model_name}:"
+                f"{model_version.version} has no run lineage"
+            )
+        tags = self._lineage_tags(model_version, mlflow_run_id=run_id)
+        self._write_model_version_tags(
+            model_version.model_name,
+            str(mlflow_version.version),
+            tags,
+        )
+        return self._to_domain(
+            self._require_client().get_model_version(
+                model_version.model_name,
+                str(mlflow_version.version),
+            )
+        )
+
+    def _reconcile_alias_unsafe(
+        self,
+        *,
+        model_name: str,
+        alias: ModelAlias,
+        authority: str,
+    ) -> ModelVersion | None:
+        """Service-internal primitive; callers must use governed reconciliation."""
+
+        if authority == "remote":
+            remote = self._get_remote_alias(model_name, alias)
+            if remote is None:
+                self.repository.clear_alias(model_name, alias)
+                return None
+            restored = self._to_domain(remote)
+            if self.repository.get_model_version(model_name, restored.version) is None:
+                raise MlflowAliasSynchronizationError(
+                    f"cannot reconcile {model_name}:{alias.value} from remote: "
+                    f"durable model version {restored.version} is missing"
+                )
+            return self.repository.set_alias(
+                model_name,
+                alias,
+                restored.version,
+            )
+
+        if authority == "durable":
+            durable = self.repository.get_alias(model_name, alias)
+            client = self._require_client()
+            if durable is None:
+                if self._get_remote_alias(model_name, alias) is not None:
+                    client.delete_registered_model_alias(model_name, alias.value)
+                return None
+            mlflow_version = self._require_model_version(model_name, durable.version)
+            client.set_registered_model_alias(
+                model_name,
+                alias.value,
+                str(mlflow_version.version),
+            )
+            reconciled = self.get_by_alias(model_name=model_name, alias=alias)
+            if reconciled is None or reconciled.version != durable.version:
+                raise MlflowAliasSynchronizationError(
+                    f"remote alias reconciliation failed for "
+                    f"{model_name}:{alias.value} -> {durable.version}"
+                )
+            return durable
+
+        raise ValueError("alias reconciliation authority must be 'remote' or 'durable'")
+
+    def _restore_alias_versions_unsafe(
+        self,
+        *,
+        model_name: str,
+        alias: ModelAlias,
+        remote_version: str | None,
+        durable_version: str | None,
+    ) -> None:
+        """Restore deliberately divergent snapshots during saga compensation."""
+
+        client = self._require_client()
+        if remote_version is None:
+            if self._get_remote_alias(model_name, alias) is not None:
+                client.delete_registered_model_alias(model_name, alias.value)
+        else:
+            mlflow_version = self._require_model_version(model_name, remote_version)
+            client.set_registered_model_alias(
+                model_name,
+                alias.value,
+                str(mlflow_version.version),
+            )
+        if durable_version is None:
+            self.repository.clear_alias(model_name, alias)
+        else:
+            self.repository.set_alias(model_name, alias, durable_version)
+
+    def _get_remote_alias(
+        self,
+        model_name: str,
+        alias: ModelAlias,
+    ) -> MlflowModelVersion | None:
+        from mlflow.exceptions import MlflowException
+
+        try:
+            return self._require_client().get_model_version_by_alias(
+                model_name,
+                alias.value,
+            )
+        except MlflowException as exc:
+            if exc.error_code in {"RESOURCE_DOES_NOT_EXIST", "INVALID_PARAMETER_VALUE"}:
+                return None
+            raise
+
+    def _assert_alias_precondition(
+        self,
+        *,
+        model_name: str,
+        alias: ModelAlias,
+        remote: MlflowModelVersion | None,
+        durable: ModelVersion | None,
+    ) -> None:
+        remote_version = self._to_domain(remote).version if remote is not None else None
+        durable_version = durable.version if durable is not None else None
+        if remote_version != durable_version:
+            raise MlflowAliasSynchronizationError(
+                f"alias precondition mismatch for {model_name}:{alias.value}: "
+                f"remote={remote_version!r}, durable={durable_version!r}"
+            )
+
+    def _restore_alias(
+        self,
+        *,
+        model_name: str,
+        alias: ModelAlias,
+        remote: MlflowModelVersion | None,
+        durable: ModelVersion | None,
+    ) -> list[str]:
+        errors: list[str] = []
+        client = self._require_client()
+
+        try:
+            if remote is None:
+                if self._get_remote_alias(model_name, alias) is not None:
+                    client.delete_registered_model_alias(model_name, alias.value)
+            else:
+                client.set_registered_model_alias(
+                    model_name,
+                    alias.value,
+                    str(remote.version),
+                )
+        except Exception as exc:
+            errors.append(f"remote={type(exc).__name__}: {exc}")
+
+        try:
+            if durable is None:
+                self.repository.clear_alias(model_name, alias)
+            else:
+                self.repository.set_alias(model_name, alias, durable.version)
+        except Exception as exc:
+            errors.append(f"durable={type(exc).__name__}: {exc}")
+
+        return errors
+
+    def _require_client(self) -> MlflowClient:
+        if self.client is None:
+            raise RuntimeError("MLflow client was not initialized")
+        return self.client
+
+    def _ensure_registered_model(self, model_name: str) -> None:
+        from mlflow.exceptions import MlflowException
+
+        client = self._require_client()
+        try:
+            client.get_registered_model(model_name)
+            return
+        except MlflowException as exc:
+            if exc.error_code != "RESOURCE_DOES_NOT_EXIST":
+                raise
+
+        try:
+            client.create_registered_model(
+                model_name,
+                tags={
+                    "oday.owner": "learninghub",
+                    "oday.contract": "models.shared_ml.registry.ModelVersion",
+                },
+                description="ODay Plus Learning Hub managed model",
+            )
+        except MlflowException as exc:
+            if exc.error_code != "RESOURCE_ALREADY_EXISTS":
+                raise
+
+    def _resolve_run(self, model_version: ModelVersion) -> str:
+        from mlflow.exceptions import MlflowException
+
+        client = self._require_client()
+        if model_version.run_id:
+            try:
+                return client.get_run(model_version.run_id).info.run_id
+            except MlflowException as exc:
+                if exc.error_code not in {
+                    "RESOURCE_DOES_NOT_EXIST",
+                    "INVALID_PARAMETER_VALUE",
+                }:
+                    raise
+
+        experiment = client.get_experiment_by_name(self.experiment_name)
+        if experiment is None:
+            experiment_id = client.create_experiment(self.experiment_name)
+        else:
+            experiment_id = experiment.experiment_id
+        run = client.create_run(
+            experiment_id,
+            run_name=f"{model_version.model_name}-{model_version.version}",
+            tags={
+                "oday.model_name": model_version.model_name,
+                "oday.domain_version": model_version.version,
+                "oday.requested_run_id": model_version.run_id or "",
+            },
+        )
+        return run.info.run_id
+
+    def _write_run_lineage(
+        self,
+        run_id: str,
+        model_version: ModelVersion,
+        tags: dict[str, str],
+    ) -> None:
+        client = self._require_client()
+        for key, value in tags.items():
+            client.set_tag(run_id, key, value)
+        for metric_name, metric_value in model_version.metrics.items():
+            client.log_metric(run_id, metric_name, float(metric_value))
+        client.log_dict(
+            run_id,
+            {
+                **model_version.to_dict(),
+                "mlflow_run_id": run_id,
+                "tag_schema_version": _TAG_SCHEMA_VERSION,
+            },
+            f"{_LINEAGE_ARTIFACT_ROOT}/{model_version.version}.json",
+        )
+
+    def _write_model_version_tags(
+        self,
+        model_name: str,
+        mlflow_version: str,
+        tags: dict[str, str],
+    ) -> None:
+        client = self._require_client()
+        for key, value in tags.items():
+            client.set_model_version_tag(model_name, mlflow_version, key, value)
+
+    def _transition_mlflow_stage(
+        self,
+        model_name: str,
+        mlflow_version: str,
+        stage: ModelStage,
+    ) -> None:
+        self._require_client().transition_model_version_stage(
+            name=model_name,
+            version=mlflow_version,
+            stage=_STAGE_TO_MLFLOW[stage],
+            archive_existing_versions=False,
+        )
+
+    def _find_model_version(
+        self,
+        model_name: str,
+        domain_version: str,
+    ) -> MlflowModelVersion | None:
+        versions = self._require_client().search_model_versions(
+            filter_string=f"name = {json.dumps(model_name)}"
+        )
+        matches = [
+            version
+            for version in versions
+            if version.tags.get(self._tag("domain_version")) == domain_version
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda version: int(version.version))
+
+    def _require_model_version(self, model_name: str, domain_version: str) -> MlflowModelVersion:
+        model_version = self._find_model_version(model_name, domain_version)
+        if model_version is None:
+            raise ValueError(f"unknown model version {model_name}:{domain_version}")
+        return model_version
+
+    def _assert_immutable_lineage(
+        self,
+        mlflow_version: MlflowModelVersion,
+        model_version: ModelVersion,
+    ) -> None:
+        existing_artifact_uri = mlflow_version.tags.get(
+            self._tag("artifact_uri"),
+            mlflow_version.source,
+        )
+        existing_source_run_id = mlflow_version.tags.get(self._tag("source_run_id")) or None
+        if existing_artifact_uri != model_version.artifact_uri:
+            raise ValueError(
+                f"immutable artifact lineage conflict for {model_version.model_id}: "
+                f"{existing_artifact_uri!r} != {model_version.artifact_uri!r}"
+            )
+        if model_version.run_id and existing_source_run_id != model_version.run_id:
+            raise ValueError(
+                f"immutable run lineage conflict for {model_version.model_id}: "
+                f"{existing_source_run_id!r} != {model_version.run_id!r}"
+            )
+        existing_artifact_sha256 = mlflow_version.tags.get(self._tag("artifact_sha256"))
+        requested_artifact_sha256 = self._artifact_sha256(model_version)
+        if (
+            existing_artifact_sha256
+            and requested_artifact_sha256
+            and existing_artifact_sha256 != requested_artifact_sha256
+        ):
+            raise ValueError(
+                f"immutable artifact digest conflict for {model_version.model_id}: "
+                f"{existing_artifact_sha256!r} != {requested_artifact_sha256!r}"
+            )
+
+    def _lineage_tags(
+        self,
+        model_version: ModelVersion,
+        *,
+        mlflow_run_id: str,
+    ) -> dict[str, str]:
+        artifact_sha256 = self._artifact_sha256(model_version)
+        governance = {
+            self._tag(key): value
+            for key, value in release_governance_values(model_version).items()
+        }
+        return {
+            **governance,
+            self._tag("schema_version"): _TAG_SCHEMA_VERSION,
+            self._tag("domain_version"): model_version.version,
+            self._tag("artifact_uri"): model_version.artifact_uri,
+            self._tag("artifact_sha256"): artifact_sha256 or "",
+            self._tag("dataset_snapshot_id"): model_version.dataset_snapshot_id,
+            self._tag("feature_schema_version"): model_version.feature_schema_version,
+            self._tag("label_version"): model_version.label_version,
+            self._tag("metrics"): self._json(model_version.metrics),
+            self._tag("stage"): model_version.stage.value,
+            self._tag("source_run_id"): model_version.run_id or mlflow_run_id,
+            self._tag("mlflow_run_id"): mlflow_run_id,
+            self._tag("git_sha"): model_version.git_sha or "",
+            self._tag("created_at"): model_version.created_at.isoformat(),
+            self._tag("approved_by"): model_version.approved_by or "",
+            self._tag("approved_at"): (
+                model_version.approved_at.isoformat() if model_version.approved_at else ""
+            ),
+            self._tag("rollback_target"): model_version.rollback_target or "",
+            self._tag("monitoring_config"): self._json(model_version.monitoring_config),
+        }
+
+    @staticmethod
+    def _artifact_sha256(model_version: ModelVersion) -> str | None:
+        configured = model_version.monitoring_config.get(
+            "artifact_sha256"
+        ) or model_version.monitoring_config.get("artifact_digest")
+        if configured:
+            value = str(configured).lower()
+            return value if value.startswith("sha256:") else f"sha256:{value}"
+
+        uri = model_version.artifact_uri
+        if uri.startswith("odp-artifact://sha256/"):
+            return f"sha256:{uri.removeprefix('odp-artifact://sha256/')}"
+        parsed = urlparse(uri)
+        if parsed.scheme not in {"", "file"}:
+            return None
+        path = Path(unquote(parsed.path if parsed.scheme else uri))
+        if not path.is_file():
+            return None
+        return f"sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+
+    def _to_domain(self, mlflow_version: MlflowModelVersion) -> ModelVersion:
+        tags = mlflow_version.tags
+        domain_version = tags.get(self._tag("domain_version"))
+        if not domain_version:
+            raise ValueError(
+                f"MLflow version {mlflow_version.name}:{mlflow_version.version} "
+                "is missing its ODay Plus domain version tag"
+            )
+        raw_stage = tags.get(self._tag("stage"))
+        stage = (
+            ModelStage(raw_stage)
+            if raw_stage
+            else _MLFLOW_TO_STAGE.get(mlflow_version.current_stage, ModelStage.DEV)
+        )
+        aliases = frozenset(
+            ModelAlias(alias)
+            for alias in (getattr(mlflow_version, "aliases", None) or ())
+            if alias in ModelAlias._value2member_map_
+        )
+        created_at = self._parse_datetime(tags.get(self._tag("created_at")))
+        approved_at = self._parse_datetime(tags.get(self._tag("approved_at")), optional=True)
+        source_run_id = tags.get(self._tag("source_run_id")) or mlflow_version.run_id
+        return ModelVersion(
+            model_name=mlflow_version.name,
+            version=domain_version,
+            artifact_uri=tags.get(self._tag("artifact_uri"), mlflow_version.source),
+            dataset_snapshot_id=tags.get(self._tag("dataset_snapshot_id"), ""),
+            feature_schema_version=tags.get(self._tag("feature_schema_version"), ""),
+            label_version=tags.get(self._tag("label_version"), ""),
+            metrics={
+                key: float(value)
+                for key, value in self._parse_json(tags.get(self._tag("metrics")), {}).items()
+            },
+            stage=stage,
+            aliases=aliases,
+            run_id=source_run_id,
+            git_sha=tags.get(self._tag("git_sha")) or None,
+            created_at=created_at,
+            approved_by=tags.get(self._tag("approved_by")) or None,
+            approved_at=approved_at,
+            rollback_target=tags.get(self._tag("rollback_target")) or None,
+            monitoring_config=self._parse_json(
+                tags.get(self._tag("monitoring_config")),
+                {},
+            ),
+        )
+
+    @staticmethod
+    def _tag(name: str) -> str:
+        return f"{_TAG_PREFIX}{name}"
+
+    @staticmethod
+    def _json(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+
+    @staticmethod
+    def _parse_json(value: str | None, default: Any) -> Any:
+        return json.loads(value) if value else default
+
+    @staticmethod
+    def _parse_datetime(value: str | None, *, optional: bool = False) -> datetime | None:
+        if not value:
+            return None if optional else datetime.now(UTC)
+        parsed = datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def release_governance_values(model_version: ModelVersion) -> dict[str, str]:
+    """Project the governance keys carried in ``monitoring_config`` as tag values."""
+
+    monitoring_config = model_version.monitoring_config
+    return {key: str(monitoring_config.get(key, "") or "") for key in _GOVERNANCE_TAG_KEYS}
+
+
+def _require_remote_tracking_uri(tracking_uri: str | None) -> None:
+    if not tracking_uri:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production requires MLFLOW_TRACKING_URI"
+        )
+    parsed = urlparse(tracking_uri)
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme.lower() in {"", "file", "sqlite"} or hostname in {
+        "",
+        "localhost",
+        "127.0.0.1",
+        "::1",
+    }:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production rejects local file or SQLite MLflow tracking"
+        )
+
+
+def _validate_production_model_lineage(model_version: ModelVersion) -> None:
+    missing = [
+        name
+        for name, value in {
+            "artifact_uri": model_version.artifact_uri,
+            "dataset_snapshot_id": model_version.dataset_snapshot_id,
+            "feature_schema_version": model_version.feature_schema_version,
+            "label_version": model_version.label_version,
+            "run_id": model_version.run_id,
+            "git_sha": model_version.git_sha,
+        }.items()
+        if not value
+    ]
+    if missing:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production model lineage is incomplete: " + ", ".join(sorted(missing))
+        )
+    parsed = urlparse(model_version.artifact_uri)
+    if parsed.scheme.lower() in {"", "file"}:
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production rejects local model artifact URIs"
+        )
+    if not MlflowRegistryAdapter._artifact_sha256(model_version):
+        raise LearningHubRuntimeConfigurationError(
+            "Learning Hub production model artifacts require an immutable SHA-256 digest"
+        )
+
+
+__all__ = [
+    "MlflowAliasSynchronizationError",
+    "MlflowRegistryAdapter",
+    "release_governance_values",
+]

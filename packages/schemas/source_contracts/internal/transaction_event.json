@@ -1,0 +1,32 @@
+{
+  "contract_id": "transaction_event",
+  "title": "Transaction Event",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.3; ODP-DATA-05 §5.3",
+  "source_system": "payment",
+  "source_dataset": "transaction_event",
+  "canonical_target": "transaction",
+  "mapping_id": "MAP-INT-TRANSACTION-v1",
+  "integration_mode": "incremental_batch",
+  "envelope": "batch",
+  "invariants": [
+    {"rule": "time_order", "earlier": "event_time", "later": "payment_time", "code": "invalid_time"}
+  ],
+  "fields": [
+    {"name": "source_transaction_id", "type": "string", "required": true, "description": "Source transaction id."},
+    {"name": "source_store_id", "type": "string", "required": true, "description": "Store id."},
+    {"name": "source_machine_id", "type": "string", "required": false, "description": "Machine id."},
+    {"name": "member_source_id", "type": "string", "required": false, "description": "Member source id (tokenized downstream)."},
+    {"name": "event_time", "type": "timestamp", "required": true, "description": "Actual transaction time."},
+    {"name": "payment_time", "type": "timestamp", "required": false, "description": "Payment completion time."},
+    {"name": "gross_amount", "type": "number", "required": true, "minimum": 0, "invalid_code": "invalid_amount", "description": "Gross transaction amount."},
+    {"name": "discount_amount", "type": "number", "required": false, "minimum": 0, "invalid_code": "invalid_amount", "description": "Discount amount."},
+    {"name": "net_amount", "type": "number", "required": true, "description": "Net amount."},
+    {"name": "currency", "type": "string", "required": true, "description": "Currency code."},
+    {"name": "payment_method", "type": "string", "required": false, "description": "Cash / LINE Pay / credit card etc."},
+    {"name": "transaction_status", "type": "string", "required": true, "enum": ["succeeded", "failed", "refunded", "voided", "partial"], "description": "Transaction status."},
+    {"name": "refund_reference_id", "type": "string", "required": false, "description": "Original transaction for a refund."},
+    {"name": "price_version", "type": "string", "required": false, "description": "Price schedule version in effect."},
+    {"name": "promotion_id", "type": "string", "required": false, "description": "Promotion / campaign id."}
+  ]
+}

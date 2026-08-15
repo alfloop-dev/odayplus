@@ -1,0 +1,361 @@
+/*
+ * Domain component styles. Token-only values from @oday-plus/design-tokens.
+ */
+
+.odp-domain-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-4);
+  padding: var(--odp-density-card-padding);
+  background: var(--odp-color-bg-surface);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  color: var(--odp-color-text-primary);
+  font-family: var(--odp-font-family-sans);
+  font-size: var(--odp-font-size-md);
+  line-height: var(--odp-line-height-normal);
+  box-shadow: var(--odp-elevation-card);
+}
+
+.odp-domain-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--odp-space-3);
+}
+
+.odp-domain-card__title {
+  margin: 0;
+  font-size: var(--odp-font-size-lg);
+  font-weight: var(--odp-font-weight-semibold);
+  line-height: var(--odp-line-height-compact);
+}
+
+.odp-domain-card__badge {
+  flex: 0 0 auto;
+}
+
+.odp-domain-eyebrow {
+  margin: 0 0 var(--odp-space-1);
+  color: var(--odp-color-text-muted);
+  font-size: var(--odp-font-size-xs);
+  font-weight: var(--odp-font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.odp-domain-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  max-width: 100%;
+  padding: var(--odp-space-1) var(--odp-space-2);
+  border-radius: var(--odp-radius-sm);
+  background: var(--odp-domain-tone-bg, var(--odp-color-status-gray-soft));
+  color: var(--odp-domain-tone-fg, var(--odp-color-status-gray-on));
+  font-size: var(--odp-font-size-xs);
+  font-weight: var(--odp-font-weight-semibold);
+  line-height: var(--odp-line-height-compact);
+  white-space: normal;
+}
+
+.odp-domain-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--odp-space-3);
+  margin: 0;
+}
+
+.odp-domain-field {
+  min-width: 0;
+}
+
+.odp-domain-field dt {
+  margin: 0 0 var(--odp-space-1);
+  color: var(--odp-color-text-muted);
+  font-size: var(--odp-font-size-xs);
+}
+
+.odp-domain-field dd {
+  margin: 0;
+  color: var(--odp-color-text-primary);
+  font-weight: var(--odp-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.odp-domain-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-2);
+}
+
+.odp-domain-section h3,
+.odp-domain-timeline h3 {
+  margin: 0;
+  font-size: var(--odp-font-size-sm);
+  font-weight: var(--odp-font-weight-semibold);
+}
+
+.odp-domain-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-2);
+  margin: 0;
+  padding-left: var(--odp-space-4);
+}
+
+.odp-domain-factor {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-2);
+}
+
+.odp-domain-muted {
+  margin: 0;
+  color: var(--odp-color-text-muted);
+}
+
+.odp-domain-alert {
+  margin: 0;
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-warning);
+  border-radius: var(--odp-radius-sm);
+  background: var(--odp-color-bg-warning-soft);
+  color: var(--odp-color-text-warning);
+  font-weight: var(--odp-font-weight-medium);
+}
+
+.odp-domain-evidence-panel,
+.odp-domain-meta,
+.odp-domain-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--odp-space-2);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.odp-domain-interval {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-1);
+}
+
+.odp-domain-interval__label {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--odp-space-2);
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-sm);
+}
+
+.odp-domain-interval__track {
+  position: relative;
+  height: var(--odp-space-3);
+  overflow: hidden;
+  border-radius: var(--odp-radius-sm);
+  background: var(--odp-color-bg-muted);
+}
+
+.odp-domain-interval__band,
+.odp-domain-interval__median {
+  position: absolute;
+  top: var(--odp-space-0);
+  bottom: var(--odp-space-0);
+  left: var(--odp-domain-p10, 0);
+}
+
+.odp-domain-interval__band {
+  width: calc(var(--odp-domain-p90, 100%) - var(--odp-domain-p10, 0%));
+  background: var(--odp-color-bg-info-soft);
+}
+
+.odp-domain-interval__median {
+  width: var(--odp-space-1);
+  transform: translateX(var(--odp-domain-p50, 50%));
+  background: var(--odp-color-status-blue);
+}
+
+.odp-domain-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.odp-domain-timeline__item {
+  display: grid;
+  grid-template-columns: var(--odp-space-4) 1fr;
+  gap: var(--odp-space-3);
+}
+
+.odp-domain-timeline__item p {
+  margin: var(--odp-space-1) 0;
+}
+
+.odp-domain-timeline__marker {
+  width: var(--odp-space-3);
+  height: var(--odp-space-3);
+  margin-top: var(--odp-space-1);
+  border-radius: var(--odp-radius-full);
+  background: var(--odp-color-status-blue);
+}
+
+.odp-domain-timeline__item--missing .odp-domain-timeline__marker {
+  background: var(--odp-color-status-gray);
+}
+
+.odp-domain-table-wrap {
+  overflow-x: auto;
+}
+
+.odp-domain-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--odp-font-size-sm);
+}
+
+.odp-domain-table caption {
+  margin-bottom: var(--odp-space-2);
+  color: var(--odp-color-text-muted);
+  text-align: left;
+}
+
+.odp-domain-table th,
+.odp-domain-table td {
+  padding: var(--odp-space-2);
+  border-bottom: 1px solid var(--odp-color-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.odp-domain-chart {
+  display: flex;
+  align-items: end;
+  gap: var(--odp-space-2);
+  padding: var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-inset);
+  overflow-x: auto;
+}
+
+.odp-domain-chart__point {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  align-items: end;
+  justify-items: center;
+  min-width: var(--odp-space-12);
+  height: 100%;
+  min-height: 220px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.odp-domain-chart__point:focus-visible {
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 2px;
+}
+
+.odp-domain-chart__bar,
+.odp-domain-chart__median,
+.odp-domain-chart__actual {
+  position: absolute;
+  bottom: var(--odp-space-8);
+  border-radius: var(--odp-radius-sm) var(--odp-radius-sm) 0 0;
+}
+
+.odp-domain-chart__bar {
+  width: var(--odp-space-6);
+  height: var(--odp-domain-band);
+  background: var(--odp-color-bg-info-soft);
+  border: 1px solid var(--odp-color-border-focus);
+}
+
+.odp-domain-chart__median {
+  width: var(--odp-space-2);
+  height: var(--odp-domain-median);
+  background: var(--odp-color-status-blue);
+}
+
+.odp-domain-chart__actual {
+  width: var(--odp-space-1);
+  height: var(--odp-domain-actual);
+  background: var(--odp-color-status-green);
+}
+
+.odp-domain-chart__point--anomaly .odp-domain-chart__bar {
+  border-color: var(--odp-color-border-danger);
+}
+
+.odp-domain-chart__baseline,
+.odp-domain-chart__marker,
+.odp-domain-chart__date {
+  max-width: 100%;
+  color: var(--odp-color-text-secondary);
+  font-size: var(--odp-font-size-xs);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
+.odp-domain-chart__date {
+  align-self: end;
+}
+
+.odp-domain-button,
+.odp-domain-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--odp-density-control-height);
+  padding: 0 var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-default);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-bg-surface);
+  color: var(--odp-color-text-link);
+  font: inherit;
+  font-weight: var(--odp-font-weight-semibold);
+  text-decoration: none;
+}
+
+.odp-domain-button:focus-visible,
+.odp-domain-link:focus-visible {
+  outline: 2px solid var(--odp-color-border-focus);
+  outline-offset: 1px;
+}
+
+.odp-domain-four-light {
+  display: inline-flex;
+}
+
+.odp-domain-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 640px) {
+  .odp-domain-card__header {
+    flex-direction: column;
+  }
+
+  .odp-domain-field-grid {
+    grid-template-columns: 1fr;
+  }
+}

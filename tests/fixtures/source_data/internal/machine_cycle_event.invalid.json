@@ -1,0 +1,38 @@
+{
+  "contract_id": "machine_cycle_event",
+  "cases": [
+    {
+      "label": "missing required source_machine_id and cycle_status",
+      "record": {
+        "source_cycle_id": "CY-9001",
+        "source_store_id": "S001",
+        "cycle_start_time": "2026-06-26T08:10:00+08:00"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "cycle_end_time before cycle_start_time",
+      "record": {
+        "source_cycle_id": "CY-9002",
+        "source_store_id": "S001",
+        "source_machine_id": "M-ABC123",
+        "cycle_start_time": "2026-06-26T08:40:00+08:00",
+        "cycle_end_time": "2026-06-26T08:10:00+08:00",
+        "cycle_status": "completed"
+      },
+      "expect_codes": ["invalid_time"]
+    },
+    {
+      "label": "unmapped cycle_type enum",
+      "record": {
+        "source_cycle_id": "CY-9003",
+        "source_store_id": "S001",
+        "source_machine_id": "M-ABC123",
+        "cycle_start_time": "2026-06-26T08:10:00+08:00",
+        "cycle_type": "spin",
+        "cycle_status": "completed"
+      },
+      "expect_codes": ["enum_violation"]
+    }
+  ]
+}

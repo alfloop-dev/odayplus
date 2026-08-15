@@ -1,0 +1,22 @@
+{
+  "contract_id": "event_envelope",
+  "records": [
+    {
+      "event_id": "evt_20260626_000001",
+      "event_type": "machine.status.changed",
+      "event_version": "1.0",
+      "source_system": "iot_core",
+      "idempotency_key": "iot_core:machine:ABC123:2026-06-26T08:15:00+08:00:error:E07",
+      "correlation_id": "corr_9d8f",
+      "event_time": "2026-06-26T08:15:00+08:00",
+      "observation_time": "2026-06-26T08:15:02+08:00",
+      "payload": {
+        "source_store_id": "S001",
+        "source_machine_id": "M-ABC123",
+        "status_type": "error",
+        "error_code": "E07",
+        "severity": "critical"
+      }
+    }
+  ]
+}

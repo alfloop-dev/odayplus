@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import fcntl
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
-from supervisor_runtime_health import evaluate_runtime_health
+from supervisor_runtime_health import check_git_repo_freshness, evaluate_runtime_health
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -15,7 +16,7 @@ def write_json(path: Path, payload: object) -> None:
 
 def test_health_passes_when_supervisor_lock_and_heartbeat_are_fresh(tmp_path: Path) -> None:
     repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
     write_json(
         repo / ".orchestrator" / "config.json",
         {
@@ -49,7 +50,7 @@ def test_health_passes_when_supervisor_lock_and_heartbeat_are_fresh(tmp_path: Pa
 
 def test_health_fails_on_stale_heartbeat(tmp_path: Path) -> None:
     repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
     write_json(repo / ".orchestrator" / "config.json", {"paths": {"state_file": ".orchestrator/state.json"}})
     write_json(
         repo / ".orchestrator" / "state.json",
@@ -66,7 +67,7 @@ def test_health_fails_on_stale_heartbeat(tmp_path: Path) -> None:
 
 def test_require_watchdog_fails_when_probe_is_stale(tmp_path: Path) -> None:
     repo = tmp_path
-    now = datetime(2026, 6, 6, 6, 30, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
     write_json(
         repo / ".orchestrator" / "config.json",
         {
@@ -92,3 +93,192 @@ def test_require_watchdog_fails_when_probe_is_stale(tmp_path: Path) -> None:
     assert report["healthy"] is False
     failed = {item["name"] for item in report["checks"] if not item["ok"]}
     assert "watchdog_probe_fresh" in failed
+
+
+def test_health_checks_dashboard_when_present_and_fresh(tmp_path: Path) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
+    write_json(
+        repo / ".orchestrator" / "config.json",
+        {
+            "paths": {
+                "state_file": ".orchestrator/state.json",
+                "status_file": ".orchestrator/ai-status.json",
+            },
+            "supervisor": {"poll_interval_seconds": 300},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "state.json",
+        {
+            "supervisor": {
+                "last_heartbeat_at": "2026-06-06T06:29:50Z",
+                "lifecycle": "running",
+                "pid": 12345,
+            }
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "dashboard-bundle.json",
+        {
+            "generated_at": "2026-06-06T06:29:58Z",
+            "runtime_summary": {"supervisor_pid": 12345},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "ai-status.json",
+        {"runtime_summary": {"supervisor_pid": 12345}},
+    )
+
+    report = evaluate_runtime_health(repo, now=now)
+
+    # Supervisor process won't exist in test env, but dashboard checks should still be evaluated.
+    assert report["healthy"] is False
+    names = {item["name"] for item in report["checks"]}
+    assert {
+        "dashboard_bundle_present",
+        "dashboard_bundle_valid",
+        "dashboard_bundle_fresh",
+        "dashboard_supervisor_pid_matches",
+    }.issubset(names)
+    assert report["dashboard"]["present"] is True
+
+
+def test_require_dashboard_fails_when_missing(tmp_path: Path) -> None:
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
+    write_json(
+        repo / ".orchestrator" / "config.json",
+        {
+            "paths": {"state_file": ".orchestrator/state.json", "status_file": ".orchestrator/ai-status.json"},
+            "supervisor": {"poll_interval_seconds": 300},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "state.json",
+        {
+            "supervisor": {
+                "last_heartbeat_at": "2026-06-06T06:29:50Z",
+                "lifecycle": "running",
+                "pid": 6789,
+            }
+        },
+    )
+
+    report = evaluate_runtime_health(repo, now=now, require_dashboard=True)
+
+    assert report["healthy"] is False
+    failed = {item["name"] for item in report["checks"] if not item["ok"]}
+    assert {
+        "dashboard_bundle_present",
+        "dashboard_bundle_valid",
+        "dashboard_bundle_fresh",
+        "dashboard_supervisor_pid_matches",
+    }.issubset(failed)
+
+
+# ---------------------------------------------------------------------------
+# Git freshness check tests
+# ---------------------------------------------------------------------------
+
+
+def test_git_freshness_fails_on_detached_head(tmp_path: Path) -> None:
+    """Detached HEAD -> both runtime_git_not_detached and runtime_git_not_behind fail closed."""
+    with patch("supervisor_runtime_health._run_git", return_value=(1, "")):
+        report = check_git_repo_freshness(tmp_path)
+
+    checks_by_name = {c["name"]: c for c in report["checks"]}
+    assert checks_by_name["runtime_git_not_detached"]["ok"] is False
+    assert checks_by_name["runtime_git_not_behind"]["ok"] is False
+    assert report["detached_head"] is True
+
+
+def test_git_freshness_fails_when_behind_upstream(tmp_path: Path) -> None:
+    """Non-detached HEAD but N commits behind -> runtime_git_not_behind fails."""
+
+    def fake_run_git(args: list, *, cwd):  # noqa: ANN001
+        if args[:2] == ["symbolic-ref", "--quiet"]:
+            return 0, "refs/heads/main"
+        # rev-list HEAD..upstream returns commit count
+        return 0, "5"
+
+    with patch("supervisor_runtime_health._run_git", side_effect=fake_run_git):
+        report = check_git_repo_freshness(tmp_path, max_commits_behind=0)
+
+    checks_by_name = {c["name"]: c for c in report["checks"]}
+    assert checks_by_name["runtime_git_not_detached"]["ok"] is True
+    assert checks_by_name["runtime_git_not_behind"]["ok"] is False
+    assert report["commits_behind"] == 5
+    assert report["detached_head"] is False
+
+
+def test_git_freshness_passes_on_fresh_checkout(tmp_path: Path) -> None:
+    """HEAD is on a tracked branch with 0 commits behind -> both checks pass."""
+
+    def fake_run_git(args: list, *, cwd):  # noqa: ANN001
+        if args[:2] == ["symbolic-ref", "--quiet"]:
+            return 0, "refs/heads/main"
+        return 0, "0"
+
+    with patch("supervisor_runtime_health._run_git", side_effect=fake_run_git):
+        report = check_git_repo_freshness(tmp_path, max_commits_behind=0)
+
+    checks_by_name = {c["name"]: c for c in report["checks"]}
+    assert checks_by_name["runtime_git_not_detached"]["ok"] is True
+    assert checks_by_name["runtime_git_not_behind"]["ok"] is True
+    assert report["commits_behind"] == 0
+
+
+def test_git_freshness_fails_when_rev_list_errors(tmp_path: Path) -> None:
+    """If rev-list fails (no upstream tracking), runtime_git_not_behind fails closed."""
+
+    def fake_run_git(args: list, *, cwd):  # noqa: ANN001
+        if args[:2] == ["symbolic-ref", "--quiet"]:
+            return 0, "refs/heads/main"
+        # Simulate no upstream configured
+        return 128, "fatal: no upstream configured"
+
+    with patch("supervisor_runtime_health._run_git", side_effect=fake_run_git):
+        report = check_git_repo_freshness(tmp_path)
+
+    checks_by_name = {c["name"]: c for c in report["checks"]}
+    assert checks_by_name["runtime_git_not_detached"]["ok"] is True
+    assert checks_by_name["runtime_git_not_behind"]["ok"] is False
+    assert report["commits_behind"] is None
+    assert report["error"] is not None
+
+
+def test_evaluate_runtime_health_includes_git_checks(tmp_path: Path) -> None:
+    """evaluate_runtime_health with check_git_freshness=True surfaces git checks."""
+    repo = tmp_path
+    now = datetime(2026, 6, 6, 6, 30, tzinfo=UTC)
+    write_json(
+        repo / ".orchestrator" / "config.json",
+        {
+            "paths": {"state_file": ".orchestrator/state.json"},
+            "watchdog": {"heartbeat_stale_seconds": 900},
+        },
+    )
+    write_json(
+        repo / ".orchestrator" / "state.json",
+        {
+            "supervisor": {
+                "last_heartbeat_at": "2026-06-06T06:29:30Z",
+                "lifecycle": "running",
+                "last_loop_error": None,
+            }
+        },
+    )
+
+    def fake_run_git(args: list, *, cwd):  # noqa: ANN001
+        if args[:2] == ["symbolic-ref", "--quiet"]:
+            return 0, "refs/heads/main"
+        return 0, "0"
+
+    with patch("supervisor_runtime_health._run_git", side_effect=fake_run_git):
+        report = evaluate_runtime_health(repo, now=now, check_git_freshness=True)
+
+    names = {item["name"] for item in report["checks"]}
+    assert "runtime_git_not_detached" in names
+    assert "runtime_git_not_behind" in names
+    assert report["git_freshness"] is not None

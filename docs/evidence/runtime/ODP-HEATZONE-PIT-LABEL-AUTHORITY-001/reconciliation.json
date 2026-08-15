@@ -1,0 +1,87 @@
+{
+  "task_id": "ODP-HEATZONE-PIT-LABEL-AUTHORITY-001",
+  "decision": "FAIL_CLOSED",
+  "decision_recorded_at": "2026-07-27T22:08:37Z",
+  "owner": "Claude3",
+  "reviewer": "Claude",
+  "correction": {
+    "supersedes_commit": "5cd8d4a2eee21b335bee98b51de299728a313fad",
+    "defect": "decision_recorded_at 2026-07-27T21:30:00Z postdated the evidence commit timestamp 2026-07-27T21:27:30Z; it was not an authoritative recording time",
+    "resolution": "decision re-recorded at actual write time immediately after a live PG16 re-verification; all fail-closed facts reconfirmed unchanged"
+  },
+  "live_verification": {
+    "verified_at": "2026-07-27T22:08:37Z",
+    "database": "oday",
+    "server_version": "PostgreSQL 16.14",
+    "access": "cloud-sql-proxy 127.0.0.1:6433 (secret oday-plus-dev-api-database-url-pg16)",
+    "queries": [
+      "select count(*), count(opened_on) from core.stores",
+      "select count(*), count(distinct h3_res_9) from data_plane.place_geography"
+    ],
+    "results": {
+      "pg16_store_rows": 2442,
+      "approved_opened_on_rows": 0,
+      "canonical_pit_geography_rows": 1909,
+      "distinct_h3_res_9_cells": 1443
+    }
+  },
+  "labels_persisted": 0,
+  "dataset_created": false,
+  "model_alias_activated": false,
+  "short_circuit_gate": "APPROVED_IMMUTABLE_OPENED_ON_MISSING",
+  "reconciliation": {
+    "pg16_store_rows": 2442,
+    "approved_opened_on_rows": 0,
+    "canonical_pit_geography_rows": 1909,
+    "distinct_h3_res_9_cells": 1443,
+    "origin_rows": 0,
+    "mature_real_label_rows": 0,
+    "minimum_required_label_rows": 200,
+    "prior_horizon_days": 90,
+    "label_horizon_days": 28
+  },
+  "invariants": [
+    "opened_on comes only from an approved immutable authority",
+    "tenant_id and store_id match canonical core.stores identity and lineage",
+    "geography is valid at each transaction event_time",
+    "orders partitions are reconciled, complete, and unquarantined",
+    "no fixture, mock, synthetic, created_at, or ingestion-time substitute",
+    "no dataset or alias is created below 200 eligible real labels"
+  ],
+  "source_evidence": [
+    {
+      "path": "docs/evidence/runtime/ODP-STORE-OPENING-AUTHORITY-ACTIVATION-001/fail_closed_decision.json",
+      "sha256": "9dce37cf9d504ab76032e807f43ce66c188c8e30ce76be34f009b9b00e752671"
+    },
+    {
+      "path": "docs/evidence/runtime/ODP-PRODUCTION-GEOGRAPHY-BACKFILL-001/live-geography-backfill.md",
+      "sha256": "e2764c7e51ebae4690364da942606c1b997ba43c816ac2a38a6f9dd916c0245e"
+    },
+    {
+      "path": "product_ops/modeling/sql/model_ready_views.sql",
+      "sha256": "0bbcad43ed07f81ecd1a6f6a4e7e387efb3abb540b4d98c8d101a0bdd292dca8"
+    }
+  ],
+  "data_request": {
+    "owner": "Expansion Operations / POS Data Platform",
+    "required_fields": [
+      "tenant_id",
+      "store_id",
+      "opened_on",
+      "authority_type",
+      "provenance",
+      "snapshot_id",
+      "content_sha256"
+    ],
+    "coverage": "all 2442 PG16 stores or an explicit eligible-subset store UUID list",
+    "correction_policy": "new immutable snapshot; conflicts quarantined without overwrite"
+  },
+  "activation_gate": {
+    "minimum_eligible_real_labels": 200,
+    "requires_prior_days": 90,
+    "requires_label_days": 28,
+    "requires_historical_geography": true,
+    "requires_canonical_identity_lineage": true,
+    "requires_reproducible_dataset": true
+  }
+}

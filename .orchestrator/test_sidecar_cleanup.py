@@ -6,7 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -22,7 +22,7 @@ class SidecarCleanupTests(unittest.TestCase):
         self.sidecars_root = self.root / "support" / "sidecars"
         self.archive_tasks_dir = self.root / "ai-task-archive" / "tasks"
         self.status_path = self.root / "ai-status.json"
-        self.now = datetime(2026, 5, 16, tzinfo=timezone.utc)
+        self.now = datetime(2026, 5, 16, tzinfo=UTC)
         self.status_path.parent.mkdir(parents=True, exist_ok=True)
         self.status_path.write_text(json.dumps({"tasks": []}), encoding="utf-8")
 

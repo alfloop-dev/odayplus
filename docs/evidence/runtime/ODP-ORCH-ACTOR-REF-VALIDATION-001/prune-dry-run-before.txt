@@ -1,0 +1,46 @@
+Warning: 11 invalid actor reference(s) in durable state; commands still run, but these fields hold prose or task ids instead of agent names:
+  - task ODP-PRODUCTION-MODEL-REGISTRY-001 waiting_for: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - blockers[5] waiting_for: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - blockers[8] waiting_for: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - blockers[9] waiting_for: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - blockers[15] waiting_for: actor reference is 1446 characters (max 40); this looks like prose, not an agent name ('STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da3676...')
+  - agents[23] name: actor reference looks like a task id, not an agent name ('ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001')
+  - agents[24] name: actor reference looks like a task id, not an agent name ('ODP-P10-FLEET-CONFLICT-REAUDIT-001')
+  - agents[25] name: actor reference is 66 characters (max 40); this looks like prose, not an agent name ('Human/Data owner: authoritative ForecastOps daily-history backfill')
+  - agents[26] name: actor reference is 314 characters (max 40); this looks like prose, not an agent name ('Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...')
+  - agents[27] name: actor reference is 58 characters (max 40); this looks like prose, not an agent name ('Remediation task for migration-compatibility-smoke timeout')
+  - agents[29] name: actor reference is 1446 characters (max 40); this looks like prose, not an agent name ('STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da3676...')
+  Repair with: ai-status.sh retarget_blocker <task-id> <agent> <reason>
+  Then remove leftover roster entries with: ai-status.sh prune_agents --apply
+KEEP   'Claude' — declared in KNOWN_AGENTS
+KEEP   'Claude2' — declared in KNOWN_AGENTS
+KEEP   'Antigravity' — declared in KNOWN_AGENTS
+KEEP   'Antigravity2' — declared in KNOWN_AGENTS
+KEEP   'Antigravity3' — declared in KNOWN_AGENTS
+KEEP   'Antigravity4' — declared in KNOWN_AGENTS
+KEEP   'Antigravity5' — declared in KNOWN_AGENTS
+KEEP   'Antigravity6' — declared in KNOWN_AGENTS
+KEEP   'Antigravity7' — declared in KNOWN_AGENTS
+KEEP   'Gemini' — declared in KNOWN_AGENTS
+KEEP   'Gemini2' — declared in KNOWN_AGENTS
+KEEP   'Codex' — declared in KNOWN_AGENTS
+KEEP   'Codex2' — declared in KNOWN_AGENTS
+KEEP   'Copilot' — declared in KNOWN_AGENTS
+KEEP   'Human/Ops' — declared in KNOWN_AGENTS
+KEEP   'Claude3' — declared in .orchestrator/config.json
+REMOVE 'Antigravity4/user' — undeclared and unreferenced synthetic roster entry
+REMOVE 'Codex4' — undeclared and unreferenced synthetic roster entry
+KEEP   'Codex5' — still referenced by a task, blocker or handoff
+KEEP   'Codex6' — still referenced by a task, blocker or handoff
+REMOVE 'Codex7' — undeclared and unreferenced synthetic roster entry
+KEEP   'Codex8' — still referenced by a task, blocker or handoff
+KEEP   'Codex9' — still referenced by a task, blocker or handoff
+REMOVE 'ODP-ORCH-ANTIGRAVITY-LIVE-FALLBACK-001' — actor reference looks like a task id, not an agent name
+REMOVE 'ODP-P10-FLEET-CONFLICT-REAUDIT-001' — actor reference looks like a task id, not an agent name
+KEEP   'Human/Data owner: authoritative ForecastOps daily-history backfill' — still referenced by a task, blocker or handoff
+KEEP   'Cannot run Deploy Dev until PR #484 (task/ODP-DEPLOY-JOB-SECRET-BIN...' — still referenced by a task, blocker or handoff
+KEEP   'Remediation task for migration-compatibility-smoke timeout' — still referenced by a task, blocker or handoff
+KEEP   'CodexCoordinator' — still referenced by a task, blocker or handoff
+KEEP   'STOP FOR CODEX2 REVIEW ON EXACT HEAD 6ca4726c31f44ca96a7f3f85da3676...' — still referenced by a task, blocker or handoff
+
+Dry run: 5 entry(ies) would be removed. Re-run with --apply.

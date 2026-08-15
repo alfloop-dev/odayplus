@@ -1,0 +1,57 @@
+# Assisted Listing Intake v1 — kill-switch / rollback trigger register.
+#
+# Normative source: runbook §5.1 (triggers) and §5.2 (mechanism order).
+# The release harness rollback drill executes the mechanism steps in this exact
+# order and records the evidence fields listed under evidence_packet.
+
+register_version: 1
+task_ref: ODP-INTAKE-RELEASE-001
+
+triggers:
+  - id: TRG-TENANT-BREACH
+    condition: "cross-tenant or field-classification breach"
+  - id: TRG-SOURCE-VIOLATION
+    condition: "unknown/prohibited source retrieval"
+  - id: TRG-AUTO-MERGE
+    condition: "ambiguous auto-merge or automatic promotion"
+  - id: TRG-WORM-LOSS
+    condition: "audit/WORM loss for a high-impact decision"
+  - id: TRG-DUP-CANDIDATE
+    condition: "duplicate active candidate invariant violation"
+  - id: TRG-CHECKSUM
+    condition: "unreconciled SQL/GCS checksum mismatch"
+  - id: TRG-ERROR-BUDGET
+    condition: "error budget exhausted or queue age critical for 30 minutes"
+  - id: TRG-DATA-LOSS
+    condition: "data-loss or restore failure"
+
+mechanism_order:
+  - step: 1
+    action: "disable per-tenant/source flags and stop new Cloud Tasks"
+  - step: 2
+    action: "keep target data read-only; do not delete evidence"
+  - step: 3
+    action: "drain/park in-flight tasks at checkpoints using cancellation/fence version"
+  - step: 4
+    action: "disable event publication; retain outbox rows"
+  - step: 5
+    action: "pre-authoritative shadow/canary: resume legacy authoritative path"
+  - step: 6
+    action: "post-authority: last compatible application version against target schema; committed business decisions are not auto-reversed"
+  - step: 7
+    action: "identity/promotion changes reverse only through approved reversal state machines"
+  - step: 8
+    action: "database restore (if required) follows reliability contract §4 restore order and reconciles from WORM/outbox/snapshots"
+
+evidence_packet:
+  required_fields:
+    - trigger
+    - actor
+    - flag_versions
+    - task_counts
+    - last_committed_aggregate_versions
+    - outbox_range
+    - snapshot_manifest
+    - reconciliation_results
+    - tenant_impact
+    - release_authority_approval

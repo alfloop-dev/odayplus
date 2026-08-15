@@ -1,0 +1,11 @@
+restored_at: 2026-07-29T06:10:38Z
+exit_code: 0
+terminal_verdict: proof_complete
+supervisor_active_state: active
+supervisor_main_pid: 1487837
+supervisor_kill_mode: control-group
+dropin_present: no
+watchdog_timer_state: active
+watchdog_service_state: inactive
+deadman_timer_state: inactive
+unmanaged_supervisors: <none>

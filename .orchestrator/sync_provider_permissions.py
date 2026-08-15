@@ -19,11 +19,11 @@ from provider_permissions import (
     apply_gemini_settings,
     apply_workspace_settings,
     create_backup,
+    desired_sync_state,
     latest_backup_dir,
     load_backup_manifest,
     provider_capabilities,
     restore_backup,
-    desired_sync_state,
     write_provider_capabilities,
 )
 

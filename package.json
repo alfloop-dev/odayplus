@@ -1,0 +1,33 @@
+{
+  "name": "oday-plus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ODay Plus monorepo foundation",
+  "workspaces": [
+    "apps/web",
+    "packages/*"
+  ],
+  "scripts": {
+    "audit:security": "npm audit --omit=dev --audit-level=high",
+    "build": "npm run build --workspaces --if-present",
+    "bundle:budget": "npm run bundle:budget --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "tokens:build": "npm run build:css --workspace=@oday-plus/design-tokens",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@playwright/test": "1.61.1",
+    "@vitejs/plugin-react": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "postcss": "^8.5.10",
+    "sharp": "0.35.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

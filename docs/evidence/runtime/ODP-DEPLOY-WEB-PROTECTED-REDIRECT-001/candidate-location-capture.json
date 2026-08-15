@@ -1,0 +1,18 @@
+{
+  "task_id": "ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001",
+  "deploy_run_id": "30436771086",
+  "web_url": "https://candidate-93ae1b2e75e1056c---oday-web-7sxbjoeozq-de.a.run.app",
+  "probe_endpoint": "/operator",
+  "status": 307,
+  "observed_location_header": "/login?returnTo=%2Foperator",
+  "observation_source": "Coordinator live no-follow probe of preserved candidate revision (same revision as run 30436771086). The pre-change validator in run 30436771086 did not capture the Location header in its detail output (detail=status=307 protected_redirect=false only). The coordinator independently probed the preserved candidate revision and captured the relative Location=/login?returnTo=%2Foperator, confirming same-origin relative redirect.",
+  "root_cause_analysis": {
+    "root_cause": "Validator prefix match rejected a valid same-origin relative Location. The old _is_safe_protected_redirect check used location.startswith(f\"{web_url}/login?\"), which requires an absolute URL prefixed by the candidate origin. A valid relative Location like /login?returnTo=%2Foperator does not start with the full https://candidate-...a.run.app/login? prefix and is therefore incorrectly rejected, producing protected_redirect=false.",
+    "validator_evaluation": "validate_cloud_run_live_deployment.py _is_safe_protected_redirect (before fix) required the Location header to be an absolute URL beginning with the candidate web_url origin. It did not resolve relative URLs against the request URL using urljoin, so a correct relative redirect was treated as a non-matching and thus unsafe Location.",
+    "middleware_unchanged": "apps/web/src/middleware.ts emits new URL('/login', request.url) — a same-origin relative Location — which is correct Next.js middleware behavior. No middleware change is required or introduced."
+  },
+  "remediation": {
+    "deployment_validator": "Updated product_ops/deployment/validate_cloud_run_live_deployment.py _is_safe_protected_redirect to resolve the raw Location via urllib.parse.urljoin against the candidate request URL before validation. Absolute and relative same-origin redirects to /login?returnTo=/operator are both accepted. Scheme downgrade, host mismatch, port mismatch, external origin, protocol-relative, userinfo, fragment, hostile returnTo, and double-encoded returnTo are all rejected. Updated smoke_checks() to capture the raw Location header in report[\"web_operator_redirect\"] and the check detail for diagnosability."
+  },
+  "captured_at": "2026-07-29T12:27:38Z"
+}

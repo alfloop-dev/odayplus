@@ -1,0 +1,45 @@
+{
+  "contract_id": "batch_envelope",
+  "cases": [
+    {
+      "label": "missing required source_record_id and idempotency_key",
+      "record": {
+        "source_system": "payment",
+        "source_dataset": "transaction_event",
+        "source_event_type": "create",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "observation_time": "2026-06-26T08:15:02+08:00",
+        "source_updated_at": "2026-06-26T08:15:02+08:00"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "unmapped source_event_type enum",
+      "record": {
+        "source_system": "payment",
+        "source_dataset": "transaction_event",
+        "source_record_id": "TX10023",
+        "source_event_type": "upsert",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "observation_time": "2026-06-26T08:15:02+08:00",
+        "source_updated_at": "2026-06-26T08:15:02+08:00",
+        "idempotency_key": "payment:transaction:TX10023:upsert"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "observation_time earlier than event_time",
+      "record": {
+        "source_system": "payment",
+        "source_dataset": "transaction_event",
+        "source_record_id": "TX10023",
+        "source_event_type": "create",
+        "event_time": "2026-06-26T08:15:02+08:00",
+        "observation_time": "2026-06-26T08:15:00+08:00",
+        "source_updated_at": "2026-06-26T08:15:02+08:00",
+        "idempotency_key": "payment:transaction:TX10023:create"
+      },
+      "expect_codes": ["invalid_time"]
+    }
+  ]
+}

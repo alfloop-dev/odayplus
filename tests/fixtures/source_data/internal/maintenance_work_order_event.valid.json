@@ -1,0 +1,25 @@
+{
+  "contract_id": "maintenance_work_order_event",
+  "records": [
+    {
+      "source_work_order_id": "WO-0001",
+      "source_store_id": "S001",
+      "source_machine_id": "M-ABC123",
+      "issue_type": "failure",
+      "issue_subtype": "water_leakage",
+      "opened_at": "2026-06-26T08:20:00+08:00",
+      "closed_at": "2026-06-26T11:00:00+08:00",
+      "status": "resolved",
+      "severity": "high",
+      "cost_amount": 2500.0,
+      "root_cause": "worn_seal"
+    },
+    {
+      "source_work_order_id": "WO-0002",
+      "source_store_id": "S001",
+      "issue_type": "cleaning",
+      "opened_at": "2026-06-26T12:00:00+08:00",
+      "status": "open"
+    }
+  ]
+}

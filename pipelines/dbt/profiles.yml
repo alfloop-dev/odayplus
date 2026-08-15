@@ -1,0 +1,11 @@
+oday_plus:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: localhost
+      user: oday
+      password: oday-local
+      port: 5432
+      dbname: oday
+      schema: public

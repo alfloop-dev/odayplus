@@ -1,0 +1,74 @@
+{
+  "taskId": "ODP-OC-R4-008",
+  "sourcePackage": {
+    "path": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/Oday Plus 營運管理後台 (6).zip",
+    "sha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+    "screenLabels": [
+      "Network 低效重配",
+      "Govern 治理稽核"
+    ]
+  },
+  "initial": {
+    "status": "watching",
+    "relocationExecuted": false,
+    "avmP50": null
+  },
+  "avm": {
+    "status": "avmready",
+    "p50": 2860000,
+    "modelVersion": "avm-rebalance-income-market-v1.0.0",
+    "snapshotId": "AVM-SNAP-20260714-0600",
+    "evidenceId": "EV-AVM-D8304CD4"
+  },
+  "netPlan": {
+    "status": "netplanreview",
+    "modelVersion": "netplan-rebalance-three-case-v1.0.0",
+    "snapshotId": "NP-SNAP-20260714-0615",
+    "scenarioIds": [
+      "keep",
+      "move",
+      "exit"
+    ],
+    "recommendedScenarioId": "move"
+  },
+  "selection": {
+    "selectedScenarioId": "move",
+    "owner": {
+      "actorRoleId": "expansionManager",
+      "actorName": "王若寧",
+      "selectedAt": "2026-07-14T10:04:19Z"
+    },
+    "evidenceId": "EV-SEL-E2E1317E"
+  },
+  "submission": {
+    "status": "pendingapproval",
+    "approvalId": "APR-NET-RB-801",
+    "relocationExecuted": false,
+    "executionBoundary": {
+      "relocationExecuted": false,
+      "message": "Govern approval was created; relocation remains unexecuted until a later approved execution plan."
+    },
+    "approvalVisibleInGovern": true
+  },
+  "runtimeUnavailable": {
+    "httpStatus": 503,
+    "detail": {
+      "state": "retryable_unavailable",
+      "retryable": true,
+      "model": "AVM",
+      "storeId": "RB-801",
+      "retryAfterSeconds": 300,
+      "message": "AVM runtime unavailable for RB-801; retryable"
+    },
+    "snapshotStatus": "avmrequested",
+    "snapshotRuntimeState": {
+      "state": "retryable_unavailable",
+      "model": "AVM",
+      "retryable": true,
+      "retryAfterSeconds": 300,
+      "recordedAt": "2026-07-14T10:04:19Z"
+    },
+    "avmP50": null,
+    "relocationExecuted": false
+  }
+}

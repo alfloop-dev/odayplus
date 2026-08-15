@@ -1,0 +1,55 @@
+{
+  "schema": "oday-plus.operator-console-design-archive-manifest.v1",
+  "archived_at": "2026-07-13T14:32:00Z",
+  "source_filename": "Oday Plus 營運管理後台 (6).zip",
+  "source_path_decoded": "/home/lupin/oday-plus/Oday Plus 營運管理後台 (6).zip",
+  "archive_integrity": {
+    "copy_matches_source": true,
+    "unzip_test": "passed",
+    "size_bytes": 153747,
+    "sha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+    "md5": "2e943b86da1a4e0813ecd214c7144b5f"
+  },
+  "design_identity": {
+    "version": "R4",
+    "demo_state_version": "oday-plus-r4-20260707",
+    "screen_label_count": 32
+  },
+  "files": [
+    {
+      "path": ".thumbnail",
+      "size_bytes": 23578,
+      "sha256": "f852cc833bb49ae2e189f17f5ef52082b6bf316d8c155c2a2a0f07da6dfd6d26"
+    },
+    {
+      "path": "Oday Plus Operator Console R4 Design Summary.dc.html",
+      "size_bytes": 16737,
+      "sha256": "a75818d8be19285d332b002032902393dcff51d21f6a7dd5a52a82b91e4b35e2"
+    },
+    {
+      "path": "Oday Plus Operator Console.dc.html",
+      "size_bytes": 443502,
+      "sha256": "65d359f4abaf82b39eb16f67da8e91e7ad1b030628bc15f8f45ce7c18c0e2f48",
+      "md5": "78b65c33fac19dc33ba241e640df5cd1"
+    },
+    {
+      "path": "oday-map.js",
+      "size_bytes": 4627,
+      "sha256": "95d92ba75a28ff24d025242bf0edf11fb6474ee6212344dd4e5e2b934f114b6d"
+    },
+    {
+      "path": "support.js",
+      "size_bytes": 60151,
+      "sha256": "e0650b109ec8f78ccc370fa27762b0c485cee4f208156a671f346e8544fc2214"
+    }
+  ],
+  "comparison_to_package_5": {
+    "package_5_zip_sha256": "ac42396833024b1831dfc80af52f2b9b07ae9ce70a92c61d1ea1cacb52e7c7e5",
+    "zip_metadata_delta": "entry timestamps only",
+    "identical_file_count": 5,
+    "changed_file_count": 0,
+    "added_file_count": 0,
+    "removed_file_count": 0,
+    "design_delta_count": 0
+  }
+}

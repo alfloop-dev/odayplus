@@ -1,0 +1,34 @@
+{
+  "contract_id": "competitor_store_snapshot",
+  "cases": [
+    {
+      "label": "missing required store_name and snapshot_id",
+      "record": {
+        "source_competitor_id": "CMP-901",
+        "status": "active"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "unmapped status enum",
+      "record": {
+        "source_competitor_id": "CMP-902",
+        "store_name": "狀態錯誤競店",
+        "status": "renovating",
+        "snapshot_id": "cmp-2026-06-01"
+      },
+      "expect_codes": ["enum_violation"]
+    },
+    {
+      "label": "unparseable last_verified_at",
+      "record": {
+        "source_competitor_id": "CMP-903",
+        "store_name": "時間錯誤競店",
+        "status": "active",
+        "last_verified_at": "yesterday",
+        "snapshot_id": "cmp-2026-06-01"
+      },
+      "expect_codes": ["invalid_time"]
+    }
+  ]
+}

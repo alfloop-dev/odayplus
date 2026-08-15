@@ -1,0 +1,1 @@
+"""NetPlan solver tests."""

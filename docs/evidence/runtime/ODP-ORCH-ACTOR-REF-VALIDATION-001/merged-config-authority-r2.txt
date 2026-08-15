@@ -1,0 +1,68 @@
+# Merged-config actor authority — live read-only receipt (revision 2)
+# host date: 2026-07-29T06:21:04Z
+# HEAD: 06d28b5b1fd9e3ece67f2a87e6cb4e0e1af4053c
+
+## live file fingerprints BEFORE
+33c5c979c56fd01f  /home/lupin/oday-plus-supervisor-live/ai-status.json
+1579704e7dd4b4a8  /home/lupin/oday-plus-supervisor-live/ai-activity-log.jsonl
+f5274297b754183c  /home/lupin/oday-plus-supervisor-live/.orchestrator/config.local.json
+
+## authority resolved through the live merged config (read-only)
+ROOT                  = /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-actor-ref-validation-001
+STATUS_ROOT           = /home/lupin/oday-plus-supervisor-live
+CONFIG_FILE (tracked) = /tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-actor-ref-validation-001/.orchestrator/config.json
+overlays merged       = ['/home/lupin/oday-plus-supervisor-live/.orchestrator/config.local.json']
+
+configured_agent_names() =
+    Antigravity
+    Antigravity2
+    Antigravity3
+    Antigravity4
+    Antigravity5
+    Antigravity6
+    Antigravity7
+    Claude
+    Claude2
+    Claude3
+    Codex
+    Codex2
+    Codex3
+    Codex4
+    Codex5
+    Codex6
+    Codex7
+    Codex8
+    Codex9
+
+registered_agent_names() =
+    Antigravity
+    Antigravity2
+    Antigravity3
+    Antigravity4
+    Antigravity5
+    Antigravity6
+    Antigravity7
+    Claude
+    Claude2
+    Claude3
+    Codex
+    Codex2
+    Codex3
+    Codex4
+    Codex5
+    Codex6
+    Codex7
+    Codex8
+    Codex9
+    CodexCoordinator
+    Human/Ops
+    Orchestrator
+
+Codex3-Codex9 preserved: True
+Human/Ops accepted     : Human/Ops
+Codex5 accepted as-is  : Codex5
+
+## live file fingerprints AFTER (must be identical — validation never writes)
+33c5c979c56fd01f  /home/lupin/oday-plus-supervisor-live/ai-status.json
+1579704e7dd4b4a8  /home/lupin/oday-plus-supervisor-live/ai-activity-log.jsonl
+f5274297b754183c  /home/lupin/oday-plus-supervisor-live/.orchestrator/config.local.json

@@ -15,21 +15,31 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from approval_queue import consume_resume_override, create_approval, find_resume_override
+from approval_queue import (
+    approval_signature,
+    consume_resume_override,
+    create_approval,
+    find_resume_override,
+)
 from common import (
     ROOT,
-    approval_tool_input_signature,
+    anchor_config_paths,
+    authoritative_status_root,
+    config_path,
     load_config,
+    load_config_for_status_root,
     load_json,
     load_status,
     normalize_agent_id,
+    repo_root_for_config,
     utc_now,
     write_activity_log,
     write_json,
 )
 from provider_permissions import CLAUDE_LOCAL_SETTINGS_PATH, _verified_claude_policy
+from provider_runtime import claude_approval_provider as _approval_provider
+from provider_runtime import provider_config
 from runtime_state import load_approval_state, load_runtime_state
-
 
 SAFE_BASH_PATTERNS = [
     re.compile(r"^pwd$"),
@@ -63,7 +73,6 @@ SAFE_BASH_PATTERNS = [
     re.compile(r"^git submodule status(\s|$)"),
     re.compile(r"^git -C .+ (status|diff|show|log|remote -v|submodule status)(\s|$)"),
     re.compile(r"^gh issue comment(\s|$)"),
-    re.compile(r"^gh pr create(\s|$)"),
     re.compile(r"^git remote -v$"),
     re.compile(r"^git -C .+ (add|commit|push|remote set-url|submodule|rm)"),
     re.compile(r"^git rm(\s|$)"),
@@ -128,6 +137,12 @@ DEFER_BASH_PATTERNS = [
     re.compile(r"^docker(\s|$)"),
 ]
 DENY_BASH_PATTERNS = [
+    # Task PRs are opened by ReviewBus (github_bus.upsert_review_pr), which
+    # bases them on the branch workflow target. An agent running `gh pr create`
+    # picks its own --base and can route work straight at the promotion target,
+    # bypassing dev CI. ReviewBus itself shells out directly and never reaches
+    # this broker, so denying here closes the bypass without disabling it.
+    re.compile(r"^gh pr create(\s|$)"),
     re.compile(r"^git reset --hard"),
     re.compile(r"^git checkout --(\s|$)"),
     re.compile(r"^git push(?:\s|$).*?(?:--force(?:-with-lease)?|-f|--mirror|--delete|--all|--tags|--prune|--atomic)(?:\s|$)"),
@@ -136,7 +151,18 @@ DENY_BASH_PATTERNS = [
     re.compile(r"^chmod 777(\s|$)"),
 ]
 
-SAFE_TOOLS = {"Read", "Grep", "Glob", "LS", "Task", "TodoRead", "TodoWrite", "ReadNotebook", "ToolSearch"}
+SAFE_TOOLS = {
+    "Read",
+    "Grep",
+    "Glob",
+    "LS",
+    "Task",
+    "TaskOutput",
+    "TodoRead",
+    "TodoWrite",
+    "ReadNotebook",
+    "ToolSearch",
+}
 EDIT_TOOLS = {"Edit", "MultiEdit", "Write"}
 NETWORK_TOOLS = {"WebFetch", "WebSearch"}
 SAFE_AGENT_SUBAGENT_TYPES = {"explore", "review"}
@@ -186,6 +212,7 @@ UNSAFE_AGENT_MARKERS = (
     "launch",
 )
 SAFE_AGENT_RUN_PATTERNS = (
+    re.compile(r"(?:^|[/\s])run\.(?:py|ts|js)\b"),
     re.compile(r"\brun\s+`?git\s+status\b"),
     re.compile(r"\brun\s+`?git\s+log\b"),
     re.compile(r"\brun\s+`?git\s+diff\b"),
@@ -203,14 +230,6 @@ SAFE_AGENT_RUN_PATTERNS = (
     re.compile(r"\brun\s+`?wc\b"),
 )
 
-SAFE_PYTHON_ONE_LINER_MARKERS = (
-    "print(",
-    "with open(",
-)
-SAFE_PYTHON_JSON_LOAD_MARKERS = (
-    "json.load",
-    "json.loads",
-)
 UNSAFE_PYTHON_ONE_LINER_MARKERS = (
     ".write(",
     "write_text(",
@@ -779,6 +798,18 @@ def _collect_paths(tool_input: dict[str, Any]) -> list[Path]:
 
 def _allowed_workspace_roots(config: dict[str, Any] | None = None) -> list[Path]:
     roots = [ROOT, ROOT.parent / "pantheon"]
+    # A worker runs in a per-task worktree outside ROOT, so without this its own
+    # workspace is out-of-workspace and every Edit/Write is denied. The value is
+    # injected into the worker process by the Supervisor (common.worker_env /
+    # supervisor.resume_claude_worker); the hook subprocess inherits it from the
+    # CLI, so a tool call cannot set it for its own hook. Relative values are
+    # ignored rather than resolved against ROOT — an unanchored value must not
+    # widen the boundary.
+    runtime_workspace = str(os.environ.get("ORCH_WORKSPACE_PATH") or "").strip()
+    if runtime_workspace:
+        candidate = Path(runtime_workspace).expanduser()
+        if candidate.is_absolute():
+            roots.append(candidate.resolve())
     configured = ((config or {}).get("permission_broker", {}) or {}).get("allowed_workspace_roots", [])
     if isinstance(configured, list):
         for item in configured:
@@ -1041,9 +1072,12 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     verb_phrase = " and ".join(verbs)
     task_id = context["task_id"]
     return {
-        "decision": "allow",
-        "reason": f"Auto-allowed safe finalize {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}.",
-        "risk_class": "repo_finalize_git",
+        "decision": "deny",
+        "reason": (
+            f"Denied {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}: "
+            "the reviewer-approved branch head is immutable. Return to review before changing it."
+        ),
+        "risk_class": "immutable_review_head",
     }
 
 
@@ -1103,9 +1137,9 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
         "tool_name": tool_name,
         "tool_input": tool_input,
         "evaluated_at": utc_now(),
-        "policy_default_mode": (
-            config.get("providers", {}).get(provider_id, {}).get("approval", {}).get("rule_default_mode", "acceptEdits")
-        ),
+        "policy_default_mode": provider_config(config, provider_id)
+        .get("approval", {})
+        .get("rule_default_mode", "acceptEdits"),
     }
 
 
@@ -1154,26 +1188,65 @@ def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None
     return None
 
 
-def _approval_provider(config: dict[str, Any]) -> str:
-    provider_id = str(os.environ.get("ORCH_PROVIDER") or "claude").strip().lower() or "claude"
-    provider = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode and delivery_mode != "claude_cli":
-        return "claude"
-    if provider or provider_id.startswith("claude"):
-        return provider_id
-    return "claude"
+def resolve_hook_config() -> tuple[dict[str, Any], Path, str]:
+    """Load the config whose approval queue is authoritative for this process.
+
+    The Claude hook wiring pins one absolute ``permission_broker.py`` path, so
+    the same executable serves every fleet on the host. ``PANTHEON_STATUS_ROOT``
+    is the supervisor's own declaration of which fleet owns this worker, so it
+    -- not ``__file__`` -- decides which approval queue, activity log, and
+    permission-rule file the hook reads and writes.
+
+    Falls back to the module-local root whenever the environment does not name
+    a usable orchestrator root, which keeps standalone and test invocations on
+    exactly their current behaviour.
+    """
+    status_root = authoritative_status_root()
+    if status_root is None:
+        return anchor_config_paths(load_config(), ROOT), ROOT, "module_root"
+    if status_root == ROOT:
+        return anchor_config_paths(load_config(), ROOT), ROOT, "status_root_env"
+    return load_config_for_status_root(status_root), status_root, "status_root_env"
+
+
+def claude_local_settings_path(config: dict[str, Any]) -> Path:
+    """Resolve the settings file holding the permission rules for ``config``'s fleet.
+
+    ``CLAUDE_LOCAL_SETTINGS_PATH`` is anchored to the running module's checkout.
+    A hook that restores rules there while the supervisor suspended them in
+    another root would strand a temporary allow rule in the authoritative fleet.
+    """
+    try:
+        root = repo_root_for_config(config)
+    except KeyError:
+        return CLAUDE_LOCAL_SETTINGS_PATH
+    return root / ".claude" / "settings.local.json"
+
+
+def approval_queue_audit(config: dict[str, Any]) -> dict[str, str]:
+    """Non-secret provenance for every hook decision: which queue root answered."""
+    audit: dict[str, str] = {"module_root": str(ROOT)}
+    try:
+        audit["status_root"] = str(repo_root_for_config(config))
+    except KeyError:
+        pass
+    try:
+        audit["approval_queue_path"] = str(config_path(config, "approval_queue"))
+    except KeyError:
+        pass
+    return audit
 
 
 def remember_rule(config: dict[str, Any], *, decision: str, rule: str) -> dict[str, Any]:
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     bucket = permissions.get(decision, []) or []
     if rule not in bucket:
         bucket.append(rule)
     permissions[decision] = bucket
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1221,7 +1294,8 @@ def suspend_matching_rules(
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> list[str]:
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     existing_rules = list(permissions.get(bucket, []) or [])
     removed_rules = [rule for rule in existing_rules if _permission_rule_matches(rule, tool_name=tool_name, tool_input=tool_input)]
@@ -1229,7 +1303,7 @@ def suspend_matching_rules(
         return []
     permissions[bucket] = [rule for rule in existing_rules if rule not in removed_rules]
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1246,7 +1320,8 @@ def suspend_matching_rules(
 def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> list[str]:
     if not rules:
         return []
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     existing_rules = list(permissions.get(bucket, []) or [])
     restored: list[str] = []
@@ -1258,7 +1333,7 @@ def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> l
         return []
     permissions[bucket] = existing_rules
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1275,7 +1350,8 @@ def restore_rules(config: dict[str, Any], *, bucket: str, rules: list[str]) -> l
 def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> bool:
     if not rule:
         return False
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     allow_rules = list(permissions.get("allow", []) or [])
     if rule in allow_rules:
@@ -1283,7 +1359,7 @@ def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> boo
     allow_rules.append(rule)
     permissions["allow"] = allow_rules
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1299,14 +1375,15 @@ def add_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> boo
 def remove_temporary_allow_rule(config: dict[str, Any], *, rule: str | None) -> bool:
     if not rule:
         return False
-    settings = load_json(CLAUDE_LOCAL_SETTINGS_PATH, default={}) or {}
+    settings_path = claude_local_settings_path(config)
+    settings = load_json(settings_path, default={}) or {}
     permissions = settings.get("permissions", {})
     allow_rules = list(permissions.get("allow", []) or [])
     if rule not in allow_rules:
         return False
     permissions["allow"] = [entry for entry in allow_rules if entry != rule]
     settings["permissions"] = permissions
-    write_json(CLAUDE_LOCAL_SETTINGS_PATH, settings)
+    write_json(settings_path, settings)
     write_activity_log(
         config,
         {
@@ -1334,18 +1411,9 @@ def log_event(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
             "message": f"{event_name}: {message}",
             "hook_event": event_name,
             "hook_payload": payload,
+            "approval_root": approval_queue_audit(config),
             "ts_local": utc_now(),
         },
-    )
-
-
-def _approval_timeout_seconds(config: dict[str, Any]) -> float:
-    provider_id = _approval_provider(config)
-    return float(
-        config.get("providers", {})
-        .get(provider_id, {})
-        .get("broker", {})
-        .get("approval_wait_seconds", 3600)
     )
 
 
@@ -1399,19 +1467,6 @@ def _permission_request_response(
     }
 
 
-def _approval_signature(
-    session_id: str | None,
-    tool_name: str,
-    tool_input: dict[str, Any] | None = None,
-    tool_input_signature: str | None = None,
-) -> tuple[str | None, str, str]:
-    return (
-        session_id,
-        tool_name,
-        str(tool_input_signature or approval_tool_input_signature(tool_input if tool_input is not None else {})),
-    )
-
-
 def _permission_rule(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
     if not tool_name:
         return None
@@ -1444,11 +1499,11 @@ def _matching_approval(
     tool_input: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = approval_signature(session_id, tool_name, tool_input)
     pending_match = None
     history_match = None
     for item in state.get("pending", []):
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),
@@ -1456,7 +1511,7 @@ def _matching_approval(
         if item_signature == signature:
             pending_match = item
     for item in reversed(state.get("history", [])):
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),
@@ -1671,7 +1726,7 @@ def hook_mode(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
 
 def main() -> int:
     args = parse_args()
-    config = load_config()
+    config, _status_root, _config_source = resolve_hook_config()
 
     if args.command == "classify":
         print(classify_command(args.shell_command))

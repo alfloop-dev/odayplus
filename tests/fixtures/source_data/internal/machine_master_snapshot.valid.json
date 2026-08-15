@@ -1,0 +1,23 @@
+{
+  "contract_id": "machine_master_snapshot",
+  "records": [
+    {
+      "source_machine_id": "M-ABC123",
+      "source_store_id": "S001",
+      "machine_serial_no": "SN-0001",
+      "equipment_brand": "Speed Queen",
+      "machine_family": "washer",
+      "capacity_kg": 15.0,
+      "capacity_band": "medium",
+      "installed_at": "2025-03-01",
+      "status": "active"
+    },
+    {
+      "source_machine_id": "M-ABC124",
+      "source_store_id": "S001",
+      "machine_serial_no": "SN-0002",
+      "machine_family": "dryer",
+      "status": "maintenance"
+    }
+  ]
+}

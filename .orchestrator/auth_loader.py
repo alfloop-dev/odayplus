@@ -6,10 +6,9 @@ import json
 import os
 import shlex
 import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
-
 
 DEFAULT_ENV_FILE = Path.home() / ".config" / "pantheon" / "worker-git.env"
 SUPPORTED_MODES = {"auto", "ssh", "pat"}
@@ -28,11 +27,6 @@ class GitCredentials:
     secret_env_keys: tuple[str, ...]
     secret_file_paths: tuple[str, ...]
     source: str
-
-    def as_subprocess_env(self, base_env: Mapping[str, str] | None = None) -> dict[str, str]:
-        merged = dict(os.environ if base_env is None else base_env)
-        merged.update(self.env)
-        return merged
 
     def safe_summary(self) -> dict[str, object]:
         return {

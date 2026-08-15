@@ -5,7 +5,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,9 +14,16 @@ if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
 from approval_queue import create_approval, wait_for_decision
-from common import load_config, utc_now, write_activity_log
+from common import (
+    ROOT,
+    anchor_config_paths,
+    authoritative_status_root,
+    load_config,
+    load_config_for_status_root,
+    write_activity_log,
+)
 from permission_broker import evaluate_tool_request
-
+from provider_runtime import claude_approval_provider, provider_config
 
 SERVER_NAME = "orchestrator_approval_broker"
 TOOL_NAME = "approval_prompt"
@@ -51,7 +58,7 @@ def read_message() -> dict[str, Any] | None:
 
 def write_message(payload: dict[str, Any]) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode()
     sys.stdout.buffer.write(header)
     sys.stdout.buffer.write(body)
     sys.stdout.buffer.flush()
@@ -68,6 +75,23 @@ def text_result(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resolve_broker_config(config_path: str) -> dict[str, Any]:
+    """Load the config whose approval queue is authoritative for this process.
+
+    The MCP server is launched with a workspace-relative ``--config`` path, so
+    the config it finds depends on the CLI's cwd rather than on which fleet owns
+    the worker. ``PANTHEON_STATUS_ROOT`` is the supervisor's own declaration of
+    that fleet, so it decides which queue this server enqueues into and waits
+    on. Falls back to ``--config`` when the environment names no usable root.
+    """
+    status_root = authoritative_status_root()
+    if status_root is None:
+        return anchor_config_paths(load_config(config_path), ROOT)
+    if status_root == ROOT:
+        return anchor_config_paths(load_config(config_path), ROOT)
+    return load_config_for_status_root(status_root)
+
+
 def approval_context() -> dict[str, Any]:
     return {
         "worker_run_id": os.environ.get("ORCH_RUN_ID"),
@@ -76,32 +100,20 @@ def approval_context() -> dict[str, Any]:
     }
 
 
-def approval_provider(config: dict[str, Any]) -> str:
-    provider_id = str(os.environ.get("ORCH_PROVIDER") or "claude").strip().lower() or "claude"
-    provider = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode and delivery_mode != "claude_cli":
-        return "claude"
-    if provider or provider_id.startswith("claude"):
-        return provider_id
-    return "claude"
-
-
 def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     tool_name = args.get("tool_name") or args.get("toolName")
     tool_input = args.get("input") or args.get("tool_input") or args.get("toolInput") or {}
     decision = evaluate_tool_request(str(tool_name or ""), tool_input, config)
     context = approval_context()
-    provider_id = approval_provider(config)
+    provider_id = claude_approval_provider(config)
 
     timeout = float(
-        config.get("providers", {})
-        .get(provider_id, {})
+        provider_config(config, provider_id)
         .get("broker", {})
         .get("approval_wait_seconds", 3600)
     )
     expires_at = (
-        datetime.now(timezone.utc) + timedelta(seconds=timeout)
+        datetime.now(UTC) + timedelta(seconds=timeout)
     ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if decision["decision"] == "allow":
         write_activity_log(
@@ -158,7 +170,7 @@ def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, 
 
 def main() -> int:
     args = parse_args()
-    config = load_config(args.config)
+    config = resolve_broker_config(args.config)
     while True:
         message = read_message()
         if message is None:

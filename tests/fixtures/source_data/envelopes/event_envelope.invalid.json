@@ -1,0 +1,31 @@
+{
+  "contract_id": "event_envelope",
+  "cases": [
+    {
+      "label": "missing required idempotency_key and payload",
+      "record": {
+        "event_id": "evt_err_1",
+        "event_type": "machine.status.changed",
+        "event_version": "1.0",
+        "source_system": "iot_core",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "observation_time": "2026-06-26T08:15:02+08:00"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "payload wrong type (string not object)",
+      "record": {
+        "event_id": "evt_err_2",
+        "event_type": "machine.status.changed",
+        "event_version": "1.0",
+        "source_system": "iot_core",
+        "idempotency_key": "iot_core:machine:ABC123:error",
+        "event_time": "2026-06-26T08:15:00+08:00",
+        "observation_time": "2026-06-26T08:15:02+08:00",
+        "payload": "status=error"
+      },
+      "expect_codes": ["type_mismatch"]
+    }
+  ]
+}

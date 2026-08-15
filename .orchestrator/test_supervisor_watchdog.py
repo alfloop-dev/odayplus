@@ -5,7 +5,7 @@ import fcntl
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
@@ -61,7 +61,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         }
 
     def test_healthy_supervisor_observes_only(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.write_pid(123)
         self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
 
@@ -112,7 +112,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(watchdog_state["restart_attempts"][0]["new_pid"], 999)
 
     def test_restart_budget_suppresses_after_window_exhausted(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.write_pid(123)
         self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": "2026-05-18T13:00:00Z", "lifecycle": "running"}})
         (self.root / "watchdog-state.json").write_text(
@@ -163,7 +163,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
     def test_lock_held_with_missing_pid_observes_only(self) -> None:
         """Regression: clean-restart seam (pid file gone) while the flock is held
         must NOT trigger a missing_pid restart."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.hold_lock()
         # Deliberately do NOT write supervisor.pid -> read_pid_file returns None.
         self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
@@ -181,7 +181,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
     def test_no_lock_and_missing_pid_restarts(self) -> None:
         """No flock held AND no pid file -> genuinely dead -> restart with missing_pid."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # No lock file, no pid file.
         self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
 
@@ -195,6 +195,22 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.assertEqual(result["decision"], "restart_supervisor")
         self.assertEqual(result["reason"], "missing_pid")
         self.assertFalse(result["lock_held"])
+
+    def test_safe_mode_uses_canonical_runtime_state_writer(self) -> None:
+        runtime_state = {"workers": {"worker-1": {"status": "running"}}}
+        now = datetime.now(UTC)
+
+        with mock.patch.object(supervisor_watchdog, "save_runtime_state") as save_state:
+            supervisor_watchdog.enter_watchdog_safe_mode(
+                self.config,
+                runtime_state,
+                now,
+                self.config["watchdog"],
+                "stale_heartbeat",
+            )
+
+        save_state.assert_called_once_with(self.config, runtime_state)
+        self.assertEqual(runtime_state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
 
 
 if __name__ == "__main__":

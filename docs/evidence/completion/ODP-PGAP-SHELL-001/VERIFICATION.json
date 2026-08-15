@@ -1,0 +1,54 @@
+{
+  "task_id": "ODP-PGAP-SHELL-001",
+  "recorded_at": "2026-07-15T15:18:44.528474+00:00",
+  "note": "Captured by re-running each check in this worktree; no result transcribed by hand.",
+  "checks": [
+    {
+      "command": "npm run typecheck --workspace=@oday-plus/web 2>&1 && echo 'clean: tsc --noEmit'",
+      "exit_code": 0,
+      "result": "clean: tsc --noEmit"
+    },
+    {
+      "command": "npm run lint --workspace=@oday-plus/web 2>&1",
+      "exit_code": 0,
+      "result": "\u2714 No ESLint warnings or errors"
+    },
+    {
+      "command": "git diff --check origin/dev...HEAD && echo 'clean: no whitespace errors'",
+      "exit_code": 0,
+      "result": "clean: no whitespace errors"
+    },
+    {
+      "command": "python3 -m ruff check modules/opsboard/application/shell.py shared/infrastructure/persistence/operator_shell.py apps/api/app/routes/operator_modules/shell.py apps/api/app/routes/operator.py shared/auth/rbac.py tests/contract/test_operator_shell_api.py tests/security/test_operator_shell_security.py tests/integration/test_operator_shell_persistence.py 2>&1",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    {
+      "command": "python3 -m pytest tests/contract/test_operator_shell_api.py tests/security/test_operator_shell_security.py tests/integration/test_operator_shell_persistence.py -p no:cacheprovider 2>&1",
+      "exit_code": 0,
+      "result": "56 passed, 1 warning in 93.42s (0:01:33)"
+    },
+    {
+      "command": "python3 -m pytest tests/contract/test_operator_api.py tests/security/test_operator_security_platform.py tests/security/test_opsboard_auth_boundary.py -p no:cacheprovider 2>&1",
+      "exit_code": 0,
+      "result": "49 passed, 1 warning in 20.12s"
+    }
+  ],
+  "new_backend_tests": {
+    "contract": 25,
+    "security": 23,
+    "durability": 8,
+    "total": 56
+  },
+  "e2e": {
+    "command": "npx playwright test tests/e2e --grep ODP-PGAP-SHELL-001",
+    "result": "31 passed",
+    "runs": 3,
+    "note": "3 consecutive runs against a reused backend, 31/31 each."
+  },
+  "regression_baseline": {
+    "note": "Compared against a clean origin/dev worktree.",
+    "e2e-api-bound-ui + e2e-operator-console": "7 passed on origin/dev and on this branch",
+    "opsboard-shell 'all 14 work-area routes are reachable'": "pre-existing: times out under parallel dev-compile on origin/dev too; passes with --workers=1"
+  }
+}

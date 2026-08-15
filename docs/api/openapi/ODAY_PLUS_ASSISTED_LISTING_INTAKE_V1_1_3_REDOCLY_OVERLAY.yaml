@@ -1,0 +1,116 @@
+overlay: 1.0.0
+info:
+  title: ODay Plus Assisted Listing Intake v1.1.3 Redocly conformance overlay
+  version: 1.1.3
+extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_2_LINT_OVERLAY.yaml
+
+actions:
+  - target: $.info
+    update:
+      version: 1.1.3
+      license:
+        name: Proprietary
+        identifier: LicenseRef-Proprietary
+
+  - target: $.tags
+    update:
+      - name: Intake
+        description: Submit, inspect, cancel, quarantine, and reopen assisted listing intakes.
+      - name: ListingInbox
+        description: Query the tenant-scoped assisted listing intake inbox.
+      - name: Corrections
+        description: Propose and apply attributable field corrections.
+      - name: Identity
+        description: Review and execute reversible property identity decisions.
+      - name: Assignment
+        description: Assign, claim, transfer, complete, pause, and resume workflow ownership and SLA.
+      - name: Jobs
+        description: Inspect and retry durable asynchronous jobs from valid checkpoints.
+      - name: Promotion
+        description: Request, independently review, and execute candidate-site promotion.
+      - name: SavedViews
+        description: Store and retrieve actor- or tenant-scoped inbox views.
+
+  - target: $.paths['/v1/intakes'].get
+    update: {summary: List assisted listing intakes}
+  - target: $.paths['/v1/intakes/url'].post
+    update: {summary: Submit a URL intake}
+  - target: $.paths['/v1/intake-batches'].post
+    update: {summary: Submit a manual CSV or approved-feed batch}
+  - target: $.paths['/v1/intakes/{intake_id}'].get
+    update: {summary: Get intake detail}
+  - target: $.paths['/v1/intakes/{intake_id}/corrections'].post
+    update: {summary: Propose an intake correction}
+  - target: $.paths['/v1/match-cases/{match_case_id}/decisions'].post
+    update: {summary: Create a match decision proposal}
+  - target: $.paths['/v1/identity/merge'].post
+    update: {summary: Propose or execute a property merge}
+  - target: $.paths['/v1/identity/split'].post
+    update: {summary: Propose or execute a property split}
+  - target: $.paths['/v1/identity/unmerge'].post
+    update: {summary: Propose or execute an identity unmerge}
+  - target: $.paths['/v1/intakes/{intake_id}/assignment'].put
+    update:
+      summary: Assign an intake
+      responses:
+        '422': {$ref: '#/components/responses/ValidationError'}
+  - target: $.paths['/v1/jobs/{job_id}/retry'].post
+    update: {summary: Retry a job from a durable checkpoint}
+  - target: $.paths['/v1/saved-views'].get
+    update:
+      summary: List saved intake views
+      responses:
+        '403': {$ref: '#/components/responses/Forbidden'}
+  - target: $.paths['/v1/saved-views'].post
+    update:
+      summary: Create a saved intake view
+      responses:
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+  - target: $.paths['/v1/intakes/{intake_id}/promotion-requests'].post
+    update: {summary: Request candidate-site promotion}
+  - target: $.paths['/v1/intakes/{intake_id}/promotion-decision'].get
+    update: {summary: Get the latest intake promotion decision}
+  - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}'].get
+    update: {summary: Get a promotion decision}
+  - target: $.paths['/v1/promotion-decisions/{promotion_decision_id}/actions/review'].post
+    update: {summary: Review a promotion decision}
+  - target: $.paths['/v1/intakes/{intake_id}/actions/cancel'].post
+    update: {summary: Cancel an intake}
+  - target: $.paths['/v1/intakes/{intake_id}/actions/quarantine'].post
+    update: {summary: Quarantine an intake}
+  - target: $.paths['/v1/intakes/{intake_id}/actions/reopen'].post
+    update: {summary: Reopen a quarantined intake}
+  - target: $.paths['/v1/assignments/{assignment_id}/actions/claim'].post
+    update: {summary: Claim an assignment}
+  - target: $.paths['/v1/assignments/{assignment_id}/actions/transfer'].post
+    update: {summary: Transfer an assignment}
+  - target: $.paths['/v1/assignments/{assignment_id}/actions/complete'].post
+    update: {summary: Complete an assignment}
+  - target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/pause'].post
+    update: {summary: Pause an SLA instance}
+  - target: $.paths['/v1/sla-instances/{sla_instance_id}/actions/resume'].post
+    update: {summary: Resume an SLA instance}
+  - target: $.paths['/v1/identity-decisions/{decision_id}'].get
+    update: {summary: Get an identity decision}
+  - target: $.paths['/v1/identity-decisions/{decision_id}/actions/review'].post
+    update: {summary: Review an identity decision}
+  - target: $.paths['/v1/identity-decisions/{decision_id}/actions/reverse'].post
+    update: {summary: Request identity decision reversal}
+
+  - target: $.components.responses.InvalidCursor.content['application/json'].example
+    update:
+      occurred_at: '2026-07-17T00:00:00Z'
+      next_action: CORRECT_INPUT
+  - target: $.components.responses.IdempotencyConflict.content['application/json'].example
+    update:
+      occurred_at: '2026-07-17T00:00:00Z'
+      next_action: CORRECT_INPUT
+  - target: $.components.responses.PreconditionRequired.content['application/json'].example
+    update:
+      occurred_at: '2026-07-17T00:00:00Z'
+      next_action: REFRESH
+
+  - target: $.components.schemas.PromotionReceipt
+    description: Remove the superseded pre-review final receipt schema.
+    remove: true

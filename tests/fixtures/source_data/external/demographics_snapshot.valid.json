@@ -1,0 +1,21 @@
+{
+  "contract_id": "demographics_snapshot",
+  "records": [
+    {
+      "h3_index": "89263064c2fffff",
+      "population_total": 4500,
+      "household_total": 1800,
+      "median_income": 85000,
+      "age_median": 39.5,
+      "snapshot_id": "demographics-2026-q2"
+    },
+    {
+      "h3_index": "89263064c2bffff",
+      "population_total": 3200,
+      "household_total": 1200,
+      "median_income": 72000,
+      "age_median": 42.1,
+      "snapshot_id": "demographics-2026-q2"
+    }
+  ]
+}

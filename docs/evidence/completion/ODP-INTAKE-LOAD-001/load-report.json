@@ -1,0 +1,82 @@
+{
+  "availability": 1.0,
+  "availability_target": 0.9995,
+  "batch_size": 1000,
+  "concurrency": 100,
+  "daily_intake_target": 100000,
+  "duration_seconds": 3.95775211090222,
+  "error_budget": {
+    "parse_budget_fraction": 0.02,
+    "parse_over_target_fraction": 0.0,
+    "receipt_budget_fraction": 0.01,
+    "receipt_over_target_fraction": 0.002
+  },
+  "measured_at": "2026-07-22T18:32:10.584614+00:00",
+  "measurement_mode": "durable-runtime",
+  "missed_targets": [],
+  "not_executed_targets": [
+    {
+      "reason": "No production review timestamps or business-calendar service are available in this local harness.",
+      "release_gate": true,
+      "target": "human_review_completion_sla"
+    },
+    {
+      "reason": "Cloud SQL, Cloud Tasks, Pub/Sub, and GCS staging load evidence is required separately.",
+      "release_gate": true,
+      "target": "managed_service_capacity"
+    }
+  ],
+  "observed_peak_submitters": 100,
+  "observed_peak_workers": 100,
+  "passed": true,
+  "production_ready": false,
+  "projected_daily_capacity": 21830573.91644067,
+  "schema_version": 1,
+  "slis": [
+    {
+      "availability": 1.0,
+      "name": "url_submission_durable_receipt",
+      "over_target_fraction": 0.002,
+      "p95_seconds": 0.3241820602212101,
+      "p95_target_seconds": 0.5,
+      "p99_seconds": 0.4352748163603246,
+      "p99_target_seconds": 1.5,
+      "passed": true,
+      "sample_count": 1000,
+      "successful": 1000
+    },
+    {
+      "availability": 1.0,
+      "name": "queue_age",
+      "over_target_fraction": 0.0,
+      "p95_seconds": 2.31563955,
+      "p95_target_seconds": 120.0,
+      "p99_seconds": 2.3324460899999995,
+      "p99_target_seconds": 600.0,
+      "passed": true,
+      "sample_count": 1000,
+      "successful": 1000
+    },
+    {
+      "availability": 1.0,
+      "name": "approved_source_parse_completion",
+      "over_target_fraction": 0.0,
+      "p95_seconds": 3.195046447217465e-05,
+      "p95_target_seconds": 300.0,
+      "p99_seconds": 4.835261031985283e-05,
+      "p99_target_seconds": 900.0,
+      "passed": true,
+      "sample_count": 1000,
+      "successful": 1000
+    },
+    {
+      "name": "concurrent_durable_workers",
+      "observed_peak_submitters": 100,
+      "observed_peak_workers": 100,
+      "passed": true,
+      "requested_workers": 100
+    }
+  ],
+  "throughput_rows_per_second": 252.66867958843366,
+  "volume": 1000
+}

@@ -1,0 +1,41 @@
+# STOP GATE 7 finding 1: revision 7 clean-attempt gate was fail-open
+# generated 2026-07-29T05:15:17Z on the live host, revision 8 working tree
+
+Both implementations are extracted mechanically, never retyped:
+
+  git show 0a77e4e3:<driver> | sed -n '/^attempt_state_dirty() {/,/^}$/p' \
+    | sed '1s/^attempt_state_dirty/rev7_gate/'          # revision 7, 19 lines
+  sed -n '/^attempt_state_dirty() {/,/^}$/p' <driver>   \
+    | sed '1s/^attempt_state_dirty/rev8_gate/'          # revision 8, 35 lines
+
+and run against the same fixture, one offender at a time. CLEAN means the gate
+returned 1, i.e. it would have let the driver start on top of that state.
+
+fixture: timeline{README.md, attempt-1-abort-killmode-probe/} + empty signal dir
+
+baseline (allowed contents only)               rev7=CLEAN                        rev8=CLEAN
+timeline/unexpected-receipts/ (reviewer repro) rev7=CLEAN                        rev8=timeline:unexpected-receipts
+timeline/attempt-9-symlink -> /etc/hostname    rev7=CLEAN                        rev8=timeline:attempt-9-symlink
+timeline/README.md as a symlink                rev7=CLEAN                        rev8=timeline:README.md
+timeline/.leftover (dotfile)                   rev7=timeline:.leftover           rev8=timeline:.leftover
+signal/probe-commands.txt (reviewer repro)     rev7=CLEAN                        rev8=signal:probe-commands.txt
+signal/probe-child.pid                         rev7=CLEAN                        rev8=signal:probe-child.pid
+signal/deadman.log                             rev7=CLEAN                        rev8=signal:deadman.log
+signal/commit-msg-capture.txt                  rev7=CLEAN                        rev8=signal:commit-msg-capture.txt
+signal/leftovers/                              rev7=CLEAN                        rev8=signal:leftovers
+timeline/98-abort-reason.txt (caught by both)  rev7=timeline:98-abort-reason.txt rev8=timeline:98-abort-reason.txt
+signal/verdict (caught by both)                rev7=signal:verdict               rev8=signal:verdict
+
+Reading:
+  * rows 2-4 and 6-10 are what STOP GATE 7 called fail-open. Rows 2 and 6 are
+    the reviewer's own reproduction (timeline/unexpected-receipts plus
+    signal/probe-commands.txt), which revision 7 reported CLEAN.
+  * revision 7 caught a stray *regular file* in the timeline root (rows 5, 11)
+    and the four hardcoded signal names (row 12) - and nothing else.
+  * revision 8 rejects every entry that is not a regular README.md or an
+    attempt-* directory in the timeline root, and every entry whatsoever in the
+    signal dir, including dotfiles, directories and symlinks.
+
+The same shapes are asserted by 15 checks inside the driver's own `--selftest`
+("revision 7/8: the clean-attempt gate refuses dirty state"), so this
+side-by-side is a diagnosis receipt, not the gate's only test.

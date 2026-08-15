@@ -1,0 +1,318 @@
+/*
+ * Product shell styles (ODP-PGAP-SHELL-001).
+ * Token-only — no literal colours or spacing (visual system §10.1).
+ * Mobile-first: the base rules are the narrow layout; wider viewports add
+ * columns. The franchisee surface is only ever rendered at mobile width.
+ */
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--odp-space-4);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+@media (min-width: 48rem) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr));
+  }
+}
+
+.statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-3);
+  align-items: center;
+  margin-bottom: var(--odp-space-4);
+}
+
+.statusHeadline {
+  margin: 0;
+  font-size: var(--odp-font-size-lg);
+  font-weight: 600;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--odp-space-3);
+  list-style: none;
+  margin: 0 0 var(--odp-space-4);
+  padding: 0;
+}
+
+@media (min-width: 48rem) {
+  .metrics {
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  }
+}
+
+.metric {
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-md);
+  padding: var(--odp-space-3);
+  background: var(--odp-color-surface-raised);
+}
+
+.metricValue {
+  display: block;
+  font-size: var(--odp-font-size-xl);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.metricLabel {
+  display: block;
+  font-size: var(--odp-font-size-sm);
+  color: var(--odp-color-text-muted);
+}
+
+.section {
+  margin-bottom: var(--odp-space-6);
+}
+
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-3);
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--odp-space-3);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: var(--odp-font-size-md);
+  font-weight: 600;
+}
+
+.source {
+  display: inline-flex;
+}
+
+/* Wide content must scroll inside its own container — the page body never
+   scrolls horizontally on mobile. */
+.tableWrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-2);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-3);
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-md);
+  padding: var(--odp-space-3);
+  background: var(--odp-color-surface-raised);
+}
+
+.rowMain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-1);
+  min-width: 0;
+  flex: 1 1 14rem;
+}
+
+.rowTitle {
+  font-weight: 600;
+  margin: 0;
+}
+
+.rowMeta {
+  margin: 0;
+  font-size: var(--odp-font-size-sm);
+  color: var(--odp-color-text-muted);
+}
+
+.rowActions {
+  display: flex;
+  gap: var(--odp-space-2);
+  flex-wrap: wrap;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--odp-space-2);
+  margin-bottom: var(--odp-space-3);
+}
+
+.filterLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--odp-space-1);
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-pill);
+  padding: var(--odp-space-1) var(--odp-space-3);
+  text-decoration: none;
+  color: inherit;
+  font-size: var(--odp-font-size-sm);
+  min-height: 2.75rem;
+}
+
+.filterLink[aria-current="true"] {
+  border-color: var(--odp-color-accent);
+  background: var(--odp-color-accent-soft);
+  font-weight: 600;
+}
+
+/* State surfaces --------------------------------------------------------- */
+
+.state {
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-lg);
+  padding: var(--odp-space-5);
+  background: var(--odp-color-surface-raised);
+  max-width: 40rem;
+}
+
+.stateHead {
+  margin-bottom: var(--odp-space-3);
+}
+
+.stateTitle {
+  margin: 0 0 var(--odp-space-2);
+  font-size: var(--odp-font-size-lg);
+}
+
+.stateBody {
+  margin: 0 0 var(--odp-space-2);
+}
+
+.stateNext {
+  margin: 0 0 var(--odp-space-3);
+  color: var(--odp-color-text-muted);
+}
+
+.stateMeta {
+  margin: 0 0 var(--odp-space-3);
+  font-size: var(--odp-font-size-sm);
+  color: var(--odp-color-text-muted);
+}
+
+.stateActions {
+  display: flex;
+  gap: var(--odp-space-2);
+  flex-wrap: wrap;
+}
+
+/* Forms ------------------------------------------------------------------ */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-3);
+  max-width: 32rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--odp-space-1);
+}
+
+.field label {
+  font-size: var(--odp-font-size-sm);
+  font-weight: 600;
+}
+
+.field select,
+.field input,
+.field textarea {
+  /* 2.75rem keeps every control above the 44px touch target minimum. */
+  min-height: 2.75rem;
+  padding: var(--odp-space-2);
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-surface);
+  color: inherit;
+  font: inherit;
+  width: 100%;
+}
+
+.field textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: var(--odp-space-2);
+  min-height: 2.75rem;
+}
+
+.checkRow input {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.formNote {
+  margin: 0;
+  font-size: var(--odp-font-size-sm);
+  color: var(--odp-color-text-muted);
+}
+
+/* Search ----------------------------------------------------------------- */
+
+.searchForm {
+  display: flex;
+  gap: var(--odp-space-2);
+  margin-bottom: var(--odp-space-4);
+  flex-wrap: wrap;
+}
+
+.searchInput {
+  flex: 1 1 16rem;
+  min-height: 2.75rem;
+  padding: var(--odp-space-2) var(--odp-space-3);
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-md);
+  background: var(--odp-color-surface);
+  color: inherit;
+  font: inherit;
+}
+
+.resultLink {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-md);
+  padding: var(--odp-space-3);
+  background: var(--odp-color-surface-raised);
+}
+
+.resultLink:hover,
+.resultLink:focus-visible {
+  border-color: var(--odp-color-accent);
+}
+
+/* Franchisee — mobile-first, never widens into an operator-style table. */
+
+.franchisee {
+  max-width: 32rem;
+}
+
+.card {
+  border: 1px solid var(--odp-color-border-subtle);
+  border-radius: var(--odp-radius-md);
+  padding: var(--odp-space-3);
+  background: var(--odp-color-surface-raised);
+  margin-bottom: var(--odp-space-3);
+}

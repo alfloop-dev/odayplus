@@ -1,0 +1,1107 @@
+[
+  {
+    "insertId": "6a69524e0004cff938b53ae5",
+    "labels": {
+      "instanceId": "001548f729d3aad6d3871f8338101f7b83399f344c2304f56cbc1bc01a22004ea1d9a212f43be127f1bb95833cfb4d02a61147b79b51e9bb677ee82f2ae1111beb13e0f1e15a16984b6ddef72860b360bac347ae2f468cbcb475",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:26.318467358Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "textPayload": "INFO:oday-server:Runtime bootstrapped: mode=postgresql durable=True",
+    "timestamp": "2026-07-29T01:07:26.315385Z"
+  },
+  {
+    "insertId": "6a69524e00056c661e765b76",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Executing job 633856a9-8860-4a2f-869f-b264680df6b6 (type: external-fetch)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:26.355060+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729d3aad6d3871f8338101f7b83399f344c2304f56cbc1bc01a22004ea1d9a212f43be127f1bb95833cfb4d02a61147b79b51e9bb677ee82f2ae1111beb13e0f1e15a16984b6ddef72860b360bac347ae2f468cbcb475",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:26.651565577Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:26.355430Z"
+  },
+  {
+    "insertId": "6a69524e000886d1019646f3",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": "RuntimeError",
+      "level": "ERROR",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 failed: External fetch failed for listing.partner_feed: ExternalFetchProviderConfigurationError: Provider is not selected by the production provider allowlist. (provider_id=listing.partner_feed, code=provider_not_selected); consecutive_failures=1; retry_after=2026-07-29T01:07:56.488741+00:00",
+      "resource": "job/external-fetch",
+      "result": "error",
+      "retryable": false,
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:26.558448+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729d3aad6d3871f8338101f7b83399f344c2304f56cbc1bc01a22004ea1d9a212f43be127f1bb95833cfb4d02a61147b79b51e9bb677ee82f2ae1111beb13e0f1e15a16984b6ddef72860b360bac347ae2f468cbcb475",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:26.651565577Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:26.558801Z"
+  },
+  {
+    "insertId": "6a69524e00089c4a577cdd0d",
+    "jsonPayload": {
+      "action": "retry",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 queued for retry (attempt 1/3)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:26.564030+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729d3aad6d3871f8338101f7b83399f344c2304f56cbc1bc01a22004ea1d9a212f43be127f1bb95833cfb4d02a61147b79b51e9bb677ee82f2ae1111beb13e0f1e15a16984b6ddef72860b360bac347ae2f468cbcb475",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:26.651565577Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:26.564298Z"
+  },
+  {
+    "insertId": "6a69524e0008ba9975c0d183",
+    "jsonPayload": {
+      "cloud_run_execution": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "cloud_run_task_index": "0",
+      "environment": "dev",
+      "processed": [
+        {
+          "attempts": 1,
+          "has_error": true,
+          "job_id": "633856a9-8860-4a2f-869f-b264680df6b6",
+          "job_status": "queued",
+          "job_type": "external-fetch",
+          "outcome": "retry_queued",
+          "retry_count": 1
+        }
+      ],
+      "processed_count": 1,
+      "queue_active": 1,
+      "receipt_kind": "worker",
+      "recorded_at": "2026-07-29T01:07:26Z",
+      "release_sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "schema_version": 1,
+      "status": "retry_queued"
+    },
+    "labels": {
+      "instanceId": "001548f729d3aad6d3871f8338101f7b83399f344c2304f56cbc1bc01a22004ea1d9a212f43be127f1bb95833cfb4d02a61147b79b51e9bb677ee82f2ae1111beb13e0f1e15a16984b6ddef72860b360bac347ae2f468cbcb475",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-07-29T01:07:26.575821560Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:26.572057Z"
+  },
+  {
+    "insertId": "6a69524e000ba885bae93e92",
+    "labels": {
+      "container_name": "worker",
+      "instanceId": "001548f729d3aad6d3871f8338101f7b83399f344c2304f56cbc1bc01a22004ea1d9a212f43be127f1bb95833cfb4d02a61147b79b51e9bb677ee82f2ae1111beb13e0f1e15a16984b6ddef72860b360bac347ae2f468cbcb475",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "0",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2026-07-29T01:07:26.766624799Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "severity": "WARNING",
+    "textPayload": "Container called exit(75).",
+    "timestamp": "2026-07-29T01:07:26.763971Z"
+  },
+  {
+    "insertId": "6a69525c000145d73367319d",
+    "labels": {
+      "instanceId": "001548f729ebd37f57a82eb785ca6fe573c92656309075d1275014445b2522b5d04e4fcb0868d989c427a5a54855ce1e4c5707e2b4194a358bcfd8f4f78337b42cb96512da655304451a0a4f24158987e154a9e5f5a41317c834",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "1",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:40.087986289Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "textPayload": "INFO:oday-server:Runtime bootstrapped: mode=postgresql durable=True",
+    "timestamp": "2026-07-29T01:07:40.083415Z"
+  },
+  {
+    "insertId": "6a69525c0003b49c780fabb7",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Executing job 633856a9-8860-4a2f-869f-b264680df6b6 (type: external-fetch)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:40.242875+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729ebd37f57a82eb785ca6fe573c92656309075d1275014445b2522b5d04e4fcb0868d989c427a5a54855ce1e4c5707e2b4194a358bcfd8f4f78337b42cb96512da655304451a0a4f24158987e154a9e5f5a41317c834",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "1",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:40.419398656Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:40.242844Z"
+  },
+  {
+    "insertId": "6a69525c0004f96b98fef1e1",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": "RuntimeError",
+      "level": "ERROR",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 failed: External fetch failed for listing.partner_feed: ExternalFetchProviderConfigurationError: Provider is not selected by the production provider allowlist. (provider_id=listing.partner_feed, code=provider_not_selected); consecutive_failures=2; retry_after=2026-07-29T01:22:40.257696+00:00",
+      "resource": "job/external-fetch",
+      "result": "error",
+      "retryable": false,
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:40.326032+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729ebd37f57a82eb785ca6fe573c92656309075d1275014445b2522b5d04e4fcb0868d989c427a5a54855ce1e4c5707e2b4194a358bcfd8f4f78337b42cb96512da655304451a0a4f24158987e154a9e5f5a41317c834",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "1",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:40.419398656Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:40.325995Z"
+  },
+  {
+    "insertId": "6a69525c00050ec52ee586e3",
+    "jsonPayload": {
+      "action": "retry",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 queued for retry (attempt 2/3)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:40.331611+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729ebd37f57a82eb785ca6fe573c92656309075d1275014445b2522b5d04e4fcb0868d989c427a5a54855ce1e4c5707e2b4194a358bcfd8f4f78337b42cb96512da655304451a0a4f24158987e154a9e5f5a41317c834",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "1",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:40.419398656Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:40.331461Z"
+  },
+  {
+    "insertId": "6a69525c0005325db8540b4f",
+    "jsonPayload": {
+      "cloud_run_execution": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "cloud_run_task_index": "0",
+      "environment": "dev",
+      "processed": [
+        {
+          "attempts": 2,
+          "has_error": true,
+          "job_id": "633856a9-8860-4a2f-869f-b264680df6b6",
+          "job_status": "queued",
+          "job_type": "external-fetch",
+          "outcome": "retry_queued",
+          "retry_count": 2
+        }
+      ],
+      "processed_count": 1,
+      "queue_active": 1,
+      "receipt_kind": "worker",
+      "recorded_at": "2026-07-29T01:07:40Z",
+      "release_sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "schema_version": 1,
+      "status": "retry_queued"
+    },
+    "labels": {
+      "instanceId": "001548f729ebd37f57a82eb785ca6fe573c92656309075d1275014445b2522b5d04e4fcb0868d989c427a5a54855ce1e4c5707e2b4194a358bcfd8f4f78337b42cb96512da655304451a0a4f24158987e154a9e5f5a41317c834",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "1",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-07-29T01:07:40.343722513Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:40.340573Z"
+  },
+  {
+    "insertId": "6a69525c0007cff073c5dd60",
+    "labels": {
+      "container_name": "worker",
+      "instanceId": "001548f729ebd37f57a82eb785ca6fe573c92656309075d1275014445b2522b5d04e4fcb0868d989c427a5a54855ce1e4c5707e2b4194a358bcfd8f4f78337b42cb96512da655304451a0a4f24158987e154a9e5f5a41317c834",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "1",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2026-07-29T01:07:40.514106567Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "severity": "WARNING",
+    "textPayload": "Container called exit(75).",
+    "timestamp": "2026-07-29T01:07:40.511935Z"
+  },
+  {
+    "insertId": "6a695269000849c8c9a6f24f",
+    "labels": {
+      "instanceId": "001548f72959489749ddfc915ba014efed8b568d8b3bb6bc7586f85c4049e586d3c048cd8377249edf068fe03995f5f28873b334af5f9cdf4a5a8fee161f1bcd2f8f088921ef43a19270d2a19fe005a32acf50c1ad671f39f19b",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "2",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:53.545646655Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "textPayload": "INFO:oday-server:Runtime bootstrapped: mode=postgresql durable=True",
+    "timestamp": "2026-07-29T01:07:53.543176Z"
+  },
+  {
+    "insertId": "6a6952690008d69342a63fc2",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Executing job 633856a9-8860-4a2f-869f-b264680df6b6 (type: external-fetch)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:53.579046+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f72959489749ddfc915ba014efed8b568d8b3bb6bc7586f85c4049e586d3c048cd8377249edf068fe03995f5f28873b334af5f9cdf4a5a8fee161f1bcd2f8f088921ef43a19270d2a19fe005a32acf50c1ad671f39f19b",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "2",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:53.879122500Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:53.579219Z"
+  },
+  {
+    "insertId": "6a695269000bc992a6ea9351",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": "RuntimeError",
+      "level": "ERROR",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 failed: External fetch failed for listing.partner_feed: provider circuit open until 2026-07-29T01:22:40.257696+00:00",
+      "resource": "job/external-fetch",
+      "result": "error",
+      "retryable": false,
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:53.772389+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f72959489749ddfc915ba014efed8b568d8b3bb6bc7586f85c4049e586d3c048cd8377249edf068fe03995f5f28873b334af5f9cdf4a5a8fee161f1bcd2f8f088921ef43a19270d2a19fe005a32acf50c1ad671f39f19b",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "2",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:53.879122500Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:53.772498Z"
+  },
+  {
+    "insertId": "6a695269000bda1d1640d11e",
+    "jsonPayload": {
+      "action": "retry",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 queued for retry (attempt 3/3)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:07:53.776698+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f72959489749ddfc915ba014efed8b568d8b3bb6bc7586f85c4049e586d3c048cd8377249edf068fe03995f5f28873b334af5f9cdf4a5a8fee161f1bcd2f8f088921ef43a19270d2a19fe005a32acf50c1ad671f39f19b",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "2",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:07:53.879122500Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:53.776733Z"
+  },
+  {
+    "insertId": "6a695269000bf48bbfd4d821",
+    "jsonPayload": {
+      "cloud_run_execution": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "cloud_run_task_index": "0",
+      "environment": "dev",
+      "processed": [
+        {
+          "attempts": 3,
+          "has_error": true,
+          "job_id": "633856a9-8860-4a2f-869f-b264680df6b6",
+          "job_status": "queued",
+          "job_type": "external-fetch",
+          "outcome": "retry_queued",
+          "retry_count": 3
+        }
+      ],
+      "processed_count": 1,
+      "queue_active": 1,
+      "receipt_kind": "worker",
+      "recorded_at": "2026-07-29T01:07:53Z",
+      "release_sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "schema_version": 1,
+      "status": "retry_queued"
+    },
+    "labels": {
+      "instanceId": "001548f72959489749ddfc915ba014efed8b568d8b3bb6bc7586f85c4049e586d3c048cd8377249edf068fe03995f5f28873b334af5f9cdf4a5a8fee161f1bcd2f8f088921ef43a19270d2a19fe005a32acf50c1ad671f39f19b",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "2",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-07-29T01:07:53.785988071Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:07:53.783499Z"
+  },
+  {
+    "insertId": "6a695269000e93fc07026b02",
+    "labels": {
+      "container_name": "worker",
+      "instanceId": "001548f72959489749ddfc915ba014efed8b568d8b3bb6bc7586f85c4049e586d3c048cd8377249edf068fe03995f5f28873b334af5f9cdf4a5a8fee161f1bcd2f8f088921ef43a19270d2a19fe005a32acf50c1ad671f39f19b",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "2",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2026-07-29T01:07:53.958195088Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "severity": "WARNING",
+    "textPayload": "Container called exit(75).",
+    "timestamp": "2026-07-29T01:07:53.955337Z"
+  },
+  {
+    "insertId": "6a695278000b67c6dcb25175",
+    "labels": {
+      "instanceId": "001548f729a79655dcf5ab5b4a6b16aeb59d87b6d8dec5152ab29e2d171085932d780bc8bd989204e1f6a95c825a70d856bb235747a51b4b0c7b47612d4e177ec511c724e1bb218f99bb6ff687aa8c30429fdaab7320593ba4a3",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "3",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:08:08.751059408Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "textPayload": "INFO:oday-server:Runtime bootstrapped: mode=postgresql durable=True",
+    "timestamp": "2026-07-29T01:08:08.747462Z"
+  },
+  {
+    "insertId": "6a695278000f188fb1d67589",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Executing job 633856a9-8860-4a2f-869f-b264680df6b6 (type: external-fetch)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:08:08.988926+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729a79655dcf5ab5b4a6b16aeb59d87b6d8dec5152ab29e2d171085932d780bc8bd989204e1f6a95c825a70d856bb235747a51b4b0c7b47612d4e177ec511c724e1bb218f99bb6ff687aa8c30429fdaab7320593ba4a3",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "3",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:08:09.084200379Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:08:08.989327Z"
+  },
+  {
+    "insertId": "6a695279000109b0daf0f597",
+    "jsonPayload": {
+      "action": "execute",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": "RuntimeError",
+      "level": "ERROR",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 failed: External fetch failed for listing.partner_feed: provider circuit open until 2026-07-29T01:22:40.257696+00:00",
+      "resource": "job/external-fetch",
+      "result": "error",
+      "retryable": false,
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:08:09.067667+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729a79655dcf5ab5b4a6b16aeb59d87b6d8dec5152ab29e2d171085932d780bc8bd989204e1f6a95c825a70d856bb235747a51b4b0c7b47612d4e177ec511c724e1bb218f99bb6ff687aa8c30429fdaab7320593ba4a3",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "3",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:08:09.084200379Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:08:09.068016Z"
+  },
+  {
+    "insertId": "6a69527900011fde26c12300",
+    "jsonPayload": {
+      "action": "fail",
+      "actor": "worker",
+      "correlation_id": "b0d45705-10c5-4fab-bcf8-53222af23d26",
+      "error_code": null,
+      "level": "INFO",
+      "message": "Job 633856a9-8860-4a2f-869f-b264680df6b6 marked failed (max retries reached or non-retryable)",
+      "resource": "job/external-fetch",
+      "result": "ok",
+      "service": "oday-worker",
+      "timestamp": "2026-07-29T01:08:09.073490+00:00"
+    },
+    "labels": {
+      "instanceId": "001548f729a79655dcf5ab5b4a6b16aeb59d87b6d8dec5152ab29e2d171085932d780bc8bd989204e1f6a95c825a70d856bb235747a51b4b0c7b47612d4e177ec511c724e1bb218f99bb6ff687aa8c30429fdaab7320593ba4a3",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "3",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstderr",
+    "receiveTimestamp": "2026-07-29T01:08:09.084200379Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:08:09.073694Z"
+  },
+  {
+    "insertId": "6a69527900014075753670e7",
+    "jsonPayload": {
+      "cloud_run_execution": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "cloud_run_task_index": "0",
+      "environment": "dev",
+      "processed": [
+        {
+          "attempts": 4,
+          "has_error": true,
+          "job_id": "633856a9-8860-4a2f-869f-b264680df6b6",
+          "job_status": "failed",
+          "job_type": "external-fetch",
+          "outcome": "failed",
+          "retry_count": 3
+        }
+      ],
+      "processed_count": 1,
+      "queue_active": 0,
+      "receipt_kind": "worker",
+      "recorded_at": "2026-07-29T01:08:09Z",
+      "release_sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "schema_version": 1,
+      "status": "failed"
+    },
+    "labels": {
+      "instanceId": "001548f729a79655dcf5ab5b4a6b16aeb59d87b6d8dec5152ab29e2d171085932d780bc8bd989204e1f6a95c825a70d856bb235747a51b4b0c7b47612d4e177ec511c724e1bb218f99bb6ff687aa8c30429fdaab7320593ba4a3",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "3",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fstdout",
+    "receiveTimestamp": "2026-07-29T01:08:09.084541978Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "timestamp": "2026-07-29T01:08:09.082037Z"
+  },
+  {
+    "insertId": "6a695279000417dd79379550",
+    "labels": {
+      "container_name": "worker",
+      "instanceId": "001548f729a79655dcf5ab5b4a6b16aeb59d87b6d8dec5152ab29e2d171085932d780bc8bd989204e1f6a95c825a70d856bb235747a51b4b0c7b47612d4e177ec511c724e1bb218f99bb6ff687aa8c30429fdaab7320593ba4a3",
+      "oday-data-binding": "live",
+      "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+      "oday-runtime": "worker",
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5",
+      "run.googleapis.com/task_attempt": "3",
+      "run.googleapis.com/task_index": "0"
+    },
+    "logName": "projects/alfaloop-data-project/logs/run.googleapis.com%2Fvarlog%2Fsystem",
+    "receiveTimestamp": "2026-07-29T01:08:09.271086556Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "severity": "WARNING",
+    "textPayload": "Container called exit(1).",
+    "timestamp": "2026-07-29T01:08:09.268215Z"
+  },
+  {
+    "insertId": "3cfz1udnhnu",
+    "labels": {
+      "run.googleapis.com/execution_name": "oday-worker-r-79cf9b67e62c-6fhw5"
+    },
+    "logName": "projects/alfaloop-data-project/logs/cloudaudit.googleapis.com%2Fsystem_event",
+    "protoPayload": {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      "methodName": "/Jobs.RunJob",
+      "resourceName": "namespaces/alfaloop-data-project/executions/oday-worker-r-79cf9b67e62c-6fhw5",
+      "response": {
+        "@type": "type.googleapis.com/google.cloud.run.v1.Execution",
+        "apiVersion": "run.googleapis.com/v1",
+        "kind": "Execution",
+        "metadata": {
+          "annotations": {
+            "run.googleapis.com/client-name": "gcloud",
+            "run.googleapis.com/client-version": "568.0.0",
+            "run.googleapis.com/cloudsql-instances": "alfaloop-data-project:asia-east1:oday-dev-sql",
+            "run.googleapis.com/creator": "github-deployer@alfaloop-data-project.iam.gserviceaccount.com",
+            "run.googleapis.com/execution-environment": "gen2",
+            "run.googleapis.com/lastModifier": "github-deployer@alfaloop-data-project.iam.gserviceaccount.com",
+            "run.googleapis.com/operation-id": "020b0cc3-da23-493d-8a7e-a9fe876e74b6"
+          },
+          "creationTimestamp": "2026-07-29T01:07:13.457407Z",
+          "generation": 1,
+          "labels": {
+            "client.knative.dev/nonce": "kes_yos_boj",
+            "cloud.googleapis.com/location": "asia-east1",
+            "oday-data-binding": "live",
+            "oday-release-sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+            "oday-runtime": "worker",
+            "run.googleapis.com/job": "oday-worker-r-79cf9b67e62c",
+            "run.googleapis.com/jobGeneration": "1",
+            "run.googleapis.com/jobResourceVersion": "1785287198860430",
+            "run.googleapis.com/jobUid": "e9f6e67e-e57a-49dd-9ae1-17d1e859cf31"
+          },
+          "name": "oday-worker-r-79cf9b67e62c-6fhw5",
+          "namespace": "1067163562451",
+          "ownerReferences": [
+            {
+              "apiVersion": "serving.knative.dev/v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Job",
+              "name": "oday-worker-r-79cf9b67e62c",
+              "uid": "e9f6e67e-e57a-49dd-9ae1-17d1e859cf31"
+            }
+          ],
+          "resourceVersion": "AAZXtZbq+NY",
+          "selfLink": "/apis/run.googleapis.com/v1/namespaces/1067163562451/executions/oday-worker-r-79cf9b67e62c-6fhw5",
+          "uid": "6401fb77-e207-4a6f-a5c5-8d5028012d16"
+        },
+        "spec": {
+          "parallelism": 1,
+          "taskCount": 1,
+          "template": {
+            "spec": {
+              "containers": [
+                {
+                  "args": [
+                    "product_ops/deployment/cloud_run_job_entrypoint.py",
+                    "worker",
+                    "--max-jobs",
+                    "1"
+                  ],
+                  "command": [
+                    "python"
+                  ],
+                  "env": [
+                    {
+                      "name": "MLFLOW_TRACKING_URI",
+                      "value": "https://oday-mlflow-7sxbjoeozq-de.a.run.app"
+                    },
+                    {
+                      "name": "ODAY_ENV",
+                      "value": "dev"
+                    },
+                    {
+                      "name": "ODAY_RELEASE_SHA",
+                      "value": "79cf9b67e62ce9fbd762b6695a214965ea9fe258"
+                    },
+                    {
+                      "name": "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+                      "value": "active"
+                    },
+                    {
+                      "name": "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+                      "value": "https://odp-provider-gateway-7sxbjoeozq-de.a.run.app/admin-boundary"
+                    },
+                    {
+                      "name": "ODP_AUTH_AUDIENCES",
+                      "value": "https://oday-api-7sxbjoeozq-de.a.run.app"
+                    },
+                    {
+                      "name": "ODP_AUTH_ISSUER",
+                      "value": "https://accounts.google.com"
+                    },
+                    {
+                      "name": "ODP_AUTH_JWKS_URI",
+                      "value": "https://www.googleapis.com/oauth2/v3/certs"
+                    },
+                    {
+                      "name": "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
+                      "value": "disabled"
+                    },
+                    {
+                      "name": "ODP_DATA_BINDING_MODE",
+                      "value": "live"
+                    },
+                    {
+                      "name": "ODP_DEPLOY_ENV",
+                      "value": "dev"
+                    },
+                    {
+                      "name": "ODP_ENV",
+                      "value": "dev"
+                    },
+                    {
+                      "name": "ODP_EXTERNAL_PROVIDER_MODE",
+                      "value": "live"
+                    },
+                    {
+                      "name": "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
+                      "value": "3.0"
+                    },
+                    {
+                      "name": "ODP_FORECAST_ENGINE",
+                      "value": "statsforecast"
+                    },
+                    {
+                      "name": "ODP_FORECAST_MODEL",
+                      "value": "seasonal_naive"
+                    },
+                    {
+                      "name": "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+                      "value": "active"
+                    },
+                    {
+                      "name": "ODP_GEOCODE_PROVIDER_URL",
+                      "value": "https://odp-provider-gateway-7sxbjoeozq-de.a.run.app/geocode"
+                    },
+                    {
+                      "name": "ODP_OBJECT_STORE",
+                      "value": "gcs"
+                    },
+                    {
+                      "name": "ODP_PERSISTENCE",
+                      "value": "postgresql"
+                    },
+                    {
+                      "name": "ODP_POI_PROVIDER_AUTH_STATUS",
+                      "value": "active"
+                    },
+                    {
+                      "name": "ODP_POI_PROVIDER_URL",
+                      "value": "https://odp-provider-gateway-7sxbjoeozq-de.a.run.app/poi"
+                    },
+                    {
+                      "name": "ODP_PRODUCTION_PROVIDER_IDS",
+                      "value": "poi.commercial_api,geocode.primary_api,admin_boundary.official_dataset"
+                    },
+                    {
+                      "name": "ODP_PRODUCT_MODE",
+                      "value": "production"
+                    },
+                    {
+                      "name": "ODP_REQUIRE_LIVE_DATA",
+                      "value": "true"
+                    },
+                    {
+                      "name": "ODP_SNAPSHOT_BUCKET",
+                      "value": "oday-dev-source-snapshots-alfaloop-data-project"
+                    },
+                    {
+                      "name": "ODAY_DATABASE_URL",
+                      "valueFrom": {
+                        "secretKeyRef": {
+                          "key": "latest",
+                          "name": "oday-plus-dev-api-database-url-pg16"
+                        }
+                      }
+                    },
+                    {
+                      "name": "ODP_AUTH_PRINCIPAL_MAP",
+                      "valueFrom": {
+                        "secretKeyRef": {
+                          "key": "latest",
+                          "name": "oday-plus-dev-auth-principal-map"
+                        }
+                      }
+                    },
+                    {
+                      "name": "ODP_POI_PROVIDER_API_KEY",
+                      "valueFrom": {
+                        "secretKeyRef": {
+                          "key": "latest",
+                          "name": "oday-plus-dev-geocode-gateway-key"
+                        }
+                      }
+                    },
+                    {
+                      "name": "ODP_GEOCODE_PROVIDER_API_KEY",
+                      "valueFrom": {
+                        "secretKeyRef": {
+                          "key": "latest",
+                          "name": "oday-plus-dev-geocode-gateway-key"
+                        }
+                      }
+                    },
+                    {
+                      "name": "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
+                      "valueFrom": {
+                        "secretKeyRef": {
+                          "key": "latest",
+                          "name": "oday-plus-dev-geocode-gateway-key"
+                        }
+                      }
+                    }
+                  ],
+                  "image": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday-plus-dev/oday-worker@sha256:9658d34627a75ef5580160011da36f42fb30fde610b711a3aa42686a900c9e92",
+                  "resources": {
+                    "limits": {
+                      "cpu": "1000m",
+                      "memory": "512Mi"
+                    }
+                  }
+                }
+              ],
+              "maxRetries": 3,
+              "serviceAccountName": "gke-oday-dev-runtime@alfaloop-data-project.iam.gserviceaccount.com",
+              "timeoutSeconds": "900"
+            }
+          }
+        },
+        "status": {
+          "completionTime": "2026-07-29T01:08:12.866960Z",
+          "conditions": [
+            {
+              "lastTransitionTime": "2026-07-29T01:08:12.866960Z",
+              "message": "Task oday-worker-r-79cf9b67e62c-6fhw5-task0 failed with exit code: 1 and message: The container exited with an error.",
+              "reason": "NonZeroExitCode",
+              "status": "False",
+              "type": "Completed"
+            },
+            {
+              "lastTransitionTime": "2026-07-29T01:07:14.399712Z",
+              "message": "Provisioned imported containers.",
+              "status": "True",
+              "type": "ResourcesAvailable"
+            },
+            {
+              "lastTransitionTime": "2026-07-29T01:07:19.537523Z",
+              "message": "Started deployed execution in 5.13s.",
+              "status": "True",
+              "type": "Started"
+            },
+            {
+              "lastTransitionTime": "2026-07-29T01:07:14.085386Z",
+              "message": "Imported container image.",
+              "status": "True",
+              "type": "ContainerReady"
+            },
+            {
+              "lastTransitionTime": "2026-07-29T01:08:12.942550Z",
+              "message": "System will retry after 00:00 from lastTransitionTime for attempt 0.",
+              "reason": "ImmediateRetry",
+              "severity": "Info",
+              "status": "True",
+              "type": "Retry"
+            }
+          ],
+          "failedCount": 1,
+          "logUri": "https://console.cloud.google.com/logs/viewer?project=alfaloop-data-project&advancedFilter=resource.type%3D%22cloud_run_job%22%0Aresource.labels.job_name%3D%22oday-worker-r-79cf9b67e62c%22%0Aresource.labels.location%3D%22asia-east1%22%0Alabels.%22run.googleapis.com/execution_name%22%3D%22oday-worker-r-79cf9b67e62c-6fhw5%22",
+          "observedGeneration": 1,
+          "retriedCount": 1,
+          "startTime": "2026-07-29T01:07:16.985431Z"
+        }
+      },
+      "serviceName": "run.googleapis.com",
+      "status": {
+        "code": 10,
+        "message": "Execution oday-worker-r-79cf9b67e62c-6fhw5 has failed to complete, 0/1 tasks were a success."
+      }
+    },
+    "receiveTimestamp": "2026-07-29T01:08:13.545191943Z",
+    "resource": {
+      "labels": {
+        "job_name": "oday-worker-r-79cf9b67e62c",
+        "location": "asia-east1",
+        "project_id": "alfaloop-data-project"
+      },
+      "type": "cloud_run_job"
+    },
+    "severity": "ERROR",
+    "timestamp": "2026-07-29T01:08:12.951129Z"
+  }
+]

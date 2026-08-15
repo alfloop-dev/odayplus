@@ -1,0 +1,47 @@
+overlay: 1.0.0
+info:
+  title: ODay Plus Assisted Listing Intake v1.1.2 lint and error-shape corrections
+  version: 1.1.2
+extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1_1_1_CONSISTENCY_OVERLAY.yaml
+
+# Applied after the command and consistency overlays. The effective bundle, not
+# any individual source fragment, is the implementation-binding OpenAPI.
+actions:
+  - target: $.info.version
+    update: 1.1.2
+
+  - target: $.paths['/v1/intakes/{intake_id}'].get.responses['200']
+    update:
+      description: Authorized intake detail with authoritative version, effective values, processing history, and audit references.
+
+  - target: $.paths['/v1/intakes/{intake_id}/corrections'].post.responses['201']
+    update:
+      description: Correction proposal or application was durably committed and an auditable receipt is returned.
+
+  - target: $.paths['/v1/match-cases/{match_case_id}/decisions'].post.responses['201']
+    update:
+      description: Match decision proposal was durably created and routed according to the independent-review policy.
+
+  - target: $.paths['/v1/intakes/{intake_id}/assignment'].put.responses['200']
+    update:
+      description: Assignment was committed with a new aggregate version and authoritative due time.
+
+  - target: $.components.schemas.ApiError.required
+    update:
+      - code
+      - message
+      - retryable
+      - correlation_id
+      - occurred_at
+      - next_action
+
+  - target: $.components.schemas.ApiError.properties
+    update:
+      occurred_at:
+        type: string
+        format: date-time
+        description: Authoritative server timestamp for the error response.
+      next_action:
+        type: [string, 'null']
+        enum: [RETRY, REFRESH, CORRECT_INPUT, REQUEST_ACCESS, CONTACT_SUPPORT, WAIT, null]
+        description: Machine-readable client guidance; null when no safe automated action exists.

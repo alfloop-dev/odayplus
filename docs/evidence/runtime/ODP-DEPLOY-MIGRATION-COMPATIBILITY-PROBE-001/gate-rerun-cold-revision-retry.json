@@ -1,0 +1,121 @@
+{
+  "api_url": "https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app",
+  "checks": [
+    {
+      "detail": "status=200 attempts=1 elapsed=11.5s",
+      "name": "compatibility:/platform/version:http",
+      "ok": true
+    },
+    {
+      "detail": "old revision remains compatible with the migrated production database",
+      "name": "compatibility:/platform/health:database",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-cloud-run-compat-dev-cold-r4-20260729",
+  "generated_at": "2026-07-29T00:03:18Z",
+  "health": {
+    "correlation_id": "corr-cloud-run-compat-dev-cold-r4-20260729",
+    "dependencies": {
+      "database": "healthy",
+      "external_providers": "unsupported for production live data: mode fixture",
+      "job_queue": "healthy"
+    },
+    "modes": {
+      "data": {
+        "blockingReasons": [
+          "PROVIDER_NOT_LIVE",
+          "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ],
+        "liveReady": false,
+        "mode": "unavailable",
+        "operatorRepositoryProbe": {
+          "checkedAt": "2026-07-29T00:03:18.505145+00:00",
+          "errors": [],
+          "persistenceMode": "postgresql",
+          "ready": true,
+          "repository": "OperatorLiveRepository"
+        },
+        "operatorRepositoryReady": true,
+        "origin": {
+          "kind": "live",
+          "persistenceMode": "postgresql",
+          "repository": "OperatorLiveRepository",
+          "sourceId": "operator-live-repository"
+        }
+      },
+      "deploymentMode": "production",
+      "models": {
+        "autoSeeded": false,
+        "error": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: avm: configured MLflow registry has no production alias",
+        "mode": "mlflow-production-unverified",
+        "productionBindingsReady": false
+      },
+      "persistence": {
+        "configuredMode": "postgresql",
+        "durable": true,
+        "production_persistence_supported": true,
+        "reachable": true,
+        "runtimeMode": "postgresql"
+      },
+      "provider": {
+        "configurationValid": true,
+        "healthy": false,
+        "live": false,
+        "mode": "fixture"
+      },
+      "requireLiveData": true
+    },
+    "service": "oday-api",
+    "status": "unhealthy",
+    "time": "2026-07-29T00:03:18.505190+00:00",
+    "version": "0.1.0"
+  },
+  "health_probe": {
+    "attempt_count": 1,
+    "attempts": [
+      {
+        "elapsed_seconds": 0.122,
+        "error": "",
+        "provenance": "json_object",
+        "status": 503,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 0.122,
+    "outcome": "answered"
+  },
+  "ok": true,
+  "probe_retry_policy": {
+    "attempts": 4,
+    "backoff_seconds": 2.0,
+    "max_backoff_seconds": 8.0,
+    "per_attempt_timeout_seconds": 15.0,
+    "total_deadline_seconds": 120.0
+  },
+  "schema_version": 1,
+  "secret_values_redacted": true,
+  "version": {
+    "api_version": "0.1.0",
+    "correlation_id": "corr-cloud-run-compat-dev-cold-r4-20260729",
+    "release_sha": "local",
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-07-29T00:03:18.380919+00:00"
+  },
+  "version_probe": {
+    "attempt_count": 1,
+    "attempts": [
+      {
+        "elapsed_seconds": 11.528,
+        "error": "",
+        "provenance": "json_object",
+        "status": 200,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 11.528,
+    "outcome": "answered"
+  },
+  "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"
+}

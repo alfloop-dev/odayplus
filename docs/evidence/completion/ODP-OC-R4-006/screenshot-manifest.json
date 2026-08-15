@@ -1,0 +1,109 @@
+{
+  "taskId": "ODP-OC-R4-006",
+  "capturedAt": "2026-07-14T10:15:00.000Z",
+  "productUrl": "http://127.0.0.1:3100/operator?ws=network",
+  "designUrl": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/extracted/Oday Plus Operator Console.dc.html",
+  "package6": {
+    "archive": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/Oday Plus 營運管理後台 (6).zip",
+    "sha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+    "entrypoint": "Oday Plus Operator Console.dc.html",
+    "setup": "Switch role to 展店經理, then navigate to 展店與店網 / Network."
+  },
+  "productShellAssertions": {
+    "appShell": 0,
+    "globalHeader": 0,
+    "sidebars": 0,
+    "nestedWorkspaceChromeText": 0
+  },
+  "productLabelsSeen": [
+    "Network 候選點工作台",
+    "Network SiteScore Lab",
+    "Network 候選點比較"
+  ],
+  "screenshots": [
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/product-network-candidate-desktop.png",
+      "viewport": {
+        "width": 1472,
+        "height": 982
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/product-network-sitescore-desktop.png",
+      "viewport": {
+        "width": 1472,
+        "height": 982
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/product-network-compare-desktop.png",
+      "viewport": {
+        "width": 1472,
+        "height": 982
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/design-network-candidate-desktop.png",
+      "viewport": {
+        "width": 1472,
+        "height": 982
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/design-network-sitescore-desktop.png",
+      "viewport": {
+        "width": 1472,
+        "height": 982
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/design-network-compare-desktop.png",
+      "viewport": {
+        "width": 1472,
+        "height": 982
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/product-network-candidate-constrained.png",
+      "viewport": {
+        "width": 390,
+        "height": 900
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/product-network-sitescore-constrained.png",
+      "viewport": {
+        "width": 390,
+        "height": 900
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/product-network-compare-constrained.png",
+      "viewport": {
+        "width": 390,
+        "height": 900
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/design-network-candidate-constrained.png",
+      "viewport": {
+        "width": 390,
+        "height": 900
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/design-network-sitescore-constrained.png",
+      "viewport": {
+        "width": 390,
+        "height": 900
+      }
+    },
+    {
+      "path": "docs/evidence/completion/ODP-OC-R4-006/screenshots/design-network-compare-constrained.png",
+      "viewport": {
+        "width": 390,
+        "height": 900
+      }
+    }
+  ]
+}

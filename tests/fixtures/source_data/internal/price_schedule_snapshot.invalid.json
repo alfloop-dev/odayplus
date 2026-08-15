@@ -1,0 +1,39 @@
+{
+  "contract_id": "price_schedule_snapshot",
+  "cases": [
+    {
+      "label": "missing required price_amount and currency",
+      "record": {
+        "source_price_id": "PR-9001",
+        "source_store_id": "S001",
+        "machine_family": "washer",
+        "effective_from": "2026-04-01T00:00:00+08:00"
+      },
+      "expect_codes": ["missing_required_field"]
+    },
+    {
+      "label": "negative price_amount",
+      "record": {
+        "source_price_id": "PR-9002",
+        "source_store_id": "S001",
+        "machine_family": "washer",
+        "price_amount": -10.0,
+        "currency": "TWD",
+        "effective_from": "2026-04-01T00:00:00+08:00"
+      },
+      "expect_codes": ["invalid_amount"]
+    },
+    {
+      "label": "unmapped machine_family enum",
+      "record": {
+        "source_price_id": "PR-9003",
+        "source_store_id": "S001",
+        "machine_family": "ironing",
+        "price_amount": 30.0,
+        "currency": "TWD",
+        "effective_from": "2026-04-01T00:00:00+08:00"
+      },
+      "expect_codes": ["enum_violation"]
+    }
+  ]
+}

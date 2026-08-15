@@ -15,11 +15,19 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal, Protocol, TypedDict, runtime_checkable
+from pathlib import Path
+from typing import Literal, Protocol, Required, TypedDict, runtime_checkable
 
 JsonScalar = str | int | float | bool | None
 JsonValue = JsonScalar | Mapping[str, "JsonValue"] | Sequence["JsonValue"]
 SignalState = Literal["pending", "leased", "consumed", "rejected", "expired"]
+
+# Producers validate before put_signal and workers validate after reading by
+# resolving this same canonical artifact. Keep the URI/version synchronized with
+# schema.json; major-version changes require a new schema and consumer opt-in.
+SIGNAL_SCHEMA_VERSION = "1.0.0"
+SIGNAL_SCHEMA_ID = "https://oday.plus/schemas/research/signal-envelope/1.0.0"
+SIGNAL_SCHEMA_PATH = Path(__file__).parents[1] / "research" / "schema.json"
 
 
 class SignalStoreError(Exception):
@@ -81,7 +89,7 @@ class SignalSubject(TypedDict):
 class SignalTrace(TypedDict, total=False):
     """Trace fields shared with API/event contracts."""
 
-    correlation_id: str
+    correlation_id: Required[str]
     causation_id: str | None
     request_id: str | None
     source_event_id: str | None
@@ -325,14 +333,27 @@ EXAMPLE_SIGNAL_PAYLOAD: SignalEnvelope = {
 
 
 CONSUMER_ASSUMPTIONS: tuple[str, ...] = (
+    "Producers and consumers validate against SIGNAL_SCHEMA_PATH and require its "
+    "$id to equal SIGNAL_SCHEMA_ID.",
     "Signals are tenant-scoped; consumers must pass tenant_id for every read or state change.",
     "idempotency_key is stable for a business signal and must reject body mismatches.",
     "signal_type follows '<domain>.<event_or_intent>.v<major>' and is versioned independently.",
-    "produced_at, effective_at, expires_at, and evidence timestamps are ISO-8601 strings.",
+    "Consumers must reject unsupported signal_version or signal_type major versions.",
+    "produced_at, effective_at, expires_at, and evidence timestamps are ISO-8601 strings with "
+    "an explicit UTC offset; stores compare normalized instants rather than source offsets.",
+    "Consumers must not act before effective_at and must reject or expire signals after expires_at.",
     "Prediction, decision, execution, and outcome remain separate; signals may request execution "
     "but do not bypass approval policy.",
     "Consumers must lease before side effects and then mark_consumed or reject_signal.",
+    "Delivery is at least once; lease expiry can redeliver a signal, so side effects must use "
+    "signal_id or idempotency_key for deduplication.",
+    "Only the active lease owner may mark a signal consumed or rejected.",
+    "Polling order and page tokens are store-defined; consumers must not infer priority or "
+    "chronology from signal_id or page_token.",
     "Unknown additive payload fields must be ignored by consumers and preserved by stores.",
+    "Version 1.x compatibility is additive within payload: existing fields keep their meaning "
+    "and required envelope fields cannot be removed; breaking changes require signal_version "
+    "2.x, a new schema $id, and explicit consumer opt-in.",
     "PII should be referenced by entity ids, not copied into the signal payload.",
 )
 
@@ -341,6 +362,9 @@ __all__ = [
     "CONSUMER_ASSUMPTIONS",
     "EXAMPLE_SIGNAL_PAYLOAD",
     "JsonValue",
+    "SIGNAL_SCHEMA_ID",
+    "SIGNAL_SCHEMA_PATH",
+    "SIGNAL_SCHEMA_VERSION",
     "SignalConflictError",
     "SignalDecision",
     "SignalDomain",

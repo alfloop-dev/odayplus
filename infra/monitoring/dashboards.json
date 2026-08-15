@@ -1,0 +1,95 @@
+{
+  "$schema": "https://oday.plus/schemas/monitoring/dashboards.v1.json",
+  "source_baseline": "ODP-SD-11 §8 (Dashboard)",
+  "description": "Cloud Monitoring dashboard definitions. Panel metric refs use the shared.observability metric catalog (PLATFORM_METRICS).",
+  "release_sha_traceability": {
+    "enabled": true,
+    "metric_label": "release_sha",
+    "exact_sha_binding": "${RELEASE_SHA}",
+    "slo_owner": "SRE Lead / Platform Operations",
+    "watch_window_minutes": 15,
+    "receipt_required": true,
+    "receipt_metric": "deployment_watch_window_status",
+    "receipt_artifact_path": "docs/evidence/watch_window_receipt.json"
+  },
+  "dashboards": [
+    {
+      "id": "platform-health",
+      "title": "Platform Health",
+      "audience": "SRE",
+      "panels": [
+        {"title": "API latency P50/P95/P99", "metric": "api_latency_ms", "viz": "heatmap"},
+        {"title": "API error rate", "metric": "api_error_count", "viz": "timeseries"},
+        {"title": "API traffic", "metric": "api_request_count", "viz": "timeseries"},
+        {"title": "Job duration", "metric": "job_duration_seconds", "viz": "timeseries"},
+        {"title": "Job failures", "metric": "job_failure_count", "viz": "timeseries"},
+        {"title": "Event consumer lag", "metric": "event_consumer_lag", "viz": "timeseries"},
+        {"title": "DLQ depth", "metric": "dlq_message_count", "viz": "timeseries"},
+        {"title": "DB query latency", "metric": "db_query_latency_ms", "viz": "heatmap"},
+        {"title": "Release SHA traceability", "metric": "deployment_watch_window_status", "viz": "stat", "label_filter": "release_sha=${RELEASE_SHA}"},
+        {"title": "Release watch-window receipt", "metric": "deployment_watch_window_status", "viz": "timeseries", "label_filter": "release_sha=${RELEASE_SHA}"}
+      ]
+    },
+    {
+      "id": "data-health",
+      "title": "Data Health",
+      "audience": "Data Owner",
+      "panels": [
+        {"title": "Freshness", "metric": "data_freshness_hours", "viz": "timeseries"},
+        {"title": "Quality score", "metric": "data_quality_score", "viz": "timeseries"},
+        {"title": "Feature null rate", "metric": "feature_null_rate", "viz": "timeseries"},
+        {"title": "External connector failures", "metric": "external_connector_failure_count", "viz": "timeseries"}
+      ]
+    },
+    {
+      "id": "model-health",
+      "title": "Model Health",
+      "audience": "Model Owner",
+      "panels": [
+        {"title": "Prediction volume", "metric": "prediction_count", "viz": "timeseries"},
+        {"title": "Error metric (MAE/MAPE/RMSE)", "metric": "model_error_metric", "viz": "timeseries"},
+        {"title": "Interval coverage", "metric": "prediction_interval_coverage", "viz": "timeseries"},
+        {"title": "Drift", "metric": "drift_score", "viz": "timeseries"},
+        {"title": "Release / rollback", "metric": "model_alias_change_count", "viz": "timeseries"}
+      ]
+    },
+    {
+      "id": "business-ops",
+      "title": "Business Ops",
+      "audience": "Operations / Management",
+      "panels": [
+        {"title": "HeatZone Top-K adoption", "metric": "heatzone_topk_adoption_rate", "viz": "stat"},
+        {"title": "SiteScore realization", "metric": "sitescore_realization_rate", "viz": "timeseries"},
+        {"title": "Forecast alert precision", "metric": "forecast_alert_precision", "viz": "timeseries"},
+        {"title": "Intervention recovery", "metric": "intervention_recovery_rate", "viz": "timeseries"},
+        {"title": "Price constraint violations", "metric": "price_hard_constraint_violation_count", "viz": "stat"},
+        {"title": "AdLift incremental GM", "metric": "adlift_incremental_gm", "viz": "timeseries"},
+        {"title": "AVM interval coverage", "metric": "avm_interval_coverage", "viz": "stat"},
+        {"title": "NetPlan plan adoption", "metric": "netplan_plan_adoption_rate", "viz": "timeseries"},
+        {"title": "Model adoption / override", "metric": "model_adoption_rate", "viz": "timeseries"}
+      ]
+    },
+    {
+      "id": "audit-compliance",
+      "title": "Audit & Compliance",
+      "audience": "Auditor",
+      "panels": [
+        {"title": "Audit event volume", "metric": "audit_event_record_count", "viz": "timeseries"},
+        {"title": "Evidence export count", "metric": "audit_evidence_export_count", "viz": "stat"},
+        {"title": "Audit write failures", "metric": "audit_event_write_failure_count", "viz": "timeseries"},
+        {"title": "Audit pipeline lag", "metric": "audit_event_pipeline_lag_seconds", "viz": "heatmap"},
+        {"title": "Audit completeness gaps", "metric": "audit_completeness_gap_count", "viz": "table"},
+        {"title": "Authorization failures", "metric": "api_error_count", "viz": "timeseries"}
+      ]
+    },
+    {
+      "id": "external-source",
+      "title": "External Source",
+      "audience": "Integration Owner",
+      "panels": [
+        {"title": "Source freshness", "metric": "data_freshness_hours", "viz": "timeseries"},
+        {"title": "Connector failures", "metric": "external_connector_failure_count", "viz": "timeseries"}
+      ]
+    }
+  ]
+}

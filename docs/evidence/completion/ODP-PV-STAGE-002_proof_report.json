@@ -1,0 +1,74 @@
+{
+  "backup": {
+    "path": "/storage/backups/product-e2e.sqlite3.backup",
+    "sha256": "703d7a291384a847594263fb282124da2cd06e87f71f82b320c8a8d9eff5a09a",
+    "size_bytes": 86016
+  },
+  "compose_file": "infra/docker/docker-compose.e2e.yml",
+  "diagnostics_dir": "/tmp/pantheon-worker-worktrees/oday-plus/odp-pv-stage-002/.odp_data/deployment-health-backup-rollback",
+  "generated_at": "2026-07-12T10:22:11.727875+00:00",
+  "health": {
+    "api": {
+      "correlation_id": "b080dfac-c691-485a-bd42-495176c1e634",
+      "service": "oday-api",
+      "status": "ok",
+      "time": "2026-07-12T10:24:54.551299+00:00",
+      "version": "0.1.0"
+    },
+    "source_fixture": {
+      "contract_id": "listing_raw_snapshot",
+      "records": [
+        {
+          "address_raw": "\u53f0\u5317\u5e02\u5927\u5b89\u5340\u5fa9\u8208\u5357\u8def\u4e8c\u6bb5100\u865f1\u6a13",
+          "area_ping": 25.5,
+          "available_from": "2026-07-01",
+          "confidence": 0.8,
+          "currency": "TWD",
+          "floor": "1F",
+          "listing_status": "active",
+          "rent_amount": 45000.0,
+          "snapshot_id": "listing-2026-06-26",
+          "source_listing_id": "LST-001"
+        },
+        {
+          "address_raw": "\u65b0\u5317\u5e02\u677f\u6a4b\u5340\u4e2d\u5c71\u8def\u4e00\u6bb550\u865f",
+          "listing_status": "stale",
+          "rent_amount": 38000.0,
+          "snapshot_id": "listing-2026-06-26",
+          "source_listing_id": "LST-002"
+        }
+      ]
+    },
+    "web_status": 200,
+    "worker": {
+      "db_path": "/data/product-e2e.sqlite3",
+      "persistence": "durable",
+      "status": "alive",
+      "time": "2026-07-12T10:24:52.436499+00:00",
+      "worker": "product-e2e-scheduler"
+    }
+  },
+  "project": "oday-plus-e2e-pv-stage-001",
+  "report_sha256": "8113cbaa6dae6cf1bb8403a9179e2f9d381b85b0c254d0d94d49ab95ab2ea4aa",
+  "result": "passed",
+  "rollback": {
+    "case_count_after_probe": 2,
+    "case_count_after_restore": 1,
+    "case_count_before_probe": 1,
+    "probe_case_id": "avm-case-28d6c93c-7183-4e96-a43e-dfb7827deef2",
+    "probe_removed": true,
+    "probe_store_id": "pv014-rollback-probe-1783851895",
+    "restore": {
+      "restored_path": "/data/product-e2e.sqlite3",
+      "sha256": "703d7a291384a847594263fb282124da2cd06e87f71f82b320c8a8d9eff5a09a",
+      "size_bytes": 86016
+    },
+    "seed_case_preserved": true
+  },
+  "seed_stdout": "{\n  \"api\": {\n    \"correlation_id\": \"corr-product-e2e-seed-001\",\n    \"service\": \"oday-api\",\n    \"status\": \"ok\",\n    \"time\": \"2026-07-12T10:24:54.462786+00:00\",\n    \"version\": \"0.1.0\"\n  },\n  \"avm_case_id\": \"avm-case-0cea82ac-564f-458d-9b8f-42e8b77ae09c\",\n  \"correlation_id\": \"corr-product-e2e-seed-001\",\n  \"evidence_export_id\": \"audit-export-dbd68956-601b-4eb9-ba74-d29083b581bc\",\n  \"heatzone_job_id\": \"heatzone-score-583d0450-e245-4247-b6dc-75ca1427817d\",\n  \"scheduler_job_id\": \"60801195-56a3-4b72-acb9-413bdef5247a\",\n  \"seeded_at\": \"2026-07-12T10:24:54.522875+00:00\",\n  \"source_fixture_keys\": [\n    \"contract_id\",\n    \"records\"\n  ]\n}",
+  "unsupported_or_documented": {
+    "model_artifact_rollback": "not mutated by this deployment drill; Learning Hub alias rollback is covered by PV-007 product E2E",
+    "policy_rollback": "policy files are immutable in the image for this E2E stack; image rollback is represented by redeploying the previous image tag",
+    "remote_staging_rollout": "not configured because ODP_STAGING_DEPLOY_URL/host variables are placeholders"
+  }
+}

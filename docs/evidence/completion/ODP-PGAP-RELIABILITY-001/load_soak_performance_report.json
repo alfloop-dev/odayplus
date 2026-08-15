@@ -1,0 +1,18 @@
+{
+  "timestamp": 1784354482.3950555,
+  "concurrency_levels": [
+    10,
+    20,
+    50
+  ],
+  "total_volume": 150,
+  "success_count": 150,
+  "failure_count": 0,
+  "total_duration_seconds": 8.205365841044113,
+  "throughput_req_per_sec": 18.280720556015194,
+  "latency_p50_seconds": 0.8874020411167294,
+  "latency_p95_seconds": 2.6975595699623227,
+  "latency_p99_seconds": 2.787663302849978,
+  "budget_p95_seconds_target": 3.0,
+  "passed": true
+}

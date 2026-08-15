@@ -1,0 +1,20 @@
+{
+  "schema": "oday-plus.operator-console-design-source-delivery.v1",
+  "task_id": "ODP-OC-R4-014",
+  "target_branch": "dev",
+  "base_commit": "59e37cf3dc7ba4ff5287c8a55c79ded5669eb121",
+  "canonical_zip": "docs_archive/00_source_zips/operator_console/r4-20260707-package-6/Oday Plus 營運管理後台 (6).zip",
+  "zip_sha256": "db3ea3d68a16a86fe3161ed0517e6072d962a1f46e6b1b7b89af96687aeb4c76",
+  "interactive_html_sha256": "65d359f4abaf82b39eb16f67da8e91e7ad1b030628bc15f8f45ce7c18c0e2f48",
+  "extracted_file_count": 5,
+  "screen_label_count": 32,
+  "fleet_preflight_required": true,
+  "application_paths_changed": false,
+  "verification": {
+    "zip_integrity": "passed",
+    "zip_hash": "passed",
+    "extracted_hashes": "passed",
+    "json_parse": "passed",
+    "staged_diff_check": "passed"
+  }
+}

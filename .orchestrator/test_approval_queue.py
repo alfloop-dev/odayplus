@@ -221,6 +221,60 @@ class ApprovalQueuePruneTests(unittest.TestCase):
         self.assertEqual(evidence["stage"], "request")
         self.assertEqual(evidence["tool_input"]["command"], "python3 -m unittest discover -s .orchestrator -p test_approval_queue.py")
 
+    def test_ensure_worker_deferred_approval_reuses_latest_queue_entry(self) -> None:
+        item = {
+            "provider": "claude2",
+            "task_id": "ODP-DEPLOY-001",
+            "worker_run_id": "claude2-run-1",
+            "session_id": "session-1",
+            "tool_use_id": "toolu-commit-1",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git commit -F /tmp/task-msg.txt"},
+            "risk_class": "needs_review",
+            "suggested_rule": "Bash(git commit -F /tmp/task-msg.txt)",
+        }
+
+        first, first_created = approval_queue.ensure_worker_deferred_approval(self.config, item)
+        second, second_created = approval_queue.ensure_worker_deferred_approval(self.config, item)
+
+        self.assertTrue(first_created)
+        self.assertFalse(second_created)
+        self.assertEqual(second["approval_id"], first["approval_id"])
+        saved = json.loads((self.root / "approval-queue.json").read_text(encoding="utf-8"))
+        self.assertEqual([entry["approval_id"] for entry in saved["pending"]], [first["approval_id"]])
+
+    def test_find_worker_deferred_approval_falls_back_to_input_signature(self) -> None:
+        command = {"command": "git commit -F /tmp/task-msg.txt"}
+        signature = approval_queue.approval_tool_input_signature(command)
+        state = {
+            "pending": [],
+            "history": [
+                {
+                    "approval_id": "apr-resolved",
+                    "worker_run_id": "claude2-run-1",
+                    "tool_use_id": None,
+                    "tool_name": "Bash",
+                    "tool_input_signature": signature,
+                }
+            ],
+        }
+
+        found = approval_queue.find_worker_deferred_approval(
+            state,
+            worker_run_id="claude2-run-1",
+            tool_name="Bash",
+            tool_input=command,
+        )
+        missing = approval_queue.find_worker_deferred_approval(
+            state,
+            worker_run_id="claude2-run-1",
+            tool_name="Bash",
+            tool_input={"command": "git push"},
+        )
+
+        self.assertEqual(found["approval_id"], "apr-resolved")
+        self.assertIsNone(missing)
+
     def test_can_recover_tool_input_from_request_evidence(self) -> None:
         approval_queue.create_approval(
             self.config,

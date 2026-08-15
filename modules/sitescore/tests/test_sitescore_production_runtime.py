@@ -1,0 +1,347 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from models.shared_ml.output_contracts import (
+    SITESCORE_OUTPUT_TRANSFORM,
+    ModelOutputContractError,
+)
+from models.shared_ml.production_runtime import ModelInferenceResult
+from models.shared_ml.registry import ModelAlias, ModelStage, ModelVersion
+from models.shared_ml.scoring_binding import ModelBinding
+from modules.sitescore import (
+    InMemorySiteScoreRepository,
+    SiteScoreRuntimeConfigurationError,
+)
+from modules.sitescore.application.reporting import SiteScoreReportService
+from modules.sitescore.domain.scoring import (
+    SITESCORE_FEATURE_VERSION,
+    SiteScoreFeatureInput,
+    score_site,
+    to_sitescore_model_row,
+)
+from modules.sitescore.workers.scoring_worker import SiteScoreScoringWorker
+from shared.infrastructure.persistence import (
+    DurableSiteScoreRepository,
+    SqliteDocumentStore,
+    SqliteEngine,
+)
+
+NOW = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+
+
+class RecordingRuntime:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+        model = ModelVersion(
+            model_name="sitescore",
+            version="approved-2026.07.24",
+            artifact_uri="gs://oday-models/sitescore/model.zip",
+            dataset_snapshot_id="training-live-001",
+            feature_schema_version=SITESCORE_FEATURE_VERSION,
+            label_version="mature-revenue-v3",
+            metrics={"mae": 8200.0},
+            stage=ModelStage.PRODUCTION,
+            aliases=frozenset({ModelAlias.PRODUCTION}),
+            run_id="mlflow-run-sitescore-001",
+            git_sha="abc1234",
+            approved_by="model-review-board",
+            approved_at=NOW,
+        )
+        self.binding = ModelBinding.from_model_version(
+            "sitescore",
+            model,
+            artifact_sha256="sha256:" + ("a" * 64),
+            engine="lightgbm.LGBMRegressor",
+            mlflow_run_id="mlflow-run-sitescore-001",
+        )
+
+    def infer(self, **kwargs: Any) -> ModelInferenceResult:
+        self.calls.append(kwargs)
+        count = len(kwargs["rows"])
+        return ModelInferenceResult(
+            binding=self.binding,
+            point=(315_000.0,) * count,
+            lower=(270_000.0,) * count,
+            upper=(360_000.0,) * count,
+            engine="lightgbm.LGBMRegressor",
+            artifact_sha256="sha256:" + ("a" * 64),
+            model_metadata={
+                "output_transform": dict(SITESCORE_OUTPUT_TRANSFORM),
+            },
+        )
+
+
+def _feature() -> dict[str, Any]:
+    return {
+        "candidate_site_id": "candidate-live-001",
+        "tenant_id": "tenant-live-001",
+        "target_format_code": "ODAY_G2",
+        "h3_index": "8926308280fffff",
+        "latitude": 25.033964,
+        "longitude": 121.564468,
+        "geocode_confidence": 0.98,
+        "prior_90d_cell_net_revenue": 1_800_000.0,
+        "prior_90d_cell_transaction_count": 720,
+        "prior_90d_cell_store_count": 4,
+        "heat_zone_score": 84.0,
+        "monthly_rent": 52_000.0,
+        "area_ping": 24.0,
+        "comparable_store_count": 5,
+        "feature_snapshot_time": NOW.isoformat(),
+        "view_version": SITESCORE_FEATURE_VERSION,
+        "source_snapshot_ids": ["listing-live-001", "poi-live-001"],
+    }
+
+
+def _repository(path: Path) -> tuple[SqliteEngine, DurableSiteScoreRepository]:
+    engine = SqliteEngine(path)
+    return engine, DurableSiteScoreRepository(SqliteDocumentStore(engine))
+
+
+def test_production_worker_invokes_model_runtime_and_survives_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "sitescore.sqlite3"
+    engine, repository = _repository(database)
+    runtime = RecordingRuntime()
+    try:
+        result = SiteScoreScoringWorker(
+            repository=repository,
+            model_runtime=runtime,
+            runtime_mode="production",
+        ).run(features=[_feature()], prediction_origin_time=NOW)
+        report_id = result.reports[0].report_id
+        assert result.reports[0].m12.p50 == 106_531.25
+        assert result.reports[0].model_version == "sitescore:approved-2026.07.24"
+        assert runtime.calls[0]["service"] == "sitescore"
+        assert set(runtime.calls[0]["rows"][0]) >= {
+            "tenant_id",
+            "target_format_code",
+            "h3_index",
+            "prior_90d_cell_net_revenue",
+            "prior_90d_cell_transaction_count",
+            "prior_90d_cell_store_count",
+            "source_snapshot_ids",
+        }
+    finally:
+        engine.close()
+
+    reopened_engine, reopened = _repository(database)
+    try:
+        restored = reopened.get_report(report_id)
+        assert restored is not None
+        assert restored.m12.p50 == 106_531.25
+        assert reopened.latest("candidate-live-001") == restored
+    finally:
+        reopened_engine.close()
+
+
+def test_production_rejects_missing_memory_or_model_bindings(tmp_path: Path) -> None:
+    with pytest.raises(
+        SiteScoreRuntimeConfigurationError,
+        match="injected durable repository",
+    ):
+        SiteScoreReportService(runtime_mode="production")
+    with pytest.raises(
+        SiteScoreRuntimeConfigurationError,
+        match="injected durable repository",
+    ):
+        SiteScoreReportService(
+            repository=InMemorySiteScoreRepository(),
+            runtime_mode="production",
+        )
+
+    engine, repository = _repository(tmp_path / "sitescore.sqlite3")
+    try:
+        service = SiteScoreReportService(
+            repository=repository,
+            runtime_mode="production",
+        )
+        with pytest.raises(RuntimeError, match="runtime was not composed"):
+            service.score_candidates([_feature()])
+    finally:
+        engine.close()
+
+
+def test_production_adapter_rejects_legacy_v1_feature_rows(tmp_path: Path) -> None:
+    engine, repository = _repository(tmp_path / "sitescore.sqlite3")
+    try:
+        legacy = {
+            "candidate_site_id": "candidate-legacy-001",
+            "heat_zone_score": 84.0,
+            "monthly_rent": 52_000.0,
+            "area_ping": 24.0,
+            "feature_snapshot_time": NOW.isoformat(),
+            "view_version": "candidate-site-view-v1",
+            "source_snapshot_ids": ["legacy-snapshot"],
+        }
+        with pytest.raises(ValueError, match="v2 model input is missing"):
+            SiteScoreReportService(
+                repository=repository,
+                model_runtime=RecordingRuntime(),
+                runtime_mode="production",
+            ).score_candidates([legacy])
+    finally:
+        engine.close()
+
+
+def test_production_flag_cannot_enable_fixed_scorecard(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from modules.sitescore.application import reporting
+
+    monkeypatch.setattr(
+        reporting,
+        "score_sites",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("fixed SiteScore baseline was invoked")
+        ),
+    )
+    engine, repository = _repository(tmp_path / "sitescore.sqlite3")
+    try:
+        runtime = RecordingRuntime()
+        reports = SiteScoreReportService(
+            repository=repository,
+            model_runtime=runtime,
+            require_production_model=False,
+            runtime_mode="production",
+        ).score_candidates([_feature()])
+        assert reports[0].m12.p50 == 106_531.25
+        assert len(runtime.calls) == 1
+    finally:
+        engine.close()
+
+
+def test_baseline_scoring_survives_absent_feature_snapshot_time() -> None:
+    """The optional point-in-time field must not break the baseline path.
+
+    ``feature_snapshot_time`` is optional so the production boundary can reject
+    rows without a real snapshot. The deterministic baseline (used by listing
+    promotion) still has to produce a serializable report, flagged with an
+    explicit warning instead of a fabricated snapshot.
+    """
+
+    report = score_site(
+        SiteScoreFeatureInput(
+            candidate_site_id="candidate-baseline-001",
+            heat_zone_score=84.0,
+            monthly_rent=52_000.0,
+            area_ping=24.0,
+            comparable_store_count=5,
+        ),
+        prediction_origin_time=NOW,
+    )
+    assert report.feature_snapshot_time == NOW
+    assert "missing_feature_snapshot_time" in report.warnings
+    assert report.to_dict()["feature_snapshot_time"] == NOW.isoformat()
+    assert report.to_summary_dict()["featureSnapshotTime"] == NOW.isoformat()
+
+
+def test_baseline_scoring_normalizes_naive_feature_snapshot_time() -> None:
+    report = score_site(
+        SiteScoreFeatureInput(
+            candidate_site_id="candidate-baseline-002",
+            feature_snapshot_time=NOW.replace(tzinfo=None),
+            heat_zone_score=84.0,
+            comparable_store_count=5,
+        ),
+        prediction_origin_time=NOW,
+    )
+    assert report.feature_snapshot_time == NOW
+    assert "missing_feature_snapshot_time" not in report.warnings
+
+
+@pytest.mark.parametrize(
+    ("latitude", "longitude"),
+    [(25.033964, 0.0), (0.0, 121.564468), (0.0, 0.0)],
+)
+def test_production_model_row_rejects_half_geocoded_location(
+    latitude: float,
+    longitude: float,
+) -> None:
+    feature = _feature() | {"latitude": latitude, "longitude": longitude}
+    with pytest.raises(ValueError, match=r"location\(latitude/longitude\)"):
+        to_sitescore_model_row(feature)
+
+
+class _MetadataRuntime(RecordingRuntime):
+    """Runtime whose inference result carries a broken ``model_metadata``."""
+
+    def __init__(self, metadata: Any) -> None:
+        super().__init__()
+        self._metadata = metadata
+
+    def infer(self, **kwargs: Any) -> ModelInferenceResult:
+        self.calls.append(kwargs)
+        count = len(kwargs["rows"])
+        return ModelInferenceResult(
+            binding=self.binding,
+            point=(315_000.0,) * count,
+            lower=(270_000.0,) * count,
+            upper=(360_000.0,) * count,
+            engine="lightgbm.LGBMRegressor",
+            artifact_sha256="sha256:" + ("a" * 64),
+            model_metadata=self._metadata,
+        )
+
+
+@pytest.mark.parametrize(
+    ("metadata", "expected"),
+    [
+        (None, "type NoneType"),
+        ("output_transform=90d", "type str"),
+        ([("output_transform", {})], "type list"),
+        ({}, "declared no output_transform"),
+        ({"feature_schema_version": SITESCORE_FEATURE_VERSION}, "declared no output"),
+    ],
+)
+def test_production_scoring_fails_closed_on_unusable_model_metadata(
+    tmp_path: Path,
+    metadata: Any,
+    expected: str,
+) -> None:
+    """M6: a runtime with no usable ``model_metadata`` must not score.
+
+    The regression this guards is silent degradation, not a crash: the previous
+    code passed ``output_transform=None`` onwards, which surfaced as a generic
+    "output transform is missing" contract error and hid the fact that the
+    registered model returned no metadata to check at all.
+    """
+
+    engine, repository = _repository(tmp_path / "sitescore-metadata.sqlite3")
+    runtime = _MetadataRuntime(metadata)
+    try:
+        service = SiteScoreReportService(
+            repository=repository,
+            model_runtime=runtime,
+            runtime_mode="production",
+        )
+        with pytest.raises(ModelOutputContractError, match=expected):
+            service.score_candidates([_feature()])
+        # Fail closed means fail *before* persistence.
+        assert repository.history("candidate-live-001") == []
+        assert repository.latest("candidate-live-001") is None
+    finally:
+        engine.close()
+
+
+def test_production_scoring_accepts_declared_output_transform(tmp_path: Path) -> None:
+    """Control for the test above: a conforming transform still scores."""
+
+    engine, repository = _repository(tmp_path / "sitescore-metadata-ok.sqlite3")
+    runtime = _MetadataRuntime({"output_transform": dict(SITESCORE_OUTPUT_TRANSFORM)})
+    try:
+        reports = SiteScoreReportService(
+            repository=repository,
+            model_runtime=runtime,
+            runtime_mode="production",
+        ).score_candidates([_feature()], prediction_origin_time=NOW)
+        assert reports[0].m12.p50 == 106_531.25
+    finally:
+        engine.close()

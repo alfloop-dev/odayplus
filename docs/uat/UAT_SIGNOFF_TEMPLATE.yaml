@@ -1,0 +1,27 @@
+uat_session_id:
+module:
+role:
+tester_name:
+tester_department:
+date:
+environment:
+build_version:
+git_commit:
+data_snapshot:
+model_versions:
+feature_flags:
+test_cases:
+  - id:
+    result:
+    defects:
+    evidence_ids:
+decision:
+  accepted:
+  accepted_with_conditions:
+conditions:
+  - owner:
+    due_date:
+    condition:
+sign_off_by:
+signature_date:
+audit_export_ref:

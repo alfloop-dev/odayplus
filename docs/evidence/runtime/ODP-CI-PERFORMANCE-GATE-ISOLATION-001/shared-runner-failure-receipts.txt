@@ -1,0 +1,15 @@
+Raw CI failure receipts - run 30380735899
+head sha: ef048b0fd0e4ac1b9e9ccb6c7eaa052aa984951e (PR 484)
+url: https://github.com/alfloop-dev/odayplus/actions/runs/30380735899
+
+== Attempt 1 - job 90347667367 (product) - conclusion: failure ==
+2026-07-28T17:12:22.7283045Z >       assert p95 <= 3.0, f"P95 latency {p95:.3f}s exceeded budget of 3.0s"
+2026-07-28T17:12:22.7283544Z E       AssertionError: P95 latency 7.518s exceeded budget of 3.0s
+2026-07-28T17:12:37.6413917Z FAILED tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution - AssertionError: P95 latency 7.518s exceeded budget of 3.0s
+2026-07-28T17:12:37.6415024Z 1 failed, 1968 passed, 68 deselected, 106 warnings in 790.31s (0:13:10)
+
+== Attempt 2 - exact-head rerun - job 90351774215 (product) - conclusion: failure ==
+2026-07-28T17:29:37.6955593Z >       assert p95 <= 3.0, f"P95 latency {p95:.3f}s exceeded budget of 3.0s"
+2026-07-28T17:29:37.6956388Z E       AssertionError: P95 latency 6.956s exceeded budget of 3.0s
+2026-07-28T17:29:52.1144395Z FAILED tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution - AssertionError: P95 latency 6.956s exceeded budget of 3.0s
+2026-07-28T17:29:52.1146063Z 1 failed, 1968 passed, 68 deselected, 106 warnings in 862.53s (0:14:22)

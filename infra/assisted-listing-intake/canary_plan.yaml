@@ -1,0 +1,76 @@
+# Assisted Listing Intake v1 — tenant/source canary rollout plan.
+#
+# Normative source: runbook §4 Phase 4 (shadow) + Phase 5 (write canary ladder).
+# Units execute strictly in order; a unit may start only when the previous unit
+# passed and its entry_gates hold. Production units additionally require the
+# release-authority rows named in release_authority.yaml to be approved —
+# the release harness enforces this fail-closed.
+
+plan_version: 1
+task_ref: ODP-INTAKE-RELEASE-001
+
+shadow_acceptance:
+  # Runbook §4 Phase 4 acceptance metrics (min 7 days or 10,000 rows in
+  # production; the staging drill proves the measurement machinery and the
+  # invariant metrics at drill volume).
+  tenant_scope_isolation_pass_rate: 1.0
+  unknown_blocked_sources_fail_closed_rate: 1.0
+  ambiguous_auto_merges: 0
+  automatic_candidate_promotions: 0
+  exact_duplicate_agreement_min: 0.999
+  material_field_parity_min: 0.995
+  snapshot_checksum_reconciliation_rate: 1.0
+  audit_outbox_loss: 0
+  blocking_findings: 0
+
+write_canary_units:
+  - unit: 1
+    name: "internal tenant, assisted-entry-only source"
+    tenant_class: internal
+    source_mode: ASSISTED_ENTRY_ONLY
+    environment: staging-surrogate
+    entry_gates: ["shadow_acceptance_met", "migration_blocking_findings_zero"]
+  - unit: 2
+    name: "internal tenant, one approved retrieval source"
+    tenant_class: internal
+    source_mode: APPROVED_RETRIEVAL
+    environment: staging-surrogate
+    entry_gates: ["unit_1_passed", "kill_switch_verified"]
+  - unit: 3
+    name: "one low-volume production tenant"
+    tenant_class: production
+    source_mode: APPROVED_RETRIEVAL
+    environment: production
+    entry_gates:
+      - "unit_2_passed"
+      - "release_authority_approved: [Release authority, Platform / SRE, Security, Product / Expansion Ops]"
+      - "live_staging_evidence_recorded"
+  - unit: 4
+    name: "5% eligible tenants"
+    tenant_class: production
+    environment: production
+    entry_gates: ["unit_3_passed", "error_budget_intact", "release_authority_all_approved"]
+  - unit: 5
+    name: "25% eligible tenants"
+    tenant_class: production
+    environment: production
+    entry_gates: ["unit_4_passed", "error_budget_intact"]
+  - unit: 6
+    name: "50% eligible tenants"
+    tenant_class: production
+    environment: production
+    entry_gates: ["unit_5_passed", "error_budget_intact"]
+  - unit: 7
+    name: "100% eligible tenants (cutover)"
+    tenant_class: production
+    environment: production
+    entry_gates: ["unit_6_passed", "release_authority_all_approved", "all_p0_contract_group_approvals"]
+
+promotion_gate:
+  # Promotion remains separately gated after identity/review UAT (runbook §4 Phase 5/6).
+  flag: assisted_intake_v1_promotion
+  requires: ["two_person_review_test", "duplicate_candidate_constraint_test", "lost_response_replay_test", "sitescore_compensation_test"]
+
+legacy_removal:
+  watch_window_days: 30
+  requires: ["rollback_checkpoint_expired", "release_authority_all_approved"]

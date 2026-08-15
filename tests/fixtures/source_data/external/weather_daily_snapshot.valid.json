@@ -1,0 +1,23 @@
+{
+  "contract_id": "weather_daily_snapshot",
+  "records": [
+    {
+      "station_id": "STA-001",
+      "date": "2026-07-10",
+      "temperature_max": 33.5,
+      "temperature_min": 25.0,
+      "precipitation": 5.2,
+      "humidity_avg": 78,
+      "snapshot_id": "weather-2026-07-10"
+    },
+    {
+      "station_id": "STA-002",
+      "date": "2026-07-10",
+      "temperature_max": 34.0,
+      "temperature_min": 26.2,
+      "precipitation": 0.0,
+      "humidity_avg": 70,
+      "snapshot_id": "weather-2026-07-10"
+    }
+  ]
+}

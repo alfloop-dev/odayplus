@@ -1,0 +1,18 @@
+final_capture_at: 2026-07-29T06:10:34Z
+approval_id: apr-20260729T060857Z-5c04969e
+approval_correlation_source: supervisor_deferred_tool_receipt
+assertion_post_boot: PASS
+assertion_final: PASS
+supervisor_main_pid_before: 1197865
+supervisor_main_pid_after: 1487837
+supervisor_active_state: active
+peer_worker_run_id: claude-20260729T055610Z-75ecff74
+peer_worker_pid_alive_final: yes
+pending_approvals_for_run: 0
+live_queue_pending_count: 0
+watchdog_timer_state_restored: active
+supervisor_kill_mode_restored: control-group
+dropin_present: no
+deadman_timer_state_final: inactive
+watchdog_service_state_final: inactive
+unmanaged_supervisors_final:

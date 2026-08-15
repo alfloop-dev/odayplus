@@ -1,0 +1,20 @@
+{
+  "contract_id": "batch_envelope",
+  "records": [
+    {
+      "source_system": "payment",
+      "source_dataset": "transaction_event",
+      "source_record_id": "TX10023",
+      "source_event_type": "create",
+      "event_time": "2026-06-26T08:15:00+08:00",
+      "observation_time": "2026-06-26T08:15:02+08:00",
+      "source_updated_at": "2026-06-26T08:15:02+08:00",
+      "ingested_at": "2026-06-26T08:20:00+08:00",
+      "idempotency_key": "payment:transaction:TX10023:create",
+      "correlation_id": "corr_9d8f",
+      "payload_hash": "sha256:abc123",
+      "is_deleted": false,
+      "raw_payload": {"txn_id": "TX10023", "amount": 150}
+    }
+  ]
+}

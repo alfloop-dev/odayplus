@@ -1,0 +1,24 @@
+{
+  "contract_id": "machine_master_snapshot",
+  "title": "Machine Master Snapshot",
+  "kind": "internal",
+  "doc_ref": "ODP-DATA-02 §5.2; ODP-DATA-05 §5.2",
+  "source_system": "iot_core",
+  "source_dataset": "machine_master_snapshot",
+  "canonical_target": "machine",
+  "mapping_id": "MAP-INT-MACHINE-v1",
+  "integration_mode": "batch_snapshot",
+  "envelope": "batch",
+  "fields": [
+    {"name": "source_machine_id", "type": "string", "required": true, "description": "Upstream machine id."},
+    {"name": "source_store_id", "type": "string", "required": true, "description": "Owning store id."},
+    {"name": "machine_serial_no", "type": "string", "required": true, "description": "Serial number."},
+    {"name": "equipment_brand", "type": "string", "required": false, "description": "Equipment brand."},
+    {"name": "machine_family", "type": "string", "required": true, "enum": ["washer", "dryer", "combo", "payment_terminal", "other"], "description": "Machine family."},
+    {"name": "capacity_kg", "type": "number", "required": false, "minimum": 0, "invalid_code": "invalid_amount", "description": "Capacity in kg."},
+    {"name": "capacity_band", "type": "string", "required": false, "enum": ["small", "medium", "large", "xlarge"], "description": "Capacity band."},
+    {"name": "installed_at", "type": "date", "required": false, "description": "Install date."},
+    {"name": "removed_at", "type": "date", "required": false, "description": "Removal date."},
+    {"name": "status", "type": "string", "required": true, "enum": ["active", "inactive", "maintenance", "retired"], "description": "Machine status."}
+  ]
+}

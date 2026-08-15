@@ -1,0 +1,80 @@
+{
+  "criterion_1_three_entry_cards": {
+    "offpeak": {
+      "created": {
+        "id": "growth-955b4cd2",
+        "kind": "offpeak",
+        "status": "DRAFT"
+      },
+      "persisted_kind": "offpeak"
+    },
+    "winback": {
+      "created": {
+        "id": "growth-f9136630",
+        "kind": "winback",
+        "status": "DRAFT"
+      },
+      "persisted_kind": "winback"
+    },
+    "priceops": {
+      "created": {
+        "id": "growth-97ec85db",
+        "kind": "priceops",
+        "status": "DRAFT"
+      },
+      "persisted_kind": "priceops"
+    }
+  },
+  "criterion_2_blocked_conflict": {
+    "gate": {
+      "blocked": true,
+      "reasons": [
+        "同門市同時窗已有進行中活動 growth-b6f18f9d — 需先錯開時段或結束該活動"
+      ]
+    },
+    "submit_status_code": 422,
+    "submit_detail": "submit blocked by conflict gate: 同門市同時窗已有進行中活動 growth-b6f18f9d — 需先錯開時段或結束該活動",
+    "draft_status_after": "DRAFT"
+  },
+  "criterion_3_approval_govern": {
+    "approval": {
+      "id": "APR-502",
+      "module": "Growth",
+      "ref": "growth-0988c76f",
+      "status": "pending"
+    },
+    "submit_growth_status": "PENDING_APPROVAL",
+    "after_approve_growth_status": "APPROVED",
+    "decision_log": {
+      "id": "DEC-9001",
+      "ordinal": 9001,
+      "occurredAt": "2026-07-14T07:48:49.885937+00:00",
+      "module": "Growth",
+      "ref": "growth-0988c76f",
+      "title": "D",
+      "recommendation": "送主管核准",
+      "verdict": "核准",
+      "reason": "ok"
+    }
+  },
+  "criterion_4_outcomes": {
+    "cases": {
+      "growth-7001": {
+        "outcome": "EFFECTIVE",
+        "status": "CLOSED",
+        "decision_verdict": "判定有效"
+      },
+      "growth-7002": {
+        "outcome": "INEFFECTIVE",
+        "status": "INEFFECTIVE",
+        "decision_verdict": "判定無效"
+      },
+      "growth-7003": {
+        "outcome": "INCONCLUSIVE",
+        "status": "OUTCOME_READY",
+        "decision_verdict": "判定待判定"
+      }
+    },
+    "decision_log_count": 4
+  }
+}

@@ -1,0 +1,78 @@
+{
+  "schema": "oday-plus.design-review-runtime-evidence.v1",
+  "reviewed_at": "2026-07-19T00:00:00Z",
+  "package": {
+    "zip_sha256": "601a55b29f1097c6c50938f30e1acbdf4c9dc7f1ff9dfbc07021b00ac6f12abd",
+    "canonical_prototype_sha256": "b3226df775cf1bf98a6707317ee0cf1c93c5b7ce90f2fd4c0bab8fba825e5fea",
+    "standalone_sha256": "e70c34de63fd862f444c18c9721d4e80ebb887090c4c2eff7015c7b6fe28e153",
+    "standalone_matches_package_8": true
+  },
+  "runtime": {
+    "initial_console_errors": 0,
+    "initial_page_errors": 0,
+    "exact_duplicate": {
+      "created_intake_id": "IN-3011",
+      "duplicate_intake_id_count": 0,
+      "visible_path": [
+        "SUBMITTED",
+        "CHECKING_IDENTITY",
+        "READY"
+      ],
+      "submission_hash": "",
+      "detail_restored_after_reload": false,
+      "direct_hash_restored_after_reload": true
+    },
+    "responsive": {
+      "tablet": {
+        "viewport_width": 1024,
+        "document_width": 1280,
+        "horizontal_overflow": 256,
+        "dedicated_composition": false
+      },
+      "mobile": {
+        "viewport_width": 390,
+        "document_width": 1280,
+        "horizontal_overflow_after_fallback_close": 890,
+        "global_desktop_required_dialog": true,
+        "url_submission_reachable_before_close": false
+      }
+    },
+    "accessibility": {
+      "add_url_initial_focus": "background trigger",
+      "focus_contained": false,
+      "close_button_accessible_name": null,
+      "heatzone_select_accessible_name": null,
+      "intake_rows_keyboard_operable": false,
+      "add_url_axe_violations": [
+        {
+          "id": "select-name",
+          "impact": "critical",
+          "nodes": 1
+        }
+      ],
+      "detail_axe_violations": [
+        {
+          "id": "color-contrast",
+          "impact": "serious",
+          "nodes": 184
+        },
+        {
+          "id": "document-title",
+          "impact": "serious",
+          "nodes": 1
+        },
+        {
+          "id": "html-has-lang",
+          "impact": "serious",
+          "nodes": 1
+        }
+      ]
+    },
+    "assignment": {
+      "transfer_handoff_required": true,
+      "transfer_audit_visible": true,
+      "pause_resume_time_control_visible": false,
+      "resume_time_control_visible_in_transfer": true
+    }
+  }
+}

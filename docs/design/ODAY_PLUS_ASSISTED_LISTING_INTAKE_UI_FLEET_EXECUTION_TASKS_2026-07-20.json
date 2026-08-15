@@ -1,0 +1,285 @@
+{
+  "schema": "oday-plus.assisted-listing-intake-ui-fleet-execution-tasks.v1",
+  "generated_at": "2026-07-20T00:00:00Z",
+  "status": "approved_for_dispatch",
+  "target_branch": "dev",
+  "baseline_ref": "origin/dev",
+  "umbrella_task": "ODP-INTAKE-UX-001",
+  "canonical_design_tool": "Claude Design",
+  "design_package": "operator-console-r7-20260720-package-10",
+  "design_zip_sha256": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8",
+  "design_prototype_sha256": "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d",
+  "design_review": "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md",
+  "design_disposition": "APPROVED_WITH_CONDITIONS",
+  "binding_conditions": [
+    "VDC-001",
+    "VDC-002",
+    "VDC-003",
+    "VDC-004",
+    "VDC-005"
+  ],
+  "source_docs": [
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_HANDOFF_REQUIREMENTS.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_UI_VISUAL_DESIGN_RESPONSE_REVIEW_003.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_SYSTEM_DESIGN_RESPONSE.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_STATE_CONTRACTS.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_AUTHORIZATION_MATRIX.md",
+    "docs/design/ODAY_PLUS_ASSISTED_LISTING_INTAKE_REVIEW_MANIFEST.yaml",
+    "docs/api/openapi/ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml",
+    "docs_archive/00_source_zips/operator_console/LATEST.json"
+  ],
+  "global_rules": [
+    "Start from freshly fetched origin/dev on task/<task-id>; never implement from the dirty shared workspace.",
+    "Open the archived Claude Design source and Review 003 together. Review conditions override conflicting prototype behavior.",
+    "Use generated OpenAPI client/types and approved backend states; no direct fixture, silent fallback, invented payload, state, permission, or error code.",
+    "Every mutation uses If-Match/idempotency where specified, is non-optimistic for high-risk actions, preserves user input on conflict, and displays a durable receipt.",
+    "Each task owns only its listed files, produces focused tests and exact-commit evidence, opens a PR to dev, and is independently reviewed.",
+    "No task may claim accessibility or responsive completion without Playwright plus axe evidence at 390, 1024, and 1440 px.",
+    "The umbrella ODP-INTAKE-UX-001 remains todo until all eight tasks are independently approved and integrated."
+  ],
+  "tasks": [
+    {
+      "id": "ODP-INTAKE-UX-FND-001",
+      "title": "Build assisted intake UI foundation, routes, generated-client boundary, and URL state",
+      "priority": "P0",
+      "owner": "Antigravity7",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-INTAKE-STATES-001",
+        "ODP-INTAKE-API-001",
+        "ODP-INTAKE-AUTH-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/index.ts",
+        "apps/web/features/operator/network/intake/types.ts",
+        "apps/web/features/operator/network/intake/AssistedIntakeSection.tsx",
+        "apps/web/features/operator/network/listingsClient.ts",
+        "apps/web/src/app/w/expansion/listings/",
+        "apps/web/features/operator/network/intake/__tests__/urlState.test.ts",
+        "docs/evidence/completion/ODP-INTAKE-UX-FND-001/"
+      ],
+      "acceptance": [
+        "Mount the actual Assisted Intake experience at /w/expansion/listings and durable /intake/:intakeId routes using generated API types/client only.",
+        "Create typed component boundaries for the seven feature slices without implementing alternate domain states.",
+        "Serialize filters, sort, list/map view, selection, active section, compare task, and receipt state into deterministic restorable URL parameters, satisfying VDC-004.",
+        "Implement route-level loading/error/permission boundaries, tenant scope, feature flag, and no-silent-fixture-fallback behavior."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web -- urlState",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-INBOX-001",
+      "title": "Implement Listing Inbox intake integration and URL submission",
+      "priority": "P0",
+      "owner": "Claude2",
+      "reviewer": "Codex2",
+      "depends_on": [
+        "ODP-INTAKE-UX-FND-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/ListingInboxIntakeView.tsx",
+        "apps/web/features/operator/network/intake/AddListingFromUrlDialog.tsx",
+        "apps/web/features/operator/network/intake/useIntakeInboxQuery.ts",
+        "apps/web/features/operator/network/intake/__tests__/ListingInboxIntakeView.test.tsx",
+        "apps/web/features/operator/network/intake/__tests__/AddListingFromUrlDialog.test.tsx",
+        "docs/evidence/completion/ODP-INTAKE-UX-INBOX-001/"
+      ],
+      "acceptance": [
+        "Implement server-paginated Listing Inbox columns, filters, stable sort, saved views, list/map preservation, direct review actions, and URL restoration.",
+        "Implement syntax validation, source detection, original/canonical URL display, HeatZone/ownership context, double-submit lock, exact duplicate short path, and durable intake receipt.",
+        "Render source policy as user-submitted single-page retrieval or approved push feed; never imply scheduled crawling or request provider credentials.",
+        "Prove direct open, submission, reload, back, forward, idempotent lost-response replay, empty/loading/degraded/error/read-only/no-results states."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web -- ListingInboxIntakeView AddListingFromUrlDialog",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-DETAIL-001",
+      "title": "Implement durable processing detail, timeline, evidence, errors, and receipts",
+      "priority": "P0",
+      "owner": "Antigravity3",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-INTAKE-UX-FND-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+        "apps/web/features/operator/network/intake/IntakeStageTimeline.tsx",
+        "apps/web/features/operator/network/intake/EvidencePanel.tsx",
+        "apps/web/features/operator/network/intake/DurableReceiptPanel.tsx",
+        "apps/web/features/operator/network/intake/IntakeErrorRecovery.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IntakeProcessingDetail.test.tsx",
+        "docs/evidence/completion/ODP-INTAKE-UX-DETAIL-001/"
+      ],
+      "acceptance": [
+        "Render exact intake stages and history without fabricated percentages, including retryability, freshness, assignment/SLA, checkpoints, attempts, next retry, cancellation, DLQ, and replay authority.",
+        "Expose source/canonical URL, snapshot/parser/correlation evidence, match recommendation versus human decision, version/ETag, audit timeline, and durable receipts.",
+        "Implement every declared error/conflict with exact code, correlation ID, time, current state/version, retryability, preserved input, and next action.",
+        "Apply masking/purpose binding without revealing hidden values and keep credential-class data absent."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web -- IntakeProcessingDetail",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-REVIEW-001",
+      "title": "Implement assisted entry, field lineage, correction, and retry-safe drafts",
+      "priority": "P0",
+      "owner": "Antigravity4",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-INTAKE-UX-FND-001",
+        "ODP-INTAKE-UX-DETAIL-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/AssistedEntryForm.tsx",
+        "apps/web/features/operator/network/intake/ParsedDataReview.tsx",
+        "apps/web/features/operator/network/intake/FieldLineageRow.tsx",
+        "apps/web/features/operator/network/intake/useCorrectionDraft.ts",
+        "apps/web/features/operator/network/intake/__tests__/ParsedDataReview.test.tsx",
+        "docs/evidence/completion/ODP-INTAKE-UX-REVIEW-001/"
+      ],
+      "acceptance": [
+        "Render Identity, Location, Commercial, Property, and Provenance groups with parsed, normalized, corrected, effective, confidence, missing, and masked states.",
+        "Require reason and risk acknowledgement for identity, address, rent, area, and match-affecting corrections according to backend policy.",
+        "Implement ASSISTED_ENTRY_ONLY without retrieval or credential prompts and preserve original URL/evidence.",
+        "Persist user drafts across retryable errors, version conflicts, navigation, reload, and correction resubmission."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web -- ParsedDataReview",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-MATCH-001",
+      "title": "Implement duplicate, revision, possible-match, and reversible identity review UI",
+      "priority": "P0",
+      "owner": "Antigravity5",
+      "reviewer": "Codex",
+      "depends_on": [
+        "ODP-INTAKE-IDENTITY-001",
+        "ODP-INTAKE-UX-FND-001",
+        "ODP-INTAKE-UX-DETAIL-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/ListingCompareTable.tsx",
+        "apps/web/features/operator/network/intake/MatchEvidencePanel.tsx",
+        "apps/web/features/operator/network/intake/IdentityDecisionPanel.tsx",
+        "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx",
+        "docs/evidence/completion/ODP-INTAKE-UX-MATCH-001/"
+      ],
+      "acceptance": [
+        "Keep NEW, EXACT_DUPLICATE, REVISION, POSSIBLE_MATCH, and QUARANTINED visibly and behaviorally distinct with canonical codes.",
+        "Render source ID, canonical URL, address, area, floor, listing type, rent/price, status, confidence, contradictions, and screen-reader change summary.",
+        "Never auto-merge POSSIBLE_MATCH; require explicit create/revise/duplicate/steward actions and second-actor review where specified.",
+        "Show merge/split/unmerge/reversal graph plan, lineage impact, before/after, reason, risk, proposer/reviewer, self-review denial, conflict, and receipt."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web -- IdentityDecisionPanel",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-ASSIGN-001",
+      "title": "Implement assignment, SLA, transfer, pause, escalation, and conflict UI",
+      "priority": "P0",
+      "owner": "Antigravity6",
+      "reviewer": "Claude2",
+      "depends_on": [
+        "ODP-INTAKE-UX-FND-001",
+        "ODP-INTAKE-UX-DETAIL-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/AssignmentSlaSummary.tsx",
+        "apps/web/features/operator/network/intake/TransferIntakeDialog.tsx",
+        "apps/web/features/operator/network/intake/PauseSlaDialog.tsx",
+        "apps/web/features/operator/network/intake/__tests__/AssignmentSlaSummary.test.tsx",
+        "docs/evidence/completion/ODP-INTAKE-UX-ASSIGN-001/"
+      ],
+      "acceptance": [
+        "Implement all assignment and SLA states, owner/queue/due-time/history, claim, transfer, pause/resume, overdue, breach, and escalation behavior.",
+        "Satisfy VDC-001: Transfer contains target and handoff note only; Pause contains reason and required editable resume time only.",
+        "On OWNER_CONFLICT preserve all input, display current owner/version, refresh, resubmit with If-Match, and emit versioned audit timeline plus durable receipt.",
+        "Use text plus icon/pattern for SLA, with no optimistic mutation or hidden default resume time."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web -- AssignmentSlaSummary",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-PROMOTION-001",
+      "title": "Implement reviewed Candidate Site promotion and SiteScore job UI",
+      "priority": "P0",
+      "owner": "Antigravity2",
+      "reviewer": "Claude",
+      "depends_on": [
+        "ODP-INTAKE-PROMOTION-001",
+        "ODP-INTAKE-UX-FND-001",
+        "ODP-INTAKE-UX-DETAIL-001"
+      ],
+      "owned_paths": [
+        "apps/web/features/operator/network/intake/PromotionReviewPanel.tsx",
+        "apps/web/features/operator/network/intake/SiteScoreJobStatus.tsx",
+        "apps/web/features/operator/network/intake/__tests__/PromotionReviewPanel.test.tsx",
+        "docs/evidence/completion/ODP-INTAKE-UX-PROMOTION-001/"
+      ],
+      "acceptance": [
+        "Render every approved promotion, decision, and job state without compressing the saga into one loading state.",
+        "Require explicit request, independent second-actor approval, reason, risk acknowledgement, If-Match, idempotency, and non-optimistic execution.",
+        "Display Candidate and SiteScore IDs only after authoritative commit; SCORE_FAILED retains the Candidate and offers authorized replay with the same idempotency key.",
+        "Recover lost responses without duplicate Candidate creation and expose durable promotion/job receipts plus audit evidence."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web -- PromotionReviewPanel",
+        "git diff --check origin/dev...HEAD"
+      ]
+    },
+    {
+      "id": "ODP-INTAKE-UX-QA-001",
+      "title": "Close responsive, accessibility, role, recovery, and end-to-end UI gates",
+      "priority": "P0",
+      "owner": "Codex2",
+      "reviewer": "Antigravity",
+      "depends_on": [
+        "ODP-INTAKE-UX-INBOX-001",
+        "ODP-INTAKE-UX-DETAIL-001",
+        "ODP-INTAKE-UX-REVIEW-001",
+        "ODP-INTAKE-UX-MATCH-001",
+        "ODP-INTAKE-UX-ASSIGN-001",
+        "ODP-INTAKE-UX-PROMOTION-001"
+      ],
+      "owned_paths": [
+        "tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+        "docs/evidence/completion/ODP-INTAKE-UX-QA-001/"
+      ],
+      "acceptance": [
+        "Exercise the six canonical flows against the real API client with no route stubs or silent fixtures, including exact duplicate, assisted entry, possible match, promotion, score failure, and replay.",
+        "Satisfy VDC-002 and VDC-003: zero page-level overflow at 390/1024/1440, stable focus return, keyboard completion, screen-reader summaries, landmarks, reduced motion, and zero serious axe violations.",
+        "Verify every role, masking, self-review denial, source-policy denial, read-only mode, conflict, stale snapshot, quarantine, DLQ, and durable receipt state.",
+        "Record exact commit, browser/version, viewport screenshots, axe output, commands, failures, and independent reviewer disposition."
+      ],
+      "verification": [
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm run build --workspace=@oday-plus/web",
+        "npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts tests/e2e/operator-assisted-listing-intake-mobile.spec.ts tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+        "git diff --check origin/dev...HEAD"
+      ]
+    }
+  ]
+}

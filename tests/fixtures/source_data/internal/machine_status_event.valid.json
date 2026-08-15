@@ -1,0 +1,22 @@
+{
+  "contract_id": "machine_status_event",
+  "records": [
+    {
+      "source_status_event_id": "evt_20260626_000001",
+      "source_machine_id": "M-ABC123",
+      "status_event_time": "2026-06-26T08:15:00+08:00",
+      "status_type": "error",
+      "error_code": "E07",
+      "severity": "critical",
+      "source_payload": {"raw_status": "ERR", "code": "E07"}
+    },
+    {
+      "source_status_event_id": "evt_20260626_000002",
+      "source_machine_id": "M-ABC123",
+      "status_event_time": "2026-06-26T09:00:00+08:00",
+      "status_type": "available",
+      "severity": "info",
+      "resolved_time": "2026-06-26T09:00:05+08:00"
+    }
+  ]
+}

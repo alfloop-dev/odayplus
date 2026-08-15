@@ -1,0 +1,11 @@
+overlay: 1.0.0
+info:
+  title: ODay Plus Assisted Listing Intake overlay prelude
+  version: 1.0.1
+extends: ./ODAY_PLUS_ASSISTED_LISTING_INTAKE_V1.yaml
+
+actions:
+  - target: $.components
+    description: Initialize component containers extended by later normative overlays.
+    update:
+      requestBodies: {}

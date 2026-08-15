@@ -1,3 +1,18 @@
+# --- Node / web ---
+node_modules/
+.next/
+out/
+playwright-report/
+test-results/
+.playwright/
+*.tsbuildinfo
+
+# --- Durable E2E persistence (SQLite data files, ODP-PV-009) ---
+.odp_data/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+
 # --- Python ---
 __pycache__/
 *.py[cod]
@@ -28,6 +43,10 @@ htmlcov/
 # uv
 # (uv.lock IS committed; only ignore the cache)
 .uv-cache/
+
+# Local MLflow tracking state
+mlflow.db
+mlruns/
 
 # --- Editors / OS ---
 .idea/
@@ -66,3 +85,6 @@ htmlcov/
 .orchestrator/event-queue.jsonl
 .orchestrator/*.jsonl
 .orchestrator/provider_capabilities.json
+
+# Claude Code local permissions (machine-specific paths)
+.claude/settings.local.json

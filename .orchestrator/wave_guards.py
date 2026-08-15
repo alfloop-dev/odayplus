@@ -66,7 +66,7 @@ def parse_state_timestamp(value: Any, *, field_name: str) -> _dt.datetime:
     except ValueError as exc:
         raise WaveGuardError(f"{field_name} is invalid: {value!r}") from exc
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+        parsed = parsed.replace(tzinfo=_dt.UTC)
     return parsed
 
 
@@ -131,7 +131,7 @@ def check_cooldown(
 ) -> None:
     """Reject if the previous wave closed fewer than 60 minutes ago."""
     if now is None:
-        now = _dt.datetime.now(_dt.timezone.utc)
+        now = _dt.datetime.now(_dt.UTC)
 
     history: list[dict[str, Any]] = wave_state.get("history") or []
     last_close_ts: str | None = None
@@ -247,9 +247,9 @@ def check_current_wave_frozen_for_close(
 ) -> None:
     """Reject close unless the current wave has been frozen for 30 minutes."""
     if now is None:
-        now = _dt.datetime.now(_dt.timezone.utc)
+        now = _dt.datetime.now(_dt.UTC)
     if now.tzinfo is None:
-        now = now.replace(tzinfo=_dt.timezone.utc)
+        now = now.replace(tzinfo=_dt.UTC)
 
     status = wave_state.get("status")
     if status != "frozen":

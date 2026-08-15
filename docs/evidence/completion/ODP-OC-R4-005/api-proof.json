@@ -1,0 +1,130 @@
+{
+  "generatedAt": "2026-07-14T08:08:36.603Z",
+  "apiBase": "http://127.0.0.1:8115",
+  "source": "api",
+  "selectedHeatZoneId": "HZ-01",
+  "relevantIds": [
+    "HZ-01",
+    "L-2024",
+    "CS-1001",
+    "L-2025",
+    "L-2029",
+    "L-2030"
+  ],
+  "initialStepStates": [
+    {
+      "id": "find",
+      "state": "completed",
+      "entityId": "HZ-01"
+    },
+    {
+      "id": "radar",
+      "state": "current",
+      "entityId": "L-2024"
+    },
+    {
+      "id": "candidate",
+      "state": "next",
+      "entityId": "L-2024"
+    },
+    {
+      "id": "sitescore",
+      "state": "blocked",
+      "entityId": "CS-1001"
+    },
+    {
+      "id": "compare",
+      "state": "blocked",
+      "entityId": "CS-1001"
+    },
+    {
+      "id": "review",
+      "state": "blocked",
+      "entityId": null
+    }
+  ],
+  "convert": {
+    "status": 200,
+    "candidateId": "CS-1001",
+    "listingStatus": "candidate",
+    "candidateCount": 1,
+    "created": true
+  },
+  "replay": {
+    "status": 200,
+    "auditEventReused": true,
+    "candidateCount": 1
+  },
+  "merge": {
+    "status": 200,
+    "sourceListingId": "L-2029",
+    "targetListingId": "L-2025",
+    "sourceMergedIntoId": "L-2025",
+    "retainedEvidence": [
+      "EV-L-2029-RAW-591",
+      "EV-L-2029-ADDRESS-MATCH",
+      "EV-L-2029-RENT-MATCH"
+    ],
+    "targetContainsRetainedEvidence": true
+  },
+  "archive": {
+    "status": 200,
+    "listingId": "L-2030",
+    "listingStatus": "archived",
+    "archivedReason": "Hard-rule archive: area and floor exceed ODAY_G2 intake policy.",
+    "hardRuleFailures": [
+      "area_above_format_maximum",
+      "floor_not_ground_level"
+    ]
+  },
+  "finalSnapshot": {
+    "candidateIds": [
+      "CS-1001"
+    ],
+    "l2024": {
+      "status": "candidate",
+      "candidateId": "CS-1001"
+    },
+    "l2025EvidenceCount": 5,
+    "l2029": {
+      "status": "duplicate",
+      "mergedIntoId": "L-2025"
+    },
+    "l2030": {
+      "status": "archived",
+      "archivedReason": "Hard-rule archive: area and floor exceed ODAY_G2 intake policy."
+    },
+    "stepStates": [
+      {
+        "id": "find",
+        "state": "completed",
+        "entityId": "HZ-01"
+      },
+      {
+        "id": "radar",
+        "state": "completed",
+        "entityId": "L-2024"
+      },
+      {
+        "id": "candidate",
+        "state": "current",
+        "entityId": "CS-1001"
+      },
+      {
+        "id": "sitescore",
+        "state": "next",
+        "entityId": "CS-1001"
+      },
+      {
+        "id": "compare",
+        "state": "next",
+        "entityId": "CS-1001"
+      },
+      {
+        "id": "review",
+        "state": "next",
+        "entityId": "RV-1001"
+      }
+    ]
+  }
+}
