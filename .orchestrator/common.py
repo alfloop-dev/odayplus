@@ -1021,10 +1021,31 @@ def normalize_source_doc_path(rel_path: str) -> str:
     return path_str.lstrip("/")
 
 
-def validate_source_doc_path(rel_path: str, status_root: Path, *, task: dict[str, Any] | None = None) -> tuple[bool, str, str | None]:
+def validate_source_doc_path(
+    rel_path: str,
+    status_root: Path,
+    *,
+    task: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
+) -> tuple[bool, str, str | None]:
     raw_str = str(rel_path or "").strip().replace("\\", "/")
     if raw_str.startswith("/") or Path(raw_str).is_absolute():
         return False, raw_str, "raw absolute path rejected"
+    if config is not None:
+        try:
+            from source_document_router import (
+                SourceDocumentRoutingError,
+                resolve_source_document,
+            )
+            resolved = resolve_source_document(
+                config,
+                status_root,
+                raw_str,
+                task=task,
+            )
+            return True, resolved.context_path, None
+        except SourceDocumentRoutingError as exc:
+            return False, raw_str, str(exc)
     norm = normalize_source_doc_path(rel_path)
     if not norm:
         return False, norm, "empty path"
@@ -1413,7 +1434,9 @@ def execution_context_files(config: dict[str, Any], task_id: str | None) -> list
         )
         source_docs = task.get("source_docs") or []
         for doc_entry in source_docs:
-            valid, norm_path, err_reason = validate_source_doc_path(doc_entry, status_root, task=task)
+            valid, norm_path, err_reason = validate_source_doc_path(
+                doc_entry, status_root, task=task, config=config
+            )
             if not valid:
                 if is_mutating_or_p0:
                     raise ValueError(f"Fail-closed on task {task_id}: {err_reason} for source_doc '{doc_entry}'")

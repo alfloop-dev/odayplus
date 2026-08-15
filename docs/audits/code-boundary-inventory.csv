@@ -28,6 +28,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/rebase_helper.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/runtime_state.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/sidecar_cleanup.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+.orchestrator/source_document_router.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/supervisor.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/supervisor_watchdog.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/sync_provider_permissions.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
@@ -49,6 +50,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_rebase_helper.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_runtime_state.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_sidecar_cleanup.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_source_document_router.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_supervisor.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_supervisor_watchdog.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_task_brief_source_docs.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -514,11 +516,13 @@ scripts/orchestrator/backfill_task_archive_snapshots.py,development_platform_sys
 scripts/orchestrator/check_runtime_freshness.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/check_task_dependency_resolvability.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/finalize_lane_doctor.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+scripts/orchestrator/register_emgi_v041_catalog.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/rollout_supervisor_runtime.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/test_backfill_task_archive_snapshots.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_check_runtime_freshness.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_check_task_dependency_resolvability.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_finalize_lane_doctor.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+scripts/orchestrator/test_register_emgi_v041_catalog.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/orchestrator/test_rollout_supervisor_runtime.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/supervisor_runtime_health.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/supervisor_watchdog_install.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
