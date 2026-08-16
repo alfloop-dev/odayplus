@@ -18,6 +18,7 @@
       "docs/audits/code-boundary-inventory.csv",
       "docs/runbooks/supervisor-runtime-rollout.md",
       "scripts/ai_status.py",
+      "scripts/ai-status.sh",
       "scripts/test_ai_status.py",
       "scripts/supervisor_runtime_health.py",
       "scripts/supervisor_watchdog_install.py"
