@@ -1690,6 +1690,168 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    @staticmethod
+    def _init_repo_with_origin(root: Path, origin_url: str) -> None:
+        subprocess.run(["git", "init", str(root)], capture_output=True, check=True)
+        subprocess.run(["git", "remote", "add", "origin", origin_url], cwd=root, check=True)
+
+    def _external_repo_config(
+        self,
+        repo_root: Path,
+        worktree_root: Path,
+        local_path: Path,
+        repo_id: str = "oday_data_platform",
+        slug: str = "alfloop-dev/oday-data-platform",
+    ) -> dict[str, object]:
+        return {
+            **self.config,
+            "paths": {"status_file": str(repo_root / "ai-status.json")},
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktrees": {
+                "enabled": True,
+                "root": str(worktree_root),
+                "base_ref": "origin/dev",
+                "reuse_existing": True,
+            },
+            "coordination": {
+                "repositories": {repo_id: {"repo": slug, "local_path": str(local_path)}}
+            },
+        }
+
+    def _external_repo_request(self, slug: str = "alfloop-dev/oday-data-platform"):
+        request = supervisor.DeliveryRequest(
+            agent_id="codex",
+            provider="codex",
+            delivery_mode="codex",
+            message="wake",
+            task_id="DPF-KRN-MEAS-001",
+            reason="owned_in_progress_dispatch",
+        )
+        request.metadata["task"] = {"id": "DPF-KRN-MEAS-001", "repository": slug}
+        return request
+
+    def test_prepare_worker_workspace_routes_external_repository_task_to_its_checkout(self) -> None:
+        # A data-platform task must never materialize its worktree (and therefore
+        # its task branch) inside the supervisor repo: the branch would be pushed
+        # to the wrong origin and every later ref check would fail closed.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            data_platform_root = Path(tmpdir) / "oday-data-platform-supervisor"
+            worktree_root = Path(tmpdir) / "workers"
+            repo_root.mkdir()
+            self._init_repo_with_origin(repo_root, "https://github.com/alfloop-dev/odayplus.git")
+            self._init_repo_with_origin(
+                data_platform_root, "https://github.com/alfloop-dev/oday-data-platform.git"
+            )
+
+            config = self._external_repo_config(repo_root, worktree_root, data_platform_root)
+            state: dict[str, object] = {}
+            request = self._external_repo_request()
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-1",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "oday-data-platform-supervisor" / "dpf-krn-meas-001"
+        self.assertTrue(ok, message)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        self.assertEqual(request.metadata["status_root"], str(data_platform_root.resolve()))
+        lease = state["worker_worktrees"]["leases"]["DPF-KRN-MEAS-001"]
+        self.assertEqual(lease["status_root"], str(data_platform_root.resolve()))
+        self.assertEqual(lease["repo_root_source"], "repository:oday_data_platform")
+        create_worktree.assert_called_once_with(
+            data_platform_root.resolve(), expected_path, "task/DPF-KRN-MEAS-001", "origin/dev"
+        )
+
+    def test_prepare_worker_workspace_blocks_when_external_checkout_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            self._init_repo_with_origin(repo_root, "https://github.com/alfloop-dev/odayplus.git")
+            worktree_root = Path(tmpdir) / "workers"
+            # A registry id without a hard-coded sibling fallback, so "missing"
+            # cannot be silently satisfied by a checkout elsewhere on this host.
+            config = self._external_repo_config(
+                repo_root,
+                worktree_root,
+                Path(tmpdir) / "does-not-exist",
+                repo_id="acme_widgets",
+                slug="acme/widgets",
+            )
+            state: dict[str, object] = {}
+            request = self._external_repo_request(slug="acme/widgets")
+
+            with (
+                mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-1",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("repository_checkout_unavailable", message)
+        create_worktree.assert_not_called()
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"], "dispatch_blocked_worktree_lease"
+        )
+
+    def test_worker_task_repo_root_rejects_checkout_pointing_at_another_origin(self) -> None:
+        # The exact DPF-GOV-001 failure: a registry entry that resolves to the
+        # supervisor's own checkout must fail closed, not silently win.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            wrong_root = Path(tmpdir) / "wrong-checkout"
+            repo_root.mkdir()
+            self._init_repo_with_origin(repo_root, "https://github.com/alfloop-dev/odayplus.git")
+            self._init_repo_with_origin(wrong_root, "https://github.com/alfloop-dev/odayplus.git")
+
+            config = self._external_repo_config(
+                repo_root,
+                Path(tmpdir) / "workers",
+                wrong_root,
+                repo_id="acme_widgets",
+                slug="acme/widgets",
+            )
+            resolved, source = supervisor.worker_task_repo_root(config, {"repository": "acme/widgets"})
+
+        self.assertIsNone(resolved)
+        self.assertIn("repository_checkout_mismatch", source)
+
+    def test_worker_task_repo_root_keeps_supervisor_repo_for_its_own_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            self._init_repo_with_origin(repo_root, "git@github.com:alfloop-dev/odayplus.git")
+            config = self._external_repo_config(
+                repo_root, Path(tmpdir) / "workers", Path(tmpdir) / "unused"
+            )
+
+            resolved, source = supervisor.worker_task_repo_root(
+                config, {"repository": "alfloop-dev/odayplus"}
+            )
+            fallback, fallback_source = supervisor.worker_task_repo_root(config, {})
+
+        self.assertEqual(resolved, repo_root.resolve())
+        self.assertEqual(source, "supervisor_repo")
+        self.assertEqual(fallback, repo_root.resolve())
+        self.assertEqual(fallback_source, "supervisor_repo")
+
     def test_create_worker_worktree_cleans_stale_foreign_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"

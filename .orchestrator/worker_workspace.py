@@ -87,10 +87,71 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
     return configured.resolve()
 
 @_entrypoint
-def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
+def _git_origin_slug(repo_root: Path) -> str | None:
+    """Return the ``owner/name`` this checkout actually pushes to, if any."""
+    returncode, url = _git_output(repo_root, "remote", "get-url", "origin")
+    if returncode != 0:
+        return None
+    candidate = url.strip()
+    if not candidate:
+        return None
+    candidate = re.sub(r"\.git$", "", candidate)
+    match = re.search(r"[:/]([^/:]+/[^/]+)$", candidate)
+    return match.group(1).casefold() if match else None
+
+
+@_entrypoint
+def worker_task_repo_root(config: dict[str, Any], task: dict[str, Any] | None) -> tuple[Path | None, str]:
+    """Resolve the checkout that owns a task's worktree and task branch.
+
+    A task carrying ``repository: owner/name`` belongs to that repository, not
+    to the supervisor's own repo.  Defaulting to the supervisor root creates the
+    task branch in the wrong origin, and the fail-closed refresh policy then
+    reports the branch as missing from a remote that never had it -- a dispatch
+    deadlock that no retry can clear.  Every candidate is verified against its
+    own ``origin`` before it is trusted, so a stale or mis-wired ``local_path``
+    fails closed instead of silently landing work in the wrong repository.
+    """
+    supervisor_root = config_path(config, "status_file").parents[0].resolve()
+    slug = str((task or {}).get("repository") or "").strip()
+    if not slug:
+        return supervisor_root, "supervisor_repo"
+
+    normalized_slug = re.sub(r"\.git$", "", slug).casefold()
+    if _git_origin_slug(supervisor_root) == normalized_slug:
+        return supervisor_root, "supervisor_repo"
+
+    # Lazy import mirrors source_document_router: avoids a common.py cycle.
+    from multi_repo_registry import matching_repo_id, repository_local_path
+
+    repo_id = matching_repo_id(config, slug)
+    if not repo_id:
+        return None, f"unknown_repository: {slug} is not in the repository registry"
+
+    local_path = repository_local_path(config, repo_id)
+    if local_path is None or not local_path.exists():
+        return None, f"repository_checkout_unavailable: no local checkout for {slug}"
+
+    resolved = local_path.resolve()
+    actual_slug = _git_origin_slug(resolved)
+    if actual_slug != normalized_slug:
+        return None, (
+            f"repository_checkout_mismatch: {resolved} points at "
+            f"{actual_slug or 'no origin'}, expected {slug}"
+        )
+    return resolved, f"repository:{repo_id}"
+
+
+@_entrypoint
+def worker_task_worktree_path(
+    config: dict[str, Any],
+    task_id: str | None,
+    settings: dict[str, Any] | None = None,
+    repo_root: Path | None = None,
+) -> Path:
     active_settings = settings or worker_worktree_settings(config)
-    repo_root = config_path(config, "status_file").parents[0]
-    repo_slug = re.sub(r"[^a-z0-9]+", "-", repo_root.name.lower()).strip("-") or "repo"
+    root = repo_root or config_path(config, "status_file").parents[0]
+    repo_slug = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-") or "repo"
     return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
 
 @_entrypoint
@@ -1463,9 +1524,33 @@ def prepare_worker_workspace(
     if request.metadata.get("workspace_path"):
         return True, None
 
-    repo_root = config_path(config, "status_file").parents[0].resolve()
+    task_metadata = request.metadata.get("task")
+    repo_root, repo_root_source = worker_task_repo_root(
+        config,
+        task_metadata if isinstance(task_metadata, dict) else None,
+    )
+    if repo_root is None:
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"{repo_root_source}. Refusing to create the task branch in the "
+            "supervisor repository, which would publish it to the wrong origin."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "repo_root_source": repo_root_source,
+            },
+        )
+        return False, message
+
     branch = worker_task_branch(config, workspace_task_id)
-    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
+    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings, repo_root)
     reused = False
 
     if settings.get("reuse_existing", True):
@@ -1709,8 +1794,8 @@ def prepare_worker_workspace(
         if _branch_checked_out_in_root(repo_root, branch):
             message = (
                 f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                f"branch {branch} is currently checked out in supervisor root {repo_root}. "
-                "Move the supervisor root back to dev or finish that root task branch first."
+                f"branch {branch} is currently checked out in repository root {repo_root}. "
+                "Move that root back to dev or finish that root task branch first."
             )
             write_activity_log(
                 config,
@@ -1760,6 +1845,7 @@ def prepare_worker_workspace(
         "branch": branch,
         "path": str(worktree_path),
         "status_root": str(repo_root),
+        "repo_root_source": repo_root_source,
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
