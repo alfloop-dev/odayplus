@@ -62,6 +62,34 @@ $ uv run pytest tests/architecture/test_external_data_boundary.py -q
 worker sandbox; the commands were run as `python3 scripts/... ` and
 `python3 -m pytest ...`, which is what `uv run` invokes.)
 
+### Code-boundary registration
+
+The repo's own ownership manifest, `config/code-boundaries.yaml`, has no
+catch-all either, so the new validator had to be registered before CI's
+`check_code_boundaries.py` would pass:
+
+```console
+$ uv run python delivery_toolchain/governance/check_code_boundaries.py
+- unclassified code file: scripts/validate_external_data_boundary.py
+# exit 1
+```
+
+`scripts/validate_external_data_boundary.py` is classified as
+`development_platform_system`. That is forced, not chosen: the
+`development_platform` removal bundle claims `scripts/` as a root, and
+`validate_removal_bundles` rejects any other scope under a bundle root as a
+foreign scope. Every other `.py` under `scripts/` carries the same boundary.
+
+`tests/architecture/test_external_data_boundary.py` needed no manifest edit —
+it matches the existing `verification` include patterns — but both files are
+new rows in the generated `docs/audits/code-boundary-inventory.csv`.
+
+```console
+$ uv run python delivery_toolchain/governance/check_code_boundaries.py
+Code boundary checks passed for 819 files.
+# exit 0
+```
+
 ## Acceptance
 
 ### 1. Classify every tracked file and detected provider reference, not only known directories
