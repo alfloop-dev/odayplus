@@ -10,8 +10,15 @@ The control-plane router is the single decision point between research signal
 producers and execution destinations. It validates the canonical signal
 envelope and selects a deterministic destination from `(domain, intent)`.
 
-Routing is a pure decision: the same envelope always yields the same
-`RoutingDecision`, and producing that decision has no side effects.
+Routing is a pure decision in the sense that `route()` reads only the envelope,
+the injected routing table, and the injected clock, and produces no side
+effects. It is deterministic **for a fixed evaluation time**, not across time:
+steps 3 and 4 of the resolution order compare `effective_at` and `expires_at`
+against `now`, so one unchanged envelope can fail `not_effective`, later return
+a `RoutingDecision`, and later still fail `expired`. Adapters must therefore
+re-evaluate an envelope on every redelivery instead of caching or replaying an
+earlier outcome, and tests that need a stable result must inject a fixed clock
+through `SignalRouter(now=...)`.
 
 ### In scope
 
@@ -66,7 +73,10 @@ default or best-effort destination.
 | `model_release` | `rollback_requested` | `model-rollback` | `ml-platform` |
 
 Callers may inject an alternative table through `SignalRouter(routes=...)` for
-tests or staged rollout, but every target must still declare a non-empty owner.
+tests or staged rollout. Every injected target must declare a non-empty
+destination name and a non-empty owner: `SignalRouter.__init__` validates the
+table up front and raises `ValueError` for any entry that does not, so an
+unowned destination fails at construction rather than at delivery time.
 
 ## Resolution order
 
@@ -86,6 +96,10 @@ so the reported code is always the earliest reason the signal could not route:
 Every failure raises `SignalRouteError` carrying a `RouterFailure` with a
 stable code, a disposition, and a retryability flag. Adapters branch on the
 disposition, not on the message text.
+
+`FAILURE_CONTRACT` in `contract.py` is the single source of truth for the two
+middle columns below — every `RouterFailure` is built from it, and the doc
+conformance tests assert this table matches it exactly, code for code.
 
 | Code | Disposition | Retryable | Remediation owner |
 | --- | --- | --- | --- |

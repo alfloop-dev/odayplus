@@ -71,6 +71,39 @@ class SignalRouteError(Exception):
         self.failure = failure
 
 
+@dataclass(frozen=True, slots=True)
+class FailureSemantics:
+    disposition: FailureDisposition
+    retryable: bool
+
+
+FAILURE_CONTRACT: Mapping[RouteErrorCode, FailureSemantics] = {
+    RouteErrorCode.INVALID_SIGNAL: FailureSemantics(FailureDisposition.DEAD_LETTER, False),
+    RouteErrorCode.UNSUPPORTED_VERSION: FailureSemantics(FailureDisposition.DEAD_LETTER, False),
+    RouteErrorCode.NOT_EFFECTIVE: FailureSemantics(FailureDisposition.RETRY, True),
+    RouteErrorCode.EXPIRED: FailureSemantics(FailureDisposition.DROP, False),
+    RouteErrorCode.ROUTE_NOT_FOUND: FailureSemantics(FailureDisposition.DEAD_LETTER, False),
+    RouteErrorCode.DOWNSTREAM_UNAVAILABLE: FailureSemantics(FailureDisposition.RETRY, True),
+    RouteErrorCode.DELIVERY_REJECTED: FailureSemantics(FailureDisposition.DEAD_LETTER, False),
+    RouteErrorCode.RETRY_EXHAUSTED: FailureSemantics(FailureDisposition.DEAD_LETTER, False),
+}
+
+
+def _failure(
+    code: RouteErrorCode, detail: str, retry_after_seconds: int | None = None
+) -> RouterFailure:
+    """Build a failure whose disposition and retryability come from the contract."""
+
+    semantics = FAILURE_CONTRACT[code]
+    return RouterFailure(
+        code,
+        semantics.disposition,
+        semantics.retryable,
+        detail,
+        retry_after_seconds,
+    )
+
+
 DEFAULT_ROUTES: Mapping[tuple[str, str], RouteTarget] = {
     ("sitescore", "decision_recommended"): RouteTarget("site-review", "network-platform"),
     ("forecast", "decision_recommended"): RouteTarget("forecast-review", "planning-platform"),
@@ -93,7 +126,12 @@ def _instant(value: str) -> datetime:
 
 
 class SignalRouter:
-    """Validate an envelope and produce a deterministic, side-effect-free route."""
+    """Validate an envelope and produce a side-effect-free route.
+
+    The decision is deterministic for a fixed evaluation time only: `effective_at`
+    and `expires_at` are compared against `now`, so one unchanged envelope can
+    defer, then route, then expire as the clock advances.
+    """
 
     def __init__(
         self,
@@ -105,6 +143,11 @@ class SignalRouter:
         Draft202012Validator.check_schema(schema)
         self._validator = Draft202012Validator(schema, format_checker=FormatChecker())
         self._routes = dict(routes)
+        for (domain, intent), target in self._routes.items():
+            if not target.name.strip() or not target.owner.strip():
+                raise ValueError(
+                    f"route {domain}/{intent} must declare a non-empty destination and owner"
+                )
         self._now = now
 
     def route(self, envelope: Mapping[str, Any]) -> RoutingDecision:
@@ -117,22 +160,13 @@ class SignalRouter:
                 if list(error.absolute_path) == ["signal_version"]
                 else RouteErrorCode.INVALID_SIGNAL
             )
-            raise SignalRouteError(
-                RouterFailure(
-                    code,
-                    FailureDisposition.DEAD_LETTER,
-                    False,
-                    f"{path}: {error.message}",
-                )
-            )
+            raise SignalRouteError(_failure(code, f"{path}: {error.message}"))
 
         version = str(envelope["signal_version"])
         if int(version.split(".", maxsplit=1)[0]) != SUPPORTED_SIGNAL_MAJOR:
             raise SignalRouteError(
-                RouterFailure(
+                _failure(
                     RouteErrorCode.UNSUPPORTED_VERSION,
-                    FailureDisposition.DEAD_LETTER,
-                    False,
                     f"unsupported signal_version {version}",
                 )
             )
@@ -142,32 +176,21 @@ class SignalRouter:
         if effective_at is not None and _instant(effective_at) > now:
             retry_after = max(1, int((_instant(effective_at) - now).total_seconds()))
             raise SignalRouteError(
-                RouterFailure(
+                _failure(
                     RouteErrorCode.NOT_EFFECTIVE,
-                    FailureDisposition.RETRY,
-                    True,
                     "signal is not effective yet",
                     retry_after,
                 )
             )
         expires_at = envelope["expires_at"]
         if expires_at is not None and _instant(expires_at) <= now:
-            raise SignalRouteError(
-                RouterFailure(
-                    RouteErrorCode.EXPIRED,
-                    FailureDisposition.DROP,
-                    False,
-                    "signal has expired",
-                )
-            )
+            raise SignalRouteError(_failure(RouteErrorCode.EXPIRED, "signal has expired"))
 
         target = self._routes.get((str(envelope["domain"]), str(envelope["intent"])))
         if target is None:
             raise SignalRouteError(
-                RouterFailure(
+                _failure(
                     RouteErrorCode.ROUTE_NOT_FOUND,
-                    FailureDisposition.DEAD_LETTER,
-                    False,
                     f"no route for {envelope['domain']}/{envelope['intent']}",
                 )
             )
@@ -193,10 +216,8 @@ def delivery_failure(
     """Translate adapter delivery failure into the contract retry semantics."""
 
     if downstream_retryable and attempt < max_attempts:
-        return RouterFailure(
+        return _failure(
             RouteErrorCode.DOWNSTREAM_UNAVAILABLE,
-            FailureDisposition.RETRY,
-            True,
             "downstream delivery failed; retry with the same idempotency key",
             retry_after_seconds,
         )
@@ -205,10 +226,8 @@ def delivery_failure(
         if downstream_retryable
         else RouteErrorCode.DELIVERY_REJECTED
     )
-    return RouterFailure(
+    return _failure(
         code,
-        FailureDisposition.DEAD_LETTER,
-        False,
         "delivery attempts exhausted" if downstream_retryable else "downstream rejected signal",
     )
 

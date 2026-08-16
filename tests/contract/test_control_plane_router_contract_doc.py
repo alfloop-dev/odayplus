@@ -1,8 +1,10 @@
 """The router contract doc must stay in sync with the executable contract.
 
 `services/control-plane/router/README.md` is the documented routing contract
-for P4-001. These tests fail when `contract.py` grows a route, failure code, or
-metric that the document never mentions, so the doc cannot silently rot.
+for P4-001. These tests parse the document's tables and compare them cell for
+cell against `contract.py`, so the doc fails the build when it gains a stale
+row, loses a route, mislabels a disposition, or advertises a metric label the
+contract does not emit.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ ROUTER_DIR = ROOT / "services" / "control-plane" / "router"
 CONTRACT_PATH = ROUTER_DIR / "contract.py"
 DOC_PATH = ROUTER_DIR / "README.md"
 
+FORBIDDEN_LABELS = frozenset({"tenant_id", "signal_id", "correlation_id", "idempotency_key"})
+
 
 @pytest.fixture(scope="module")
 def contract() -> dict[str, object]:
@@ -29,6 +33,42 @@ def doc() -> str:
     return DOC_PATH.read_text(encoding="utf-8")
 
 
+def _code_spans(cell: str) -> list[str]:
+    """Every backticked token in a table cell, in document order."""
+
+    return re.findall(r"`([^`]+)`", cell)
+
+
+def _markdown_tables(doc: str) -> list[list[dict[str, str]]]:
+    """Parse every pipe table into a list of header-keyed rows."""
+
+    tables: list[list[dict[str, str]]] = []
+    headers: list[str] | None = None
+    rows: list[dict[str, str]] = []
+
+    for line in [*doc.splitlines(), ""]:
+        stripped = line.strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+            if headers is None:
+                headers = cells
+            elif not all(set(cell) <= set("-: ") for cell in cells):
+                rows.append(dict(zip(headers, cells, strict=True)))
+            continue
+        if rows:
+            tables.append(rows)
+        headers = None
+        rows = []
+
+    return tables
+
+
+def _table(doc: str, *columns: str) -> list[dict[str, str]]:
+    matches = [rows for rows in _markdown_tables(doc) if set(columns) <= set(rows[0])]
+    assert len(matches) == 1, f"expected exactly one table with columns {columns}, got {len(matches)}"
+    return matches[0]
+
+
 def test_doc_pins_contract_version_and_canonical_schema(
     contract: dict[str, object], doc: str
 ) -> None:
@@ -36,57 +76,55 @@ def test_doc_pins_contract_version_and_canonical_schema(
     assert "services/research/schema.json" in doc
 
 
-def test_doc_documents_every_route_with_its_owner(
+def test_doc_routing_table_matches_the_default_routes_exactly(
     contract: dict[str, object], doc: str
 ) -> None:
-    for (domain, intent), target in contract["DEFAULT_ROUTES"].items():
-        row = next(
-            (
-                line
-                for line in doc.splitlines()
-                if line.startswith("|") and f"`{domain}`" in line and f"`{intent}`" in line
-            ),
-            None,
+    documented = {
+        (
+            _code_spans(row["Domain"])[0],
+            _code_spans(row["Intent"])[0],
+        ): (
+            _code_spans(row["Destination"])[0],
+            _code_spans(row["Destination owner"])[0],
         )
-        assert row is not None, f"routing table row missing for {domain}/{intent}"
-        assert f"`{target.name}`" in row, f"destination missing for {domain}/{intent}"
-        assert f"`{target.owner}`" in row, f"destination owner missing for {domain}/{intent}"
+        for row in _table(doc, "Domain", "Intent", "Destination", "Destination owner")
+    }
+    expected = {
+        key: (target.name, target.owner)
+        for key, target in contract["DEFAULT_ROUTES"].items()
+    }
+
+    assert documented == expected
 
 
-def test_doc_documents_every_failure_code_with_disposition_and_retryability(
+def test_doc_failure_rows_match_each_code_disposition_and_retryability(
     contract: dict[str, object], doc: str
 ) -> None:
-    dispositions = {member.value for member in contract["FailureDisposition"]}
+    documented = {
+        _code_spans(row["Code"])[0]: (
+            _code_spans(row["Disposition"]),
+            row["Retryable"],
+        )
+        for row in _table(doc, "Code", "Disposition", "Retryable")
+    }
+    expected = {
+        code.value: ([semantics.disposition.value], "yes" if semantics.retryable else "no")
+        for code, semantics in contract["FAILURE_CONTRACT"].items()
+    }
 
-    for code in contract["RouteErrorCode"]:
-        row = next(
-            (
-                line
-                for line in doc.splitlines()
-                if line.startswith("|") and f"`{code.value}`" in line
-            ),
-            None,
-        )
-        assert row is not None, f"failure contract row missing for {code.value}"
-        assert any(f"`{value}`" in row for value in dispositions), (
-            f"no disposition documented for {code.value}"
-        )
-        assert re.search(r"\|\s*(yes|no)\s*\|", row), (
-            f"no retryability documented for {code.value}"
-        )
+    assert documented == expected
 
 
-def test_doc_documents_every_metric_with_its_exact_labels(
+def test_doc_metric_rows_declare_exactly_the_contract_labels(
     contract: dict[str, object], doc: str
 ) -> None:
-    for metric, labels in contract["METRIC_CONTRACT"].items():
-        row = next(
-            (line for line in doc.splitlines() if line.startswith("|") and f"`{metric}`" in line),
-            None,
-        )
-        assert row is not None, f"metric table row missing for {metric}"
-        for label in labels:
-            assert f"`{label}`" in row, f"label {label} missing for {metric}"
+    documented = {
+        _code_spans(row["Metric"])[0]: _code_spans(row["Labels"])
+        for row in _table(doc, "Metric", "Labels")
+    }
+    expected = {metric: list(labels) for metric, labels in contract["METRIC_CONTRACT"].items()}
+
+    assert documented == expected
 
 
 def test_doc_states_the_monitoring_handoff_owners(doc: str) -> None:
@@ -96,10 +134,13 @@ def test_doc_states_the_monitoring_handoff_owners(doc: str) -> None:
     assert "RouteTarget.owner" in doc
 
 
-def test_doc_forbids_high_cardinality_metric_labels(
+def test_doc_and_contract_both_forbid_high_cardinality_metric_labels(
     contract: dict[str, object], doc: str
 ) -> None:
-    forbidden = {"tenant_id", "signal_id", "correlation_id", "idempotency_key"}
     for labels in contract["METRIC_CONTRACT"].values():
-        assert not forbidden.intersection(labels)
+        assert not FORBIDDEN_LABELS.intersection(labels)
+    for row in _table(doc, "Metric", "Labels"):
+        assert not FORBIDDEN_LABELS.intersection(_code_spans(row["Labels"])), (
+            f"metric row {row['Metric']} documents an unbounded label"
+        )
     assert "Never label with tenant, signal, correlation, or idempotency identifiers" in doc
