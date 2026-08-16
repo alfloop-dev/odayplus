@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1688,6 +1689,112 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(state["worker_worktrees"]["leases"]["OPS-WORKTREE-001"]["path"], str(expected_path))
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
+
+    def test_create_worker_worktree_cleans_stale_foreign_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            foreign_root = Path(tmpdir) / "foreign"
+            stale_path = Path(tmpdir) / "workers" / "stale"
+            repo_root.mkdir()
+            foreign_root.mkdir()
+
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Supervisor Test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@supervisor.invalid"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("base\\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            subprocess.run(["git", "init", str(foreign_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Supervisor Test"], cwd=foreign_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@supervisor.invalid"], cwd=foreign_root, check=True)
+            (foreign_root / "README.md").write_text("foreign\\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=foreign_root, check=True)
+            subprocess.run(["git", "commit", "-m", "foreign base"], cwd=foreign_root, check=True)
+
+            shutil.copytree(foreign_root, stale_path)
+
+            ok, error = supervisor._create_worker_worktree(repo_root.resolve(), stale_path, "task/OPS-WORKTREE-001", "dev")
+            self.assertTrue(ok, error)
+            self.assertIsNone(error)
+            proc = subprocess.run(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                cwd=stale_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(proc.stdout.strip(), "task/OPS-WORKTREE-001")
+
+    def test_prepare_worker_workspace_skips_reused_worktree_with_mismatched_git_common_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            foreign_root = Path(tmpdir) / "foreign"
+            foreign_root.mkdir()
+
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Supervisor Test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@supervisor.invalid"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            subprocess.run(["git", "init", str(foreign_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Supervisor Test"], cwd=foreign_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@supervisor.invalid"], cwd=foreign_root, check=True)
+            (foreign_root / "README.md").write_text("foreign\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=foreign_root, check=True)
+            subprocess.run(["git", "commit", "-m", "foreign base"], cwd=foreign_root, check=True)
+
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-WORKTREE-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "_git_worktree_records",
+                    return_value=[{"worktree": str(foreign_root), "branch": "task/OPS-WORKTREE-001"}],
+                ),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-1",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "ops-worktree-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
+        self.assertEqual(request.metadata["workspace_path"], str(expected_path))
+        create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
 
     def test_review_dispatch_uses_task_branch_not_mainline_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

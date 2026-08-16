@@ -3,6 +3,7 @@ from __future__ import annotations
 """Workspace lifecycle helpers extracted from legacy supervisor."""
 # ruff: noqa: F821
 
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -132,9 +133,41 @@ def _worktree_record_branch(record: dict[str, str]) -> str:
         return branch[len("refs/heads/") :]
     return branch
 
+
+@_entrypoint
+def _worktree_matches_repo_common_dir(repo_root: Path, path: Path) -> bool:
+    try:
+        path = path.resolve()
+        repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
+        if repo_common_rc != 0:
+            return False
+        expected_common = Path(repo_common)
+        if not expected_common.is_absolute():
+            expected_common = (repo_root / expected_common).resolve()
+        else:
+            expected_common = expected_common.resolve()
+
+        top_level_rc, top_level = _git_output(path, "rev-parse", "--show-toplevel")
+        if top_level_rc != 0 or Path(top_level).resolve() != path:
+            return False
+
+        worktree_common_rc, worktree_common = _git_output(path, "rev-parse", "--git-common-dir")
+        if worktree_common_rc != 0:
+            return False
+        resolved_worktree_common = Path(worktree_common)
+        if not resolved_worktree_common.is_absolute():
+            resolved_worktree_common = (path / resolved_worktree_common).resolve()
+        else:
+            resolved_worktree_common = resolved_worktree_common.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return resolved_worktree_common == expected_common
+
+
 @_entrypoint
 def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root: bool) -> Path | None:
     resolved_repo_root = repo_root.resolve()
+
     for record in _git_worktree_records(repo_root):
         if _worktree_record_branch(record) != branch:
             continue
@@ -142,7 +175,15 @@ def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root:
         if not path_value:
             continue
         path = Path(path_value).resolve()
+        if not path.exists() or not path.is_dir():
+            continue
         if exclude_root and path == resolved_repo_root:
+            continue
+        if not (path / ".git").exists():
+            continue
+        if _git_output(path, "rev-parse", "--is-inside-work-tree")[0] != 0:
+            continue
+        if not _worktree_matches_repo_common_dir(repo_root, path):
             continue
         return path
     return None
@@ -150,8 +191,18 @@ def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root:
 @_entrypoint
 def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: str) -> tuple[bool, str | None]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists() and (not path.is_dir() or any(path.iterdir())):
-        return False, f"Worker worktree path already exists and is not empty: {path}"
+    if path.exists():
+        if not path.is_dir():
+            return False, f"Worker worktree path already exists and is not empty: {path}"
+        if any(path.iterdir()) and (
+            not (path / ".git").exists() or not _worktree_matches_repo_common_dir(repo_root, path)
+        ):
+            try:
+                shutil.rmtree(path)
+            except OSError as exc:
+                return False, f"Failed to clean stale worker worktree {path}: {exc}"
+        elif any(path.iterdir()) and (path / ".git").exists():
+            return False, f"Worker worktree path already exists and is not empty: {path}"
 
     remote_ref = f"refs/remotes/origin/{branch}"
     if _git_ref_exists(repo_root, f"refs/heads/{branch}"):
@@ -170,8 +221,68 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     )
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "").strip()
+        # If the live supervisor repository is readonly, `git worktree add` cannot
+        # write refs under `.git`. Fall back to cloning into an isolated checkout.
+        fallback = _create_worker_worktree_fallback(repo_root, path, branch, base_ref)
+        if fallback:
+            return True, None
         return False, f"Failed to create worker worktree {path} for {branch}: {details}"
     return True, None
+
+
+def _create_worker_worktree_fallback(repo_root: Path, path: Path, branch: str, base_ref: str) -> bool:
+    if path.exists():
+        return False
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    clone_proc = subprocess.run(
+        ["git", "clone", "--no-checkout", str(repo_root), str(path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if clone_proc.returncode != 0:
+        return False
+
+    if _git_ref_exists(path, f"refs/heads/{branch}"):
+        checkout_proc = subprocess.run(
+            ["git", "checkout", "-q", branch],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    elif _git_ref_exists(path, f"refs/remotes/origin/{branch}"):
+        checkout_proc = subprocess.run(
+            ["git", "checkout", "-q", "-b", branch, f"origin/{branch}"],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    else:
+        base_branch = base_ref
+        if base_branch.startswith("origin/"):
+            base_branch = base_branch.split("/", 1)[1]
+        if _git_ref_exists(path, f"refs/remotes/{base_ref}"):
+            checkout_source = base_ref
+        elif _git_ref_exists(path, f"refs/heads/{base_branch}"):
+            checkout_source = base_branch
+        else:
+            return False
+        checkout_proc = subprocess.run(
+            ["git", "checkout", "-q", "-b", branch, checkout_source],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if checkout_proc.returncode != 0:
+        return False
+
+    if _git_output(path, "symbolic-ref", "--short", "HEAD")[0] != 0:
+        return False
+    return True
 
 @_entrypoint
 def _classify_worktree_dirt(
