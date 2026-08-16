@@ -3151,6 +3151,8 @@ def task_assignment_integrity_issues(
         waiting_reason = task_actor_assignment_block_reason(config, state, task, waiting_for)
         if waiting_reason:
             issues.append(f"waiting_for_unavailable:{waiting_reason}")
+    elif str(task.get("status") or "").strip().lower() == "blocked" and not waiting_for:
+        issues.append("waiting_for_missing")
     return issues
 
 
@@ -3194,8 +3196,9 @@ def normalize_task_assignment_integrity(
         or issue.startswith("reviewer_unavailable:")
         or issue == "owner_reviewer_same_account_pool"
     }
+    waiting_for_missing = "waiting_for_missing" in issues
     waiting_for_unavailable = any(issue.startswith("waiting_for_unavailable:") for issue in issues)
-    if not assignment_issues and not waiting_for_unavailable:
+    if not assignment_issues and not waiting_for_unavailable and not waiting_for_missing:
         return False
 
     task_id = str(task.get("id") or "").strip()
@@ -3266,6 +3269,14 @@ def normalize_task_assignment_integrity(
         ):
             new_waiting_for = replacement_waiting_for
             changes.append(f"waiting_for {waiting_for} -> {new_waiting_for}")
+    elif waiting_for_missing:
+        replacement_waiting_for = new_owner
+        if (
+            replacement_waiting_for
+            and not task_actor_assignment_block_reason(config, state, task, replacement_waiting_for)
+        ):
+            new_waiting_for = replacement_waiting_for
+            changes.append(f"waiting_for missing -> {new_waiting_for}")
 
     if not changes or new_owner == new_reviewer:
         return False

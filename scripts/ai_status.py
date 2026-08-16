@@ -2832,7 +2832,15 @@ def validate_state(state: dict[str, Any]) -> None:
         if task["owner"] == task["reviewer"]:
             raise SystemExit(f"Task {task['id']} has identical owner and reviewer")
         if task["status"] == "blocked" and not task.get("waiting_for"):
-            raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
+            owner = str(task.get("owner") or "").strip()
+            if owner and owner != task["reviewer"]:
+                task["waiting_for"] = owner
+                print(
+                    f"Auto-repaired blocked task {task['id']}: waiting_for missing, defaulting to owner '{owner}'.",
+                    file=sys.stderr,
+                )
+            else:
+                raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
 
     for blocker in state.get("blockers", []):
         ensure_agent(blocker["owner"])

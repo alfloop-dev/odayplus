@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import multi_repo_registry
 
@@ -51,6 +53,25 @@ class MultiRepoRegistryTests(unittest.TestCase):
         }
 
         self.assertIsNone(multi_repo_registry.task_primary_repository_id({}, task))
+
+    def test_oday_data_platform_uses_fallback_checkout_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            missing = tmp_root / "missing"
+            fallback = tmp_root / "oday-data-platform-supervisor"
+            fallback.mkdir()
+
+            def fake_resolve_path(value):
+                if value == "../oday-data-platform":
+                    return missing
+                if value == "../oday-data-platform-supervisor":
+                    return fallback
+                return None
+
+            with mock.patch.object(multi_repo_registry, "resolve_path", fake_resolve_path):
+                repo = multi_repo_registry.resolve_repository({}, "oday_data_platform")
+
+            self.assertEqual(repo["resolved_local_path"], fallback)
 
 
 if __name__ == "__main__":
