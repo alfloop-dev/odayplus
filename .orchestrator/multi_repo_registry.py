@@ -7,6 +7,7 @@ repository root with repository-relative path ``e2e/dummy.spec.ts``.
 """
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,38 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
         "responses_dir": ".coordination/responses",
     },
 }
+
+_ENV_PATH_OVERRIDE_SUFFIX = "_LOCAL_PATHS"
+
+
+def _path_override_env_key(repo_id: str) -> str:
+    return repo_id.upper().replace("-", "_").replace("/", "_") + _ENV_PATH_OVERRIDE_SUFFIX
+
+
+def _coalesce_repo_local_path_candidates(repo_id: str, local_path: str | None) -> list[str]:
+    candidates: list[str] = []
+    if local_path:
+        candidates.append(local_path)
+
+    # Backward-compatible fallback for environments where the canonical sibling
+    # data-platform checkout does not use the historical repository name.
+    if repo_id == "oday_data_platform":
+        candidates.extend(["../oday-data-platform-supervisor"])
+
+    override = os.getenv(_path_override_env_key(repo_id), "")
+    for raw in override.split(os.pathsep):
+        value = str(raw).strip()
+        if value:
+            candidates.append(value)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
 
 
 DEFAULT_WORKER_ROUTES: dict[str, dict[str, Any]] = {
@@ -164,7 +197,20 @@ def resolve_repository(config: dict[str, Any], repo_id: str) -> dict[str, Any]:
     repo["id"] = repo_id
     repo["display_name"] = repo.get("display_name") or repo_id
     local_path = repo.get("local_path")
-    repo["resolved_local_path"] = resolve_path(local_path) if local_path else None
+    resolved_local_path = None
+    default_path: Path | None = None
+    for candidate in _coalesce_repo_local_path_candidates(repo_id, local_path):
+        candidate_path = resolve_path(candidate) if candidate else None
+        if candidate_path is None:
+            continue
+        if default_path is None:
+            default_path = candidate_path
+        if candidate_path.exists():
+            resolved_local_path = candidate_path
+            break
+    if resolved_local_path is None:
+        resolved_local_path = default_path
+    repo["resolved_local_path"] = resolved_local_path
     return repo
 
 
