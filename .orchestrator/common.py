@@ -67,6 +67,50 @@ def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def strip_json_comments(text: str) -> str:
+    """Remove `//` and `/* */` comments that sit outside string literals.
+
+    A plain ``re.sub(r"//.*?$", ...)`` also eats the second half of every URL
+    in the document, turning `"https://github.com/x"` into an unterminated
+    `"https:` and reporting the resulting stray newline as an "Invalid control
+    character" hundreds of lines away from the real defect. Scanning for string
+    boundaries keeps the tolerance for commented config without inventing a
+    corruption that was never in the file.
+    """
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    in_string = False
+    while index < length:
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if char == "\\" and index + 1 < length:
+                out.append(text[index + 1])
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = length if newline == -1 else newline
+            continue
+        if text.startswith("/*", index):
+            close = text.find("*/", index + 2)
+            index = length if close == -1 else close + 2
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def load_json(path: Path, default: Any | None = None) -> Any:
     if not path.exists():
         return deepcopy(default)
@@ -78,16 +122,17 @@ def load_json(path: Path, default: Any | None = None) -> Any:
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
-            sanitized = re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
-            sanitized = re.sub(r"/\*.*?\*/", "", sanitized, flags=re.DOTALL)
+            # Report the error from the file as written. A sanitizer failure
+            # describes a document nobody has on disk, which sends whoever is
+            # reading the traceback after the wrong defect.
+            last_error = exc
+            sanitized = strip_json_comments(text)
             sanitized = re.sub(r",(\s*[}\]])", r"\1", sanitized)
             if sanitized != text:
                 try:
                     return json.loads(sanitized)
-                except json.JSONDecodeError as sanitized_exc:
-                    last_error = sanitized_exc
-            else:
-                last_error = exc
+                except json.JSONDecodeError:
+                    pass
             if attempt < 9:
                 time.sleep(0.05 * (attempt + 1))
     if last_error is not None:

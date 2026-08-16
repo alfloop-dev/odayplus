@@ -1889,6 +1889,43 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             )
             self.assertEqual(proc.stdout.strip(), "task/OPS-WORKTREE-001")
 
+    def test_worktree_clone_fallback_keeps_the_real_upstream_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "repo"
+            clone_path = Path(tmpdir) / "workers" / "task-clone"
+            repo_root.mkdir()
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "Supervisor Test"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@supervisor.invalid"], cwd=repo_root, check=True)
+            subprocess.run(
+                ["git", "remote", "add", "origin", "https://github.com/alfloop-dev/oday-data-platform.git"],
+                cwd=repo_root,
+                check=True,
+            )
+            (repo_root / "README.md").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "base"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-q", "-b", "dev"], cwd=repo_root, check=True)
+
+            created = supervisor._create_worker_worktree_fallback(
+                repo_root.resolve(), clone_path, "task/DPF-KRN-MEAS-001", "dev"
+            )
+            self.assertTrue(created)
+
+            proc = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=clone_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        # Never the local supervisor checkout: a push there would silently
+        # never reach GitHub.
+        self.assertEqual(
+            proc.stdout.strip(), "https://github.com/alfloop-dev/oday-data-platform.git"
+        )
+
     def test_prepare_worker_workspace_skips_reused_worktree_with_mismatched_git_common_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -6819,6 +6856,78 @@ class AutomaticRecoveryTests(unittest.TestCase):
         self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
         self.assertTrue(persist.call_args.kwargs["resolve_open_blockers"])
         self.assertIsNone(persist.call_args.kwargs["handoff_to"])
+
+    @staticmethod
+    def _dependency_gated_task(task_id: str, depends_on: list[str]) -> dict[str, object]:
+        # Exactly the shape a staged-wave catalog registers: a static `blocked`
+        # status whose prose is never rewritten when the dependency completes.
+        reason = "waiting for dependencies: " + ", ".join(depends_on)
+        return {
+            "id": task_id,
+            "status": "blocked",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "depends_on": list(depends_on),
+            "blocked_reason": reason,
+            "next": reason,
+            "waiting_for": "Antigravity",
+        }
+
+    def test_released_dependency_gate_reopens_without_routing_failure_prose(self) -> None:
+        gate = {"id": "WAVE-GOV-001", "status": "done", "depends_on": []}
+        task = self._dependency_gated_task("WAVE-KRN-001", ["WAVE-GOV-001"])
+        task_map = {gate["id"]: gate, task["id"]: task}
+
+        self.assertTrue(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.normalize_mainline_task_assignment(self.config, task, task_map)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+        self.assertTrue(persist.call_args.kwargs["resolve_open_blockers"])
+
+    def test_unsatisfied_dependency_gate_stays_blocked(self) -> None:
+        gate = {"id": "WAVE-GOV-001", "status": "in_progress", "depends_on": []}
+        task = self._dependency_gated_task("WAVE-KRN-001", ["WAVE-GOV-001"])
+        task_map = {gate["id"]: gate, task["id"]: task}
+
+        self.assertFalse(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+
+    def test_dependency_ids_do_not_masquerade_as_hard_gates(self) -> None:
+        # "WAVE-KRN-DATASET-001" contains the external-data gate keyword
+        # "dataset"; a dependent task must not inherit that classification.
+        gate = {"id": "WAVE-KRN-DATASET-001", "status": "done", "depends_on": []}
+        task = self._dependency_gated_task("WAVE-KRN-SCHEMA-001", ["WAVE-KRN-DATASET-001"])
+        task_map = {gate["id"]: gate, task["id"]: task}
+
+        self.assertNotIn("dataset", supervisor.blocked_task_prose_context(task))
+        self.assertTrue(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+
+    def test_released_dependency_gate_still_fails_closed_on_human_gate_prose(self) -> None:
+        gate = {"id": "WAVE-GOV-001", "status": "done", "depends_on": []}
+        task = self._dependency_gated_task("WAVE-KRN-001", ["WAVE-GOV-001"])
+        task["blocker"] = "requires operator sign-off before dispatch"
+        task_map = {gate["id"]: gate, task["id"]: task}
+
+        self.assertFalse(supervisor.blocked_task_auto_recovery_eligible(self.config, task, task_map))
+
+    def test_dependency_free_blocked_task_still_needs_routing_failure_prose(self) -> None:
+        task = {
+            "id": "WAVE-MISC-001",
+            "status": "blocked",
+            "owner": "Antigravity",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "next": "waiting on an unrelated business decision",
+        }
+
+        self.assertFalse(
+            supervisor.blocked_task_auto_recovery_eligible(self.config, task, {task["id"]: task})
+        )
 
     def test_unregistered_coordinator_reviewer_is_reassigned(self) -> None:
         task = {

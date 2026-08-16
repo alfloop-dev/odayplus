@@ -291,6 +291,7 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
+@_entrypoint
 def _create_worker_worktree_fallback(repo_root: Path, path: Path, branch: str, base_ref: str) -> bool:
     if path.exists():
         return False
@@ -304,6 +305,21 @@ def _create_worker_worktree_fallback(repo_root: Path, path: Path, branch: str, b
     )
     if clone_proc.returncode != 0:
         return False
+
+    # A clone of a local checkout inherits `origin = <local path>`. Left that
+    # way the workspace looks healthy while every push lands in the supervisor's
+    # own repo instead of the real remote, and every later ref verification asks
+    # a remote nobody publishes to -- which is how a task branch ends up
+    # "missing" from an origin that never had it.
+    upstream_rc, upstream_url = _git_output(repo_root, "remote", "get-url", "origin")
+    if upstream_rc == 0 and upstream_url.strip():
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", upstream_url.strip()],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     if _git_ref_exists(path, f"refs/heads/{branch}"):
         checkout_proc = subprocess.run(
