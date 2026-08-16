@@ -2298,6 +2298,7 @@ WORKER_RUNTIME_METRIC_COUNTERS = (
     "lease_refreshes",
     "missing_process_workers_failed",
     "expired_lease_workers_failed",
+    "supersede_deferrals",
     "started_queue_records_requeued",
     "started_queue_records_failed",
     "stale_queue_records_completed",

@@ -5661,6 +5661,103 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         terminate_worker_pid.assert_called_once_with(2222)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
 
+    def _reassigned_supersede_fixture(self, worker_overrides: dict) -> tuple[dict, dict, dict]:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "owned_statuses": ["in_progress", "todo"],
+                "done_statuses": ["done", "review_approved"],
+                "active_worker_statuses": ["running", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled"],
+            },
+            "providers": {},
+            "agents": {
+                "copilot": {"id": "copilot", "display_name": "Copilot"},
+                "gemini": {"id": "gemini", "display_name": "Gemini"},
+            },
+        }
+        worker = {
+            "run_id": "run-1",
+            "task_id": "REG-002",
+            "provider": "copilot",
+            "agent_id": "copilot",
+            "status": "running",
+            "queue_event_id": "evt-1",
+            "pid": 2222,
+            "last_event_at": "2026-04-06T14:19:47Z",
+        }
+        worker.update(worker_overrides)
+        state = {
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "workers": {"run-1": worker},
+        }
+        status = {"tasks": [{"id": "REG-002", "status": "review", "owner": "Codex", "reviewer": "Gemini"}]}
+        return config, state, status
+
+    def test_fresh_alive_worker_supersede_is_deferred_within_grace(self) -> None:
+        # A worker that just handed its task off keeps a fresh heartbeat while it
+        # tears down and flushes its final status write. It must NOT be killed
+        # inside the grace window (that truncates the write and causes churn).
+        config, state, status = self._reassigned_supersede_fixture(
+            {"last_heartbeat_at": supervisor.utc_now()}
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "running")
+        self.assertNotEqual(worker["status"], "superseded")
+        self.assertIsNotNone(worker.get("supersede_deferred_since"))
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
+        terminate_worker_pid.assert_not_called()
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_supersede_deferred")
+
+    def test_fresh_alive_worker_is_superseded_after_grace_exhausted(self) -> None:
+        # Once the grace window elapses and the worker still has not exited, the
+        # supervisor reclaims it exactly as before.
+        deferred_since = (datetime.now(UTC) - timedelta(seconds=600)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        config, state, status = self._reassigned_supersede_fixture(
+            {
+                "last_heartbeat_at": supervisor.utc_now(),
+                "supersede_deferred_since": deferred_since,
+            }
+        )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "superseded")
+        self.assertNotIn("supersede_deferred_since", worker)
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "completed")
+        terminate_worker_pid.assert_called_once_with(2222)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_superseded")
+
 
 class SingleSupervisorGuardTests(unittest.TestCase):
     def test_cmdline_match_requires_supervisor_as_executable_or_python_script(self) -> None:

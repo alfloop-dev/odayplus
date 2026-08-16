@@ -965,6 +965,9 @@
         "runner_heartbeat_interval_seconds": {
           "type": "integer"
         },
+        "supersede_grace_seconds": {
+          "type": "integer"
+        },
         "worker_lease_seconds": {
           "type": "integer"
         }

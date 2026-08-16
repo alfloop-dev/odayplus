@@ -282,6 +282,14 @@ def worker_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("heartbeat_stale_seconds", supervisor_settings.get("heartbeat_stale_seconds", 300))
     settings.setdefault("heartbeat_grace_seconds", supervisor_settings.get("heartbeat_grace_seconds", 60))
     settings.setdefault("runner_heartbeat_interval_seconds", 15)
+    # Grace window before a still-alive, freshly heart-beating worker is
+    # SIGTERM-superseded once its task assignment moves on. A worker that has
+    # just advanced its own task (owner -> review, reviewer -> review_approved)
+    # keeps a fresh heartbeat while it tears down the CLI/MCP session and
+    # flushes its final canonical status write. Killing it inside that window
+    # truncates the un-landed lifecycle write and forces a wasteful redispatch,
+    # so we let it exit on its own until this many seconds elapse.
+    settings.setdefault("supersede_grace_seconds", supervisor_settings.get("supersede_grace_seconds", 120))
     return settings
 
 @_entrypoint
