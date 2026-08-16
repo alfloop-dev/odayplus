@@ -1847,10 +1847,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             )
             fallback, fallback_source = supervisor.worker_task_repo_root(config, {})
 
+        # The fleet's own repo resolves through the same registry as any other,
+        # and `local_path: "."` anchors on the fleet root rather than whichever
+        # rollout directory the code happens to be running from.
         self.assertEqual(resolved, repo_root.resolve())
-        self.assertEqual(source, "supervisor_repo")
+        self.assertEqual(source, "repository:odayplus")
         self.assertEqual(fallback, repo_root.resolve())
-        self.assertEqual(fallback_source, "supervisor_repo")
+        self.assertEqual(fallback_source, "repository:pantheon")
 
     def test_create_worker_worktree_cleans_stale_foreign_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

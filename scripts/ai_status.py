@@ -62,6 +62,7 @@ from multi_repo_registry import (
     repository_local_path,
     repository_slug,
     resolve_repository,
+    resolve_task_repository,
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
@@ -6118,13 +6119,31 @@ def get_repository_slug_safe() -> str:
     return "alfloop-dev/odayplus"
 
 
+def task_repository_slug_safe(task: dict[str, Any]) -> str:
+    """The repository a task's review gate belongs to.
+
+    A GitHub status is addressed as ``repos/<slug>/statuses/<sha>``, so a
+    fleet-wide slug posts one repository's commit against another and GitHub
+    answers 422 "No commit found for SHA" forever. The task already names its
+    repository; resolve through the same registry every other subsystem uses.
+    """
+    try:
+        config = status_runtime_config()
+        binding = resolve_task_repository(config, task)
+        if binding.slug:
+            return binding.slug
+    except Exception:
+        pass
+    return get_repository_slug_safe()
+
+
 def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
     task_id = str(task.get("id") or "")
     sha = resolve_task_sha(task_id)
     if not sha:
         return None
 
-    repo_slug = get_repository_slug_safe()
+    repo_slug = task_repository_slug_safe(task)
     context = "task-review-gate"
 
     if state_status == "review_approved":

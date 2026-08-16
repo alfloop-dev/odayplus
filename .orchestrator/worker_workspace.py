@@ -87,59 +87,27 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
     return configured.resolve()
 
 @_entrypoint
-def _git_origin_slug(repo_root: Path) -> str | None:
-    """Return the ``owner/name`` this checkout actually pushes to, if any."""
-    returncode, url = _git_output(repo_root, "remote", "get-url", "origin")
-    if returncode != 0:
-        return None
-    candidate = url.strip()
-    if not candidate:
-        return None
-    candidate = re.sub(r"\.git$", "", candidate)
-    match = re.search(r"[:/]([^/:]+/[^/]+)$", candidate)
-    return match.group(1).casefold() if match else None
-
-
-@_entrypoint
 def worker_task_repo_root(config: dict[str, Any], task: dict[str, Any] | None) -> tuple[Path | None, str]:
     """Resolve the checkout that owns a task's worktree and task branch.
 
-    A task carrying ``repository: owner/name`` belongs to that repository, not
-    to the supervisor's own repo.  Defaulting to the supervisor root creates the
-    task branch in the wrong origin, and the fail-closed refresh policy then
-    reports the branch as missing from a remote that never had it -- a dispatch
-    deadlock that no retry can clear.  Every candidate is verified against its
-    own ``origin`` before it is trusted, so a stale or mis-wired ``local_path``
-    fails closed instead of silently landing work in the wrong repository.
+    Delegates to the registry so worktree leasing cannot drift from the
+    repository every other subsystem resolved for the same task. Falling back
+    to the supervisor root would create the task branch in the wrong origin,
+    and the fail-closed refresh policy then reports that branch as missing from
+    a remote that never had it -- a dispatch deadlock no retry can clear.
     """
-    supervisor_root = config_path(config, "status_file").parents[0].resolve()
-    slug = str((task or {}).get("repository") or "").strip()
-    if not slug:
-        return supervisor_root, "supervisor_repo"
-
-    normalized_slug = re.sub(r"\.git$", "", slug).casefold()
-    if _git_origin_slug(supervisor_root) == normalized_slug:
-        return supervisor_root, "supervisor_repo"
-
     # Lazy import mirrors source_document_router: avoids a common.py cycle.
-    from multi_repo_registry import matching_repo_id, repository_local_path
+    from multi_repo_registry import resolve_task_repository
 
-    repo_id = matching_repo_id(config, slug)
-    if not repo_id:
-        return None, f"unknown_repository: {slug} is not in the repository registry"
-
-    local_path = repository_local_path(config, repo_id)
-    if local_path is None or not local_path.exists():
-        return None, f"repository_checkout_unavailable: no local checkout for {slug}"
-
-    resolved = local_path.resolve()
-    actual_slug = _git_origin_slug(resolved)
-    if actual_slug != normalized_slug:
-        return None, (
-            f"repository_checkout_mismatch: {resolved} points at "
-            f"{actual_slug or 'no origin'}, expected {slug}"
-        )
-    return resolved, f"repository:{repo_id}"
+    binding = resolve_task_repository(config, task)
+    if binding.resolved:
+        return binding.root, binding.source
+    if not str((task or {}).get("repository") or "").strip():
+        # No repository was ever declared for this task, and inference found no
+        # usable checkout. The supervisor's own root is the historical default
+        # and is correct for single-repo fleets.
+        return config_path(config, "status_file").parents[0].resolve(), "supervisor_repo"
+    return None, binding.error or "unresolved repository"
 
 
 @_entrypoint

@@ -150,7 +150,6 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_run_git_network_command",
 "_scan_process_paths_in_root",
 "_task_brief_context_candidates",
-"_git_origin_slug",
 "_task_id_slug",
 "_worker_worktree_base_root",
 "_worktree_record_branch",

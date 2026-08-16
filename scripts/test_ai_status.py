@@ -29,6 +29,7 @@ if "ai_status" not in sys.modules:
     os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 try:
     import ai_status
+    import multi_repo_registry
     import task_archive
 finally:
     if _IMPORT_STATUS_ROOT is None:
@@ -3482,6 +3483,42 @@ class StatusCheckEmissionTests(unittest.TestCase):
             with mock.patch.object(ai_status, "status_runtime_config", return_value={"repository": "foo/bar"}), \
                  mock.patch.object(ai_status, "repository_slug", return_value="foo/bar"):
                 self.assertEqual(ai_status.get_repository_slug_safe(), "foo/bar")
+
+    def test_review_gate_posts_to_the_repository_that_owns_the_task(self) -> None:
+        # A status is addressed as repos/<slug>/statuses/<sha>. Posting a
+        # data-platform commit against the fleet repo returns HTTP 422
+        # "No commit found for SHA" on every retry, forever.
+        task = {
+            "id": "DPF-GOV-001",
+            "reviewer": "Codex",
+            "repository": "alfloop-dev/oday-data-platform",
+        }
+        binding = multi_repo_registry.RepositoryBinding(
+            repo_id="oday_data_platform",
+            slug="alfloop-dev/oday-data-platform",
+            root=Path("/tmp/oday-data-platform"),
+            source="repository:oday_data_platform",
+        )
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "resolve_task_repository", return_value=binding),
+            mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+        ):
+            payload = ai_status.task_review_status_payload(task, "review")
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["repo_slug"], "alfloop-dev/oday-data-platform")
+
+    def test_review_gate_falls_back_to_the_fleet_slug_without_a_binding(self) -> None:
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40),
+            mock.patch.object(ai_status, "status_runtime_config", side_effect=RuntimeError("no config")),
+            mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+        ):
+            payload = ai_status.task_review_status_payload({"id": "ODP-001"}, "review")
+
+        self.assertEqual(payload["repo_slug"], "alfloop-dev/odayplus")
 
     def test_resolve_task_sha_rejects_branch_absent_old_pr_and_local_head(self) -> None:
         mock_result = mock.Mock(returncode=0, stdout="")
