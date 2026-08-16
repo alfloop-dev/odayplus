@@ -38,18 +38,18 @@ Both commands from the task definition, run at the reviewed head:
 ```console
 $ uv run python scripts/validate_external_data_boundary.py
 contract: odayplus.legacy-external-data-disposition.v2
-tracked files: 2453
-  classified: 2453
+tracked files: 2457
+  classified: 2457
   unclassified: 0
   by_disposition: {"archived": 77, "assisted_intake_workflow": 58,
-    "delivery_and_governance": 75, "development_platform": 195,
-    "documentation_and_evidence": 886, "frozen_legacy_producer": 32,
+    "delivery_and_governance": 75, "development_platform": 196,
+    "documentation_and_evidence": 888, "frozen_legacy_producer": 32,
     "migrating_to_platform_client": 46, "product_consumer_owned": 611,
     "product_review_workflow": 146, "repository_metadata": 14,
-    "shared_platform_support": 61, "verification_only": 252}
+    "shared_platform_support": 61, "verification_only": 253}
   frozen_files: 32
   capability_detections: 69
-  provider_reference_hits: 221
+  provider_reference_hits: 227
 external-data boundary: OK
 # exit 0
 
@@ -66,7 +66,7 @@ worker sandbox; the commands were run as `python3 scripts/... ` and
 
 ### 1. Classify every tracked file and detected provider reference, not only known directories
 
-All **2453** tracked files carry a disposition. The classification rule list has
+All **2457** tracked files carry a disposition. The classification rule list has
 **no catch-all** (asserted by `test_classification_has_no_catch_all_rule`), so a
 genuinely new top-level surface fails validation until a human gives it an
 explicit disposition rather than inheriting one by accident. Dead rules fail
@@ -83,7 +83,7 @@ external-data surface:
 | `packages/schemas/source_contracts/external/**` | `frozen_legacy_producer` |
 | `apps/data_platform/**`, `modules/integration/connectors/**`, `apps/api/app/routes/external_data.py` | `migrating_to_platform_client` |
 
-**221** provider references were detected across `.py`, `.ts`, `.tsx`, `.yaml`,
+**227** provider references were detected across `.py`, `.ts`, `.tsx`, `.yaml`,
 `.tf`, `.sh`, `.json` and `.sql` by three signals — provider host, provider
 credential env var, frozen-producer package import — and every one is covered
 by a declaration naming both the matched text and a path glob. Declarations
