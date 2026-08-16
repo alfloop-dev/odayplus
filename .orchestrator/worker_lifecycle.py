@@ -465,6 +465,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         "marker_updates": 0,
         "lease_refreshes": 0,
         "expired_lease_workers_failed": 0,
+        "supersede_deferrals": 0,
     }
     workers = state.setdefault("workers", {})
     for run_id, worker in list(workers.items()):
@@ -592,6 +593,46 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         ):
             if worker.get("status") == "superseded":
                 continue
+            # A worker that just advanced its own task keeps a fresh heartbeat
+            # while it tears down the CLI/MCP session and flushes its final
+            # canonical status write. SIGTERM-ing it here truncates that
+            # un-landed lifecycle write and forces a wasteful redispatch (the
+            # observed owner->review->reopen churn). Defer the supersede while
+            # the worker is alive with a fresh heartbeat, up to a bounded grace
+            # window, so it can exit on its own and be reconciled cleanly on a
+            # later poll. Stalled/dead workers (no fresh heartbeat) still
+            # supersede immediately.
+            heartbeat_is_fresh = bool(worker.get("last_heartbeat_at")) and not worker_heartbeat_is_stale(
+                config, worker, now
+            )
+            grace_seconds = max(0, int(worker_runtime_settings(config).get("supersede_grace_seconds", 120)))
+            if alive and heartbeat_is_fresh and grace_seconds > 0:
+                deferred_since = _parse_iso_utc(str(worker.get("supersede_deferred_since") or ""))
+                if deferred_since is None:
+                    worker["supersede_deferred_since"] = utc_now()
+                    poll_counts["supersede_deferrals"] += 1
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_supersede_deferred",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": (
+                                "Deferred supersede: worker is still alive with a fresh heartbeat after its "
+                                "task responsibility moved on; letting it finish and flush its lifecycle write."
+                            ),
+                            "worker_run_id": worker.get("run_id"),
+                        },
+                    )
+                    changed = True
+                    continue
+                elapsed = (now - deferred_since.astimezone(UTC)).total_seconds()
+                if elapsed < grace_seconds:
+                    # Still within the grace window; wait for the next poll.
+                    continue
+                # Grace exhausted: the worker is not exiting on its own, so fall
+                # through and reclaim it as before.
+            worker.pop("supersede_deferred_since", None)
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
