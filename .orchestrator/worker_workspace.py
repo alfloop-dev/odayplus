@@ -87,10 +87,39 @@ def _worker_worktree_base_root(config: dict[str, Any], settings: dict[str, Any])
     return configured.resolve()
 
 @_entrypoint
-def worker_task_worktree_path(config: dict[str, Any], task_id: str | None, settings: dict[str, Any] | None = None) -> Path:
+def worker_task_repo_root(config: dict[str, Any], task: dict[str, Any] | None) -> tuple[Path | None, str]:
+    """Resolve the checkout that owns a task's worktree and task branch.
+
+    Delegates to the registry so worktree leasing cannot drift from the
+    repository every other subsystem resolved for the same task. Falling back
+    to the supervisor root would create the task branch in the wrong origin,
+    and the fail-closed refresh policy then reports that branch as missing from
+    a remote that never had it -- a dispatch deadlock no retry can clear.
+    """
+    # Lazy import mirrors source_document_router: avoids a common.py cycle.
+    from multi_repo_registry import resolve_task_repository
+
+    binding = resolve_task_repository(config, task)
+    if binding.resolved:
+        return binding.root, binding.source
+    if not str((task or {}).get("repository") or "").strip():
+        # No repository was ever declared for this task, and inference found no
+        # usable checkout. The supervisor's own root is the historical default
+        # and is correct for single-repo fleets.
+        return config_path(config, "status_file").parents[0].resolve(), "supervisor_repo"
+    return None, binding.error or "unresolved repository"
+
+
+@_entrypoint
+def worker_task_worktree_path(
+    config: dict[str, Any],
+    task_id: str | None,
+    settings: dict[str, Any] | None = None,
+    repo_root: Path | None = None,
+) -> Path:
     active_settings = settings or worker_worktree_settings(config)
-    repo_root = config_path(config, "status_file").parents[0]
-    repo_slug = re.sub(r"[^a-z0-9]+", "-", repo_root.name.lower()).strip("-") or "repo"
+    root = repo_root or config_path(config, "status_file").parents[0]
+    repo_slug = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-") or "repo"
     return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
 
 @_entrypoint
@@ -230,6 +259,7 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     return True, None
 
 
+@_entrypoint
 def _create_worker_worktree_fallback(repo_root: Path, path: Path, branch: str, base_ref: str) -> bool:
     if path.exists():
         return False
@@ -243,6 +273,21 @@ def _create_worker_worktree_fallback(repo_root: Path, path: Path, branch: str, b
     )
     if clone_proc.returncode != 0:
         return False
+
+    # A clone of a local checkout inherits `origin = <local path>`. Left that
+    # way the workspace looks healthy while every push lands in the supervisor's
+    # own repo instead of the real remote, and every later ref verification asks
+    # a remote nobody publishes to -- which is how a task branch ends up
+    # "missing" from an origin that never had it.
+    upstream_rc, upstream_url = _git_output(repo_root, "remote", "get-url", "origin")
+    if upstream_rc == 0 and upstream_url.strip():
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", upstream_url.strip()],
+            cwd=path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     if _git_ref_exists(path, f"refs/heads/{branch}"):
         checkout_proc = subprocess.run(
@@ -1463,9 +1508,33 @@ def prepare_worker_workspace(
     if request.metadata.get("workspace_path"):
         return True, None
 
-    repo_root = config_path(config, "status_file").parents[0].resolve()
+    task_metadata = request.metadata.get("task")
+    repo_root, repo_root_source = worker_task_repo_root(
+        config,
+        task_metadata if isinstance(task_metadata, dict) else None,
+    )
+    if repo_root is None:
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"{repo_root_source}. Refusing to create the task branch in the "
+            "supervisor repository, which would publish it to the wrong origin."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_lease",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "message": message,
+                "repo_root_source": repo_root_source,
+            },
+        )
+        return False, message
+
     branch = worker_task_branch(config, workspace_task_id)
-    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings)
+    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings, repo_root)
     reused = False
 
     if settings.get("reuse_existing", True):
@@ -1709,8 +1778,8 @@ def prepare_worker_workspace(
         if _branch_checked_out_in_root(repo_root, branch):
             message = (
                 f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                f"branch {branch} is currently checked out in supervisor root {repo_root}. "
-                "Move the supervisor root back to dev or finish that root task branch first."
+                f"branch {branch} is currently checked out in repository root {repo_root}. "
+                "Move that root back to dev or finish that root task branch first."
             )
             write_activity_log(
                 config,
@@ -1760,6 +1829,7 @@ def prepare_worker_workspace(
         "branch": branch,
         "path": str(worktree_path),
         "status_root": str(repo_root),
+        "repo_root_source": repo_root_source,
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),

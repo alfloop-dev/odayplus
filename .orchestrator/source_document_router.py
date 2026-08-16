@@ -127,24 +127,21 @@ def _registered_repository(
     repository_slug: str,
 ) -> tuple[str, Path, dict[str, Any]]:
     # Lazy import avoids common.py <-> multi_repo_registry.py import cycles.
-    from multi_repo_registry import matching_repo_id, repository_local_path, resolve_repository
+    from multi_repo_registry import matching_repo_id, resolve_repository, resolve_task_repository
 
     repo_id = matching_repo_id(config, repository_slug)
     if not repo_id:
         raise SourceDocumentRoutingError(
             f"source repository is not registered: {repository_slug}"
         )
-    root = repository_local_path(config, repo_id)
-    if root is None:
+    # Same authority as worktree leasing and review status checks: a source doc
+    # must be read from the very checkout the task's work will land in.
+    binding = resolve_task_repository(config, {"repository": repository_slug})
+    if not binding.resolved:
         raise SourceDocumentRoutingError(
-            f"source repository has no configured local path: {repository_slug}"
+            f"source repository checkout is unavailable: {repository_slug} ({binding.error})"
         )
-    try:
-        root = root.resolve(strict=True)
-    except OSError as exc:
-        raise SourceDocumentRoutingError(
-            f"source repository checkout is unavailable: {repository_slug}"
-        ) from exc
+    root = binding.root
     if not (root / ".git").exists() and _run_git(root, "rev-parse", "--git-dir").returncode != 0:
         raise SourceDocumentRoutingError(
             f"source repository local path is not a git checkout: {root}"

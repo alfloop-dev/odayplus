@@ -57,6 +57,28 @@ class JsonLoadResilienceTests(unittest.TestCase):
         self.assertEqual(result, payload)
         sleep.assert_called_once()
 
+    def test_comment_stripper_preserves_urls_and_still_strips_comments(self) -> None:
+        document = json.dumps({"pr_url": "https://github.com/alfloop-dev/odayplus/pull/505"}, indent=2)
+        self.assertEqual(common.strip_json_comments(document), document)
+
+        commented = '{\n  // lead\n  "a": 1, /* block */ "b": "x//y"\n}'
+        self.assertEqual(json.loads(common.strip_json_comments(commented)), {"a": 1, "b": "x//y"})
+
+    def test_load_json_reports_the_error_from_the_file_as_written(self) -> None:
+        # A state file with two stray trailing bytes must report the trailing
+        # garbage, not a phantom defect the sanitizer introduced elsewhere.
+        corrupt = json.dumps({"pr_url": "https://github.com/alfloop-dev/odayplus/pull/505"}, indent=2) + "\\n"
+        with (
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(Path, "read_text", return_value=corrupt),
+            mock.patch.object(common.time, "sleep"),
+            self.assertRaises(json.JSONDecodeError) as raised,
+        ):
+            common.load_json(Path("/tmp/corrupt.json"), default={})
+
+        self.assertIn("Extra data", str(raised.exception))
+        self.assertNotIn("control character", str(raised.exception))
+
     def test_load_jsonl_retries_after_transient_decode_error(self) -> None:
         with (
             mock.patch.object(Path, "exists", return_value=True),

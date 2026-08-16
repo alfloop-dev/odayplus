@@ -125,6 +125,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_clear_remote_head_snapshot_cache",
 "_clear_worktree_lease_block",
 "_create_worker_worktree",
+"_create_worker_worktree_fallback",
 "_existing_worktree_for_branch",
 "_fetch_authoritative_task_head",
 "_file_or_dir_hash",
@@ -157,6 +158,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "prepare_worker_workspace",
 "prune_orphan_worktrees",
 "worker_task_branch",
+"worker_task_repo_root",
 "worker_task_worktree_path",
 "worker_tree_guard_settings",
 "worker_worktree_housekeeping_settings",
@@ -3315,21 +3317,53 @@ def normalized_business_priority(value: Any, default: str = "P2") -> str:
     return status_transition.normalized_business_priority(value, default=default)
 
 
+def blocked_task_prose_context(task: dict[str, Any]) -> str:
+    """Free-text blocker context with declared task IDs removed.
+
+    The gate keywords below are matched as substrings, so any task ID that
+    happens to contain one poisons every task that depends on it: a task
+    waiting on ``DPF-KRN-DATASET-001`` reads as an external-data gate purely
+    because its dependency list mentions "dataset". Dependency identity is
+    already carried structurally in ``depends_on``; strip those tokens before
+    keyword matching so only genuine prose is classified.
+    """
+    identifiers = [str(task.get("id") or "")]
+    identifiers.extend(str(dep) for dep in (task.get("depends_on") or []))
+    context = " ".join(
+        str(task.get(key) or "")
+        for key in ("next", "waiting_for", "blocker", "blocked_by", "failure_reason", "last_failure_reason", "push_status")
+    ).casefold()
+    for identifier in identifiers:
+        token = identifier.strip().casefold()
+        if token:
+            context = context.replace(token, " ")
+    return context
+
+
 def blocked_task_auto_recovery_eligible(
     config: dict[str, Any],
     task: dict[str, Any],
     task_map: dict[str, dict[str, Any]] | None = None,
 ) -> bool:
-    """Whether a blocked task is stale routing state, not a real gate.
+    """Whether a blocked task is a released gate, not a live one.
 
     Human, external-data, deployment and operator gates remain fail-closed.
-    A blocked task with no unresolved dependency and only routing/provider
-    failure language can safely be reopened for a fresh automatic dispatch.
+    Two distinct blocks are recoverable: a dependency gate whose dependencies
+    have since completed, and stale routing/provider failure state.
+
+    The dependency case must be decided from ``depends_on`` via the resolver,
+    never from the blocker prose. A catalog registers a staged wave as
+    ``blocked`` with "waiting for dependencies: X" and nothing rewrites that
+    sentence when X completes, so a prose-only rule leaves every dependent
+    task blocked forever behind a dependency the resolver already reports as
+    satisfied -- a deadlock only a human can clear.
     """
     if str(task.get("status") or "").strip().lower() != "blocked":
         return False
     if task_is_human_gate(task) or task_is_sidecar(task) or bool(task.get("non_dispatchable")):
         return False
+    declared_dependencies = [str(dep).strip() for dep in (task.get("depends_on") or []) if str(dep).strip()]
+    dependency_gate_released = False
     if task_map is not None:
         done_statuses = {
             str(value).lower()
@@ -3337,10 +3371,8 @@ def blocked_task_auto_recovery_eligible(
         }
         if not dependencies_satisfied(task, task_map, done_statuses):
             return False
-    context = " ".join(
-        str(task.get(key) or "")
-        for key in ("next", "waiting_for", "blocker", "blocked_by", "failure_reason", "last_failure_reason", "push_status")
-    ).casefold()
+        dependency_gate_released = bool(declared_dependencies)
+    context = blocked_task_prose_context(task)
     hard_gate_markers = (
         "human/ops", "human gate", "pending_human", "authoritative", "dataset", "attestation",
         "external-data", "mlflow", "deploy dev", "live-e2e", "production alias", "merge queue",
@@ -3348,6 +3380,8 @@ def blocked_task_auto_recovery_eligible(
     )
     if any(marker in context for marker in hard_gate_markers):
         return False
+    if dependency_gate_released:
+        return True
     return bool(context) and any(
         marker in context
         for marker in (
