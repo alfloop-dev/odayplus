@@ -53,3 +53,12 @@ def test_supervisor_runtime_docs_and_ai_status_tests_are_tooling() -> None:
 
     assert result["scope"] == "development_tooling"
     assert result["non_tooling_paths"] == []
+
+
+def test_canonical_ai_status_launcher_is_tooling() -> None:
+    manifest = scope.load_manifest()
+
+    result = scope.classify_paths(["scripts/ai-status.sh"], manifest)
+
+    assert result["scope"] == "development_tooling"
+    assert result["non_tooling_paths"] == []
