@@ -644,6 +644,7 @@ tests/contract/test_assisted_listing_promotion_api.py,verification,verification_
 tests/contract/test_assisted_listing_v1_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_canonical_schema.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_control_plane_router.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/contract/test_control_plane_router_contract_doc.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_deferred_oss_adr.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_frontend_domain_type_coverage.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_ingestion_contracts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
