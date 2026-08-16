@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from math import ceil
 from pathlib import Path
 from typing import Any
 
@@ -174,7 +175,9 @@ class SignalRouter:
         now = self._now().astimezone(UTC)
         effective_at = envelope["effective_at"]
         if effective_at is not None and _instant(effective_at) > now:
-            retry_after = max(1, int((_instant(effective_at) - now).total_seconds()))
+            # Ceiling, not truncation: the delay is a documented minimum, so a
+            # fractional remainder must round up or an adapter redelivers early.
+            retry_after = max(1, ceil((_instant(effective_at) - now).total_seconds()))
             raise SignalRouteError(
                 _failure(
                     RouteErrorCode.NOT_EFFECTIVE,

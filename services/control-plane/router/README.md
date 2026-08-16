@@ -124,7 +124,9 @@ non-retryable downstream response yields `delivery_rejected`.
 - A retry reuses the **same** idempotency key. Generating a fresh key turns a
   retry into a duplicate execution.
 - `retry_after_seconds` is a **minimum** delay, not a schedule. Adapters may
-  back off longer; they must not deliver sooner.
+  back off longer; they must not deliver sooner. It is a whole-second count
+  **rounded up** from the remaining wait and never below `1`, so honouring it
+  exactly cannot redeliver before `effective_at`.
 - Invalid or unsupported envelopes, missing routes, terminal downstream
   rejection, and retry exhaustion go to a **tenant-scoped** dead-letter store.
 - Expired signals are **dropped** with an audit and metric event, never

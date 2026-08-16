@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import runpy
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -104,6 +104,31 @@ def test_not_effective_failure_exposes_minimum_retry_delay() -> None:
         _router(contract).route(signal)
 
     assert exc_info.value.failure.retry_after_seconds == 60
+
+
+@pytest.mark.parametrize(
+    ("effective_at", "expected"),
+    [
+        ("2026-06-26T12:01:00.400000Z", 61),
+        ("2026-06-26T12:01:00.000001Z", 61),
+        ("2026-06-26T12:00:00.200000Z", 1),
+    ],
+)
+def test_fractional_delay_rounds_up_so_retry_is_never_early(
+    effective_at: str, expected: int
+) -> None:
+    contract = _contract()
+    signal = _example()
+    signal["effective_at"] = effective_at
+
+    with pytest.raises(contract["SignalRouteError"]) as exc_info:
+        _router(contract).route(signal)
+
+    retry_after = exc_info.value.failure.retry_after_seconds
+    assert retry_after == expected
+    assert NOW + timedelta(seconds=retry_after) >= datetime.fromisoformat(
+        effective_at.replace("Z", "+00:00")
+    )
 
 
 def test_delivery_failure_retries_then_dead_letters_with_same_semantics() -> None:
