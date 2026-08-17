@@ -11988,7 +11988,7 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
                 "reviewer_field": "reviewer",
             },
             "ready_dispatcher": {
-                "helper_claim": {"enabled": True, "include_registered_idle_agents": True},
+                "reviewer_failover": {"enabled": True},
                 "review_statuses": ["review"],
                 "finalize_statuses": ["review_approved"],
                 "owned_statuses": ["in_progress", "todo"],
@@ -12021,7 +12021,8 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
             },
         }
 
-    def _run(self, status: dict) -> mock.Mock:
+    def _run(self, status: dict, config: dict | None = None) -> mock.Mock:
+        cfg = config or self._config()
         with (
             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
             mock.patch.object(
@@ -12030,8 +12031,8 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor, "console_log"),
         ):
-            supervisor.reassign_blocked_task_roles_to_registered_idle_agents(
-                self._config(), self._state_with_codex_quota_paused(), status
+            supervisor.reassign_unavailable_reviewers(
+                cfg, self._state_with_codex_quota_paused(), status
             )
         return persist
 
@@ -12047,7 +12048,7 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
         persist.assert_called_once()
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "T-1")
-        self.assertNotEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_owner"], "Claude")
         self.assertEqual(kwargs["new_reviewer"], "Antigravity")
         self.assertEqual(kwargs["handoff_from"], "Codex")
 
@@ -12059,7 +12060,7 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
         persist = self._run(status)
 
         persist.assert_called_once()
-        self.assertNotEqual(persist.call_args.kwargs["new_owner"], "Codex")
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Claude")
 
     def test_blocked_reviewer_at_review_still_reassigns_the_reviewer(self) -> None:
         status = {
@@ -12070,8 +12071,9 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
 
         persist.assert_called_once()
         kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-3")
         self.assertEqual(kwargs["new_owner"], "Antigravity")
-        self.assertNotEqual(kwargs["new_reviewer"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         self.assertEqual(kwargs["handoff_from"], "Codex")
 
     def test_healthy_owner_is_left_alone(self) -> None:
@@ -12091,9 +12093,60 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
 
         self._run(status).assert_not_called()
 
+    def test_failover_disabled_leaves_tasks_alone(self) -> None:
+        config = self._config()
+        config["ready_dispatcher"]["reviewer_failover"]["enabled"] = False
+        status = {
+            "tasks": [
+                {"id": "T-6", "status": "review_approved", "owner": "Codex", "reviewer": "Antigravity"}
+            ]
+        }
 
-if __name__ == "__main__":
-    unittest.main()
+        self._run(status, config=config).assert_not_called()
+
+    def test_shared_pool_reviewer_is_reassigned_to_independent_reviewer(self) -> None:
+        config = self._config()
+        config["agents"]["antigravity2"] = {
+            "id": "antigravity2",
+            "display_name": "Antigravity2",
+            "provider": "antigravity",
+        }
+        status = {
+            "tasks": [
+                {"id": "T-7", "status": "review", "owner": "Antigravity", "reviewer": "Antigravity2"}
+            ]
+        }
+
+        persist = self._run(status, config=config)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-7")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertEqual(kwargs["handoff_from"], "Antigravity2")
+
+    def test_blocked_owner_reassigned_to_independent_owner(self) -> None:
+        config = self._config()
+        config["agents"]["claude2"] = {
+            "id": "claude2",
+            "display_name": "Claude2",
+            "provider": "claude",
+        }
+        status = {
+            "tasks": [
+                {"id": "T-8", "status": "review_approved", "owner": "Codex", "reviewer": "Claude"}
+            ]
+        }
+
+        persist = self._run(status, config=config)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-8")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+
 
 
 class AgentLoadBalancingTests(unittest.TestCase):
@@ -12235,3 +12288,7 @@ class AgentLoadBalancingTests(unittest.TestCase):
         )
 
         self.assertEqual(chosen, "Antigravity3")
+
+
+if __name__ == "__main__":
+    unittest.main()
