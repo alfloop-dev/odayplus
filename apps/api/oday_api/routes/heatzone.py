@@ -38,6 +38,7 @@ else:
         model_runtime: ProductionModelRuntime | None = None,
         require_production_model: bool | None = None,
     ) -> APIRouter:
+        from apps.api.app.routes._common import resolve_tenant_id
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
@@ -50,44 +51,6 @@ else:
             if require_production_model is None
             else require_production_model
         )
-
-        def resolve_tenant_id(request: Request) -> str:
-            principal = getattr(request.state, "operator_principal", None)
-            if principal is None:
-                from apps.api.oday_api.security.dependencies import principal_from_headers
-
-                try:
-                    principal = principal_from_headers(request.headers)
-                except Exception:
-                    principal = None
-
-            if principal is None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Missing verified principal",
-                )
-
-            principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
-                principal, "tenant_id", None
-            )
-            if not principal_tenant or not str(principal_tenant).strip():
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
-                )
-            clean_tenant = str(principal_tenant).strip()
-
-            header_tenant = (
-                request.headers.get("x-tenant-id")
-                or request.headers.get("tenant_id")
-                or ""
-            ).strip()
-            if header_tenant and header_tenant != clean_tenant:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
-                )
-            return clean_tenant
 
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)

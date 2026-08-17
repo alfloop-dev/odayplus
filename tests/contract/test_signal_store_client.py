@@ -136,3 +136,45 @@ def test_consumer_assumptions_cover_delivery_and_safety_boundaries() -> None:
         "Unknown additive payload fields",
     ):
         assert boundary in assumptions
+
+
+def test_signal_schema_documents_all_payload_and_envelope_keys() -> None:
+    contract = _contract()
+    schema_path = contract["SIGNAL_SCHEMA_PATH"]
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    assert schema.get("description"), "Top-level schema must have a description"
+
+    # All top-level properties must have descriptions
+    for prop_name, prop_def in schema["properties"].items():
+        assert prop_def.get("description"), f"Property '{prop_name}' must have a description"
+
+    # All payload properties must have descriptions
+    payload_props = schema["$defs"]["payload"]["properties"]
+    for payload_key, payload_def in payload_props.items():
+        assert payload_def.get("description"), f"Payload key '{payload_key}' must have a description"
+
+    # All nested object properties in $defs must have descriptions
+    for def_name, def_body in schema["$defs"].items():
+        assert def_body.get("description"), f"Definition '{def_name}' must have a description"
+        if "properties" in def_body:
+            for sub_key, sub_def in def_body["properties"].items():
+                assert sub_def.get("description"), (
+                    f"Property '{sub_key}' in definition '{def_name}' must have a description"
+                )
+
+
+def test_worker_contracts_reference_same_canonical_schema() -> None:
+    contract = _contract()
+    canonical_schema_path = contract["SIGNAL_SCHEMA_PATH"].resolve()
+
+    # LEAN execution runtime consumer
+    lean_consumer_path = Path(__file__).parents[2] / "services" / "execution" / "lean-runtime" / "consumer.py"
+    lean_contract = runpy.run_path(str(lean_consumer_path))
+    assert lean_contract["SIGNAL_SCHEMA_PATH"].resolve() == canonical_schema_path
+
+    # Control-plane router
+    router_path = Path(__file__).parents[2] / "services" / "control-plane" / "router" / "contract.py"
+    router_contract = runpy.run_path(str(router_path))
+    assert router_contract["SIGNAL_SCHEMA_PATH"].resolve() == canonical_schema_path
+

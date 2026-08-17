@@ -206,7 +206,7 @@ GET /api/2.0/mlflow/registered-models/alias
 ForecastOps 權威資料 1,303 rows 只涵蓋 2026-06-19..22（4 個日曆天）
   → FORECASTOPS_HORIZON_WEEKS = (4, 8, 12, 24) 需要每店
     28 / 56 / 84 / 168 天「連續」日資料才能成窗
-    (scripts/models/forecast_training.py: len(window) != horizon_days → skip)
+    (product_ops/modeling/forecast_training.py: len(window) != horizon_days → skip)
   → 0 個 horizon 訓練樣本 → 訓練 fail closed（execution 2dzlg），無 DEV candidate
   → MLflow registry 空，無 forecast_revenue_interval production alias
   → productionBindingsReady = false

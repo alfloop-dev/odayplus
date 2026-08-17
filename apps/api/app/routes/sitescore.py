@@ -66,6 +66,7 @@ else:
         require_durable_jobs: bool | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
+        from apps.api.app.routes._common import resolve_tenant_id, runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
@@ -124,53 +125,7 @@ else:
                 service = None
         local_job_queue = None if durable_jobs_required else InMemoryJobQueue()
 
-        def require_runtime_binding() -> None:
-            if composition_error is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "code": composition_error.code,
-                        "message": str(composition_error),
-                    },
-                )
-
-        def resolve_tenant_id(request: Request) -> str:
-            principal = getattr(request.state, "operator_principal", None)
-            if principal is None:
-                from apps.api.oday_api.security.dependencies import principal_from_headers
-
-                try:
-                    principal = principal_from_headers(request.headers)
-                except Exception:
-                    principal = None
-
-            if principal is None:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Missing verified principal",
-                )
-
-            principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
-                principal, "tenant_id", None
-            )
-            if not principal_tenant or not str(principal_tenant).strip():
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
-                )
-            clean_tenant = str(principal_tenant).strip()
-
-            header_tenant = (
-                request.headers.get("x-tenant-id")
-                or request.headers.get("tenant_id")
-                or ""
-            ).strip()
-            if header_tenant and header_tenant != clean_tenant:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
-                )
-            return clean_tenant
+        require_runtime_binding = runtime_binding_guard(composition_error)
 
         def workflow_for_request(request: Request) -> SiteScoreDecisionWorkflow:
             tid = resolve_tenant_id(request)

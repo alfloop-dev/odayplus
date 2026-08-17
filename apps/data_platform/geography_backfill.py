@@ -1054,7 +1054,7 @@ def _open_connection(env: Mapping[str, str]) -> Any:
 
 
 class _QmarkQueryClient:
-    """Adapts a DBAPI connection to the scripts.models QueryClient protocol."""
+    """Adapts a DBAPI connection to the product_ops.modeling QueryClient protocol."""
 
     def __init__(self, connection: Any) -> None:
         self._conn = connection
@@ -1114,8 +1114,8 @@ def main(argv: list[str] | None = None) -> int:
     env = dict(os.environ)
     try:
         if args.command == "inventory":
-            from scripts.models.contracts import MODEL_SPECS
-            from scripts.models.storage import PostgresModelReadySource
+            from models.model_ready.contracts import MODEL_SPECS
+            from models.model_ready.storage import PostgresModelReadySource
 
             connection = _open_connection(env)
             source = PostgresModelReadySource(_QmarkQueryClient(connection))

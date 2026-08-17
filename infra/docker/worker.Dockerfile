@@ -13,5 +13,5 @@ RUN python -c "import tomllib, pathlib; deps = tomllib.load(open('pyproject.toml
 
 COPY . .
 
-ENTRYPOINT ["python", "scripts/deployment/cloud_run_job_entrypoint.py"]
+ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]
 CMD ["worker", "--max-jobs", "100"]

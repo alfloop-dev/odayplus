@@ -52,7 +52,7 @@
 
 ## Task Brief Commands
 
-Run `python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task <task-id>` for one fleet task.
+Run `python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task <task-id>` for one fleet task.
 
 | Task | Suggested Branch | Acceptance Count | Handoff Artifact Count |
 |---|---|---:|---:|

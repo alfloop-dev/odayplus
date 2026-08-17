@@ -12,7 +12,7 @@ import pytest
 from shared.runtime_config import get_release_identity, resolve_tenant_id
 
 ROOT = Path(__file__).resolve().parents[2]
-DEPLOY_SCRIPT = ROOT / "scripts/deploy_cloud_run_waji.sh"
+DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 
 
 def test_get_release_identity_search_hierarchy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,7 +157,7 @@ def test_deploy_script_requires_tenant_id_and_fails_closed(
 def test_deploy_script_contains_explicit_rollback_targets() -> None:
     """Verify deploy_cloud_run_waji.sh and cloud_run_release_traffic.sh arm explicit rollback traps."""
     script_text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
-    helper_text = (ROOT / "scripts/deployment/cloud_run_release_traffic.sh").read_text(
+    helper_text = (ROOT / "product_ops/deployment/cloud_run_release_traffic.sh").read_text(
         encoding="utf-8"
     )
 

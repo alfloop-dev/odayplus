@@ -5,5 +5,10 @@
     "product-e2e-gate",
     "task-review-gate"
   ],
-  "enforce_admins": true
+  "enforce_admins": true,
+  "branches": {
+    "dev": {
+      "strict": false
+    }
+  }
 }

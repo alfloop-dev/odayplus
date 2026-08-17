@@ -80,6 +80,18 @@ def test_within_tolerance_passes(tmp_path: Path) -> None:
     assert facts["behind"] == 2
 
 
+def test_dirty_runtime_fails_even_when_head_is_current(tmp_path: Path) -> None:
+    """HEAD alone is not runtime provenance: local overlays must be rejected."""
+    repo = make_repo(tmp_path)
+    (repo / "f0.txt").write_text("locally overwritten old runtime code", encoding="utf-8")
+
+    ok, problems, facts = fresh.evaluate(repo, "HEAD", max_behind=0)
+
+    assert not ok
+    assert facts["dirty"] is True
+    assert any("tracked local modifications" in p for p in problems)
+
+
 def test_unreadable_repo_fails_closed(tmp_path: Path) -> None:
     """Cannot-verify must never be reported as fresh."""
     ok, problems, _ = fresh.evaluate(tmp_path / "absent", "origin/dev", max_behind=25)

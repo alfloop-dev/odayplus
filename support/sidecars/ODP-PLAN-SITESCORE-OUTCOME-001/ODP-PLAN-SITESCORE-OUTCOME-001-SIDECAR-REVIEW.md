@@ -35,7 +35,7 @@ Executed in the clean parent worktree at exact implementation head `fb42ef7a`:
 
 ```bash
 PYTHONPATH=. .venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 git diff --check
 git diff --check ebe994b1..fb42ef7a
 PYTHONPATH=. .venv/bin/pytest -q tests -k "sitescore or opening_outcome or model_ready"
@@ -72,7 +72,7 @@ Captured at `2026-08-01T23:17:19Z` after PR `#551` was returned to the owner:
 - PR `#551` still points to the previously approved sidecar head `9ef60d3b19c3749b6253250660b15e2e964763c3`, based on `dev` commit `eed83c0937f491211247ee3fdb0bdf8d932564fb`.
 - CI run `30706244856` passed `orchestrator` and `performance-gate`. The `product` job completed with 2,474 passing tests and one failing acceptance-coverage assertion; `product-e2e-gate` failed at the same release-gate check.
 - Both failures have one shared diagnostic: `support/sidecars/ODP-PLAN-SITESCORE-OUTCOME-001/ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-REVIEW.md` is an intervening non-evidence path relative to the recorded product E2E source.
-- `scripts/e2e/product_e2e_receipt.py` currently restricts `EVIDENCE_COMMIT_ALLOWLIST` to the two raw E2E result files and `PRODUCT_E2E_EXECUTION_RECEIPT.json`. Therefore a committed packet at the task-required `support/sidecars/**` path cannot make this check green without changing the cross-cutting release-gate policy or regenerating canonical product E2E evidence.
+- `delivery_toolchain/e2e/product_e2e_receipt.py` currently restricts `EVIDENCE_COMMIT_ALLOWLIST` to the two raw E2E result files and `PRODUCT_E2E_EXECUTION_RECEIPT.json`. Therefore a committed packet at the task-required `support/sidecars/**` path cannot make this check green without changing the cross-cutting release-gate policy or regenerating canonical product E2E evidence.
 - Neither action is authorized for this support-only sidecar. This packet records the conflict instead of weakening the gate, rebinding a product receipt, or broadening canonical truth.
 - Parent PR `#525` remains open, `BEHIND`, and exact head `b2d9250f`; its task remains `review_approved` with the same CI family blocking finalization.
 

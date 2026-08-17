@@ -90,7 +90,10 @@ class BrokerConfig:
         )
         topic = values.get("LEAN_SIGNAL_TOPIC", "").strip()
         group = values.get("LEAN_SIGNAL_CONSUMER_GROUP", "").strip()
-        protocol = values.get("LEAN_SIGNAL_SECURITY_PROTOCOL", "SASL_SSL").strip()
+        # An optional variable rendered as an empty string by a deployment
+        # template is "unset", not "set to nothing": fall back to the default.
+        protocol = values.get("LEAN_SIGNAL_SECURITY_PROTOCOL", "").strip() or "SASL_SSL"
+        dead_letter_topic = values.get("LEAN_SIGNAL_DEAD_LETTER_TOPIC", "").strip() or None
         if not servers or not topic or not group:
             raise ValueError(
                 "LEAN_SIGNAL_BROKER_SERVERS, LEAN_SIGNAL_TOPIC, and "
@@ -98,12 +101,18 @@ class BrokerConfig:
             )
         if protocol not in {"PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"}:
             raise ValueError(f"unsupported LEAN_SIGNAL_SECURITY_PROTOCOL: {protocol}")
+        # Routing permanent rejections back into the input topic would redeliver
+        # them forever, so refuse the loop instead of accepting it at startup.
+        if dead_letter_topic == topic:
+            raise ValueError(
+                "LEAN_SIGNAL_DEAD_LETTER_TOPIC must differ from LEAN_SIGNAL_TOPIC"
+            )
         return cls(
             bootstrap_servers=servers,
             topic=topic,
             consumer_group=group,
             security_protocol=protocol,
-            dead_letter_topic=values.get("LEAN_SIGNAL_DEAD_LETTER_TOPIC") or None,
+            dead_letter_topic=dead_letter_topic,
         )
 
 

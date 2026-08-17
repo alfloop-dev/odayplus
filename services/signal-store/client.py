@@ -197,6 +197,11 @@ class SignalPage:
 class SignalStoreClient(Protocol):
     """Contract for durable, idempotent signal handoff.
 
+    This is a synchronous boundary. Implementations backed by asynchronous
+    transports must provide an adapter that completes each operation before it
+    returns. Every returned StoredSignal is the post-operation snapshot visible
+    to subsequent calls, and state-changing methods are atomic for one signal.
+
     Producers call put_signal once per business signal using a stable
     idempotency_key. Consumers call lease_pending before side effects and must
     finish with mark_consumed or reject_signal. Implementations must persist
@@ -205,6 +210,9 @@ class SignalStoreClient(Protocol):
 
     def put_signal(self, envelope: SignalEnvelope) -> StoredSignal:
         """Persist a signal or return the existing row for its idempotency key.
+
+        Idempotency is scoped by (tenant_id, idempotency_key); another tenant
+        may reuse the same key without observing or conflicting with this row.
 
         Raises:
             SignalValidationError: envelope or payload violates the contract.
@@ -235,6 +243,10 @@ class SignalStoreClient(Protocol):
 
         Leased signals must not be delivered to another consumer until the
         lease expires, is marked consumed, or is rejected.
+
+        Returned items are post-lease snapshots. Selection order is deliberately
+        implementation-defined; consumers must not infer chronology or priority
+        from tuple position.
         """
 
     def mark_consumed(
@@ -247,6 +259,9 @@ class SignalStoreClient(Protocol):
         result_ref: str | None = None,
     ) -> StoredSignal:
         """Finalize successful processing for the active lease holder.
+
+        result_ref is an opaque audit pointer to the durable processing result;
+        it is not a substitute for idempotent downstream side effects.
 
         Raises:
             SignalConflictError: signal is not leased to consumer_id.
@@ -335,8 +350,11 @@ EXAMPLE_SIGNAL_PAYLOAD: SignalEnvelope = {
 CONSUMER_ASSUMPTIONS: tuple[str, ...] = (
     "Producers and consumers validate against SIGNAL_SCHEMA_PATH and require its "
     "$id to equal SIGNAL_SCHEMA_ID.",
+    "SignalStoreClient is synchronous; every returned StoredSignal is a post-operation "
+    "snapshot and state changes are atomic for one signal.",
     "Signals are tenant-scoped; consumers must pass tenant_id for every read or state change.",
-    "idempotency_key is stable for a business signal and must reject body mismatches.",
+    "idempotency_key is stable for a business signal and scoped by tenant_id; a store must "
+    "reject body mismatches within that scope without leaking rows across tenants.",
     "signal_type follows '<domain>.<event_or_intent>.v<major>' and is versioned independently.",
     "Consumers must reject unsupported signal_version or signal_type major versions.",
     "produced_at, effective_at, expires_at, and evidence timestamps are ISO-8601 strings with "

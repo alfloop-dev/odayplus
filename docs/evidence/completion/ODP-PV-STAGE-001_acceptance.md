@@ -13,8 +13,8 @@ The approved deliverable scope is confirmed present in the current worktree:
 - `docs/evidence/completion/ODP-PV-STAGE-002_proof_report.json` — DR drill proof report
 - `docs/testing/remote_staging_proof.md` — staging environment inventory and smoke check evidence
 - `docs/testing/remote_staging_drill.md` — backup/restore/rollback DR drill evidence
-- `scripts/e2e/check_remote_staging_proof.py` — remote staging verifier script
-- `scripts/e2e/verify_deployment_health_backup_rollback.py` — backup/restore/rollback verifier script
+- `delivery_toolchain/e2e/check_remote_staging_proof.py` — remote staging verifier script
+- `delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py` — backup/restore/rollback verifier script
 
 ## Reviewer Approval Summary
 

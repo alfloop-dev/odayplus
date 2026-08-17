@@ -21,6 +21,7 @@ from solver.netplan import (
     NetPlanConstraints,
     NetworkAction,
     NetworkPlanSolveResult,
+    compute_solver_problem_hash,
 )
 
 NETPLAN_MODEL_VERSION = "netplan-network-baseline-v1"
@@ -45,9 +46,9 @@ VALID_TRANSITIONS: dict[NetPlanScenarioStatus, frozenset[NetPlanScenarioStatus]]
         {NetPlanScenarioStatus.SOLVED, NetPlanScenarioStatus.INFEASIBLE}
     ),
     NetPlanScenarioStatus.SOLVED: frozenset(
-        {NetPlanScenarioStatus.PENDING_APPROVAL, NetPlanScenarioStatus.REJECTED}
+        {NetPlanScenarioStatus.PENDING_APPROVAL, NetPlanScenarioStatus.REJECTED, NetPlanScenarioStatus.DRAFT}
     ),
-    NetPlanScenarioStatus.INFEASIBLE: frozenset(),
+    NetPlanScenarioStatus.INFEASIBLE: frozenset({NetPlanScenarioStatus.DRAFT}),
     NetPlanScenarioStatus.PENDING_APPROVAL: frozenset(
         {NetPlanScenarioStatus.APPROVED, NetPlanScenarioStatus.REJECTED}
     ),
@@ -243,6 +244,22 @@ class ScenarioSolveRecord:
     solved_at: datetime
     alternative_limit: int = 3
     execution_metadata: dict[str, Any] = field(default_factory=dict)
+    problem_hash: str = ""
+    model_version: str = NETPLAN_MODEL_VERSION
+
+    def is_stale(self, scenario: NetPlanScenario, risk_penalty: float = 100_000.0) -> bool:
+        if not self.problem_hash:
+            return True
+        if self.model_version != scenario.model_version:
+            return True
+        current_hash = compute_solver_problem_hash(
+            scenario.options_by_entity,
+            scenario.constraints,
+            risk_penalty,
+            self.alternative_limit,
+            scenario.model_version,
+        )
+        return self.problem_hash != current_hash
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -251,6 +268,8 @@ class ScenarioSolveRecord:
             "solved_at": self.solved_at.isoformat(),
             "alternative_limit": self.alternative_limit,
             "execution_metadata": self.execution_metadata,
+            "problem_hash": self.problem_hash,
+            "model_version": self.model_version,
         }
 
 

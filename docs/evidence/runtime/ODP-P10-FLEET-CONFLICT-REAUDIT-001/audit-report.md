@@ -62,7 +62,7 @@ not a retired visual path and not present in either retirement inventory.
 | `Oday Plus 營運管理後台 (10).zip` | `d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8` | Match |
 | `Oday Plus Operator Console.dc.html` | `cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d` | Match |
 
-`python3 scripts/e2e/check_product_grade_ci_gates.py --report` found exactly
+`python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report` found exactly
 40 unique canonical HTML screen labels and confirmed all 40 remain reachable
 from React source.
 
@@ -103,7 +103,7 @@ Executed against fetched `origin/dev`:
 git fetch origin dev --prune
 git ls-tree -r --name-only origin/dev
 sha256sum <canonical Package 10 ZIP> <canonical Package 10 HTML>
-python3 scripts/e2e/check_product_grade_ci_gates.py --report
+python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report
 ```
 
 Observed:

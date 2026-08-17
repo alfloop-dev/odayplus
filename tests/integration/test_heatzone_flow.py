@@ -139,7 +139,6 @@ def test_heatzone_mapping_coercion_preserves_explicit_zero_quality_values() -> N
 
 
 def test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target() -> None:
-    client = TestClient(create_app())
     payload = {
         "prediction_origin_time": PREDICTION_TIME.isoformat(),
         "features": [
@@ -158,6 +157,18 @@ def test_heatzone_api_scores_batch_and_returns_map_results_within_fixture_target
             for _ in range(20)
         ],
     }
+
+    # MLflow lazily creates its SQLite schema on the first score request. That
+    # one-time process setup is not part of the batch scoring latency contract,
+    # so warm the same app that is measured below. An isolated app would create
+    # a separate in-memory repository and a separate MLflow SQLite database.
+    client = TestClient(create_app())
+    warm_response = client.post(
+        "/heatzones/score-jobs",
+        json={**payload, "features": [payload["features"][0]]},
+        headers={**HEATZONE_HEADERS, "Idempotency-Key": "hz-warmup-1"},
+    )
+    assert warm_response.status_code == 202
 
     start = perf_counter()
     response = client.post(

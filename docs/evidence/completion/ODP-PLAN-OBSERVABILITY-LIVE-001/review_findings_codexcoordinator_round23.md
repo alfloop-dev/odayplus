@@ -24,7 +24,7 @@ Independent verification on the exact head:
 
 ## B1 — local loopback evidence still claims real successful delivery
 
-`scripts/e2e/generate_observability_evidence.py` starts a caller-owned loopback
+`delivery_toolchain/e2e/generate_observability_evidence.py` starts a caller-owned loopback
 HTTP server and has that server return `"status": "delivered"`. The generated
 evidence then labels the result as all of the following:
 

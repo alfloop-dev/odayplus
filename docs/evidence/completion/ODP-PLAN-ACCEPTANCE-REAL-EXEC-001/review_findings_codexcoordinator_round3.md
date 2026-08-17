@@ -33,7 +33,7 @@ The reviewed branch is also behind the current integration branch:
 
 ### B1 — Parsed execution results are overwritten by fixed passing counts
 
-`scripts/e2e/generate_product_e2e_receipt.py:50-77` traverses the raw report,
+`delivery_toolchain/e2e/generate_product_e2e_receipt.py:50-77` traverses the raw report,
 but lines 79-83 replace the derived values with fixed values of 16 specs, 107
 tests, 107 passed, zero failed, and zero skipped. The generated receipt can
 therefore say `passed` even when its own hashed raw artifact contains failures

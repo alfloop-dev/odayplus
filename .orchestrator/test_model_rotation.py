@@ -476,16 +476,16 @@ def _deliver(config, tmp_path):
     )
     process = mock.Mock()
     process.pid = 4321
-    with mock.patch("adapters.antigravity.command_exists", return_value="/usr/bin/agy"), \
+    with mock.patch("adapters.antigravity.configured_provider_binary", return_value="/usr/bin/agy"), \
             mock.patch("adapters.antigravity._auth_ready", return_value=True), \
             mock.patch("adapters.antigravity.delivery_workspace_root", return_value=pathlib.Path(tmp_path)), \
-            mock.patch("adapters.antigravity.runtime_log_path", return_value=pathlib.Path(tmp_path) / "agy.log"), \
-            mock.patch("adapters.antigravity.new_runtime_id", return_value="antigravity5-test"), \
-            mock.patch("adapters.antigravity.worker_runtime_paths", return_value={
+            mock.patch("adapters.base.runtime_log_path", return_value=pathlib.Path(tmp_path) / "agy.log"), \
+            mock.patch("adapters.base.new_runtime_id", return_value="antigravity5-test"), \
+            mock.patch("adapters.base.worker_runtime_paths", return_value={
                 "heartbeat_path": pathlib.Path(tmp_path) / "hb.json",
                 "status_path": pathlib.Path(tmp_path) / "st.json",
             }), \
-            mock.patch("adapters.antigravity.spawn_background_process", return_value=(process, pathlib.Path(tmp_path) / "agy.log")) as spawn:
+            mock.patch("adapters.base.spawn_background_process", return_value=(process, pathlib.Path(tmp_path) / "agy.log")) as spawn:
         result = AntigravityAdapter(config=config, provider_capabilities={}).deliver(request)
     return result, spawn
 

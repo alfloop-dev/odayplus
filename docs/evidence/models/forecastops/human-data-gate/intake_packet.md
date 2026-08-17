@@ -52,7 +52,7 @@ model registry 這組追根究柢：資料的**時間跨度**不足，不是筆�
 
 ## 3. 精確的資料需求（由程式碼契約推導，非估計）
 
-來源：`modules/forecastops/model_contract.py`、`scripts/models/forecast_training.py`
+來源：`modules/forecastops/model_contract.py`、`product_ops/modeling/forecast_training.py`
 
 ```python
 FORECASTOPS_HORIZON_WEEKS        = (4, 8, 12, 24)   # → 28 / 56 / 84 / 168 天

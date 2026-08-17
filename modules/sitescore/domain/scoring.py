@@ -591,7 +591,7 @@ def to_sitescore_model_row(
     if value.latitude == 0.0 or value.longitude == 0.0:
         missing.append("location(latitude/longitude)")
     # geocode_confidence is a declared feature column of the sitescore ModelSpec
-    # (scripts/models/contracts.py). It defaults to 0.0 both on the dataclass and
+    # (product_ops/modeling/contracts.py). It defaults to 0.0 both on the dataclass and
     # in from_mapping(), so an absent value is indistinguishable from "no
     # confidence" and must fail closed instead of being scored as 0.0.
     if not value.geocode_confidence:

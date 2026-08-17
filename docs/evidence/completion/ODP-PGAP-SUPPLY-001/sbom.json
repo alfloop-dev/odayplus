@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-94ce1d1c45c5ccbbe8eda2a816bd7968",
+  "serialNumber": "urn:uuid:sha256-e20bd030faaaf141316420460020eefd",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-08T15:10:25.064942+00:00",
+    "timestamp": "2026-08-10T11:16:58.496506+00:00",
     "component": {
       "name": "oday-plus",
       "version": "0.1.0",
@@ -13,15 +13,15 @@
     "properties": [
       {
         "name": "git-sha",
-        "value": "07167d47819ff9ad7dc1731b625dfea64c946c99"
+        "value": "6b4245581f1a252917165e58b5d43e88d657ab72"
       },
       {
         "name": "sbom-hash",
-        "value": "94ce1d1c45c5ccbbe8eda2a816bd7968990c4ff5dafed824e0b1ccdd8f106be6"
+        "value": "e20bd030faaaf141316420460020eefd86df45b9fb063197bc5cc6b96081365e"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:b320615d7ba593e48668da09e4ecd3fab933179dd0b949b44503786aadc19083"
+        "value": "sha256:1a5dcac02c7113edacda2b66ab9f657911117752d9f6420e09b1a7eebd7a62e9"
       }
     ]
   },
@@ -4136,6 +4136,13 @@
       "bom-ref": "pkg:pypi/evidently@0.7.21"
     },
     {
+      "name": "execnet",
+      "version": "2.1.2",
+      "type": "library",
+      "purl": "pkg:pypi/execnet@2.1.2",
+      "bom-ref": "pkg:pypi/execnet@2.1.2"
+    },
+    {
       "name": "faker",
       "version": "40.35.0",
       "type": "library",
@@ -4221,10 +4228,10 @@
     },
     {
       "name": "gitpython",
-      "version": "3.1.55",
+      "version": "3.1.58",
       "type": "library",
-      "purl": "pkg:pypi/gitpython@3.1.55",
-      "bom-ref": "pkg:pypi/gitpython@3.1.55"
+      "purl": "pkg:pypi/gitpython@3.1.58",
+      "bom-ref": "pkg:pypi/gitpython@3.1.58"
     },
     {
       "name": "giturlparse",
@@ -5002,6 +5009,13 @@
       "type": "library",
       "purl": "pkg:pypi/pytest@9.1.1",
       "bom-ref": "pkg:pypi/pytest@9.1.1"
+    },
+    {
+      "name": "pytest-xdist",
+      "version": "3.8.0",
+      "type": "library",
+      "purl": "pkg:pypi/pytest-xdist@3.8.0",
+      "bom-ref": "pkg:pypi/pytest-xdist@3.8.0"
     },
     {
       "name": "python-dateutil",
