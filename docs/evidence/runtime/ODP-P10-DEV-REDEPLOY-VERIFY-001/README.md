@@ -1,8 +1,9 @@
 # ODP-P10-DEV-REDEPLOY-VERIFY-001 runtime evidence
 
 - Task: `ODP-P10-DEV-REDEPLOY-VERIFY-001`
-- Owner: Antigravity3 (current); Claude2 (run 30362772798)
-- Independent reviewer: Codex6
+- Owner: Antigravity (current); Antigravity3 (runs 30376737123, 30402570022, 30412416116, 30680943677); Claude2 (run 30362772798)
+- Independent reviewer: Claude2 (current, per ai-status.json); Codex6 (historical runs)
+- Current as of: 2026-08-17T16:54:48Z (origin/dev tip `078ed1563736fe36a43c7df8dec98dbd615d5d36`, run 32047557948)
 - Result: **BLOCKED — deploy runs have failed. Package 10 Operator runtime
   parity is not proven and must not be claimed.**
 
@@ -15,6 +16,7 @@
 | [30402570022](https://github.com/alfloop-dev/odayplus/actions/runs/30402570022) | `7d13f8e162` (PR #484) | push | failure | `migration-compatibility-smoke` probe timeout (`/platform/version` & `/platform/health`) |
 | [30412416116](https://github.com/alfloop-dev/odayplus/actions/runs/30412416116) | `79cf9b67e6` (PR #488) | push | failure | `worker Cloud Run Job` execution failure (`oday-worker-r-79cf9b67e62c-6fhw5`) |
 | [30680943677](https://github.com/alfloop-dev/odayplus/actions/runs/30680943677) | `97e3ae2e26` (dev) | push | failure | Candidate revision smoke fail-closed (`/platform/health` & `/readiness` 503, operator bootstrap degraded data_mode/provenance, forecastops unverified model bindings) |
+| [32047557948](https://github.com/alfloop-dev/odayplus/actions/runs/32047557948) | `078ed15637` (dev tip) | push | failure | WIF authentication failed (`google-github-actions/auth`: Consumer `projects/1067163562451` suspended) |
 
 
 This directory is evidence only. Per the task conflict gate, no product code,
@@ -586,7 +588,7 @@ Snapshot receipt: `cloud-run-post-rollback-state-run-30680943677.json`.
 | 3 | Operator API returns live non-placeholder data and fails closed on invalid access | **NOT REACHED** | Candidate candidate smoke failed closed |
 | 4 | `/operator` leaves loading state and renders Package 10 canonical shell at desktop and mobile | **NOT REACHED** | Candidate candidate smoke failed closed |
 | 5 | All 40 Package 10 screen contracts and 117 retired visual paths remain verified | **PASS (source scope)** | `package10-contract-verification.txt` (40/40 screen labels, 117 retired paths, 0 survivors) |
-| 6 | Independent Codex6 evidence review and CI pass before closeout | **PENDING** | Requires this evidence PR |
+| 6 | Independent Claude2 evidence review and CI pass before closeout | **PENDING** | Requires this evidence PR |
 
 ## 26. Required remediation task
 
@@ -604,6 +606,69 @@ HOME=/home/lupin /usr/bin/gh run download 30680943677 -R alfloop-dev/odayplus -n
 cat cloud-run-dev-validation/cloud-run-smoke.json
 python3 scripts/e2e/check_product_grade_ci_gates.py --report
 ```
+
+---
+
+## 28. Deploy Dev run 32047557948 (SHA 078ed15637, dev tip)
+
+`Deploy Dev` run [`32047557948`](https://github.com/alfloop-dev/odayplus/actions/runs/32047557948)
+was triggered by push to `origin/dev` at `2026-08-17T16:51:08Z`,
+running on exact SHA `078ed1563736fe36a43c7df8dec98dbd615d5d36`.
+
+| Field | Value |
+|---|---|
+| Head branch / SHA | `dev` / `078ed1563736fe36a43c7df8dec98dbd615d5d36` |
+| Event | `push` |
+| `e2e-operational-evidence` job | **success** |
+| `deploy` job | **failure** at step 10 |
+| Started | `2026-08-17T16:51:08Z` |
+| Completed | `2026-08-17T16:54:48Z` |
+
+Full step-by-step receipt: `deploy-run-32047557948.json`.
+
+### Preflight status
+
+Preflight ran and passed with 75 checks, 0 failures (`cloud-run-preflight-run-32047557948.json`).
+
+### Where run 32047557948 failed
+
+The deploy failed at step 10 (`Authenticate to Google Cloud (WIF)`):
+
+```text
+##[error]google-github-actions/auth failed with: failed to generate Google Cloud federated token for //iam.googleapis.com/projects/1067163562451/locations/global/workloadIdentityPools/github-actions/providers/odayplus: {"error":"access_denied","error_description":"Permission denied: Consumer 'projects/1067163562451' has been suspended."}
+```
+
+Verbatim excerpt: `deploy-failure-excerpt-run-32047557948.log`.
+
+Because step 10 failed prior to Cloud SDK setup and container build/deploy steps, candidate revisions were not created.
+
+## 29. Acceptance status (run 32047557948, dev tip)
+
+| # | Acceptance criterion | Status | Basis |
+|---|---|---|---|
+| 1 | Deploy Dev runs from exact merged `origin/dev` SHA and completes successfully | **FAIL** | Ran on `078ed15637`; concluded `failure`; `deploy-run-32047557948.json` |
+| 2 | Cloud Run API and web revisions report the deployed release SHA | **FAIL** | Deploy failed before revision creation; WIF authentication error |
+| 3 | Operator API returns live non-placeholder data and fails closed on invalid access | **NOT REACHED** | Deploy did not reach candidate revision serving |
+| 4 | `/operator` leaves loading state and renders Package 10 canonical shell at desktop and mobile | **NOT REACHED** | Same |
+| 5 | All 40 Package 10 screen contracts and 117 retired visual paths remain verified | **PASS (source scope)** | `package10-contract-verification.txt` (40/40 screen labels, 117 retired paths, 0 survivors) |
+| 6 | Independent Claude2 evidence review and CI pass before closeout | **PENDING** | Requires this evidence PR |
+
+## 30. Required remediation task
+
+A remediation task / operator action is required for GCP consumer project status:
+- **Scope:** resolve GCP project suspension for `projects/1067163562451` to re-enable WIF authentication for GitHub Actions.
+- **Dependency:** task `ODP-P10-DEV-REDEPLOY-VERIFY-001` remains blocked on successful live deployment.
+
+## 31. Verification commands (run 32047557948)
+
+```text
+git fetch origin dev --prune
+git rev-parse origin/dev                              # 078ed1563736fe36a43c7df8dec98dbd615d5d36
+gh api repos/alfloop-dev/odayplus/actions/runs/32047557948 --jq '{id: .id, status: .status, conclusion: .conclusion, head_sha: .head_sha}'
+gh api repos/alfloop-dev/odayplus/actions/runs/32047557948/artifacts
+python3 delivery_toolchain/e2e/product_e2e_receipt.py
+```
+
 
 
 

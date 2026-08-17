@@ -1,0 +1,8 @@
+=== Preflight ===
+Running fail-closed live deployment preflight...
+Cloud Run live deployment preflight passed.
+report=.odp_data/deployment/cloud-run-preflight.json
+
+=== Authenticate to Google Cloud (WIF) ===
+Created credentials file at "/home/runner/work/odayplus/odayplus/gha-creds-e87e95c8f41da616.json"
+##[error]google-github-actions/auth failed with: failed to generate Google Cloud federated token for //iam.googleapis.com/projects/1067163562451/locations/global/workloadIdentityPools/github-actions/providers/odayplus: {"error":"access_denied","error_description":"Permission denied: Consumer 'projects/1067163562451' has been suspended."}
