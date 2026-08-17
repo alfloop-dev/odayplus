@@ -90,7 +90,13 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
         | _grant("audit", Action.VIEW)
     ),
     Role.RELEASE_OWNER: frozenset(
-        _grant("model", Action.VIEW, Action.PUBLISH, Action.ROLLBACK)
+        _grant(
+            "model",
+            Action.VIEW,
+            Action.APPROVE,
+            Action.PUBLISH,
+            Action.ROLLBACK,
+        )
         | _grant("audit", Action.VIEW)
     ),
     Role.EXPANSION_USER: frozenset(

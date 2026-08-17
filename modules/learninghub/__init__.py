@@ -1,8 +1,12 @@
 """Learning Hub public API."""
 
 from modules.learninghub.application import (
+    DEFAULT_RELEASE_LEASE_SECONDS,
+    AliasReconciliationReceipt,
     GuardrailBreach,
+    LearningHubConflictError,
     LearningHubError,
+    LearningHubPreconditionRequiredError,
     LearningHubService,
     ModelReleaseDecision,
     MonitorStatus,
@@ -35,28 +39,43 @@ from modules.learninghub.domain import (
     model_ready_record_from_mapping,
     validate_point_in_time,
 )
-from modules.learninghub.infrastructure import InMemoryLearningHubRepository, MlflowRegistryAdapter
+from modules.learninghub.infrastructure import (
+    InMemoryLearningHubRepository,
+    LearningHubReleaseConflict,
+    LearningHubReleaseFenced,
+    MlflowRegistryAdapter,
+    ModelReleaseSaga,
+    ReleaseSagaState,
+)
 from modules.learninghub.runtime import LearningHubRuntimeConfigurationError
 from modules.learninghub.workers import (
     LearningHubReleaseWorker,
     run_learninghub_release,
     run_learninghub_release_monitor,
+    run_learninghub_release_recovery,
 )
 
 __all__ = [
+    "DEFAULT_RELEASE_LEASE_SECONDS",
+    "AliasReconciliationReceipt",
     "DatasetSnapshot",
     "DatasetSnapshotError",
     "GuardrailBreach",
     "InMemoryLearningHubRepository",
     "InferenceComparison",
     "InferenceComparisonMode",
+    "LearningHubConflictError",
     "LearningHubError",
+    "LearningHubPreconditionRequiredError",
+    "LearningHubReleaseConflict",
+    "LearningHubReleaseFenced",
     "LearningHubReleaseWorker",
     "LearningHubService",
     "LearningHubRuntimeConfigurationError",
     "MlflowRegistryAdapter",
     "ModelReadyRecord",
     "ModelReleaseDecision",
+    "ModelReleaseSaga",
     "MonitorStatus",
     "MonitoringEvaluation",
     "MonitoringSignalType",
@@ -64,12 +83,14 @@ __all__ = [
     "PointInTimeViolation",
     "RecommendedAction",
     "ReleaseMonitorAssessment",
+    "ReleaseSagaState",
     "ReleaseType",
     "RetrainingRequest",
     "build_dataset_snapshot",
     "evaluate_guardrails",
     "model_ready_record_from_mapping",
     "run_learninghub_release",
+    "run_learninghub_release_recovery",
     "run_learninghub_release_monitor",
     "validate_point_in_time",
     # Feature Registry

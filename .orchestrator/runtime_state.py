@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
+from contextlib import contextmanager
 from copy import deepcopy
+from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from common import (
@@ -26,6 +30,14 @@ def default_state() -> dict[str, Any]:
         "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
+        # The weighted ready-dispatch cursor is durable scheduling state. If it
+        # is dropped between loops, agents near the front of the sequence can
+        # consume the per-tick budget forever and starve later reviewers.
+        "ready_dispatcher": {
+            "weighted_cursor": 0,
+            "weighted_cursor_revision": 0,
+            "weighted_cursor_updated_at": None,
+        },
         "queue": {
             "events": {},
         },
@@ -99,6 +111,15 @@ def default_state() -> dict[str, Any]:
     }
 
 
+def _nonnegative_cursor_revision(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
 def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state = deepcopy(default_state())
     if not raw:
@@ -109,6 +130,28 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["recent_terminal_tasks"] = recent_terminal_tasks if isinstance(recent_terminal_tasks, list) else []
     state.setdefault("pending_handoff_keys", [])
     state.setdefault("seen_event_keys", {})
+    ready_dispatcher = state.get("ready_dispatcher")
+    if not isinstance(ready_dispatcher, dict):
+        ready_dispatcher = {}
+        state["ready_dispatcher"] = ready_dispatcher
+    try:
+        ready_dispatcher["weighted_cursor"] = max(
+            0, int(ready_dispatcher.get("weighted_cursor", 0))
+        )
+    except (TypeError, ValueError):
+        ready_dispatcher["weighted_cursor"] = 0
+    ready_dispatcher["weighted_cursor_revision"] = _nonnegative_cursor_revision(
+        ready_dispatcher.get("weighted_cursor_revision", 0)
+    )
+    cursor_updated_at = ready_dispatcher.get("weighted_cursor_updated_at")
+    if isinstance(cursor_updated_at, str) and cursor_updated_at:
+        try:
+            datetime.fromisoformat(cursor_updated_at.replace("Z", "+00:00"))
+        except ValueError:
+            cursor_updated_at = None
+    else:
+        cursor_updated_at = None
+    ready_dispatcher["weighted_cursor_updated_at"] = cursor_updated_at
     state.setdefault("queue", {})
     state["queue"].setdefault("events", {})
     state.setdefault("workers", {})
@@ -285,8 +328,203 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     return state
 
 
+TERMINAL_WORKER_STATUSES = {
+    "completed",
+    "failed",
+    "superseded",
+    "reassigned",
+    "cancelled",
+    "done",
+}
+ACTIVE_WORKER_STATUSES = {
+    "running",
+    "started",
+    "manual_pending",
+    "waiting_approval",
+    "suspended_approval",
+    "retry_backoff",
+    "stalled",
+    "fallback",
+}
+TERMINAL_QUEUE_STATUSES = {"completed", "failed", "done", "cancelled"}
+QUEUE_STATUS_RANK = {
+    "queued": 0,
+    "pending": 0,
+    "retry_backoff": 1,
+    "started": 2,
+    "manual_pending": 2,
+    "waiting_approval": 2,
+    "suspended_approval": 2,
+    "completed": 3,
+    "failed": 3,
+    "done": 3,
+    "cancelled": 3,
+}
+
+
+def _merge_worker_record(disk_worker: dict[str, Any], mem_worker: dict[str, Any]) -> dict[str, Any]:
+    """Merge one immutable run record without ever reviving a terminal run."""
+    disk_status = str(disk_worker.get("status") or "").lower()
+    mem_status = str(mem_worker.get("status") or "").lower()
+
+    # A run id is never reused. Once either writer has observed a terminal
+    # transition, an older active snapshot cannot make that run active again.
+    if mem_status in TERMINAL_WORKER_STATUSES:
+        merged = deepcopy(disk_worker)
+        merged.update(deepcopy(mem_worker))
+        return merged
+    if disk_status in TERMINAL_WORKER_STATUSES:
+        merged = deepcopy(mem_worker)
+        merged.update(deepcopy(disk_worker))
+        return merged
+
+    merged = deepcopy(disk_worker)
+    merged.update(deepcopy(mem_worker))
+    disk_heartbeat = str(disk_worker.get("last_heartbeat_at") or "")
+    mem_heartbeat = str(mem_worker.get("last_heartbeat_at") or "")
+    if disk_heartbeat > mem_heartbeat:
+        merged["last_heartbeat_at"] = disk_worker.get("last_heartbeat_at")
+    if not mem_status and disk_status:
+        merged["status"] = disk_worker.get("status")
+    return merged
+
+
+def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -> dict[str, Any]:
+    """Preserve the furthest durable queue transition across concurrent saves."""
+    disk_status = str(disk_event.get("status") or "").lower()
+    mem_status = str(mem_event.get("status") or "").lower()
+    disk_rank = QUEUE_STATUS_RANK.get(disk_status, 0)
+    mem_rank = QUEUE_STATUS_RANK.get(mem_status, 0)
+
+    if mem_status in TERMINAL_QUEUE_STATUSES:
+        merged = deepcopy(disk_event)
+        merged.update(deepcopy(mem_event))
+        return merged
+    if disk_status in TERMINAL_QUEUE_STATUSES:
+        merged = deepcopy(mem_event)
+        merged.update(deepcopy(disk_event))
+        return merged
+
+    merged = deepcopy(disk_event)
+    merged.update(deepcopy(mem_event))
+    if disk_rank > mem_rank:
+        merged.update(deepcopy(disk_event))
+    return merged
+
+
+def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(disk_state, dict):
+        return in_mem_state
+    merged = deepcopy(in_mem_state)
+
+    # `--claim-agent` intentionally does not advance the global weighted
+    # cursor, but it can save a snapshot loaded before the singleton loop
+    # advanced it. A monotonic revision, advanced atomically with the cursor by
+    # the singleton dispatch path, determines the winner without relying on a
+    # collision-prone or attacker-controlled wall clock. Equal/legacy revisions
+    # prefer disk so an auxiliary writer can never roll scheduling fairness
+    # backward. The timestamp remains informational only.
+    disk_dispatcher = disk_state.get("ready_dispatcher")
+    mem_dispatcher = merged.get("ready_dispatcher")
+    if isinstance(disk_dispatcher, dict):
+        disk_revision = _nonnegative_cursor_revision(
+            disk_dispatcher.get("weighted_cursor_revision", 0)
+        )
+        mem_revision = (
+            _nonnegative_cursor_revision(
+                mem_dispatcher.get("weighted_cursor_revision", 0)
+            )
+            if isinstance(mem_dispatcher, dict)
+            else 0
+        )
+        if not isinstance(mem_dispatcher, dict) or disk_revision >= mem_revision:
+            merged["ready_dispatcher"] = deepcopy(disk_dispatcher)
+
+    disk_workers = disk_state.get("workers", {})
+    if isinstance(disk_workers, dict):
+        in_mem_workers = merged.setdefault("workers", {})
+        for run_id, disk_worker in disk_workers.items():
+            if not isinstance(disk_worker, dict):
+                continue
+            if run_id not in in_mem_workers:
+                # A concurrent writer may have created and even finalized the
+                # run after this writer loaded state. Preserve the whole record;
+                # normal pruning owns history retention.
+                in_mem_workers[run_id] = deepcopy(disk_worker)
+            else:
+                in_mem_workers[run_id] = _merge_worker_record(
+                    disk_worker,
+                    in_mem_workers[run_id],
+                )
+
+    disk_events = (disk_state.get("queue") or {}).get("events")
+    if isinstance(disk_events, dict):
+        mem_queue = merged.setdefault("queue", {})
+        mem_events = mem_queue.setdefault("events", {})
+        for evt_id, disk_evt in disk_events.items():
+            if not isinstance(disk_evt, dict):
+                continue
+            if evt_id not in mem_events:
+                mem_events[evt_id] = deepcopy(disk_evt)
+            else:
+                mem_events[evt_id] = _merge_queue_record(
+                    disk_evt,
+                    mem_events[evt_id],
+                )
+
+    if "workers" in merged:
+        in_mem_state["workers"] = merged["workers"]
+    if "queue" in merged:
+        in_mem_state["queue"] = merged["queue"]
+
+    return merged
+
+
+@contextmanager
+def runtime_state_transaction_lock(state_path: Path):
+    """Serialize the complete state read/merge/write transaction across processes."""
+    lock_path = state_path.with_name(f"{state_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
 def save_runtime_state(config: dict[str, Any], state: dict[str, Any]) -> None:
-    write_json(config_path(config, "state_file"), migrate_state(state))
+    path = config_path(config, "state_file")
+    with runtime_state_transaction_lock(path):
+        disk_state = load_json(path, default={})
+        if disk_state and isinstance(disk_state, dict):
+            merged = merge_runtime_states(disk_state, state)
+        else:
+            merged = state
+
+        # The append-only event queue is the authority for which queue event
+        # ids still exist.  ``merge_runtime_states`` must preserve records
+        # created by a concurrent writer, but its union semantics cannot tell a
+        # concurrent addition from an event deliberately pruned from the
+        # canonical queue.  Re-filter after the locked merge so a stale disk
+        # snapshot cannot resurrect a deleted ``started`` lease forever.  A
+        # concurrently appended event remains present because it is read from
+        # the canonical queue at the latest point in the transaction.
+        try:
+            queued_events = load_jsonl(config_path(config, "event_queue"))
+        except KeyError:
+            queued_events = None
+        if queued_events is not None:
+            _rebuild_queue_records(merged, queued_events)
+
+        persisted = migrate_state(merged)
+        write_json(path, persisted)
+
+    # Keep the caller's live view aligned with concurrent data incorporated
+    # under the transaction lock.
+    state.clear()
+    state.update(deepcopy(persisted))
+
 
 
 def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:

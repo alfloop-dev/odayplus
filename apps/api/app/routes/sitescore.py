@@ -56,6 +56,7 @@ else:
         *,
         repository: InMemorySiteScoreRepository | None = None,
         workflow: SiteScoreDecisionWorkflow | None = None,
+        sitescore_decision_repository_for_tenant: Any | None = None,
         realization_hook: CandidateSiteRealizationHook | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
@@ -132,6 +133,61 @@ else:
                         "message": str(composition_error),
                     },
                 )
+
+        def resolve_tenant_id(request: Request) -> str:
+            principal = getattr(request.state, "operator_principal", None)
+            if principal is None:
+                from apps.api.oday_api.security.dependencies import principal_from_headers
+
+                try:
+                    principal = principal_from_headers(request.headers)
+                except Exception:
+                    principal = None
+
+            if principal is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified principal",
+                )
+
+            principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+                principal, "tenant_id", None
+            )
+            if not principal_tenant or not str(principal_tenant).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
+                )
+            clean_tenant = str(principal_tenant).strip()
+
+            header_tenant = (
+                request.headers.get("x-tenant-id")
+                or request.headers.get("tenant_id")
+                or ""
+            ).strip()
+            if header_tenant and header_tenant != clean_tenant:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
+                )
+            return clean_tenant
+
+        def workflow_for_request(request: Request) -> SiteScoreDecisionWorkflow:
+            tid = resolve_tenant_id(request)
+            if sitescore_decision_repository_for_tenant is not None:
+                scoped_store = sitescore_decision_repository_for_tenant(tid)
+                if scoped_store is not None:
+                    return SiteScoreDecisionWorkflow(
+                        audit_log=active_audit_log,
+                        hooks=decision_workflow.hooks,
+                        policy_version=decision_workflow.policy_version,
+                        store=scoped_store,
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to resolve tenant-scoped sitescore decision store",
+                )
+            return decision_workflow
 
         router = APIRouter(
             prefix="/sitescore",
@@ -339,12 +395,15 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
                 )
-            decision = decision_workflow.open_decision(
+            active_wf = workflow_for_request(request)
+            tid = resolve_tenant_id(request)
+            decision = active_wf.open_decision(
                 report,
                 created_by=body.created_by,
                 correlation_id=request.state.correlation_id,
+                tenant_id=tid,
             )
-            decision = decision_workflow.submit_for_review(
+            decision = active_wf.submit_for_review(
                 decision.decision_id,
                 submitted_by=body.created_by,
                 correlation_id=request.state.correlation_id,
@@ -364,8 +423,9 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+            active_wf = workflow_for_request(request)
             try:
-                outcome = decision_workflow.decide(
+                outcome = active_wf.decide(
                     decision_id,
                     action=action,
                     actor=body.actor,
@@ -386,8 +446,9 @@ else:
                 Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
             ],
         )
-        def get_decision(decision_id: str) -> dict[str, Any]:
-            decision = decision_workflow.get(decision_id)
+        def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
+            active_wf = workflow_for_request(request)
+            decision = active_wf.get(decision_id)
             if decision is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="decision not found"

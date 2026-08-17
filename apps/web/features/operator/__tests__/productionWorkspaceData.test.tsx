@@ -11,6 +11,7 @@ import {
   inspectNetworkRebalanceSnapshot,
   inspectNetworkReviewsSnapshot,
   inspectNetworkScoringSnapshot,
+  resolveNetworkTabGateState,
 } from "../NetworkFindAreasWorkspace";
 
 afterEach(() => {
@@ -78,6 +79,7 @@ describe("production workspace data contracts", () => {
       auditEvents: [],
     };
     expect(inspectStoreOpsApiPayload(livePayload)).toBe("ready");
+    expect(inspectStoreOpsApiPayload({ ...livePayload, source: undefined })).toBe("ready");
     expect(inspectStoreOpsApiPayload({ ...livePayload, source: "fixture-store-ops" })).toBe("seed");
     expect(inspectStoreOpsApiPayload({ ...livePayload, issues: [] })).toBe("empty");
   });
@@ -119,5 +121,33 @@ describe("production workspace data contracts", () => {
     expect(inspectNetworkScoringSnapshot({ ...scoringSnapshot, scorecards: [] })).toBe("empty");
     expect(inspectNetworkRebalanceSnapshot({ ...rebalanceSnapshot, stores: [] })).toBe("empty");
     expect(inspectNetworkReviewsSnapshot({ ...reviewsSnapshot, reviews: [] })).toBe("empty");
+  });
+
+  it("does not let unrelated Network snapshots gate Listing Radar intake", () => {
+    expect(resolveNetworkTabGateState({
+      activeTab: 1,
+      bindingLoadStates: ["error", "loading"],
+      fixturesAllowed: false,
+      networkLoadState: "error",
+      scoringLoadState: "loading",
+      reviewsLoadState: "empty",
+      rebalanceLoadState: "error",
+    })).toBeNull();
+  });
+
+  it("keeps unavailable data scoped to the tab that owns it", () => {
+    const states = {
+      bindingLoadStates: ["ready", "ready"] as const,
+      fixturesAllowed: false,
+      networkLoadState: "ready" as const,
+      scoringLoadState: "error" as const,
+      reviewsLoadState: "loading" as const,
+      rebalanceLoadState: "empty" as const,
+    };
+
+    expect(resolveNetworkTabGateState({ activeTab: 0, ...states })).toBeNull();
+    expect(resolveNetworkTabGateState({ activeTab: 2, ...states })).toBe("error");
+    expect(resolveNetworkTabGateState({ activeTab: 5, ...states })).toBe("loading");
+    expect(resolveNetworkTabGateState({ activeTab: 6, ...states })).toBe("empty");
   });
 });

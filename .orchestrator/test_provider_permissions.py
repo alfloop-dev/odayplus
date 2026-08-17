@@ -50,7 +50,10 @@ class ProviderPermissionsTest(unittest.TestCase):
                     "gemini": {},
                     "codex": {
                         "delivery_mode": "codex",
-                        "codex": {"codex_home": str(codex_home)},
+                        "codex": {
+                            "cli": "/opt/pantheon/bin/codex",
+                            "codex_home": str(codex_home),
+                        },
                     },
                     "copilot": {},
                 },
@@ -98,7 +101,11 @@ class ProviderPermissionsTest(unittest.TestCase):
                 mock.patch.object(
                     provider_permissions,
                     "command_exists",
-                    side_effect=lambda cmd: "/usr/bin/codex" if cmd == "codex" else None,
+                    side_effect=(
+                        lambda cmd: "/opt/pantheon/bin/codex"
+                        if cmd == "/opt/pantheon/bin/codex"
+                        else None
+                    ),
                 ),
                 mock.patch.object(provider_permissions, "claude_auth_ready", return_value=False),
             ):
@@ -109,6 +116,9 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertEqual(codex_report["verified"], "blocked")
         self.assertIn("unsupported service_tier", codex_report["config_error"])
         self.assertEqual(codex_report["config_checks"]["service_tier"], "priority")
+        self.assertTrue(codex_report["local_cli_worker_supported"])
+        self.assertTrue(codex_report["supports_auto_approve"])
+        self.assertEqual(codex_report["paths"]["binary"], "/opt/pantheon/bin/codex")
 
     def test_verified_claude_hooks_use_absolute_broker_path(self) -> None:
         expected = str(Path(ROOT) / ".orchestrator" / "permission_broker.py")
@@ -123,6 +133,56 @@ class ProviderPermissionsTest(unittest.TestCase):
 
         self.assertEqual(evaluation["decision"], "allow")
         self.assertEqual(evaluation["risk_class"], "safe_read")
+
+    def test_taskoutput_is_auto_allowed_as_exact_read_only_tool(self) -> None:
+        evaluation = permission_broker.evaluate_tool_request(
+            "TaskOutput",
+            {"task_id": "byld6bjnj", "block": True, "timeout": 600000},
+            {},
+        )
+
+        self.assertEqual(evaluation["decision"], "allow")
+        self.assertEqual(evaluation["risk_class"], "safe_read")
+        self.assertEqual(evaluation["reason"], "TaskOutput is read-only.")
+
+    def test_taskoutput_allow_does_not_broaden_adjacent_permission_classes(self) -> None:
+        cases = {
+            "unknown": (
+                permission_broker.evaluate_tool_request("TaskOutputWrite", {}, {}),
+                ("defer", "unknown"),
+            ),
+            "network": (
+                permission_broker.evaluate_tool_request("WebFetch", {"url": "https://example.com"}, {}),
+                ("defer", "network"),
+            ),
+            "bash": (
+                permission_broker.evaluate_tool_request("Bash", {"command": "curl https://example.com"}, {}),
+                ("defer", "needs_review"),
+            ),
+            "edit": (
+                permission_broker.evaluate_tool_request("Edit", {"file_path": "/tmp/outside.txt"}, {}),
+                ("deny", "out_of_workspace"),
+            ),
+            "agent": (
+                permission_broker.evaluate_tool_request(
+                    "Agent",
+                    {
+                        "description": "Implement a fix",
+                        "prompt": "Edit the permission broker and update tests.",
+                        "subagent_type": "Explore",
+                    },
+                    {},
+                ),
+                ("defer", "unknown"),
+            ),
+        }
+
+        for name, (evaluation, expected) in cases.items():
+            with self.subTest(name=name):
+                self.assertEqual(
+                    (evaluation["decision"], evaluation["risk_class"]),
+                    expected,
+                )
 
     def test_read_only_agent_explore_request_is_auto_allowed(self) -> None:
         evaluation = permission_broker.evaluate_tool_request(
@@ -189,9 +249,10 @@ class ProviderPermissionsTest(unittest.TestCase):
 
     @pytest.mark.requires_live_env
     def test_edit_allows_configured_execute_plans_workspace_root(self) -> None:
+        target_path = str((permission_broker.ROOT / "../execute-plans/src/lib/bff/client.ts").resolve())
         evaluation = permission_broker.evaluate_tool_request(
             "Edit",
-            {"file_path": "/home/lupin/code/execute-plans/src/lib/bff/client.ts"},
+            {"file_path": target_path},
             {
                 "permission_broker": {
                     "allowed_workspace_roots": ["../execute-plans"],

@@ -78,7 +78,9 @@ jobs:
           node-version: "20"
 
       - name: Install dependencies
-        run: uv sync
+        run: |
+          uv sync
+          npm ci
 
       - name: Prepare local config
         run: make bootstrap
@@ -86,8 +88,16 @@ jobs:
       - name: Lint product code
         run: uv run ruff check tests modules apps shared models solver pipelines infra
 
+      # `not performance` deselects exactly one test:
+      # tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execution.
+      # It is a wall-clock SLO measurement, so it is enforced by the dedicated
+      # performance-gate job below instead of being measured on a runner that is
+      # already loaded by ~1900 other tests and a Postgres service container.
       - name: Test product code
-        run: uv run pytest -m "not requires_live_env" tests modules apps shared models
+        run: uv run pytest -m "not requires_live_env and not performance" tests modules apps shared models
+
+      - name: Test official real-estate outcomes on PostgreSQL 16
+        run: uv run pytest tests/integration/test_official_real_estate_postgresql.py
 
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
@@ -104,10 +114,89 @@ jobs:
       - name: Run Node workspace checks
         run: make node-check
 
+  # ODP-CI-PERFORMANCE-GATE-ISOLATION-001.
+  #
+  # The load/soak P95 budget is a timing measurement, so its result is only
+  # meaningful on a runner it owns. Sharing the `product` runner made it report
+  # that runner's residual load: run 30380735899 failed at P95 7.518s, and the
+  # rerun of the identical head sha ef048b0f failed again at P95 6.956s, while
+  # the same code measures ~1.1s in an unloaded process. Rerunning until green
+  # would have been luck, and relaxing the budget would have deleted the SLO.
+  #
+  # This job is the blocking enforcement point instead. It keeps the 3.0s P95
+  # budget, the zero-failure assertion, the concurrency waves (10/20/50), and
+  # the 150-request volume exactly as ratified, and runs the measurement three
+  # times in separate processes so a single pass cannot be a lucky sample.
+  performance-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Prepare local config
+        run: make bootstrap
+
+      # No Node, no Postgres service, no other test module imported into the
+      # process: the runner stays clean so the measurement is reproducible.
+      - name: Enforce load and soak P95 budget
+        run: |
+          set -uo pipefail
+          mkdir -p performance-reports
+          for attempt in 1 2 3; do
+            echo "::group::performance gate attempt ${attempt}"
+            # The test writes its report before asserting, so a red attempt
+            # still produces the measured numbers. Remove any stale copy first
+            # so a missing report can never be mistaken for a fresh one.
+            rm -f /tmp/load_soak_performance_report.json
+            status=0
+            uv run pytest -m performance tests/performance || status=$?
+            if [[ -f /tmp/load_soak_performance_report.json ]]; then
+              cp /tmp/load_soak_performance_report.json \
+                "performance-reports/load_soak_performance_report_attempt_${attempt}.json"
+            fi
+            echo "::endgroup::"
+            if [[ "${status}" -ne 0 ]]; then
+              echo "Performance gate failed on attempt ${attempt} (exit ${status})."
+              exit "${status}"
+            fi
+          done
+
+      # Uploaded on failure too: a red gate must hand over the measured P95,
+      # throughput, and error list rather than just an assertion string.
+      - name: Upload performance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-soak-performance-reports
+          path: performance-reports/
+          if-no-files-found: warn
+
   product-e2e-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Receipt validation proves the complete evidence-only ancestry from
+          # the tested source commit, which is unavailable in a depth-1 clone.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -116,8 +205,13 @@ jobs:
 
       - name: Install product E2E dependencies
         run: |
+          uv sync --frozen
           npm ci
           npx playwright install --with-deps chromium
 
-      - name: Run product E2E release gate
-        run: make product-release-gate
+      # A reviewed task PR must prove its current source through the complete
+      # deterministic E2E runner. It must not manufacture production release
+      # authority: a well-formed NO-GO Gate 0-6 registry is valid here, while
+      # dev -> main promotion separately requires an authentic GO decision.
+      - name: Run product E2E dev merge gate
+        run: make product-e2e-gate

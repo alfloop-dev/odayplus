@@ -1,0 +1,60 @@
+[2026-07-29T06:08:16Z] signal: starting
+[2026-07-29T06:08:17Z] validating KillMode=process semantics on a throwaway unit
+[2026-07-29T06:08:22Z] installing the temporary KillMode=process drop-in
+[2026-07-29T06:08:23Z] KillMode is now: process
+[2026-07-29T06:08:23Z] arming the dead-man switch (odp-rollout-deadman, +2708s; bounded waits total 1808s)
+[2026-07-29T06:08:23Z] stopping watchdog timer AND service for the duration of the window
+[2026-07-29T06:08:23Z] watchdog timer=inactive service=inactive
+[2026-07-29T06:08:23Z] stopping pantheon-supervisor.service (KillMode=process: only the supervisor process is signalled)
+[2026-07-29T06:08:26Z] after stop: test worker alive=yes peer alive=yes
+[2026-07-29T06:08:26Z] signal: supervisor_stopped
+[2026-07-29T06:08:26Z] waiting for the worker to emit stop_reason=tool_deferred (<=420s)
+[2026-07-29T06:08:56Z] receipt observed at 2026-07-29T06:08:56Z; waiting for the runner process to exit (<=120s)
+[2026-07-29T06:08:56Z] starting pantheon-supervisor.service
+[2026-07-29T06:09:01Z] supervisor restarted: pid 1197865 -> 1487837
+[2026-07-29T06:09:01Z] waiting for boot reconciliation to record the approval (<=300s)
+[2026-07-29T06:09:01Z] approval id: apr-20260729T060857Z-5c04969e
+[2026-07-29T06:09:01Z] approval correlation_source: supervisor_deferred_tool_receipt
+[2026-07-29T06:09:01Z] asserting boot-reconciliation ordering (post_boot)
+{
+  "verdict": "PASS",
+  "mode": "post_boot",
+  "worker_run_id": "claude-20260729T060543Z-a962c8f8",
+  "events_in_slice": 10,
+  "approval_id": "apr-20260729T060857Z-5c04969e",
+  "correlation_event_type": "worker_deferred_approval_recorded",
+  "correlation_index": 8,
+  "first_generic_worker_failed_index": null,
+  "missing_process_finalizations": 0,
+  "boot_metric_missing_process_failures": 0,
+  "failures": []
+}
+[2026-07-29T06:09:01Z] committing captured evidence before resolving the approval
+[2026-07-29T06:09:01Z] capture commit: fabaf342
+[2026-07-29T06:09:03Z] pushed task branch
+[2026-07-29T06:09:03Z] explicitly denying the test approval apr-20260729T060857Z-5c04969e (the deferred command must not run)
+[2026-07-29T06:09:04Z] live deny rc=0
+[2026-07-29T06:09:04Z] waiting for the supervisor to act on the resolved approval (90s)
+[2026-07-29T06:10:34Z] asserting boot-reconciliation ordering (final)
+{
+  "verdict": "PASS",
+  "mode": "final",
+  "worker_run_id": "claude-20260729T060543Z-a962c8f8",
+  "events_in_slice": 13,
+  "approval_id": "apr-20260729T060857Z-5c04969e",
+  "correlation_event_type": "worker_deferred_approval_recorded",
+  "correlation_index": 8,
+  "first_generic_worker_failed_index": 11,
+  "missing_process_finalizations": 0,
+  "boot_metric_missing_process_failures": 0,
+  "failures": []
+}
+[2026-07-29T06:10:34Z] pending approvals still attached to claude-20260729T060543Z-a962c8f8: 0
+[2026-07-29T06:10:34Z] restoring watchdog timer and the shipped KillMode
+[2026-07-29T06:10:35Z] disarming the dead-man switch
+[2026-07-29T06:10:36Z] final commit: 1c76087a
+[2026-07-29T06:10:38Z] pushed task branch
+[2026-07-29T06:10:38Z] signal: proof_complete
+[2026-07-29T06:10:38Z] done
+[2026-07-29T06:10:38Z] driver exiting rc=0; restoring supervisor, watchdog, shipped KillMode and disarming the dead-man
+[2026-07-29T06:10:39Z] preserving terminal verdict: proof_complete (rc=0)

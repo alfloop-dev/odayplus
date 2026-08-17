@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,11 +24,30 @@ except ModuleNotFoundError:  # pragma: no cover - exercised only in lean supervi
 YAML_ERROR_TYPES = (yaml.YAMLError,) if yaml is not None else ()
 
 ROOT = Path(__file__).resolve().parents[1]
-STATUS_ROOT = (
-    Path(os.path.expanduser(os.environ["PANTHEON_STATUS_ROOT"])).resolve()
-    if os.environ.get("PANTHEON_STATUS_ROOT")
-    else ROOT
-)
+
+
+def resolve_status_root(
+    env: dict[str, str] | os._Environ[str] | None = None,
+    *,
+    default_root: Path = ROOT,
+) -> Path:
+    """Resolve the canonical coordination root for status mutations.
+
+    ``ORCH_STATUS_ROOT`` is written by the Supervisor from the dispatch
+    receipt and deliberately wins over the legacy worker-facing
+    ``PANTHEON_STATUS_ROOT``.  This prevents an otherwise valid worker from
+    making GitHub's review row green while materializing the matching task
+    transition only in a worktree-local shadow.
+    """
+
+    source = os.environ if env is None else env
+    raw = str(source.get("ORCH_STATUS_ROOT") or source.get("PANTHEON_STATUS_ROOT") or "").strip()
+    if not raw:
+        return default_root
+    return Path(os.path.expanduser(raw)).resolve()
+
+
+STATUS_ROOT = resolve_status_root()
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
@@ -63,6 +83,13 @@ LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
+# The live Supervisor reads its fleet through common.load_config(), which deep-
+# merges `.orchestrator/config.json` with the gitignored `.orchestrator/
+# config.local.json` overlay. Worker worktrees only get the tracked half, so the
+# status-root copy is consulted as well; in the live checkout both paths are the
+# same file and the merge is a no-op.
+CONFIG_LOCAL_FILE = ROOT / ".orchestrator" / "config.local.json"
+STATUS_ROOT_CONFIG_LOCAL_FILE = STATUS_ROOT / ".orchestrator" / "config.local.json"
 PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
 ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
 APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
@@ -149,6 +176,19 @@ KNOWN_AGENTS = {
     },
 }
 
+# KNOWN_AGENTS is mutated at runtime by ensure_agent(). This frozen snapshot is
+# NOT an authority for actor validation — a name that only appears here is
+# rejected as an actor reference. It exists solely so the cleanup path can tell
+# that recompute_agents() will recreate a static lane's roster row, and
+# therefore not advertise it as removable.
+BASELINE_KNOWN_AGENT_NAMES = frozenset(KNOWN_AGENTS)
+
+# Actors that legitimately appear in actor-shaped fields without ever being a
+# dispatchable worker: the human gate, the supervisor's own audit identity, and
+# the Codex coordination lane. They are declared here because the Supervisor
+# config only enumerates dispatch targets.
+NON_WORKER_ACTORS = frozenset({"Human/Ops", "Orchestrator", "CodexCoordinator"})
+
 AGENT_ALIASES = {
     "claude2": "Claude2",
     "claude 2": "Claude2",
@@ -170,8 +210,8 @@ AGENT_ALIASES = {
     "agy7": "Antigravity7",
     "codex2": "Codex2",
     "codex (2)": "Codex2",
-    "codex3": "Codex",
-    "codex (3)": "Codex",
+    # No "codex3" alias: config.local.json declares Codex3 as its own worker,
+    # so folding it into Codex would silently reassign a real fleet member.
     "grok": "Copilot",
     "copilot": "Copilot",
     "copilot host": "Copilot",
@@ -224,7 +264,7 @@ EXTERNAL_TASK_ARTIFACT_PREFIXES = (
 TASK_TERMINAL_SUPERSEDED = "superseded"
 DEFAULT_DELIVERY_GATES = {
     "require_commit_hash": True,
-    "require_git_clean": False,
+    "require_git_clean": True,
     "record_remote_status": True,
     "require_merged_pr": True,
 }
@@ -492,7 +532,11 @@ def canonical_agent_name(name: str | None) -> str:
     if not trimmed:
         return ""
     lowered = trimmed.lower()
+    # Case-fold against the declared fleet as well as the in-process table, so a
+    # config.local.json worker such as `codex5` resolves to its declared
+    # spelling `Codex5` instead of being treated as a new name.
     canonical_by_lower = {agent.lower(): agent for agent in KNOWN_AGENTS}
+    canonical_by_lower.update({name.lower(): name for name in registered_agent_names()})
     if lowered in canonical_by_lower:
         return canonical_by_lower[lowered]
     alias_target = AGENT_ALIASES.get(lowered)
@@ -507,8 +551,267 @@ def active_agent_name(name: str | None) -> str:
     return replacement or canonical
 
 
-def current_actor(default: str = "Codex") -> str:
-    return canonical_agent_name(os.environ.get("AI_NAME", default))
+# ---------------------------------------------------------------------------
+# Actor reference validation
+#
+# Every actor-shaped field (task owner/reviewer/waiting_for, blocker
+# owner/waiting_for, handoff from/to, AI_NAME) must hold an *agent name*, never
+# free prose and never a task id. Before this guard existed, ensure_agent()
+# happily invented a roster entry for whatever string it was handed, so a
+# worker that passed a blocker sentence where an agent name was expected
+# permanently fabricated a synthetic fleet agent in ai-status.json.
+#
+# Two different strictness levels are needed:
+#   * CLI input  -> reject loudly, before any durable state is mutated.
+#   * durable state already on disk -> tolerate, so a single bad record cannot
+#     brick every ai_status command (the 2026-07-20 fleet-wide stall).
+# ---------------------------------------------------------------------------
+
+ACTOR_REFERENCE_MAX_LENGTH = 40
+# One or two `/`-separated segments of letters/digits/`_`/`-`, each starting
+# with a letter. Matches Claude2, Antigravity7, CodexCoordinator, Human/Ops.
+_ACTOR_SEGMENT = r"[A-Za-z][A-Za-z0-9_-]*"
+ACTOR_REFERENCE_RE = re.compile(rf"^{_ACTOR_SEGMENT}(?:/{_ACTOR_SEGMENT})?$")
+# Upper-case, >=3 dash-separated segments: ODP-P10-FLEET-CONFLICT-REAUDIT-001.
+TASK_ID_LIKE_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+){2,}$")
+
+# Names registered during this process because they already appear in durable
+# state but are not declared anywhere. Kept out of the durable roster so a
+# corrupt record cannot grow new synthetic fleet agents on every sync.
+QUARANTINED_AGENTS: set[str] = set()
+
+
+def actor_reference_problem(name: str | None) -> str | None:
+    """Return why `name` is unusable as an actor reference, else None.
+
+    `name` is expected to be already canonicalized (aliases resolved), so
+    alias spellings such as "human ops" or "codex (3)" never reach here.
+    """
+    if name is None:
+        return "actor reference is missing"
+    raw = str(name)
+    trimmed = raw.strip()
+    if not trimmed:
+        return "actor reference is empty"
+    if len(trimmed) > ACTOR_REFERENCE_MAX_LENGTH:
+        return (
+            f"actor reference is {len(trimmed)} characters "
+            f"(max {ACTOR_REFERENCE_MAX_LENGTH}); this looks like prose, not an agent name"
+        )
+    if any(char in trimmed for char in "\n\r\t"):
+        return "actor reference contains control characters"
+    if TASK_ID_LIKE_RE.match(trimmed):
+        return "actor reference looks like a task id, not an agent name"
+    if not ACTOR_REFERENCE_RE.match(trimmed):
+        return (
+            "actor reference must be an agent name such as 'Claude2' or 'Human/Ops' "
+            "(letters, digits, '_', '-', at most one '/')"
+        )
+    return None
+
+
+def _fallback_deep_merge(base: Any, overlay: Any) -> Any:
+    """Local copy of common.deep_merge for environments without the orchestrator package."""
+    if isinstance(base, dict) and isinstance(overlay, dict):
+        merged = deepcopy(base)
+        for key, value in overlay.items():
+            merged[key] = _fallback_deep_merge(merged[key], value) if key in merged else deepcopy(value)
+        return merged
+    if isinstance(base, list) and isinstance(overlay, list):
+        return deepcopy(overlay)
+    return deepcopy(overlay)
+
+
+def _orchestrator_common() -> Any | None:
+    try:
+        import common as orchestrator_common
+    except Exception:  # pragma: no cover - lean environments without the package
+        return None
+    return orchestrator_common
+
+
+def local_config_overlay_paths() -> list[Path]:
+    """Local overlays to merge on top of CONFIG_FILE, in application order."""
+    paths: list[Path] = [CONFIG_FILE.with_name("config.local.json")]
+    if STATUS_ROOT_CONFIG_LOCAL_FILE not in paths:
+        paths.append(STATUS_ROOT_CONFIG_LOCAL_FILE)
+    return [path for path in paths if path.exists()]
+
+
+def _read_config_json(path: Path) -> dict[str, Any]:
+    """Tolerant JSON read used only by the actor-authority path.
+
+    Deliberately independent of `load_json_file()`: actor validation runs inside
+    almost every command, so it must not be perturbed by tests or callers that
+    patch the general-purpose reader.
+    """
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not text:
+        return {}
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _config_fingerprint() -> tuple[Any, ...]:
+    fingerprint: list[Any] = []
+    for path in (CONFIG_FILE, CONFIG_FILE.with_name("config.local.json"), STATUS_ROOT_CONFIG_LOCAL_FILE):
+        try:
+            stat = path.stat()
+        except OSError:
+            fingerprint.append((str(path), None))
+        else:
+            fingerprint.append((str(path), stat.st_mtime_ns, stat.st_size))
+    return tuple(fingerprint)
+
+
+_MERGED_CONFIG_CACHE: dict[str, Any] = {}
+
+
+def merged_orchestrator_config() -> dict[str, Any]:
+    """The config as the live Supervisor sees it.
+
+    Dispatchability is decided by `common.load_config()`, which deep-merges
+    `.orchestrator/config.json` with `.orchestrator/config.local.json`. That
+    function is used verbatim when this process points at the same config path,
+    so the two can never drift; otherwise the same deep-merge is applied to
+    whatever `CONFIG_FILE` resolves to.
+
+    Cached against the config files' mtime/size, because actor validation is on
+    the hot path of every command.
+    """
+    fingerprint = _config_fingerprint()
+    if _MERGED_CONFIG_CACHE.get("fingerprint") == fingerprint:
+        return _MERGED_CONFIG_CACHE["payload"]
+
+    common = _orchestrator_common()
+    merge = getattr(common, "deep_merge", None) or _fallback_deep_merge
+    applied: set[Path] = set()
+
+    if common is not None and CONFIG_FILE == getattr(common, "DEFAULT_CONFIG_PATH", None):
+        loaded = common.load_config()
+        payload: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
+        local_path = getattr(common, "LOCAL_CONFIG_PATH", None)
+        if local_path is not None:
+            applied.add(local_path)
+    else:
+        payload = _read_config_json(CONFIG_FILE)
+
+    for overlay_path in local_config_overlay_paths():
+        if overlay_path in applied:
+            continue
+        overlay = _read_config_json(overlay_path)
+        if overlay:
+            payload = merge(payload, overlay)
+            applied.add(overlay_path)
+
+    _MERGED_CONFIG_CACHE["fingerprint"] = fingerprint
+    _MERGED_CONFIG_CACHE["payload"] = payload
+    return payload
+
+
+def extra_actor_names() -> set[str]:
+    """Actor names registered out-of-band through AI_STATUS_EXTRA_AGENTS."""
+    return {
+        name
+        for name in (raw.strip() for raw in parse_csv_env("AI_STATUS_EXTRA_AGENTS"))
+        if name and actor_reference_problem(name) is None
+    }
+
+
+def configured_agent_names() -> set[str]:
+    """Worker names the live Supervisor can dispatch.
+
+    Reads the merged config (see `merged_orchestrator_config`), so the workers
+    declared only in the gitignored `config.local.json` overlay — Codex3 through
+    Codex9 on this fleet — count as declared exactly as they do for dispatch.
+    Names are taken as declared and are deliberately not passed through
+    `canonical_agent_name`: this function is what teaches that function how the
+    fleet spells itself.
+    """
+    names: set[str] = set()
+    agents = merged_orchestrator_config().get("agents")
+    if isinstance(agents, dict):
+        for agent_id, agent in agents.items():
+            entry = agent if isinstance(agent, dict) else {}
+            declared = str(entry.get("display_name") or agent_id or "").strip()
+            if declared and actor_reference_problem(declared) is None:
+                names.add(declared)
+    return names
+
+
+def registered_agent_names() -> set[str]:
+    """Actor names this fleet accepts from the CLI.
+
+    Authority is exactly three things: the merged Supervisor config, the
+    explicitly declared non-worker actors, and AI_STATUS_EXTRA_AGENTS.
+
+    Two tempting sources are deliberately excluded. `KNOWN_AGENTS` is mutated at
+    runtime by `ensure_agent()`, so admitting it would let a name that was
+    invented earlier in the same process validate later calls. The durable
+    `agents[]` roster is exactly where fabricated entries land, so admitting it
+    would let one bad record legitimise itself on the next command. Names that
+    only exist in those two places (retired lanes such as Gemini or Copilot, or
+    a synthetic entry) are readable in state but are not accepted as new input.
+    """
+    names = configured_agent_names() | extra_actor_names() | set(NON_WORKER_ACTORS)
+    return {name for name in names if actor_reference_problem(name) is None}
+
+
+def resolve_actor_reference(
+    raw: str | None,
+    *,
+    field: str,
+    allow_empty: bool = False,
+) -> str:
+    """Validate a caller-supplied actor reference, or abort before mutating state."""
+    canonical = active_agent_name(raw)
+    if not canonical:
+        if allow_empty:
+            return ""
+        raise SystemExit(f"Invalid {field}: actor reference is required")
+
+    problem = actor_reference_problem(canonical)
+    if problem is not None:
+        preview = canonical if len(canonical) <= 80 else canonical[:77] + "..."
+        raise SystemExit(
+            f"Invalid {field}: {problem}\n"
+            f"  received: {preview!r}\n"
+            "  Pass an agent name here and put the explanation in the message argument."
+        )
+
+    registered = registered_agent_names()
+    if canonical not in registered:
+        raise SystemExit(
+            f"Unknown {field}: {canonical!r} is not a registered agent.\n"
+            f"  registered: {', '.join(sorted(registered))}\n"
+            "  Declare it under `agents` in .orchestrator/config.json or "
+            ".orchestrator/config.local.json (the same merged config the "
+            "Supervisor dispatches from), or set AI_STATUS_EXTRA_AGENTS to "
+            "register it explicitly. Being present in ai-status.json agents[] "
+            "is not a declaration."
+        )
+    ensure_agent(canonical)
+    return canonical
+
+
+def current_actor_validated(default: str = "Codex") -> str:
+    """The one way a command may learn who is calling it.
+
+    There used to be an unvalidated sibling, `current_actor()`, that merely
+    canonicalized `AI_NAME`. Commands that used it let a malformed or
+    unregistered `AI_NAME` reach durable state and the activity log, which is
+    how prose ended up in actor-shaped fields in the first place. It is deleted
+    rather than deprecated: every mutating command must read its actor here, and
+    must do so before its first mutation, so a bad `AI_NAME` fails closed.
+    `test_no_unvalidated_actor_read_remains` keeps it that way.
+    """
+    return resolve_actor_reference(os.environ.get("AI_NAME", default), field="AI_NAME")
 
 
 def default_state() -> dict[str, Any]:
@@ -692,7 +995,12 @@ def load_json_file(path: Path, default: Any) -> Any:
 
 
 def load_config() -> dict[str, Any]:
-    payload = load_json_file(CONFIG_FILE, {})
+    config_source = CONFIG_FILE
+    if not config_source.exists():
+        example = ORCHESTRATOR_DIR / "config.example.json"
+        if example.exists():
+            config_source = example
+    payload = load_json_file(config_source, {})
     if not isinstance(payload, dict):
         return {}
     paths = payload.setdefault("paths", {})
@@ -1055,26 +1363,45 @@ def append_log(entry: dict[str, Any]) -> None:
 
 
 def ensure_agent(name: str) -> dict[str, Any]:
-    import re
+    """Register `name` in the in-process roster.
+
+    Tolerant by design: it is also called while loading state that may already
+    contain a corrupt actor reference, and aborting there would make every
+    ai_status command unusable. Anything that fails actor-reference validation
+    is registered as *quarantined* instead: enough for the derived views not to
+    crash, but never promoted into the durable `agents` roster.
+
+    Caller-supplied references must go through resolve_actor_reference() first,
+    which rejects the same values loudly and before any state mutation.
+    """
     canonical = canonical_agent_name(name)
     if canonical not in KNOWN_AGENTS:
-        base_name = re.sub(r'\d+$', '', canonical)
-        template = KNOWN_AGENTS.get(base_name, KNOWN_AGENTS.get("Antigravity"))
+        problem = actor_reference_problem(canonical)
+        if problem is not None:
+            QUARANTINED_AGENTS.add(canonical)
+        base_name = re.sub(r"\d+$", "", canonical) if problem is None else ""
+        template = KNOWN_AGENTS.get(base_name, KNOWN_AGENTS["Antigravity"])
         KNOWN_AGENTS[canonical] = {
             "capability_lane": template["capability_lane"],
-            "default_branch": f"feat/{canonical.lower()}-branch",
-            "target_workload": 5,
+            "default_branch": f"feat/{canonical.lower()}-branch" if problem is None else "",
+            "target_workload": 0 if problem is not None else 5,
         }
     return KNOWN_AGENTS[canonical]
 
 
+def is_quarantined_agent(name: str | None) -> bool:
+    canonical = canonical_agent_name(name)
+    return bool(canonical) and (
+        canonical in QUARANTINED_AGENTS or actor_reference_problem(canonical) is not None
+    )
+
+
 def get_agent(state: dict[str, Any], name: str) -> dict[str, Any]:
     name = canonical_agent_name(name)
-    ensure_agent(name)
+    meta = ensure_agent(name)
     for agent in state["agents"]:
         if agent["name"] == name:
             return agent
-    meta = KNOWN_AGENTS[name]
     agent = {
         "name": name,
         "capability_lane": meta["capability_lane"],
@@ -1084,6 +1411,9 @@ def get_agent(state: dict[str, Any], name: str) -> dict[str, Any]:
         "next": "",
         "last_update": None,
     }
+    if is_quarantined_agent(name):
+        # Never grow the durable roster from an invalid reference.
+        return agent
     state["agents"].append(agent)
     return agent
 
@@ -1259,19 +1589,114 @@ def delivery_merge_target_branch(config: dict[str, Any], repository_id: str) -> 
     return branch or "main"
 
 
-def pull_request_status_for_branch(repository_root: Path, branch: str) -> dict[str, Any] | None:
+def pull_request_status_for_branch(
+    repository_root: Path,
+    branch: str,
+    repository_slug_value: str | None = None,
+) -> dict[str, Any] | None:
     if not branch or branch == "HEAD":
         return None
+    repo_args = ["--repo", repository_slug_value] if repository_slug_value else []
     return run_gh_json_command(
         [
             "pr",
             "view",
             branch,
+            *repo_args,
             "--json",
-            "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url",
+            (
+                "number,state,mergeStateStatus,mergedAt,mergeCommit,autoMergeRequest,url,"
+                "headRefOid,headRefName,baseRefName,statusCheckRollup"
+            ),
         ],
         cwd=repository_root,
     )
+
+
+_CI_STATUS_CACHE: dict[str, tuple[float, tuple[str | None, str]]] = {}
+_TASK_SHA_CACHE: dict[str, tuple[float, str | None]] = {}
+
+
+def clear_ai_status_caches() -> None:
+    _CI_STATUS_CACHE.clear()
+    _TASK_SHA_CACHE.clear()
+
+
+def task_pr_ci_status(
+    task_id: str,
+    repository_root: Path | None = None,
+    max_age_seconds: float = 10.0,
+) -> tuple[str | None, str]:
+    now = time.time()
+    cache_key = f"{task_id}:{repository_root}"
+    if cache_key in _CI_STATUS_CACHE:
+        ts, val = _CI_STATUS_CACHE[cache_key]
+        if now - ts < max_age_seconds:
+            return val
+
+    root = repository_root or ROOT
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        res = run_gh_json_command(
+            ["pr", "view", branch_name, "--json", "state,statusCheckRollup"],
+            cwd=root,
+        )
+        if res and isinstance(res, dict):
+            pr_state = res.get("state")
+            rollup = res.get("statusCheckRollup") or []
+            if not rollup:
+                val = (pr_state, "none")
+                _CI_STATUS_CACHE[cache_key] = (now, val)
+                return val
+
+            has_pending = False
+            has_failure = False
+            has_success = False
+            for check in rollup:
+                if isinstance(check, dict):
+                    conclusion = str(check.get("conclusion") or "").upper()
+                    state_val = str(check.get("state") or "").upper()
+                    status_val = str(check.get("status") or "").upper()
+
+                    if conclusion:
+                        if conclusion in {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"}:
+                            has_failure = True
+                        elif conclusion in {"PENDING", "IN_PROGRESS"}:
+                            has_pending = True
+                        elif conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                            has_success = True
+                    elif state_val:
+                        if state_val in {"FAILURE", "ERROR"}:
+                            has_failure = True
+                        elif state_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED"}:
+                            has_pending = True
+                        elif state_val in {"SUCCESS"}:
+                            has_success = True
+                    elif status_val:
+                        if status_val in {"PENDING", "QUEUED", "IN_PROGRESS", "WAITING", "EXPECTED", "REQUESTED"}:
+                            has_pending = True
+                        elif status_val in {"FAILURE", "ERROR"}:
+                            has_failure = True
+                        elif status_val in {"COMPLETED", "SUCCESS"}:
+                            has_success = True
+
+            if has_failure:
+                ci_status = "failure"
+            elif has_pending:
+                ci_status = "pending"
+            elif has_success:
+                ci_status = "success"
+            else:
+                ci_status = "unknown"
+
+            val = (pr_state, ci_status)
+            _CI_STATUS_CACHE[cache_key] = (now, val)
+            return val
+
+    val = (None, "unknown")
+    _CI_STATUS_CACHE[cache_key] = (now, val)
+    return val
+
+
 
 
 def format_pull_request_status(pr: dict[str, Any] | None) -> str:
@@ -1289,6 +1714,135 @@ def format_pull_request_status(pr: dict[str, Any] | None) -> str:
     return "; ".join(parts)
 
 
+def normalized_green_pr_checks(pr_status: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return auditable successful PR checks, failing closed on every other shape."""
+
+    raw_checks = pr_status.get("statusCheckRollup")
+    if not isinstance(raw_checks, list) or not raw_checks:
+        raise SystemExit(
+            "Cannot finalize task: merged PR has no verifiable CI status checks."
+        )
+
+    checks: list[dict[str, Any]] = []
+    pending: list[str] = []
+    failed: list[str] = []
+    for index, raw_check in enumerate(raw_checks, start=1):
+        if not isinstance(raw_check, dict):
+            failed.append(f"check-{index} (malformed)")
+            continue
+        check_type = str(raw_check.get("__typename") or "").strip()
+        name = str(raw_check.get("name") or raw_check.get("context") or f"check-{index}").strip()
+        conclusion = str(raw_check.get("conclusion") or "").upper()
+        status = str(raw_check.get("status") or "").upper()
+        state = str(raw_check.get("state") or "").upper()
+
+        if check_type == "CheckRun":
+            if status != "COMPLETED" or not conclusion:
+                pending.append(name)
+            elif conclusion not in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                failed.append(name)
+        elif check_type == "StatusContext":
+            if state in {"PENDING", "EXPECTED"} or not state:
+                pending.append(name)
+            elif state != "SUCCESS":
+                failed.append(name)
+        else:
+            failed.append(f"{name} (unrecognized status type)")
+
+        checks.append(
+            {
+                "type": check_type or None,
+                "name": name,
+                "status": status or state or None,
+                "conclusion": conclusion or state or None,
+                "details_url": raw_check.get("detailsUrl") or raw_check.get("targetUrl") or None,
+            }
+        )
+
+    if failed or pending:
+        issues: list[str] = []
+        if failed:
+            issues.append(f"red or unverifiable checks: {', '.join(failed)}")
+        if pending:
+            issues.append(f"pending checks: {', '.join(pending)}")
+        raise SystemExit(f"Cannot finalize task: merged PR CI is not green ({'; '.join(issues)}).")
+    return checks
+
+
+def parse_git_worktree_porcelain(payload: str) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for line in [*payload.splitlines(), ""]:
+        if not line.strip():
+            if current:
+                entries.append(current)
+                current = {}
+            continue
+        key, _, value = line.partition(" ")
+        current[key] = value.strip()
+    return entries
+
+
+def split_task_owned_dirty_entries(entries: list[str], task_id: str) -> tuple[list[str], list[str]]:
+    """Separate delivery dirtiness from known untracked worker context seeds."""
+
+    task_brief = f".orchestrator/task-briefs/{task_id.lower().replace('-', '_')}.md"
+    seed_paths = {"AI_COLLABORATION_GUIDE.md", "ai-status.json", task_brief}
+    owned: list[str] = []
+    ignored_seeds: list[str] = []
+    for entry in entries:
+        status = entry[:2]
+        path = entry[3:].strip() if len(entry) > 3 else ""
+        if status == "??" and path in seed_paths:
+            ignored_seeds.append(entry)
+        else:
+            owned.append(entry)
+    return owned, ignored_seeds
+
+
+def task_delivery_checkout(repository_root: Path, task_id: str) -> tuple[Path, str]:
+    """Resolve the one checkout owned by ``task_id`` instead of central writer HEAD."""
+
+    branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    current_branch = run_git_command(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repository_root,
+        required=False,
+    )
+    if current_branch in branch_names:
+        return repository_root.resolve(strict=False), current_branch
+
+    payload = run_git_command(
+        ["worktree", "list", "--porcelain"],
+        cwd=repository_root,
+        failure_message="Cannot finalize task: git worktree inventory is unavailable.",
+    )
+    matches = [
+        entry
+        for entry in parse_git_worktree_porcelain(payload)
+        if entry.get("branch") in {f"refs/heads/{name}" for name in branch_names}
+        and entry.get("worktree")
+    ]
+    if len(matches) != 1:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: expected exactly one task-owned delivery "
+            f"checkout for {', '.join(branch_names)}, found {len(matches)}."
+        )
+    checkout = Path(matches[0]["worktree"]).resolve(strict=False)
+    branch = str(matches[0]["branch"]).removeprefix("refs/heads/")
+    return checkout, branch
+
+
+def git_remote_repository_slug(repository_root: Path, remote: str) -> str | None:
+    remote_url = run_git_command(
+        ["remote", "get-url", remote],
+        cwd=repository_root,
+        required=False,
+    )
+    match = re.search(r"github\.com[:/]([^/\s]+/[^/\s]+?)(?:\.git)?$", remote_url)
+    return match.group(1) if match else None
+
+
 def enforce_delivery_merged_gate(
     config: dict[str, Any],
     delivery: dict[str, Any],
@@ -1297,6 +1851,8 @@ def enforce_delivery_merged_gate(
     repository_id: str,
     branch: str,
     remote_names: list[str],
+    approved_head: str,
+    repository_slug_value: str | None,
 ) -> None:
     target_branch = delivery_merge_target_branch(config, repository_id)
     delivery["merge_target_branch"] = target_branch
@@ -1321,21 +1877,188 @@ def enforce_delivery_merged_gate(
         )
     delivery["merge_target_sha"] = target_sha
     merged = git_command_succeeds(
-        ["merge-base", "--is-ancestor", "HEAD", target_ref],
+        ["merge-base", "--is-ancestor", approved_head, target_ref],
         cwd=repository_root,
     )
     delivery["head_merged_to_target"] = merged
-    if merged:
+    if not repository_slug_value:
+        raise SystemExit(
+            "Cannot finalize task: configured repository slug is unavailable for PR verification."
+        )
+    pr_status = pull_request_status_for_branch(repository_root, branch, repository_slug_value)
+    if not pr_status:
+        raise SystemExit(
+            "Cannot finalize task: unable to verify the task PR from GitHub. "
+            "Network and repository provenance fail closed."
+        )
+    pr_state = str(pr_status.get("state") or "").upper()
+    pr_head = str(pr_status.get("headRefOid") or "").strip()
+    pr_head_name = str(pr_status.get("headRefName") or "").strip()
+    pr_base = str(pr_status.get("baseRefName") or "").strip()
+    merged_at = str(pr_status.get("mergedAt") or "").strip()
+    merge_commit_raw = pr_status.get("mergeCommit")
+    merge_commit = (
+        str(merge_commit_raw.get("oid") or "").strip()
+        if isinstance(merge_commit_raw, dict)
+        else str(merge_commit_raw or "").strip()
+    )
+    merge_commit_on_target = bool(
+        merge_commit
+        and git_command_succeeds(
+            ["merge-base", "--is-ancestor", merge_commit, target_ref],
+            cwd=repository_root,
+        )
+    )
+    if (
+        pr_state == "MERGED"
+        and pr_head == approved_head
+        and pr_head_name == branch
+        and pr_base == target_branch
+        and merged_at
+        and merge_commit
+        and merge_commit_on_target
+    ):
+        checks = normalized_green_pr_checks(pr_status)
+        delivery["merge_verified_via_pr"] = True
+        delivery["ci_status"] = "success"
+        delivery["ci_checks"] = checks
+        delivery["pull_request"] = {
+            "number": pr_status.get("number"),
+            "url": pr_status.get("url"),
+            "repository": repository_slug_value,
+            "head_branch": pr_head_name,
+            "head_sha": pr_head,
+            "base_branch": pr_base,
+            "merged_at": merged_at,
+            "merge_commit": merge_commit,
+        }
+        checkout_head = str(delivery.get("verified_head") or "").strip()
+        if checkout_head and checkout_head != approved_head:
+            task_id = branch.replace("task/", "") if branch.startswith("task/") else branch
+            if is_approved_head_satisfied(
+                {"id": task_id, "approved_head": approved_head},
+                checkout_head,
+                approved_head,
+                repository_root=repository_root,
+            ):
+                delivery["post_merge_checkout_advanced"] = True
+            else:
+                raise SystemExit(
+                    f"Cannot finalize task: task-owned checkout HEAD ({checkout_head[:8]}) "
+                    f"differs from reviewer-approved head ({approved_head[:8]})."
+                )
         return
-    pr_status = pull_request_status_for_branch(repository_root, branch)
     status_text = format_pull_request_status(pr_status)
     detail = f";{status_text}" if status_text else ""
     raise SystemExit(
-        "Cannot finalize task: the task branch HEAD is not merged into "
-        f"`{target_ref}` yet{detail}. Keep the task in `review_approved`, "
-        "refresh the PR branch if it is behind, and run `done` only after "
-        "GitHub reports the PR merged."
+        "Cannot finalize task: immutable approved-head PR provenance does not prove "
+        f"delivery to `{target_ref}`{detail}. Required facts are an exact task branch, "
+        "matching approved PR head, merged state, configured base, and merge commit on target."
     )
+
+
+def is_approved_head_satisfied(
+    task: dict[str, Any],
+    current_head: str,
+    approved_head: str,
+    repository_root: Path | None = None,
+) -> bool:
+    """Verify if current_head satisfies approved_head freeze for task.
+
+    Returns True if current_head == approved_head, or if current_head represents a safe
+    post-merge checkout advance after an approved PR was merged into the target branch.
+    """
+    current_head = str(current_head or "").strip()
+    approved_head = str(approved_head or "").strip()
+    if not approved_head or not current_head:
+        return False
+    if current_head == approved_head:
+        return True
+
+    delivery = task.get("delivery")
+    if isinstance(delivery, dict) and delivery.get("post_merge_checkout_advanced"):
+        if str(delivery.get("verified_head") or "").strip() == current_head:
+            return True
+
+    task_id = str(task.get("id") or "").strip()
+    if not task_id or task_id.startswith("FREEZE-TEST-"):
+        return False
+
+    try:
+        config = load_config()
+        repository_id = task_primary_repository_id(config, task) or "pantheon"
+        repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
+        repo_root = repo_root.resolve(strict=False)
+        branch = f"task/{task_id}"
+
+        slug = repository_slug(config, repository_id) or git_remote_repository_slug(repo_root, "origin") or get_repository_slug_safe()
+        if not slug:
+            return False
+
+        target_branch = delivery_merge_target_branch(config, repository_id)
+        remotes_output = run_git_command(["remote"], cwd=repo_root, required=False)
+        remote_names = [line.strip() for line in remotes_output.splitlines() if line.strip()]
+        if not remote_names:
+            return False
+        remote = "origin" if "origin" in remote_names else remote_names[0]
+        target_ref = f"{remote}/{target_branch}"
+
+        pr_status = pull_request_status_for_branch(repo_root, branch, slug)
+        if not pr_status or not isinstance(pr_status, dict):
+            return False
+
+        pr_state = str(pr_status.get("state") or "").upper()
+        pr_head = str(pr_status.get("headRefOid") or "").strip()
+        pr_head_name = str(pr_status.get("headRefName") or "").strip()
+        pr_base = str(pr_status.get("baseRefName") or "").strip()
+        merged_at = str(pr_status.get("mergedAt") or "").strip()
+        merge_commit_raw = pr_status.get("mergeCommit")
+        merge_commit = (
+            str(merge_commit_raw.get("oid") or "").strip()
+            if isinstance(merge_commit_raw, dict)
+            else str(merge_commit_raw or "").strip()
+        )
+
+        if not (
+            pr_state == "MERGED"
+            and pr_head == approved_head
+            and pr_head_name == branch
+            and pr_base == target_branch
+            and merged_at
+            and merge_commit
+        ):
+            return False
+
+        merge_commit_on_target = git_command_succeeds(
+            ["merge-base", "--is-ancestor", merge_commit, target_ref],
+            cwd=repo_root,
+        )
+        if not merge_commit_on_target:
+            return False
+
+        has_merge_ancestor = (
+            git_command_succeeds(
+                ["merge-base", "--is-ancestor", merge_commit, current_head],
+                cwd=repo_root,
+            )
+            or git_command_succeeds(
+                ["merge-base", "--is-ancestor", approved_head, current_head],
+                cwd=repo_root,
+            )
+        )
+        if not has_merge_ancestor:
+            return False
+
+        on_target_lineage = git_command_succeeds(
+            ["merge-base", "--is-ancestor", current_head, target_ref],
+            cwd=repo_root,
+        )
+        if not on_target_lineage:
+            return False
+
+        return True
+    except (Exception, SystemExit):
+        return False
 
 
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
@@ -1352,10 +2075,34 @@ def parse_commit_metadata_lines(body: str) -> dict[str, str]:
     return metadata
 
 
-def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str, Any]:
+def collect_done_delivery_metadata(
+    task: dict[str, Any],
+    actor: str,
+    *,
+    approved_head: str | None = None,
+) -> dict[str, Any]:
     settings = delivery_gate_settings()
     commit_rules = commit_convention_settings()
+    # A `done` transition is governance, not a configurable convenience path.
+    # Local/env settings may make recording stricter, but may not switch off the
+    # immutable commit, clean checkout, remote status, merged PR, or CI gates.
+    settings.update(
+        {
+            "require_commit_hash": True,
+            "require_git_clean": True,
+            "record_remote_status": True,
+            "require_merged_pr": True,
+        }
+    )
+    commit_rules["subject_must_include_task_id"] = True
+    commit_rules["required_body_fields"] = ["LLM-Agent", "Task-ID", "Reviewer"]
     config = load_config()
+    task_id = str(task.get("id") or "").strip()
+    approved_head = str(approved_head or task.get("approved_head") or "").strip()
+    if not approved_head:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: delivery metadata requires an immutable approved head."
+        )
     repository_id = task_primary_repository_id(config, task)
     if repository_id is None:
         repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
@@ -1381,52 +2128,60 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             }
             repository_id = "pantheon"
             repository_root = pantheon_root
-    repository_root = repository_root.resolve(strict=False)
-    repository_slug_value = repository_slug(config, repository_id)
-    branch = run_git_command(
-        ["rev-parse", "--abbrev-ref", "HEAD"],
+    configured_repository_root = repository_root.resolve(strict=False)
+    repository_root, branch = task_delivery_checkout(configured_repository_root, task_id)
+    configured_repository_slug = repository_slug(config, repository_id)
+    checkout_head = run_git_command(
+        ["rev-parse", "HEAD"],
         cwd=repository_root,
-        failure_message="Cannot finalize task: git branch information is unavailable.",
+        failure_message="Cannot finalize task: task-owned checkout HEAD is unavailable.",
     )
     delivery: dict[str, Any] = {
         "recorded_at": iso_now(),
         "repository_id": repository_id,
         "repository_path": str(repository_root),
-        "repository_slug": repository_slug_value,
+        "configured_repository_path": str(configured_repository_root),
+        "repository_slug": configured_repository_slug,
         "branch": branch,
+        "approved_head": approved_head,
+        "verified_head": checkout_head,
         "git_clean_required": settings["require_git_clean"],
     }
+    if checkout_head != approved_head:
+        if is_approved_head_satisfied(task, checkout_head, approved_head, repository_root=repository_root):
+            delivery["post_merge_checkout_advanced"] = True
+        else:
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: task-owned checkout HEAD ({checkout_head[:8]}) "
+                f"differs from reviewer-approved head ({approved_head[:8]})."
+            )
     if repository_fallback is not None:
         delivery["repository_fallback"] = repository_fallback
 
     if settings["require_commit_hash"]:
-        commit_hash = run_git_command(
-            ["rev-parse", "HEAD"],
-            cwd=repository_root,
-            failure_message="Cannot finalize task: a HEAD commit hash is required before moving to done.",
-        )
+        commit_hash = approved_head
         if not commit_hash:
             raise SystemExit("Cannot finalize task: a HEAD commit hash is required before moving to done.")
         delivery["commit"] = commit_hash
         subject = run_git_command(
-            ["show", "-s", "--format=%s", "HEAD"],
+            ["show", "-s", "--format=%s", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit subject is unavailable.",
+            failure_message="Cannot finalize task: approved commit subject is unavailable.",
         )
         body = run_git_command(
-            ["show", "-s", "--format=%b", "HEAD"],
+            ["show", "-s", "--format=%b", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit body is unavailable.",
+            failure_message="Cannot finalize task: approved commit body is unavailable.",
         )
         author_name = run_git_command(
-            ["show", "-s", "--format=%an", "HEAD"],
+            ["show", "-s", "--format=%an", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit author name is unavailable.",
+            failure_message="Cannot finalize task: approved commit author name is unavailable.",
         )
         author_email = run_git_command(
-            ["show", "-s", "--format=%ae", "HEAD"],
+            ["show", "-s", "--format=%ae", approved_head],
             cwd=repository_root,
-            failure_message="Cannot finalize task: latest commit author email is unavailable.",
+            failure_message="Cannot finalize task: approved commit author email is unavailable.",
         )
         delivery["commit_subject"] = subject
         delivery["commit_author"] = {
@@ -1434,10 +2189,9 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             "email": author_email,
         }
 
-        task_id = str(task.get("id") or "").strip()
         if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
             raise SystemExit(
-                f"Cannot finalize task: latest commit subject must include task id {task_id}."
+                f"Cannot finalize task: approved commit subject must include task id {task_id}."
             )
 
         metadata_fields = parse_commit_metadata_lines(body)
@@ -1461,28 +2215,31 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             issues: list[str] = []
             if missing_fields:
                 missing_list = ", ".join(f"`{field_name}: ...`" for field_name in missing_fields)
-                issues.append(f"latest commit body must include {missing_list}")
+                issues.append(f"approved commit body must include {missing_list}")
             if mismatched_fields:
                 mismatch_list = ", ".join(
                     f"`{field_name}` must be `{expected_value}`"
                     for field_name, expected_value in mismatched_fields
                 )
-                issues.append(f"latest commit body fields must match task metadata: {mismatch_list}")
+                issues.append(f"approved commit body fields must match task metadata: {mismatch_list}")
             raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
         delivery["commit_metadata"] = metadata_fields
 
     porcelain = run_git_command(
-        ["status", "--porcelain"],
+        ["status", "--porcelain", "--untracked-files=all"],
         cwd=repository_root,
         failure_message="Cannot finalize task: git status is unavailable.",
     )
-    dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
+    all_dirty_entries = [line for line in porcelain.splitlines() if line.strip()]
+    dirty_entries, ignored_seed_entries = split_task_owned_dirty_entries(all_dirty_entries, task_id)
     delivery["git_clean"] = not dirty_entries
     delivery["dirty_entry_count"] = len(dirty_entries)
+    delivery["ignored_worker_seed_entry_count"] = len(ignored_seed_entries)
 
     if settings["require_git_clean"] and dirty_entries:
         raise SystemExit(
-            "Cannot finalize task: git working tree is dirty while delivery_gates.require_git_clean is enabled."
+            "Cannot finalize task: task-owned git working tree is dirty while "
+            "delivery_gates.require_git_clean is enabled."
         )
 
     remotes_output = run_git_command(
@@ -1494,6 +2251,18 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
     delivery["remote_present"] = bool(remote_names)
     if remote_names:
         delivery["remote_names"] = remote_names
+    remote = "origin" if "origin" in remote_names else (remote_names[0] if remote_names else "")
+    remote_repository_slug = git_remote_repository_slug(repository_root, remote) if remote else None
+    if configured_repository_slug and remote_repository_slug and (
+        configured_repository_slug.casefold() != remote_repository_slug.casefold()
+    ):
+        raise SystemExit(
+            "Cannot finalize task: task-owned checkout remote repository "
+            f"`{remote_repository_slug}` does not match configured repository "
+            f"`{configured_repository_slug}`."
+        )
+    repository_slug_value = configured_repository_slug or remote_repository_slug
+    delivery["repository_slug"] = repository_slug_value
 
     if settings["record_remote_status"] and remote_names:
         upstream = run_git_command(
@@ -1528,6 +2297,8 @@ def collect_done_delivery_metadata(task: dict[str, Any], actor: str) -> dict[str
             repository_id=repository_id,
             branch=branch,
             remote_names=remote_names,
+            approved_head=approved_head,
+            repository_slug_value=repository_slug_value,
         )
 
     return delivery
@@ -1602,9 +2373,57 @@ def ensure_review_finalize_handoff(
     )
 
 
+def invalid_actor_references(state: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Return (location, value, problem) for every unusable actor reference in state."""
+    findings: list[tuple[str, str, str]] = []
+
+    def check(value: Any, location: str, *, required: bool) -> None:
+        canonical = canonical_agent_name(value)
+        if not canonical and not required:
+            return
+        problem = actor_reference_problem(canonical)
+        if problem is not None:
+            findings.append((location, canonical, problem))
+
+    for task in state.get("tasks", []):
+        task_id = task.get("id", "?")
+        check(task.get("owner"), f"task {task_id} owner", required=True)
+        check(task.get("reviewer"), f"task {task_id} reviewer", required=True)
+        check(task.get("waiting_for"), f"task {task_id} waiting_for", required=False)
+    for index, blocker in enumerate(state.get("blockers", [])):
+        check(blocker.get("owner"), f"blockers[{index}] owner", required=True)
+        check(blocker.get("waiting_for"), f"blockers[{index}] waiting_for", required=True)
+    for index, handoff in enumerate(state.get("handoffs", [])):
+        check(handoff.get("from"), f"handoffs[{index}] from", required=True)
+        check(handoff.get("to"), f"handoffs[{index}] to", required=True)
+    for index, agent in enumerate(state.get("agents", []) or []):
+        check(agent.get("name"), f"agents[{index}] name", required=True)
+    return findings
+
+
+def report_invalid_actor_references(state: dict[str, Any]) -> None:
+    findings = invalid_actor_references(state)
+    if not findings:
+        return
+    print(
+        f"Warning: {len(findings)} invalid actor reference(s) in durable state; "
+        "commands still run, but these fields hold prose or task ids instead of agent names:",
+        file=sys.stderr,
+    )
+    for location, value, problem in findings:
+        preview = value if len(value) <= 70 else value[:67] + "..."
+        print(f"  - {location}: {problem} ({preview!r})", file=sys.stderr)
+    print(
+        "  Repair with: ai-status.sh retarget_blocker <task-id> <agent> <reason>\n"
+        "  Then remove leftover roster entries with: ai-status.sh prune_agents --apply",
+        file=sys.stderr,
+    )
+
+
 def validate_state(state: dict[str, Any]) -> None:
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
+    report_invalid_actor_references(state)
     for task in state["tasks"]:
         ensure_agent(task["owner"])
         ensure_agent(task["reviewer"])
@@ -1657,7 +2476,9 @@ def recompute_agents(state: dict[str, Any]) -> None:
     for task in state["tasks"]:
         by_owner.setdefault(task["owner"], []).append(task)
 
-    for name in KNOWN_AGENTS:
+    for name in list(KNOWN_AGENTS):
+        if is_quarantined_agent(name):
+            continue
         agent = get_agent(state, name)
         owned = by_owner.get(name, [])
         active = [task for task in owned if task["status"] in {"in_progress", "review", "blocked"}]
@@ -1719,28 +2540,36 @@ def recompute_agents(state: dict[str, Any]) -> None:
                 agent["last_update"] = None
 
 
+def _empty_workload_bucket() -> dict[str, int]:
+    return {
+        "total": 0,
+        "active": 0,
+        "blocked": 0,
+        "done": 0,
+        "review": 0,
+        "review_approved": 0,
+        "todo": 0,
+    }
+
+
 def recompute_workload(state: dict[str, Any]) -> None:
     summary: dict[str, dict[str, int]] = {}
     for name in KNOWN_AGENTS:
-        summary[name] = {
-            "total": 0,
-            "active": 0,
-            "blocked": 0,
-            "done": 0,
-            "review": 0,
-            "review_approved": 0,
-            "todo": 0,
-        }
+        summary[name] = _empty_workload_bucket()
 
     for task in state["tasks"]:
         owner = task["owner"]
-        bucket = summary[owner]
+        bucket = summary.setdefault(owner, _empty_workload_bucket())
         bucket["total"] += 1
         bucket[task["status"] if task["status"] in bucket else "todo"] += 1
         if task["status"] in {"in_progress", "review", "blocked"}:
             bucket["active"] += 1
 
-    state["workload"] = {name: KNOWN_AGENTS[name]["target_workload"] for name in KNOWN_AGENTS}
+    state["workload"] = {
+        name: KNOWN_AGENTS[name]["target_workload"]
+        for name in KNOWN_AGENTS
+        if not is_quarantined_agent(name)
+    }
     state["workload_summary"] = summary
 
 
@@ -3615,16 +4444,17 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
 
     if len(args) < 3:
         raise SystemExit("Usage: assign <task-id> <owner> <reviewer> [title]")
+    actor = current_actor_validated()
     try:
         check_wave_assign(state.get("wave_state") or {})
     except WaveGuardError as exc:
         raise SystemExit(f"Wave guard rejected assign: {exc}") from exc
-    task_id, owner, reviewer = args[0], canonical_agent_name(args[1]), canonical_agent_name(args[2])
+    task_id = args[0]
+    owner = resolve_actor_reference(args[1], field="owner")
+    reviewer = resolve_actor_reference(args[2], field="reviewer")
     title = args[3] if len(args) > 3 else os.environ.get("TASK_TITLE")
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
-    ensure_agent(owner)
-    ensure_agent(reviewer)
     if owner == reviewer:
         raise SystemExit("Reviewer cannot equal owner")
 
@@ -3670,7 +4500,7 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     append_log(
         {
             "ts": timestamp,
-            "agent": current_actor(),
+            "agent": actor,
             "type": "assign",
             "task_id": task_id,
             "message": f"Assigned {task_id} to {owner} with reviewer {reviewer}",
@@ -3682,8 +4512,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: start <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3702,7 +4531,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: progress <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3721,7 +4550,7 @@ def command_note(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: note <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3735,8 +4564,7 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: reopen <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         if archived_task_snapshot(task_id):
@@ -3753,6 +4581,8 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    task.pop("approved_head", None)
+    task["last_reopened_by"] = actor
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
@@ -3772,10 +4602,9 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
-    task_id, to_agent, message = args[0], canonical_agent_name(args[1]), args[2]
-    actor = current_actor()
-    ensure_agent(actor)
-    ensure_agent(to_agent)
+    task_id, message = args[0], args[2]
+    to_agent = resolve_actor_reference(args[1], field="handoff target")
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3789,6 +4618,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task["status"] = "review"
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("approved_head", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -3804,13 +4634,47 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "handoff", "task_id": task_id, "message": f"Handoff to {to_agent}: {message}"})
 
 
+def command_re_review(state: dict[str, Any], args: list[str]) -> None:
+    """re_review <task-id> <message>"""
+    if len(args) < 2:
+        raise SystemExit("Usage: re_review <task-id> <message>")
+    task_id, message = args[0], args[1]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can request re-review for {task_id}")
+    timestamp = iso_now()
+    task["status"] = "review"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task.pop("approved_head", None)
+    task.pop("waiting_for", None)
+    mark_blockers_resolved(state, task_id)
+    mark_handoffs_done(state, task_id)
+    if owner and reviewer and owner != reviewer:
+        state.setdefault("handoffs", []).append(
+            {
+                "task_id": task_id,
+                "from": owner,
+                "to": reviewer,
+                "message": message,
+                "status": "pending",
+                "created_at": timestamp,
+            }
+        )
+    append_log({"ts": timestamp, "agent": actor, "type": "re_review", "task_id": task_id, "message": message})
+
+
 def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: blocker <task-id> <message> <waiting-for>")
-    task_id, message, waiting_for = args[0], args[1], canonical_agent_name(args[2])
-    actor = current_actor()
-    ensure_agent(actor)
-    ensure_agent(waiting_for)
+    task_id, message = args[0], args[1]
+    waiting_for = resolve_actor_reference(args[2], field="waiting-for")
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3835,6 +4699,209 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     append_log({"ts": timestamp, "agent": actor, "type": "blocker", "task_id": task_id, "message": f"Blocked on {waiting_for}: {message}"})
 
 
+def command_retarget_blocker(state: dict[str, Any], args: list[str]) -> None:
+    """Repoint a blocker's waiting_for at a real agent without losing its text.
+
+    Usage: retarget_blocker <task-id> <agent> <reason> [--index N]
+
+    Allowed when the current waiting_for is not a usable actor reference (a
+    repair), or when the caller owns the blocker (a normal reassignment). This
+    keeps the command from becoming a way to silently reassign someone else's
+    valid blocker. `--index N` selects a single blocker of that task by its
+    position in `blockers[]` when the task has several.
+    """
+    positional = [arg for arg in args if not arg.startswith("--")]
+    if len(positional) < 3:
+        raise SystemExit("Usage: retarget_blocker <task-id> <agent> <reason> [--index N]")
+    task_id, reason = positional[0], positional[2]
+    new_actor = resolve_actor_reference(positional[1], field="waiting-for")
+    actor = current_actor_validated()
+
+    selected_index: int | None = None
+    for arg in args:
+        if arg.startswith("--index="):
+            selected_index = int(arg.split("=", 1)[1])
+
+    targets = [
+        blocker
+        for index, blocker in enumerate(state.get("blockers", []))
+        if blocker.get("task_id") == task_id
+        and (selected_index is None or index == selected_index)
+    ]
+    if not targets:
+        raise SystemExit(f"No blocker recorded for task: {task_id}")
+
+    timestamp = iso_now()
+    changed: list[dict[str, Any]] = []
+    for blocker in targets:
+        previous = str(blocker.get("waiting_for") or "")
+        if previous == new_actor:
+            continue
+        repairable = actor_reference_problem(canonical_agent_name(previous)) is not None
+        if not repairable and blocker.get("owner") != actor:
+            # Already a real agent and not ours to reassign — leave it untouched.
+            continue
+        blocker["waiting_for"] = new_actor
+        blocker["original_waiting_for"] = previous
+        blocker["retargeted_by"] = actor
+        blocker["retargeted_at"] = timestamp
+        blocker["retarget_reason"] = reason
+        if repairable and previous and previous not in str(blocker.get("message") or ""):
+            existing = str(blocker.get("message") or "").strip()
+            blocker["message"] = (
+                f"{existing}\n\nRecovered waiting_for text: {previous}" if existing else previous
+            )
+        changed.append(blocker)
+
+    task = get_task(state, task_id)
+    task_repaired = False
+    if task is not None:
+        current = str(task.get("waiting_for") or "")
+        if current and actor_reference_problem(canonical_agent_name(current)) is not None:
+            task["waiting_for"] = new_actor
+            task["last_update"] = timestamp
+            task_repaired = True
+
+    if not changed and not task_repaired:
+        print(
+            f"No change for {task_id}: nothing to repair, and any valid blocker "
+            f"waiting_for belongs to another owner"
+        )
+        return
+
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "actor_ref_repair",
+            "task_id": task_id,
+            "message": (
+                f"Retargeted {len(changed)} blocker record(s)"
+                f"{' and task waiting_for' if task_repaired else ''} to {new_actor}: {reason}"
+            ),
+        }
+    )
+    print(
+        f"Retargeted {len(changed)} blocker record(s)"
+        f"{' and task waiting_for' if task_repaired else ''} for {task_id} to {new_actor}"
+    )
+
+
+def synthetic_roster_entries(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Classify every durable roster entry as keep-or-remove for the cleanup path.
+
+    An entry is removable only when it is (a) not declared in the merged
+    Supervisor config, (b) not an explicit non-worker actor, (c) not carrying
+    live workload, and (d) not referenced by any task, blocker or handoff. A
+    valid actor is never removed just for being idle.
+    """
+    referenced: set[str] = set()
+
+    def mark(value: Any) -> None:
+        canonical = canonical_agent_name(value)
+        if canonical:
+            referenced.add(canonical)
+
+    for task in state.get("tasks", []):
+        mark(task.get("owner"))
+        mark(task.get("reviewer"))
+        mark(task.get("waiting_for"))
+    for blocker in state.get("blockers", []):
+        mark(blocker.get("owner"))
+        mark(blocker.get("waiting_for"))
+    for handoff in state.get("handoffs", []):
+        mark(handoff.get("from"))
+        mark(handoff.get("to"))
+
+    configured = configured_agent_names()
+    extras = extra_actor_names()
+    report: list[dict[str, Any]] = []
+    for agent in state.get("agents", []) or []:
+        name = canonical_agent_name(agent.get("name"))
+        if name in configured:
+            reason = "declared in the merged Supervisor config (config.json + config.local.json)"
+        elif name in NON_WORKER_ACTORS:
+            reason = "explicitly declared non-worker actor"
+        elif name in extras:
+            reason = "registered through AI_STATUS_EXTRA_AGENTS"
+        elif name in BASELINE_KNOWN_AGENT_NAMES:
+            # Not an authority for validation — resolve_actor_reference still
+            # rejects these — but recompute_agents() recreates a row for every
+            # static lane, so reporting them as removable would be a lie.
+            reason = (
+                "static KNOWN_AGENTS lane; recompute_agents recreates the row, "
+                "so pruning it is a no-op (still not accepted as an actor reference)"
+            )
+        elif agent.get("current_task_ids") or str(agent.get("status") or "") not in ("", "idle"):
+            reason = "carrying live workload; repoint its work before pruning it"
+        elif name in referenced:
+            reason = "still referenced by a task, blocker or handoff"
+        else:
+            problem = actor_reference_problem(name)
+            report.append(
+                {
+                    "name": name,
+                    "keep": False,
+                    "reason": problem or "undeclared and unreferenced synthetic roster entry",
+                }
+            )
+            continue
+        report.append({"name": name, "keep": True, "reason": reason})
+    return report
+
+
+def command_prune_agents(state: dict[str, Any], args: list[str]) -> None:
+    """Audited removal of unreferenced synthetic roster entries.
+
+    Usage: prune_agents [--apply] [reason]
+
+    Dry-run by default. Never removes a declared or still-referenced actor.
+    """
+    apply = "--apply" in args
+    reason = next((arg for arg in args if not arg.startswith("--")), "actor reference cleanup")
+    actor = current_actor_validated()
+
+    report = synthetic_roster_entries(state)
+    removable = [entry for entry in report if not entry["keep"]]
+
+    for entry in report:
+        verb = "KEEP  " if entry["keep"] else "REMOVE"
+        preview = entry["name"] if len(entry["name"]) <= 70 else entry["name"][:67] + "..."
+        print(f"{verb} {preview!r} — {entry['reason']}")
+
+    if not removable:
+        print("\nNothing to prune: every roster entry is declared or still referenced.")
+        return
+    if not apply:
+        print(f"\nDry run: {len(removable)} entry(ies) would be removed. Re-run with --apply.")
+        return
+
+    doomed = {entry["name"] for entry in removable}
+    state["agents"] = [
+        agent
+        for agent in state.get("agents", [])
+        if canonical_agent_name(agent.get("name")) not in doomed
+    ]
+    for name in doomed:
+        KNOWN_AGENTS.pop(name, None)
+        QUARANTINED_AGENTS.discard(name)
+        state.get("workload", {}).pop(name, None)
+        state.get("workload_summary", {}).pop(name, None)
+
+    timestamp = iso_now()
+    for entry in removable:
+        append_log(
+            {
+                "ts": timestamp,
+                "agent": actor,
+                "type": "agent_pruned",
+                "task_id": "",
+                "message": f"Removed synthetic roster entry {entry['name']!r}: {entry['reason']} ({reason})",
+            }
+        )
+    print(f"\nRemoved {len(removable)} synthetic roster entry(ies).")
+
+
 def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     """Recover a task that was incorrectly downgraded from review_approved to in_progress by the supervisor.
 
@@ -3846,8 +4913,7 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: restore_approved <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3860,10 +4926,64 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "restore_approved requires review_notes_zh to be present as evidence of a prior approval. "
             "Use the normal review lifecycle if the task has not been reviewed yet."
         )
+
+    # B21: this command is the second producer of `review_approved`, so it has to
+    # re-establish the freeze or it manufactures exactly the un-frozen state the
+    # freeze exists to prevent. It must NOT resolve the current head itself --
+    # this is an owner-invokable command, and resolving here would let the owner
+    # self-freeze a head no reviewer ever saw. It may only re-freeze the durable
+    # `last_approved_head` written by `command_approve`, and only while the branch
+    # still sits on it.
+    last_approved_head = task.get("last_approved_head")
+    if not last_approved_head:
+        raise SystemExit(
+            f"Cannot restore {task_id}: no durable reviewer-approved head is recorded, so the "
+            "post-review freeze cannot be re-established and restoring would finalize at an "
+            f"unreviewed commit. Run `re_review {task_id} <reason>` so the reviewer re-stamps "
+            "the head. No restore was recorded."
+        )
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    last_reopened_by = canonical_agent_name(task.get("last_reopened_by"))
+    pending_handoffs = state.get("handoffs", [])
+    has_pending_reviewer_handoff = any(
+        str(h.get("task_id") or "").upper() == str(task_id).upper()
+        and h.get("status") == "pending"
+        and canonical_agent_name(h.get("from")) == reviewer
+        for h in pending_handoffs
+    )
+    if has_pending_reviewer_handoff or (last_reopened_by and last_reopened_by == reviewer):
+        raise SystemExit(
+            f"Cannot restore {task_id}: the task was reopened by the reviewer ({reviewer}). "
+            "Reviewer rejections cannot be restored by the owner; run `re_review` so the "
+            "reviewer can re-examine the work. No restore was recorded."
+        )
+    try:
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot restore {task_id}: unable to resolve the current branch HEAD ({exc}). "
+            "Integrity gate failed closed; no restore was recorded."
+        ) from exc
+    if not current_sha:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the branch HEAD could not be resolved, so it cannot be "
+            f"checked against the reviewer-approved head ({last_approved_head[:8]}). "
+            "No restore was recorded."
+        )
+    if current_sha != last_approved_head:
+        raise SystemExit(
+            f"Cannot restore {task_id}: the branch has moved to {current_sha[:8]}, past the "
+            f"reviewer-approved head ({last_approved_head[:8]}). The downgrade was not spurious. "
+            f"Run `re_review {task_id} <reason>` so the reviewer stamps the new head. "
+            "No restore was recorded."
+        )
+
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("last_reopened_by", None)
+    task["approved_head"] = last_approved_head
     append_log(
         {
             "ts": timestamp,
@@ -3871,6 +4991,94 @@ def command_restore_approved(state: dict[str, Any], args: list[str]) -> None:
             "type": "restore_approved",
             "task_id": task_id,
             "message": message,
+            "approved_head": last_approved_head,
+        }
+    )
+
+
+def command_restore_approved_head(state: dict[str, Any], args: list[str]) -> None:
+    """restore_approved_head <task-id> <sha> <message>
+
+    B22: `review_approved` with no `approved_head` fails closed everywhere -- in
+    `command_done` and in both supervisor dispatch gates. Pre-freeze tasks and
+    tasks approved by an older build sit in exactly that shape, so they need a way
+    out; making it an automatic bypass is what the freeze exists to stop. This is
+    that way out as an explicit, audited, reviewer-signed attestation of one exact
+    commit: the reviewer names the sha, it must match the immutable PR head, and
+    the restoration is written to the activity log.
+    """
+    if len(args) < 3:
+        raise SystemExit("Usage: restore_approved_head <task-id> <sha> <message>")
+    task_id, requested_sha, message = args[0], args[1].strip(), args[2]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if owner and reviewer and owner == reviewer:
+        raise SystemExit(
+            f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}"
+        )
+    if reviewer != actor:
+        raise SystemExit(
+            f"Only the reviewer ({reviewer}) can attest the approved head for {task_id}; "
+            "the owner cannot restore the freeze on their own work."
+        )
+    if task.get("status") != "review_approved":
+        raise SystemExit(
+            f"restore_approved_head is only valid when status is review_approved "
+            f"(current: {task.get('status')}). Use `approve` for the normal review lifecycle."
+        )
+    existing_head = task.get("approved_head")
+    if existing_head:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: it already carries one "
+            f"({existing_head[:8]}). This command only repairs the missing-head shape."
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", requested_sha):
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {requested_sha!r} is not a full "
+            "40-character commit sha. Name the exact reviewed commit, not an abbreviation."
+        )
+    try:
+        current_sha = resolve_task_sha(task_id, force_refresh=True)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: unable to resolve the branch HEAD "
+            f"({exc}). Integrity gate failed closed; nothing was recorded."
+        ) from exc
+    if not current_sha:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: the branch HEAD could not be "
+            "resolved, so the attested sha cannot be corroborated. Nothing was recorded."
+        )
+    _head_ref_oid, merge_commit = task_pr_head_and_merge_commit(task_id)
+    if merge_commit and requested_sha == merge_commit:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: {requested_sha[:8]} is the PR merge "
+            "commit, not the reviewed branch head. Attest the head the review actually read."
+        )
+    if requested_sha != current_sha:
+        raise SystemExit(
+            f"Cannot restore the approved head for {task_id}: the attested sha ({requested_sha[:8]}) "
+            f"does not match the task branch head ({current_sha[:8]}). Only the exact current head "
+            f"can be restored; run `re_review {task_id} <reason>` if the branch has moved."
+        )
+
+    timestamp = iso_now()
+    task["approved_head"] = requested_sha
+    task["last_approved_head"] = requested_sha
+    task["last_update"] = timestamp
+    task["next"] = message
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "approved_head_restored",
+            "task_id": task_id,
+            "message": message,
+            "approved_head": requested_sha,
         }
     )
 
@@ -3879,8 +5087,7 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: done <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3888,8 +5095,54 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Only the owner ({task.get('owner')}) can finalize {task_id} to done")
     if task.get("status") != "review_approved":
         raise SystemExit(f"{task_id} must be review_approved before it can move to done")
+    # B22: the freeze gate runs here, before collect_done_delivery_metadata, and
+    # every branch of it raises. The delivery gates further down are real
+    # defence-in-depth but they are not a backstop for this gate: they check
+    # merge/commit hygiene, not "is this the commit a reviewer read".
+    approved_head = task.get("approved_head")
+    if not approved_head:
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: it is review_approved but carries no "
+            "reviewer-approved head, so there is nothing to verify the branch against. "
+            "This is the pre-freeze (or restored) shape and it fails closed. "
+            f"The reviewer must run `restore_approved_head {task_id} <sha> <reason>` to "
+            f"attest the exact reviewed commit, or `re_review {task_id} <reason>` for a "
+            "fresh review. No finalization was recorded."
+        )
     timestamp = iso_now()
-    delivery = collect_done_delivery_metadata(task, actor)
+    delivery = collect_done_delivery_metadata(task, actor, approved_head=approved_head)
+    # The task branch is ephemeral and GitHub may delete its remote ref as soon
+    # as the PR merges.  Do not make that deleted ref a second closeout
+    # authority.  The collector resolves the unique task-owned checkout and
+    # verifies the immutable merged PR instead; keep both heads exact here as
+    # defence in depth even when the collector is replaced by a unit-test fake.
+    current_sha = str(delivery.get("verified_head") or "").strip()
+    if current_sha != approved_head:
+        if not delivery.get("post_merge_checkout_advanced"):
+            display_sha = current_sha[:8] if current_sha else "unresolved"
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: task-owned checkout HEAD ({display_sha}) "
+                f"differs from reviewer-approved head ({approved_head[:8]}). "
+                "Strict update-branch merge requires re-review."
+            )
+
+    pull_request_raw = delivery.get("pull_request")
+    pull_request = pull_request_raw if isinstance(pull_request_raw, dict) else {}
+    head_ref_oid = str(pull_request.get("head_sha") or "").strip()
+    merge_commit = str(pull_request.get("merge_commit") or "").strip()
+    if head_ref_oid != approved_head:
+        display_sha = head_ref_oid[:8] if head_ref_oid else "unresolved"
+        raise SystemExit(
+            f"Cannot finalize task {task_id}: merged PR headRefOid ({display_sha}) "
+            f"differs from reviewer-approved head ({approved_head[:8]}). "
+            "Immutable approved-head PR provenance failed closed."
+        )
+
+    delivery["approved_head"] = approved_head
+    delivery["verified_head"] = current_sha
+    delivery["pr_head_ref_oid"] = head_ref_oid
+    if merge_commit:
+        delivery["pr_merge_commit"] = merge_commit
     delivery["recorded_at"] = timestamp
     task["status"] = "done"
     task["terminal_outcome"] = "completed"
@@ -3917,8 +5170,7 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit("Usage: supersede <task-id> <message> [replacement-task-id]")
     task_id, message = args[0], args[1]
     replacement_task_id = args[2].strip() if len(args) > 2 and args[2].strip() else ""
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
@@ -3953,21 +5205,65 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: approve <task-id> <message>")
     task_id, message = args[0], args[1]
-    actor = current_actor()
-    ensure_agent(actor)
+    actor = current_actor_validated()
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if owner and reviewer and owner == reviewer:
+        raise SystemExit(f"Owner ({owner}) and reviewer ({reviewer}) must be separate identities for task {task_id}")
     if task.get("reviewer") != actor:
         raise SystemExit(f"Only the reviewer ({task.get('reviewer')}) can approve {task_id}")
     if task.get("status") != "review":
         raise SystemExit(f"{task_id} must be in review before it can move to review_approved")
+
+    # B20: the approved head is the whole basis of the post-review freeze.
+    # command_done and both supervisor dispatch gates are guarded by
+    # `if approved_head:`, so approving without recording one silently disables
+    # the freeze for that task instead of failing closed. Resolve it *before*
+    # any mutation, so an unresolvable head aborts the approval outright rather
+    # than leaving the task review_approved-but-unfrozen.
+    try:
+        approved_sha = resolve_task_sha(task_id, force_refresh=True)
+    except Exception as exc:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: unable to resolve the branch HEAD to freeze ({exc}). "
+            "Integrity gate failed closed; no approval was recorded."
+        ) from exc
+    if not approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: branch HEAD could not be resolved, so the "
+            "reviewer-approved commit cannot be frozen. Push the task branch (or open its PR) "
+            "and approve again. No approval was recorded."
+        )
+
+    # B20: approved_head is immutable for the lifetime of one approval. Every
+    # transition back to `review` (handoff, reopen, re_review, and the
+    # supervisor's head-drift demotion) pops it, so a task sitting in `review`
+    # while still carrying an approved_head is inconsistent state. Refuse to
+    # overwrite the earlier freeze silently.
+    existing_head = task.get("approved_head")
+    if existing_head and existing_head != approved_sha:
+        raise SystemExit(
+            f"Cannot approve task {task_id}: it still carries an uncleared approved head "
+            f"({existing_head[:8]}) while the branch is now at {approved_sha[:8]}. "
+            f"Run `re_review {task_id} <reason>` to clear the stale freeze first. "
+            "No approval was recorded."
+        )
 
     timestamp = iso_now()
     task["status"] = "review_approved"
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("waiting_for", None)
+    task.pop("last_reopened_by", None)
+    task["approved_head"] = approved_sha
+    # B21: `approved_head` is the *live* freeze and every return-to-review pops it.
+    # `last_approved_head` is the durable record of the last commit a reviewer
+    # actually stamped: it is never popped, so `restore_approved` can re-freeze a
+    # spurious supervisor downgrade without the owner getting to name the head.
+    task["last_approved_head"] = approved_sha
 
     review_notes = parse_delimited_env("REVIEW_NOTES_ZH")
     if review_notes:
@@ -3995,12 +5291,13 @@ def command_sync(state: dict[str, Any], _args: list[str]) -> None:
 
 
 def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
+    actor = current_actor_validated()
     archived_at = iso_now()
     archived_ids = archive_terminal_tasks_in_state(state, archived_at=archived_at)
     append_log(
         {
             "ts": archived_at,
-            "agent": current_actor(),
+            "agent": actor,
             "type": "archive_migrate",
             "message": f"Archived {len(archived_ids)} terminal tasks from ai-status.json.",
             "task_ids": archived_ids,
@@ -4059,7 +5356,7 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit("Usage: wave <open <wave-id> | close | freeze>")
 
     subcommand = args[0]
-    actor = current_actor()
+    actor = current_actor_validated()
     timestamp = iso_now()
     wave_state: dict[str, Any] = state.setdefault("wave_state", {})
     planning_state = load_planning_state()
@@ -4113,70 +5410,165 @@ def command_wave(state: dict[str, Any], args: list[str]) -> None:
         raise SystemExit(f"Unknown wave subcommand: {subcommand!r}. Use: open <wave-id>, close, freeze")
 
 
-def resolve_task_sha(task_id: str) -> str | None:
-    # 1. Try gh pr view for task/TASK-ID
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0:
-            try:
-                data = json.loads(result.stdout)
-                sha = data.get("headRefOid")
-                if sha:
-                    return sha
-            except Exception:
-                pass
+def resolve_task_sha(
+    task_id: str,
+    max_age_seconds: float = 5.0,
+    force_refresh: bool = False,
+    fresh: bool = False,
+) -> str | None:
+    now = time.time()
+    if not (force_refresh or fresh) and max_age_seconds > 0:
+        if task_id in _TASK_SHA_CACHE:
+            ts, cached_sha = _TASK_SHA_CACHE[task_id]
+            if now - ts < max_age_seconds:
+                return cached_sha
 
-    # 2. Try git rev-parse for local branches
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
+    branch_names = [f"task/{task_id}", f"task-{task_id}"]
 
-    # 3. Try git rev-parse for remote branches
-    for branch_name in [f"origin/task/{task_id}", f"origin/task-{task_id}"]:
-        result = subprocess.run(
-            ["git", "rev-parse", "--verify", branch_name],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=ROOT,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-
-    # 4. Fallback to current HEAD if current branch matches task_id
-    current_branch_result = subprocess.run(
-        ["git", "branch", "--show-current"],
+    remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
+    result = subprocess.run(
+        ["git", "ls-remote", "--heads", "origin", *remote_refs],
         capture_output=True,
         text=True,
         check=False,
         cwd=ROOT,
     )
-    if current_branch_result.returncode == 0:
-        current_branch = current_branch_result.stdout.strip()
-        if task_id.lower() in current_branch.lower():
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                check=False,
-                cwd=ROOT,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+    matches: list[str] = []
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            fields = line.split()
+            if (
+                len(fields) == 2
+                and fields[1] in remote_refs
+                and (
+                    re.fullmatch(r"[0-9a-fA-F]{40}", fields[0])
+                    or re.fullmatch(r"[0-9a-fA-F]{64}", fields[0])
+                )
+            ):
+                matches.append(fields[0])
+    # Fail closed unless origin returns exactly one valid canonical task ref.
+    # Local HEAD, local task refs, cached origin refs, and old PR heads are not
+    # authoritative active-task review/freeze evidence.
+    if result.returncode == 0 and len(matches) == 1:
+        _TASK_SHA_CACHE[task_id] = (now, matches[0])
+        return matches[0]
+
+    _TASK_SHA_CACHE[task_id] = (now, None)
     return None
+
+
+def resolve_task_checkout_sha(
+    task: dict[str, Any] | str,
+    force_refresh: bool = False,
+    repository_root: Path | None = None,
+) -> str | None:
+    """Resolve active remote task branch SHA or post-merge checkout HEAD for a task.
+
+    Returns:
+    - The remote task branch SHA from origin/task/<id> (via resolve_task_sha) if present.
+    - If origin has no task branch (e.g. deleted after PR auto-merge), checks candidate
+      checkout HEADs (local checkout HEAD, target branch SHA, delivery verified_head) and
+      returns the first candidate that satisfies `is_approved_head_satisfied`.
+    - None if no remote branch exists and no post-merge checkout HEAD satisfies approved_head.
+    """
+    if isinstance(task, str):
+        task_id = task.strip()
+        state = load_state()
+        task_dict = get_task(state, task_id) or {"id": task_id}
+    else:
+        task_dict = task
+        task_id = str(task_dict.get("id") or "").strip()
+
+    if not task_id:
+        return None
+
+    remote_sha = resolve_task_sha(task_id, force_refresh=force_refresh)
+    if remote_sha:
+        return remote_sha
+
+    approved_head = str(task_dict.get("approved_head") or "").strip()
+    if not approved_head:
+        return None
+
+    try:
+        config = load_config()
+        repository_id = task_primary_repository_id(config, task_dict) or "pantheon"
+        repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
+        repo_root = repo_root.resolve(strict=False)
+
+        candidates: list[str] = []
+
+        local_head = run_git_command(["rev-parse", "HEAD"], cwd=repo_root, required=False)
+        if local_head:
+            candidates.append(local_head.strip())
+
+        target_branch = delivery_merge_target_branch(config, repository_id)
+        remotes_output = run_git_command(["remote"], cwd=repo_root, required=False)
+        remote_names = [line.strip() for line in remotes_output.splitlines() if line.strip()]
+        if remote_names:
+            remote = "origin" if "origin" in remote_names else remote_names[0]
+            target_ref = f"{remote}/{target_branch}"
+            run_git_command(["fetch", remote, target_branch], cwd=repo_root, required=False)
+            target_sha = run_git_command(["rev-parse", "--verify", target_ref], cwd=repo_root, required=False)
+            if target_sha:
+                candidates.append(target_sha.strip())
+
+        delivery = task_dict.get("delivery")
+        if isinstance(delivery, dict):
+            v_head = str(delivery.get("verified_head") or "").strip()
+            if v_head:
+                candidates.append(v_head)
+
+        seen = set()
+        unique_candidates: list[str] = []
+        for c in candidates:
+            if c and c not in seen:
+                seen.add(c)
+                unique_candidates.append(c)
+
+        for candidate in unique_candidates:
+            if is_approved_head_satisfied(task_dict, candidate, approved_head, repository_root=repo_root):
+                return candidate
+    except Exception:
+        pass
+
+    return None
+
+
+
+def task_pr_head_and_merge_commit(task_id: str) -> tuple[str | None, str | None]:
+    """Return ``(headRefOid, mergeCommit_oid)`` for the task PR, or ``(None, None)``.
+
+    B22-3: these are two different commits and the distinction has to be explicit.
+    ``headRefOid`` is the branch tip the reviewer stamped; it is immutable once the
+    PR merges, which is what makes it a usable freeze anchor after merge.
+    ``mergeCommit`` is a *new* commit GitHub creates on the target branch, and it
+    has never been reviewed. Finalizing against it would let an unreviewed commit
+    close the task, so it is recorded as delivery evidence only -- never compared
+    against ``approved_head``.
+    """
+    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+        result = subprocess.run(
+            [get_gh_executable(), "pr", "view", branch_name, "--json", "headRefOid,mergeCommit"],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=ROOT,
+        )
+        if result.returncode != 0:
+            continue
+        try:
+            data = json.loads(result.stdout)
+        except Exception:
+            continue
+        if not isinstance(data, dict):
+            continue
+        head_ref_oid = data.get("headRefOid") or None
+        merge_commit = data.get("mergeCommit") or {}
+        merge_oid = merge_commit.get("oid") if isinstance(merge_commit, dict) else None
+        if head_ref_oid or merge_oid:
+            return head_ref_oid, (merge_oid or None)
+    return None, None
 
 
 def get_repository_slug_safe() -> str:
@@ -4196,8 +5588,8 @@ def get_repository_slug_safe() -> str:
     try:
         remote_url = subprocess.check_output(
             ["git", "remote", "get-url", "origin"],
-            stderr=subprocess.DEVNULL,
             text=True,
+            stderr=subprocess.DEVNULL,
             cwd=ROOT,
         ).strip()
         match = re.search(r"github\.com[:/]([^/]+/[^/.]+)(?:\.git)?", remote_url)
@@ -4205,67 +5597,202 @@ def get_repository_slug_safe() -> str:
             return match.group(1)
     except Exception:
         pass
-    return "alfloop-dev/odayplus"  # Fallback
+    return "alfloop-dev/odayplus"
 
 
-def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
-    task_id = task.get("id")
-    if not task_id:
-        return
-
+def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
+    task_id = str(task.get("id") or "")
     sha = resolve_task_sha(task_id)
     if not sha:
-        print(f"Warning: Could not resolve git SHA for task {task_id}. Skipping status emission.", file=sys.stderr)
-        return
+        return None
 
-    repo = get_repository_slug_safe()
+    repo_slug = get_repository_slug_safe()
     context = "task-review-gate"
 
     if state_status == "review_approved":
-        state = "success"
-        description = f"Approved by assigned reviewer {task.get('reviewer', 'Codex')}"
+        approved_head = task.get("approved_head")
+        if not approved_head:
+            # B22: no frozen head means nothing corroborates that this commit is
+            # the reviewed one, so the gate cannot claim success for it.
+            state = "pending"
+            description = "review_approved but no reviewer-approved head is recorded; head restoration or re-review required"
+        elif not is_approved_head_satisfied(task, sha, approved_head):
+            state = "pending"
+            description = f"Branch HEAD ({sha[:8]}) differs from approved head ({approved_head[:8]}); re-review required"
+        else:
+            state = "success"
+            description = f"Approved by assigned reviewer {task.get('reviewer', 'Codex')}"
     elif state_status == "review":
         state = "pending"
         description = f"Pending review by {task.get('reviewer', 'Codex')}"
+    elif state_status == "done":
+        state = "success"
+        description = "Task completed"
     else:
         state = "failure"
         description = f"Review rejected or reopened. Task status is {state_status}"
 
-    print(f"Emitting GitHub status check '{context}'={state} on {repo}@{sha}...")
+    return {
+        "repo_slug": repo_slug,
+        "sha": sha,
+        "state": state,
+        "context": context,
+        "description": description,
+    }
 
+
+def post_task_review_status_payload(payload: dict[str, str]) -> tuple[bool, str]:
     cmd = [
         get_gh_executable(), "api",
         "-X", "POST",
-        f"repos/{repo}/statuses/{sha}",
-        "-F", f"state={state}",
-        "-F", f"context={context}",
-        "-F", f"description={description}"
+        f"repos/{payload['repo_slug']}/statuses/{payload['sha']}",
+        "-F", f"state={payload['state']}",
+        "-F", f"context={payload['context']}",
+        "-F", f"description={payload['description']}",
     ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, cwd=ROOT)
         if result.returncode == 0:
-            print(f"Successfully emitted status check '{context}'={state} to GitHub API.", file=sys.stdout)
-        else:
-            err_msg = f"Failed to emit status check (code {result.returncode}): {result.stderr.strip()}"
-            print(err_msg, file=sys.stderr)
-            if "gh auth login" in result.stderr or "authentication token" in result.stderr or os.environ.get("ALLOW_EMISSION_FAILURE") == "1":
-                print("Warning: Skipping status check emission due to unauthenticated environment.", file=sys.stderr)
-                return
-            raise RuntimeError(err_msg)
+            return True, ""
+        return (
+            False,
+            f"Failed to emit status check (code {result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}",
+        )
     except Exception as exc:
-        err_msg = f"Error during status emission: {exc}"
-        print(err_msg, file=sys.stderr)
-        if not isinstance(exc, RuntimeError):
-            raise RuntimeError(err_msg) from exc
-        raise
+        return False, f"Error during status emission: {exc}"
+
+
+def enqueue_status_check_outbox(
+    task: dict[str, Any],
+    payload: dict[str, str],
+    error: str,
+) -> None:
+    """Durably retain one exact failed payload without duplicate queue growth."""
+    outbox = task.setdefault("status_check_outbox", [])
+    existing = next(
+        (
+            item
+            for item in outbox
+            if isinstance(item, dict)
+            and all(
+                str(item.get(key) or "") == str(payload.get(key) or "")
+                for key in ("repo_slug", "sha", "state", "context", "description")
+            )
+        ),
+        None,
+    )
+    now = iso_now()
+    if existing is not None:
+        existing["last_error"] = error
+        existing["last_attempt_at"] = now
+        existing["attempt_count"] = int(existing.get("attempt_count", 0) or 0) + 1
+        return
+    outbox.append(
+        {
+            **payload,
+            "created_at": now,
+            "last_attempt_at": now,
+            "attempt_count": 1,
+            "last_error": error,
+        }
+    )
+
+
+def reconcile_status_check_outbox(state: dict[str, Any]) -> tuple[int, int]:
+    """Retry exact failed status payloads and remove only confirmed deliveries."""
+    delivered = 0
+    retained = 0
+    for task in state.get("tasks", []):
+        pending = task.get("status_check_outbox")
+        if not isinstance(pending, list) or not pending:
+            continue
+        remaining: list[dict[str, Any]] = []
+        for item in pending:
+            if not isinstance(item, dict):
+                continue
+            payload = {
+                key: str(item.get(key) or "")
+                for key in ("repo_slug", "sha", "state", "context", "description")
+            }
+            if not all(payload.values()):
+                item["last_error"] = "Malformed status-check outbox payload"
+                remaining.append(item)
+                retained += 1
+                continue
+            ok, error = post_task_review_status_payload(payload)
+            if ok:
+                delivered += 1
+                task.setdefault("status_check_delivery_history", []).append(
+                    {
+                        **payload,
+                        "created_at": item.get("created_at"),
+                        "attempt_count": int(item.get("attempt_count", 0) or 0) + 1,
+                        "delivered_at": iso_now(),
+                    }
+                )
+                print(
+                    f"Reconciled status check '{payload['context']}'="
+                    f"{payload['state']} for {payload['sha'][:8]}.",
+                    file=sys.stdout,
+                )
+                continue
+            item["last_error"] = error
+            item["last_attempt_at"] = iso_now()
+            item["attempt_count"] = int(item.get("attempt_count", 0) or 0) + 1
+            remaining.append(item)
+            retained += 1
+        if remaining:
+            task["status_check_outbox"] = remaining
+        else:
+            task.pop("status_check_outbox", None)
+    return delivered, retained
+
+
+def emit_task_review_status_check(task: dict[str, Any], state_status: str) -> None:
+    payload = task_review_status_payload(task, state_status)
+    if payload is None:
+        return
+    ok, error = post_task_review_status_payload(payload)
+    if ok:
+        print(
+            f"Successfully emitted status check '{payload['context']}'="
+            f"{payload['state']} to GitHub API.",
+            file=sys.stdout,
+        )
+        return
+    print(error, file=sys.stderr)
+    enqueue_status_check_outbox(task, payload, error)
+    print(
+        "Warning: Status check emission failed; exact payload recorded for reconciliation.",
+        file=sys.stderr,
+    )
 
 
 def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_after: dict[str, Any], command: str, args: list[str]) -> None:
     before_statuses = {t["id"]: t for t in state_before.get("tasks", []) if "id" in t}
     after_tasks = {t["id"]: t for t in state_after.get("tasks", []) if "id" in t}
 
-    target_task_id = args[0] if (args and command in {"approve", "reopen", "handoff", "progress", "start"}) else None
+    target_task_id = (
+        args[0]
+        if (
+            args
+            and command
+            in {
+                "approve",
+                "reopen",
+                "handoff",
+                "progress",
+                "start",
+                "re_review",
+                "re-review",
+                "restore_approved",
+                "restore_approved_head",
+            }
+        )
+        else None
+    )
 
     for task_id, after_task in after_tasks.items():
         before_task = before_statuses.get(task_id)
@@ -4277,32 +5804,48 @@ def emit_status_checks_for_changed_tasks(state_before: dict[str, Any], state_aft
             emit_task_review_status_check(after_task, after_status)
 
 
+READ_ONLY_COMMANDS = {
+    "prompt": command_prompt,
+    "show": command_show,
+}
+
+MUTATING_COMMANDS = {
+    "assign": command_assign,
+    "start": command_start,
+    "progress": command_progress,
+    "note": command_note,
+    "reopen": command_reopen,
+    "re_review": command_re_review,
+    "re-review": command_re_review,
+    "handoff": command_handoff,
+    "blocker": command_blocker,
+    "retarget_blocker": command_retarget_blocker,
+    "prune_agents": command_prune_agents,
+    "done": command_done,
+    "restore_approved": command_restore_approved,
+    "restore_approved_head": command_restore_approved_head,
+    "supersede": command_supersede,
+    "approve": command_approve,
+    "archive_migrate": command_archive_migrate,
+    "sync": command_sync,
+    "wave": command_wave,
+}
+
+# The one mutating command that records nothing under an agent name: `sync`
+# only recomputes derived views. Every other entry in MUTATING_COMMANDS must
+# read its actor through current_actor_validated() before its first mutation.
+# Anything added here is a deliberate, reviewed exemption, not an oversight —
+# `ActorCommandMutationGuardTests` fails if a command escapes both sets.
+ACTORLESS_MUTATING_COMMANDS = frozenset({"sync"})
+
+
 def main(argv: list[str]) -> int:
     state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
-    read_only_commands = {
-        "prompt": command_prompt,
-        "show": command_show,
-    }
-
-    commands = {
-        "assign": command_assign,
-        "start": command_start,
-        "progress": command_progress,
-        "note": command_note,
-        "reopen": command_reopen,
-        "handoff": command_handoff,
-        "blocker": command_blocker,
-        "done": command_done,
-        "restore_approved": command_restore_approved,
-        "supersede": command_supersede,
-        "approve": command_approve,
-        "archive_migrate": command_archive_migrate,
-        "sync": command_sync,
-        "wave": command_wave,
-    }
+    read_only_commands = READ_ONLY_COMMANDS
+    commands = MUTATING_COMMANDS
 
     if command in read_only_commands:
         read_only_commands[command](state, args)
@@ -4313,13 +5856,13 @@ def main(argv: list[str]) -> int:
 
     state_before = deepcopy(state)
     commands[command](state, args)
+    sync_all(state)
     try:
-        sync_all(state)
-        # Emit status checks for any modified task status
+        reconcile_status_check_outbox(state)
         emit_status_checks_for_changed_tasks(state_before, state, command, args)
-    except Exception:
-        save_state(state_before)
-        raise
+        sync_all(state)
+    except Exception as exc:
+        print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
     return 0
 
 

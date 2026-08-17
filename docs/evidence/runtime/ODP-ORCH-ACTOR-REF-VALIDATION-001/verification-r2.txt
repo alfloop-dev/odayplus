@@ -1,0 +1,27 @@
+# Verification transcript — revision 2 (gate 2 rework)
+# date: 2026-07-29T06:23:03Z
+# note: pytest -q hides the summary line under this repo's plugin set, so the
+#       runs below are unquieted to keep the pass counts visible.
+
+$ python3 -m pytest scripts/test_ai_status.py
+98 passed, 41 subtests passed in 4.46s
+  (was 96 passed at revision 1; +2 new guard tests, and the AI_NAME table grew
+   from 4 commands to all 15 actor-bearing ones — 41 subtests)
+
+$ python3 -m pytest .orchestrator/test_supervisor.py .orchestrator/test_dispatch_policy.py
+249 passed in 1.72s
+
+$ python3 -m pytest scripts/test_ai_status.py -k ActorCommandMutationGuardTests -v
+======================= 5 passed, 93 deselected in 0.30s =======================
+
+$ python3 -m ruff check scripts/ai_status.py scripts/test_ai_status.py
+All checks passed!
+
+$ grep -n 'current_actor(' scripts/ai_status.py    # the unvalidated helper is deleted
+786:    There used to be an unvalidated sibling, `current_actor()`, that merely
+  (only the docstring that records why it was removed; the AST guard test
+   test_no_unvalidated_actor_read_remains fails on any real call site)
+
+$ grep -c 'current_actor_validated()' scripts/ai_status.py
+16
+  15 actor-bearing commands + 1 definition = 16.

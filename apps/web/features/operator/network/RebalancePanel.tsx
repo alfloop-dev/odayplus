@@ -78,7 +78,7 @@ export function RebalancePanel({
       <div className={styles.panelHeader}>
         <div>
           <h3>低效重配 / Rebalance</h3>
-          <p>API-backed AVM job → NetPlan 三案 → Govern approval</p>
+          <p>AVM 服務估值 → NetPlan 三案 → Govern 核准；送審不代表搬遷已執行。</p>
         </div>
         <span>{rows.length} stores</span>
       </div>
@@ -176,8 +176,8 @@ export function RebalancePanel({
 
           {selected.runtimeState ? (
             <div className={styles.rebalanceRuntimeState} data-testid={`rebalance-runtime-${selected.id}`}>
-              <strong>{selected.runtimeState.model} runtime unavailable</strong>
-              <span>retryable · retry after {selected.runtimeState.retryAfterSeconds ?? 300}s</span>
+              <strong>{selected.runtimeState.model} 暫時無法使用</strong>
+              <span>可重試 · {selected.runtimeState.retryAfterSeconds ?? 300} 秒後再試</span>
             </div>
           ) : null}
 
@@ -253,7 +253,7 @@ export function RebalancePanel({
           ) : null}
 
           <section className={styles.rebalanceBoundary} data-testid={`rebalance-boundary-${selected.id}`}>
-            <strong>Execution boundary</strong>
+            <strong>執行邊界 / Execution boundary</strong>
             <span>
               relocationExecuted={String(Boolean(selected.relocationExecuted))} ·{" "}
               {selected.executionBoundary ?? "Govern approval required before relocation execution."}

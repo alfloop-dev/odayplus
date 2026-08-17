@@ -11,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 CORRELATION_ID = "corr-product-e2e-seed-001"
+TENANT_ID = "tenant-a"
 
 
 def main() -> int:
@@ -39,6 +40,8 @@ def main() -> int:
 
     source_fixture = get_json(f"{source_stub_url}/external/listing_raw_snapshot.valid.json")
     health = get_json(f"{api_url}/platform/health")
+    ingestion_run = seed_tenant_ingestion(api_url)
+    freshness = wait_for_persisted_freshness(api_url)
     avm_case = post_json(
         f"{api_url}/avm/cases",
         {
@@ -155,6 +158,8 @@ def main() -> int:
         "seeded_at": now.isoformat(),
         "api": health,
         "source_fixture_keys": sorted(source_fixture.keys()),
+        "external_freshness": freshness,
+        "external_ingestion_run_id": ingestion_run["run_id"],
         "avm_case_id": avm_case["case_id"],
         "heatzone_job_id": heatzone_job["job_id"],
         "scheduler_job_id": queued_job["job_id"],
@@ -167,6 +172,47 @@ def main() -> int:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
+
+
+def seed_tenant_ingestion(api_url: str) -> dict[str, Any]:
+    """Create deterministic evidence through the tenant-scoped product API."""
+
+    return post_json(
+        f"{api_url}/external-data/ingestion-runs",
+        {
+            "provider_id": "listing.partner_feed",
+            "schedule_id": "product-e2e-seed",
+            "window_start": "2026-06-28T08:00:00Z",
+            "window_end": "2026-06-28T09:00:00Z",
+            "idempotency_key": "product-e2e-external-ingestion-001",
+        },
+    )
+
+
+def wait_for_persisted_freshness(
+    api_url: str, *, timeout_seconds: float = 180
+) -> dict[str, Any]:
+    """Wait until the tenant-scoped ingestion API has persisted its evidence.
+
+    The seed writes an `IngestionRunRecord` through the public API, so
+    `/external-data/freshness` must read durable evidence from that same tenant
+    partition instead of the poc fixture fallback that only applies while the
+    partition is empty.
+    """
+    deadline = time.time() + timeout_seconds
+    last: dict[str, Any] | None = None
+    while True:
+        last = get_json(f"{api_url}/external-data/freshness")
+        if last.get("availability", {}).get("source") == "persisted":
+            return last
+        if time.time() >= deadline:
+            break
+        time.sleep(2)
+    raise RuntimeError(
+        "timed out waiting for persisted external-data freshness: the tenant-scoped "
+        "ingestion API wrote no readable run. Last response: "
+        + json.dumps(last, sort_keys=True)
+    )
 
 
 def wait_for_url(url: str, *, timeout_seconds: int = 120) -> None:
@@ -202,6 +248,7 @@ def get_json(url: str) -> dict[str, Any]:
         headers={
             "x-correlation-id": CORRELATION_ID,
             "x-subject-id": "product-e2e-seed",
+            "x-tenant-id": TENANT_ID,
             "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
         }
     )
@@ -217,6 +264,7 @@ def post_json(url: str, payload: dict[str, Any]) -> dict[str, Any]:
             "content-type": "application/json",
             "x-correlation-id": CORRELATION_ID,
             "x-subject-id": "product-e2e-seed",
+            "x-tenant-id": TENANT_ID,
             "x-roles": "finance_legal,expansion_user,operations_manager,regional_supervisor,site_reviewer,data_owner,auditor,executive",
         },
         method="POST",

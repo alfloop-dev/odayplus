@@ -1,0 +1,619 @@
+{
+  "schema_version": "1.1.0",
+  "packet_id": "ODP-PLAN-EXECUTION-CONTROL-PACK-001",
+  "program_id": "ODP-PLAN-GAP-CLOSEOUT-2026-07-30",
+  "as_of": "2026-07-31T07:10:00Z",
+  "source_plan": {
+    "provider": "google_drive",
+    "document_id": "1RH1XOd7_3VEUIdSEwnNeSXDg379gwZJROvj8EsuAxhU",
+    "chapters": "69-81"
+  },
+  "source_documents": [
+    "docs/evidence/DEVELOPMENT_PLAN_IMPLEMENTATION_GAP_MATRIX_2026-07-30.md",
+    "docs/evidence/DEVELOPMENT_PLAN_GAP_EXECUTION_TASKS_2026-07-30.md"
+  ],
+  "coverage": {
+    "rtm_rows": 84,
+    "rtm_unique_rows": 84,
+    "governance_tasks": 26,
+    "completed_tasks": 7,
+    "unresolved_tasks": 19,
+    "stage_distribution": [12, 12, 10, 9, 11, 12, 11, 7]
+  },
+  "completed_task_ids": [
+    "ODP-PLAN-CANONICAL-SHELL-LIVE-001",
+    "ODP-PLAN-DEFERRED-OSS-ADR-001",
+    "ODP-PLAN-GAP-ARCHIVE-001",
+    "ODP-PLAN-GATE-REGISTRY-001",
+    "ODP-PLAN-HEATZONE-OUTCOME-001",
+    "ODP-PLAN-LEDGER-NETPLAN-HUMAN-GATE-001",
+    "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001"
+  ],
+  "global_execution_contract": {
+    "scope_freeze": [
+      "Owner must read the complete task packet, source gap rows, dependencies, current task notes, and prior review findings before editing.",
+      "A reopened owner must re-audit every packet criterion; fixing only the latest reviewer example is not a valid handoff.",
+      "Newly discovered requirements must be classified as an omitted requirement, regression, or genuinely new follow-up and recorded before implementation."
+    ],
+    "owner_pre_handoff": [
+      "All packet criteria are marked PASS or evidence-backed NOT_APPLICABLE; UNKNOWN is not handoff-ready.",
+      "Implementation and evidence are committed on the task branch based on current origin/dev.",
+      "Focused, negative/mutation, integration, and touched-scope quality gates pass on the exact tested source revision.",
+      "Evidence records exact source/tree SHA, commands, runner versions, start/end timestamps, exit codes, artifact hashes, and environment identity.",
+      "No unrelated generated files, stale artifacts, fixtures, mocks, synthetic data, or self-authored approvals are included as completion evidence."
+    ],
+    "review": [
+      "Reviewer must be different from owner and independently inspect the exact pushed head in a clean checkout.",
+      "Reviewer replays acceptance and at least one negative/mutation path; owner-reported green output alone is insufficient.",
+      "Any source/config/test change after approval invalidates the approval and requires exact-head re-review."
+    ],
+    "pr_merge_closeout": [
+      "Open or refresh one task-scoped PR only after the complete local batch is handoff-ready.",
+      "Required CI must pass on the exact PR head before merge to dev.",
+      "Only the owner closes the task after merge SHA and required artifacts are archived and read back.",
+      "After closeout, every original packet must resolve from exactly one canonical lifecycle source: active ai-status state or an official terminal archive snapshot.",
+      "A superseded packet is valid only when its non-cyclic replacement chain exists in canonical state and preserves the original execution-packet and gap scope."
+    ],
+    "deployment": [
+      "No task may deploy production merely because its focused tests pass.",
+      "Only ODP-PLAN-LIVE-STAGING-PROOF-001 may perform the planned staging/live deployment workflow, and only after every declared dependency is merged and verified.",
+      "ODP-PLAN-FINAL-GATE-AUDIT-001 and Human/Ops approval remain mandatory for any GO release claim."
+    ],
+    "human_gate": [
+      "Human-gate tasks are not dispatchable to an AI worker as an approver.",
+      "AI may prepare a handoff template and validate a returned receipt, but may not author the approval, source data, UAT result, legal decision, or live operational fact.",
+      "Missing, expired, unverifiable, mismatched, or repository-local self-attested receipts fail closed."
+    ]
+  },
+  "task_packets": [
+    {
+      "task_id": "ODP-PLAN-OSS-LICENSE-GATE-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-007"],
+      "batch_deliverables": [
+        "Generate a license-aware CycloneDX SBOM containing exact component identity, version, purl, supplier, hashes, dependency graph, runtime/dev scope, and resolved license evidence.",
+        "Implement fail-closed allow/deny/review policy, NOTICE and THIRD_PARTY_NOTICES reconciliation, and release/image/source/lock digest attestation with readback.",
+        "Run non-empty lock-derived Python and npm production/dev audits; retain immutable scanner reports and distinguish production from dev-tool findings.",
+        "Integrate a concrete configured authoritative legal-policy readback verifier, or keep every approval-dependent exemption disabled."
+      ],
+      "must_reject": [
+        "Unknown, absent, ambiguous, denied, or review-required license treated as allowed.",
+        "Repository-local self-authored legal receipt or arbitrary callback treated as authority.",
+        "Unfrozen ambient-environment audit, empty dependency inventory, scanner parse failure, or lock export fallback.",
+        "Unhandled high/critical finding, unbound SBOM, mismatched release/source/lock/evidence hash, expired or wrong-scope exemption."
+      ],
+      "evidence": [
+        "SBOM hash and component count",
+        "source/tree, lock, image, and release digests",
+        "scanner command/version/time/exit/report hashes",
+        "authoritative policy principal/role/source-system/readback/signature/policy version and decision",
+        "NOTICE reconciliation report"
+      ],
+      "verification": [
+        "pytest -q tests -k \"sbom or license or security\"",
+        "python3 scripts/security/generate_sbom.py --help",
+        "real frozen production and dev audit smoke",
+        "negative mutations for local lookalike receipts, hash/scope/expiry mismatch, empty inventory, and export failure",
+        "git diff --check"
+      ],
+      "handoff_gate": "All four deliverables and all negative cases pass on one exact pushed head; legal approval itself may remain a separate Human/Ops NO-GO gate."
+    },
+    {
+      "task_id": "ODP-PLAN-OBSERVABILITY-LIVE-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-008"],
+      "batch_deliverables": [
+        "Wire production exporters for API, worker, event/DLQ, model, solver, and business KPI signals.",
+        "Provide dashboards, alert policies/routes, SLO owners, runbooks, and provider readback tied to the exact release.",
+        "Produce a watch-window receipt with independent error/failure and latency/health signals covering the full required window per signal/category.",
+        "Verify a test alert reaches the configured real on-call route without recording secrets."
+      ],
+      "must_reject": [
+        "Pooled timestamps across unrelated signals, single-point or partial-window evidence.",
+        "Negative, non-finite, wrong-unit, out-of-window, wrong-project, or wrong-release metric values.",
+        "Locally fabricated provider payload, missing route, missing SLO owner/runbook, or undelivered alert.",
+        "Healthy claim inferred only from request volume or an incomplete signal set."
+      ],
+      "evidence": [
+        "provider project/resource/metric identities and query response hash",
+        "exact release SHA",
+        "per-signal timestamps, values, units, thresholds, and coverage",
+        "alert route delivery receipt and redacted destination identity",
+        "dashboard/alert/runbook identifiers and owners"
+      ],
+      "verification": [
+        "ruff check shared/observability tests/reliability scripts/deployment",
+        "pytest -q tests -k \"observability or telemetry or alert or dlq\"",
+        "independent pooled-coverage, negative/non-finite, wrong-release/project, route-missing, and receipt-tamper mutations",
+        "git diff --check"
+      ],
+      "handoff_gate": "The full signal inventory and negative matrix pass together; a focused fix for only one metric family is not handoff-ready."
+    },
+    {
+      "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P0-002"],
+      "batch_deliverables": [
+        "Keep the canonical inventory at 16 unique Playwright spec files and 107 expected tests with no stale deleted-spec reference.",
+        "Execute canonical Playwright and required Python integration/security scenarios and bind each registry scenario to an exact normalized test id and raw result.",
+        "Record runner-start source/tree SHA, command, version, start/end, exit code, counts, environment, and artifact hash in each raw artifact and reconcile them in the receipt.",
+        "Allow an evidence-only child commit only when the complete diff from tested source is an explicit evidence allowlist; reject arbitrary ancestor or intervening source/config/test changes.",
+        "Propagate failure from every runner to the shell and release gate."
+      ],
+      "must_reject": [
+        "Hard-coded pass/count/status, registry-presence-only success, substring-only test matching, missing or duplicate scenario result.",
+        "Zero-test/zero-suite, skipped, unexpected, flaky-as-pass, malformed, stale, or mismatched raw result.",
+        "Receipt generated from a later HEAD than the tested source without an evidence-only proof.",
+        "Python runner records failure but exits zero, or shell returns only the Playwright exit status.",
+        "Unrelated regenerated screenshots or artifacts in the task commit."
+      ],
+      "evidence": [
+        "raw Playwright and Pytest artifacts",
+        "tested source/tree SHA and evidence-only diff proof",
+        "exact scenario-to-result bindings",
+        "aggregate and per-runner counts and exit codes",
+        "durable product E2E receipt"
+      ],
+      "verification": [
+        "pytest -q tests/e2e/test_acceptance_coverage.py",
+        "scripts/e2e/run_product_e2e.sh",
+        "python3 scripts/e2e/check_product_go_no_go.py",
+        "mutations for stale SHA, source change after test, zero tests, exact-id mismatch, failed/skipped runner, and tampered artifact hash",
+        "git diff --check"
+      ],
+      "handoff_gate": "One complete real run and all fail-closed mutations must pass on the same tested source; no PR or release claim from a synthetic receipt."
+    },
+    {
+      "task_id": "ODP-PLAN-SITESCORE-OUTCOME-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-002"],
+      "batch_deliverables": [
+        "Build authoritative opening-outcome inventory with true M6/M12 maturity, eligibility, lineage, freshness, and dataset hash.",
+        "Compute population-aligned coverage/calibration metrics only when prediction and outcome evidence is available.",
+        "Generate Gate 2 receipt, model card, benchmark report, and concrete Human/Ops backfill handoff.",
+        "Keep capability governed-disabled until thresholds and authoritative prediction-source dependency are satisfied."
+      ],
+      "must_reject": [
+        "Store age relabeled as M6/M12 outcome, y_pred=y_true, synthetic/fixed-multiplier horizon metrics, or population mismatch.",
+        "Invented validation run, feature/label ids, periods, algorithm, baseline, explainability, privacy/security status, or approval.",
+        "Malformed intervals, non-finite metrics, self-consistent forged receipt, missing lineage, or insufficient maturity treated as ACTIVE."
+      ],
+      "evidence": [
+        "authoritative query/source identity and dataset snapshot hash",
+        "observed/eligible/mature counts and M6/M12 definitions",
+        "prediction/model lineage when available",
+        "metric numerator/denominator populations",
+        "Gate 2 receipt/model card/backfill handoff hashes"
+      ],
+      "verification": [
+        "pytest -q tests/models -k \"sitescore or opening_outcome\"",
+        "ruff check scripts/models models tests/models",
+        "mutations for invented governance fields, fake maturity, fixed-multiplier metrics, malformed intervals, count/hash drift, and forged ACTIVE verdict",
+        "git diff --check"
+      ],
+      "handoff_gate": "Technical fail-closed and handback capability may complete without 200 real outcomes, but no ACTIVE/model-governance claim is permitted without authoritative evidence."
+    },
+    {
+      "task_id": "ODP-PLAN-AVM-OUTCOME-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-003"],
+      "batch_deliverables": [
+        "Build authoritative mature transaction-outcome inventory with >=120 activation threshold, lineage, freshness, and confidential-access classification.",
+        "Join exact model/version predictions to outcomes and compute interval coverage, calibration, and value-band separation on aligned populations.",
+        "Record RBAC/ABAC access and audit evidence without leaking confidential values.",
+        "Generate governed-disabled receipt and concrete backfill handoff when data or controls are insufficient."
+      ],
+      "must_reject": [
+        "Synthetic/fixture/auto-seeded transaction, prediction copied from outcome, immature transaction, duplicate join, or population drift.",
+        "Missing access authority, confidential raw value in evidence, non-finite metric, unbound model/dataset hash, or forged ACTIVE verdict."
+      ],
+      "evidence": [
+        "authoritative transaction source and snapshot hash",
+        "eligibility/maturity query and counts",
+        "model/version/prediction lineage",
+        "coverage/calibration/value-band calculations and populations",
+        "redacted RBAC/audit receipt and backfill handoff"
+      ],
+      "verification": [
+        "pytest -q tests -k \"avm and (outcome or coverage or calibration or confidential)\"",
+        "ruff check changed AVM paths",
+        "mutations for synthetic rows, maturity boundary, prediction/outcome substitution, unauthorized access, hash/count/population drift, and forged activation",
+        "git diff --check"
+      ],
+      "handoff_gate": "All mechanics and fail-closed paths must be complete in one batch; authentic data activation remains a separate Human/Ops gate."
+    },
+    {
+      "task_id": "ODP-PLAN-NETPLAN-ACCEPTANCE-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-006"],
+      "batch_deliverables": [
+        "Validate 100% hard constraints, selected-option feasibility, objective, alternatives, and infeasibility explanation by independently recomputing the solver result.",
+        "Bind scenario, source snapshots, baseline content, solver problem, policy/version, actions/domain, and comparison output to immutable hashes.",
+        "Resolve a fixed authoritative management approval receipt through principal/role/source-system readback; actor strings are not authentication.",
+        "Emit BUSINESS_UAT_UNVERIFIED and GOVERNED_DISABLED until the separate Human/Ops baseline approval exists."
+      ],
+      "must_reject": [
+        "Caller data validated by hashing the same caller data, entity-id-only result matching, forged objective/status/actions, or source_receipt_id=ANY.",
+        "startswith Human/Ops trust, blank approval ref/time, non-UTC/future/expired receipt, wrong principal/source/scope/release/hash.",
+        "Claim of superiority over an unapproved or mismatched baseline."
+      ],
+      "evidence": [
+        "scenario/source/baseline/problem/result hashes",
+        "solver version/status/objective/constraints and recomputation receipt",
+        "alternatives/infeasibility report",
+        "authoritative approval readback when available"
+      ],
+      "verification": [
+        "pytest -q tests -k \"netplan or management_baseline or solver\"",
+        "ruff check changed NetPlan paths",
+        "mutations for actor-string trust, arbitrary receipt id, hash substitution, forged objective/actions/status/feasibility, expiry/time/source/scope mismatch",
+        "git diff --check"
+      ],
+      "handoff_gate": "Technical capability may close while authentic approval is pending, but every output must remain explicitly unverified/governed-disabled."
+    },
+    {
+      "task_id": "ODP-PLAN-ENGINEERING-HARDENING-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P2-ENGINEERING"],
+      "batch_deliverables": [
+        "Close OpenAPI response typing/client drift, CSS/build warnings, bundle regressions, stale documentation, and scoped route/workspace decomposition without behavior drift.",
+        "Resolve all production dependency high/critical findings.",
+        "Resolve dev-tool findings or bind them to a named, scoped, non-expired authoritative risk decision from ODP-PLAN-OSS-LEGAL-POLICY-001.",
+        "Run the complete touched Python/web/API contract and build matrix."
+      ],
+      "must_reject": [
+        "AI-authored waiver, hidden audit scope, --force major upgrade without compatibility proof, suppressed warning, or stale generated client.",
+        "Behavior-changing decomposition, unreviewed route removal, unresolved production high/critical, or unbound dev-tool exception."
+      ],
+      "evidence": [
+        "OpenAPI/client diff report",
+        "build/typecheck/test/bundle outputs",
+        "production and dev audit reports",
+        "authoritative dev-tool decision receipt when required",
+        "behavior parity and decomposition test report"
+      ],
+      "verification": [
+        "ruff check changed Python paths",
+        "pytest -q affected Python/contract suites",
+        "npm run typecheck --workspace=@oday-plus/web",
+        "npm test --workspace=@oday-plus/web",
+        "npm run build --workspace=@oday-plus/web",
+        "production and full dependency audits",
+        "git diff --check"
+      ],
+      "handoff_gate": "Remain blocked while the 13 dev-tool highs lack an authoritative decision; no partial closeout that silently excludes dev scope."
+    },
+    {
+      "task_id": "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P0-004"],
+      "batch_deliverables": [
+        "Bind authoritative history snapshot, PIT-safe eligibility, feature/label contract, training cutoff, and dataset hash.",
+        "Produce model artifact, model card, metrics, environment/image/release hashes, and MLflow registered version/alias readback.",
+        "Execute shadow/canary gates, watch window, rollback candidate selection, and rollback drill with durable receipts.",
+        "Reconcile live serving health and payload to the exact approved model/release."
+      ],
+      "must_reject": [
+        "Fixture/synthetic/research-only data, alias string without remote readback, model card fields inferred without evidence, stale metric/model/dataset pairing.",
+        "Canary/shadow/rollback marked passed from code presence, local mock, wrong release, incomplete watch, or unverified alias."
+      ],
+      "evidence": [
+        "authoritative dataset/feature/label/training hashes and counts",
+        "model artifact/card/metric hashes",
+        "MLflow server/version/alias readback",
+        "image/release/deployment identity",
+        "shadow/canary/watch/rollback receipts"
+      ],
+      "verification": [
+        "pytest -q tests -k \"forecast and (release or registry or alias or canary or rollback)\"",
+        "remote alias and live health readback",
+        "mutations for dataset/model/release mismatch, stale alias, mock provider, incomplete window, and failed rollback",
+        "git diff --check"
+      ],
+      "handoff_gate": "All lifecycle receipts must bind the same model and release; a green training test alone is not release evidence."
+    },
+    {
+      "task_id": "ODP-PLAN-FORECAST-BUSINESS-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-004"],
+      "batch_deliverables": [
+        "Compare the approved forecast model against seasonal-naive and declared baselines on authoritative holdout data.",
+        "Report overall and segment-level accuracy/calibration with minimum sample and fail-closed segment policy.",
+        "Measure four-light alert precision, recall, lead time, root-cause evidence, and operator actionability.",
+        "Bind dashboard thresholds, metric evidence, dataset, and model version to one immutable release candidate."
+      ],
+      "must_reject": [
+        "Cherry-picked segments/horizons, denominator drift, insufficient sample treated as pass, stale baseline, or metric/model/version mismatch.",
+        "Alert quality inferred from configured rules rather than realized labeled outcomes."
+      ],
+      "evidence": [
+        "holdout/baseline/model hashes and evaluation periods",
+        "overall/segment/horizon populations and metrics",
+        "alert labeled outcomes and precision/recall/lead-time calculation",
+        "dashboard/threshold/model binding"
+      ],
+      "verification": [
+        "pytest -q tests -k \"forecast and (baseline or segment or alert or business)\"",
+        "mutations for population/denominator/model/version/period drift and insufficient sample",
+        "git diff --check"
+      ],
+      "handoff_gate": "Every required segment and alert metric is passed or explicitly fail-closed; partial aggregate superiority is insufficient."
+    },
+    {
+      "task_id": "ODP-PLAN-PRICE-ADLIFT-PILOT-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-005"],
+      "batch_deliverables": [
+        "Verify PriceOps hard constraints with zero violations across every pilot decision.",
+        "Run AdLift treatment/control eligibility, pre-trend, overlap, causal estimate, uncertainty, and incremental gross-margin analysis on authoritative pilot data.",
+        "Wire guardrails, alert/watch window, kill switch, rollback, and decision/audit receipts.",
+        "Prepare Finance/Product acceptance evidence for the Human/Ops UAT gate."
+      ],
+      "must_reject": [
+        "Synthetic campaign, outcome leakage, unmatched control, failed pre-trend, hidden hard violation, denominator drift, or revenue substituted for gross margin.",
+        "Kill switch/rollback passed by code presence, AI-authored Finance/Product approval, or incomplete watch window."
+      ],
+      "evidence": [
+        "pilot population and treatment/control lineage",
+        "constraint evaluation and violation count",
+        "pre-trend/overlap/effect/uncertainty/incremental-GM calculations",
+        "guardrail/watch/kill/rollback receipts",
+        "Finance/Product handoff"
+      ],
+      "verification": [
+        "pytest -q tests -k \"priceops or adlift or intervention\"",
+        "mutations for constraint, leakage, pre-trend, matching, denominator, financial metric, watch, kill, and rollback failures",
+        "git diff --check"
+      ],
+      "handoff_gate": "All technical pilot controls and negative cases pass together; formal Finance/Product acceptance remains Human/Ops evidence."
+    },
+    {
+      "task_id": "ODP-PLAN-LIVE-STAGING-PROOF-001",
+      "class": "implementation",
+      "deployment_contract": "staging_live_allowed",
+      "gap_ids": ["GAP-P0-006"],
+      "batch_deliverables": [
+        "Deploy only the exact merged dev release candidate after all declared dependencies are done and read back the deployed image/revision SHA.",
+        "Verify Cloud Run services/jobs, Cloud SQL/PostGIS migrations and data, OIDC/service identity, external providers, Pub/Sub/DLQ, model aliases, and audit chain.",
+        "Execute live canonical E2E, watch window, backup, restore/rollback drill, and post-rollback health.",
+        "Archive redacted requestable provider receipts without credentials or secrets."
+      ],
+      "must_reject": [
+        "Local/mock/fixture/static evidence, wrong project/environment/release, stale revision, unresolved dependency, or partial service inventory.",
+        "Migration/provider/event/model/audit/backup/rollback proof inferred from configuration rather than live readback.",
+        "Deployment with unapproved source changes or unclosed P0/P1."
+      ],
+      "evidence": [
+        "merged dev, image, deployed revision, job and service identities",
+        "database/migration/PostGIS and authoritative data readback",
+        "OIDC/provider/event/DLQ/model/audit receipts",
+        "live E2E and per-signal watch receipt",
+        "backup/restore/rollback and post-rollback health receipt"
+      ],
+      "verification": [
+        "python3 scripts/e2e/check_live_e2e_gate.py",
+        "deployment validators on the exact release",
+        "authenticated non-mock live smoke and canonical E2E",
+        "watch-window and rollback verification",
+        "git diff --check"
+      ],
+      "handoff_gate": "This is the only planned deployment task; do not start until Supervisor proves every dependency is done and the deployment candidate equals merged dev."
+    },
+    {
+      "task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
+      "class": "implementation",
+      "deployment_contract": "forbidden",
+      "gap_ids": ["GAP-P1-002"],
+      "batch_deliverables": [
+        "Join an authoritative prediction/model-registry source to opening outcomes using stable entity, as-of, model version, and horizon keys.",
+        "Record dataset/model/prediction source lineage and immutable receipt hashes.",
+        "Compute only measured M6/M12 horizon calibration/coverage with aligned numerator/denominator populations and explicit malformed interval policy.",
+        "Permit Gate 2 ACTIVE only from verified prediction evidence and satisfied outcome criteria."
+      ],
+      "must_reject": [
+        "y_pred=y_true, fixed multiplier horizon metrics, store age as outcome coverage, missing/unmatched/duplicate prediction, wrong as-of or model version.",
+        "Malformed P10/P50/P90, population mismatch, stale registry alias, or unbound dataset/model/receipt hash."
+      ],
+      "evidence": [
+        "prediction source/query/model registry readback",
+        "entity/as-of/horizon join report",
+        "dataset/model/prediction/receipt hashes",
+        "aligned metric populations and calculations",
+        "Gate 2 activation dependency proof"
+      ],
+      "verification": [
+        "pytest -q tests/models -k \"sitescore and (prediction or calibration or coverage)\"",
+        "mutations for missing/duplicate/stale/wrong-version predictions, y_pred substitution, fixed multiplier, age alias, malformed intervals, and population drift",
+        "git diff --check"
+      ],
+      "handoff_gate": "No ACTIVE path may exist without authoritative prediction readback; outcome availability alone is insufficient."
+    },
+    {
+      "task_id": "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
+      "class": "human_gate",
+      "deployment_contract": "not_applicable",
+      "gap_ids": ["GAP-P1-001-DATA"],
+      "batch_deliverables": [
+        "Provide at least 200 authoritative eligible mature labels through the declared source contract.",
+        "Provide dataset hash, lineage, owner, freshness/cutoff, eligibility query, and readback location."
+      ],
+      "must_reject": [
+        "Synthetic, fixture, auto-seeded, duplicate, immature, ownerless, stale, or unverifiable label.",
+        "AI-authored source receipt or count without authoritative readback."
+      ],
+      "evidence": [
+        "source-system readback",
+        "dataset snapshot hash",
+        "eligibility query and count",
+        "named data owner and freshness/cutoff"
+      ],
+      "verification": [
+        "Reviewer reruns inventory/eligibility readback and hash/count reconciliation against the HeatZone handback contract."
+      ],
+      "handoff_gate": "Human/Ops supplies the data; AI only validates and keeps HeatZone governed-disabled when evidence is absent."
+    },
+    {
+      "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+      "class": "human_gate",
+      "deployment_contract": "not_applicable",
+      "gap_ids": ["GAP-P1-002-DATA"],
+      "batch_deliverables": [
+        "Provide at least 200 authoritative eligible opening outcomes with true M6/M12 maturity fields and stable entity/as-of keys.",
+        "Provide dataset hash, lineage, owner, freshness/cutoff, eligibility query, and readback location."
+      ],
+      "must_reject": [
+        "Store age substituted for outcome, synthetic/fixture/auto-seeded/duplicate/immature row, or missing M6/M12 definition.",
+        "AI-authored source receipt or count without authoritative readback."
+      ],
+      "evidence": [
+        "source-system readback",
+        "dataset snapshot hash",
+        "M6/M12 maturity and eligibility query/count",
+        "named data owner and freshness/cutoff"
+      ],
+      "verification": [
+        "Reviewer reruns outcome inventory, maturity boundaries, deduplication, and hash/count reconciliation against the SiteScore handback contract."
+      ],
+      "handoff_gate": "Human/Ops supplies outcomes; AI only validates and keeps SiteScore governed-disabled when evidence is absent."
+    },
+    {
+      "task_id": "ODP-PLAN-AVM-OUTCOME-BACKFILL-001",
+      "class": "human_gate",
+      "deployment_contract": "not_applicable",
+      "gap_ids": ["GAP-P1-003-DATA"],
+      "batch_deliverables": [
+        "Provide at least 120 authoritative eligible mature transaction outcomes with stable prediction join keys.",
+        "Provide dataset hash, lineage, owner, freshness/cutoff, confidential classification, access policy, and readback location."
+      ],
+      "must_reject": [
+        "Synthetic/fixture/auto-seeded/duplicate/immature transaction, missing join key, or confidential data exposed in evidence.",
+        "AI-authored source/access receipt or count without authoritative readback."
+      ],
+      "evidence": [
+        "source-system and access-control readback",
+        "redacted dataset snapshot hash",
+        "maturity/eligibility query and count",
+        "named data owner, classification, and freshness/cutoff"
+      ],
+      "verification": [
+        "Reviewer reruns redacted inventory, maturity/dedup/join-key checks, RBAC audit, and hash/count reconciliation against the AVM handback contract."
+      ],
+      "handoff_gate": "Human/Ops supplies data/access authority; AI only validates and keeps AVM governed-disabled when evidence is absent."
+    },
+    {
+      "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+      "class": "human_gate",
+      "deployment_contract": "not_applicable",
+      "gap_ids": ["GAP-P1-007-LEGAL"],
+      "batch_deliverables": [
+        "Named Legal/Security/Risk owner decides license allow/deny/review policy, LGPL handling, exception format, scope, and expiry/review cadence.",
+        "Provide authoritative signed/readback receipt bound to policy name/version/hash, exact release/source/SBOM/lock/evidence hashes, principal id/role, source system, decision, issue/review/expiry, and canonical receipt integrity."
+      ],
+      "must_reject": [
+        "AI or repository author as approver, role text without authenticated principal, local JSON without external/signed readback, missing/mismatched hashes/scope/release, or expired decision.",
+        "Documentation handoff or PR treated as legal approval."
+      ],
+      "evidence": [
+        "authoritative policy-system readback",
+        "principal/role and decision",
+        "policy/version/hash and bound artifact hashes",
+        "issued/reviewed/expires timestamps",
+        "canonical receipt hash/signature"
+      ],
+      "verification": [
+        "Reviewer validates the receipt through the configured authoritative verifier and replays mismatch/expiry/scope/release/hash negative cases."
+      ],
+      "handoff_gate": "PR #532 is only the decision template; release remains NO-GO until Human/Ops returns a valid receipt."
+    },
+    {
+      "task_id": "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001",
+      "class": "human_gate",
+      "deployment_contract": "not_applicable",
+      "gap_ids": ["GAP-P1-006-BUSINESS"],
+      "batch_deliverables": [
+        "Named accountable management owner approves immutable baseline actions, entity/scenario domain, policy/constraints/objective/risk penalty, and source snapshots.",
+        "Provide authoritative readback receipt bound to principal/role, active decision, issue/expiry, approval reference, exact scope/release, baseline content hash, and solver problem hash."
+      ],
+      "must_reject": [
+        "AI-authored approval, actor string as authentication, arbitrary receipt id, mutable caller baseline, missing/expired/non-UTC receipt, or hash/scope/release mismatch."
+      ],
+      "evidence": [
+        "management approval-system readback",
+        "principal/role and active decision",
+        "baseline/problem/source hashes",
+        "policy/domain/scope/release",
+        "issued/expires and canonical receipt integrity"
+      ],
+      "verification": [
+        "Reviewer resolves the authoritative receipt and recomputes baseline/problem/source hashes; actor, id, time, scope, release, and hash mutation cases must reject."
+      ],
+      "handoff_gate": "No AI worker may satisfy this task; NetPlan remains BUSINESS_UAT_UNVERIFIED until Human/Ops evidence passes."
+    },
+    {
+      "task_id": "ODP-PLAN-UAT-SIGNOFF-001",
+      "class": "human_gate",
+      "deployment_contract": "not_applicable",
+      "gap_ids": ["GAP-P0-005"],
+      "batch_deliverables": [
+        "Run role-specific UAT for Admin, Ops, Expansion, Analyst, Finance, and Franchisee on the exact staging release.",
+        "Record scenario ids, tester principal/role, environment/release, timestamps, results, defects, evidence, and formal signoff.",
+        "Close every P0/P1 defect or provide named risk acceptance with owner, scope, expiry, and remediation date."
+      ],
+      "must_reject": [
+        "AI-executed result as human signoff, local/mock environment, wrong release, missing role/scenario, unsigned result, hidden defect, or generic approval string.",
+        "NetPlan superiority without its separate authoritative baseline approval."
+      ],
+      "evidence": [
+        "authenticated tester and role",
+        "exact staging release/environment",
+        "scenario-level results and artifacts",
+        "defect ledger and dispositions",
+        "formal signoff/readback"
+      ],
+      "verification": [
+        "Human/Ops reviewer reconciles every planned role/scenario to an authenticated result and checks zero unresolved P0/P1 or valid bounded risk acceptance."
+      ],
+      "handoff_gate": "Only Human/Ops may approve; all implementation and NetPlan approval dependencies must be satisfied first."
+    },
+    {
+      "task_id": "ODP-PLAN-FINAL-GATE-AUDIT-001",
+      "class": "human_gate",
+      "deployment_contract": "not_applicable",
+      "gap_ids": ["FINAL-GATE"],
+      "batch_deliverables": [
+        "Re-run all original Stage 0-7 and Gate 0-6 checks against current merged dev and deployed release.",
+        "For every one of 84 RTM rows record verdict, merged SHA, deployed SHA, evidence URI/hash, owner, reviewer, date, and blocker if not passed.",
+        "Reconcile all 26 governance tasks, authentic data/legal/business/UAT gates, production proof, and exact-SHA chain.",
+        "Obtain formal Human/Ops release decision; otherwise emit the unique remaining blocker list and retain NO-GO."
+      ],
+      "must_reject": [
+        "Missing RTM row, duplicate row, indirect/narrow evidence, owner self-review, local/mock proof, stale SHA, unavailable receipt, unresolved P0/P1, or AI-authored final approval.",
+        "GO inferred from absence of failures rather than positive requirement-by-requirement proof."
+      ],
+      "evidence": [
+        "84-row final RTM registry",
+        "26-task archive/merge/review records",
+        "merged/source/image/deployed SHA chain",
+        "requestable production, model, security, observability, rollback, data, legal, business, and UAT receipts",
+        "Human/Ops release decision"
+      ],
+      "verification": [
+        "python3 scripts/e2e/check_product_go_no_go.py",
+        "python3 scripts/e2e/check_live_e2e_gate.py",
+        "complete RTM uniqueness/coverage and exact-SHA audit",
+        "independent Human/Ops readback of every required gate"
+      ],
+      "handoff_gate": "GO is valid only when every requirement is positively proven; otherwise final output is NO-GO plus the exact remaining blockers."
+    }
+  ]
+}

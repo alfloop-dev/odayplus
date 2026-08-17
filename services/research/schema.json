@@ -1,0 +1,239 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oday.plus/schemas/research/signal-envelope/1.0.0",
+  "title": "Pantheon research signal envelope",
+  "description": "Canonical producer-to-worker contract for signal_version 1.x. Consumers must accept additive payload fields, but reject unknown envelope fields and unsupported major versions.",
+  "type": "object",
+  "required": [
+    "signal_id",
+    "signal_version",
+    "signal_type",
+    "domain",
+    "intent",
+    "priority",
+    "subject",
+    "tenant_id",
+    "idempotency_key",
+    "produced_at",
+    "effective_at",
+    "expires_at",
+    "producer",
+    "trace",
+    "payload"
+  ],
+  "properties": {
+    "signal_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "signal_version": {
+      "type": "string",
+      "pattern": "^1\\.[0-9]+\\.[0-9]+$"
+    },
+    "signal_type": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*\\.v1$"
+    },
+    "domain": {
+      "enum": [
+        "sitescore",
+        "forecast",
+        "intervention",
+        "pricing",
+        "adlift",
+        "valuation",
+        "netplan",
+        "model_release"
+      ]
+    },
+    "intent": {
+      "enum": [
+        "score_requested",
+        "decision_recommended",
+        "execution_requested",
+        "rollback_requested",
+        "monitoring_alert",
+        "model_release_requested"
+      ]
+    },
+    "priority": {
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "urgent"
+      ]
+    },
+    "subject": {
+      "$ref": "#/$defs/subject"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "produced_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "effective_at": {
+      "$ref": "#/$defs/nullableTimestamp"
+    },
+    "expires_at": {
+      "$ref": "#/$defs/nullableTimestamp"
+    },
+    "producer": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace": {
+      "$ref": "#/$defs/trace"
+    },
+    "payload": {
+      "$ref": "#/$defs/payload"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "nullableTimestamp": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/timestamp"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "subject": {
+      "type": "object",
+      "required": [
+        "entity_type",
+        "entity_id"
+      ],
+      "properties": {
+        "entity_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entity_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "trace": {
+      "type": "object",
+      "required": [
+        "correlation_id"
+      ],
+      "properties": {
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "causation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_event_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "decision": {
+      "type": "object",
+      "properties": {
+        "decision_id": { "type": "string" },
+        "policy_version": { "type": "string" },
+        "actor_id": { "type": "string" },
+        "approved_at": { "$ref": "#/$defs/timestamp" },
+        "decision_reason": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "evidence": {
+      "type": "object",
+      "properties": {
+        "model_name": { "type": "string" },
+        "model_version": { "type": "string" },
+        "model_alias": { "type": "string" },
+        "feature_view_version": { "type": "string" },
+        "dataset_snapshot_id": { "type": "string" },
+        "feature_snapshot_time": { "$ref": "#/$defs/timestamp" },
+        "prediction_origin_time": { "$ref": "#/$defs/timestamp" },
+        "prediction_horizon": { "type": "string" },
+        "input_hash": { "type": "string" },
+        "output_hash": { "type": "string" },
+        "evidence_level": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "metric": {
+      "type": [
+        "number",
+        "string",
+        "null"
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "recommended_action": { "type": "string" },
+        "recommendation_summary": { "type": "string" },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "score": { "type": "number" },
+        "risk_flags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "constraints": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/metric"
+          }
+        },
+        "decision": { "$ref": "#/$defs/decision" },
+        "evidence": { "$ref": "#/$defs/evidence" },
+        "details": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

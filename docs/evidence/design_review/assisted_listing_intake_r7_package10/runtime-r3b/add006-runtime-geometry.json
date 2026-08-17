@@ -1,0 +1,177 @@
+{
+  "capturedIntakeId": "IN-3001",
+  "measurements": [
+    {
+      "label": "operator-1440",
+      "screenshot": "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1440.png",
+      "intakeId": "IN-3001",
+      "topbarHeight": 67,
+      "detailTop": 126,
+      "detailWidth": 1160,
+      "surfacesBeforeDetail": [],
+      "sourceCardsBelowDetail": true,
+      "listingRadarBelowDetail": true,
+      "viewportWidth": 1440,
+      "documentScrollWidth": 1440,
+      "horizontalOverflow": false,
+      "lineageTable": {
+        "tag": "TABLE",
+        "width": 1118,
+        "cellDisplays": [
+          "table-cell"
+        ],
+        "minCellWidth": 262,
+        "maxCellWidth": 285,
+        "nativeSemantics": true
+      },
+      "compareTable": {
+        "tag": "TABLE",
+        "width": 1118,
+        "cellDisplays": [
+          "table-cell"
+        ],
+        "minCellWidth": 166,
+        "maxCellWidth": 476,
+        "nativeSemantics": true
+      },
+      "compareVisible": true,
+      "desktopRequiredVisible": false,
+      "matchOutcome": "POSSIBLE_MATCH",
+      "retiredSurfaces": {
+        "detailTabs": false,
+        "stateMatrixLauncher": false,
+        "tabPromotion": false,
+        "inboxStillMounted": false
+      }
+    },
+    {
+      "label": "operator-390",
+      "screenshot": "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-390.png",
+      "intakeId": "IN-3001",
+      "topbarHeight": 278,
+      "detailTop": 356.14,
+      "detailWidth": 350,
+      "surfacesBeforeDetail": [],
+      "sourceCardsBelowDetail": true,
+      "listingRadarBelowDetail": true,
+      "viewportWidth": 390,
+      "documentScrollWidth": 390,
+      "horizontalOverflow": false,
+      "lineageTable": {
+        "tag": "TABLE",
+        "width": 328,
+        "cellDisplays": [
+          "block"
+        ],
+        "minCellWidth": 328,
+        "maxCellWidth": 328,
+        "nativeSemantics": true
+      },
+      "compareTable": {
+        "tag": "TABLE",
+        "width": 0,
+        "cellDisplays": [
+          "table-cell"
+        ],
+        "minCellWidth": 0,
+        "maxCellWidth": 0,
+        "nativeSemantics": true
+      },
+      "compareVisible": false,
+      "desktopRequiredVisible": true,
+      "matchOutcome": "POSSIBLE_MATCH",
+      "retiredSurfaces": {
+        "detailTabs": false,
+        "stateMatrixLauncher": false,
+        "tabPromotion": false,
+        "inboxStillMounted": false
+      }
+    },
+    {
+      "label": "operator-1024",
+      "screenshot": "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1024.png",
+      "intakeId": "IN-3001",
+      "topbarHeight": 109,
+      "detailTop": 168,
+      "detailWidth": 984,
+      "surfacesBeforeDetail": [],
+      "sourceCardsBelowDetail": true,
+      "listingRadarBelowDetail": true,
+      "viewportWidth": 1024,
+      "documentScrollWidth": 1024,
+      "horizontalOverflow": false,
+      "lineageTable": {
+        "tag": "TABLE",
+        "width": 942,
+        "cellDisplays": [
+          "table-cell"
+        ],
+        "minCellWidth": 223,
+        "maxCellWidth": 240,
+        "nativeSemantics": true
+      },
+      "compareTable": {
+        "tag": "TABLE",
+        "width": 942,
+        "cellDisplays": [
+          "table-cell"
+        ],
+        "minCellWidth": 166,
+        "maxCellWidth": 388,
+        "nativeSemantics": true
+      },
+      "compareVisible": true,
+      "desktopRequiredVisible": false,
+      "matchOutcome": "POSSIBLE_MATCH",
+      "retiredSurfaces": {
+        "detailTabs": false,
+        "stateMatrixLauncher": false,
+        "tabPromotion": false,
+        "inboxStillMounted": false
+      }
+    },
+    {
+      "label": "direct-1440",
+      "screenshot": "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/direct-detail-1440.png",
+      "intakeId": "IN-3001",
+      "topbarHeight": 57,
+      "detailTop": 116,
+      "detailWidth": 1160,
+      "surfacesBeforeDetail": [],
+      "sourceCardsBelowDetail": true,
+      "listingRadarBelowDetail": true,
+      "viewportWidth": 1440,
+      "documentScrollWidth": 1440,
+      "horizontalOverflow": false,
+      "lineageTable": {
+        "tag": "TABLE",
+        "width": 1118,
+        "cellDisplays": [
+          "table-cell"
+        ],
+        "minCellWidth": 262,
+        "maxCellWidth": 285,
+        "nativeSemantics": true
+      },
+      "compareTable": {
+        "tag": "TABLE",
+        "width": 1118,
+        "cellDisplays": [
+          "table-cell"
+        ],
+        "minCellWidth": 166,
+        "maxCellWidth": 476,
+        "nativeSemantics": true
+      },
+      "compareVisible": true,
+      "desktopRequiredVisible": false,
+      "matchOutcome": "POSSIBLE_MATCH",
+      "retiredSurfaces": {
+        "detailTabs": false,
+        "stateMatrixLauncher": false,
+        "tabPromotion": false,
+        "inboxStillMounted": false
+      }
+    }
+  ]
+}

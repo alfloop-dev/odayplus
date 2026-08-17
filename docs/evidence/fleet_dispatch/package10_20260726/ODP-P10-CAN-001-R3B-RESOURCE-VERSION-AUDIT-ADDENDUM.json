@@ -1,0 +1,72 @@
+{
+  "schema": "oday-plus.package10-wave-addendum.v1",
+  "addendum_id": "ODP-P10-CAN-001-R3B-ADD-005",
+  "parent_task": "ODP-P10-CAN-001-R3B",
+  "status": "ready_for_pickup",
+  "prepared_at": "2026-07-26",
+  "trigger": "coordinator ADD-004 code and backend-contract review",
+  "program_status": "no_go",
+  "findings": [
+    {
+      "id": "assignment_if_match_uses_intake_version",
+      "severity": "critical",
+      "evidence": "claim and transfer send selected.version although the backend compares the assignment resource version"
+    },
+    {
+      "id": "sla_if_match_uses_intake_version",
+      "severity": "critical",
+      "evidence": "pause and resume send selected.version although the backend compares the SLA resource version"
+    },
+    {
+      "id": "resource_versions_absent",
+      "severity": "high",
+      "evidence": "the legacy AssistedIntake contract does not guarantee assignmentVersion or slaVersion, so controls must fail closed"
+    },
+    {
+      "id": "raw_audit_metadata_disclosure",
+      "severity": "critical",
+      "evidence": "the UI raw-renders arbitrary audit metadata that the backend intake masking path does not classify or mask"
+    },
+    {
+      "id": "sla_data_receipt_conflation",
+      "severity": "medium",
+      "evidence": "audit mode labels SLA data unavailable even when the record has authoritative SLA read-model state"
+    },
+    {
+      "id": "hydrated_job_badge_contrast",
+      "severity": "high",
+      "evidence": "white text on #cbd5e1 is below WCAG contrast and is outside the current clean-state axe fixture"
+    }
+  ],
+  "required_remediation": [
+    "use only authoritative assignment resource versions for claim and transfer If-Match",
+    "use only authoritative SLA resource versions for pause and resume If-Match",
+    "fail all assignment and SLA actions closed when the resource-specific version is unavailable",
+    "never raw-render arbitrary audit metadata or beforeAfter values",
+    "separate legacy SLA read-model state from durable SLA receipt availability",
+    "fix hydrated job status contrast and test the populated state"
+  ],
+  "additional_writable_paths": [],
+  "forbidden": [
+    "further playwright.config.ts changes",
+    "any further E2E change",
+    "apps/api/**",
+    "packages/openapi-client/**",
+    "auth middleware permission or source-policy changes",
+    "archives task ledgers or package manager files",
+    "external worktrees",
+    "commit push rebase merge deploy or spawn"
+  ],
+  "required_gates": [
+    "resource-version divergence and fail-closed production-container tests",
+    "safe audit-envelope and SLA read-model versus receipt tests",
+    "hydrated job WCAG contrast coverage",
+    "focused and full web unit suites",
+    "web and root typecheck",
+    "root build",
+    "complete six-test canonical a11y spec",
+    "exact scope E2E scope and static scans",
+    "git diff --check"
+  ],
+  "ack_requirement": "record ADD-005 and remain no_go_pending_coordinator_visual_review"
+}

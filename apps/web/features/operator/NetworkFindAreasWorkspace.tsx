@@ -1,7 +1,8 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   CANDIDATE_FIXTURES,
   HEAT_ZONE_FIXTURES,
@@ -38,6 +39,10 @@ import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import { RebalancePanel } from "./network/RebalancePanel";
+import {
+  buildNetworkTabHref,
+  parseNetworkTabIndex,
+} from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
 import type { NetworkScoringSnapshot } from "./network/networkScoringTypes";
 import type {
@@ -53,8 +58,12 @@ import {
   type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
 } from "./networkFindAreasViewModel";
-import { HeatZoneMap } from "../map/HeatZoneMap";
-import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
+import { HeatZoneMap } from "./network/HeatZoneMap";
+import type {
+  CandidateSite as MapCandidateSite,
+  HeatZone as MapHeatZone,
+  Listing as MapListing,
+} from "./network/mapTypes";
 
 export type NetworkFindAreasWorkspaceCallbacks = {
   onSelectHeatZone?: (heatZone: OperatorHeatZone) => void;
@@ -74,6 +83,7 @@ export type NetworkFindAreasWorkspaceProps = {
   rebalanceStores?: RebalanceStore[];
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
+  initialTabId?: string;
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -105,6 +115,13 @@ const networkTabs = [
   "審核 / Review",
   "低效重配 / Rebalance",
 ] as const;
+
+const EMPTY_CANDIDATES: Candidate[] = [];
+const EMPTY_HEAT_ZONES: OperatorHeatZone[] = [];
+const EMPTY_LISTINGS: Listing[] = [];
+const EMPTY_LISTING_SOURCES: ListingSource[] = [];
+const EMPTY_REBALANCE_STORES: RebalanceStore[] = [];
+const EMPTY_SITE_REVIEWS: SiteReview[] = [];
 
 type NetworkListingDetail = Listing & {
   archivedReason?: string;
@@ -147,6 +164,52 @@ type NetworkRebalanceSnapshot = {
   };
   correlationId?: string;
 };
+
+export function resolveNetworkDataUnavailableState(
+  loadStates: readonly OperatorDataAvailability[],
+): Exclude<OperatorDataAvailability, "ready" | "fixture"> | null {
+  if (loadStates.includes("error")) return "error";
+  if (loadStates.includes("seed") || loadStates.includes("fixture")) return "seed";
+  if (loadStates.includes("empty")) return "empty";
+  if (loadStates.includes("loading")) return "loading";
+  return null;
+}
+
+export function resolveNetworkTabGateState({
+  activeTab,
+  bindingLoadStates,
+  fixturesAllowed,
+  networkLoadState,
+  rebalanceLoadState,
+  reviewsLoadState,
+  scoringLoadState,
+}: {
+  activeTab: number;
+  bindingLoadStates: readonly OperatorDataAvailability[];
+  fixturesAllowed: boolean;
+  networkLoadState: OperatorDataAvailability;
+  rebalanceLoadState: OperatorDataAvailability;
+  reviewsLoadState: OperatorDataAvailability;
+  scoringLoadState: OperatorDataAvailability;
+}): Exclude<OperatorDataAvailability, "ready" | "fixture"> | null {
+  if (fixturesAllowed || activeTab === 1) return null;
+  if (activeTab === 0) {
+    return resolveNetworkDataUnavailableState([
+      ...bindingLoadStates,
+      networkLoadState,
+    ]);
+  }
+  if (activeTab >= 2 && activeTab <= 4) {
+    return resolveNetworkDataUnavailableState([scoringLoadState]);
+  }
+  if (activeTab === 5) {
+    return resolveNetworkDataUnavailableState([reviewsLoadState]);
+  }
+  if (activeTab === 6) {
+    return resolveNetworkDataUnavailableState([rebalanceLoadState]);
+  }
+  return null;
+}
 
 export function inspectNetworkListingsSnapshot(
   snapshot: NetworkListingsSnapshot | null,
@@ -400,12 +463,36 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
   ];
 }
 
+/**
+ * True when the canonical intake detail owns the page, on either entry point:
+ * the Operator query context (`selected=<intakeId>` plus a detail dialog) or
+ * the durable `/intake/<intakeId>` route. `fix`, `decide` and `assignmentSla`
+ * are included because `AssistedIntakeSection` keeps the full-page detail
+ * mounted underneath those confirmation dialogs, and it must sit in the same
+ * canonical position there (ADD-006 §3.1).
+ */
+export function isNetworkIntakeDetailRoute(
+  pathname: string | null | undefined,
+  searchParams: Pick<URLSearchParams, "get">,
+): boolean {
+  if (/^\/intake\/[^/]+$/.test(pathname ?? "")) return true;
+  if (!searchParams.get("selected")) return false;
+  const dialog = searchParams.get("dialog");
+  return (
+    dialog === "detail" ||
+    dialog === "fix" ||
+    dialog === "decide" ||
+    dialog === "assignmentSla"
+  );
+}
+
 export function NetworkFindAreasWorkspace({
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   callbacks,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
+  initialTabId,
   listings: listingsInput,
   listingSources: listingSourcesInput,
   rebalanceStores: rebalanceStoresInput,
@@ -415,13 +502,16 @@ export function NetworkFindAreasWorkspace({
   liveHeatZones,
   liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
-  const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : []);
-  const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : []);
-  const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : []);
-  const listingSources = listingSourcesInput ?? (fixturesAllowed ? LISTING_SOURCE_FIXTURES : []);
-  const rebalanceStores = rebalanceStoresInput ?? (fixturesAllowed ? REBALANCE_STORE_FIXTURES : []);
-  const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : []);
+  const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
+  const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
+  const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
+  const listingSources = listingSourcesInput ?? (fixturesAllowed ? LISTING_SOURCE_FIXTURES : EMPTY_LISTING_SOURCES);
+  const rebalanceStores = rebalanceStoresInput ?? (fixturesAllowed ? REBALANCE_STORE_FIXTURES : EMPTY_REBALANCE_STORES);
+  const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : EMPTY_SITE_REVIEWS);
   const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
   const [localSelectedId, setLocalSelectedId] = useState(
     selectedHeatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
@@ -430,7 +520,25 @@ export function NetworkFindAreasWorkspace({
   const [localTrackedIds, setLocalTrackedIds] = useState(
     () => new Set(trackedHeatZoneIds ?? (fixturesAllowed ? ["HZ-01"] : [])),
   );
-  const [activeTab, setActiveTab] = useState(0);
+  const intakeDetailOpen = isNetworkIntakeDetailRoute(pathname, searchParams);
+  const urlTab = searchParams.get("tab")
+    ? parseNetworkTabIndex(searchParams)
+    : parseNetworkTabIndex(`tab=${initialTabId ?? ""}`);
+  // A Network tab click has to survive the console's initial preference
+  // hydration, shell bootstrap and URL hydration. While any of those are still
+  // in flight the console keeps re-publishing the server-rendered
+  // `initialTabId`, and a tab selection that only existed in the pushed URL was
+  // silently dropped — the Listing Radar click was lost and Find Areas stayed
+  // on screen. The selection is therefore committed to workspace state at click
+  // time and stays authoritative until the URL reports a different tab, at
+  // which point the URL (deep link, back/forward) takes over again.
+  const [tabOverride, setTabOverride] = useState<{ from: number; requested: number } | null>(null);
+  const overrideApplies = tabOverride !== null && tabOverride.from === urlTab;
+  const activeTab = overrideApplies ? tabOverride.requested : urlTab;
+
+  useEffect(() => {
+    setTabOverride((current) => (current !== null && current.from !== urlTab ? null : current));
+  }, [urlTab]);
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(
@@ -457,6 +565,17 @@ export function NetworkFindAreasWorkspace({
   );
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const changeActiveTab = useCallback((tabIndex: number) => {
+    setTabOverride({ from: urlTab, requested: tabIndex });
+    const href = buildNetworkTabHref(
+      pathname,
+      tabIndex,
+      searchParams,
+      typeof window === "undefined" ? "" : window.location.hash,
+    );
+    router.push(href, { scroll: false });
+  }, [pathname, router, searchParams, urlTab]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
@@ -886,7 +1005,7 @@ export function NetworkFindAreasWorkspace({
   function sourceListings() {
     if (selectedZone) {
       callbacks?.onSourceListings?.(selectedZone.zone);
-      setActiveTab(1);
+      changeActiveTab(1);
     }
   }
 
@@ -948,7 +1067,7 @@ export function NetworkFindAreasWorkspace({
   async function convertListing(listingId: string) {
     const payload = await postNetworkListingAction(listingId, "convert", {});
     if (payload) {
-      setActiveTab(2);
+      changeActiveTab(2);
     }
   }
 
@@ -1039,31 +1158,74 @@ export function NetworkFindAreasWorkspace({
       return "seed";
     },
   );
-  const requiredLoadStates = [
-    ...bindingLoadStates,
+  const activeTabGateState = resolveNetworkTabGateState({
+    activeTab,
+    bindingLoadStates,
+    fixturesAllowed,
     networkLoadState,
-    scoringLoadState,
     rebalanceLoadState,
     reviewsLoadState,
-  ];
-  const unavailableNetworkState: Exclude<OperatorDataAvailability, "ready" | "fixture"> | null =
-    requiredLoadStates.includes("error")
-      ? "error"
-      : requiredLoadStates.includes("seed") || requiredLoadStates.includes("fixture")
-        ? "seed"
-        : requiredLoadStates.includes("empty")
-          ? "empty"
-          : requiredLoadStates.includes("loading")
-            ? "loading"
-            : null;
+    scoringLoadState,
+  });
+  const activeTabGateDetail =
+    activeTab === 0
+      ? networkApiError
+      : activeTab === 6
+        ? rebalanceApiError
+        : null;
 
-  if (!fixturesAllowed && unavailableNetworkState) {
+  const listingRadarPanel = (
+    <ListingRadarPanel
+      activeRoleId={activeRoleId}
+      busyListingId={busyListingId}
+      intakeDetailOpen={intakeDetailOpen}
+      listings={listingsEffective}
+      onArchive={archiveListing}
+      onConvert={convertListing}
+      onMerge={mergeListing}
+      rows={viewModel.listingRadar}
+      selectedHeatZoneId={effectiveSelectedId}
+      selectedZoneLabel={selectedZoneLabel}
+      sources={listingSourcesEffective}
+    />
+  );
+
+  const listingMergeDialog = mergeRequest ? (
+    <ListingMergeDialog
+      busy={mergeBusy}
+      error={mergeError}
+      onClose={() => {
+        setMergeRequest(null);
+        setMergeError(null);
+      }}
+      onSubmit={submitMergeListing}
+      request={mergeRequest}
+    />
+  ) : null;
+
+  /*
+   * Package 10 renders the intake detail as the first workspace surface under
+   * the global Operator topbar/status banner: no Network heading, KPI strip,
+   * expansion stepper, tab strip, compliance strip or Network status row may
+   * precede it. The canonical source cards and Listing Radar stay below the
+   * detail, inside the same single production graph
+   * (NetworkFindAreasWorkspace -> ListingRadarPanel -> AssistedIntakeSection),
+   * so no second intake UI, modal, drawer or fixed overlay is introduced. The
+   * unrelated Network tab data gate is bypassed here for the same reason the
+   * durable /intake/<id> route bypasses the shell bootstrap gate: the detail
+   * owns its own authoritative API binding (ADD-006 §3.1).
+   */
+  if (intakeDetailOpen) {
     return (
-      <OperatorDataUnavailableGate
-        detail={networkApiError ?? rebalanceApiError}
-        onRetry={() => window.location.reload()}
-        status={unavailableNetworkState}
-      />
+      <section
+        className={styles.workspace}
+        data-intake-detail-open="true"
+        data-screen-label="Network 展店與店網"
+        data-testid="network-find-areas-workspace"
+      >
+        {listingRadarPanel}
+        {listingMergeDialog}
+      </section>
     );
   }
 
@@ -1091,20 +1253,15 @@ export function NetworkFindAreasWorkspace({
         </div>
       </header>
 
-      <NetworkShell activeTab={activeTab} onTabChange={setActiveTab} steps={expansionSteps} tabs={networkTabs}>
-        {activeTab === 1 ? (
-          <ListingRadarPanel
-            activeRoleId={activeRoleId}
-            busyListingId={busyListingId}
-            listings={listingsEffective}
-            onArchive={archiveListing}
-            onConvert={convertListing}
-            onMerge={mergeListing}
-            rows={viewModel.listingRadar}
-            selectedHeatZoneId={effectiveSelectedId}
-            selectedZoneLabel={selectedZoneLabel}
-            sources={listingSourcesEffective}
+      <NetworkShell activeTab={activeTab} onTabChange={changeActiveTab} steps={expansionSteps} tabs={networkTabs}>
+        {activeTabGateState ? (
+          <OperatorDataUnavailableGate
+            detail={activeTabGateDetail}
+            onRetry={() => window.location.reload()}
+            status={activeTabGateState}
           />
+        ) : activeTab === 1 ? (
+          listingRadarPanel
         ) : activeTab === 2 ? (
           <CandidatePanel
             busyCandidateId={busyCandidateId}
@@ -1168,18 +1325,7 @@ export function NetworkFindAreasWorkspace({
         )}
       </NetworkShell>
 
-      {mergeRequest ? (
-        <ListingMergeDialog
-          busy={mergeBusy}
-          error={mergeError}
-          onClose={() => {
-            setMergeRequest(null);
-            setMergeError(null);
-          }}
-          onSubmit={submitMergeListing}
-          request={mergeRequest}
-        />
-      ) : null}
+      {listingMergeDialog}
     </section>
   );
 }

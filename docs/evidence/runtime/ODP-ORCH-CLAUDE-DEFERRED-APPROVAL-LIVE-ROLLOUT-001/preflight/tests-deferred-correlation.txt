@@ -1,0 +1,12 @@
+$ cd .orchestrator && python3 -m unittest test_supervisor.DeferredApprovalCorrelationTests -v
+test_allowed_scoped_commit_resumes_without_broad_bash (test_supervisor.DeferredApprovalCorrelationTests.test_allowed_scoped_commit_resumes_without_broad_bash) ... ok
+test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure (test_supervisor.DeferredApprovalCorrelationTests.test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure) ... ok
+test_boot_reconciliation_fails_closed_when_receipt_cannot_be_persisted (test_supervisor.DeferredApprovalCorrelationTests.test_boot_reconciliation_fails_closed_when_receipt_cannot_be_persisted) ... ok
+test_broker_denied_deferred_tool_fails_closed (test_supervisor.DeferredApprovalCorrelationTests.test_broker_denied_deferred_tool_fails_closed) ... ok
+test_missing_deferred_receipt_still_fails_closed (test_supervisor.DeferredApprovalCorrelationTests.test_missing_deferred_receipt_still_fails_closed) ... ok
+test_normal_poll_makes_claude2_receipt_durable_before_dead_worker_cleanup (test_supervisor.DeferredApprovalCorrelationTests.test_normal_poll_makes_claude2_receipt_durable_before_dead_worker_cleanup) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.079s
+
+OK

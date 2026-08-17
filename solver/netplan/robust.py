@@ -10,6 +10,7 @@ from time import monotonic
 from typing import Any
 
 from solver.netplan.model import NetworkAction
+from solver.process_isolation import run_in_process_isolation
 
 SOLVER_VERSION = "robust-netplan-cvxpy-v1"
 STATUS_OPTIMAL = "OPTIMAL"
@@ -129,7 +130,7 @@ class RobustNetPlanResult:
         }
 
 
-def solve_robust_network_plan(
+def _solve_robust_network_plan_impl(
     *,
     options_by_entity: Mapping[str, tuple[ScenarioActionOption, ...]],
     scenarios: tuple[Scenario, ...],
@@ -629,6 +630,91 @@ def _diagnose_infeasible(
                     ),
                 )
             )
+
+    if constraints.max_average_risk is not None:
+        minimum_risk = (
+            sum(
+                min(
+                    option.risk_score
+                    for option in options
+                    if option.admissible
+                )
+                for options in options_by_entity.values()
+                if any(option.admissible for option in options)
+            )
+            / len(options_by_entity)
+        ) if options_by_entity else 0.0
+        if minimum_risk > constraints.max_average_risk:
+            diagnostics.append(
+                SolverDiagnostic(
+                    code="AVERAGE_RISK_INFEASIBLE",
+                    constraint="max_average_risk",
+                    message=(
+                        f"Lowest achievable average risk {minimum_risk:.8g} exceeds "
+                        f"risk ceiling {constraints.max_average_risk}."
+                    ),
+                )
+            )
+
+    if constraints.min_capacity_delta is not None:
+        max_capacity = sum(
+            max(
+                option.capacity_delta
+                for option in options
+                if option.admissible
+            )
+            for options in options_by_entity.values()
+            if any(option.admissible for option in options)
+        )
+        if max_capacity < constraints.min_capacity_delta:
+            diagnostics.append(
+                SolverDiagnostic(
+                    code="CAPACITY_DELTA_INFEASIBLE",
+                    constraint="min_capacity_delta",
+                    message=(
+                        f"Best-case capacity delta {max_capacity} cannot reach "
+                        f"target minimum {constraints.min_capacity_delta}."
+                    ),
+                )
+            )
+
+    for action, minimum in constraints.min_action_counts.items():
+        possible_count = sum(
+            1
+            for options in options_by_entity.values()
+            if any(option.admissible and option.action is action for option in options)
+        )
+        if possible_count < minimum:
+            diagnostics.append(
+                SolverDiagnostic(
+                    code="ACTION_COUNT_MIN_INFEASIBLE",
+                    constraint=f"min_action_counts.{action.value}",
+                    message=(
+                        f"Maximum possible {action.value} actions count {possible_count} "
+                        f"cannot reach required minimum {minimum}."
+                    ),
+                )
+            )
+
+    for action, maximum in constraints.max_action_counts.items():
+        forced_count = sum(
+            1
+            for options in options_by_entity.values()
+            if any(option.admissible for option in options)
+            and all(option.action is action for option in options if option.admissible)
+        )
+        if forced_count > maximum:
+            diagnostics.append(
+                SolverDiagnostic(
+                    code="ACTION_COUNT_MAX_INFEASIBLE",
+                    constraint=f"max_action_counts.{action.value}",
+                    message=(
+                        f"Forced {action.value} actions count {forced_count} exceeds "
+                        f"maximum allowed {maximum}."
+                    ),
+                )
+            )
+
     return tuple(diagnostics) or (
         SolverDiagnostic(
             code="COMBINED_CONSTRAINTS_INFEASIBLE",
@@ -757,6 +843,40 @@ def _maximum(actual: float, limit: float) -> dict[str, Any]:
 
 def _near(left: float, right: float, tolerance: float = 1e-5) -> bool:
     return abs(left - right) <= tolerance
+
+
+def solve_robust_network_plan(
+    *,
+    options_by_entity: Mapping[str, tuple[ScenarioActionOption, ...]],
+    scenarios: tuple[Scenario, ...],
+    constraints: RobustNetPlanConstraints,
+    objective: RobustObjective = RobustObjective.WEIGHTED_EXPECTED,
+    downside_weight: float = 1.0,
+    cvar_confidence: float = 0.8,
+    preferred_solver: str | None = None,
+    isolate_process: bool = True,
+) -> RobustNetPlanResult:
+    """Public solver entrypoint with process isolation contract."""
+    if isolate_process:
+        return run_in_process_isolation(
+            _solve_robust_network_plan_impl,
+            options_by_entity=options_by_entity,
+            scenarios=scenarios,
+            constraints=constraints,
+            objective=objective,
+            downside_weight=downside_weight,
+            cvar_confidence=cvar_confidence,
+            preferred_solver=preferred_solver,
+        )
+    return _solve_robust_network_plan_impl(
+        options_by_entity=options_by_entity,
+        scenarios=scenarios,
+        constraints=constraints,
+        objective=objective,
+        downside_weight=downside_weight,
+        cvar_confidence=cvar_confidence,
+        preferred_solver=preferred_solver,
+    )
 
 
 __all__ = [

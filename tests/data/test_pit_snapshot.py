@@ -109,6 +109,62 @@ def test_build_dataset_snapshot_blocks_unmatured_training_label() -> None:
         )
 
 
+def _horizon_forecast_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "view_name": "forecast_training_view",
+        "view_version": "v2",
+        "entity_id": "tenant-1:store-1:2026-06-27:w4",
+        "feature_snapshot_time": "2026-06-27T00:00:00Z",
+        "prediction_origin_time": "2026-06-27T00:00:01Z",
+        "source_snapshot_ids": ["txn-20260626", "txn-20260627"],
+        "labels": {"horizon_average_daily_net_revenue": 1800.0},
+        "label_maturity_time": "2026-07-25T00:00:00Z",
+        "training_as_of_time": "2026-07-26T00:00:00Z",
+        "features": {"horizon_weeks": 4, "revenue_lag_1": 1700.0},
+    }
+    row.update(overrides)
+    return row
+
+
+def test_future_label_maturity_allowed_with_horizon_and_cutoff_evidence() -> None:
+    snapshot = build_dataset_snapshot([_horizon_forecast_row()])
+
+    record = snapshot.records[0]
+    assert record.label_maturity_time is not None
+    assert record.label_maturity_time > record.feature_snapshot_time
+    assert record.training_as_of_time == datetime(2026, 7, 26, tzinfo=UTC)
+    assert "training_as_of_time" not in record.features
+
+
+def test_future_label_maturity_rejected_outside_horizon_window() -> None:
+    with pytest.raises(PointInTimeViolation, match="horizon observation window"):
+        build_dataset_snapshot(
+            [
+                _horizon_forecast_row(
+                    label_maturity_time="2026-07-26T00:00:02Z",
+                    training_as_of_time="2026-07-27T00:00:00Z",
+                )
+            ]
+        )
+
+
+def test_future_label_maturity_rejected_without_training_cutoff_evidence() -> None:
+    with pytest.raises(PointInTimeViolation, match="training_as_of_time cutoff evidence"):
+        build_dataset_snapshot([_horizon_forecast_row(training_as_of_time=None)])
+
+
+def test_future_label_maturity_rejected_after_training_cutoff() -> None:
+    with pytest.raises(PointInTimeViolation, match="must not be after training_as_of_time"):
+        build_dataset_snapshot(
+            [
+                _horizon_forecast_row(
+                    label_maturity_time="2026-07-25T00:00:00Z",
+                    training_as_of_time="2026-07-24T00:00:00Z",
+                )
+            ]
+        )
+
+
 def test_point_in_time_validation_rejects_late_available_feature() -> None:
     with pytest.raises(PointInTimeViolation, match="available_from"):
         build_dataset_snapshot(

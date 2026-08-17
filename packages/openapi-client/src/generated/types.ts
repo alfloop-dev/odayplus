@@ -707,10 +707,14 @@ export type MergeRequest = {
   target_property_id: string;
 };
 
+/** ModelCardApprovalPayload */
+export type ModelCardApprovalPayload = {
+  decision?: string;
+};
+
 /** ModelCardPayload */
 export type ModelCardPayload = {
   algorithm: string;
-  approvals?: Record<string, string>[];
   baseline: string;
   calibration_summary?: Record<string, unknown>;
   explainability_method?: string;
@@ -775,6 +779,7 @@ export type NetPlanActorPayload = {
 /** NetPlanDecisionPayload */
 export type NetPlanDecisionPayload = {
   actor_id: string;
+  approval_receipt_id?: string;
   decided_at?: string | null;
   decision?: string;
   reason: string;
@@ -1039,7 +1044,7 @@ export type ReleaseHoldPayload = {
 
 /** ReleaseMonitorPayload */
 export type ReleaseMonitorPayload = {
-  evaluated_by?: string;
+  evaluated_by?: string | null;
   guardrails: MonitorGuardrailPayload[];
   observed_metrics: Record<string, number>;
 };
@@ -1048,13 +1053,16 @@ export type ReleaseMonitorPayload = {
 export type ReleasePayload = {
   affected_modules?: string[];
   approval_id: string;
-  approved_by?: string;
+  approved_by: string;
+  expected_release_revision?: number | null;
   fail_criteria: string[];
+  idempotency_key?: string | null;
   model_name: string;
   monitoring_window: string;
   reason: string;
+  release_scope?: string;
   release_type: string;
-  requested_by?: string;
+  requested_by?: string | null;
   rollback_target?: string | null;
   success_criteria: string[];
   version: string;
@@ -1443,6 +1451,7 @@ export const API_PATHS = {
   "/api/v1/learninghub/models/{model_name}": ["GET"],
   "/api/v1/learninghub/models/{model_name}/evidence": ["GET"],
   "/api/v1/learninghub/models/{model_name}/versions": ["POST"],
+  "/api/v1/learninghub/models/{model_name}/versions/{version}/approval": ["POST"],
   "/api/v1/learninghub/oss-capabilities": ["GET"],
   "/api/v1/learninghub/releases": ["GET", "POST"],
   "/api/v1/learninghub/releases/{release_id}/monitor": ["POST"],
@@ -1540,6 +1549,9 @@ export const API_PATHS = {
   "/api/v1/operator/store-ops/issues/{issue_id}/{action_type}": ["POST"],
   "/api/v1/operator/store-ops/summary": ["GET"],
   "/api/v1/operator/today": ["GET"],
+  "/api/v1/platform/dashboards/provisioned": ["GET"],
+  "/api/v1/platform/metrics/export": ["GET"],
+  "/api/v1/platform/observability": ["GET"],
   "/api/v1/priceops/optimizer-jobs": ["POST"],
   "/api/v1/priceops/optimizer-jobs/{job_id}": ["GET"],
   "/api/v1/priceops/plans": ["GET", "POST"],

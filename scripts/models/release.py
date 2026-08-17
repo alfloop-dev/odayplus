@@ -24,11 +24,19 @@ from models.shared_ml import (
     ModelRiskLevel,
     ModelStage,
     ModelVersion,
+    compute_content_digest,
 )
 from models.shared_ml.oss_estimators import EstimatorTrainingResult, train_oss_estimator
 from modules.avm.domain.liquidity import LiquidityTrainingRecord
 from modules.avm.infrastructure import LifelinesLiquiditySurvivalAdapter
-from modules.learninghub import LearningHubService, MlflowRegistryAdapter, ReleaseType
+from modules.learninghub import (
+    LearningHubService,
+    MlflowRegistryAdapter,
+    ModelReleaseDecision,
+    ModelReleaseSaga,
+    ReleaseSagaState,
+    ReleaseType,
+)
 from pipelines.features import FeaturePipelineRunner
 from pipelines.training import TrainingPipelineRunner
 from shared.infrastructure.persistence.audit_log import DurableAuditLog
@@ -47,6 +55,7 @@ from .contracts import (
     ProductionTrainingSettings,
     require_approval_document,
 )
+from .forecast_training import ForecastHorizonContractError, expand_forecast_horizon_rows
 from .storage import (
     GcsArtifactStore,
     LoadedModelReadyRows,
@@ -163,8 +172,12 @@ class BoundedModelTrainingRelease:
             "required_label": spec.label_column,
             "minimum_rows": spec.minimum_rows,
             "minimum_rows_satisfied": inventory.labeled_row_count >= spec.minimum_rows,
-            "trainable": inventory.ready
-            and inventory.labeled_row_count >= spec.minimum_rows,
+            "split_minimum_rows": {
+                "train": max(2, int(spec.minimum_rows * 0.60)),
+                "validation": max(1, int(spec.minimum_rows * 0.20)),
+                "test": max(1, spec.minimum_rows - int(spec.minimum_rows * 0.80)),
+            },
+            "trainable": inventory.ready and inventory.labeled_row_count >= spec.minimum_rows,
         }
 
     def train(
@@ -180,14 +193,12 @@ class BoundedModelTrainingRelease:
         prepared = prepare_model_rows(spec, loaded)
         if len(prepared) < spec.minimum_rows:
             raise ModelReadyDataError(
-                f"{spec.key}: {len(prepared)} clean rows are below minimum "
-                f"{spec.minimum_rows}"
+                f"{spec.key}: {len(prepared)} clean rows are below minimum {spec.minimum_rows}"
             )
         temporal = self._temporal_validation(spec, prepared)
         if not temporal.passed:
             raise ModelReadyDataError(
-                f"{spec.key}: temporal validation failed: "
-                + "; ".join(temporal.failed_rules)
+                f"{spec.key}: temporal validation failed: " + "; ".join(temporal.failed_rules)
             )
 
         snapshot_rows = [row.mapping for row in prepared]
@@ -261,6 +272,15 @@ class BoundedModelTrainingRelease:
         approval_payload: dict[str, object],
         rollback_target: str | None,
     ) -> dict[str, Any]:
+        if not spec.production_release_enabled:
+            reason = (
+                spec.production_block_reason
+                or "PRODUCTION_RELEASE_NOT_ENABLED"
+            )
+            raise ModelTrainingConfigurationError(
+                f"{spec.key} production release is BLOCKED: {reason}; "
+                "training and backtest artifacts may not receive release aliases"
+            )
         approval = require_approval_document(
             approval_payload,
             model_name=spec.model_name,
@@ -273,22 +293,42 @@ class BoundedModelTrainingRelease:
             raise ModelTrainingConfigurationError(
                 "CANARY/FULL release requires an existing approved rollback target"
             )
+        approval_bytes = _canonical_json(approval_payload)
+        idempotency_key = _promotion_idempotency_key(
+            model_name=spec.model_name,
+            version=version,
+            approval_id=approval["approval_id"],
+        )
+        # A lost-response retry must return the durable decision of the saga this
+        # approval already created. The saga is resolved before the current
+        # release revision is recomputed: after a committed release the revision
+        # has advanced, so a recomputed expected_release_revision would change
+        # the request fingerprint and turn a legitimate replay into a conflict.
+        existing_saga = self.service.repository.get_release_saga_by_idempotency(
+            spec.model_name,
+            idempotency_key,
+        )
+        if existing_saga is not None:
+            return self._replay_promotion(
+                saga=existing_saga,
+                spec=spec,
+                version=version,
+                approval=approval,
+                approval_bytes=approval_bytes,
+                rollback_target=rollback_target,
+            )
         model_version = self.service.repository.get_model_version(spec.model_name, version)
         model_card = self.service.repository.get_model_card(spec.model_name, version)
         if model_version is None or model_card is None:
             raise ModelTrainingConfigurationError(
                 f"registered candidate {spec.model_name}:{version} is unavailable"
             )
-        validation = self.service.repository.get_validation_run(
-            model_card.validation_run_id
-        )
+        validation = self.service.repository.get_validation_run(model_card.validation_run_id)
         if validation is None or not validation.passed:
             raise ModelTrainingConfigurationError(
                 "promotion requires a persisted passing validation run"
             )
-        model_artifact_sha256 = str(
-            model_version.monitoring_config.get("artifact_sha256") or ""
-        )
+        model_artifact_sha256 = str(model_version.monitoring_config.get("artifact_sha256") or "")
         if not model_artifact_sha256 or not self.artifact_store.verify_uri(
             model_version.artifact_uri,
             model_artifact_sha256,
@@ -296,9 +336,7 @@ class BoundedModelTrainingRelease:
             raise ModelTrainingConfigurationError(
                 "promotion requires a verified immutable GCS model artifact"
             )
-        approved_at = datetime.fromisoformat(
-            approval["approved_at"].replace("Z", "+00:00")
-        )
+        approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
         approval_entry = ModelCardApproval(
             approver=approval["approver"],
             role=approval["role"],
@@ -309,7 +347,6 @@ class BoundedModelTrainingRelease:
             model_card,
             approvals=tuple(model_card.approvals) + (approval_entry,),
         )
-        approval_bytes = _canonical_json(approval_payload)
         approval_record = self.artifact_store.put_artifact(
             model_name=spec.model_name,
             version=version,
@@ -331,6 +368,9 @@ class BoundedModelTrainingRelease:
             model_version=approved_version,
             model_card=approved_card,
             validation_run=validation,
+        )
+        expected_release_revision = self.service.repository.get_release_revision(
+            spec.model_name
         )
         decision = self.service.request_release(
             model_name=spec.model_name,
@@ -354,16 +394,89 @@ class BoundedModelTrainingRelease:
             requested_by=self.actor,
             approved_by=approval["approver"],
             correlation_id=approval["approval_id"],
+            expected_release_revision=expected_release_revision,
+            idempotency_key=idempotency_key,
+            approval_sha256=approval_record.content_digest,
         )
         return {
             "status": "promoted",
+            "replayed": False,
             "model_name": spec.model_name,
             "version": version,
             "release_type": release_type.value,
             "release_id": decision.release_id,
+            "release_revision": decision.release_revision,
             "approval_id": approval["approval_id"],
             "approval_sha256": approval_record.content_digest,
             "rollback_target": rollback_target,
+        }
+
+    def _replay_promotion(
+        self,
+        *,
+        saga: ModelReleaseSaga,
+        spec: ModelSpec,
+        version: str,
+        approval: Mapping[str, Any],
+        approval_bytes: bytes,
+        rollback_target: str | None,
+    ) -> dict[str, Any]:
+        command = dict(saga.command)
+        approval_sha256 = compute_content_digest(approval_bytes)
+        expected_command_binding = {
+            "model_name": spec.model_name,
+            "version": version,
+            "release_type": _RELEASE_TYPES[
+                str(approval["release_type"]).lower()
+            ].value,
+            "reason": approval["reason"],
+            "approval_id": approval["approval_id"],
+            "rollback_target": rollback_target,
+            "monitoring_window": "48h",
+            "success_criteria": [
+                "production registry alias resolves",
+                "live inference smoke test passes",
+                "outcome guardrails remain within approved thresholds",
+            ],
+            "fail_criteria": [
+                "artifact lineage mismatch",
+                "live inference failure",
+                "approved validation threshold breach",
+            ],
+            "affected_modules": [spec.key],
+            "requested_by": self.actor,
+            "approved_by": approval["approver"],
+            "correlation_id": approval["approval_id"],
+            "approval_sha256": approval_sha256,
+            "release_scope": "global",
+        }
+        if any(command.get(field) != value for field, value in expected_command_binding.items()):
+            raise ModelTrainingConfigurationError(
+                f"promotion idempotency key for {spec.model_name}:{version} is "
+                "already bound to a different release command"
+            )
+        if saga.state is not ReleaseSagaState.COMPLETED:
+            raise ModelTrainingConfigurationError(
+                f"existing release {saga.release_id} for approval "
+                f"{approval['approval_id']} is {saga.state.value}; operator "
+                "recovery is required before the promotion can be retried"
+            )
+        decision = saga.decision
+        if not isinstance(decision, ModelReleaseDecision):
+            raise ModelTrainingConfigurationError(
+                f"completed release {saga.release_id} has no durable decision receipt"
+            )
+        return {
+            "status": "promoted",
+            "replayed": True,
+            "model_name": spec.model_name,
+            "version": version,
+            "release_type": decision.release_type.value,
+            "release_id": decision.release_id,
+            "release_revision": decision.release_revision,
+            "approval_id": approval["approval_id"],
+            "approval_sha256": approval_sha256,
+            "rollback_target": decision.rollback_target,
         }
 
     def _train_regression_candidate(
@@ -405,12 +518,8 @@ class BoundedModelTrainingRelease:
             git_sha=self.git_sha,
         )
         if not result.accepted:
-            failures = "; ".join(
-                failure.message for failure in result.validation_run.failed_rules
-            )
-            raise ModelReadyDataError(
-                f"{spec.key}: full-dataset validation failed: {failures}"
-            )
+            failures = "; ".join(failure.message for failure in result.validation_run.failed_rules)
+            raise ModelReadyDataError(f"{spec.key}: full-dataset validation failed: {failures}")
         metrics = {
             **dict(result.model_version.metrics),
             **{f"temporal_{name}": value for name, value in temporal.metrics.items()},
@@ -424,6 +533,7 @@ class BoundedModelTrainingRelease:
                 "temporal_validation_sha256": temporal_artifact_sha256,
                 "temporal_validation_required": True,
                 "segment_validation_required": True,
+                "output_transform": dict(spec.output_transform),
             },
         )
         card = _model_card(
@@ -433,9 +543,7 @@ class BoundedModelTrainingRelease:
             validation_run_id=result.validation_run.validation_run_id,
             temporal=temporal,
             metrics=metrics,
-            bounds=(
-                self.service.repository.get_dataset_snapshot(snapshot_id).time_range
-            ),
+            bounds=(self.service.repository.get_dataset_snapshot(snapshot_id).time_range),
         )
         registered = self.service.register_model_version(
             model_version=model_version,
@@ -470,15 +578,12 @@ class BoundedModelTrainingRelease:
                 duration_days=float(row.mapping["labels"][spec.label_name]),
                 sold=bool(row.mapping["labels"]["event_observed"]),
                 features={
-                    name: float(row.mapping["features"][name])
-                    for name in spec.feature_columns
+                    name: float(row.mapping["features"][name]) for name in spec.feature_columns
                 },
             )
             for row in prepared
         ]
-        adapter = LifelinesLiquiditySurvivalAdapter(model_version=version).fit(
-            survival_rows
-        )
+        adapter = LifelinesLiquiditySurvivalAdapter(model_version=version).fit(survival_rows)
         model_record = self.artifact_store.put_artifact(
             model_name=spec.model_name,
             version=version,
@@ -510,9 +615,7 @@ class BoundedModelTrainingRelease:
             calibration_summary={"temporal_validation": True},
         )
         if not validation.passed:
-            raise ModelReadyDataError(
-                f"{spec.key}: survival validation did not pass release gates"
-            )
+            raise ModelReadyDataError(f"{spec.key}: survival validation did not pass release gates")
         validation_record = self.artifact_store.put_artifact(
             model_name=spec.model_name,
             version=version,
@@ -540,6 +643,7 @@ class BoundedModelTrainingRelease:
                 "validation_report_sha256": validation_record.content_digest,
                 "temporal_validation_required": True,
                 "segment_validation_required": True,
+                "output_transform": dict(spec.output_transform),
             },
         )
         card = _model_card(
@@ -549,9 +653,7 @@ class BoundedModelTrainingRelease:
             validation_run_id=validation.validation_run_id,
             temporal=temporal,
             metrics=metrics,
-            bounds=(
-                self.service.repository.get_dataset_snapshot(snapshot_id).time_range
-            ),
+            bounds=(self.service.repository.get_dataset_snapshot(snapshot_id).time_range),
         )
         registered = self.service.register_model_version(
             model_version=model_version,
@@ -638,7 +740,16 @@ def prepare_model_rows(
 ) -> tuple[PreparedRow, ...]:
     prepared: list[PreparedRow] = []
     lineage_id = f"postgres:{loaded.relation}:sha256:{loaded.query_sha256}"
-    for raw in loaded.rows:
+    rows: Sequence[Mapping[str, Any]] = loaded.rows
+    if spec.key == "forecastops":
+        # The model-ready view serves daily rows; the horizon contract trains on
+        # leakage-safe horizon-average targets whose maturity is bounded by the
+        # declared observation window.
+        try:
+            rows = expand_forecast_horizon_rows(rows)
+        except ForecastHorizonContractError as exc:
+            raise ModelReadyDataError(f"{spec.key}: {exc}") from exc
+    for raw in rows:
         _reject_nonproduction_source_markers(raw)
         try:
             temporal_value = _timestamp(raw[spec.temporal_column])
@@ -649,10 +760,7 @@ def prepare_model_rows(
             ) from exc
         if not math.isfinite(label):
             raise ModelReadyDataError(f"{spec.key}: label values must be finite")
-        feature_values = {
-            name: _feature_value(raw.get(name))
-            for name in spec.feature_columns
-        }
+        feature_values = {name: _feature_value(raw.get(name)) for name in spec.feature_columns}
         if any(value is None for value in feature_values.values()):
             continue
         segment_value = str(raw.get(spec.segment_column) or "").strip()
@@ -669,10 +777,8 @@ def prepare_model_rows(
             raise ModelReadyDataError(
                 f"{spec.key}: feature_snapshot_time must precede prediction_origin_time"
             )
-        if label_maturity_time > feature_snapshot_time:
-            raise ModelReadyDataError(
-                f"{spec.key}: label is not mature at feature_snapshot_time"
-            )
+        if label_maturity_time > loaded.as_of_time:
+            raise ModelReadyDataError(f"{spec.key}: label is not mature at training as_of_time")
         labels: dict[str, Any] = {spec.label_name: label}
         if spec.event_column:
             if spec.event_column not in raw or raw[spec.event_column] is None:
@@ -696,9 +802,7 @@ def prepare_model_rows(
             )
         )
         if len(source_snapshot_ids) == 1:
-            raise ModelReadyDataError(
-                f"{spec.key}: canonical source snapshot lineage is required"
-            )
+            raise ModelReadyDataError(f"{spec.key}: canonical source snapshot lineage is required")
         mapping = {
             "view_name": str(raw["view_name"]),
             "view_version": str(raw["view_version"]),
@@ -714,6 +818,7 @@ def prepare_model_rows(
             "features": feature_values,
             "labels": labels,
             "label_maturity_time": label_maturity_time,
+            "training_as_of_time": loaded.as_of_time,
         }
         prepared.append(
             PreparedRow(
@@ -809,10 +914,7 @@ def _validate_survival_temporally(
         LiquidityTrainingRecord(
             duration_days=float(row.mapping["labels"][spec.label_name]),
             sold=bool(row.mapping["labels"]["event_observed"]),
-            features={
-                name: float(row.mapping["features"][name])
-                for name in spec.feature_columns
-            },
+            features={name: float(row.mapping["features"][name]) for name in spec.feature_columns},
         )
         for row in training_rows
     ]
@@ -824,10 +926,7 @@ def _validate_survival_temporally(
     predictions = np.asarray(
         [
             adapter.predict(
-                {
-                    name: float(row.mapping["features"][name])
-                    for name in spec.feature_columns
-                }
+                {name: float(row.mapping["features"][name]) for name in spec.feature_columns}
             ).expected_days
             for row in holdout_rows
         ],
@@ -840,12 +939,7 @@ def _validate_survival_temporally(
     zeros = np.zeros_like(labels)
     metrics = _regression_metrics(labels, predictions, zeros, zeros)
     metrics["observed_event_rate"] = float(
-        np.mean(
-            [
-                bool(row.mapping["labels"]["event_observed"])
-                for row in holdout_rows
-            ]
-        )
+        np.mean([bool(row.mapping["labels"]["event_observed"]) for row in holdout_rows])
     )
     baseline_metrics = _regression_metrics(labels, baseline, zeros, zeros)
     segments, segment_failures = _segment_validation(
@@ -896,7 +990,9 @@ def _temporal_split(
         raise ModelReadyDataError(
             "temporal validation requires at least two distinct observation times"
         )
-    split_index = max(1, min(len(unique_times) - 1, int(len(unique_times) * (1 - holdout_fraction))))
+    split_index = max(
+        1, min(len(unique_times) - 1, int(len(unique_times) * (1 - holdout_fraction)))
+    )
     cutoff = unique_times[split_index]
     training = tuple(row for row in rows if row.temporal_value < cutoff)
     holdout = tuple(row for row in rows if row.temporal_value >= cutoff)
@@ -959,8 +1055,7 @@ def _regression_metrics(
     if not (labels.shape == predictions.shape == lower.shape == upper.shape):
         raise ModelReadyDataError("validation arrays have inconsistent shapes")
     if labels.size == 0 or not all(
-        np.all(np.isfinite(values))
-        for values in (labels, predictions, lower, upper)
+        np.all(np.isfinite(values)) for values in (labels, predictions, lower, upper)
     ):
         raise ModelReadyDataError("validation arrays must contain finite values")
     denominator = max(float(np.mean(np.abs(labels))), 1e-9)
@@ -993,9 +1088,7 @@ def _model_card(
         feature_set_id=spec.feature_set_id,
         label_set_id=spec.label_set_id,
         training_period=f"{bounds[0].isoformat()}/{bounds[1].isoformat()}",
-        validation_period=(
-            f"{temporal.cutoff}/{bounds[1].isoformat()}"
-        ),
+        validation_period=(f"{temporal.cutoff}/{bounds[1].isoformat()}"),
         algorithm=spec.algorithm,
         baseline="temporal_training_mean",
         metrics_summary=dict(metrics),
@@ -1009,9 +1102,7 @@ def _model_card(
             "Only approved canonical model-ready rows inside the bounded snapshot are represented",
             "Predictions require human review in the consuming workflow",
         ),
-        known_biases=(
-            "Segments below the configured minimum sample size are not promotable",
-        ),
+        known_biases=("Segments below the configured minimum sample size are not promotable",),
         privacy_review="PASSED",
         security_review="PASSED",
         release_status="DEV",
@@ -1087,13 +1178,35 @@ def _reject_nonproduction_source_markers(row: Mapping[str, Any]) -> None:
             )
 
 
+def _promotion_idempotency_key(
+    *,
+    model_name: str,
+    version: str,
+    approval_id: str,
+) -> str:
+    """Deterministic approval-bound release idempotency key.
+
+    Derived only from the approved release identity, so a lost-response retry
+    of the same approval always resolves to the same durable saga while a
+    different approval can never collide with it.
+    """
+
+    material = _canonical_json(
+        {
+            "approval_id": approval_id,
+            "model_name": model_name,
+            "version": version,
+        }
+    )
+    digest = compute_content_digest(material).removeprefix("sha256:")
+    return f"model-promotion-{digest}"
+
+
 def _read_approval(path: Path) -> dict[str, object]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ModelTrainingConfigurationError(
-            "approval file must be readable JSON"
-        ) from exc
+        raise ModelTrainingConfigurationError("approval file must be readable JSON") from exc
     if not isinstance(payload, dict):
         raise ModelTrainingConfigurationError("approval file must contain a JSON object")
     return payload
@@ -1144,10 +1257,7 @@ def main(
         resources = resource_builder(settings)
         if args.command == "inventory":
             keys = MODEL_SPECS if args.model == "all" else (args.model,)
-            result = [
-                resources.application.inventory(MODEL_SPECS[key])
-                for key in keys
-            ]
+            result = [resources.application.inventory(MODEL_SPECS[key]) for key in keys]
             print(
                 json.dumps(
                     {

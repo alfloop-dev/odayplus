@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -39,6 +39,7 @@ class ModelReadyRecord:
     features: Mapping[str, Any] = field(default_factory=dict)
     labels: Mapping[str, Any] = field(default_factory=dict)
     label_maturity_time: datetime | None = None
+    training_as_of_time: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -101,12 +102,14 @@ def model_ready_record_from_mapping(row: Mapping[str, Any]) -> ModelReadyRecord:
         "features",
         "labels",
         "label_maturity_time",
+        "training_as_of_time",
     }
     features = dict(row.get("features") or {})
     for key, value in row.items():
         if key not in known_fields:
             features[key] = value
     label_maturity_time = row.get("label_maturity_time")
+    training_as_of_time = row.get("training_as_of_time")
     return ModelReadyRecord(
         view_name=str(row["view_name"]),
         view_version=str(row["view_version"]),
@@ -128,6 +131,11 @@ def model_ready_record_from_mapping(row: Mapping[str, Any]) -> ModelReadyRecord:
         label_maturity_time=(
             _parse_datetime(label_maturity_time, field_name="label_maturity_time")
             if label_maturity_time not in (None, "")
+            else None
+        ),
+        training_as_of_time=(
+            _parse_datetime(training_as_of_time, field_name="training_as_of_time")
+            if training_as_of_time not in (None, "")
             else None
         ),
     )
@@ -152,14 +160,7 @@ def validate_point_in_time(
                 )
             )
         if record.label_maturity_time and record.label_maturity_time > record.feature_snapshot_time:
-            issues.append(
-                PointInTimeIssue(
-                    "label_not_mature",
-                    "label_maturity_time must not be after feature_snapshot_time",
-                    row_index,
-                    "label_maturity_time",
-                )
-            )
+            issues.extend(_future_label_maturity_issues(record, row_index))
         for field_name in ("event_time", "observation_time", "available_from"):
             value = record.features.get(field_name)
             if value in (None, ""):
@@ -191,6 +192,65 @@ def validate_point_in_time(
                         "available_to",
                     )
                 )
+    return tuple(issues)
+
+
+def _future_label_maturity_issues(
+    record: ModelReadyRecord, row_index: int
+) -> tuple[PointInTimeIssue, ...]:
+    """Gate labels that mature after the feature snapshot behind leakage evidence.
+
+    Forecast horizon labels are only observable after the prediction origin, so
+    maturity after the feature snapshot is legitimate — but only when the row
+    proves no leakage: a declared ``horizon_weeks`` observation window that
+    bounds the maturity time, and a ``training_as_of_time`` cutoff showing the
+    label had matured before it entered training. Rows without both pieces of
+    evidence keep the strict point-in-time rejection.
+    """
+    horizon_raw = record.features.get("horizon_weeks")
+    try:
+        horizon_weeks = float(horizon_raw) if horizon_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        horizon_weeks = None
+    if horizon_weeks is None or horizon_weeks <= 0:
+        return (
+            PointInTimeIssue(
+                "label_not_mature",
+                "label_maturity_time must not be after feature_snapshot_time",
+                row_index,
+                "label_maturity_time",
+            ),
+        )
+
+    issues: list[PointInTimeIssue] = []
+    horizon_end = record.prediction_origin_time + timedelta(weeks=horizon_weeks)
+    if record.label_maturity_time and record.label_maturity_time > horizon_end:
+        issues.append(
+            PointInTimeIssue(
+                "label_maturity_outside_horizon",
+                "label_maturity_time must stay within the declared horizon observation window",
+                row_index,
+                "label_maturity_time",
+            )
+        )
+    if record.training_as_of_time is None:
+        issues.append(
+            PointInTimeIssue(
+                "label_missing_training_cutoff_evidence",
+                "future-maturing label requires training_as_of_time cutoff evidence",
+                row_index,
+                "training_as_of_time",
+            )
+        )
+    elif record.label_maturity_time and record.label_maturity_time > record.training_as_of_time:
+        issues.append(
+            PointInTimeIssue(
+                "label_not_mature_at_training_cutoff",
+                "label_maturity_time must not be after training_as_of_time",
+                row_index,
+                "label_maturity_time",
+            )
+        )
     return tuple(issues)
 
 

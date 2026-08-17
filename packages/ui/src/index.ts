@@ -1,21 +1,11 @@
 /**
- * @oday-plus/ui — OpsBoard shell + design-system React components.
+ * @oday-plus/ui — shared ODay Plus design-system React components.
  * Token-only (visual system §10.1); consumes @oday-plus/design-tokens and
  * @oday-plus/domain-types. Import the stylesheet once at the app root:
  *   import "@oday-plus/ui/styles/shell.css";
  */
 export const designSystemName = "ODay Plus UI";
 
-export { AppShell, type AppShellProps } from "./components/AppShell.tsx";
-export {
-  GlobalHeader,
-  type GlobalHeaderProps,
-} from "./components/GlobalHeader.tsx";
-export {
-  Sidebar,
-  type SidebarProps,
-  type LinkComponent,
-} from "./components/Sidebar.tsx";
 export {
   PageHeader,
   type PageHeaderProps,
@@ -60,16 +50,6 @@ export {
 } from "./components/AuditMetadata.tsx";
 export { EvidencePanel, type EvidencePanelProps } from "./components/EvidencePanel.tsx";
 export {
-  ModulePlaceholder,
-  type ModulePlaceholderProps,
-} from "./components/ModulePlaceholder.tsx";
-export {
-  ShellProvider,
-  useShell,
-  type ShellState,
-  type ShellProviderProps,
-} from "./components/ShellContext.tsx";
-export {
   CORE_UI_COMPONENT_KEYS,
   type ActionSpec,
   type ApprovalDecision,
@@ -97,10 +77,3 @@ export {
   type TableSort,
   type TimelineNodeSpec,
 } from "./components/contracts.ts";
-
-export { NAV_ITEMS, NAV_BY_KEY, ROUTE_KEYS } from "./nav/routes.ts";
-export {
-  navForRole,
-  isVisibleForRole,
-  isReadOnlyForRole,
-} from "./nav/filterNav.ts";

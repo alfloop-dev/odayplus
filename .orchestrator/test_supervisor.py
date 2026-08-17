@@ -5,18 +5,170 @@ import contextlib
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
-from datetime import UTC
+from copy import deepcopy
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = THIS_DIR.parent
+SCRIPTS_DIR = ROOT_DIR / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+# Never let orchestration tests inherit a worker's live coordination root.
+# ai_status binds its output paths at import time, so isolation must happen
+# before importing it.
+_ORIGINAL_STATUS_ROOT = os.environ.get("PANTHEON_STATUS_ROOT")
+_ORIGINAL_ORCH_STATUS_ROOT = os.environ.get("ORCH_STATUS_ROOT")
+_TEST_STATUS_ROOT_HANDLE = tempfile.TemporaryDirectory(prefix="pantheon-supervisor-tests-")
+_TEST_STATUS_ROOT = Path(_TEST_STATUS_ROOT_HANDLE.name).resolve()
+os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
+
+import ai_status
+import runtime_state
 import supervisor
 
 
+def tearDownModule() -> None:
+    if _ORIGINAL_STATUS_ROOT is None:
+        os.environ.pop("PANTHEON_STATUS_ROOT", None)
+    else:
+        os.environ["PANTHEON_STATUS_ROOT"] = _ORIGINAL_STATUS_ROOT
+    if _ORIGINAL_ORCH_STATUS_ROOT is None:
+        os.environ.pop("ORCH_STATUS_ROOT", None)
+    else:
+        os.environ["ORCH_STATUS_ROOT"] = _ORIGINAL_ORCH_STATUS_ROOT
+    _TEST_STATUS_ROOT_HANDLE.cleanup()
+
+
+def load_test_config() -> dict[str, Any]:
+    config_file = Path(__file__).with_name("config.json")
+    if not config_file.exists():
+        try:
+            from ai_status import STATUS_ROOT
+            config_file = STATUS_ROOT / ".orchestrator" / "config.json"
+        except Exception:
+            pass
+    if not config_file.exists():
+        config_file = Path(__file__).with_name("config.example.json")
+    config = json.loads(config_file.read_text(encoding="utf-8"))
+
+    # A test config must never retain repository-relative coordination paths:
+    # common.config_path() resolves them against the checked-out code root, not
+    # PANTHEON_STATUS_ROOT. Rewrite the complete coordination path table to the
+    # module-scoped temporary root before any Supervisor helper can persist.
+    config.setdefault("ready_dispatcher", {})["disabled_agents"] = []
+
+    isolated_paths: dict[str, str] = {}
+    for key, value in (config.get("paths") or {}).items():
+        raw_path = Path(str(value))
+        relative_path = Path(raw_path.name) if raw_path.is_absolute() else raw_path
+        isolated_paths[key] = str((_TEST_STATUS_ROOT / relative_path).resolve())
+    config["paths"] = isolated_paths
+
+    watchdog = config.setdefault("watchdog", {})
+    watchdog["state_file"] = str((_TEST_STATUS_ROOT / ".orchestrator/watchdog-state.json").resolve())
+    watchdog["metrics_file"] = str(
+        (_TEST_STATUS_ROOT / ".orchestrator/metrics/supervisor-watchdog.jsonl").resolve()
+    )
+    config.setdefault("worker_worktrees", {})["root"] = str(
+        (_TEST_STATUS_ROOT / "worker-worktrees").resolve()
+    )
+    config.setdefault("permission_broker", {})["allowed_workspace_roots"] = [
+        str((_TEST_STATUS_ROOT / "workspace").resolve())
+    ]
+    return config
+
+
 class RuntimeConfigTests(unittest.TestCase):
+    def test_supervisor_pins_ai_status_to_immutable_runtime(self) -> None:
+        self.assertEqual(
+            Path(supervisor.runtime_ai_status.__file__).resolve(),
+            (SCRIPTS_DIR / "ai_status.py").resolve(),
+        )
+
+    def test_dashboard_refresh_does_not_prepend_status_root_scripts(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pantheon-stale-status-root-") as tmp:
+            status_root = Path(tmp)
+            stale_scripts = status_root / "scripts"
+            stale_scripts.mkdir()
+            (stale_scripts / "ai_status.py").write_text(
+                "raise RuntimeError('stale status-root ai_status imported')\n",
+                encoding="utf-8",
+            )
+            config = {"paths": {"status_file": str(status_root / "ai-status.json")}}
+
+            with mock.patch.object(supervisor.runtime_ai_status, "load_state", return_value={}), \
+                 mock.patch.object(supervisor.runtime_ai_status, "write_dashboard_bundle"), \
+                 mock.patch.object(supervisor.runtime_ai_status, "sync_docs_site"):
+                supervisor.refresh_dashboard_runtime_artifacts(config)
+
+            self.assertNotIn(str(stale_scripts), sys.path)
+
+    def test_task_head_resolution_ignores_poisoned_ai_status_module(self) -> None:
+        stale_module = mock.Mock()
+        stale_module.resolve_task_sha.side_effect = TypeError(
+            "resolve_task_sha() got an unexpected keyword argument 'force_refresh'"
+        )
+        with mock.patch.dict(sys.modules, {"ai_status": stale_module}), \
+             mock.patch.object(
+                 supervisor.runtime_ai_status,
+                 "resolve_task_sha",
+                 return_value="1111111122222222333333334444444455555555",
+             ) as pinned_resolver, \
+             mock.patch.object(
+                 supervisor.runtime_ai_status,
+                 "task_pr_ci_status",
+                 return_value=("OPEN", "success"),
+             ):
+            self.assertEqual(
+                supervisor.resolve_task_progress_head("PINNED-RUNTIME-001"),
+                "1111111122222222333333334444444455555555",
+            )
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(
+                    load_test_config(),
+                    {
+                        "id": "PINNED-RUNTIME-001",
+                        "owner": "Codex2",
+                        "reviewer": "Codex",
+                        "status": "review_approved",
+                        "approved_head": "1111111122222222333333334444444455555555",
+                    },
+                    "Codex2",
+                ),
+                1,
+            )
+
+        self.assertEqual(
+            pinned_resolver.call_args_list,
+            [
+                mock.call("PINNED-RUNTIME-001"),
+                mock.call("PINNED-RUNTIME-001", force_refresh=True),
+            ],
+        )
+        stale_module.resolve_task_sha.assert_not_called()
+
+    def test_test_config_coordination_paths_are_temporary_and_absolute(self) -> None:
+        config = load_test_config()
+
+        for key, value in config["paths"].items():
+            with self.subTest(path=key):
+                path = Path(value)
+                self.assertTrue(path.is_absolute())
+                self.assertTrue(path.is_relative_to(_TEST_STATUS_ROOT))
+        self.assertTrue(Path(config["watchdog"]["state_file"]).is_relative_to(_TEST_STATUS_ROOT))
+        self.assertTrue(Path(config["watchdog"]["metrics_file"]).is_relative_to(_TEST_STATUS_ROOT))
+        self.assertTrue(Path(config["worker_worktrees"]["root"]).is_relative_to(_TEST_STATUS_ROOT))
+
     def test_codex_pair_shares_one_account_quota_group(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
         quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
@@ -32,7 +184,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "codex2"), 4)
 
     def test_claude_concurrency_is_explicitly_capped(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
 
@@ -41,7 +193,7 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertEqual(supervisor.agent_dispatch_capacity(config, "claude"), 3)
 
     def test_claude2_shares_claude_account_quota_group(self) -> None:
-        config = json.loads(Path(__file__).with_name("config.json").read_text(encoding="utf-8"))
+        config = load_test_config()
 
         ready_dispatcher = config["ready_dispatcher"]
         quota_caps = ready_dispatcher["max_concurrent_per_quota_group"]
@@ -279,6 +431,20 @@ class DetectWorkerFailureTests(unittest.TestCase):
                 ]
             )
             + "\n"
+        )
+
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_auto_reassigned_log_summary_quoted_auth_ignored(self) -> None:
+        """Verify auto-reassigned notes quoting auth or permission errors are not misclassified as live worker failures."""
+        worker = self._worker_for_log(
+            "next: Auto-reassigned ownership from Gemini2 after repeated Gemini2 auth: not authenticated\n"
+        )
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_python_source_assignment_quoted_auth_ignored(self) -> None:
+        worker = self._worker_for_log(
+            'reason = f"Principal {attempt.actor_id!r} is not authenticated"\n'
         )
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
@@ -681,6 +847,36 @@ class DetectWorkerFailureTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "provider_dispatch_resumed")
 
+    def test_expire_provider_dispatch_pauses_clears_quota_pause_after_account_switch(self) -> None:
+        config = {
+            "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
+            "providers": {"codex": {"quota_group": "codex"}},
+        }
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "trigger_provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "pause_kind": "quota_terminal",
+                        "auth_identity_hash": "old-account",
+                    }
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "provider_auth_identity_hash", return_value="new-account"),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.expire_provider_dispatch_pauses(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+        message = write_activity_log.call_args.args[1]["message"]
+        self.assertIn("account identity changed", message)
+
     def test_clear_provider_dispatch_pause_removes_group_pause(self) -> None:
         config = {
             "paths": {"activity_log": "/tmp/test-activity-log.jsonl"},
@@ -883,6 +1079,63 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
+    def test_review_dispatch_uses_task_branch_not_mainline_worktree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_root = Path(tmpdir) / "workers"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(worktree_root),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="review exact task head",
+                task_id="ODP-PLAN-REVIEW-001",
+                reason="review_ready_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_branch_checked_out_in_root", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "_create_worker_worktree",
+                    return_value=(True, None),
+                ) as create_worktree,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-review",
+                    target_agent="Codex",
+                )
+
+        expected_path = worktree_root / "pantheon" / "odp-plan-review-001"
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(request.metadata["workspace_branch"], "task/ODP-PLAN-REVIEW-001")
+        self.assertNotEqual(request.metadata["workspace_branch"], "dev")
+        self.assertNotEqual(request.metadata["workspace_branch"], "main")
+        create_worktree.assert_called_once_with(
+            repo_root.resolve(),
+            expected_path,
+            "task/ODP-PLAN-REVIEW-001",
+            "origin/dev",
+        )
+
     def test_prepare_worker_workspace_allocates_chair_review_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -1025,6 +1278,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "skipped_dirty_worktree"),
                 ) as refresh_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_fetch_authoritative_task_head",
+                    return_value=("a" * 40, "local_only_task_ref"),
+                ),
+                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=False) as reset_worktree,
                 mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
@@ -1042,12 +1301,198 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertNotIn("workspace_path", request.metadata)
         self.assertNotIn("worker_worktrees", state)
         refresh_worktree.assert_called_once()
+        reset_worktree.assert_called_once()
         create_worktree.assert_not_called()
         self.assertEqual(
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
             ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
         )
         self.assertEqual(write_activity_log.call_args_list[-1].args[1]["refresh_status"], "skipped_dirty_worktree")
+
+    def test_prepare_worker_workspace_recovers_dirty_worktree_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ops-worktree-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-WORKTREE-RECOVER-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(False, "skipped_dirty_worktree"),
+                ) as refresh_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_fetch_authoritative_task_head",
+                    return_value=("a" * 40, "local_only_task_ref"),
+                ),
+                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=True) as reset_worktree,
+                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-recover",
+                    target_agent="Codex",
+                )
+
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(refresh_worktree.call_count, 1)
+        reset_worktree.assert_called_once()
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["worker_worktree_refreshed", "worker_worktree_lease_recovered", "worker_worktree_reused"],
+        )
+
+
+    def test_prepare_worker_workspace_blocks_every_other_unsafe_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ops-worktree-unsafe-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-WORKTREE-UNSAFE-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(False, "task_head_mismatch: local=a remote=b"),
+                ),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    {},
+                    request,
+                    queue_event_id="evt-unsafe",
+                    target_agent="Codex",
+                )
+
+        self.assertFalse(ok)
+        self.assertIn("fail-closed refresh policy", message or "")
+        self.assertEqual(write_activity_log.call_args_list[-1].args[1]["type"], "dispatch_blocked_worktree_lease")
+
+    def test_prepare_worker_workspace_prompts_owner_to_advance_diverged_base(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ops-worktree-rebase-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="original owner dispatch",
+                task_id="OPS-WORKTREE-REBASE-001",
+                reason="owned_in_progress_dispatch",
+            )
+            refresh_status = "base_advance_rebase_required:local=" + "a" * 40 + ",base=" + "b" * 40
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(True, refresh_status),
+                ),
+                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-rebase",
+                    target_agent="Codex",
+                )
+
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertTrue(request.metadata["base_advance_required"])
+        self.assertEqual(request.metadata["worktree_refresh_status"], refresh_status)
+        self.assertIn("BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF", request.message)
+        self.assertIn("must fetch and rebase/compose", request.message)
+        self.assertTrue(request.message.endswith("original owner dispatch"))
+
+    def test_failed_queue_finalization_preserves_worker_worktree(self) -> None:
+        state = {
+            "queue": {"events": {"evt-failed": {"status": "started"}}},
+            "workers": {},
+        }
+        worker = {
+            "run_id": "run-failed",
+            "queue_event_id": "evt-failed",
+            "task_id": "OPS-WORKTREE-PRESERVE-001",
+            "workspace_path": "/tmp/worker-preserve",
+        }
+
+        with mock.patch.object(supervisor, "reset_worker_worktree_after_failure") as reset_worktree:
+            supervisor.finalize_queue_event_record(
+                self.config,
+                state,
+                worker,
+                "failed",
+                "worker failed with task-owned dirt",
+            )
+
+        reset_worktree.assert_not_called()
+        record = state["queue"]["events"]["evt-failed"]
+        self.assertEqual(record["status"], "failed")
+        self.assertEqual(record["error"], "worker failed with task-owned dirt")
 
     def test_process_queue_checks_worker_guard_inside_isolated_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1111,6 +1556,140 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(guard.call_args.kwargs["cwd"], workspace)
+
+    def test_process_queue_isolates_workspace_exception_and_starts_next_event(self) -> None:
+        tasks = [
+            {
+                "id": task_id,
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Reviewer",
+                "depends_on": [],
+            }
+            for task_id in ("BAD-001", "GOOD-001")
+        ]
+        events = [
+            {
+                "event_id": event_id,
+                "task_id": task_id,
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "provider": "codex",
+                "reason": "owned_in_progress_dispatch",
+                "message": "wake",
+            }
+            for event_id, task_id in (("evt-bad", "BAD-001"), ("evt-good", "GOOD-001"))
+        ]
+        state = {"queue": {"events": {}}, "workers": {}}
+
+        def prepare_workspace(_config, _state, request, **_kwargs):
+            if request.task_id == "BAD-001":
+                raise ValueError("missing required source document")
+            request.metadata["workspace_path"] = "/tmp/good-workspace"
+            return True, None
+
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=events),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
+            mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-good", {"manual_confirmation_required": False, "auto_delivered": True}),
+            ) as start_worker,
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["queue"]["events"]["evt-bad"]["status"], "failed")
+        self.assertIn("missing required source document", state["queue"]["events"]["evt-bad"]["error"])
+        self.assertEqual(state["queue"]["events"]["evt-good"]["status"], "started")
+        start_worker.assert_called_once()
+        failure_events = [
+            call.args[1]
+            for call in write_activity_log.call_args_list
+            if call.args[1].get("type") == "wake_failed"
+        ]
+        self.assertEqual(failure_events[0]["task_id"], "BAD-001")
+
+    def test_process_queue_isolates_request_construction_exception(self) -> None:
+        events = [
+            {
+                "event_id": event_id,
+                "task_id": task_id,
+                "target_agent": "codex",
+                "target_display_name": "Codex",
+                "provider": "codex",
+                "reason": "owned_in_progress_dispatch",
+                "message": "wake",
+            }
+            for event_id, task_id in (("evt-bad", "BAD-REQUEST"), ("evt-good", "GOOD-REQUEST"))
+        ]
+        tasks = [
+            {
+                "id": event["task_id"],
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Reviewer",
+            }
+            for event in events
+        ]
+
+        def build_request(_config, event, **_kwargs):
+            if event["task_id"] == "BAD-REQUEST":
+                raise ValueError("invalid task source metadata")
+            return supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="GOOD-REQUEST",
+                reason="owned_in_progress_dispatch",
+            )
+
+        state = {"queue": {"events": {}}, "workers": {}}
+        with (
+            mock.patch.object(supervisor, "load_event_queue", return_value=events),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
+            mock.patch.object(supervisor, "build_request", side_effect=build_request),
+            mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
+            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
+            mock.patch.object(
+                supervisor,
+                "start_worker_for_request",
+                return_value=(True, "run-good", {"manual_confirmation_required": False, "auto_delivered": True}),
+            ) as start_worker,
+            mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.process_queue(self.config, state, self.provider_report)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["queue"]["events"]["evt-bad"]["status"], "failed")
+        self.assertIn("invalid task source metadata", state["queue"]["events"]["evt-bad"]["error"])
+        self.assertEqual(state["queue"]["events"]["evt-good"]["status"], "started")
+        start_worker.assert_called_once()
+
+    def test_queue_dispatch_event_safely_contains_source_metadata_error(self) -> None:
+        event = {"task_id": "BAD-EVENT", "target_agent": "Antigravity"}
+        with (
+            mock.patch.object(
+                supervisor,
+                "queue_delivery_event",
+                side_effect=ValueError("missing source document"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            queued = supervisor.queue_dispatch_event_safely(self.config, event)
+
+        self.assertFalse(queued)
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_event_rejected")
+        self.assertIn("missing source document", write_activity_log.call_args.args[1]["message"])
 
     def test_build_request_uses_provider_model_preference_for_qwen_agent(self) -> None:
         config = {
@@ -1227,6 +1806,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(request.agent_id, "grok")
         self.assertEqual(request.provider, "copilot")
         self.assertEqual(request.metadata["model_preference"], "grok-code-fast-1")
+        self.assertEqual(request.metadata["logical_agent_id"], "grok")
+        self.assertEqual(request.metadata["target_display_name"], "Copilot (legacy alias)")
 
     def test_build_request_can_target_codex_worker_slot_with_logical_identity(self) -> None:
         config = {
@@ -1761,6 +2342,190 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             },
         )
 
+    def test_persisted_weighted_cursor_prevents_review_starvation(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "owned_statuses": ["in_progress", "todo"],
+                "active_worker_statuses": ["running"],
+                "max_dispatches_per_tick": 1,
+                "target_workload": {"Antigravity": 1, "Codex": 1},
+                "helper_claim": {"enabled": False},
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                },
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "OWNER-FIRST",
+                    "status": "todo",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                },
+                {
+                    "id": "REVIEW-LATER",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                },
+            ]
+        }
+        state = runtime_state.default_state()
+        first_round: list[dict[str, Any]] = []
+        second_round: list[dict[str, Any]] = []
+
+        common_patches = (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "outstanding_delivery_indexes",
+                return_value=(set(), set(), set()),
+            ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "utc_now",
+                return_value="2026-07-31T12:00:00Z",
+            ),
+        )
+        with contextlib.ExitStack() as stack:
+            for patcher in common_patches:
+                stack.enter_context(patcher)
+            stack.enter_context(
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, event: first_round.append(event) or True,
+                )
+            )
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
+
+        self.assertEqual(first_round[0]["task_id"], "OWNER-FIRST")
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor"], 1)
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor_revision"], 1)
+
+        # Simulate the end-of-loop save/reload boundary that previously erased
+        # the cursor and restarted every round from Antigravity.
+        state = runtime_state.migrate_state(deepcopy(state))
+        with contextlib.ExitStack() as stack:
+            for patcher in (
+                mock.patch.object(supervisor, "load_status", return_value=status),
+                mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+                mock.patch.object(
+                    supervisor,
+                    "outstanding_delivery_indexes",
+                    return_value=(set(), set(), set()),
+                ),
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+                mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+                mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+                mock.patch.object(
+                    supervisor,
+                    "utc_now",
+                    return_value="2026-07-31T12:00:00Z",
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "queue_delivery_event",
+                    side_effect=lambda _config, event: second_round.append(event) or True,
+                ),
+            ):
+                stack.enter_context(patcher)
+            self.assertTrue(supervisor.dispatch_ready_tasks(config, state, provider_report={}))
+
+        self.assertEqual(second_round[0]["task_id"], "REVIEW-LATER")
+        self.assertEqual(second_round[0]["target_agent"], "Codex")
+        self.assertEqual(second_round[0]["reason"], "review_ready_dispatch")
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor"], 0)
+        self.assertEqual(state["ready_dispatcher"]["weighted_cursor_revision"], 2)
+        self.assertEqual(
+            state["ready_dispatcher"]["weighted_cursor_updated_at"],
+            "2026-07-31T12:00:00Z",
+        )
+
+    def test_dispatcher_fails_closed_on_owner_self_review(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "enabled": True,
+                "review_statuses": ["review"],
+                "active_worker_statuses": ["running"],
+                "helper_claim": {"enabled": False},
+            },
+            "agents": {
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                    "provider": "codex",
+                }
+            },
+            "providers": {},
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "INVALID-SELF-REVIEW",
+                    "status": "review",
+                    "owner": "Codex",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                }
+            ]
+        }
+        state = runtime_state.default_state()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(
+                supervisor,
+                "outstanding_delivery_indexes",
+                return_value=(set(), set(), set()),
+            ),
+            mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "normalize_mainline_task_assignment", return_value=False),
+            mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                provider_report={},
+                agent_ids_override=["codex"],
+            )
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
+
     def test_dispatcher_queues_owner_finalize_after_review_approved(self) -> None:
         current_task = {
             "id": "REG-002",
@@ -1769,6 +2534,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "reviewer": "Claude",
             "depends_on": ["REG-001"],
             "last_update": "2026-04-06T15:00:00Z",
+            "approved_head": "1111111122222222333333334444444455555555",
         }
         dependency = {
             "id": "REG-001",
@@ -1785,6 +2551,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -1811,6 +2579,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "reviewer": "Claude",
             "depends_on": ["REG-001"],
             "last_update": "2026-04-06T14:00:00Z",
+            "approved_head": "1111111122222222333333334444444455555555",
         }
         state = {"queue": {"events": {}}, "workers": {}}
         status = {"tasks": [dependency, current_task]}
@@ -1819,6 +2588,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -2148,10 +2919,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "id": "FB-003",
                     "status": "todo",
                     "owner": "Codex",
-                    "reviewer": "Copilot",
+                    "reviewer": "Claude",
                     "depends_on": [],
                     "last_update": "2026-05-13T09:30:00Z",
-                    "next": "Helper-claimed by idle Codex; previous owner Copilot becomes reviewer.",
+                    "next": "Helper-claimed by idle Codex; designated reviewer Claude preserved.",
                 },
             ]
         }
@@ -2170,11 +2941,250 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "FB-003")
         self.assertEqual(kwargs["new_owner"], "Codex")
-        self.assertEqual(kwargs["new_reviewer"], "Copilot")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-003")
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_ready_dispatch")
+
+    def test_dispatcher_spreads_paused_owner_work_to_registered_idle_agents(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": ["running"],
+                "max_tasks_per_agent_by_agent": {"Antigravity": 8},
+                "helper_claim": {
+                    "enabled": True,
+                    "task_statuses": ["todo"],
+                    "paused_owner_task_statuses": ["in_progress"],
+                    "claim_idle_work": True,
+                    "include_registered_idle_agents": True,
+                },
+            },
+            "worker_reassignment": {
+                "owner_fallbacks": {
+                    "Codex": ["Antigravity"],
+                }
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "antigravity2": {
+                    "id": "antigravity2",
+                    "display_name": "Antigravity2",
+                    "provider": "antigravity2",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-antigravity": {
+                    "run_id": "run-antigravity",
+                    "task_id": "BUSY-001",
+                    "provider": "antigravity",
+                    "agent_id": "antigravity",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                }
+            },
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "Codex usage limit reached",
+                    }
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "HELP-002",
+                    "status": "in_progress",
+                    "owner": "Codex",
+                    "reviewer": "Reviewer",
+                    "depends_on": [],
+                }
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "HELP-002",
+                    "status": "in_progress",
+                    "owner": "Antigravity2",
+                    "reviewer": "Reviewer",
+                    "depends_on": [],
+                    "last_update": "2026-08-02T14:00:00Z",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity2")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Reviewer")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "HELP-002")
+        self.assertEqual(queued_event["target_agent"], "Antigravity2")
+
+    def test_dispatcher_does_not_queue_backlog_for_single_process_agent(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "active_worker_statuses": ["running"],
+                "max_tasks_per_agent_by_agent": {"Copilot": 4},
+                "helper_claim": {"enabled": False},
+            },
+            "agents": {
+                "copilot": {"id": "copilot", "display_name": "Copilot", "provider": "copilot"},
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "run-copilot": {
+                    "run_id": "run-copilot",
+                    "task_id": "BUSY-001",
+                    "provider": "copilot",
+                    "agent_id": "copilot",
+                    "status": "running",
+                    "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+                }
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "NEXT-001",
+                    "status": "todo",
+                    "owner": "Copilot",
+                    "reviewer": "Reviewer",
+                    "depends_on": [],
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertFalse(changed)
+        queue_delivery_event.assert_not_called()
+
+    def test_dispatcher_spreads_paused_review_to_registered_idle_reviewer(self) -> None:
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "active_worker_statuses": ["running"],
+                "helper_claim": {
+                    "enabled": True,
+                    "include_registered_idle_agents": True,
+                },
+            },
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex", "provider": "codex"},
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                },
+                "antigravity2": {
+                    "id": "antigravity2",
+                    "display_name": "Antigravity2",
+                    "provider": "antigravity2",
+                },
+            },
+            "providers": {},
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "codex": {
+                        "provider": "codex",
+                        "blocked_until": "2999-01-01T00:00:00Z",
+                        "summary": "Codex usage limit reached",
+                    }
+                }
+            },
+        }
+        initial_status = {
+            "tasks": [
+                {
+                    "id": "REVIEW-002",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Codex",
+                    "depends_on": [],
+                }
+            ]
+        }
+        persisted_status = {
+            "tasks": [
+                {
+                    "id": "REVIEW-002",
+                    "status": "review",
+                    "owner": "Antigravity",
+                    "reviewer": "Antigravity2",
+                    "depends_on": [],
+                    "last_update": "2026-08-02T14:05:00Z",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", side_effect=[initial_status, persisted_status]),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.dispatch_ready_tasks(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(persist.call_args.kwargs["new_owner"], "Antigravity")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Antigravity2")
+        queued_event = queue_delivery_event.call_args.args[1]
+        self.assertEqual(queued_event["task_id"], "REVIEW-002")
+        self.assertEqual(queued_event["target_agent"], "Antigravity2")
+        self.assertEqual(queued_event["reason"], "review_ready_dispatch")
 
     def test_dispatcher_helper_claims_unrelated_task_during_failure_loop(self) -> None:
         config = {
@@ -2357,7 +3367,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(kwargs["new_owner"], "Codex")
-        self.assertEqual(kwargs["new_reviewer"], "Gemini2")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(queued_event["target_agent"], "Codex")
@@ -2410,7 +3420,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "id": "FB-009-SIDECAR-BFF-HANDOFF",
                     "status": "todo",
                     "owner": "Codex",
-                    "reviewer": "Gemini2",
+                    "reviewer": "Claude",
                     "depends_on": [],
                     "task_class": "sidecar",
                     "helper_parent": "FB-009",
@@ -2434,7 +3444,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(kwargs["new_owner"], "Codex")
-        self.assertEqual(kwargs["new_reviewer"], "Gemini2")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "FB-009-SIDECAR-BFF-HANDOFF")
         self.assertEqual(queued_event["target_agent"], "Codex")
@@ -2569,7 +3579,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         kwargs = persist.call_args.kwargs
         self.assertEqual(kwargs["task_id"], "WB-006")
         self.assertEqual(kwargs["new_owner"], "Copilot")
-        self.assertEqual(kwargs["new_reviewer"], "Qwen")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
         queued_event = queue_delivery_event.call_args.args[1]
         self.assertEqual(queued_event["task_id"], "WB-006")
         self.assertEqual(queued_event["target_agent"], "Copilot")
@@ -2691,7 +3701,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Claude")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
-    def test_dispatcher_helper_claim_uses_persisted_reassignment_timestamp_for_event_key(self) -> None:
+    def test_dispatcher_helper_claim_uses_persisted_authority_for_event_key(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -2769,7 +3779,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
         self.assertTrue(changed)
         queued_event = queue_delivery_event.call_args.args[1]
-        self.assertIn('"last_update": "2026-05-09T10:00:00Z"', queued_event["key"])
+        self.assertNotIn("2026-05-09T09:00:00Z", queued_event["key"])
+        self.assertNotIn("2026-05-09T10:00:00Z", queued_event["key"])
+        self.assertIn('"owner": "Claude"', queued_event["key"])
+        self.assertIn('"reviewer": "Qwen"', queued_event["key"])
         self.assertEqual(queued_event["target_agent"], "Claude")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
@@ -5110,6 +6123,39 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertFalse(changed)
         queue_delivery_event.assert_not_called()
 
+    def test_dispatch_ready_ignores_stale_logic_streak_after_environmental_failure(self) -> None:
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "T-REVIEW:codex2": {
+                        "task_id": "T-REVIEW",
+                        "provider": "codex2",
+                        "count": 3,
+                        "last_reason": "Codex usage limit reached",
+                        "last_failure_kind": "quota_terminal",
+                        "last_environmental_failure_at": "2026-08-02T13:22:47Z",
+                    }
+                }
+            },
+        }
+        status = {"tasks": [{"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"}]}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queue_delivery_event,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                self.config,
+                state,
+                agent_ids_override=["codex2"],
+            )
+
+        self.assertTrue(changed)
+        queue_delivery_event.assert_called_once()
+
     def test_dispatch_ready_skips_only_task_agent_pair_in_failure_loop(self) -> None:
         state = {
             "queue": {"events": {}},
@@ -5128,7 +6174,13 @@ class ChairReviewDispatchTests(unittest.TestCase):
         status = {
             "tasks": [
                 {"id": "T-REVIEW", "status": "review", "owner": "Codex", "reviewer": "Codex2"},
-                {"id": "T-FINALIZE", "status": "review_approved", "owner": "Codex2", "reviewer": "Codex"},
+                {
+                    "id": "T-FINALIZE",
+                    "status": "review_approved",
+                    "owner": "Codex2",
+                    "reviewer": "Codex",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                },
             ]
         }
 
@@ -5136,6 +6188,8 @@ class ChairReviewDispatchTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value=status),
             mock.patch.object(supervisor, "load_event_queue", return_value=[]),
             mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.dispatch_ready_tasks(self.config, state)
 
@@ -5648,7 +6702,7 @@ class ChairReviewDispatchTests(unittest.TestCase):
 
         self.assertIn("Blocked Owner Rescue Candidates:", message)
         self.assertIn("task=T-PUSH", message)
-        self.assertIn('targets=["Codex", "Codex2"]', message)
+        self.assertIn('targets=["Codex", "Codex2", "Claude2"]', message)
 
     def test_persist_task_reassignment_can_clear_blocked_owner_handoff(self) -> None:
         status_path = self.root / "ai-status.json"
@@ -5778,6 +6832,305 @@ class ChairReviewDispatchTests(unittest.TestCase):
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "chair_review_missing_report")
 
 
+class DeferredApprovalCorrelationTests(unittest.TestCase):
+    task_id = "ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001"
+    command = "git commit -F /tmp/odp-secret-schema-msg.txt 2>&1 | tail -20"
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        self.root = Path(self.tmpdir.name)
+        self.config = {
+            "paths": {
+                "approval_queue": str(self.root / "approval-queue.json"),
+                "state_file": str(self.root / "state.json"),
+                "event_queue": str(self.root / "event-queue.jsonl"),
+                "activity_log": str(self.root / "activity-log.jsonl"),
+                "evidence_dir": str(self.root / "evidence"),
+                "status_file": str(self.root / "ai-status.json"),
+            },
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "ready_dispatcher": {
+                "active_worker_statuses": [
+                    "running",
+                    "waiting_approval",
+                    "suspended_approval",
+                    "manual_pending",
+                ]
+            },
+            "providers": {"claude2": {"delivery_mode": "claude_cli"}},
+            "agents": {
+                "claude2": {"id": "claude2", "display_name": "Claude2"},
+                "codex6": {"id": "codex6", "display_name": "Codex6"},
+            },
+        }
+        (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
+        (self.root / "approval-queue.json").write_text(
+            json.dumps({"pending": [], "history": []}),
+            encoding="utf-8",
+        )
+        self.status = {
+            "tasks": [
+                {
+                    "id": self.task_id,
+                    "status": "in_progress",
+                    "owner": "Claude2",
+                    "reviewer": "Codex6",
+                }
+            ]
+        }
+
+    def _write_deferred_log(self) -> Path:
+        log_path = self.root / "claude2.log"
+        receipt = {
+            "is_error": False,
+            "stop_reason": "tool_deferred",
+            "session_id": "7d919ae4-893a-400b-b13f-b45e5115184b",
+            "terminal_reason": "tool_deferred",
+            "deferred_tool_use": {
+                "id": "toolu_01YZMtMekPkN7JQUG6AdSo1f",
+                "name": "Bash",
+                "input": {
+                    "command": self.command,
+                    "description": "Create task commit",
+                },
+            },
+            "type": "result",
+        }
+        log_path.write_text(json.dumps(receipt) + "\n", encoding="utf-8")
+        return log_path
+
+    def _state_for_deferred_log(self) -> dict[str, object]:
+        return {
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": self.task_id,
+                    "provider": "claude2",
+                    "agent_id": "claude2",
+                    "status": "running",
+                    "queue_event_id": "evt-1",
+                    "pid": 999999,
+                    "log_path": str(self._write_deferred_log()),
+                    "last_event_at": "2026-07-28T16:48:00Z",
+                }
+            },
+        }
+
+    def _poll(self, state: dict[str, object], broker_decision: dict[str, str]) -> bool:
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_approval_state",
+                return_value={"pending": [], "history": []},
+            ),
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "_deferred_tool_broker_decision",
+                return_value=broker_decision,
+            ),
+        ):
+            return supervisor.poll_workers(self.config, state)
+
+    def test_normal_poll_makes_claude2_receipt_durable_before_dead_worker_cleanup(self) -> None:
+        state = self._state_for_deferred_log()
+
+        changed = self._poll(
+            state,
+            {"decision": "defer", "risk_class": "git_write"},
+        )
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "suspended_approval")
+        self.assertEqual(worker["session_id"], "7d919ae4-893a-400b-b13f-b45e5115184b")
+        self.assertEqual(worker["deferred_tool_use"]["input"]["command"], self.command)
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "manual_pending")
+        approval_state = supervisor.load_approval_state(self.config)
+        self.assertEqual(len(approval_state["pending"]), 1)
+        approval = approval_state["pending"][0]
+        self.assertEqual(approval["worker_run_id"], "run-1")
+        self.assertEqual(approval["tool_use_id"], "toolu_01YZMtMekPkN7JQUG6AdSo1f")
+        self.assertEqual(approval["suggested_rule"], f"Bash({self.command})")
+        self.assertEqual(worker["deferred_action"], approval["approval_id"])
+
+    def test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure(self) -> None:
+        state = self._state_for_deferred_log()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "_deferred_tool_broker_decision",
+                return_value={"decision": "defer", "risk_class": "git_write"},
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "waiting_approval")
+        self.assertEqual(worker["session_id"], "7d919ae4-893a-400b-b13f-b45e5115184b")
+        self.assertEqual(worker["deferred_tool_use"]["id"], "toolu_01YZMtMekPkN7JQUG6AdSo1f")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
+        approval_state = supervisor.load_approval_state(self.config)
+        self.assertEqual(len(approval_state["pending"]), 1)
+        self.assertEqual(approval_state["pending"][0]["worker_run_id"], "run-1")
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertNotIn("worker_failed", activity_types)
+        metrics = state.get("worker_runtime_metrics", {})
+        self.assertEqual(metrics.get("totals", {}).get("missing_process_workers_failed", 0), 0)
+
+    def test_boot_reconciliation_fails_closed_when_receipt_cannot_be_persisted(self) -> None:
+        state = self._state_for_deferred_log()
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "correlate_deferred_tool_approval",
+                side_effect=OSError("approval queue unavailable"),
+            ),
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertIn("process missing", worker["last_error"])
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+        self.assertEqual(supervisor.load_approval_state(self.config)["pending"], [])
+        activity_types = [call.args[1]["type"] for call in write_activity_log.call_args_list]
+        self.assertIn("worker_deferred_approval_failed", activity_types)
+        self.assertIn("worker_failed", activity_types)
+        metrics = state["worker_runtime_metrics"]
+        self.assertEqual(metrics["totals"]["missing_process_workers_failed"], 1)
+
+    def test_allowed_scoped_commit_resumes_without_broad_bash(self) -> None:
+        state = self._state_for_deferred_log()
+        self._poll(state, {"decision": "defer", "risk_class": "git_write"})
+        pending = supervisor.load_approval_state(self.config)["pending"][0]
+        resolved = supervisor.resolve_approval(
+            self.config,
+            pending["approval_id"],
+            decision="allow",
+            note="Allow only the staged task commit.",
+            remember=False,
+        )
+        resolved_state = supervisor.load_approval_state(self.config)
+
+        def resume(
+            _config: dict[str, object],
+            worker: dict[str, object],
+            _provider_report: dict[str, object],
+            *,
+            approval: dict[str, object],
+        ) -> dict[str, object]:
+            worker["status"] = "running"
+            worker["deferred_tool_use"] = None
+            return {
+                "command": ["claude", "--resume", str(worker["session_id"])],
+                "allowed_tools": supervisor._claude_resume_allowed_tools(approval),
+            }
+
+        with (
+            mock.patch.object(
+                supervisor,
+                "load_approval_state",
+                return_value=resolved_state,
+            ),
+            mock.patch.object(supervisor, "load_status", return_value=self.status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(
+                supervisor,
+                "resume_claude_worker",
+                side_effect=resume,
+            ) as resume_claude_worker,
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"]["run-1"]["status"], "running")
+        resume_claude_worker.assert_called_once()
+        resumed_approval = resume_claude_worker.call_args.kwargs["approval"]
+        self.assertEqual(resumed_approval["approval_id"], resolved["approval_id"])
+        self.assertEqual(
+            supervisor._claude_resume_allowed_tools(resumed_approval),
+            [f"Bash({self.command})"],
+        )
+        self.assertNotIn("Bash", supervisor._claude_resume_allowed_tools(resumed_approval))
+
+    def test_broker_denied_deferred_tool_fails_closed(self) -> None:
+        state = self._state_for_deferred_log()
+
+        changed = self._poll(
+            state,
+            {
+                "decision": "deny",
+                "risk_class": "forbidden",
+                "reason": "Command is forbidden by policy.",
+            },
+        )
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+        approval_state = supervisor.load_approval_state(self.config)
+        self.assertEqual(approval_state["pending"], [])
+        self.assertEqual(approval_state["history"][0]["decision"], "deny")
+        self.assertEqual(approval_state["history"][0]["note"], "Command is forbidden by policy.")
+
+    def test_missing_deferred_receipt_still_fails_closed(self) -> None:
+        state = {
+            "queue": {"events": {"evt-1": {"status": "manual_pending"}}},
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "task_id": self.task_id,
+                    "provider": "claude2",
+                    "agent_id": "claude2",
+                    "status": "suspended_approval",
+                    "queue_event_id": "evt-1",
+                    "pid": 999999,
+                    "session_id": "session-without-receipt",
+                    "last_event_at": "2026-07-28T16:48:00Z",
+                }
+            },
+        }
+
+        changed = self._poll(
+            state,
+            {"decision": "defer", "risk_class": "git_write"},
+        )
+
+        self.assertTrue(changed)
+        worker = state["workers"]["run-1"]
+        self.assertEqual(worker["status"], "failed")
+        self.assertEqual(
+            worker["last_error"],
+            "Approval state disappeared before the suspended worker could resume.",
+        )
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+
+
 class PollWorkersRecoveryTests(unittest.TestCase):
     def test_successful_chair_worker_does_not_scan_report_text_as_provider_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5885,7 +7238,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         status = {
             "tasks": [
                 {"id": "FB-003", "status": "todo", "owner": "Copilot", "reviewer": "Codex", "depends_on": []},
-                {"id": "EX-001", "status": "review_approved", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
+                {"id": "EX-001", "status": "review_approved", "approved_head": "1111111122222222333333334444444455555555", "owner": "Copilot", "reviewer": "Claude", "depends_on": []},
             ]
         }
 
@@ -5898,6 +7251,8 @@ class PollWorkersRecoveryTests(unittest.TestCase):
             mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
             mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
             mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"),
+            mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")),
         ):
             changed = supervisor.poll_workers(config, state)
 
@@ -6036,7 +7391,7 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertTrue(changed)
         worker = state["workers"]["run-1"]
         self.assertEqual(worker["status"], "failed")
-        self.assertEqual(worker["last_error"], "Worker exited before the task reached a terminal status.")
+        self.assertEqual(worker["last_error"], supervisor.NO_PROGRESS_WORKER_EXIT_REASON)
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_failed")
 
@@ -6643,10 +7998,10 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
 
     def test_scratch_only_is_reusable(self) -> None:
-        # Exactly the dirt that jammed the fleet: brief modified + review re-staged.
+        # Untracked scratch/context paths are classified as scratch_only.
         status = (
-            "MM .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
-            "D  .orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md\n"
+            "?? .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
+            "?? .orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md\n"
         )
         kind, paths = supervisor._classify_worktree_dirt(status)
         self.assertEqual(kind, "scratch_only")
@@ -6657,6 +8012,16 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
                 ".orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md",
             },
         )
+
+    def test_tracked_or_staged_context_dirt_classified_as_real(self) -> None:
+        # Tracked/staged modifications under context or scratch paths are real dirt.
+        status = (
+            "MM .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
+            " M ai-status.json\n"
+        )
+        kind, paths = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "real")
+        self.assertEqual(paths, [])
 
     def test_real_product_dirt_still_blocks(self) -> None:
         status = (
@@ -6671,6 +8036,248 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         status = "R  old/file.py -> services/new/file.py\n"
         kind, _ = supervisor._classify_worktree_dirt(status)
         self.assertEqual(kind, "real")
+
+
+class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
+    """Regression matrix for the clean divergence topology observed on PR #562."""
+
+    task_branch = "task/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.origin = root / "origin.git"
+        seed = root / "seed"
+        self.repo_root = root / "supervisor"
+        self.worktree = root / "worker"
+
+        self._git(root, "init", "--bare", str(self.origin))
+        self._git(root, "init", "-b", "dev", str(seed))
+        self._git(seed, "config", "user.name", "Supervisor Test")
+        self._git(seed, "config", "user.email", "supervisor-test@example.invalid")
+        (seed / "tracked.txt").write_text("initial\n", encoding="utf-8")
+        self._git(seed, "add", "tracked.txt")
+        self._git(seed, "commit", "-m", "initial")
+        self.initial_head = self._git(seed, "rev-parse", "HEAD").stdout.strip()
+        self._git(seed, "remote", "add", "origin", str(self.origin))
+        self._git(seed, "push", "-u", "origin", "dev")
+        self._git(self.origin, "symbolic-ref", "HEAD", "refs/heads/dev")
+
+        self._git(seed, "switch", "-c", self.task_branch)
+        (seed / "task.txt").write_text("task commit\n", encoding="utf-8")
+        self._git(seed, "add", "task.txt")
+        self._git(seed, "commit", "-m", "task change")
+        self._git(seed, "push", "-u", "origin", self.task_branch)
+        self.task_head = self._git(seed, "rev-parse", "HEAD").stdout.strip()
+
+        self._git(seed, "switch", "dev")
+        (seed / "base.txt").write_text("advanced dev\n", encoding="utf-8")
+        self._git(seed, "add", "base.txt")
+        self._git(seed, "commit", "-m", "advance dev")
+        self._git(seed, "push", "origin", "dev")
+        self.base_head = self._git(seed, "rev-parse", "HEAD").stdout.strip()
+
+        self._git(root, "clone", "--branch", "dev", str(self.origin), str(self.repo_root))
+        self._git(
+            self.repo_root,
+            "worktree",
+            "add",
+            "-b",
+            self.task_branch,
+            str(self.worktree),
+            f"origin/{self.task_branch}",
+        )
+        self._git(self.worktree, "config", "user.name", "Supervisor Test")
+        self._git(self.worktree, "config", "user.email", "supervisor-test@example.invalid")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _git(self, cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=check,
+        )
+
+    def _refresh(self) -> tuple[bool, str]:
+        return supervisor._refresh_reused_worker_worktree(
+            self.repo_root,
+            self.worktree,
+            "origin/dev",
+            self.task_branch,
+        )
+
+    def test_clean_matching_task_head_diverged_from_dev_dispatches_for_owner_rebase(self) -> None:
+        before = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), before)
+        self.assertEqual(before, self.task_head)
+
+    def test_task_containing_current_base_is_left_untouched(self) -> None:
+        self._git(self.worktree, "merge", "--no-edit", "origin/dev")
+        self._git(self.worktree, "push", "origin", f"HEAD:{self.task_branch}")
+        composed_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertTrue(status.startswith("base_present_at_"), status)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), composed_head)
+
+    def test_task_behind_current_base_fast_forwards(self) -> None:
+        self._git(self.worktree, "reset", "--hard", self.initial_head)
+        self._git(self.repo_root, "push", "origin", "--delete", self.task_branch)
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertEqual(status, f"ff_to_{self.base_head[:12]}")
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), self.base_head)
+
+    def test_dirty_tracked_state_blocks_without_discarding_it(self) -> None:
+        dirty_path = self.worktree / "task.txt"
+        dirty_path.write_text("uncommitted owner work\n", encoding="utf-8")
+        before_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "skipped_dirty_worktree")
+        self.assertEqual(dirty_path.read_text(encoding="utf-8"), "uncommitted owner work\n")
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), before_head)
+
+    def test_dirty_tracked_orchestrator_scratch_also_blocks(self) -> None:
+        scratch = self.worktree / ".orchestrator" / "config.json"
+        scratch.parent.mkdir(parents=True, exist_ok=True)
+        scratch.write_text("tracked context\n", encoding="utf-8")
+        self._git(self.worktree, "add", str(scratch.relative_to(self.worktree)))
+        self._git(self.worktree, "commit", "-m", "track task context")
+        self._git(self.worktree, "push", "origin", f"HEAD:{self.task_branch}")
+        scratch.write_text("owner annotation\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "skipped_dirty_worktree")
+        self.assertEqual(scratch.read_text(encoding="utf-8"), "owner annotation\n")
+
+    def test_local_and_remote_task_head_mismatch_blocks(self) -> None:
+        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
+        self._git(self.worktree, "add", "local-only.txt")
+        self._git(self.worktree, "commit", "-m", "local only")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("task_head_mismatch:"), status)
+
+    def test_clean_local_task_behind_remote_fast_forwards_to_published_head(self) -> None:
+        self._git(self.repo_root, "fetch", "origin", self.task_branch)
+        self._git(self.repo_root, "switch", "--detach", f"origin/{self.task_branch}")
+        self._git(self.repo_root, "config", "user.name", "Supervisor Test")
+        self._git(self.repo_root, "config", "user.email", "supervisor-test@example.invalid")
+        (self.repo_root / "published.txt").write_text("published task update\n", encoding="utf-8")
+        self._git(self.repo_root, "add", "published.txt")
+        self._git(self.repo_root, "commit", "-m", "publish task update")
+        self._git(self.repo_root, "push", "origin", f"HEAD:{self.task_branch}")
+        published_head = self._git(self.repo_root, "rev-parse", "HEAD").stdout.strip()
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok, status)
+        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
+        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), published_head)
+
+    def test_wrong_branch_blocks(self) -> None:
+        self._git(self.worktree, "switch", "-c", "task/WRONG-BRANCH")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("wrong_branch:"), status)
+
+    def test_wrong_repository_worktree_blocks(self) -> None:
+        other = Path(self.tmp.name) / "other"
+        self._git(Path(self.tmp.name), "init", "-b", "dev", str(other))
+
+        ok, status = supervisor._refresh_reused_worker_worktree(
+            self.repo_root,
+            other,
+            "origin/dev",
+            self.task_branch,
+        )
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("wrong_worktree:"), status)
+
+    def test_fetch_failure_blocks(self) -> None:
+        self._git(self.worktree, "remote", "set-url", "origin", str(Path(self.tmp.name) / "missing.git"))
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("fetch_failed:"), status)
+
+    def test_unresolved_git_operation_blocks(self) -> None:
+        marker = Path(self._git(self.worktree, "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
+        marker.write_text(self.base_head + "\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertEqual(status, "unresolved_git_operation")
+
+    def test_unresolved_rebase_blocks(self) -> None:
+        raw_rebase_head = self._git(
+            self.worktree, "rev-parse", "--git-path", "REBASE_HEAD"
+        ).stdout.strip()
+        rebase_head = Path(raw_rebase_head)
+        if not rebase_head.is_absolute():
+            rebase_head = self.worktree / rebase_head
+        rebase_head.write_text(self.initial_head + "\n", encoding="utf-8")
+
+        for marker_name in ("rebase-merge", "rebase-apply"):
+            with self.subTest(marker=marker_name):
+                raw_marker = self._git(
+                    self.worktree, "rev-parse", "--git-path", marker_name
+                ).stdout.strip()
+                marker = Path(raw_marker)
+                if not marker.is_absolute():
+                    marker = self.worktree / marker
+                marker.mkdir(parents=True)
+
+                ok, status = self._refresh()
+
+                self.assertFalse(ok)
+                self.assertEqual(status, "unresolved_git_operation")
+                marker.rmdir()
+
+    def test_stale_rebase_head_after_completed_rebase_does_not_block(self) -> None:
+        raw_marker = self._git(self.worktree, "rev-parse", "--git-path", "REBASE_HEAD").stdout.strip()
+        marker = Path(raw_marker)
+        if not marker.is_absolute():
+            marker = self.worktree / marker
+        marker.write_text(self.initial_head + "\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok)
+        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
+        self.assertEqual(marker.read_text(encoding="utf-8").strip(), self.initial_head)
+
+    def test_unverifiable_fetched_base_blocks(self) -> None:
+        with mock.patch.object(supervisor, "_git_commit_oid", side_effect=[self.task_head, None]):
+            ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(status.startswith("unverifiable_refs:"), status)
 
 
 class WorkerReassignmentTests(unittest.TestCase):
@@ -7421,6 +9028,82 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                 1,
             )
 
+    def test_restart_preserves_one_live_claude_worker_without_redispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["providers"]["claude"] = {"delivery_mode": "claude_cli", "quota_group": "claude"}
+            config["agents"]["claude"] = {
+                "id": "claude",
+                "display_name": "Claude",
+                "provider": "claude",
+            }
+            config["ready_dispatcher"]["agent_order"] = ["claude"]
+            task = {
+                "id": "ODP-TASKOUTPUT-LIVE",
+                "status": "in_progress",
+                "owner": "Claude",
+                "reviewer": "Codex",
+                "depends_on": [],
+            }
+            (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_id": "evt-claude",
+                        "task_id": task["id"],
+                        "target_agent": "claude",
+                        "target_display_name": "Claude",
+                        "reason": "owned_in_progress_dispatch",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = {
+                "queue": {
+                    "events": {
+                        "evt-claude": {
+                            "status": "started",
+                            "run_id": "claude-run-live",
+                        }
+                    }
+                },
+                "workers": {
+                    "claude-run-live": {
+                        "run_id": "claude-run-live",
+                        "status": "running",
+                        "provider": "claude",
+                        "agent_id": "claude",
+                        "task_id": task["id"],
+                        "queue_event_id": "evt-claude",
+                        "pid": 4242,
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+                mock.patch.object(supervisor, "queue_delivery_event") as queue_delivery_event,
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={"Claude": [4242]}),
+            ):
+                supervisor.reconcile_runtime_on_boot(config, state)
+                dispatched = supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    provider_report={"providers": {"claude": {"auth_ready": True}}},
+                )
+
+            active_for_task = [
+                worker
+                for worker in state["workers"].values()
+                if worker.get("task_id") == task["id"] and worker.get("status") == "running"
+            ]
+            self.assertFalse(dispatched)
+            self.assertEqual(len(active_for_task), 1)
+            self.assertEqual(active_for_task[0]["run_id"], "claude-run-live")
+            queue_delivery_event.assert_not_called()
+
     def test_reconcile_runtime_fails_running_worker_when_pid_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -7635,9 +9318,105 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             pause = state["provider_guardrails"]["dispatch_pauses"]["gemini"]
             self.assertEqual(pause["pause_kind"], "quota_terminal")
             self.assertEqual(pause["worker_run_id"], "gemini-run-dead")
-            streak = state["provider_guardrails"]["task_failure_streaks"]["OPS-LEASE-003:gemini"]
-            self.assertEqual(streak["last_failure_kind"], "quota_terminal")
+            # Provider quota is environmental, not evidence that this task is in
+            # a logic failure loop; provider pause carries the recovery state.
+            self.assertNotIn(
+                "OPS-LEASE-003:gemini",
+                state["provider_guardrails"]["task_failure_streaks"],
+            )
             self.assertIn("capacity", worker["last_error"].lower())
+
+    def test_antigravity_boot_reconciliation_preserves_owner_for_claude_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            config["providers"]["antigravity5"] = {
+                "delivery_mode": "antigravity",
+                "antigravity": {
+                    "model_rotation": {
+                        "enabled": True,
+                        "primary_model": "",
+                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                    }
+                },
+            }
+            config["agents"]["antigravity5"] = {
+                "id": "antigravity5",
+                "display_name": "Antigravity5",
+                "provider": "antigravity5",
+            }
+            (root / "ai-status.json").write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "id": "ODP-AGY-LIVE",
+                                "status": "in_progress",
+                                "owner": "Antigravity5",
+                                "reviewer": "Claude",
+                                "depends_on": [],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "event-queue.jsonl").write_text(
+                json.dumps(
+                    {
+                        "event_id": "evt-agy",
+                        "task_id": "ODP-AGY-LIVE",
+                        "target_agent": "antigravity5",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            log_path = root / "agy-quota.log"
+            log_path.write_text(
+                "Error: Individual quota reached. Please upgrade your subscription "
+                "to increase your limits. Resets in 2h21m32s.\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "run_id": "agy-run-dead",
+                "status": "running",
+                "provider": "antigravity5",
+                "agent_id": "antigravity5",
+                "task_id": "ODP-AGY-LIVE",
+                "queue_event_id": "evt-agy",
+                "pid": 987654,
+                "log_path": str(log_path),
+                "antigravity_model_pool": "gemini",
+                "metadata": {"antigravity_model_pool": "gemini"},
+            }
+            state = {
+                "queue": {"events": {"evt-agy": {"status": "started", "run_id": "agy-run-dead"}}},
+                "workers": {"agy-run-dead": worker},
+            }
+
+            previous_state_path = supervisor.model_rotation._STATE_PATH
+            supervisor.model_rotation._STATE_PATH = root / "model-cooldown.json"
+            try:
+                with (
+                    mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                    mock.patch.object(supervisor, "write_failure_evidence", return_value="evidence/agy.json"),
+                    mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure") as reassign,
+                ):
+                    self.assertTrue(supervisor.reconcile_runtime_on_boot(config, state))
+                    self.assertFalse(supervisor.reconcile_runtime_on_boot(config, state))
+                    self.assertEqual(
+                        supervisor.model_rotation.resolve_active_selection(config, "antigravity5")["pool"],
+                        "claude",
+                    )
+            finally:
+                supervisor.model_rotation._STATE_PATH = previous_state_path
+
+            reassign.assert_not_called()
+            self.assertEqual(worker["status"], "failed")
+            self.assertEqual(state["queue"]["events"]["evt-agy"]["status"], "failed")
+            processed = state["provider_guardrails"]["processed_model_rotation_failures"]
+            self.assertEqual(list(processed), ["agy-run-dead"])
 
     def test_quota_group_cap_blocks_second_slot(self) -> None:
         config = {
@@ -7958,5 +9737,4189 @@ class RunSupervisorShellGuardTests(unittest.TestCase):
 
 
 
+class ReviewHeadFreezeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.test_dir = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.test_dir.name)
+        ai_status.STATUS_FILE = self.tmp_path / "ai-status.json"
+        ai_status.LOG_FILE = self.tmp_path / "ai-activity-log.jsonl"
+        ai_status.CURRENT_WORK_FILE = self.tmp_path / "current-work.md"
+        ai_status.STATUS_FILE.write_text("{}", encoding="utf-8")
+        ai_status.LOG_FILE.write_text("", encoding="utf-8")
+        ai_status.clear_ai_status_caches()
+
+    def tearDown(self) -> None:
+        ai_status.clear_ai_status_caches()
+        self.test_dir.cleanup()
+
+    def _build_freeze_test_config(self) -> dict[str, Any]:
+        config = load_test_config()
+        ready_disp = config.setdefault("ready_dispatcher", {})
+        ready_disp["enabled"] = True
+        ready_disp["review_statuses"] = ["review"]
+        ready_disp["finalize_statuses"] = ["review_approved"]
+        ready_disp["owned_statuses"] = ["in_progress", "todo"]
+        ready_disp["active_worker_statuses"] = ["running", "waiting_approval"]
+        max_by_agent = ready_disp.setdefault("max_tasks_per_agent_by_agent", {})
+        max_by_agent["Antigravity4"] = 10
+        max_by_agent["antigravity4"] = 10
+        quota_groups = ready_disp.setdefault("max_concurrent_per_quota_group", {})
+        quota_groups["antigravity4"] = 10
+        quota_groups["antigravity"] = 10
+        agents = config.setdefault("agents", {})
+        agents["antigravity4"] = {
+            "display_name": "Antigravity4",
+            "provider": "antigravity",
+            "adapter": "antigravity",
+        }
+        return config
+
+    def test_approve_saves_approved_head_and_rejects_same_owner_reviewer(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-001",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review",
+                },
+                {
+                    "id": "FREEZE-TEST-002",
+                    "owner": "Claude",
+                    "reviewer": "Claude",
+                    "status": "review",
+                },
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
+            with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"):
+                with unittest.mock.patch("ai_status.sync_all"):
+                    with self.assertRaises(SystemExit) as cm:
+                        ai_status.command_approve(state, ["FREEZE-TEST-002", "Approve self"])
+                    self.assertIn("must be separate identities", str(cm.exception))
+
+                    ai_status.command_approve(state, ["FREEZE-TEST-001", "Approve valid"])
+                    task = ai_status.get_task(state, "FREEZE-TEST-001")
+                    self.assertEqual(task["status"], "review_approved")
+                    self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
+
+    def test_command_done_rejects_mutated_head(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": "9999999922222222333333334444444455555555",
+                    "pull_request": {
+                        "head_sha": "1111111122222222333333334444444455555555",
+                        "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                    },
+                },
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003", "Finalize done"])
+                self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+    def test_command_done_fails_closed_when_delivery_checkout_sha_unresolved_or_collector_raises(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-003B",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": None,
+                    "pull_request": {
+                        "head_sha": "1111111122222222333333334444444455555555",
+                        "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                    },
+                },
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
+                self.assertIn("differs from reviewer-approved head", str(cm.exception))
+
+            with unittest.mock.patch(
+                "ai_status.collect_done_delivery_metadata",
+                side_effect=SystemExit("Cannot finalize task: task-owned checkout HEAD is unavailable."),
+            ):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_done(state, ["FREEZE-TEST-003B", "Finalize done"])
+                self.assertIn("task-owned checkout HEAD is unavailable", str(cm.exception))
+
+    def test_supervisor_reverts_mutated_approved_head_to_review_on_disk(self) -> None:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            status_file = tmppath / "ai-status.json"
+            initial_status = {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-004",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review_approved",
+                        "approved_head": "1111111122222222333333334444444455555555",
+                    }
+                ]
+            }
+            status_file.write_text(json.dumps(initial_status), encoding="utf-8")
+
+            config = self._build_freeze_test_config()
+            config["paths"]["status_file"] = str(status_file)
+            state = {
+                "seen_event_keys": {},
+                "ready_dispatcher": {"weighted_cursor": 0},
+                "status": initial_status,
+            }
+
+            ai_status.clear_ai_status_caches()
+            with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+                 unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value="8888888822222222333333334444444455555555"), \
+                 unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+                 unittest.mock.patch("supervisor.sync_status_pipeline", return_value=True), \
+                 unittest.mock.patch("supervisor.write_activity_log"):
+                supervisor.dispatch_ready_tasks(
+                    config,
+                    state,
+                    agent_ids_override=["antigravity4"],
+                )
+                disk_status = json.loads(status_file.read_text(encoding="utf-8"))
+                disk_task = disk_status["tasks"][0]
+                self.assertEqual(disk_task["status"], "review")
+                self.assertIn("re-review required", disk_task["next"])
+                self.assertNotIn("approved_head", disk_task)
+
+    def test_task_pr_ci_status_handles_checkrun_completed_failure(self) -> None:
+        ai_status.clear_ai_status_caches()
+        fake_payload = {
+            "state": "OPEN",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "build",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                }
+            ],
+        }
+        with unittest.mock.patch("ai_status.run_gh_json_command", return_value=fake_payload):
+            pr_state, ci_status = ai_status.task_pr_ci_status("TEST-CI-001")
+            self.assertEqual(pr_state, "OPEN")
+            self.assertEqual(ci_status, "failure")
+
+    def test_dispatch_priority_for_task_and_agent_primary_work(self) -> None:
+        config = self._build_freeze_test_config()
+        task_mutated = {
+            "id": "FREEZE-TEST-007",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        status_data = {"tasks": [task_mutated]}
+        task_map = {"FREEZE-TEST-007": task_mutated}
+
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"):
+            prio = supervisor.dispatch_priority_for_task(config, task_mutated, "Antigravity4", task_map=task_map)
+            self.assertIsNone(prio)
+            has_work = supervisor.agent_has_dispatchable_primary_work(config, status_data, "Antigravity4", task_map)
+            self.assertFalse(has_work)
+
+    def test_dispatch_priority_fails_closed_on_unresolved_head_or_unknown_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-007B",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        task_map = {"FREEZE-TEST-007B": task}
+
+        ai_status.clear_ai_status_caches()
+        # Positive control: matching head + green CI MUST yield the finalize priority.
+        # Without this, a config/schema regression would make every negative
+        # sub-case below pass vacuously (the B13 failure mode).
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map),
+                1,
+            )
+
+        # Head sub-cases pin CI to a *passing* probe so the head gate is the only
+        # thing that can produce None. Leaving task_pr_ci_status unpatched here
+        # lets control fall through to the CI gate, where the real (unmocked)
+        # probe shells out to `gh`, returns ("unknown"), and produces the None
+        # the assertion is checking -- which is how B14/B17/B18 stayed vacuous.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("git error")), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        # Head drifted off the approved head, CI green: still must not dispatch.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")):
+            self.assertIsNone(supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map))
+
+    def test_approve_fails_closed_when_approved_head_cannot_be_resolved(self) -> None:
+        """B20: approving without freezing a head silently disables the freeze.
+
+        command_done and both supervisor dispatch gates are guarded by
+        `if approved_head:`. Recording no head therefore does not fail closed --
+        it opts the task out of the integrity check entirely. Approval must
+        abort instead, leaving the task in `review`.
+        """
+        def _fresh_state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-020A",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review",
+                    }
+                ]
+            }
+
+        # Positive control: a resolvable head still approves and freezes.
+        state = _fresh_state()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.append_log"), \
+             unittest.mock.patch("ai_status.sync_all"):
+            ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
+        task = ai_status.get_task(state, "FREEZE-TEST-020A")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], "1111111122222222333333334444444455555555")
+
+        # Unresolvable head -> abort, and leave no half-applied approval behind.
+        state = _fresh_state()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.sync_all"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
+        self.assertIn("could not be resolved", str(cm.exception))
+        task = ai_status.get_task(state, "FREEZE-TEST-020A")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("approved_head", task)
+
+        # A raising probe must fail closed too, not escape as a traceback.
+        state = _fresh_state()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", side_effect=RuntimeError("gh down")), \
+             unittest.mock.patch("ai_status.sync_all"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state, ["FREEZE-TEST-020A", "Approve valid"])
+        self.assertIn("Integrity gate failed closed", str(cm.exception))
+        task = ai_status.get_task(state, "FREEZE-TEST-020A")
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("approved_head", task)
+
+    def test_approve_refuses_to_overwrite_uncleared_approved_head(self) -> None:
+        """B20: approved_head is immutable for the lifetime of one approval.
+
+        Every transition back to `review` pops approved_head, so a task in
+        `review` still carrying one is inconsistent state. Silently overwriting
+        it would re-freeze on a head the reviewer never signed off.
+        """
+        old_head = "1111111122222222333333334444444455555555"
+        new_head = "9999999922222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-020B",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review",
+                    "approved_head": old_head,
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=new_head), \
+             unittest.mock.patch("ai_status.sync_all"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state, ["FREEZE-TEST-020B", "Approve drifted"])
+        self.assertIn("uncleared approved head", str(cm.exception))
+        task = ai_status.get_task(state, "FREEZE-TEST-020B")
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["approved_head"], old_head)
+
+        # Positive control: re-approving at the *same* head is not a conflict,
+        # so the guard cannot be satisfied by rejecting every stale-head task.
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=old_head), \
+             unittest.mock.patch("ai_status.append_log"), \
+             unittest.mock.patch("ai_status.sync_all"):
+            ai_status.command_approve(state, ["FREEZE-TEST-020B", "Approve same head"])
+        task = ai_status.get_task(state, "FREEZE-TEST-020B")
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], old_head)
+
+    def _run_finalize_dispatch_capturing_signals(
+        self,
+        config: dict[str, Any],
+        task: dict[str, Any],
+        *,
+        head: Any,
+        ci: Any,
+    ) -> tuple[bool, list[dict[str, Any]], unittest.mock.MagicMock]:
+        """Drive dispatch_ready_tasks once and collect the operator signals."""
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+        logged: list[dict[str, Any]] = []
+
+        ai_status.clear_ai_status_caches()
+        head_patch = (
+            unittest.mock.patch("ai_status.resolve_task_sha", side_effect=head)
+            if isinstance(head, Exception)
+            else unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+        )
+        with head_patch, \
+             unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", ci)), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.sync_status_pipeline"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.write_activity_log", side_effect=lambda _c, e: logged.append(e)), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+        return dispatched, logged, mock_queue
+
+    def test_supervisor_emits_operator_signal_for_silent_finalize_suppression(self) -> None:
+        """B20: suppressing finalize dispatch must not be silent.
+
+        The unresolved-head path and the catch-all unresolved-CI path both used
+        a bare `continue`, unlike the pending/failure branches, so a task could
+        sit in review_approved indefinitely with no `next` and no activity-log
+        entry explaining why nothing was happening.
+        """
+        approved = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+
+        def _task() -> dict[str, Any]:
+            return {
+                "id": "FREEZE-TEST-020C",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "review_approved",
+                "approved_head": approved,
+            }
+
+        # Positive control: head matches and CI is green -> dispatch, no signal.
+        task = _task()
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="success"
+        )
+        self.assertTrue(dispatched)
+        mock_queue.assert_called_once()
+        self.assertEqual([], [e["type"] for e in logged])
+
+        # Head unresolvable: suppressed, task stays review_approved, signal emitted.
+        task = _task()
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=None, ci="success"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertEqual(task["status"], "review_approved")
+        self.assertIn("approved_head_unresolved", [e["type"] for e in logged])
+        self.assertIn("Cannot verify branch HEAD", task["next"])
+
+        # Head resolution raising is the same suppression path.
+        task = _task()
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=RuntimeError("git down"), ci="success"
+        )
+        self.assertFalse(dispatched)
+        self.assertIn("approved_head_unresolved", [e["type"] for e in logged])
+
+        # CI probe inconclusive: suppressed with its own distinct signal.
+        task = _task()
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="unknown"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertEqual(task["status"], "review_approved")
+        self.assertIn("ci_status_unresolved", [e["type"] for e in logged])
+        self.assertIn("is unresolved (unknown)", task["next"])
+
+        # Signals are emitted once, not re-logged every supervisor cycle.
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="unknown"
+        )
+        self.assertFalse(dispatched)
+        self.assertEqual([], [e["type"] for e in logged])
+
+    def test_ci_pending_escalates_to_operator_after_timeout(self) -> None:
+        """AC3 escalation half: covered by nothing until this test.
+
+        Mutating the whole `if ci_status == "pending":` branch to `if False:`
+        left the suite green, because the later catch-all still suppressed
+        dispatch. Only the ci_pending_since_ts bookkeeping and the 30-minute
+        escalation notice were lost -- and nothing asserted on either.
+        """
+        approved = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+
+        def _task(**extra: Any) -> dict[str, Any]:
+            task = {
+                "id": "FREEZE-TEST-020D",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "review_approved",
+                "approved_head": approved,
+            }
+            task.update(extra)
+            return task
+
+        # First pending cycle: start the clock, do not escalate yet.
+        task = _task()
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertFalse(dispatched)
+        self.assertIn("ci_pending_since_ts", task)
+        self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
+
+        # Still inside the 30-minute window: still no escalation.
+        task = _task(ci_pending_since_ts=datetime.now(UTC).timestamp() - 60)
+        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
+
+        # Past 1800s: escalate to the operator exactly once.
+        task = _task(ci_pending_since_ts=datetime.now(UTC).timestamp() - 2000)
+        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertIn("ci_pending_timeout", [e["type"] for e in logged])
+        self.assertIn("pending for over 30 minutes", task["next"])
+
+        _, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="pending"
+        )
+        self.assertEqual([], [e["type"] for e in logged])
+
+        # Recovery: a green probe clears the pending bookkeeping and dispatches.
+        dispatched, _, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="success"
+        )
+        self.assertTrue(dispatched)
+        mock_queue.assert_called_once()
+        self.assertNotIn("ci_pending_since_ts", task)
+
+    def test_explicit_re_review_command(self) -> None:
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-008",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": "1111111122222222333333334444444455555555",
+                }
+            ]
+        }
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.load_state", return_value=state), \
+             unittest.mock.patch("ai_status.save_state"), \
+             unittest.mock.patch("ai_status.sync_all"), \
+             unittest.mock.patch("ai_status.emit_status_checks_for_changed_tasks"):
+            ai_status.main(["ai_status.py", "re_review", "FREEZE-TEST-008", "Updated branch with strict merge"])
+            task = ai_status.get_task(state, "FREEZE-TEST-008")
+            self.assertEqual(task["status"], "review")
+            self.assertNotIn("approved_head", task)
+            self.assertEqual(task["next"], "Updated branch with strict merge")
+
+            task["status"] = "review_approved"
+            task["approved_head"] = "1111111122222222333333334444444455555555"
+            ai_status.main(["ai_status.py", "re-review", "FREEZE-TEST-008", "Alias re-review check"])
+            self.assertEqual(task["status"], "review")
+            self.assertNotIn("approved_head", task)
+
+    def test_higher_priority_ready_task_exists_refuses_undispatchable_finalize_task(self) -> None:
+        """B24: higher_priority_ready_task_exists must fail closed on undispatchable finalize tasks.
+
+        A review_approved task with missing approved_head, head mismatch, or pending CI
+        cannot be dispatched by dispatch_ready_tasks. It MUST NOT cause
+        higher_priority_ready_task_exists to return True and terminate running workers.
+        """
+        approved_head = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+        config["ready_dispatcher"]["max_tasks_per_agent_by_agent"]["Antigravity4"] = 1
+        config["ready_dispatcher"]["max_concurrent_per_quota_group"]["antigravity4"] = 1
+
+        worker = {
+            "run_id": "run-001",
+            "task_id": "INPROG-001",
+            "agent_id": "antigravity4",
+            "status": "running",
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_IN_PROGRESS},
+        }
+
+        task_map = {
+            "INPROG-001": {
+                "id": "INPROG-001",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "in_progress",
+            },
+            "FINAL-001": {
+                "id": "FINAL-001",
+                "owner": "Antigravity4",
+                "reviewer": "Claude",
+                "status": "review_approved",
+            },
+        }
+
+        # No approved_head -> must return False (does not preempt)
+        self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # Head mismatch -> must return False
+        task_map["FINAL-001"]["approved_head"] = approved_head
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="9999999922222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # CI pending -> must return False
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")):
+            self.assertFalse(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+        # Positive control: matching head + green CI -> returns True (preempts)
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved_head), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_dispatch_capacity", return_value=1):
+            self.assertTrue(supervisor.higher_priority_ready_task_exists(config, worker, task_map))
+
+    def test_supervisor_suppresses_finalize_dispatch_on_pending_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task_worktree_status_path = ROOT_DIR / "ai-status.json"
+        task_worktree_status_before = (
+            task_worktree_status_path.read_bytes()
+            if task_worktree_status_path.exists()
+            else None
+        )
+        task = {
+            "id": "FREEZE-TEST-005",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+
+        ai_status.clear_ai_status_caches()
+        # Positive Control: ci_status = "success" MUST dispatch
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Test suppression: ci_status = "pending" MUST NOT dispatch
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "pending")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+        task_worktree_status_after = (
+            task_worktree_status_path.read_bytes()
+            if task_worktree_status_path.exists()
+            else None
+        )
+        self.assertEqual(task_worktree_status_before, task_worktree_status_after)
+
+    def test_supervisor_suppresses_finalize_dispatch_on_unresolved_head_or_unknown_ci(self) -> None:
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-005B",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        state = {
+            "seen_event_keys": {},
+            "ready_dispatcher": {"weighted_cursor": 0},
+            "status": {"tasks": [task]},
+        }
+        status = {"tasks": [task]}
+        APPROVED = "1111111122222222333333334444444455555555"
+
+        ai_status.clear_ai_status_caches()
+
+        # Sub-case 1: resolve_task_sha returns None — head cannot be resolved, must suppress.
+        # Positive control: matching head + ci=success MUST dispatch.
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: resolve_task_sha returns None — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.write_activity_log"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+        # Sub-case 2: ci_status = "unknown" — must suppress.
+        # Positive control: matching head + ci=success MUST dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: ci_status = "unknown" — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "unknown")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.write_activity_log"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+        # Sub-case 3: task_pr_ci_status raises — must suppress (fail closed on error).
+        # Positive control: matching head + ci=success MUST dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertTrue(dispatched)
+            mock_queue.assert_called_once()
+
+        # Negative: task_pr_ci_status raises RuntimeError — must NOT dispatch.
+        state["seen_event_keys"] = {}
+        task["status"] = "review_approved"
+        with unittest.mock.patch("supervisor.scan_live_worker_pids_by_agent", return_value={}), \
+             unittest.mock.patch("supervisor.outstanding_delivery_indexes", return_value=(set(), set(), set())), \
+             unittest.mock.patch("supervisor.agent_dispatch_loads", return_value={}), \
+             unittest.mock.patch("supervisor.load_status", return_value=status), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", side_effect=RuntimeError("gh error")), \
+             unittest.mock.patch("supervisor.agent_auto_dispatch_block_reason", return_value=None), \
+             unittest.mock.patch("supervisor.write_activity_log"), \
+             unittest.mock.patch("supervisor.write_json"), \
+             unittest.mock.patch("supervisor.queue_delivery_event", return_value=True) as mock_queue:
+            dispatched = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["antigravity4"],
+            )
+            self.assertFalse(dispatched)
+            mock_queue.assert_not_called()
+            self.assertEqual(task["status"], "review_approved")
+
+    def test_supervisor_finalize_dispatch_forces_fresh_sha_resolution(self) -> None:
+        """Verify supervisor evaluate_dispatch and finalize dispatch gate pass force_refresh=True to resolve_task_sha."""
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-FRESH-001",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="1111111122222222333333334444444455555555") as mock_resolve, \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            prio = supervisor.dispatch_priority_for_task(config, task, "Antigravity4")
+            self.assertIsNotNone(prio)
+            mock_resolve.assert_called_with("FREEZE-TEST-FRESH-001", force_refresh=True)
+
+    def test_task_review_gate_status_check_pending_on_head_mismatch(self) -> None:
+        task = {
+            "id": "FREEZE-TEST-006",
+            "reviewer": "Claude",
+            "approved_head": "1111111122222222333333334444444455555555",
+        }
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="7777777722222222333333334444444455555555"):
+            with unittest.mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"):
+                with unittest.mock.patch("subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ai_status.emit_task_review_status_check(task, "review_approved")
+                    mock_run.assert_called_once()
+                    cmd = mock_run.call_args[0][0]
+                    self.assertIn("state=pending", cmd)
+                    self.assertIn("re-review required", "".join(cmd))
+
+    # ------------------------------------------------------------------
+    # B22 -- `review_approved` with the approved_head key *absent*.
+    #
+    # Round 8 rejected the freeze because every consumer was written as
+    # `if approved_head:`, so the missing-key shape opted a task out of the
+    # control entirely. Mutation testing could not find it: a mutant only dies
+    # inside a path some test reaches, and all 32 approved_head references in
+    # the suite *set* the key. These tests construct the shape directly.
+    # ------------------------------------------------------------------
+
+    MISSING_HEAD_APPROVED = "3333333322222222333333334444444455555555"
+
+    def _missing_head_task(self, task_id: str) -> dict[str, Any]:
+        """The live ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001 shape, verbatim:
+        review_approved, owned, and simply carrying no `approved_head` key."""
+        return {
+            "id": task_id,
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+        }
+
+    def test_dispatch_priority_fails_closed_when_approved_head_is_absent(self) -> None:
+        config = self._build_freeze_test_config()
+        task = self._missing_head_task("FREEZE-TEST-022A")
+        task_map = {task["id"]: task}
+        ai_status.clear_ai_status_caches()
+
+        # The gate must not consult the head/CI probes at all -- there is
+        # nothing to compare against -- so both are pinned green. If the
+        # suppression came from the CI probe instead, this would pass vacuously.
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=self.MISSING_HEAD_APPROVED), \
+             unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+            self.assertIsNone(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map=task_map)
+            )
+
+            # Control: the identical task with the key present and matching is
+            # dispatched, so the assertion above is the gate firing, not a
+            # broken fixture.
+            control = dict(task, approved_head=self.MISSING_HEAD_APPROVED)
+            self.assertEqual(
+                supervisor.dispatch_priority_for_task(
+                    config, control, "Antigravity4", task_map={control["id"]: control}
+                ),
+                1,
+            )
+
+    def test_dispatch_ready_suppresses_and_signals_when_approved_head_is_absent(self) -> None:
+        config = self._build_freeze_test_config()
+        task = self._missing_head_task("FREEZE-TEST-022B")
+
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=self.MISSING_HEAD_APPROVED, ci="success"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertEqual(task["status"], "review_approved")
+        self.assertIn("approved_head_missing", [e["type"] for e in logged])
+        self.assertIn("no reviewer-approved head", task["next"])
+        self.assertIn("restore_approved_head", task["next"])
+
+        # Emitted once, not every supervisor cycle.
+        dispatched, logged, _ = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=self.MISSING_HEAD_APPROVED, ci="success"
+        )
+        self.assertFalse(dispatched)
+        self.assertEqual([], [e["type"] for e in logged])
+
+        # Control: the same task with the head recorded does dispatch.
+        control = self._missing_head_task("FREEZE-TEST-022B")
+        control["approved_head"] = self.MISSING_HEAD_APPROVED
+        dispatched, _, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, control, head=self.MISSING_HEAD_APPROVED, ci="success"
+        )
+        self.assertTrue(dispatched)
+        mock_queue.assert_called_once()
+
+    def test_command_done_rejects_absent_head_before_delivery_metadata(self) -> None:
+        """The freeze gate must reject, not merely be followed by gates that do.
+
+        Round 8's reproduction reached the commit-convention and require_merged_pr
+        messages, which proved the freeze had never fired. Those gates check
+        merge hygiene, not "is this the commit a reviewer read", so this asserts
+        collect_done_delivery_metadata is never entered.
+        """
+        state = {"tasks": [self._missing_head_task("FREEZE-TEST-022C")]}
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=self.MISSING_HEAD_APPROVED), \
+             unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect, \
+             unittest.mock.patch("ai_status.append_log"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state, ["FREEZE-TEST-022C", "Finalize"])
+        self.assertIn("no reviewer-approved head", str(cm.exception))
+        collect.assert_not_called()
+        self.assertEqual(ai_status.get_task(state, "FREEZE-TEST-022C")["status"], "review_approved")
+
+    def test_task_review_gate_pending_when_approved_head_is_absent(self) -> None:
+        task = {"id": "FREEZE-TEST-022D", "reviewer": "Claude"}
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value=self.MISSING_HEAD_APPROVED), \
+             unittest.mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"), \
+             unittest.mock.patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            ai_status.emit_task_review_status_check(task, "review_approved")
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("state=pending", cmd)
+            self.assertIn("no reviewer-approved head is recorded", "".join(cmd))
+
+    def test_staging_shape_closes_only_after_explicit_head_restoration(self) -> None:
+        """End-to-end on the exact live shape: head e0147acb, merge 4b329493.
+
+        Also pins B22-3: the freeze anchors on the immutable PR head, and the
+        merge commit GitHub created is recorded as separate delivery evidence
+        rather than being accepted as the reviewed commit.
+        """
+        head = "e0147acb22222222333333334444444455555555"
+        merge = "4b32949322222222333333334444444455555555"
+        task_id = "ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001"
+        state = {"tasks": [self._missing_head_task(task_id)]}
+        task = ai_status.get_task(state, task_id)
+        config = self._build_freeze_test_config()
+        ai_status.clear_ai_status_caches()
+
+        resolve = unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+        pr_info = unittest.mock.patch(
+            "ai_status.task_pr_head_and_merge_commit", return_value=(head, merge)
+        )
+
+        # 1. Nothing dispatches and nothing finalizes while the head is missing.
+        with resolve, pr_info, unittest.mock.patch("ai_status.append_log"):
+            self.assertIsNone(
+                supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map={task_id: task})
+            )
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                 unittest.mock.patch("ai_status.collect_done_delivery_metadata") as collect:
+                with self.assertRaises(SystemExit):
+                    ai_status.command_done(state, [task_id, "Finalize"])
+                collect.assert_not_called()
+
+            # 2. The owner cannot attest their own head.
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(state, [task_id, head, "self-attest"])
+                self.assertIn("Only the reviewer", str(cm.exception))
+            self.assertNotIn("approved_head", task)
+
+            # 3. The reviewer cannot attest the merge commit, an abbreviation,
+            #    or any sha other than the immutable PR head.
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(state, [task_id, merge, "merge commit"])
+                self.assertIn("merge commit", str(cm.exception))
+
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(state, [task_id, head[:8], "abbrev"])
+                self.assertIn("40-character commit sha", str(cm.exception))
+
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved_head(
+                        state, [task_id, "9999999922222222333333334444444455555555", "other head"]
+                    )
+                self.assertIn("does not match the task branch head", str(cm.exception))
+                self.assertNotIn("approved_head", task)
+
+                # 4. Attesting the exact reviewed head restores the freeze.
+                ai_status.command_restore_approved_head(state, [task_id, head, "attest reviewed head"])
+            self.assertEqual(task["approved_head"], head)
+
+            # 5. Only now does the task dispatch and finalize, and the merge
+            #    commit is recorded as a distinct fact from the approved head.
+            with unittest.mock.patch("ai_status.task_pr_ci_status", return_value=("OPEN", "success")):
+                self.assertEqual(
+                    supervisor.dispatch_priority_for_task(config, task, "Antigravity4", task_map={task_id: task}),
+                    1,
+                )
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                 unittest.mock.patch(
+                     "ai_status.collect_done_delivery_metadata",
+                     return_value={
+                         "verified_head": head,
+                         "pull_request": {"head_sha": head, "merge_commit": merge},
+                     },
+                 ), \
+                 unittest.mock.patch("ai_status.archive_terminal_task_from_state"):
+                ai_status.command_done(state, [task_id, "Finalize"])
+
+        self.assertEqual(task["status"], "done")
+        self.assertEqual(task["delivery"]["approved_head"], head)
+        self.assertEqual(task["delivery"]["verified_head"], head)
+        self.assertEqual(task["delivery"]["pr_merge_commit"], merge)
+        self.assertNotEqual(task["delivery"]["pr_merge_commit"], task["delivery"]["approved_head"])
+
+    def test_done_refuses_when_resolved_head_is_the_merge_commit(self) -> None:
+        """If a task branch resolves to the merge commit, the frozen head must
+        not be satisfiable by it -- the merge commit was never reviewed."""
+        merge = "4b32949322222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-022E",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review_approved",
+                    "approved_head": merge,
+                }
+            ]
+        }
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch(
+                 "ai_status.collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": merge,
+                     "pull_request": {
+                         "head_sha": "e0147acb22222222333333334444444455555555",
+                         "merge_commit": merge,
+                     },
+                 },
+             ) as collect, \
+             unittest.mock.patch("ai_status.append_log"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state, ["FREEZE-TEST-022E", "Finalize"])
+        self.assertIn("differs from reviewer-approved head", str(cm.exception))
+        collect.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # B21 -- `restore_approved` is the second producer of `review_approved`.
+    # ------------------------------------------------------------------
+
+    def _restore_state(self, **task_extra: Any) -> dict[str, Any]:
+        task = {
+            "id": "FREEZE-TEST-021",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "in_progress",
+            "review_notes_zh": "已審核通過",
+        }
+        task.update(task_extra)
+        return {"tasks": [task]}
+
+    def test_restore_approved_refuses_without_a_durable_approved_head(self) -> None:
+        """The round-8 reproduction: approve -> reopen -> restore -> done at an
+        unreviewed head. `reopen` pops approved_head but keeps review_notes_zh,
+        which is exactly restore_approved's precondition."""
+        approved = "1111111122222222333333334444444455555555"
+        state = {
+            "tasks": [
+                {
+                    "id": "FREEZE-TEST-021A",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                    "status": "review",
+                    "review_notes_zh": "已審核通過",
+                }
+            ]
+        }
+        task = ai_status.get_task(state, "FREEZE-TEST-021A")
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.append_log"), unittest.mock.patch("ai_status.sync_all"):
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved):
+                ai_status.command_approve(state, ["FREEZE-TEST-021A", "Approved"])
+            self.assertEqual(task["last_approved_head"], approved)
+
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"):
+                ai_status.command_reopen(state, ["FREEZE-TEST-021A", "More work"])
+                self.assertNotIn("approved_head", task)
+                # B21's precondition: the durable record survives the reopen,
+                # so restore can re-freeze it rather than producing no freeze.
+                self.assertEqual(task["last_approved_head"], approved)
+
+                # Owner pushes an unreviewed commit, then tries to restore.
+                drifted = "bbbbbbbb22222222333333334444444455555555"
+                with unittest.mock.patch("ai_status.resolve_task_sha", return_value=drifted):
+                    with self.assertRaises(SystemExit) as cm:
+                        ai_status.command_restore_approved(state, ["FREEZE-TEST-021A", "Restore"])
+                self.assertIn("moved to bbbbbbbb", str(cm.exception))
+                self.assertEqual(task["status"], "in_progress")
+
+            # A task that never had a durable head cannot be restored at all.
+            legacy = self._restore_state(id="FREEZE-TEST-021B")
+            with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                 unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved):
+                with self.assertRaises(SystemExit) as cm:
+                    ai_status.command_restore_approved(legacy, ["FREEZE-TEST-021B", "Restore"])
+            self.assertIn("no durable reviewer-approved head", str(cm.exception))
+            self.assertEqual(ai_status.get_task(legacy, "FREEZE-TEST-021B")["status"], "in_progress")
+
+    def test_restore_approved_refreezes_the_reviewed_head_when_branch_unmoved(self) -> None:
+        """Positive control for the two refusals above: a genuinely spurious
+        downgrade still recovers, and it recovers *with* the freeze intact."""
+        approved = "1111111122222222333333334444444455555555"
+        state = self._restore_state(id="FREEZE-TEST-021C", last_approved_head=approved)
+        task = ai_status.get_task(state, "FREEZE-TEST-021C")
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=approved), \
+             unittest.mock.patch("ai_status.append_log"):
+            ai_status.command_restore_approved(state, ["FREEZE-TEST-021C", "Spurious downgrade"])
+        self.assertEqual(task["status"], "review_approved")
+        self.assertEqual(task["approved_head"], approved)
+
+        # And the restored task is frozen: a later push is still refused.
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+             unittest.mock.patch(
+                 "ai_status.collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": "bbbbbbbb22222222333333334444444455555555",
+                     "pull_request": {
+                         "head_sha": approved,
+                         "merge_commit": "aaaaaaaa22222222333333334444444455555555",
+                     },
+                 },
+             ) as collect, \
+             unittest.mock.patch("ai_status.append_log"):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_done(state, ["FREEZE-TEST-021C", "Finalize"])
+        self.assertIn("differs from reviewer-approved head", str(cm.exception))
+        collect.assert_called_once()
+
+    def test_restore_approved_fails_closed_when_head_unresolvable(self) -> None:
+        approved = "1111111122222222333333334444444455555555"
+        for head, expected in (
+            (None, "branch HEAD could not be resolved"),
+            (RuntimeError("git down"), "unable to resolve the current branch HEAD"),
+        ):
+            with self.subTest(head=str(head)):
+                state = self._restore_state(id="FREEZE-TEST-021D", last_approved_head=approved)
+                ai_status.clear_ai_status_caches()
+                patch = (
+                    unittest.mock.patch("ai_status.resolve_task_sha", side_effect=head)
+                    if isinstance(head, Exception)
+                    else unittest.mock.patch("ai_status.resolve_task_sha", return_value=head)
+                )
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value="Antigravity4"), \
+                     patch, unittest.mock.patch("ai_status.append_log"):
+                    with self.assertRaises(SystemExit) as cm:
+                        ai_status.command_restore_approved(state, ["FREEZE-TEST-021D", "Restore"])
+                self.assertIn(expected, str(cm.exception))
+                self.assertEqual(
+                    ai_status.get_task(state, "FREEZE-TEST-021D")["status"], "in_progress"
+                )
+
+    def test_restore_approved_head_requires_the_missing_head_shape(self) -> None:
+        """It repairs the B22 shape only; it is not a second approve path."""
+        head = "1111111122222222333333334444444455555555"
+        ai_status.clear_ai_status_caches()
+        with unittest.mock.patch("ai_status.current_actor_validated", return_value="Claude"), \
+             unittest.mock.patch("ai_status.resolve_task_sha", return_value=head), \
+             unittest.mock.patch("ai_status.task_pr_head_and_merge_commit", return_value=(head, None)), \
+             unittest.mock.patch("ai_status.append_log"):
+            in_progress = self._restore_state(id="FREEZE-TEST-022F")
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(in_progress, ["FREEZE-TEST-022F", head, "attest"])
+            self.assertIn("only valid when status is review_approved", str(cm.exception))
+
+            already = {"tasks": [self._missing_head_task("FREEZE-TEST-022G")]}
+            ai_status.get_task(already, "FREEZE-TEST-022G")["approved_head"] = head
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(already, ["FREEZE-TEST-022G", head, "attest"])
+            self.assertIn("already carries one", str(cm.exception))
+
+            same_identity = {"tasks": [self._missing_head_task("FREEZE-TEST-022H")]}
+            ai_status.get_task(same_identity, "FREEZE-TEST-022H")["owner"] = "Claude"
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_restore_approved_head(same_identity, ["FREEZE-TEST-022H", head, "attest"])
+            self.assertIn("must be separate identities", str(cm.exception))
+
+    # ------------------------------------------------------------------
+    # Round-8 non-blocking findings N1/N2, now covered.
+    # ------------------------------------------------------------------
+
+    def test_return_to_review_transitions_clear_and_preserve_the_right_heads(self) -> None:
+        """N2: `reopen`/`handoff` popping approved_head is load-bearing.
+
+        After B20-b a leftover approved_head makes `command_approve` refuse
+        outright, so dropping either pop would wedge the whole
+        reject -> rework -> re-approve cycle with the suite still green. The
+        durable `last_approved_head` must survive all three, or B21's fix
+        loses its input.
+        """
+        approved = "1111111122222222333333334444444455555555"
+
+        def _state() -> dict[str, Any]:
+            return {
+                "tasks": [
+                    {
+                        "id": "FREEZE-TEST-023",
+                        "owner": "Antigravity4",
+                        "reviewer": "Claude",
+                        "status": "review_approved",
+                        "approved_head": approved,
+                        "last_approved_head": approved,
+                    }
+                ],
+                "handoffs": [],
+            }
+
+        cases = (
+            ("reopen", ai_status.command_reopen, ["FREEZE-TEST-023", "rework"], "Antigravity4"),
+            ("handoff", ai_status.command_handoff, ["FREEZE-TEST-023", "Claude", "review"], "Antigravity4"),
+            ("re_review", ai_status.command_re_review, ["FREEZE-TEST-023", "re-review"], "Antigravity4"),
+        )
+        for label, command, args, actor in cases:
+            with self.subTest(command=label):
+                state = _state()
+                with unittest.mock.patch("ai_status.current_actor_validated", return_value=actor), \
+                     unittest.mock.patch("ai_status.resolve_actor_reference", side_effect=lambda v, **_: v), \
+                     unittest.mock.patch("ai_status.append_log"):
+                    command(state, args)
+                task = ai_status.get_task(state, "FREEZE-TEST-023")
+                self.assertNotIn("approved_head", task)
+                self.assertEqual(task["last_approved_head"], approved)
+
+    def test_ci_failure_branch_signals_and_clears_the_pending_timer(self) -> None:
+        """N1: deleting the whole `ci_status == "failure"` branch kept the suite
+        green because the catch-all still suppressed dispatch. Its distinguishing
+        side effects -- the `ci_failed` signal and popping ci_pending_since_ts so
+        a stale timer cannot fire the 30-minute escalation -- had no coverage."""
+        approved = "1111111122222222333333334444444455555555"
+        config = self._build_freeze_test_config()
+        task = {
+            "id": "FREEZE-TEST-024",
+            "owner": "Antigravity4",
+            "reviewer": "Claude",
+            "status": "review_approved",
+            "approved_head": approved,
+            "ci_pending_since_ts": datetime.now(UTC).timestamp() - 4000,
+        }
+
+        dispatched, logged, mock_queue = self._run_finalize_dispatch_capturing_signals(
+            config, task, head=approved, ci="failure"
+        )
+        self.assertFalse(dispatched)
+        mock_queue.assert_not_called()
+        self.assertIn("ci_failed", [e["type"] for e in logged])
+        self.assertNotIn("ci_pending_timeout", [e["type"] for e in logged])
+        self.assertNotIn("ci_pending_since_ts", task)
+        self.assertIn("failed; resolve failing checks", task["next"])
+
+
+class SuccessfulWorkerPostconditionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+        self.config.setdefault("provider_guardrails", {})["generic_exit_reassign_after"] = 2
+
+    @staticmethod
+    def _task(*, status: str = "in_progress", next_step: str = "Implement packet") -> dict[str, Any]:
+        return {
+            "id": "ODP-POSTCONDITION-001",
+            "status": status,
+            "owner": "Antigravity4",
+            "reviewer": "Codex6",
+            "next": next_step,
+            "depends_on": [],
+        }
+
+    @staticmethod
+    def _worker(
+        task: dict[str, Any],
+        *,
+        run_id: str = "antigravity4-postcondition-1",
+        reason: str = "owned_in_progress_dispatch",
+        agent_id: str = "antigravity4",
+        dispatch_head: str = "a" * 40,
+    ) -> dict[str, Any]:
+        dispatch_task = {
+            "id": task["id"],
+            "status": task["status"],
+            "owner": task["owner"],
+            "reviewer": task["reviewer"],
+            "next": task["next"],
+            "head": dispatch_head,
+        }
+        return {
+            "run_id": run_id,
+            "task_id": task["id"],
+            "provider": agent_id,
+            "agent_id": agent_id,
+            "status": "running",
+            "queue_event_id": f"evt-{run_id}",
+            "pid": 999999,
+            "runner_status": "completed",
+            "exit_code": 0,
+            "last_event_at": "2026-07-31T15:00:00Z",
+            "request_snapshot": {
+                "reason": reason,
+                "metadata": {
+                    "logical_agent_id": agent_id,
+                    "task": dispatch_task,
+                },
+            },
+        }
+
+    def _poll(self, state: dict[str, Any], task: dict[str, Any], *, current_head: str) -> bool:
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value=current_head),
+            mock.patch.object(supervisor, "detect_worker_failure", side_effect=AssertionError("zero-exit worker must use postcondition path")),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            return supervisor.poll_workers(self.config, state)
+
+    def test_poll_accepts_new_head_as_incremental_progress_and_clears_failure_streak(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        streak_key = f"{task['id']}:antigravity4"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+        self.assertTrue(self._poll(state, task, current_head="b" * 40))
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "incremental_progress")
+        self.assertEqual(state["queue"]["events"][worker["queue_event_id"]]["status"], "completed")
+        self.assertNotIn(streak_key, state["provider_guardrails"]["task_failure_streaks"])
+
+    def test_poll_reassigns_after_repeated_zero_exit_without_progress(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        streak_key = f"{task['id']}:antigravity4"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+        with mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value="Antigravity5") as reassign:
+            self.assertTrue(self._poll(state, task, current_head="a" * 40))
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertEqual(worker["reassigned_to"], "Antigravity5")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][streak_key]["count"], 2)
+        reassign.assert_called_once()
+
+    def test_owner_ready_note_without_handoff_is_no_progress_even_with_new_head(self) -> None:
+        task = self._task(next_step="Implementation complete; ready for independent review")
+        worker = self._worker(self._task())
+        outcome = supervisor.successful_worker_exit_outcome(
+            worker,
+            task,
+            terminal_statuses={"done", "review_approved"},
+        )
+        self.assertEqual(outcome, "no_progress")
+
+    def test_poll_accepts_reviewer_reopen_as_durable_review_decision(self) -> None:
+        dispatch_task = self._task(status="review", next_step="Independent review required")
+        worker = self._worker(dispatch_task, reason="review_ready_dispatch", agent_id="codex6")
+        current_task = self._task(status="in_progress", next_step="Fix review finding B1")
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+        self.assertTrue(self._poll(state, current_task, current_head="a" * 40))
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "review_decided")
+
+    def test_poll_never_recounts_historical_terminal_run_after_reopen(self) -> None:
+        task = self._task(status="review", next_step="Fresh exact-head review required")
+        for historical_status in ("completed", "failed", "superseded", "reassigned"):
+            with self.subTest(historical_status=historical_status):
+                worker = self._worker(
+                    self._task(status="review", next_step="Old review"),
+                    reason="review_ready_dispatch",
+                    agent_id="codex6",
+                )
+                worker.update(
+                    {
+                        "status": historical_status,
+                        "runner_status": "failed",
+                        "exit_code": -15,
+                        "runner_signal": 15,
+                    }
+                )
+                state = {
+                    "queue": {"events": {worker["queue_event_id"]: {"status": "completed"}}},
+                    "workers": {worker["run_id"]: worker},
+                    "provider_guardrails": {"task_failure_streaks": {}},
+                }
+                with mock.patch.object(
+                    supervisor,
+                    "maybe_reassign_task_after_worker_failure",
+                    side_effect=AssertionError("historical run must not be re-counted"),
+                ):
+                    self.assertFalse(self._poll(state, task, current_head="b" * 40))
+                self.assertEqual(worker["status"], historical_status)
+                self.assertEqual(state["provider_guardrails"]["task_failure_streaks"], {})
+
+    def test_boot_reconciliation_applies_same_no_progress_threshold(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        streak_key = f"{task['id']}:antigravity4"
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"task_failure_streaks": {streak_key: {"count": 1}}},
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "resolve_task_progress_head", return_value="a" * 40),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value="Antigravity5") as reassign,
+        ):
+            changed = supervisor.reconcile_runtime_on_boot(self.config, state)
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "reassigned")
+        self.assertEqual(worker["reassigned_to"], "Antigravity5")
+        self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][streak_key]["count"], 2)
+        reassign.assert_called_once()
+
+
+class SupervisorFailureLoopCoverageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+
+    def test_full_agent_matrix_coverage_all_configured_agents(self) -> None:
+        all_agents = [
+            "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7",
+            "Claude", "Claude2", "Claude3",
+            "Codex", "Codex2", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "CodexCoordinator",
+            "Gemini", "Gemini2", "Copilot"
+        ]
+        for agent in all_agents:
+            with self.subTest(agent=agent, role="owner"):
+                fallbacks = supervisor.get_agent_reassignment_candidates(self.config, agent, role="owner")
+                self.assertTrue(len(fallbacks) > 0, f"Owner fallbacks for {agent} should not be empty")
+                self.assertNotIn(agent, fallbacks)
+                self.assertNotIn("Human/Ops", fallbacks)
+
+            with self.subTest(agent=agent, role="reviewer"):
+                fallbacks = supervisor.get_agent_reassignment_candidates(self.config, agent, role="reviewer")
+                self.assertTrue(len(fallbacks) > 0, f"Reviewer fallbacks for {agent} should not be empty")
+                self.assertNotIn(agent, fallbacks)
+                self.assertNotIn("Human/Ops", fallbacks)
+
+    def test_dynamic_fallback_derivation_when_agent_missing_from_config(self) -> None:
+        lean_config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "after_attempts": 2,
+                "reassign_on_terminal_failure": True,
+                "owner_fallbacks": {},
+                "reviewer_fallbacks": {},
+            },
+            "agents": {
+                "antigravity4": {"display_name": "Antigravity4"},
+                "antigravity3": {"display_name": "Antigravity3"},
+                "codex6": {"display_name": "Codex6"},
+            },
+        }
+        fallbacks = supervisor.get_agent_reassignment_candidates(lean_config, "Antigravity4", role="owner")
+        self.assertIn("Antigravity3", fallbacks)
+        self.assertIn("Codex6", fallbacks)
+        self.assertNotIn("Antigravity4", fallbacks)
+
+    def test_failure_loop_reassignment_drill_owner(self) -> None:
+        worker = {
+            "task_id": "ODP-PLAN-SITESCORE-OUTCOME-001",
+            "agent_id": "antigravity4",
+            "retry_count": 2,
+            "run_id": "antigravity4-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-PLAN-SITESCORE-OUTCOME-001",
+                    "status": "in_progress",
+                    "owner": "Antigravity4",
+                    "reviewer": "Codex6",
+                }
+            ]
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "ODP-PLAN-SITESCORE-OUTCOME-001:antigravity4": {
+                        "task_id": "ODP-PLAN-SITESCORE-OUTCOME-001",
+                        "provider": "antigravity4",
+                        "count": 2,
+                    }
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "Terminal model quota exhausted",
+                terminal=True,
+            )
+
+        self.assertIsNotNone(reassigned_to)
+        self.assertNotEqual(reassigned_to, "Antigravity4")
+        self.assertNotEqual(reassigned_to, "Codex6")
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "ODP-PLAN-SITESCORE-OUTCOME-001")
+        self.assertEqual(kwargs["new_owner"], reassigned_to)
+        self.assertEqual(kwargs["new_status"], "todo")
+        self.assertNotIn("ODP-PLAN-SITESCORE-OUTCOME-001:antigravity4", state["provider_guardrails"]["task_failure_streaks"])
+
+    def test_failure_loop_reassignment_drill_reviewer(self) -> None:
+        worker = {
+            "task_id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
+            "agent_id": "antigravity7",
+            "retry_count": 2,
+            "run_id": "antigravity7-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
+                    "status": "review",
+                    "owner": "Codex6",
+                    "reviewer": "Antigravity7",
+                }
+            ]
+        }
+        state = {
+            "provider_guardrails": {
+                "task_failure_streaks": {
+                    "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001:antigravity7": {
+                        "task_id": "ODP-PLAN-SUPERVISOR-FAILURE-LOOP-001",
+                        "provider": "antigravity7",
+                        "count": 2,
+                    }
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "Quota limit reached",
+                terminal=True,
+            )
+
+        self.assertIsNotNone(reassigned_to)
+        self.assertNotEqual(reassigned_to, "Antigravity7")
+        self.assertNotEqual(reassigned_to, "Codex6")
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], reassigned_to)
+
+    def test_fail_closed_human_ops_gate_never_auto_reassigned(self) -> None:
+        worker = {
+            "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+            "agent_id": "Human/Ops",
+            "retry_count": 5,
+            "run_id": "human-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+                    "status": "in_progress",
+                    "owner": "Human/Ops",
+                    "reviewer": "CodexCoordinator",
+                }
+            ]
+        }
+        state = {}
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+        ):
+            reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "Human gate pending",
+                terminal=True,
+            )
+
+        self.assertIsNone(reassigned_to)
+        persist.assert_not_called()
+
+    def test_fail_closed_never_reassigns_to_human_ops(self) -> None:
+        config_with_human = dict(self.config)
+        config_with_human["worker_reassignment"] = {
+            "enabled": True,
+            "after_attempts": 1,
+            "reassign_on_terminal_failure": True,
+            "owner_fallbacks": {
+                "Antigravity4": ["Human/Ops", "Codex6"],
+            },
+        }
+        worker = {
+            "task_id": "T-TEST",
+            "agent_id": "antigravity4",
+            "retry_count": 2,
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "T-TEST",
+                    "status": "in_progress",
+                    "owner": "Antigravity4",
+                    "reviewer": "Claude",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned = supervisor.maybe_reassign_task_after_worker_failure(
+                config_with_human,
+                {},
+                worker,
+                "failure",
+                terminal=True,
+            )
+
+        self.assertNotEqual(reassigned, "Human/Ops")
+        if persist.called:
+            self.assertNotEqual(persist.call_args.kwargs["new_owner"], "Human/Ops")
+            self.assertNotEqual(persist.call_args.kwargs["new_reviewer"], "Human/Ops")
+
+    def test_fail_closed_skips_paused_agents(self) -> None:
+        state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity3": {"provider": "antigravity3", "blocked_until": "2099-01-01T00:00:00Z"},
+                    "antigravity5": {"provider": "antigravity5", "blocked_until": "2099-01-01T00:00:00Z"},
+                }
+            }
+        }
+        worker = {
+            "task_id": "T-PAUSE-TEST",
+            "agent_id": "antigravity4",
+            "retry_count": 2,
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "T-PAUSE-TEST",
+                    "status": "in_progress",
+                    "owner": "Antigravity4",
+                    "reviewer": "Codex6",
+                }
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            reassigned = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                state,
+                worker,
+                "failure",
+                terminal=True,
+            )
+
+        self.assertNotIn(reassigned, ["Antigravity3", "Antigravity5", "Antigravity4", "Codex6"])
+        if reassigned is None:
+            persist.assert_not_called()
+
+    def test_concurrent_claim_main_loop_state_preservation(self) -> None:
+        """R1: Prove concurrent claim/main-loop state save preserves live worker, reconciles event, and avoids double-dispatch."""
+        import tempfile
+        from pathlib import Path
+        ai_status.clear_ai_status_caches()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            cfg = deepcopy(self.config)
+            live_activity_path = ROOT_DIR / "ai-activity-log.jsonl"
+            live_activity_before = (
+                live_activity_path.read_bytes()
+                if live_activity_path.exists()
+                else None
+            )
+            isolated_paths = {
+                "status_file": tmp_root / "ai-status.json",
+                "activity_log": tmp_root / "ai-activity-log.jsonl",
+                "current_work": tmp_root / "current-work.md",
+                "dashboard": tmp_root / "docs-site" / "index.html",
+                "state_file": tmp_root / ".orchestrator" / "state.json",
+                "event_queue": tmp_root / ".orchestrator" / "event-queue.jsonl",
+                "approval_queue": tmp_root / ".orchestrator" / "approval-queue.json",
+                "sidecar_catalog": tmp_root / ".orchestrator" / "sidecar_catalog.json",
+                "github_bus_state": tmp_root / ".orchestrator" / "github-bus-state.json",
+                "github_webhook_events": tmp_root / ".orchestrator" / "github-webhook-events.jsonl",
+                "github_relay_state": tmp_root / ".orchestrator" / "github-relay-state.json",
+                "provider_capabilities": tmp_root / ".orchestrator" / "provider_capabilities.json",
+                "claude_mcp_config": tmp_root / ".orchestrator" / "claude-approval-broker.mcp.json",
+            }
+            (tmp_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
+            (tmp_root / ".orchestrator" / "event-queue.jsonl").write_text("", encoding="utf-8")
+            (tmp_root / ".orchestrator" / "state.json").write_text("{}", encoding="utf-8")
+            cfg["paths"] = {key: str(value) for key, value in isolated_paths.items()}
+            cfg.setdefault("worker_worktrees", {})["root"] = str(tmp_root / "worker-worktrees")
+            cfg.setdefault("permission_broker", {})["allowed_workspace_roots"] = [str(tmp_root)]
+            cfg.setdefault("watchdog", {})["state_file"] = str(tmp_root / ".orchestrator" / "watchdog-state.json")
+            cfg.setdefault("watchdog", {})["metrics_file"] = str(tmp_root / ".orchestrator" / "watchdog-metrics.jsonl")
+
+            status_todo = {
+                "tasks": [
+                    {
+                        "id": "ODP-CONC-001",
+                        "status": "todo",
+                        "owner": "Antigravity4",
+                        "reviewer": "Codex",
+                    }
+                ]
+            }
+
+            initial_state = supervisor.load_runtime_state(cfg)
+            initial_state["seen_event_keys"] = {}
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status_todo),
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            ):
+                supervisor.dispatch_ready_tasks(cfg, initial_state, {}, agent_ids_override=["antigravity4"])
+            supervisor.save_runtime_state(cfg, initial_state)
+
+            main_loop_state = supervisor.load_runtime_state(cfg)
+            evt_id = list(main_loop_state.get("queue", {}).get("events", {}).keys())[0]
+
+            concurrent_worker = {
+                "run_id": "antigravity4-conc-run-1",
+                "agent_id": "antigravity4",
+                "task_id": "ODP-CONC-001",
+                "queue_event_id": evt_id,
+                "pid": os.getpid(),
+                "status": "running",
+                "started_at": supervisor.utc_now(),
+                "last_heartbeat_at": supervisor.utc_now(),
+            }
+            disk_state = supervisor.load_runtime_state(cfg)
+            disk_state["workers"]["antigravity4-conc-run-1"] = concurrent_worker
+            disk_state["queue"]["events"][evt_id]["status"] = "started"
+            disk_state["queue"]["events"][evt_id]["run_id"] = "antigravity4-conc-run-1"
+            supervisor.save_runtime_state(cfg, disk_state)
+            # The main loop crosses the real locked save boundary before it may
+            # process its stale queue snapshot. The concurrent run and started
+            # event must be merged into its live view.
+            supervisor.save_runtime_state(cfg, main_loop_state)
+            main_loop_state = supervisor.load_runtime_state(cfg)
+
+            status_in_prog = {
+                "tasks": [
+                    {
+                        "id": "ODP-CONC-001",
+                        "status": "in_progress",
+                        "owner": "Antigravity4",
+                        "reviewer": "Codex6",
+                    }
+                ]
+            }
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status_in_prog),
+                mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "isolated")),
+                mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, "isolated")),
+                mock.patch.object(supervisor, "start_worker_for_request") as start_worker,
+                mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                supervisor.process_queue(cfg, main_loop_state, {})
+            start_worker.assert_not_called()
+
+            supervisor.save_runtime_state(cfg, main_loop_state)
+            saved_disk = supervisor.load_runtime_state(cfg)
+
+            self.assertIn("antigravity4-conc-run-1", saved_disk["workers"])
+            self.assertEqual(saved_disk["workers"]["antigravity4-conc-run-1"]["pid"], os.getpid())
+
+            evt_rec = saved_disk["queue"]["events"].get(evt_id, {})
+            self.assertIn(evt_rec.get("status"), {"started", "manual_pending"})
+            self.assertNotEqual(evt_rec.get("skip_reason"), "stale_dispatch_event")
+            self.assertEqual(evt_rec.get("run_id"), "antigravity4-conc-run-1")
+
+            with (
+                mock.patch.object(supervisor, "load_status", return_value=status_in_prog),
+                mock.patch.object(supervisor, "scan_live_worker_pids_by_agent", return_value={}),
+            ):
+                dispatched = supervisor.dispatch_ready_tasks(cfg, saved_disk, {})
+                self.assertFalse(dispatched)
+
+            self.assertTrue(Path(cfg["paths"]["state_file"]).is_relative_to(tmp_root))
+            self.assertTrue(Path(cfg["paths"]["event_queue"]).is_relative_to(tmp_root))
+            self.assertTrue(Path(cfg["worker_worktrees"]["root"]).is_relative_to(tmp_root))
+            live_activity_after = (
+                live_activity_path.read_bytes()
+                if live_activity_path.exists()
+                else None
+            )
+            self.assertEqual(live_activity_after, live_activity_before)
+
+    def test_runtime_state_save_preserves_terminal_worker_and_queue_transitions(self) -> None:
+        """R9: A stale active disk snapshot cannot revive a terminal run or queue record."""
+        for terminal_status in ("completed", "failed"):
+            with self.subTest(terminal_status=terminal_status), tempfile.TemporaryDirectory() as tmpdir:
+                state_path = Path(tmpdir) / "state.json"
+                cfg = deepcopy(self.config)
+                cfg["paths"]["state_file"] = str(state_path)
+                cfg["paths"]["event_queue"] = str(Path(tmpdir) / "event-queue.jsonl")
+
+                run_id = f"run-{terminal_status}"
+                event_id = f"event-{terminal_status}"
+                Path(cfg["paths"]["event_queue"]).write_text(
+                    json.dumps(
+                        {
+                            "event_id": event_id,
+                            "task_id": "ODP-TERMINAL-001",
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
+                disk_state = supervisor.load_runtime_state(cfg)
+                disk_state["workers"][run_id] = {
+                    "run_id": run_id,
+                    "task_id": "ODP-TERMINAL-001",
+                    "queue_event_id": event_id,
+                    "pid": os.getpid(),
+                    "status": "running",
+                    "last_heartbeat_at": "2026-07-31T08:00:00Z",
+                }
+                disk_state["queue"]["events"][event_id] = {
+                    "status": "started",
+                    "run_id": run_id,
+                }
+                supervisor.save_runtime_state(cfg, disk_state)
+
+                terminal_state = deepcopy(disk_state)
+                terminal_state["workers"][run_id]["status"] = terminal_status
+                terminal_state["workers"][run_id]["finished_at"] = "2026-07-31T08:01:00Z"
+                terminal_state["queue"]["events"][event_id]["status"] = terminal_status
+                terminal_state["queue"]["events"][event_id]["processed_at"] = "2026-07-31T08:01:00Z"
+                supervisor.save_runtime_state(cfg, terminal_state)
+
+                persisted = json.loads(state_path.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["workers"][run_id]["status"], terminal_status)
+                self.assertEqual(persisted["queue"]["events"][event_id]["status"], terminal_status)
+
+    def test_runtime_state_save_serializes_two_real_writers(self) -> None:
+        """R10: Two processes that loaded the same snapshot both survive the locked transaction."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            state_path = tmp_root / "state.json"
+            cfg = deepcopy(self.config)
+            cfg["paths"]["state_file"] = str(state_path)
+            cfg["paths"]["event_queue"] = str(tmp_root / "event-queue.jsonl")
+            supervisor.save_runtime_state(cfg, supervisor.load_runtime_state(cfg))
+
+            ready_read, ready_write = os.pipe()
+            start_read, start_write = os.pipe()
+            child_pids: list[int] = []
+            for index in (1, 2):
+                pid = os.fork()
+                if pid == 0:
+                    os.close(ready_read)
+                    os.close(start_write)
+                    try:
+                        child_state = supervisor.load_runtime_state(cfg)
+                        run_id = f"run-{index}"
+                        child_state.setdefault("workers", {})[run_id] = {
+                            "run_id": run_id,
+                            "task_id": f"ODP-CONCURRENT-{index}",
+                            "pid": os.getpid(),
+                            "status": "running",
+                            "last_heartbeat_at": "2026-07-31T08:00:00Z",
+                        }
+                        os.write(ready_write, b"1")
+                        os.read(start_read, 1)
+                        supervisor.save_runtime_state(cfg, child_state)
+                    except BaseException:
+                        os._exit(1)
+                    os._exit(0)
+                child_pids.append(pid)
+
+            os.close(ready_write)
+            os.close(start_read)
+            try:
+                ready = b""
+                while len(ready) < 2:
+                    ready += os.read(ready_read, 2 - len(ready))
+                self.assertEqual(ready, b"11")
+                os.write(start_write, b"12")
+                exit_codes = []
+                for pid in child_pids:
+                    _, wait_status = os.waitpid(pid, 0)
+                    exit_codes.append(os.waitstatus_to_exitcode(wait_status))
+            finally:
+                os.close(ready_read)
+                os.close(start_write)
+
+            self.assertEqual(exit_codes, [0, 0])
+            persisted = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(sorted(persisted["workers"]), ["run-1", "run-2"])
+
+    def test_fail_closed_human_gate_task_metadata_and_non_dispatchable(self) -> None:
+        """R2: Prove human-gate metadata and non_dispatchable tasks fail-closed and return None without calling persist."""
+        worker = {
+            "task_id": "ODP-HG-TEST",
+            "agent_id": "antigravity4",
+            "retry_count": 3,
+            "run_id": "ag4-run-hg",
+        }
+        cases = [
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "task_class": "human_gate"},
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "human_required_roles": ["security_reviewer"]},
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "gate_status": "pending_human_signoff"},
+            {"id": "ODP-HG-TEST", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Codex6", "non_dispatchable": True},
+        ]
+        for task_dict in cases:
+            with self.subTest(case=task_dict):
+                status = {"tasks": [task_dict]}
+                with mock.patch.object(supervisor, "load_status", return_value=status), \
+                     mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+                    res = supervisor.maybe_reassign_task_after_worker_failure(
+                        self.config,
+                        {},
+                        worker,
+                        "failure threshold exceeded",
+                        terminal=True,
+                    )
+                    self.assertIsNone(res)
+                    persist.assert_not_called()
+
+    def test_full_agent_matrix_and_negative_viability_coverage(self) -> None:
+        """R3: Prove enabled agent matrix coverage and negative viability checks."""
+        enabled_agents = [
+            "Antigravity", "Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7",
+            "Claude", "Claude2", "Claude3",
+            "Codex", "Codex2", "Codex3", "Codex4", "Codex5", "Codex6", "Codex7", "Codex8", "Codex9", "CodexCoordinator",
+            "Gemini", "Gemini2", "Copilot"
+        ]
+        for agent in enabled_agents:
+            with self.subTest(agent=agent, role="owner"):
+                candidates = supervisor.get_agent_reassignment_candidates(self.config, agent, role="owner")
+                viable = supervisor.first_viable_agent(self.config, candidates, exclude={agent})
+                self.assertIsNotNone(viable, f"Owner fallback for {agent} should return a viable candidate")
+                self.assertNotEqual(viable, agent)
+                self.assertNotEqual(viable, "Human/Ops")
+
+            with self.subTest(agent=agent, role="reviewer"):
+                candidates = supervisor.get_agent_reassignment_candidates(self.config, agent, role="reviewer")
+                viable = supervisor.first_viable_agent(self.config, candidates, exclude={agent})
+                self.assertIsNotNone(viable, f"Reviewer fallback for {agent} should return a viable candidate")
+                self.assertNotEqual(viable, agent)
+                self.assertNotEqual(viable, "Human/Ops")
+
+        disabled_config = deepcopy(self.config)
+        disabled_config.setdefault("agents", {})["antigravity3"] = {"display_name": "Antigravity3", "enabled": False}
+        viable_dis = supervisor.first_viable_agent(disabled_config, ["Antigravity3"], exclude=set())
+        self.assertIsNone(viable_dis)
+
+        paused_state = {
+            "provider_guardrails": {
+                "dispatch_pauses": {
+                    "antigravity3": {"provider": "antigravity3", "blocked_until": "2099-01-01T00:00:00Z"}
+                }
+            }
+        }
+        viable_pause = supervisor.first_viable_agent(self.config, ["Antigravity3"], exclude=set(), state=paused_state)
+        self.assertIsNone(viable_pause)
+
+        viable_human = supervisor.first_viable_agent(self.config, ["Human/Ops"], exclude=set())
+        self.assertIsNone(viable_human)
+
+    def test_status_check_http_422_failure_injection_outbox_transactional(self) -> None:
+        """R13: Real isolated main retries the exact 422 payload without rolling back state."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            status_file = tmp_root / "ai-status.json"
+            activity_file = tmp_root / "ai-activity-log.jsonl"
+            runtime_file = tmp_root / ".orchestrator" / "state.json"
+            runtime_file.parent.mkdir(parents=True, exist_ok=True)
+            backup_dir = tmp_root / ".orchestrator" / "worktree-dirt-backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            backup_file = backup_dir / "odp-plan-acceptance-real-exec-001-lease_blocked.patch"
+            backup_file.write_text("patch content", encoding="utf-8")
+            runtime_payload = {
+                "workers": {
+                    "run-422": {
+                        "run_id": "run-422",
+                        "task_id": "ODP-422-TEST-001",
+                        "status": "running",
+                        "queue_event_id": "event-422",
+                    }
+                },
+                "queue": {
+                    "events": {
+                        "event-422": {
+                            "status": "started",
+                            "run_id": "run-422",
+                        }
+                    }
+                },
+            }
+            runtime_file.write_text(
+                json.dumps(runtime_payload, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            runtime_before = runtime_file.read_bytes()
+            state = {
+                "agents": [
+                    {
+                        "name": "CodexCoordinator",
+                        "capability_lane": [],
+                        "status": "idle",
+                        "current_task_ids": [],
+                        "branch": "",
+                        "next": "",
+                        "last_update": None,
+                    },
+                    {
+                        "name": "Codex2",
+                        "capability_lane": [],
+                        "status": "idle",
+                        "current_task_ids": [],
+                        "branch": "",
+                        "next": "",
+                        "last_update": None,
+                    },
+                ],
+                "tasks": [
+                    {
+                        "id": "ODP-422-TEST-001",
+                        "title": "Outbox transaction",
+                        "phase": "execution-control",
+                        "owner": "CodexCoordinator",
+                        "reviewer": "Codex2",
+                        "status": "review",
+                        "depends_on": [],
+                        "artifacts": [],
+                        "acceptance": [],
+                        "next": "Awaiting review",
+                        "last_update": "2026-07-31T08:00:00Z",
+                    }
+                ],
+                "handoffs": [
+                    {
+                        "task_id": "ODP-422-TEST-001",
+                        "from": "CodexCoordinator",
+                        "to": "Codex2",
+                        "message": "Review exact head",
+                        "status": "pending",
+                        "created_at": "2026-07-31T08:00:00Z",
+                    }
+                ],
+                "blockers": [],
+                "workload": {},
+                "workload_summary": {},
+            }
+            status_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+            sha = "f1078e8b" + ("0" * 32)
+            observed_status_at_post: list[str] = []
+            post_results = [
+                mock.MagicMock(
+                    returncode=1,
+                    stderr=f"HTTP 422 Unprocessable Entity: No commit found for SHA {sha}",
+                    stdout="",
+                ),
+                mock.MagicMock(returncode=0, stderr="", stdout="created"),
+            ]
+
+            def fake_post(*_args: Any, **_kwargs: Any) -> Any:
+                persisted = json.loads(status_file.read_text(encoding="utf-8"))
+                observed_status_at_post.append(persisted["tasks"][0]["status"])
+                return post_results.pop(0)
+
+            live_activity = ROOT_DIR / "ai-activity-log.jsonl"
+            live_activity_before = live_activity.read_bytes() if live_activity.exists() else None
+            with (
+                mock.patch.dict(os.environ, {"AI_NAME": "Codex2"}, clear=False),
+                mock.patch.object(ai_status, "STATUS_ROOT", tmp_root),
+                mock.patch.object(ai_status, "STATUS_FILE", status_file),
+                mock.patch.object(ai_status, "LOG_FILE", activity_file),
+                mock.patch.object(ai_status, "CURRENT_WORK_FILE", tmp_root / "current-work.md"),
+                mock.patch.object(ai_status, "DOCS_SITE_DIR", tmp_root / "docs-site"),
+                mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", runtime_file),
+                mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", tmp_root / "dashboard-bundle.json"),
+                mock.patch.object(ai_status, "resolve_task_sha", return_value=sha),
+                mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+                mock.patch.object(ai_status, "sync_all", side_effect=lambda state_arg: ai_status.save_state(state_arg)),
+                mock.patch.object(ai_status.subprocess, "run", side_effect=fake_post),
+            ):
+                self.assertEqual(
+                    ai_status.main(
+                        [
+                            "ai_status.py",
+                            "reopen",
+                            "ODP-422-TEST-001",
+                            "Exact-head review rejected",
+                        ]
+                    ),
+                    0,
+                )
+                failed_state = json.loads(status_file.read_text(encoding="utf-8"))
+                failed_task = failed_state["tasks"][0]
+                self.assertEqual(failed_task["status"], "in_progress")
+                self.assertEqual(len(failed_task["status_check_outbox"]), 1)
+                failed_payload = failed_task["status_check_outbox"][0]
+                self.assertEqual(failed_payload["sha"], sha)
+                self.assertEqual(failed_payload["state"], "failure")
+                self.assertEqual(failed_payload["context"], "task-review-gate")
+                self.assertIn("Review rejected or reopened", failed_payload["description"])
+                self.assertIn("HTTP 422", failed_payload["last_error"])
+
+                self.assertEqual(ai_status.main(["ai_status.py", "sync"]), 0)
+
+            reconciled_state = json.loads(status_file.read_text(encoding="utf-8"))
+            reconciled_task = reconciled_state["tasks"][0]
+            self.assertNotIn("status_check_outbox", reconciled_task)
+            history = reconciled_task["status_check_delivery_history"]
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]["sha"], sha)
+            self.assertEqual(history[0]["state"], "failure")
+            self.assertEqual(observed_status_at_post, ["in_progress", "in_progress"])
+            self.assertEqual(runtime_file.read_bytes(), runtime_before)
+            self.assertTrue(backup_file.exists())
+            self.assertEqual(backup_file.read_text(encoding="utf-8"), "patch content")
+            live_activity_after = live_activity.read_bytes() if live_activity.exists() else None
+            self.assertEqual(live_activity_after, live_activity_before)
+
+    def test_last_update_only_change_does_not_stale_eligible_wake(self) -> None:
+        """R8: operational notes must not invalidate an otherwise eligible wake."""
+        task = {
+            "id": "ODP-WAKE-STABLE-001",
+            "status": "in_progress",
+            "owner": "Antigravity7",
+            "reviewer": "CodexCoordinator",
+            "last_update": "2026-07-31T08:28:23Z",
+            "depends_on": [],
+        }
+        task_map = {task["id"]: task}
+        event = supervisor.build_dispatch_event(
+            task,
+            "Antigravity7",
+            supervisor.REASON_OWNED_IN_PROGRESS,
+            task_map,
+        )
+        event["event_key"] = event["key"]
+        event["target_display_name"] = "Antigravity7"
+
+        task["last_update"] = "2026-07-31T08:29:00Z"
+        task["next"] = "Coordinator note added after wake queueing"
+
+        self.assertIsNone(
+            supervisor.stale_dispatch_skip_message(self.config, event, task_map)
+        )
+
+    def test_assignment_or_status_change_still_stales_wake(self) -> None:
+        """R8/R12 negative matrix: every authority or dependency change invalidates."""
+        base_task = {
+            "id": "ODP-WAKE-STABLE-002",
+            "status": "in_progress",
+            "owner": "Antigravity7",
+            "reviewer": "CodexCoordinator",
+            "depends_on": [],
+        }
+        dependency = {
+            "id": "ODP-WAKE-DEPENDENCY-001",
+            "status": "done",
+            "owner": "Codex",
+            "reviewer": "Codex2",
+            "depends_on": [],
+        }
+        mutations = {
+            "owner": lambda task, task_map: task.update(owner="Antigravity4"),
+            "reviewer": lambda task, task_map: task.update(reviewer="Codex6"),
+            "status": lambda task, task_map: task.update(status="review"),
+            "dependency_list": lambda task, task_map: task.update(depends_on=[dependency["id"]]),
+            "dependency_state": lambda task, task_map: task_map[dependency["id"]].update(status="in_progress"),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(mutation=name):
+                task = deepcopy(base_task)
+                if name == "dependency_state":
+                    task["depends_on"] = [dependency["id"]]
+                task_map = {
+                    task["id"]: task,
+                    dependency["id"]: deepcopy(dependency),
+                }
+                event = supervisor.build_dispatch_event(
+                    task,
+                    "Antigravity7",
+                    supervisor.REASON_OWNED_IN_PROGRESS,
+                    task_map,
+                )
+                event["event_key"] = event["key"]
+                event["target_display_name"] = "Antigravity7"
+
+                mutate(task, task_map)
+                message = supervisor.stale_dispatch_skip_message(
+                    self.config,
+                    event,
+                    task_map,
+                ) or ""
+                self.assertTrue(
+                    "no longer eligible" in message or "task state changed" in message,
+                    message,
+                )
+
+    def test_resolve_task_sha_precedence_over_merged_pr(self) -> None:
+        """Verify pushed task branch beats both stale PR and unpushed local HEAD."""
+        task_id = "TEST-BRANCH-PRECEDENCE-001"
+        ai_status.clear_ai_status_caches()
+
+        def fake_run(cmd, **kwargs):
+            cmd_str = " ".join(cmd)
+            if "ls-remote --heads origin" in cmd_str:
+                remote_ref = f"refs/heads/task/{task_id}"
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout=f"{'2' * 40}\t{remote_ref}\n",
+                )
+            if "branch --show-current" in cmd_str:
+                return unittest.mock.Mock(returncode=0, stdout=f"task/{task_id}\n")
+            if "rev-parse HEAD" in cmd_str:
+                return unittest.mock.Mock(returncode=0, stdout=f"{'3' * 40}\n")
+            if "pr view" in cmd_str:
+                return unittest.mock.Mock(
+                    returncode=0,
+                    stdout=json.dumps({"headRefOid": "1" * 40}),
+                )
+            return unittest.mock.Mock(returncode=1, stdout="")
+
+        with unittest.mock.patch("subprocess.run", side_effect=fake_run):
+            resolved = ai_status.resolve_task_sha(task_id)
+            self.assertEqual(resolved, "2" * 40)
+
+    def test_resolve_task_sha_exact_length_validation(self) -> None:
+        """Verify resolve_task_sha accepts exactly 40 or 64 hex chars and rejects 41, 63, or non-hex."""
+        task_id = "TEST-SHA-LENGTH-VAL-001"
+
+        sha_candidates = [
+            ("a" * 40, True),   # 40 hex (SHA-1) -> valid
+            ("f" * 64, True),   # 64 hex (SHA-256) -> valid
+            ("b" * 41, False),  # 41 hex -> invalid
+            ("c" * 63, False),  # 63 hex -> invalid
+            ("g" * 40, False),  # 40 non-hex -> invalid
+        ]
+
+        for sha, is_valid in sha_candidates:
+            ai_status.clear_ai_status_caches()
+
+            def fake_ls_remote(cmd, current_sha=sha, **kwargs):
+                cmd_str = " ".join(cmd)
+                if "ls-remote --heads origin" in cmd_str:
+                    remote_ref = f"refs/heads/task/{task_id}"
+                    return unittest.mock.Mock(
+                        returncode=0,
+                        stdout=f"{current_sha}\t{remote_ref}\n",
+                    )
+                return unittest.mock.Mock(returncode=1, stdout="")
+
+            with unittest.mock.patch("subprocess.run", side_effect=fake_ls_remote):
+                resolved = ai_status.resolve_task_sha(task_id, force_refresh=True)
+                if is_valid:
+                    self.assertEqual(resolved, sha)
+                else:
+                    self.assertIsNone(resolved)
+
+class ReleaseCompletedWorkerForClaimTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+
+    def test_release_completed_worker_reopened_in_progress_and_review_lifecycle(self) -> None:
+        task_id = "ODP-REOPEN-CLAIM-001"
+        run_id = "codex6-run-reopen-1"
+        status_reopened = {
+            "tasks": [
+                {
+                    "id": task_id,
+                    "status": "in_progress",
+                    "owner": "Antigravity6",
+                    "reviewer": "Codex6",
+                }
+            ]
+        }
+        receipt = {
+            "status": "completed",
+            "exit_code": 0,
+            "signal": None,
+            "run_id": run_id,
+            "pid": 999999,
+        }
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "logical_agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status.json",
+                    "queue_event_id": "evt-reopen-1",
+                }
+            },
+            "queue": {
+                "events": {
+                    "evt-reopen-1": {
+                        "status": "started",
+                        "run_id": run_id,
+                    }
+                }
+            },
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status_reopened), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config,
+                state,
+                agent_name="Codex6",
+                task_id=task_id,
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"][run_id]["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-reopen-1"]["status"], "completed")
+
+    def test_release_completed_worker_rejects_all_invalid_receipt_and_identity_cases(self) -> None:
+        task_id = "ODP-REJECT-CLAIM-001"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+
+        # Case 1: Live PID
+        run_id_live = "codex6-run-live"
+        state_live = {
+            "workers": {
+                run_id_live: {
+                    "run_id": run_id_live,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": os.getpid(),
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value={"status": "completed", "exit_code": 0, "run_id": run_id_live, "pid": os.getpid()}):
+            changed_live = supervisor.release_completed_worker_for_claim(
+                self.config, state_live, agent_name="Codex6", task_id=task_id
+            )
+        self.assertFalse(changed_live)
+
+        # Case 2: Missing receipt file / path
+        run_id_noreceipt = "codex6-run-noreceipt"
+        state_noreceipt = {
+            "workers": {
+                run_id_noreceipt: {
+                    "run_id": run_id_noreceipt,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_noreceipt, agent_name="Codex6", task_id=task_id))
+
+        # Case 3: Malformed receipt (exit_code != 0)
+        run_id_badexit = "codex6-run-badexit"
+        state_badexit = {
+            "workers": {
+                run_id_badexit: {
+                    "run_id": run_id_badexit,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value={"status": "completed", "exit_code": 1, "run_id": run_id_badexit}):
+            self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_badexit, agent_name="Codex6", task_id=task_id))
+
+        # Case 4: Non-terminal runner status in receipt
+        run_id_nonterm = "codex6-run-nonterm"
+        state_nonterm = {
+            "workers": {
+                run_id_nonterm: {
+                    "run_id": run_id_nonterm,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value={"status": "running", "exit_code": 0, "run_id": run_id_nonterm}):
+            self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_nonterm, agent_name="Codex6", task_id=task_id))
+
+        # Case 5: Mismatched run_id
+        run_id_mismatch = "codex6-run-mismatch"
+        state_mismatch = {
+            "workers": {
+                run_id_mismatch: {
+                    "run_id": run_id_mismatch,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value={"status": "completed", "exit_code": 0, "run_id": "other-run-id"}):
+            self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_mismatch, agent_name="Codex6", task_id=task_id))
+
+        # Case 6: Mismatched PID
+        run_id_pid_mismatch = "codex6-run-pid-mismatch"
+        state_pid_mismatch = {
+            "workers": {
+                run_id_pid_mismatch: {
+                    "run_id": run_id_pid_mismatch,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value={"status": "completed", "exit_code": 0, "run_id": run_id_pid_mismatch, "pid": 111111}):
+            self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_pid_mismatch, agent_name="Codex6", task_id=task_id))
+
+        # Case 7: Forged cached terminal in worker dict without disk receipt
+        run_id_forged = "codex6-run-forged"
+        state_forged = {
+            "workers": {
+                run_id_forged: {
+                    "run_id": run_id_forged,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "completed",
+                    "pid": 999999,
+                    "runner_status": "completed",
+                    "exit_code": 0,
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_forged, agent_name="Codex6", task_id=task_id))
+
+        # Case 8: Multiple historical same task-agent worker records
+        state_multi = {
+            "workers": {
+                "run-1": {
+                    "run_id": "run-1",
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status1.json",
+                },
+                "run-2": {
+                    "run_id": "run-2",
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 888888,
+                    "runner_status_path": "/tmp/fake_status2.json",
+                },
+            }
+        }
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value={"status": "completed", "exit_code": 0, "run_id": "run-1", "pid": 999999}):
+            self.assertFalse(supervisor.release_completed_worker_for_claim(self.config, state_multi, agent_name="Codex6", task_id=task_id))
+
+
+class ReleaseCompletedWorkerShapeCorrectionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+
+    def test_release_completed_worker_4_history_1_active_success(self) -> None:
+        task_id = "ODP-4HIST-1ACT-SUCCESS"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        run_active = "run-active-5"
+        state = {
+            "workers": {
+                "run-hist-1": {"run_id": "run-hist-1", "agent_id": "codex6", "task_id": task_id, "status": "completed"},
+                "run-hist-2": {"run_id": "run-hist-2", "agent_id": "codex6", "task_id": task_id, "status": "failed"},
+                "run-hist-3": {"run_id": "run-hist-3", "agent_id": "codex6", "task_id": task_id, "status": "killed"},
+                "run-hist-4": {"run_id": "run-hist-4", "agent_id": "codex6", "task_id": task_id, "status": "abandoned"},
+                run_active: {
+                    "run_id": run_active,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status_active.json",
+                    "queue_event_id": "evt-active-5",
+                },
+            },
+            "queue": {
+                "events": {
+                    "evt-active-5": {"id": "evt-active-5", "status": "claimed", "run_id": run_active}
+                }
+            },
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_active, "pid": 999999}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertTrue(changed)
+        self.assertEqual(state["workers"][run_active]["status"], "completed")
+        self.assertEqual(state["queue"]["events"]["evt-active-5"]["status"], "completed")
+        self.assertEqual(state["workers"]["run-hist-1"]["status"], "completed")
+        self.assertEqual(state["workers"]["run-hist-2"]["status"], "failed")
+
+    def test_release_completed_worker_two_active_rejection(self) -> None:
+        task_id = "ODP-TWO-ACTIVE-REJECT"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                "run-active-1": {
+                    "run_id": "run-active-1",
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999991,
+                    "runner_status_path": "/tmp/fake_status1.json",
+                },
+                "run-active-2": {
+                    "run_id": "run-active-2",
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999992,
+                    "runner_status_path": "/tmp/fake_status2.json",
+                },
+            }
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": "run-active-1", "pid": 999991}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertFalse(changed)
+
+    def test_release_completed_worker_missing_receipt_pid_rejection(self) -> None:
+        task_id = "ODP-MISSING-RECEIPT-PID"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        run_id = "run-active-pid"
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertFalse(changed)
+
+    def test_release_completed_worker_missing_receipt_child_pid_rejection(self) -> None:
+        task_id = "ODP-MISSING-RECEIPT-CHILD-PID"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        run_id = "run-active-child-pid"
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 999999,
+                    "child_pid": 888888,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 999999}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+            changed = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+        self.assertFalse(changed)
+
+    def test_release_completed_worker_pid_schema_validation_mocked(self) -> None:
+        """Verify invalid PID values (bool, string, 0, negative, float) return False without calling pid_is_alive or raising."""
+        task_id = "ODP-PID-SCHEMA-001"
+        run_id = "run-schema-val-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+
+        invalid_pids = [False, True, "1234", "invalid", 0, -1, -999, 12.34, [1234]]
+        for bad_pid in invalid_pids:
+            state = {
+                "workers": {
+                    run_id: {
+                        "run_id": run_id,
+                        "agent_id": "codex6",
+                        "task_id": task_id,
+                        "status": "running",
+                        "pid": bad_pid,
+                        "runner_status_path": "/tmp/fake_status.json",
+                    }
+                }
+            }
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+                 mock.patch.object(supervisor, "pid_is_alive") as mock_pid_alive:
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+                mock_pid_alive.assert_not_called()
+
+        # Check invalid receipt pid
+        for bad_receipt_pid in invalid_pids:
+            state = {
+                "workers": {
+                    run_id: {
+                        "run_id": run_id,
+                        "agent_id": "codex6",
+                        "task_id": task_id,
+                        "status": "running",
+                        "pid": None,
+                        "runner_status_path": "/tmp/fake_status.json",
+                    }
+                }
+            }
+            bad_receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": bad_receipt_pid}
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=bad_receipt), \
+                 mock.patch.object(supervisor, "pid_is_alive") as mock_pid_alive:
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+                mock_pid_alive.assert_not_called()
+
+    def test_release_completed_worker_terminal_receipt_fail_closed_mocked(self) -> None:
+        """Verify terminal receipt fields (exit_code=False, exit_code='0', signal, status, run_id) fail closed."""
+        task_id = "ODP-RECEIPT-FAILCLOSED-001"
+        run_id = "run-rcpt-fc-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 1234,
+                    "runner_status_path": "/tmp/fake_status.json",
+                }
+            }
+        }
+
+        invalid_receipts = [
+            {"status": "completed", "exit_code": False, "run_id": run_id, "pid": 1234},  # bool exit_code
+            {"status": "completed", "exit_code": "0", "run_id": run_id, "pid": 1234},    # string exit_code
+            {"status": "completed", "exit_code": 1, "run_id": run_id, "pid": 1234},      # non-zero exit_code
+            {"status": "failed", "exit_code": 0, "run_id": run_id, "pid": 1234},         # non-completed status
+            {"status": "completed", "exit_code": 0, "signal": "SIGKILL", "run_id": run_id, "pid": 1234},  # signal set
+            {"status": "completed", "exit_code": 0, "signal": False, "run_id": run_id, "pid": 1234},     # signal=False
+            {"status": "completed", "exit_code": 0, "runner_signal": False, "run_id": run_id, "pid": 1234}, # runner_signal=False
+            {"status": "completed", "exit_code": 0, "run_id": 1234, "pid": 1234},        # numeric run_id
+            {"status": "completed", "exit_code": 0, "worker_run_id": 1234, "pid": 1234}, # numeric worker_run_id
+            {"status": "completed", "exit_code": 0, "run_id": "wrong-run-id", "pid": 1234},  # run_id mismatch
+        ]
+
+        for bad_rcpt in invalid_receipts:
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=bad_rcpt), \
+                 mock.patch.object(supervisor, "pid_is_alive", return_value=False):
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+
+    def test_release_completed_worker_atomic_rollback_on_queue_mutation_exception(self) -> None:
+        """Verify worker and queue event record are restored byte-equivalent if finalize_queue_event_record mutates queue then raises."""
+        import copy
+        task_id = "ODP-ATOMIC-ROLLBACK-001"
+        run_id = "run-atomic-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 1234,
+                    "runner_status_path": "/tmp/fake_status.json",
+                    "queue_event_id": "evt-atomic-1",
+                }
+            },
+            "queue": {
+                "events": {
+                    "evt-atomic-1": {"id": "evt-atomic-1", "status": "claimed", "run_id": run_id}
+                }
+            },
+        }
+        original_worker = copy.deepcopy(state["workers"][run_id])
+        original_queue_event = copy.deepcopy(state["queue"]["events"]["evt-atomic-1"])
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+
+        def _mutating_finalize(config, st, w, status, error=None):
+            st["queue"]["events"]["evt-atomic-1"]["status"] = "mutated_before_crash"
+            raise RuntimeError("queue disk write error")
+
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "finalize_queue_event_record", side_effect=_mutating_finalize):
+            res = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+            self.assertFalse(res)
+            # Verify atomic rollback of both worker and queue event record
+            self.assertEqual(state["workers"][run_id], original_worker)
+            self.assertEqual(state["queue"]["events"]["evt-atomic-1"], original_queue_event)
+
+    def test_release_completed_worker_activity_log_exception_rollback(self) -> None:
+        """Verify release_completed_worker_for_claim rolls back both worker and queue and returns False if write_activity_log raises."""
+        import copy
+        task_id = "ODP-LOG-EXCEPT-001"
+        run_id = "run-log-except-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        state = {
+            "workers": {
+                run_id: {
+                    "run_id": run_id,
+                    "agent_id": "codex6",
+                    "task_id": task_id,
+                    "status": "running",
+                    "pid": 1234,
+                    "runner_status_path": "/tmp/fake_status.json",
+                    "queue_event_id": "evt-log-except-1",
+                }
+            },
+            "queue": {
+                "events": {
+                    "evt-log-except-1": {"id": "evt-log-except-1", "status": "claimed", "run_id": run_id}
+                }
+            },
+        }
+        original_worker = copy.deepcopy(state["workers"][run_id])
+        original_queue_event = copy.deepcopy(state["queue"]["events"]["evt-log-except-1"])
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+        with mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt), \
+             mock.patch.object(supervisor, "pid_is_alive", return_value=False), \
+             mock.patch.object(supervisor, "write_activity_log", side_effect=OSError("log lock failed")):
+            res = supervisor.release_completed_worker_for_claim(
+                self.config, state, agent_name="Codex6", task_id=task_id
+            )
+            self.assertFalse(res)
+            # Verify atomic rollback of both worker and queue event record
+            self.assertEqual(state["workers"][run_id], original_worker)
+            self.assertEqual(state["queue"]["events"]["evt-log-except-1"], original_queue_event)
+
+    def test_release_completed_worker_pid_schema_validation_unmocked_real_pid_is_alive(self) -> None:
+        """Verify release_completed_worker_for_claim executes safely with real unmocked pid_is_alive on invalid PIDs."""
+        task_id = "ODP-UNMOCKED-REAL-PID-001"
+        run_id = "run-unmocked-1"
+        status = {"tasks": [{"id": task_id, "status": "in_progress", "owner": "Antigravity6", "reviewer": "Codex6"}]}
+        receipt = {"status": "completed", "exit_code": 0, "run_id": run_id, "pid": 1234}
+
+        unmocked_cases = [False, 0, -100, "string_pid", 12.34]
+        for bad_pid in unmocked_cases:
+            state = {
+                "workers": {
+                    run_id: {
+                        "run_id": run_id,
+                        "agent_id": "codex6",
+                        "task_id": task_id,
+                        "status": "running",
+                        "pid": bad_pid,
+                        "runner_status_path": "/tmp/fake_status.json",
+                    }
+                }
+            }
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "_load_runtime_marker", return_value=receipt):
+                # Note: pid_is_alive is NOT mocked here!
+                res = supervisor.release_completed_worker_for_claim(
+                    self.config, state, agent_name="Codex6", task_id=task_id
+                )
+                self.assertFalse(res)
+
+
+class ProcessQueueAgentOverrideTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = load_test_config()
+
+    def test_process_queue_with_agent_override_only_processes_matching_agent_queue_events(self) -> None:
+        events = [
+            {
+                "event_id": "evt-codex6-1",
+                "task_id": "TASK-CODEX6",
+                "target_agent": "Codex6",
+                "key": "evt-codex6-1",
+                "message": "test message codex6",
+            },
+            {
+                "event_id": "evt-antigravity6-1",
+                "task_id": "TASK-ANTIGRAVITY6",
+                "target_agent": "Antigravity6",
+                "key": "evt-antigravity6-1",
+                "message": "test message antigravity6",
+            },
+            {
+                "event_id": "evt-empty-target",
+                "task_id": "TASK-EMPTY",
+                "target_agent": "",
+                "key": "evt-empty-target",
+            },
+            {
+                "event_id": "evt-malformed-target",
+                "task_id": "TASK-MALFORMED",
+                "target_agent": "!!!###",
+                "key": "evt-malformed-target",
+            },
+            {
+                "event_id": "evt-unknown-target",
+                "task_id": "TASK-UNKNOWN",
+                "target_agent": "NonExistentAgent999",
+                "key": "evt-unknown-target",
+            },
+        ]
+        status = {
+            "tasks": [
+                {"id": "TASK-CODEX6", "status": "in_progress", "owner": "Codex6", "reviewer": "Claude"},
+                {"id": "TASK-ANTIGRAVITY6", "status": "in_progress", "owner": "Antigravity6", "reviewer": "Claude"},
+                {"id": "TASK-EMPTY", "status": "in_progress", "owner": "Codex6", "reviewer": "Claude"},
+                {"id": "TASK-MALFORMED", "status": "in_progress", "owner": "Codex6", "reviewer": "Claude"},
+                {"id": "TASK-UNKNOWN", "status": "in_progress", "owner": "Codex6", "reviewer": "Claude"},
+            ]
+        }
+        state = {
+            "queue": {
+                "events": {
+                    "evt-codex6-1": {"status": "pending"},
+                    "evt-antigravity6-1": {"status": "pending"},
+                    "evt-empty-target": {"status": "pending"},
+                    "evt-malformed-target": {"status": "pending"},
+                    "evt-unknown-target": {"status": "pending"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_event_queue", return_value=events), \
+             mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "current_provider_dispatch_pause", return_value=None), \
+             mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None), \
+             mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "ok")), \
+             mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, "ok")), \
+             mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-codex6-1", {})) as start_worker, \
+             mock.patch.object(supervisor, "write_activity_log"):
+            changed = supervisor.process_queue(
+                self.config,
+                state,
+                provider_report={},
+                agent_ids_override=["codex6"],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(state["queue"]["events"]["evt-codex6-1"]["status"], "started")
+        self.assertEqual(state["queue"]["events"]["evt-antigravity6-1"]["status"], "pending")
+        self.assertEqual(state["queue"]["events"]["evt-empty-target"]["status"], "pending")
+        self.assertEqual(state["queue"]["events"]["evt-malformed-target"]["status"], "pending")
+        self.assertEqual(state["queue"]["events"]["evt-unknown-target"]["status"], "pending")
+        start_worker.assert_called_once()
+
+    def test_process_queue_with_agent_override_skips_targetless_events_without_inference(self) -> None:
+        events = [
+            {
+                "event_id": "evt-targetless-complete",
+                "task_id": "TASK-TARGETLESS",
+                "key": "evt-targetless-complete",
+                "message": "targetless complete message",
+            },
+        ]
+        status = {
+            "tasks": [
+                {"id": "TASK-TARGETLESS", "status": "in_progress", "owner": "Codex6", "reviewer": "Claude"},
+            ]
+        }
+        state = {
+            "queue": {
+                "events": {
+                    "evt-targetless-complete": {"status": "pending"},
+                }
+            }
+        }
+        with mock.patch.object(supervisor, "load_event_queue", return_value=events), \
+             mock.patch.object(supervisor, "load_status", return_value=status), \
+             mock.patch.object(supervisor, "build_request") as mock_build_req:
+            changed = supervisor.process_queue(
+                self.config,
+                state,
+                provider_report={},
+                agent_ids_override=["codex6"],
+            )
+
+        self.assertFalse(changed)
+        self.assertEqual(state["queue"]["events"]["evt-targetless-complete"]["status"], "pending")
+        mock_build_req.assert_not_called()
+
+    def test_post_merge_deleted_remote_branch_finalize_dispatch(self) -> None:
+        """B1 regression: when origin branch task/<id> is deleted on PR merge,
+        resolve_task_checkout_sha resolves the post-merge checkout HEAD, enabling
+        supervisor priority dispatch and reconciliation gates to issue owned_finalize_dispatch."""
+        approved_head = "b664a8ea9fed476c6224a339994fa66163c574fa"
+        checkout_head = "80ba278631111111222222223333333344444444"
+        task_id = "B1-TEST-POST-MERGE-001"
+        task_item = {
+            "id": task_id,
+            "status": "review_approved",
+            "owner": "Antigravity",
+            "reviewer": "Antigravity4",
+            "approved_head": approved_head,
+        }
+        task_map = {task_id: task_item}
+
+        with mock.patch("ai_status.resolve_task_sha", return_value=None), \
+             mock.patch("ai_status.is_approved_head_satisfied", return_value=True), \
+             mock.patch("ai_status.run_git_command") as mock_git, \
+             mock.patch("ai_status.task_pr_ci_status", return_value=("CLOSED", "success")):
+            def git_side_effect(cmd, **kwargs):
+                if cmd[0] == "rev-parse" and cmd[1] == "HEAD":
+                    return checkout_head
+                if cmd[0] == "remote":
+                    return "origin\n"
+                if cmd[0] == "rev-parse" and cmd[1] == "--verify":
+                    return checkout_head
+                return ""
+            mock_git.side_effect = git_side_effect
+
+            # 1. Verify resolve_task_checkout_sha returns checkout_head despite resolve_task_sha returning None
+            resolved = ai_status.resolve_task_checkout_sha(task_item, force_refresh=True)
+            self.assertEqual(resolved, checkout_head)
+
+            # 2. Verify dispatch_priority_for_task returns 1 (owned_finalize_dispatch priority)
+            config = {"status_file": "/tmp/fake_status.json", "branch_workflow": {"dev_branch": "dev"}}
+            prio = supervisor.dispatch_priority_for_task(config, task_item, "Antigravity", task_map=task_map)
+            self.assertEqual(prio, 1)
+
+            # 3. Verify dispatch_ready_tasks retains review_approved status and does not set approved_head_unresolved
+            status = {"tasks": [task_item]}
+            with mock.patch("supervisor.load_status", return_value=status), \
+                 mock.patch("supervisor.load_event_queue", return_value=[]), \
+                 mock.patch("supervisor.queue_delivery_event", return_value=False), \
+                 mock.patch("supervisor.config_path", return_value="/tmp/fake_status.json"), \
+                 mock.patch("supervisor.write_json"), \
+                 mock.patch("supervisor.sync_status_pipeline"), \
+                 mock.patch("supervisor.write_activity_log"):
+                supervisor.dispatch_ready_tasks(config, {}, agent_ids_override=["antigravity"])
+            self.assertEqual(task_item["status"], "review_approved")
+            self.assertNotIn("Cannot verify branch HEAD", task_item.get("next", ""))
+class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
+
+    def _create_git_repo_and_worktree(self, tmpdir_path: Path, task_id: str = "TASK-001") -> tuple[Path, Path, str]:
+        repo_root = tmpdir_path / "main_repo"
+        repo_root.mkdir()
+        (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+        subprocess.run(["git", "init", "-b", "dev"], cwd=repo_root, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+        (repo_root / "README.md").write_text("main\n", encoding="utf-8")
+        subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+
+        branch_name = f"task/{task_id}"
+        subprocess.run(["git", "branch", branch_name], cwd=repo_root, check=True)
+
+        wt_path = tmpdir_path / "workers" / supervisor._task_id_slug(task_id)
+        wt_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], cwd=repo_root, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+        return repo_root, wt_path, branch_name
+
+    def test_untracked_preservation_and_staged_content(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-REAL-001")
+
+            staged_file = wt_path / "staged_doc.txt"
+            staged_file.write_text("staged content", encoding="utf-8")
+            subprocess.run(["git", "add", "staged_doc.txt"], cwd=wt_path, check=True)
+
+            unstaged_file = wt_path / "README.md"
+            unstaged_file.write_text("modified main\n", encoding="utf-8")
+
+            untracked_file = wt_path / "untracked_output.log"
+            untracked_file.write_text("untracked context data", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-REAL-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+
+            self.assertTrue(ok)
+
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertIn("A  staged_doc.txt", st_proc.stdout)
+            self.assertIn("?? untracked_output.log", st_proc.stdout)
+
+            self.assertTrue(staged_file.exists())
+            self.assertEqual("staged content", staged_file.read_text(encoding="utf-8"))
+            self.assertTrue(untracked_file.exists())
+            self.assertEqual("untracked context data", untracked_file.read_text(encoding="utf-8"))
+
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            self.assertTrue(backups_dir.exists())
+            task_backups = list(backups_dir.glob("task-real-001-*"))
+            self.assertEqual(1, len(task_backups))
+            b_dir = task_backups[0]
+            manifest_file = b_dir / "manifest.json"
+            self.assertTrue(manifest_file.exists())
+            manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+            self.assertEqual("TASK-REAL-001", manifest["task_id"])
+            paths_in_manifest = [f["path"] for f in manifest["files"]]
+            self.assertIn("staged_doc.txt", paths_in_manifest)
+            self.assertIn("untracked_output.log", paths_in_manifest)
+            self.assertTrue((b_dir / "untracked" / "untracked_output.log").exists())
+            self.assertTrue((b_dir / "backup_checksums.sha256").exists())
+
+    def test_backup_failure_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-FAIL-001")
+
+            untracked_file = wt_path / "untracked_data.txt"
+            untracked_file.write_text("important data", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            with mock.patch("shutil.copy2", side_effect=OSError("Disk full")):
+                ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                    config,
+                    state,
+                    wt_path,
+                    "TASK-FAIL-001",
+                    expected_branch=branch_name,
+                    run_id=None,
+                    trigger="unit_test",
+                )
+
+            self.assertFalse(ok)
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertIn("untracked_data.txt", st_proc.stdout)
+            self.assertTrue(untracked_file.exists())
+
+    def test_ref_and_branch_mismatch_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-MISMATCH-001")
+
+            (wt_path / "file.txt").write_text("dirt", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-MISMATCH-001",
+                expected_branch="task/OTHER-BRANCH",
+                run_id=None,
+                trigger="unit_test",
+            )
+            self.assertFalse(ok)
+
+    def test_active_run_exclusion_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-ACTIVE-001")
+
+            (wt_path / "file.txt").write_text("dirt", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state = {
+                "workers": {
+                    "w1": {
+                        "run_id": "run-active-123",
+                        "task_id": "TASK-ACTIVE-001",
+                        "status": "running",
+                        "workspace_path": str(wt_path),
+                    }
+                }
+            }
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-ACTIVE-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="lease_recovery",
+            )
+            self.assertFalse(ok)
+
+            ok_self = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-ACTIVE-001",
+                expected_branch=branch_name,
+                run_id="run-active-123",
+                trigger="worker_failed",
+            )
+            self.assertTrue(ok_self)
+
+    def test_exact_restoration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-RESTORE-001")
+
+            untracked_file = wt_path / "sub" / "data.csv"
+            untracked_file.parent.mkdir()
+            untracked_file.write_text("col1,col2\nval1,val2\n", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-RESTORE-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            b_dir = list(backups_dir.glob("task-restore-001-*"))[0]
+
+            target_restore_dir = tmp_p / "restored_location"
+            restored_ok, msg = supervisor.restore_quarantined_worktree_backup(b_dir, target_restore_dir)
+            self.assertTrue(restored_ok)
+            restored_file = target_restore_dir / "sub" / "data.csv"
+            self.assertTrue(restored_file.exists())
+            self.assertEqual("col1,col2\nval1,val2\n", restored_file.read_text(encoding="utf-8"))
+
+    def test_exact_restoration_mixed_staged_unstaged_untracked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-RESTORE-MIXED-001")
+
+            # 1. Staged addition
+            staged_add = wt_path / "staged_add.txt"
+            staged_add.write_text("staged addition", encoding="utf-8")
+            subprocess.run(["git", "add", "staged_add.txt"], cwd=wt_path, check=True)
+
+            # 2. Staged modification + unstaged modification (MM)
+            readme = wt_path / "README.md"
+            readme.write_text("staged readme edit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=wt_path, check=True)
+            readme.write_text("staged readme edit\nunstaged readme edit\n", encoding="utf-8")
+
+            # 3. Untracked file
+            untracked = wt_path / "untracked.log"
+            untracked.write_text("untracked log data", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            state: dict = {}
+
+            ok = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                state,
+                wt_path,
+                "TASK-RESTORE-MIXED-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+            self.assertTrue(ok)
+
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            b_dir = list(backups_dir.glob("task-restore-mixed-001-*"))[0]
+
+            # Create target clean git worktree at the original head
+            target_repo = tmp_p / "target_repo"
+            target_repo.mkdir()
+            subprocess.run(["git", "init", "-b", "dev"], cwd=target_repo, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=target_repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=target_repo, check=True)
+            (target_repo / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=target_repo, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=target_repo, check=True)
+
+            restored_ok, msg = supervisor.restore_quarantined_worktree_backup(b_dir, target_repo)
+            self.assertTrue(restored_ok, msg)
+
+            status_proc = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                cwd=target_repo,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            lines = sorted(status_proc.stdout.strip().splitlines())
+            self.assertEqual(len(lines), 3)
+            self.assertTrue(any(line.startswith("A  staged_add.txt") for line in lines))
+            self.assertTrue(any(line.startswith("MM README.md") for line in lines))
+            self.assertTrue(any(line.startswith("?? untracked.log") for line in lines))
+
+    def test_prepare_worker_workspace_recovers_dirty_worktree_lease_with_real_bare_remote(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            remote_root = tmp_p / "remote.git"
+            subprocess.run(["git", "init", "--bare", str(remote_root)], capture_output=True, check=True)
+
+            repo_root = tmp_p / "main_repo"
+            subprocess.run(["git", "clone", str(remote_root), str(repo_root)], capture_output=True, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=repo_root, check=True)
+
+            task_id = "TASK-REMOTE-BARE-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+
+            # Create an unpushed local commit. Recovery must lease the immutable
+            # remote task head, never this newer mutable local branch ref.
+            (wt_path / "local_only.txt").write_text("unpushed local commit\n", encoding="utf-8")
+            subprocess.run(["git", "add", "local_only.txt"], cwd=wt_path, check=True)
+            subprocess.run(["git", "commit", "-m", "local unpushed task commit"], cwd=wt_path, check=True)
+            local_unpushed_head = supervisor._git_commit_oid(wt_path, "HEAD")
+
+            # Introduce uncommitted dirty changes into the reused worker worktree
+            dirty_file = wt_path / "dirty_work.txt"
+            dirty_file.write_text("uncommitted progress\n", encoding="utf-8")
+            subprocess.run(["git", "add", "dirty_work.txt"], cwd=wt_path, check=True)
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+            )
+
+            # Execute real prepare_worker_workspace without mocking refresh or quarantine
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-remote-recover",
+                target_agent="Codex",
+            )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            leased_path = Path(request.metadata["workspace_path"])
+            self.assertNotEqual(leased_path, wt_path)
+
+            # Confirm original worktree wt_path is untouched and still dirty
+            self.assertTrue(dirty_file.exists())
+            st_orig = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertTrue(st_orig.stdout.strip())
+
+            # Confirm leased fresh worktree is clean
+            st_leased = subprocess.run(["git", "status", "--porcelain=v1"], cwd=leased_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_leased.stdout.strip())
+
+            # Confirm bare remote task branch was NOT polluted with dirty commits
+            remote_task_head = subprocess.run(
+                ["git", "rev-parse", f"refs/heads/{branch_name}"],
+                cwd=remote_root,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            leased_head = supervisor._git_commit_oid(leased_path, "HEAD")
+            self.assertEqual(leased_head, remote_task_head)
+            self.assertNotEqual(leased_head, local_unpushed_head)
+
+            # Confirm backup manifest exists
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+            self.assertTrue(backups_dir.exists())
+            self.assertGreater(len(list(backups_dir.glob("task-remote-bare-001-*"))), 0)
+
+    def test_rejected_push_has_no_head_mismatch_and_no_unknown_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            remote_root = tmp_p / "remote.git"
+            subprocess.run(["git", "init", "--bare", str(remote_root)], capture_output=True, check=True)
+
+            repo_root = tmp_p / "main_repo"
+            subprocess.run(["git", "clone", str(remote_root), str(repo_root)], capture_output=True, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=repo_root, check=True)
+
+            task_id = "TASK-PUSH-REJECT-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            # Configure pre-receive hook to reject all subsequent pushes
+            hook_file = remote_root / "hooks" / "pre-receive"
+            hook_file.write_text("#!/bin/sh\necho 'Push rejected' >&2\nexit 1\n", encoding="utf-8")
+            hook_file.chmod(0o755)
+
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+
+            # Add dirt to worktree
+            (wt_path / "secret.txt").write_text("abandoned dirty secret\n", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-push-reject",
+                target_agent="Codex",
+            )
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            leased_path = Path(request.metadata["workspace_path"])
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=leased_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_proc.stdout.strip())
+
+            ref_ok, ref_status = supervisor._refresh_reused_worker_worktree(repo_root, leased_path, "origin/dev", branch_name)
+            self.assertTrue(ref_ok)
+            self.assertNotEqual("task_head_mismatch", ref_status)
+
+    def test_dirty_worktree_quarantine_and_restoration_exhaustive_nul_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "tracked_a.txt").write_text("line 1\n", encoding="utf-8")
+            (repo_root / "tracked_b.txt").write_text("line 2\n", encoding="utf-8")
+            (repo_root / "to_delete.txt").write_text("delete me\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
+
+            wt_dir = tmp_p / "wt"
+            subprocess.run(["git", "worktree", "add", "-b", "task/NUL-SAFE-001", str(wt_dir), "dev"], cwd=repo_root, capture_output=True, check=True)
+
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (wt_dir / "tracked_a.txt").write_text("line 1 modified staged\n", encoding="utf-8")
+            subprocess.run(["git", "add", "tracked_a.txt"], cwd=wt_dir, check=True)
+
+            (wt_dir / "tracked_b.txt").write_text("line 2 modified unstaged\n", encoding="utf-8")
+            (wt_dir / "to_delete.txt").unlink()
+
+            quoted_name = "space & 'quote' file.txt"
+            (wt_dir / quoted_name).write_text("complex filename content\n", encoding="utf-8")
+
+            symlink_name = "link_to_a.txt"
+            os.symlink("tracked_a.txt", wt_dir / symlink_name)
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                }
+            }
+            state: dict = {}
+
+            preserved = supervisor._quarantine_and_preserve_dirty_worktree(
+                config, state, wt_dir, "NUL-SAFE-001", expected_branch="task/NUL-SAFE-001", trigger="test"
+            )
+            self.assertTrue(preserved)
+
+            backups = list((repo_root / ".orchestrator" / "worktree-dirt-backups").glob("nul-safe-001-*"))
+            self.assertEqual(len(backups), 1)
+            backup_dir = backups[0]
+
+            manifest = json.loads((backup_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["task_id"], "NUL-SAFE-001")
+            files_by_path = {f["path"]: f for f in manifest["files"]}
+
+            self.assertIn("tracked_a.txt", files_by_path)
+            self.assertIn("tracked_b.txt", files_by_path)
+            self.assertIn("to_delete.txt", files_by_path)
+            self.assertIn(quoted_name, files_by_path)
+            self.assertIn(symlink_name, files_by_path)
+
+            self.assertTrue(files_by_path[symlink_name]["is_symlink"])
+            self.assertEqual(files_by_path[symlink_name]["symlink_target"], "tracked_a.txt")
+
+            # Restore into a fresh target directory
+            target_dir = tmp_p / "restored_target"
+            subprocess.run(["git", "clone", str(repo_root), str(target_dir)], capture_output=True, check=True)
+            subprocess.run(["git", "checkout", "task/NUL-SAFE-001"], cwd=target_dir, check=True)
+
+            restored_ok, restored_msg = supervisor.restore_quarantined_worktree_backup(backup_dir, target_dir)
+            self.assertTrue(restored_ok)
+            self.assertEqual(restored_msg, "restored")
+
+            self.assertEqual((target_dir / "tracked_a.txt").read_text(encoding="utf-8"), "line 1 modified staged\n")
+            self.assertEqual((target_dir / "tracked_b.txt").read_text(encoding="utf-8"), "line 2 modified unstaged\n")
+            self.assertFalse((target_dir / "to_delete.txt").exists())
+            self.assertEqual((target_dir / quoted_name).read_text(encoding="utf-8"), "complex filename content\n")
+            self.assertTrue(os.path.islink(target_dir / symlink_name))
+
+    def test_quarantine_restoration_negative_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            target = tmp_p / "target"
+            target.mkdir()
+
+            # Missing manifest & checksums
+            ok, msg = supervisor.restore_quarantined_worktree_backup(tmp_p, target)
+            self.assertFalse(ok)
+            self.assertIn("missing manifest", msg)
+
+            # Corrupted checksum
+            b_dir = tmp_p / "backup"
+            b_dir.mkdir()
+            (b_dir / "manifest.json").write_text('{"files":[]}', encoding="utf-8")
+            (b_dir / "backup_checksums.sha256").write_text('{"missing.txt": "1234"}', encoding="utf-8")
+
+            ok, msg = supervisor.restore_quarantined_worktree_backup(b_dir, target)
+            self.assertFalse(ok)
+            self.assertIn("corrupted backup: missing", msg)
+
+    def test_context_materialization_ephemeral_and_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "README.md").write_text("hello\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            wt_path = tmp_p / "wt"
+            subprocess.run(["git", "worktree", "add", "-b", "task/EPHEM-001", str(wt_path), "dev"], cwd=repo_root, capture_output=True, check=True)
+
+            config = {"paths": {"status_file": str(repo_root / "ai-status.json")}}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="EPHEM-001",
+                reason="owned_in_progress_dispatch",
+                context_files=["AI_COLLABORATION_GUIDE.md", ".orchestrator/task-briefs/ephem_001.md"],
+            )
+
+            materialized = supervisor.materialize_worker_context_files(config, request, wt_path)
+            self.assertIn("AI_COLLABORATION_GUIDE.md", materialized)
+            self.assertIn(".orchestrator/task-briefs/ephem_001.md", materialized)
+
+            # Confirm git exclude path was updated via rev-parse
+            rc, out = supervisor._git_output(wt_path, "rev-parse", "--git-path", "info/exclude")
+            self.assertEqual(rc, 0)
+            ex_path = Path(out.strip())
+            if not ex_path.is_absolute():
+                ex_path = (wt_path / ex_path).resolve()
+            ex_content = ex_path.read_text(encoding="utf-8")
+            self.assertIn("AI_COLLABORATION_GUIDE.md", ex_content)
+            self.assertIn(".orchestrator/task-briefs/", ex_content)
+
+            # Confirm dirt classification treats context files as clean or scratch_only
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=wt_path, capture_output=True, check=True)
+            classification, paths = supervisor._classify_worktree_dirt(st_proc.stdout)
+            self.assertIn(classification, ("clean", "scratch_only"))
+
+            # Add an unknown user file in task-briefs directory
+            unknown_user_file = wt_path / ".orchestrator" / "task-briefs" / "my_custom_notes.txt"
+            unknown_user_file.write_text("custom user notes\n", encoding="utf-8")
+
+            # Confirm _restore_reusable_scratch does NOT delete unknown user file
+            supervisor._restore_reusable_scratch(wt_path, paths)
+            self.assertTrue(unknown_user_file.exists())
+            self.assertEqual(unknown_user_file.read_text(encoding="utf-8"), "custom user notes\n")
+
+    def test_original_worktree_byte_branch_gitdir_identity_on_lease_recovery(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "README.md").write_text("base content\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
+
+            task_id = "TASK-IDENTITY-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            (repo_root / "task_code.py").write_text("print('task')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "task_code.py"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "task commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "master"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+
+            # Introduce dirty changes into wt_path
+            dirty_f = wt_path / "dirty_progress.py"
+            dirty_f.write_text("import sys\n# work in progress\n", encoding="utf-8")
+            subprocess.run(["git", "add", "dirty_progress.py"], cwd=wt_path, check=True)
+
+            # Snapshot original bytes, branch, .git file, gitdir before recovery
+            orig_git_file_content = (wt_path / ".git").read_text(encoding="utf-8")
+            orig_dirty_content = dirty_f.read_text(encoding="utf-8")
+            orig_branch = supervisor._git_output(wt_path, "symbolic-ref", "--quiet", "--short", "HEAD")[1]
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "master"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "master",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-identity",
+                target_agent="Codex",
+            )
+
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            leased_path = Path(request.metadata["workspace_path"])
+            self.assertNotEqual(leased_path, wt_path)
+
+            # Verify original wt_path bytes, branch, .git file content are 100% byte-identical
+            self.assertEqual((wt_path / ".git").read_text(encoding="utf-8"), orig_git_file_content)
+            self.assertEqual(dirty_f.read_text(encoding="utf-8"), orig_dirty_content)
+            self.assertEqual(supervisor._git_output(wt_path, "symbolic-ref", "--quiet", "--short", "HEAD")[1], orig_branch)
+
+            # Verify leased_path is clean and at exact task HEAD
+            st_leased = subprocess.run(["git", "status", "--porcelain=v1"], cwd=leased_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_leased.stdout.strip())
+            self.assertEqual(supervisor._git_commit_oid(leased_path, "HEAD"), supervisor._git_commit_oid(repo_root, branch_name))
+
+    def test_dirty_lease_recovery_preserves_exact_task_sha_without_dev_merge(self) -> None:
+        """B1 regression test: lease recovery preserves exact task SHA without merging origin/dev base."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "base.txt").write_text("initial base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            task_id = "TASK-B1-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            (repo_root / "task.txt").write_text("task work\n", encoding="utf-8")
+            subprocess.run(["git", "add", "task.txt"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "task commit"], cwd=repo_root, check=True)
+            task_sha = supervisor._git_commit_oid(repo_root, branch_name)
+            self.assertIsNotNone(task_sha)
+
+            # Advance dev branch with new commits so task_sha becomes an ancestor of dev
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+            (repo_root / "dev_advance.txt").write_text("dev advanced\n", encoding="utf-8")
+            subprocess.run(["git", "add", "dev_advance.txt"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "dev advance commit"], cwd=repo_root, check=True)
+            dev_sha = supervisor._git_commit_oid(repo_root, "dev")
+            self.assertNotEqual(task_sha, dev_sha)
+
+            # Create existing dirty worktree for task branch
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+            (wt_path / "dirty.txt").write_text("dirty uncommitted work\n", encoding="utf-8")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config, state, request, queue_event_id="evt-b1", target_agent="Antigravity"
+            )
+            self.assertTrue(ok)
+            leased_path = Path(request.metadata["workspace_path"])
+            leased_sha = supervisor._git_commit_oid(leased_path, "HEAD")
+
+            # B1 check: fresh HEAD must be exact task_sha, NOT dev_sha
+            self.assertEqual(leased_sha, task_sha)
+            self.assertNotEqual(leased_sha, dev_sha)
+
+    def test_materialized_context_written_to_actual_git_exclude_path(self) -> None:
+        """B2 regression test: context exclusions written to git rev-parse --git-path info/exclude."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "README.md").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "wt"
+            subprocess.run(["git", "worktree", "add", "-b", "task/EPHEM-B2", str(wt_path), "dev"], capture_output=True, check=True, cwd=repo_root)
+
+            config = {"paths": {"status_file": str(repo_root / "ai-status.json")}}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="EPHEM-B2",
+                reason="owned_in_progress_dispatch",
+                context_files=["AI_COLLABORATION_GUIDE.md", ".orchestrator/task-briefs/ephem_b2.md"],
+            )
+
+            supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            # B2 check: git check-ignore must return 0 (ignored) for materialized context
+            chk_proc = subprocess.run(["git", "check-ignore", "AI_COLLABORATION_GUIDE.md"], cwd=wt_path, capture_output=True, check=False)
+            self.assertEqual(chk_proc.returncode, 0)
+
+            # Confirm git status does NOT report AI_COLLABORATION_GUIDE.md as untracked
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertNotIn("AI_COLLABORATION_GUIDE.md", st_proc.stdout)
+
+    def test_tracked_owner_content_classified_real_dirt_and_preserved(self) -> None:
+        """B3 regression test: modified tracked context files classified as real dirt, quarantined, and recovered cleanly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            (repo_root / "ai-activity-log.jsonl").write_text('{"event":"baseline"}\n', encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            task_id = "B3-001"
+            branch_name = f"task/{task_id}"
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", "-b", branch_name, str(wt_path), "dev"], capture_output=True, check=True, cwd=repo_root)
+
+            # Modify tracked ai-activity-log.jsonl (simulating owner progress)
+            owner_progress_text = '{"event":"baseline"}\n{"event":"owner_progress"}\n'
+            (wt_path / "ai-activity-log.jsonl").write_text(owner_progress_text, encoding="utf-8")
+
+            # B3 check 1: dirt classification for tracked context file MUST be real
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=wt_path, capture_output=True, check=True)
+            classification, paths = supervisor._classify_worktree_dirt(st_proc.stdout)
+            self.assertEqual(classification, "real")
+            self.assertEqual(paths, [])
+
+            # B3 check 2: end-to-end prepare_worker_workspace interaction
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json", "ai-activity-log.jsonl"],
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config, state, request, queue_event_id="evt-b3", target_agent="Antigravity"
+            )
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            leased_path = Path(request.metadata["workspace_path"])
+            # Fresh clean workspace must be allocated at a distinct path
+            self.assertNotEqual(leased_path, wt_path)
+
+            # Original dirty worktree bytes must remain 100% byte-identical and untouched
+            self.assertEqual((wt_path / "ai-activity-log.jsonl").read_text(encoding="utf-8"), owner_progress_text)
+
+    def test_materialization_refuses_to_overwrite_tracked_files_with_differing_source_bytes(self) -> None:
+        """B4 regression test: materialization refuses to overwrite any Git-tracked destination even when live source differs."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "repo"
+            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+
+            # Create tracked files on dev: ai-status.json, ai-activity-log.jsonl, and a task brief
+            (repo_root / "ai-status.json").write_text('{"project":"tracked_baseline"}\n', encoding="utf-8")
+            (repo_root / "ai-activity-log.jsonl").write_text('{"event":"tracked_log_baseline"}\n', encoding="utf-8")
+            tb_dir = repo_root / ".orchestrator" / "task-briefs"
+            tb_dir.mkdir(parents=True, exist_ok=True)
+            tracked_brief = tb_dir / "b4_task_001.md"
+            tracked_brief.write_text("# Tracked Brief Baseline\n", encoding="utf-8")
+            (repo_root / "README.md").write_text("base readme\n", encoding="utf-8")
+
+            subprocess.run(["git", "add", "."], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial tracked baseline"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+
+            task_id = "B4-TASK-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+
+            # Now modify live status_root files (repo_root) to differ from the tracked baseline
+            (repo_root / "ai-activity-log.jsonl").write_text('{"event":"live_canonical_log_differs"}\n', encoding="utf-8")
+            tracked_brief.write_text("# Live Brief Modified Bytes\n", encoding="utf-8")
+            (repo_root / "AI_COLLABORATION_GUIDE.md").write_text("# Live Collaboration Guide\n", encoding="utf-8")
+
+            # Checkout dev in repo_root so task branch can be checked out in worktree
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "wt_b4"
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+                context_files=[
+                    "AI_COLLABORATION_GUIDE.md",
+                    "ai-activity-log.jsonl",
+                    ".orchestrator/task-briefs/b4_task_001.md",
+                    "ai-status.json",
+                ],
+            )
+
+            materialized = supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            # 1. Untracked file AI_COLLABORATION_GUIDE.md was materialized
+            self.assertIn("AI_COLLABORATION_GUIDE.md", materialized)
+
+            # 2. Tracked files MUST NOT be in materialized list, and MUST NOT be overwritten
+            self.assertNotIn("ai-activity-log.jsonl", materialized)
+            self.assertNotIn(".orchestrator/task-briefs/b4_task_001.md", materialized)
+            self.assertNotIn("ai-status.json", materialized)
+
+            self.assertEqual((wt_path / "ai-activity-log.jsonl").read_text(encoding="utf-8"), '{"event":"tracked_log_baseline"}\n')
+            self.assertEqual((wt_path / ".orchestrator" / "task-briefs" / "b4_task_001.md").read_text(encoding="utf-8"), "# Tracked Brief Baseline\n")
+            self.assertEqual((wt_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"tracked_baseline"}\n')
+
+            # 3. git status MUST remain 100% clean after materialization
+            st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
+            self.assertEqual("", st_proc.stdout.strip())
+
+    def test_materialize_worker_context_files_skips_symlinks_and_unsafe_destinations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "main_repo"
+            repo_root.mkdir()
+            (repo_root / "ai-status.json").write_text('{"project":"canonical"}', encoding="utf-8")
+
+            wt_path = tmp_p / "wt_b5"
+            wt_path.mkdir()
+
+            # Create target file README.md
+            readme = wt_path / "README.md"
+            readme.write_text("original owner readme content\n", encoding="utf-8")
+
+            # Create untracked symlink ai-status.json -> README.md
+            symlink = wt_path / "ai-status.json"
+            symlink.symlink_to("README.md")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id="TASK-B5-001",
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json"],
+            )
+
+            materialized = supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            self.assertNotIn("ai-status.json", materialized)
+            self.assertEqual(readme.read_text(encoding="utf-8"), "original owner readme content\n")
+            self.assertTrue(os.path.islink(symlink))
+
+    def test_materialize_worker_context_files_replaces_hardlink_without_mutating_tracked_inode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            status_root = tmp_p / "status_root"
+            status_root.mkdir()
+            canonical = b'{"project":"canonical"}\n'
+            (status_root / "ai-status.json").write_bytes(canonical)
+
+            wt_path = tmp_p / "worker"
+            wt_path.mkdir()
+            subprocess.run(["git", "init"], cwd=wt_path, capture_output=True, check=True)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+            readme = wt_path / "README.md"
+            owner_bytes = b"tracked owner bytes\n"
+            readme.write_bytes(owner_bytes)
+            subprocess.run(["git", "add", "README.md"], cwd=wt_path, check=True)
+            subprocess.run(["git", "commit", "-m", "tracked baseline"], cwd=wt_path, capture_output=True, check=True)
+
+            destination = wt_path / "ai-status.json"
+            os.link(readme, destination)
+            self.assertEqual(readme.stat().st_ino, destination.stat().st_ino)
+
+            config = {
+                "paths": {
+                    "status_file": str(status_root / "ai-status.json"),
+                    "activity_log": str(status_root / "ai-activity-log.jsonl"),
+                },
+            }
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="TASK-HARDLINK-001",
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json"],
+            )
+
+            materialized = supervisor.materialize_worker_context_files(config, request, wt_path)
+
+            self.assertIn("ai-status.json", materialized)
+            self.assertEqual(readme.read_bytes(), owner_bytes)
+            self.assertEqual(destination.read_bytes(), canonical)
+            self.assertNotEqual(readme.stat().st_ino, destination.stat().st_ino)
+            diff = subprocess.run(
+                ["git", "diff", "--exit-code", "--", "README.md"],
+                cwd=wt_path,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(diff.returncode, 0, diff.stdout.decode(errors="replace"))
+
+    def test_prepare_worker_workspace_recovers_dirty_worktree_lease_with_untracked_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            remote_root = tmp_p / "remote.git"
+            subprocess.run(["git", "init", "--bare", str(remote_root)], capture_output=True, check=True)
+
+            repo_root = tmp_p / "main_repo"
+            subprocess.run(["git", "clone", str(remote_root), str(repo_root)], capture_output=True, check=True)
+            (repo_root / "ai-status.json").write_text('{"project":"canonical"}', encoding="utf-8")
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=repo_root, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo_root, check=True)
+            (repo_root / "README.md").write_text("main owner content\n", encoding="utf-8")
+            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
+            subprocess.run(["git", "commit", "-m", "initial commit"], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", "dev"], cwd=repo_root, check=True)
+
+            task_id = "TASK-B5-LEASE-001"
+            branch_name = f"task/{task_id}"
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "push", "origin", branch_name], cwd=repo_root, check=True)
+            subprocess.run(["git", "checkout", "dev"], cwd=repo_root, check=True)
+
+            wt_path = tmp_p / "workers" / supervisor._task_id_slug(task_id)
+            wt_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(["git", "worktree", "add", str(wt_path), branch_name], capture_output=True, check=True, cwd=repo_root)
+            subprocess.run(["git", "config", "user.name", "TestUser"], cwd=wt_path, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=wt_path, check=True)
+
+            # Introduce an untracked symlink ai-status.json -> README.md into the reused worktree
+            symlink = wt_path / "ai-status.json"
+            symlink.symlink_to("README.md")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="antigravity",
+                provider="antigravity",
+                delivery_mode="antigravity",
+                message="wake",
+                task_id=task_id,
+                reason="owned_in_progress_dispatch",
+                context_files=["ai-status.json"],
+            )
+
+            ok, message = supervisor.prepare_worker_workspace(
+                config,
+                state,
+                request,
+                queue_event_id="evt-b5-recover",
+                target_agent="antigravity",
+            )
+            self.assertTrue(ok)
+            self.assertIsNone(message)
+
+            leased_path = Path(request.metadata["workspace_path"])
+            # Fresh clean workspace allocated at a distinct path
+            self.assertNotEqual(leased_path, wt_path)
+
+            # Original dirty worktree at wt_path remains 100% byte-identical and untouched
+            self.assertEqual((wt_path / "README.md").read_text(encoding="utf-8"), "main owner content\n")
+            self.assertTrue(os.path.islink(wt_path / "ai-status.json"))
+
+            # Fresh recovery workspace has regular materialized ai-status.json
+            self.assertTrue(leased_path.exists())
+            self.assertFalse(os.path.islink(leased_path / "ai-status.json"))
+            self.assertEqual((leased_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"canonical"}')
 if __name__ == "__main__":
     unittest.main()

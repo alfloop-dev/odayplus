@@ -27,7 +27,6 @@ jobs:
       url: ${{ vars.ODP_STAGING_DEPLOY_URL }}
     env:
       HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
-      HAS_GCP_SA_KEY: ${{ secrets.GCP_SA_KEY != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
@@ -55,10 +54,13 @@ jobs:
       ODP_GEOCODE_PROVIDER_AUTH_STATUS: ${{ vars.ODP_GEOCODE_PROVIDER_AUTH_STATUS }}
       ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS: ${{ vars.ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS }}
       ODP_PRODUCTION_PROVIDER_IDS: ${{ vars.ODP_PRODUCTION_PROVIDER_IDS }}
+      ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS: ${{ vars.ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS }}
       ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled
       ODP_AUTH_ISSUER: ${{ vars.ODP_AUTH_ISSUER }}
       ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
       ODP_AUTH_JWKS_URI: ${{ vars.ODP_AUTH_JWKS_URI }}
+      ODP_AUTH_PRINCIPAL_MAP_SECRET: ${{ vars.ODP_AUTH_PRINCIPAL_MAP_SECRET }}
+      ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
@@ -99,16 +101,14 @@ jobs:
       - name: Generate SBOM
         run: python3 scripts/security/generate_sbom.py
 
-      - name: Validate release authority, authentication, and live runtime
-        env:
-          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+      - name: Validate release authority, WIF, and live runtime
         run: |
           if [ "${ODAY_RELEASE_SHA}" != "${GITHUB_SHA}" ]; then
             echo "Error: expected_sha must equal the checked-out workflow SHA." >&2
             exit 1
           fi
-          if [ "${HAS_WIF}" != "true" ] && [ "${HAS_GCP_SA_KEY}" != "true" ]; then
-            echo "Error: configure WIF variables or the GCP_SA_KEY secret." >&2
+          if [ "${HAS_WIF}" != "true" ]; then
+            echo "Error: Workload Identity Federation variables are required." >&2
             exit 1
           fi
           python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
@@ -123,12 +123,6 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
-      - name: Authenticate to Google Cloud (SA Key)
-        if: ${{ env.HAS_GCP_SA_KEY == 'true' && env.HAS_WIF != 'true' }}
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
-
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
@@ -138,7 +132,6 @@ jobs:
       - name: Build, push, deploy, and verify Cloud Run
         env:
           IMAGE_TAG: staging-${{ github.sha }}
-          ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
         run: ./scripts/deploy_cloud_run_waji.sh
 
       - name: Verify configured staging authority endpoint
@@ -157,7 +150,35 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: remote-staging-proof
+          # ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001: `.odp_data/deployment/*.json`
+          # is not recursive, so this artifact published the top-level reports and
+          # silently dropped the migration/scheduler/worker Cloud Run Job receipts
+          # `deploy_cloud_run_waji.sh` writes under `cloud-run-jobs/`. Deploy Dev
+          # lost exactly those in run 30436771086 and was fixed in c7727020; this
+          # is the same contract applied to staging, which has not yet reached the
+          # Job stage (every run so far fails closed at the WIF gate) and so would
+          # have lost its first real receipts the moment it did.
+          #
+          # An explicit allowlist rather than a recursive include: the same
+          # directory holds the raw `gcloud run jobs describe` / `executions
+          # describe` / `executions list` dumps (`*-job.json`, `*-execution.json`,
+          # `*-execution-list.json`), which restate the deployed env block and its
+          # secret selectors verbatim and must never leave the runner. Every file
+          # named below is written by
+          # `scripts/deployment/validate_cloud_run_live_deployment.py`,
+          # `scripts/e2e/check_live_e2e_gate.py`, or
+          # `scripts/e2e/check_remote_staging_proof.py`, and carries redacted
+          # check results only. The staging proof keeps the run-scoped name the
+          # checker step above writes. `tests/ops/test_deploy_workflow_contract.py`
+          # holds both this list and Deploy Dev's to the receipts those scripts
+          # actually produce.
           path: |
-            .odp_data/deployment/*.json
-            .odp_data/remote-staging-proof/*.json
+            .odp_data/deployment/cloud-run-preflight.json
+            .odp_data/deployment/cloud-run-smoke.json
+            .odp_data/deployment/cloud-run-migration-compatibility.json
+            .odp_data/deployment/live-e2e-gate.json
+            .odp_data/deployment/cloud-run-jobs/migration-validation.json
+            .odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+            .odp_data/deployment/cloud-run-jobs/worker-validation.json
+            .odp_data/remote-staging-proof/staging-${{ github.run_id }}.json
           if-no-files-found: ignore

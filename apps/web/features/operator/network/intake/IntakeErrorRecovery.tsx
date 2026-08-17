@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import type { ApiError, ConflictError } from "@oday-plus/openapi-client";
+import type { ApiError, ConflictError, IntakeFailure } from "@oday-plus/openapi-client";
 import styles from "./intake.module.css";
 import type { IntakeApiError } from "./intakeClient";
 
 export type IntakeErrorRecoveryProps = {
-  error?: IntakeApiError | ApiError | ConflictError | null;
+  error?: IntakeApiError | ApiError | ConflictError | IntakeFailure | null;
   stage?: string;
   correlationId?: string | null;
   preservedInput?: Record<string, unknown> | null;
@@ -75,6 +75,7 @@ export function IntakeErrorRecovery({
   };
 
   const safeInput = sanitizePreservedInput(preservedInput);
+  const hasPreservedInput = Object.keys(safeInput).length > 0;
 
   const handleConfirmOverride = () => {
     if (!overrideReason.trim() || !riskAcknowledged) return;
@@ -131,7 +132,7 @@ export function IntakeErrorRecovery({
           <span style={{ fontFamily: "monospace", fontWeight: 700, color: "#b91c1c", fontSize: "12px" }} data-testid="error-code">
             [{errorCode}]
           </span>
-          <span style={{ fontSize: "10.5px", color: "#64748b" }}>
+          <span data-testid="error-occurred-at" style={{ fontSize: "10.5px", color: "#64748b" }}>
             發生時間: {occurredAt ? new Date(occurredAt).toLocaleString() : "UNAVAILABLE"}
           </span>
         </div>
@@ -143,7 +144,7 @@ export function IntakeErrorRecovery({
         <div style={{ display: "flex", gap: "16px", fontSize: "10.5px", color: "#64748b", borderTop: "1px dashed #fca5a5", paddingTop: "6px" }}>
           <div>Correlation ID: <code style={{ color: "#1e293b" }} data-testid="error-correlation-id">{corrId}</code></div>
           <div>目前版本: <code>{currentVersion === null ? "UNAVAILABLE" : `v${currentVersion}`}</code></div>
-          <div>建議處置: <strong style={{ color: "#2563eb" }}>{nextAction}</strong></div>
+          <div>建議處置: <strong data-testid="error-next-action" style={{ color: "#2563eb" }}>{nextAction}</strong></div>
         </div>
       </div>
 
@@ -174,9 +175,17 @@ export function IntakeErrorRecovery({
               overflowY: "auto",
             }}
           >
-            <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
-              {JSON.stringify(safeInput, null, 2)}
-            </pre>
+            {hasPreservedInput ? (
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }} data-testid="error-preserved-input-json">
+                {JSON.stringify(safeInput, null, 2)}
+              </pre>
+            ) : (
+              // Nothing durable came back from the intake record. Say so rather
+              // than rendering `{}`, which reads as "the submission was empty".
+              <span data-testid="error-preserved-input-unavailable">
+                保留輸入參數 UNAVAILABLE — 收件紀錄尚未提供可保留的送件輸入。
+              </span>
+            )}
           </div>
         )}
       </div>

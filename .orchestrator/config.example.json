@@ -151,92 +151,54 @@
       "review_approved"
     ],
     "owner_fallbacks": {
-      "Claude": [
-        "Claude2",
-        "Codex",
-        "Codex2",
-        "Antigravity",
-        "Antigravity2"
-      ],
-      "Claude2": [
-        "Claude",
-        "Codex",
-        "Codex2",
-        "Antigravity",
-        "Antigravity2"
-      ],
-      "Antigravity": [
-        "Antigravity2",
-        "Codex",
-        "Codex2",
-        "Claude",
-        "Claude2"
-      ],
-      "Antigravity2": [
-        "Antigravity",
-        "Codex",
-        "Codex2",
-        "Claude",
-        "Claude2"
-      ],
-      "Codex": [
-        "Codex2",
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
-      ],
-      "Codex2": [
-        "Codex",
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
-      ]
+      "Claude": ["Claude2", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+      "Claude2": ["Claude", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+      "Claude3": ["Claude2", "Claude", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+      "Antigravity": ["Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+      "Antigravity2": ["Antigravity", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+      "Antigravity3": ["Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity4": ["Antigravity3", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity5": ["Antigravity6", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity6": ["Antigravity5", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity7": ["Antigravity6", "Antigravity5", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Codex": ["Codex2", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Codex2": ["Codex", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Codex3": ["Codex2", "Codex6", "Codex", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+      "Codex4": ["Codex2", "Codex6", "Codex", "Codex3", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+      "Codex5": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity3", "Antigravity4"],
+      "Codex6": ["Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+      "Codex7": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+      "Codex8": ["Codex9", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+      "Codex9": ["Codex8", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+      "CodexCoordinator": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity7"],
+      "Gemini": ["Gemini2", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Gemini2": ["Gemini", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Copilot": ["Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"]
     },
     "reviewer_fallbacks": {
-      "Claude": [
-        "Claude2",
-        "Codex",
-        "Codex2",
-        "Antigravity",
-        "Antigravity2"
-      ],
-      "Claude2": [
-        "Claude",
-        "Codex",
-        "Codex2",
-        "Antigravity",
-        "Antigravity2"
-      ],
-      "Antigravity": [
-        "Antigravity2",
-        "Codex",
-        "Codex2",
-        "Claude",
-        "Claude2"
-      ],
-      "Antigravity2": [
-        "Antigravity",
-        "Codex",
-        "Codex2",
-        "Claude",
-        "Claude2"
-      ],
-      "Codex": [
-        "Codex2",
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
-      ],
-      "Codex2": [
-        "Codex",
-        "Claude",
-        "Claude2",
-        "Antigravity",
-        "Antigravity2"
-      ]
+      "Claude": ["Claude2", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+      "Claude2": ["Claude", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+      "Claude3": ["Claude2", "Claude", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
+      "Antigravity": ["Antigravity2", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+      "Antigravity2": ["Antigravity", "Antigravity3", "Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Codex2", "Codex", "Codex6", "Claude2", "Claude"],
+      "Antigravity3": ["Antigravity4", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity4": ["Antigravity3", "Antigravity5", "Antigravity6", "Antigravity7", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity5": ["Antigravity6", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity6": ["Antigravity5", "Antigravity7", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Antigravity7": ["Antigravity6", "Antigravity5", "Antigravity4", "Antigravity3", "Antigravity2", "Antigravity", "Codex6", "Codex2", "Codex", "Claude2", "Claude"],
+      "Codex": ["Codex2", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Codex2": ["Codex", "Codex6", "Codex3", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Codex3": ["Codex2", "Codex6", "Codex", "Codex4", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+      "Codex4": ["Codex2", "Codex6", "Codex", "Codex3", "Codex5", "Codex7", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+      "Codex5": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity3", "Antigravity4"],
+      "Codex6": ["Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+      "Codex7": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude", "Claude2", "Antigravity"],
+      "Codex8": ["Codex9", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+      "Codex9": ["Codex8", "Codex6", "Codex2", "Codex", "Claude2", "Claude", "Antigravity3", "Antigravity7"],
+      "CodexCoordinator": ["Codex6", "Codex2", "Codex", "Codex8", "Codex9", "Claude2", "Claude", "Antigravity7"],
+      "Gemini": ["Gemini2", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Gemini2": ["Gemini", "Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"],
+      "Copilot": ["Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"]
     }
   },
   "underutilization_dispatch": {
@@ -446,6 +408,41 @@
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/antigravity2.md"
     },
+    "antigravity3": {
+      "display_name": "Antigravity3",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity3.md"
+    },
+    "antigravity4": {
+      "display_name": "Antigravity4",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity4.md"
+    },
+    "antigravity5": {
+      "display_name": "Antigravity5",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity5.md"
+    },
+    "antigravity6": {
+      "display_name": "Antigravity6",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity6.md"
+    },
+    "antigravity7": {
+      "display_name": "Antigravity7",
+      "provider": "antigravity",
+      "adapter": "antigravity",
+      "wake_template": ".orchestrator/templates/wakeup.txt",
+      "file_inbox_path": ".llm-inbox/antigravity7.md"
+    },
     "codex": {
       "display_name": "Codex",
       "provider": "codex",
@@ -543,6 +540,7 @@
       "codex": {
         "cli": "codex",
         "ask_for_approval": "never",
+        "model": "gpt-5.3-codex-spark",
         "sandbox_mode": "workspace-write",
         "dangerously_bypass": true
       },

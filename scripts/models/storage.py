@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 from urllib.parse import urlparse
 
@@ -41,6 +41,11 @@ class ModelReadyInventory:
     labeled_row_count: int
     temporal_min: str | None
     temporal_max: str | None
+    train_row_count: int = 0
+    validation_row_count: int = 0
+    test_row_count: int = 0
+    tenant_count: int = 0
+    source_snapshot_count: int = 0
 
     @property
     def ready(self) -> bool:
@@ -68,6 +73,11 @@ class ModelReadyInventory:
             "labeled_row_count": self.labeled_row_count,
             "temporal_min": self.temporal_min,
             "temporal_max": self.temporal_max,
+            "train_row_count": self.train_row_count,
+            "validation_row_count": self.validation_row_count,
+            "test_row_count": self.test_row_count,
+            "tenant_count": self.tenant_count,
+            "source_snapshot_count": self.source_snapshot_count,
             "ready": self.ready,
         }
 
@@ -78,6 +88,7 @@ class LoadedModelReadyRows:
     relation: str
     bounds: DataBounds
     query_sha256: str
+    as_of_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @runtime_checkable
@@ -163,10 +174,7 @@ class PostgresModelReadySource:
                 spec,
                 registry_exists=True,
                 contract_version=contract_version,
-                reason=str(
-                    contract.get("blocked_reason")
-                    or "MODEL_READY_CONTRACT_BLOCKED"
-                ),
+                reason=str(contract.get("blocked_reason") or "MODEL_READY_CONTRACT_BLOCKED"),
             )
         exists = self.client.query_one(
             "SELECT to_regclass(?) AS relation",
@@ -212,20 +220,47 @@ class PostgresModelReadySource:
                 temporal_min=None,
                 temporal_max=None,
             )
-        stats = self.client.query_one(
-            f"SELECT "
-            f"count(*) FILTER (WHERE is_training_eligible = true) AS eligible_count, "
-            f"count(*) FILTER (WHERE is_training_eligible = true "
-            f"AND {spec.label_column} IS NOT NULL) AS labeled_count, "
-            f"min({spec.temporal_column}) AS temporal_min, "
-            f"max({spec.temporal_column}) AS temporal_max "
-            f"FROM {spec.relation} "
-            f"WHERE view_name = ? AND view_version = ?",
-            (
-                relation,
-                spec.expected_view_version,
-            ),
-        ) or {}
+        tenant_projection = (
+            "tenant_id"
+            if "tenant_id" in spec.required_columns
+            else "NULL::text AS tenant_id"
+        )
+        stats = (
+            self.client.query_one(
+                f"WITH eligible AS ("
+                f"SELECT {spec.temporal_column} AS observed_at, {tenant_projection}, "
+                f"source_snapshot_ids, ntile(5) OVER ("
+                f"ORDER BY {spec.temporal_column}, entity_id"
+                f") AS temporal_fifth "
+                f"FROM {spec.relation} "
+                f"WHERE view_name = ? AND view_version = ? "
+                f"AND is_training_eligible = true "
+                f"AND {spec.label_column} IS NOT NULL"
+                f"), source_ids AS ("
+                f"SELECT DISTINCT unnest(source_snapshot_ids) AS source_snapshot_id "
+                f"FROM eligible"
+                f") SELECT "
+                f"(SELECT count(*) FROM {spec.relation} "
+                f"WHERE view_name = ? AND view_version = ? "
+                f"AND is_training_eligible = true) AS eligible_count, "
+                f"count(*) AS labeled_count, "
+                f"count(*) FILTER (WHERE temporal_fifth <= 3) AS train_count, "
+                f"count(*) FILTER (WHERE temporal_fifth = 4) AS validation_count, "
+                f"count(*) FILTER (WHERE temporal_fifth = 5) AS test_count, "
+                f"count(DISTINCT tenant_id) AS tenant_count, "
+                f"(SELECT count(*) FROM source_ids) AS source_snapshot_count, "
+                f"min(observed_at) AS temporal_min, "
+                f"max(observed_at) AS temporal_max "
+                f"FROM eligible",
+                (
+                    relation,
+                    spec.expected_view_version,
+                    relation,
+                    spec.expected_view_version,
+                ),
+            )
+            or {}
+        )
         return ModelReadyInventory(
             model_key=spec.key,
             relation=spec.relation,
@@ -240,6 +275,11 @@ class PostgresModelReadySource:
             labeled_row_count=int(stats.get("labeled_count") or 0),
             temporal_min=_text_timestamp(stats.get("temporal_min")),
             temporal_max=_text_timestamp(stats.get("temporal_max")),
+            train_row_count=int(stats.get("train_count") or 0),
+            validation_row_count=int(stats.get("validation_count") or 0),
+            test_row_count=int(stats.get("test_count") or 0),
+            tenant_count=int(stats.get("tenant_count") or 0),
+            source_snapshot_count=int(stats.get("source_snapshot_count") or 0),
         )
 
     def load(self, spec: ModelSpec, bounds: DataBounds) -> LoadedModelReadyRows:
@@ -450,22 +490,14 @@ class GcsArtifactStore:
         return self.transport.download(bucket=parsed.netloc, key=parsed.path.lstrip("/"))
 
     def list_artifacts(self, model_name: str) -> list[ArtifactRecord]:
-        return [
-            record
-            for record in self._records.values()
-            if record.model_name == model_name
-        ]
+        return [record for record in self._records.values() if record.model_name == model_name]
 
     def list_artifacts_for_version(
         self,
         model_name: str,
         version: str,
     ) -> list[ArtifactRecord]:
-        return [
-            record
-            for record in self.list_artifacts(model_name)
-            if record.version == version
-        ]
+        return [record for record in self.list_artifacts(model_name) if record.version == version]
 
     def verify(self, artifact_id: str) -> bool:
         record = self.get_artifact(artifact_id)

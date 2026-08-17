@@ -10,12 +10,19 @@ set -euo pipefail
 
 echo "=== Starting ODay Plus Cloud Run Deployment ==="
 
-for cmd in python3 gcloud docker; do
+for cmd in python3 uv gcloud docker; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "Error: required command '$cmd' is not installed." >&2
     exit 1
   fi
 done
+
+# Repository-aware validators import project runtime modules and dependencies.
+# Always resolve them through uv.lock; the runner's system Python is reserved
+# for the explicitly standard-library-only inline serializers below.
+run_locked_python() {
+  uv run --frozen python "$@"
+}
 
 : "${ODP_DEPLOY_ENV:?Error: ODP_DEPLOY_ENV is required.}"
 : "${ODAY_RELEASE_SHA:?Error: ODAY_RELEASE_SHA is required.}"
@@ -32,6 +39,8 @@ done
 : "${ODP_SCHEDULER_TIME_ZONE:?Error: ODP_SCHEDULER_TIME_ZONE is required.}"
 : "${ODP_FORECAST_ENGINE:?Error: ODP_FORECAST_ENGINE is required for live deployments.}"
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
+: "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
+: "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?Error: ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS is required for live deployments.}"
 
 case "${ODP_FORECAST_ENGINE}:${ODP_FORECAST_MODEL}" in
   statsforecast:seasonal_naive|statsforecast:auto_arima|statsforecast:auto_ets)
@@ -50,11 +59,20 @@ esac
 PREFLIGHT_REPORT="${PREFLIGHT_REPORT:-.odp_data/deployment/cloud-run-preflight.json}"
 SMOKE_REPORT="${SMOKE_REPORT:-.odp_data/deployment/cloud-run-smoke.json}"
 MIGRATION_COMPAT_REPORT="${MIGRATION_COMPAT_REPORT:-.odp_data/deployment/cloud-run-migration-compatibility.json}"
+# Bounded cold-start tolerance for the old-revision compatibility probes.
+# Worst case per probe: 4 x 15s of attempts + 2s + 4s + 8s of backoff = 74s,
+# hard-capped by the 120s deadline. See run_migration_compatibility_gate.
+MIGRATION_COMPAT_TIMEOUT="${MIGRATION_COMPAT_TIMEOUT:-15}"
+MIGRATION_COMPAT_RETRY_ATTEMPTS="${MIGRATION_COMPAT_RETRY_ATTEMPTS:-4}"
+MIGRATION_COMPAT_RETRY_BACKOFF="${MIGRATION_COMPAT_RETRY_BACKOFF:-2}"
+MIGRATION_COMPAT_RETRY_MAX_BACKOFF="${MIGRATION_COMPAT_RETRY_MAX_BACKOFF:-8}"
+MIGRATION_COMPAT_RETRY_DEADLINE="${MIGRATION_COMPAT_RETRY_DEADLINE:-120}"
+LIVE_E2E_REPORT="${LIVE_E2E_REPORT:-.odp_data/deployment/live-e2e-gate.json}"
 JOB_REPORT_DIR="${JOB_REPORT_DIR:-.odp_data/deployment/cloud-run-jobs}"
 source scripts/deployment/cloud_run_release_traffic.sh
 
 echo "Running fail-closed live deployment preflight..."
-python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py preflight \
   --environment "${ODP_DEPLOY_ENV}" \
   --release-sha "${ODAY_RELEASE_SHA}" \
   --output "${PREFLIGHT_REPORT}"
@@ -106,6 +124,7 @@ ROLLBACK_ARMED=false
 SCHEDULER_ROLLBACK_ARMED=false
 DEPLOYMENT_COMMITTED=false
 cleanup() {
+  unset ODP_OPERATOR_SMOKE_BEARER_TOKEN
   rm -f \
     "${API_ENV_FILE}" \
     "${WEB_ENV_FILE}" \
@@ -152,12 +171,13 @@ handle_deployment_exit() {
 trap handle_deployment_exit EXIT
 mkdir -p "${JOB_REPORT_DIR}"
 
+# This deterministic serializer imports only Python's standard library.
 python3 - "${API_ENV_FILE}" <<'PY'
 import json
 import os
 import sys
 
-keys = (
+keys = [
     "ODAY_RELEASE_SHA",
     "ODP_DEPLOY_ENV",
     "ODP_REQUIRE_LIVE_DATA",
@@ -166,24 +186,42 @@ keys = (
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
     "ODP_EXTERNAL_PROVIDER_MODE",
+    "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
     "ODP_PERSISTENCE",
     "ODP_OBJECT_STORE",
     "ODP_SNAPSHOT_BUCKET",
     "MLFLOW_TRACKING_URI",
-    "ODP_LISTING_PROVIDER_FEED_URL",
-    "ODP_POI_PROVIDER_URL",
-    "ODP_GEOCODE_PROVIDER_URL",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-    "ODP_LISTING_PROVIDER_AUTH_STATUS",
-    "ODP_POI_PROVIDER_AUTH_STATUS",
-    "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
-    "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
     "ODP_PRODUCTION_PROVIDER_IDS",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS",
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
-)
+]
+provider_config = {
+    "listing.partner_feed": (
+        "ODP_LISTING_PROVIDER_FEED_URL",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS",
+    ),
+    "poi.commercial_api": (
+        "ODP_POI_PROVIDER_URL",
+        "ODP_POI_PROVIDER_AUTH_STATUS",
+    ),
+    "geocode.primary_api": (
+        "ODP_GEOCODE_PROVIDER_URL",
+        "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+    ),
+    "admin_boundary.official_dataset": (
+        "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+    ),
+}
+selected = {
+    item.strip()
+    for item in os.environ["ODP_PRODUCTION_PROVIDER_IDS"].split(",")
+    if item.strip()
+}
+for provider_id in sorted(selected):
+    keys.extend(provider_config.get(provider_id, ()))
 payload = {key: os.environ[key] for key in keys}
 payload["ODAY_ENV"] = os.environ["ODP_DEPLOY_ENV"]
 payload["ODP_ENV"] = os.environ["ODP_DEPLOY_ENV"]
@@ -220,12 +258,63 @@ build_publish_sign "worker" "${WORKER_IMAGE}" "infra/docker/worker.Dockerfile"
 build_publish_sign "scheduler" "${SCHEDULER_IMAGE}" "infra/docker/scheduler.Dockerfile"
 
 API_SECRET_BINDINGS="ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}"
-API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
-API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
+API_SECRET_BINDINGS+=",ODP_AUTH_PRINCIPAL_MAP=${ODP_AUTH_PRINCIPAL_MAP_SECRET}"
+IFS=',' read -ra SELECTED_PROVIDER_IDS <<<"${ODP_PRODUCTION_PROVIDER_IDS}"
+for provider_id in "${SELECTED_PROVIDER_IDS[@]}"; do
+  provider_id="${provider_id//[[:space:]]/}"
+  case "${provider_id}" in
+    listing.partner_feed)
+      API_SECRET_BINDINGS+=",ODP_LISTING_PROVIDER_API_KEY=${ODP_LISTING_PROVIDER_API_KEY_SECRET}"
+      ;;
+    poi.commercial_api)
+      API_SECRET_BINDINGS+=",ODP_POI_PROVIDER_API_KEY=${ODP_POI_PROVIDER_API_KEY_SECRET}"
+      ;;
+    geocode.primary_api)
+      API_SECRET_BINDINGS+=",ODP_GEOCODE_PROVIDER_API_KEY=${ODP_GEOCODE_PROVIDER_API_KEY_SECRET}"
+      ;;
+    admin_boundary.official_dataset)
+      API_SECRET_BINDINGS+=",ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN=${ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET}"
+      ;;
+  esac
+done
 WEB_SECRET_BINDINGS="ODP_WEB_OIDC_CLIENT_SECRET=${ODP_WEB_OIDC_CLIENT_SECRET_SECRET}"
 WEB_SECRET_BINDINGS+=",ODP_WEB_SESSION_SECRET=${ODP_WEB_SESSION_SECRET_SECRET}"
+
+# gcloud's shortcut for describing a job's newest execution only exists on
+# recent releases, so job proof capture used to depend on the runner's CLI
+# version. Resolve the newest execution through the version-stable
+# `executions list` surface and then describe it by its exact name.
+# Resolution is fail-closed: an empty, malformed, or ambiguous list aborts
+# before any receipt is written.
+capture_latest_execution() {
+  local job="$1"
+  local execution_file="$2"
+  local list_file="${execution_file%.json}-list.json"
+  local execution_name
+  if ! gcloud run jobs executions list \
+    --job="${job}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json >"${list_file}"; then
+    return 1
+  fi
+  if ! execution_name="$(run_locked_python \
+    scripts/deployment/validate_cloud_run_live_deployment.py resolve-latest-execution \
+    --executions="${list_file}" \
+    --job="${job}")"; then
+    return 1
+  fi
+  if [ -z "${execution_name}" ]; then
+    echo "Error: latest Cloud Run Job execution name resolved empty." >&2
+    return 1
+  fi
+  if ! gcloud run jobs executions describe "${execution_name}" \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --format=json >"${execution_file}"; then
+    return 1
+  fi
+}
 
 capture_job_proof() {
   local kind="$1"
@@ -236,12 +325,8 @@ capture_job_proof() {
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
     --format=json >"${description_file}"
-  gcloud run jobs executions describe-latest \
-    --job="${job}" \
-    --region="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" \
-    --format=json >"${execution_file}"
-  python3 scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
+  capture_latest_execution "${job}" "${execution_file}"
+  run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke \
     --job-kind="${kind}" \
     --job-description="${description_file}" \
     --execution="${execution_file}" \
@@ -260,11 +345,9 @@ execute_job() {
     --wait \
     --quiet \
     "$@"; then
-    gcloud run jobs executions describe-latest \
-      --job="${job}" \
-      --region="${GCP_REGION}" \
-      --project="${GCP_PROJECT}" \
-      --format=json >"${JOB_REPORT_DIR}/${kind}-execution.json" || true
+    # Best-effort forensic capture only; the failure below still stops the
+    # deployment and falls through to the rollback trap.
+    capture_latest_execution "${job}" "${JOB_REPORT_DIR}/${kind}-execution.json" || true
     echo "Error: ${kind} Cloud Run Job failed; deployment stopped." >&2
     return 1
   fi
@@ -300,12 +383,25 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
 # This gate verifies both the exact migration receipt and backward
 # compatibility with the old revisions that still carry all production
 # traffic. No candidate service is deployed until this passes.
+#
+# The old revision has no minScale and receives no traffic between deploys, so
+# this probe pays a Cloud Run cold start. The retry bounds below are explicit
+# at the call site so the worst-case gate duration stays auditable: per probe
+# at most ${MIGRATION_COMPAT_RETRY_ATTEMPTS} attempts of
+# ${MIGRATION_COMPAT_TIMEOUT}s plus backoff, never past
+# ${MIGRATION_COMPAT_RETRY_DEADLINE}s. Exhausting either bound still fails the
+# gate closed, before any candidate traffic and with the rollback trap armed.
 run_migration_compatibility_gate() {
   execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"
-  python3 scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
+  run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
     --api-url "${OLD_API_URL}" \
     --web-url "${OLD_WEB_URL}" \
     --correlation-id "corr-cloud-run-compat-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}" \
+    --timeout "${MIGRATION_COMPAT_TIMEOUT}" \
+    --compat-retry-attempts "${MIGRATION_COMPAT_RETRY_ATTEMPTS}" \
+    --compat-retry-backoff-seconds "${MIGRATION_COMPAT_RETRY_BACKOFF}" \
+    --compat-retry-max-backoff-seconds "${MIGRATION_COMPAT_RETRY_MAX_BACKOFF}" \
+    --compat-retry-deadline-seconds "${MIGRATION_COMPAT_RETRY_DEADLINE}" \
     --output "${MIGRATION_COMPAT_REPORT}"
 }
 run_migration_compatibility_gate
@@ -334,6 +430,7 @@ gcloud run services describe "${API_SERVICE}" \
   --format=json >"${API_CANDIDATE_DESCRIPTION}"
 API_REVISION="$(tagged_revision "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
 API_URL="$(tagged_revision_url "${API_CANDIDATE_DESCRIPTION}" "${API_REVISION_TAG}")"
+API_SERVICE_AUDIENCE="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
 
 echo "Deploying immutable scheduler candidate Cloud Run Job..."
 gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
@@ -412,7 +509,8 @@ execute_job "scheduler" "${SCHEDULER_CANDIDATE_JOB}"
 execute_job "worker" "${WORKER_CANDIDATE_JOB}" \
   --args="scripts/deployment/cloud_run_job_entrypoint.py,worker,--max-jobs,1"
 
-python3 - "${WEB_ENV_FILE}" "${API_URL}" <<'PY'
+# This deterministic serializer imports only Python's standard library.
+python3 - "${WEB_ENV_FILE}" "${API_URL}" "${API_SERVICE_AUDIENCE}" <<'PY'
 import json
 import os
 import sys
@@ -429,6 +527,7 @@ payload = {
     "NEXT_PUBLIC_ODP_DATA_BINDING_MODE": os.environ["ODP_DATA_BINDING_MODE"],
     "NEXT_PUBLIC_ODAY_RELEASE_SHA": os.environ["ODAY_RELEASE_SHA"],
     "ODP_API_BASE_URL": sys.argv[2],
+    "ODP_API_SERVICE_AUDIENCE": sys.argv[3],
     "NEXT_PUBLIC_ODP_API_BASE_URL": sys.argv[2],
     "ODP_WEB_OIDC_ISSUER": os.environ["ODP_WEB_OIDC_ISSUER"],
     "ODP_WEB_OIDC_CLIENT_ID": os.environ["ODP_WEB_OIDC_CLIENT_ID"],
@@ -479,8 +578,26 @@ gcloud run services describe "${WEB_SERVICE}" \
 WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 
+smoke_audience="${ODP_AUTH_AUDIENCES%%,*}"
+if [[ -z "${smoke_audience//[[:space:]]/}" ]]; then
+  echo "Error: ODP_AUTH_AUDIENCES must provide a smoke token audience." >&2
+  exit 1
+fi
+ODP_OPERATOR_SMOKE_BEARER_TOKEN="$(gcloud auth print-identity-token \
+  --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+  --audiences="${smoke_audience}" \
+  --include-email)"
+if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN}" ]]; then
+  echo "Error: failed to mint short-lived smoke identity token." >&2
+  exit 1
+fi
+export ODP_OPERATOR_SMOKE_BEARER_TOKEN
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  echo "::add-mask::${ODP_OPERATOR_SMOKE_BEARER_TOKEN}"
+fi
+
 echo "Running release-aware smoke checks against tagged candidate revisions..."
-python3 scripts/deployment/validate_cloud_run_live_deployment.py smoke \
+run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py smoke \
   --api-url "${API_URL}" \
   --web-url "${WEB_URL}" \
   --expected-sha "${ODAY_RELEASE_SHA}" \
@@ -498,11 +615,57 @@ upsert_scheduler_trigger \
   "${ODP_WORKER_CRON}"
 promote_service_traffic "${API_SERVICE}" "${API_REVISION}"
 promote_service_traffic "${WEB_SERVICE}" "${WEB_REVISION}"
+
+# ODP-LIVE-E2E-001: the release is serving but is not committed yet. The live
+# E2E gate drives the promoted release the way an operator would -- authenticate,
+# read the operator bootstrap, enqueue durable work, watch the worker take it to
+# a terminal state, read the durable audit receipt back -- and rejects any
+# fixture/mock surrogate or missing MLflow production alias. Because this runs
+# before DEPLOYMENT_COMMITTED, a failure falls through the EXIT trap and rolls
+# traffic and the scheduler triggers back to the previous release.
+echo "Running fail-closed live E2E acceptance gate against the promoted release..."
+# Resolve the served origins into variables first. Inside the argv of the gate
+# invocation a failing command substitution would expand to an empty string
+# without tripping `set -e`, handing the gate a blank URL.
+LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
+LIVE_E2E_WEB_URL="$(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then
+  echo "Live E2E gate cannot run: served origin lookup returned empty" \
+    "(api='${LIVE_E2E_API_URL}' web='${LIVE_E2E_WEB_URL}')." >&2
+  exit 1
+fi
+# `deploymentMode` is what the *runtime* reports back from
+# `apps/api/oday_api/runtime_mode.deployment_mode()`, which reads the
+# ODP_DEPLOY_ENV/ODAY_ENV/ODP_ENV triple this script writes into the API env
+# payload above. So the expectation must be derived from that same value, not
+# from a hardcoded "production": a dev deploy legitimately reports
+# `deploymentMode=dev` while still being a live, production-mode runtime
+# (ODP_PRODUCT_MODE/ODP_REQUIRE_LIVE_DATA carry that, and the gate asserts them
+# separately). Hardcoding "production" made every dev deploy promote and then
+# roll straight back. The var override stays for environments whose runtime env
+# name differs from the deploy env name.
+LIVE_E2E_DEPLOYMENT_MODE="${ODP_LIVE_E2E_DEPLOYMENT_MODE:-${ODP_DEPLOY_ENV}}"
+if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then
+  echo "Live E2E gate cannot run: neither ODP_LIVE_E2E_DEPLOYMENT_MODE nor" \
+    "ODP_DEPLOY_ENV is set, so the expected deploymentMode is unknown." >&2
+  exit 1
+fi
+run_locked_python scripts/e2e/check_live_e2e_gate.py \
+  --api-url "${LIVE_E2E_API_URL}" \
+  --web-url "${LIVE_E2E_WEB_URL}" \
+  --expected-sha "${ODAY_RELEASE_SHA}" \
+  --expected-deployment "${LIVE_E2E_DEPLOYMENT_MODE}" \
+  --worker-job "${WORKER_CANDIDATE_JOB}" \
+  --gcp-region "${GCP_REGION}" \
+  --gcp-project "${GCP_PROJECT}" \
+  --worker-deadline-seconds "${ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS:-600}" \
+  --output "${LIVE_E2E_REPORT}"
+
 DEPLOYMENT_COMMITTED=true
 
 echo "=== Cloud Run deployment passed all live-data gates ==="
-echo "API Endpoint: $(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"
-echo "Web Endpoint: $(service_snapshot_url "${WEB_CANDIDATE_DESCRIPTION}")"
+echo "API Endpoint: ${LIVE_E2E_API_URL}"
+echo "Web Endpoint: ${LIVE_E2E_WEB_URL}"
 echo "Migration Job: ${MIGRATION_CANDIDATE_JOB}"
 echo "Worker Job: ${WORKER_CANDIDATE_JOB} (${WORKER_SCHEDULE_NAME})"
 echo "Scheduler Job: ${SCHEDULER_CANDIDATE_JOB} (${SCHEDULER_SCHEDULE_NAME})"

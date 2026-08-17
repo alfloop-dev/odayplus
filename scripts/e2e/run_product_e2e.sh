@@ -22,15 +22,54 @@ API_PORT="${ODP_E2E_API_PORT:-8099}"
 SOURCE_STUB_PORT="${ODP_E2E_SOURCE_STUB_PORT:-8077}"
 DIAGNOSTICS_DIR="${ODP_E2E_DIAGNOSTICS_DIR:-.odp_data/e2e-diagnostics}"
 COMPOSE=(docker compose -p "$PROJECT" -f infra/docker/docker-compose.e2e.yml)
+PLAYWRIGHT_PAYLOAD="$(mktemp "${TMPDIR:-/tmp}/odp-playwright-payload.XXXXXX.json")"
+PLAYWRIGHT_ARTIFACT="docs/evidence/e2e/raw_playwright_results.json"
+export PATH="/home/lupin/.local/bin:$PATH"
 
-mkdir -p "$DIAGNOSTICS_DIR"
+if command -v uv >/dev/null 2>&1; then
+  PYTHON_COMMAND=(uv run --frozen python)
+elif [[ -f /home/lupin/oday-plus/.venv/bin/python3 ]]; then
+  PYTHON_COMMAND=(/home/lupin/oday-plus/.venv/bin/python3)
+else
+  PYTHON_COMMAND=(python3)
+fi
+
+
 
 cleanup() {
+  rm -f "$PLAYWRIGHT_PAYLOAD"
   if [[ "${ODP_E2E_KEEP_STACK:-0}" != "1" ]]; then
     "${COMPOSE[@]}" down --remove-orphans --volumes
   fi
 }
 trap cleanup EXIT
+
+mkdir -p "$DIAGNOSTICS_DIR"
+
+TESTED_SOURCE_SHA="$(git rev-parse HEAD)"
+TESTED_TREE_SHA="$(git rev-parse HEAD^{tree})"
+export ODP_E2E_TESTED_SOURCE_SHA="$TESTED_SOURCE_SHA"
+export ODP_E2E_TESTED_TREE_SHA="$TESTED_TREE_SHA"
+
+while IFS= read -r dirty_path; do
+  case "$dirty_path" in
+    docs/evidence/e2e/raw_playwright_results.json|\
+    docs/evidence/e2e/raw_pytest_results.json|\
+    docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json)
+      ;;
+    "")
+      ;;
+    *)
+      printf "Refusing E2E run with non-evidence tracked change: %s\n" "$dirty_path" >&2
+      exit 2
+      ;;
+  esac
+done < <(
+  {
+    git diff --name-only HEAD
+    git diff --cached --name-only HEAD
+  } | sort -u
+)
 
 "${COMPOSE[@]}" down --remove-orphans --volumes
 "${COMPOSE[@]}" up -d --build
@@ -42,41 +81,80 @@ python3 scripts/e2e/seed_product_e2e_data.py \
   --web-url "http://127.0.0.1:${WEB_PORT}" \
   --diagnostics-dir "$DIAGNOSTICS_DIR"
 
+PLAYWRIGHT_COMMAND=(
+  npx playwright test
+  tests/e2e/e2e-network-find-areas-api-binding.spec.ts
+  tests/e2e/e2e-operator-console.spec.ts
+  tests/e2e/operator-assisted-listing-intake-a11y.spec.ts
+  tests/e2e/operator-assisted-listing-intake-mobile.spec.ts
+  tests/e2e/operator-assisted-listing-intake.spec.ts
+  tests/e2e/operator-governance.spec.ts
+  tests/e2e/operator-growth.spec.ts
+  tests/e2e/operator-network-assisted-intake.spec.ts
+  tests/e2e/operator-network-listings.spec.ts
+  tests/e2e/operator-network-rebalance.spec.ts
+  tests/e2e/operator-network-review.spec.ts
+  tests/e2e/operator-network-scoring.spec.ts
+  tests/e2e/operator-shell-today.spec.ts
+  tests/e2e/operator-store-ops.spec.ts
+  tests/e2e/product-e2e-env.spec.ts
+  tests/e2e/shell-resource-binding.spec.ts
+  --workers=1
+  --retries=0
+  --project=chromium
+  --reporter=json
+)
+printf -v PLAYWRIGHT_COMMAND_TEXT '%q ' "${PLAYWRIGHT_COMMAND[@]}"
+PLAYWRIGHT_COMMAND_TEXT="${PLAYWRIGHT_COMMAND_TEXT% }"
+PLAYWRIGHT_VERSION="$(npx playwright --version)"
+PLAYWRIGHT_STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
 set +e
 ODP_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
 OPSBOARD_PORT="$WEB_PORT" \
 ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
-npx playwright test \
-  tests/e2e/e2e-api-bound-ui.spec.ts \
-  tests/e2e/e2e-expansion-product.spec.ts \
-  tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts \
-  tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts \
-  tests/e2e/product-e2e-env.spec.ts \
-  --workers=1 \
-  --retries=0 \
-  --project=chromium
-test_status=$?
+ODP_OPERATOR_PRODUCT_GATE=1 \
+PLAYWRIGHT_JSON_OUTPUT_NAME="$PLAYWRIGHT_PAYLOAD" \
+"${PLAYWRIGHT_COMMAND[@]}"
+playwright_status=$?
+PLAYWRIGHT_ENDED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# MapLibre + DeckGL allocate multiple WebGL contexts per navigation. Run their
-# pixel/picking suite in a fresh browser process so contexts from the product
-# workflow suite cannot exhaust Chromium's per-process WebGL budget.
-ODP_API_BASE_URL="http://127.0.0.1:${API_PORT}" \
-OPSBOARD_PORT="$WEB_PORT" \
-ODP_PLAYWRIGHT_REUSE_EXISTING=1 \
-npx playwright test \
-  tests/e2e/e2e-map.spec.ts \
-  --workers=1 \
-  --retries=0 \
-  --project=chromium
-map_test_status=$?
+python3 scripts/e2e/record_playwright_results.py \
+  --payload "$PLAYWRIGHT_PAYLOAD" \
+  --output "$PLAYWRIGHT_ARTIFACT" \
+  --source-sha "$TESTED_SOURCE_SHA" \
+  --tree-sha "$TESTED_TREE_SHA" \
+  --command "$PLAYWRIGHT_COMMAND_TEXT" \
+  --version "$PLAYWRIGHT_VERSION" \
+  --started-at "$PLAYWRIGHT_STARTED_AT" \
+  --ended-at "$PLAYWRIGHT_ENDED_AT" \
+  --exit-code "$playwright_status" \
+  --project chromium \
+  --workers 1 \
+  --retries 0
+playwright_record_status=$?
 
-if [[ "$map_test_status" -ne 0 ]]; then
-  test_status="$map_test_status"
-fi
-set -e
+"${PYTHON_COMMAND[@]}" scripts/e2e/run_python_e2e_tests.py
+pytest_status=$?
+
+"${PYTHON_COMMAND[@]}" scripts/e2e/generate_product_e2e_receipt.py
+receipt_status=$?
 
 "${COMPOSE[@]}" ps >"${DIAGNOSTICS_DIR}/compose-ps.txt"
 "${COMPOSE[@]}" logs --no-color --tail=200 >"${DIAGNOSTICS_DIR}/compose-tail.log"
+set -e
 
 printf "Product E2E diagnostics written to %s\n" "$DIAGNOSTICS_DIR"
-exit "$test_status"
+printf "Runner status: playwright=%s recorder=%s pytest=%s receipt=%s\n" \
+  "$playwright_status" "$playwright_record_status" "$pytest_status" "$receipt_status"
+
+for status in \
+  "$playwright_status" \
+  "$playwright_record_status" \
+  "$pytest_status" \
+  "$receipt_status"; do
+  if [[ "$status" -ne 0 ]]; then
+    exit "$status"
+  fi
+done
+exit 0

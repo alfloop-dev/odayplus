@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -35,9 +35,14 @@ from models.shared_ml import (
     production_model_execution_required,
 )
 from models.shared_ml.oss_estimators import train_oss_estimator
+from models.shared_ml.output_contracts import (
+    HEATZONE_OUTPUT_TRANSFORM,
+    SITESCORE_OUTPUT_TRANSFORM,
+)
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
 from modules.forecastops.application import RegisteredEstimatorForecastEngine
 from modules.forecastops.domain import ForecastInput
+from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
 from modules.heatzone.workers import run_heatzone_batch_score
 from modules.learninghub.infrastructure import (
     InMemoryLearningHubRepository,
@@ -45,19 +50,24 @@ from modules.learninghub.infrastructure import (
 )
 from modules.sitescore.application.reporting import SiteScoreReportService
 from modules.sitescore.domain import SITESCORE_FEATURE_VERSION, score_sites
+from scripts.models.contracts import MODEL_SPECS
 
 NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
-SITESCORE_MODEL_NAME = (
-    PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
-)
+SITESCORE_MODEL_NAME = PRODUCTION_MODEL_CONTRACTS["sitescore"].model_name or ""
 
 
 def _training_rows() -> list[dict[str, Any]]:
     return [
         {
-            "heat_zone_score": float(40 + index * 2),
-            "monthly_rent": float(35_000 + index * 1_100),
-            "area_ping": float(18 + index % 6),
+            "tenant_id": f"tenant-{index % 2 + 1}",
+            "target_format_code": "ODAY_G2",
+            "h3_index": f"892630828{index % 5:01d}ffff",
+            "latitude": 25.03 + index * 0.001,
+            "longitude": 121.56 + index * 0.001,
+            "geocode_confidence": 0.8 + (index % 5) * 0.03,
+            "prior_90d_cell_net_revenue": float(300_000 + index * 18_000),
+            "prior_90d_cell_transaction_count": 40 + index * 3,
+            "prior_90d_cell_store_count": 1 + index % 4,
         }
         for index in range(20)
     ]
@@ -66,6 +76,15 @@ def _training_rows() -> list[dict[str, Any]]:
 def _live_sitescore_row() -> dict[str, Any]:
     return {
         "candidate_site_id": "candidate-live-001",
+        "tenant_id": "tenant-1",
+        "target_format_code": "ODAY_G2",
+        "h3_index": "8926308280fffff",
+        "latitude": 25.033,
+        "longitude": 121.565,
+        "geocode_confidence": 0.98,
+        "prior_90d_cell_net_revenue": 612_000.0,
+        "prior_90d_cell_transaction_count": 92,
+        "prior_90d_cell_store_count": 3,
         "heat_zone_score": 82.0,
         "monthly_rent": 52_000.0,
         "area_ping": 24.0,
@@ -86,16 +105,16 @@ def _registered_runtime(
     rows = _training_rows()
     labels = [
         180_000.0
-        + row["heat_zone_score"] * 3_800.0
-        - row["monthly_rent"] * 0.7
-        + row["area_ping"] * 2_500.0
+        + row["prior_90d_cell_net_revenue"] * 0.9
+        + row["prior_90d_cell_transaction_count"] * 1_500.0
+        - row["prior_90d_cell_store_count"] * 20_000.0
         for row in rows
     ]
     trained = train_oss_estimator(
         algorithm="lightgbm_regressor",
         feature_rows=rows,
         labels=labels,
-        feature_names=("heat_zone_score", "monthly_rent", "area_ping"),
+        feature_names=MODEL_SPECS["sitescore"].feature_columns,
     )
     artifact_path = tmp_path / "sitescore-lightgbm.zip"
     artifact_path.write_bytes(trained.estimator.to_artifact_bytes())
@@ -120,9 +139,22 @@ def _registered_runtime(
             git_sha="4d5e5e0",
             approved_by="model-risk-reviewer" if approved else None,
             approved_at=NOW if approved else None,
+            monitoring_config={
+                "output_transform": dict(SITESCORE_OUTPUT_TRANSFORM),
+            },
         )
     )
-    return MlflowProductionModelRuntime(tracking_uri=tracking_uri), artifact_path
+    return (
+        MlflowProductionModelRuntime(
+            tracking_uri=tracking_uri,
+            # Explicitly declare the sitescore name mapping for this integration
+            # test. Since sitescore is governed-disabled in production, the default
+            # production_model_names() no longer includes it; the test exercises the
+            # runtime directly with a real registered artifact.
+            model_names={"sitescore": SITESCORE_MODEL_NAME},
+        ),
+        artifact_path,
+    )
 
 
 def test_real_lightgbm_artifact_reload_and_sitescore_inference(tmp_path: Path) -> None:
@@ -146,7 +178,8 @@ def test_real_lightgbm_artifact_reload_and_sitescore_inference(tmp_path: Path) -
     assert inference.binding.approved_by == "model-risk-reviewer"
     assert inference.binding.artifact_sha256
     assert inference.lower[0] <= inference.point[0] <= inference.upper[0]
-    assert report.m12.p50 == round(max(0.0, inference.point[0]), 2)
+    expected_monthly = max(0.0, inference.point[0]) * 30.4375 / 90.0
+    assert report.m12.p50 == round(expected_monthly, 2)
     assert report.model_version == f"{SITESCORE_MODEL_NAME}:2026.07.24"
     assert report.m12.p50 != baseline.m12.p50
 
@@ -182,10 +215,7 @@ def test_production_sitescore_route_executes_registered_artifact(tmp_path: Path)
 
     assert payload["model_binding"]["model_engine"] == "lightgbm.LGBMRegressor"
     assert payload["model_binding"]["model_approved_by"] == "model-risk-reviewer"
-    assert (
-        payload["reports"][0]["model_version"]
-        == f"{SITESCORE_MODEL_NAME}:2026.07.24"
-    )
+    assert payload["reports"][0]["model_version"] == f"{SITESCORE_MODEL_NAME}:2026.07.24"
 
 
 def test_production_runtime_fails_closed_without_registry_configuration(
@@ -245,7 +275,7 @@ def test_production_runtime_rejects_tampered_artifact(tmp_path: Path) -> None:
         ("source_snapshot_ids", []),
         ("feature_snapshot_time", None),
         ("view_version", "candidate-site-view-v0"),
-        ("monthly_rent", None),
+        ("prior_90d_cell_net_revenue", None),
     ],
 )
 def test_production_runtime_rejects_incomplete_live_input_lineage(
@@ -270,26 +300,52 @@ def test_heatzone_and_forecast_adapters_use_runtime_outputs() -> None:
         features=[
             {
                 "h3_index": "h3-live-001",
+                "tenant_id": "tenant-live-001",
+                "h3_resolution": 9,
+                "cell_latitude": 25.033,
+                "cell_longitude": 121.565,
+                "average_geocode_confidence": 0.98,
+                "prior_opened_store_count": 1,
+                "prior_28d_cell_net_revenue": 80_000.0,
+                "prior_90d_cell_net_revenue": 250_000.0,
+                "prior_28d_transaction_count": 12,
+                "prior_90d_transaction_count": 40,
+                "prior_90d_transaction_days": 24,
                 "poi_count": 4,
                 "source_snapshot_ids": ["poi-live"],
                 "feature_snapshot_time": NOW.isoformat(),
-                "view_version": "geo-grid-view-v1",
+                "view_version": HEATZONE_FEATURE_VERSION,
             }
         ],
         model_runtime=heatzone_runtime,
         require_production_model=True,
     )
-    assert heat_result.scores[0].score == 91.0
+    assert heat_result.scores[0].score == 50.0
     assert heat_result.scores[0].model_version == "heatzone:2026.07.24"
 
-    forecast_runtime = _StubRuntime(
-        points=(120_000.0, 130_000.0, 140_000.0, 150_000.0)
-    )
+    forecast_runtime = _StubRuntime(points=(120_000.0, 130_000.0, 140_000.0, 150_000.0))
     engine = RegisteredEstimatorForecastEngine(forecast_runtime)
     result = engine.fit_predict(ForecastInput.from_mapping(_forecast_input()))
     assert result.bands[4].p50 == 120_000.0
     assert result.bands[24].p50 == 150_000.0
     assert result.model_version == "forecastops:2026.07.24"
+
+
+def test_heatzone_production_adapter_rejects_legacy_v1_feature_rows() -> None:
+    with pytest.raises(ValueError, match="v2 model input is missing"):
+        run_heatzone_batch_score(
+            features=[
+                {
+                    "h3_index": "h3-legacy-001",
+                    "poi_count": 4,
+                    "source_snapshot_ids": ["legacy-snapshot"],
+                    "feature_snapshot_time": NOW.isoformat(),
+                    "view_version": "geo-grid-view-v1",
+                }
+            ],
+            model_runtime=_StubRuntime(points=(91.0,)),
+            require_production_model=True,
+        )
 
 
 class _StubRuntime:
@@ -312,6 +368,15 @@ class _StubRuntime:
             upper=tuple(value * 1.1 for value in self.points),
             engine="lightgbm.LGBMRegressor",
             artifact_sha256="sha256:" + "a" * 64,
+            model_metadata={
+                "output_transform": dict(
+                    HEATZONE_OUTPUT_TRANSFORM
+                    if service == "heatzone"
+                    else SITESCORE_OUTPUT_TRANSFORM
+                    if service == "sitescore"
+                    else {}
+                )
+            },
         )
 
 
@@ -325,7 +390,7 @@ def _binding(service: str) -> ModelBinding:
             dataset_snapshot_id=f"{service}-training-live",
             feature_schema_version={
                 "sitescore": SITESCORE_FEATURE_VERSION,
-                "heatzone": "geo-grid-view-v1",
+                "heatzone": HEATZONE_FEATURE_VERSION,
                 "forecastops": "store-machine-timeseries-view-v1",
             }[service],
             label_version=f"{service}-label-v1",
@@ -344,18 +409,20 @@ def _binding(service: str) -> ModelBinding:
 
 
 def _forecast_input() -> dict[str, Any]:
+    start = NOW.date() - timedelta(days=28)
     return {
+        "tenant_id": "tenant-live-001",
         "store_id": "store-live-001",
         "prediction_origin_time": NOW.isoformat(),
         "observations": [
             {
-                "business_date": f"2026-07-{day:02d}",
-                "actual_revenue": 100_000 + day * 1_000,
-                "machine_cycles": 20 + day,
+                "business_date": (start + timedelta(days=index)).isoformat(),
+                "actual_revenue": 100_000 + index * 1_000,
+                "machine_cycles": 20 + index,
                 "data_quality_score": 0.95,
-                "source_snapshot_ids": [f"pos-202607{day:02d}"],
+                "source_snapshot_ids": [f"pos-{index:02d}"],
             }
-            for day in range(1, 15)
+            for index in range(28)
         ],
     }
 

@@ -1,0 +1,110 @@
+{
+  "schema": "oday-plus.package10-r3b-addendum.v1",
+  "doc_id": "ODP-P10-CAN-001-R3B-ADD-006",
+  "task_id": "ODP-P10-CAN-001-R3B",
+  "status": "ready-for-supervisor-dispatch",
+  "owner": "Claude",
+  "reviewer": "Antigravity",
+  "updated_at": "2026-07-26",
+  "canonical": {
+    "zip": "docs_archive/00_source_zips/operator_console/r7-20260720-package-10/Oday Plus 營運管理後台 (10).zip",
+    "zip_sha256": "d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454e983645d7f8",
+    "html_sha256": "cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d",
+    "references": [
+      "docs/evidence/design_review/assisted_listing_intake_r7_package10/package10-tablet-detail.png",
+      "docs/evidence/design_review/assisted_listing_intake_r7_package10/package10-mobile-detail.png"
+    ]
+  },
+  "coordinator_evidence": {
+    "screenshots": [
+      "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-390.png",
+      "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1024.png",
+      "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/detail-1440.png",
+      "docs/evidence/design_review/assisted_listing_intake_r7_package10/runtime-r3b/direct-detail-1440.png"
+    ],
+    "geometry": [
+      {
+        "route": "operator",
+        "viewport": 390,
+        "topbar_height": 278,
+        "detail_top": 1104.34375,
+        "document_scroll_width": 390
+      },
+      {
+        "route": "operator",
+        "viewport": 1024,
+        "topbar_height": 109,
+        "detail_top": 696.421875,
+        "document_scroll_width": 1024
+      },
+      {
+        "route": "operator",
+        "viewport": 1440,
+        "topbar_height": 57,
+        "detail_top": 543.234375,
+        "document_scroll_width": 1440
+      },
+      {
+        "route": "direct",
+        "viewport": 1440,
+        "detail_top": 494.4375,
+        "document_scroll_width": 1440
+      }
+    ],
+    "accessibility": {
+      "first_run": "1 failed, 5 did not run: Listing Radar click lost during hydration",
+      "focused_rerun": "1 passed",
+      "full_rerun": "6 passed",
+      "decision": "stability defect remains until two consecutive unchanged full runs pass"
+    }
+  },
+  "findings": [
+    {
+      "id": "detail_below_network_chrome",
+      "severity": "blocker",
+      "required": "detail immediately follows global topbar/status banner and durable return row"
+    },
+    {
+      "id": "native_tables_collapsed",
+      "severity": "blocker",
+      "required": "remove non-table display from native cells and prove readable 390/1024/1440 layouts"
+    },
+    {
+      "id": "resource_version_zero",
+      "severity": "high",
+      "required": "accept positive integer versions only and fail closed without endpoint invocation"
+    },
+    {
+      "id": "listing_radar_navigation_hydration_race",
+      "severity": "high",
+      "required": "stabilize product URL/state hydration without changing canonical test timing"
+    }
+  ],
+  "additional_writable_paths": [
+    "apps/web/features/operator/NetworkFindAreasWorkspace.tsx",
+    "apps/web/features/operator/network/__tests__/NetworkFindAreasWorkspace.route-gate.test.tsx"
+  ],
+  "forbidden": [
+    "tests/e2e/** except the already-authorized existing one-line screen-label change",
+    "apps/api/**",
+    "auth middleware",
+    "source-policy decisions",
+    "permission rules",
+    "reintroduction of retired intake dialogs, tabs, drawers, or orphan components"
+  ],
+  "gates": [
+    "focused intake and Network route tests",
+    "full web unit",
+    "web and root typecheck",
+    "root build",
+    "unchanged six-test accessibility spec twice consecutively",
+    "390/1024/1440 and direct-route runtime screenshots",
+    "no workspace chrome before detail",
+    "readable native tables",
+    "no document overflow",
+    "old-visual and orphan static inspection",
+    "git diff --check"
+  ],
+  "program_decision": "no_go_pending_add_006",
+  "next": "supervisor dispatches Claude implementation; Antigravity reviews; Codex coordinates acceptance"
+}

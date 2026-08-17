@@ -382,6 +382,14 @@ describe("PromotionReviewPanel — independent second-actor review", () => {
     });
     fireEvent.click(screen.getByTestId("promotion-review-ack"));
     fireEvent.click(screen.getByTestId("promotion-approve-btn"));
+
+    const dialog = screen.getByTestId("promotion-confirmation-dialog");
+    expect(dialog.getAttribute("data-screen-label")).toBe("Dialog Promotion 核准");
+    expect(screen.getByTestId("promotion-review-summary").textContent).toContain("決策前檢視");
+    expect(screen.getByTestId("promotion-review-summary").textContent).toContain("已核對 gate snapshot，核准。");
+    expect(onReviewPromotion).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("promotion-confirm-approve-btn"));
     await flush();
 
     expect(onReviewPromotion).toHaveBeenCalledTimes(1);

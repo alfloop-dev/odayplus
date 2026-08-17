@@ -1,0 +1,5 @@
+probe_unit: odp-killmode-probe-1350716
+probe_child_pid: 1350758
+probe_child_survived_stop: yes
+probe_unit_restarted_with_leftover: no
+probe_verdict: fail

@@ -71,7 +71,128 @@ def _headers(tenant_id: str, *, idempotency_key: str | None = None) -> dict[str,
     return headers
 
 
-def _live_app(database_path: Path) -> tuple[FastAPI, Any]:
+def _ops_headers(
+    tenant_id: str,
+    *,
+    idempotency_key: str | None = None,
+) -> dict[str, str]:
+    return {
+        **_headers(tenant_id, idempotency_key=idempotency_key),
+        "x-operator-role": "ops-lead",
+    }
+
+
+def _franchisee_headers(
+    tenant_id: str,
+    *,
+    idempotency_key: str | None = None,
+    store_ids: str = "STORE-001",
+) -> dict[str, str]:
+    headers = {
+        "x-subject-id": f"franchisee-{tenant_id}",
+        "x-roles": "franchisee",
+        "x-tenant-id": tenant_id,
+        "x-store-ids": store_ids,
+        "x-correlation-id": f"corr-franchisee-{tenant_id}",
+    }
+    if idempotency_key is not None:
+        headers["idempotency-key"] = idempotency_key
+    return headers
+
+
+class _StaticLiveRepository:
+    """Small non-fixture live projection for canonical shell write tests."""
+
+    @property
+    def data_origin(self) -> dict[str, Any]:
+        return {
+            "kind": "live",
+            "sourceId": "operator-shell-live-test",
+            "persistenceMode": "postgresql",
+        }
+
+    def load_state(self, *, tenant_id: str, **_scope: Any) -> dict[str, Any]:
+        origin = {**self.data_origin, "tenantId": tenant_id}
+        return {
+            "_meta": {
+                "generatedAt": "2026-07-30T12:00:00+00:00",
+                "dataMode": "live",
+                "dataOrigin": origin,
+                "tenantId": tenant_id,
+                "recordCounts": {"workQueue": 1, "notifications": 1},
+                "sections": {
+                    "workQueue": {
+                        "state": "live",
+                        "source": "operator-shell-live-test",
+                        "recordCount": 1,
+                    },
+                    "approvals": {
+                        "state": "live",
+                        "source": "operator-shell-live-test",
+                        "recordCount": 0,
+                    },
+                    "notifications": {
+                        "state": "live",
+                        "source": "operator-shell-live-test",
+                        "recordCount": 1,
+                    },
+                },
+            },
+            "workQueue": [
+                {
+                    "id": "LIVE-STORE-TASK-1",
+                    "title": "門市冷藏櫃檢查",
+                    "status": "open",
+                    "time": "12:00",
+                    "owner": "門市營運",
+                    "meta": "SLA 追蹤",
+                    "tone": "danger",
+                    "workspace": "store",
+                    "roles": ["ops-lead"],
+                    "target": {
+                        "workspace": "store",
+                        "entityId": "LIVE-STORE-TASK-1",
+                        "tab": "overview",
+                    },
+                }
+            ],
+            "notifications": [
+                {
+                    "id": "LIVE-STORE-NOTIFICATION-1",
+                    "title": "冷藏櫃溫度異常",
+                    "detail": "門市需在 SLA 內確認",
+                    "tone": "danger",
+                    "roles": ["ops-lead"],
+                    "target": {
+                        "workspace": "store",
+                        "entityId": "LIVE-STORE-TASK-1",
+                    },
+                }
+            ],
+            "decisions": [],
+            "riskRows": [],
+            "auditFeed": [],
+            "kpis": [],
+        }
+
+
+class _ScopeCapturingLiveRepository(_StaticLiveRepository):
+    """Record the exact live repository scope selected by the HTTP route."""
+
+    def __init__(self) -> None:
+        self.load_scopes: list[dict[str, Any]] = []
+
+    def load_state(self, *, tenant_id: str, **scope: Any) -> dict[str, Any]:
+        self.load_scopes.append({"tenant_id": tenant_id, **scope})
+        return super().load_state(tenant_id=tenant_id, **scope)
+
+
+def _live_app(
+    database_path: Path,
+    *,
+    allow_test_reset: bool = False,
+    live_repository: Any | None = None,
+) -> tuple[FastAPI, Any]:
     bundle = _durable_bundle(database_path)
     document_store = SqliteDocumentStore(bundle.engine)
 
@@ -110,10 +231,11 @@ def _live_app(database_path: Path) -> tuple[FastAPI, Any]:
                 scoped(tenant_id)
             ),
             model_runtime=_UnusedModelRuntime(),
-            live_repository=OperatorLiveRepository(bundle),
+            live_repository=live_repository or OperatorLiveRepository(bundle),
             require_live_data=True,
             persistence_mode="postgresql",
             provider_mode="live",
+            allow_test_reset=allow_test_reset,
         ),
         prefix="/api/v1",
     )
@@ -149,6 +271,8 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
 
         with TestClient(app) as client:
             headers = _headers("tenant-live-empty")
+            ops_headers = _ops_headers("tenant-live-empty")
+            franchisee_headers = _franchisee_headers("tenant-live-empty")
             shell_search = client.get(
                 f"{BASE}/shell/search",
                 headers=headers,
@@ -159,11 +283,12 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
                 f"{BASE}/shell/notifications",
                 headers=headers,
             )
-            governed_unavailable = [
-                client.get(f"{BASE}/shell/admin", headers=headers),
-                client.get(f"{BASE}/shell/settings", headers=headers),
-                client.get(f"{BASE}/shell/franchisee", headers=headers),
-            ]
+            shell_admin = client.get(f"{BASE}/shell/admin", headers=ops_headers)
+            shell_settings = client.get(f"{BASE}/shell/settings", headers=headers)
+            shell_franchisee = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=franchisee_headers,
+            )
             payloads = [
                 client.get(f"{BASE}/network-listings", headers=headers).json(),
                 client.get(f"{BASE}/network-scoring", headers=headers).json(),
@@ -176,27 +301,18 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         assert shell_search.status_code == 200
         assert shell_tasks.status_code == 200
         task_payload = shell_tasks.json()
-        assert task_payload["facets"]["sla"]["breached"] is None
-        assert task_payload["facets"]["assignee"]["me"] is None
-        assert task_payload["assignableRoles"] is None
-        assert task_payload["assignability"]["state"] == "unavailable"
+        assert task_payload["facets"]["sla"]["breached"] == 0
+        assert task_payload["facets"]["assignee"]["me"] == 0
+        assert task_payload["assignableRoles"]
         assert shell_notifications.status_code == 200
         notification_payload = shell_notifications.json()
-        assert notification_payload["unacknowledged"] is None
-        assert notification_payload["preferences"]["value"] is None
-        assert (
-            notification_payload["preferences"]["availability"]["state"]
-            == "unavailable"
-        )
-        assert [response.status_code for response in governed_unavailable] == [
-            503,
-            503,
-            503,
-        ]
-        assert {
-            response.json()["detail"]["code"]
-            for response in governed_unavailable
-        } == {"OPERATOR_SHELL_CONTRACT_UNAVAILABLE"}
+        assert notification_payload["unacknowledged"] == 0
+        assert notification_payload["preferences"]["severityFloor"] == "info"
+        assert shell_admin.status_code == 200
+        assert shell_settings.status_code == 200
+        assert shell_settings.json()["isDefault"] is True
+        assert shell_franchisee.status_code == 200
+        assert shell_franchisee.json()["tasks"] == []
 
         serialized = str(payloads)
         assert all(seed_id not in serialized for seed_id in SEED_IDS)
@@ -207,6 +323,397 @@ def test_live_router_mounts_all_operator_domain_routes_without_seed_rows(
         assert payloads[3]["stores"] == []
         assert payloads[4]["items"] == []
         assert payloads[5]["approvals"] == []
+    finally:
+        bundle.engine.close()
+
+
+def test_live_shell_writes_are_tenant_scoped_and_recover_after_restart(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "operator-live-shell.sqlite3"
+    repository = _StaticLiveRepository()
+    ops = _ops_headers("tenant-shell-a")
+    franchisee = _franchisee_headers("tenant-shell-a")
+    assignment_body = {
+        "assigneeId": "operator-cs-lead",
+        "assigneeName": "張珮珊",
+        "slaDueAt": "2030-01-01T00:00:00+00:00",
+    }
+
+    first_app, first_bundle = _live_app(
+        database_path,
+        live_repository=repository,
+    )
+    try:
+        with TestClient(first_app) as client:
+            assigned = client.post(
+                f"{BASE}/shell/tasks/LIVE-STORE-TASK-1/assignment",
+                headers={
+                    **ops,
+                    "idempotency-key": "live-shell-assignment-1",
+                },
+                json=assignment_body,
+            )
+            inbox = client.get(f"{BASE}/shell/notifications", headers=ops).json()
+            acknowledged = client.post(
+                (
+                    f"{BASE}/shell/notifications/"
+                    f"{inbox['items'][0]['notificationId']}/acknowledgement"
+                ),
+                headers={**ops, "idempotency-key": "live-shell-notification-1"},
+            )
+            preferences = client.put(
+                f"{BASE}/shell/notifications/preferences",
+                headers={**ops, "idempotency-key": "live-shell-preferences-1"},
+                json={
+                    "channels": {"inApp": True, "email": False},
+                    "severityFloor": "warning",
+                    "digest": "daily",
+                },
+            )
+            settings = client.put(
+                f"{BASE}/shell/settings",
+                headers={**ops, "idempotency-key": "live-shell-settings-1"},
+                json={"values": {"density": "compact"}},
+            )
+            grant = client.put(
+                f"{BASE}/shell/admin/roles/expansion-manager/workspaces",
+                headers={**ops, "idempotency-key": "live-shell-grant-1"},
+                json={"allowedWorkspaces": ["today"]},
+            )
+            franchisee_view = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=franchisee,
+            ).json()
+            franchisee_ack = client.post(
+                f"{BASE}/shell/franchisee/acknowledgement",
+                headers={
+                    **franchisee,
+                    "idempotency-key": "live-shell-franchisee-ack-1",
+                },
+                json={
+                    "notificationId": franchisee_view["notifications"][0][
+                        "notificationId"
+                    ]
+                },
+            )
+            franchisee_report = client.post(
+                f"{BASE}/shell/franchisee/reports",
+                headers={
+                    **franchisee,
+                    "idempotency-key": "live-shell-franchisee-report-1",
+                },
+                json={"category": "equipment", "message": "冷藏櫃溫度異常"},
+            )
+
+        assert [
+            response.status_code
+            for response in (
+                assigned,
+                acknowledged,
+                preferences,
+                settings,
+                grant,
+                franchisee_ack,
+                franchisee_report,
+            )
+        ] == [200] * 7
+        assignment_receipt = assigned.json()
+        grant_audit_id = grant.json()["auditEvent"]["auditEventId"]
+    finally:
+        first_bundle.engine.close()
+
+    reopened_app, reopened_bundle = _live_app(
+        database_path,
+        live_repository=repository,
+    )
+    try:
+        with TestClient(reopened_app) as client:
+            replay = client.post(
+                f"{BASE}/shell/tasks/LIVE-STORE-TASK-1/assignment",
+                headers={
+                    **ops,
+                    "idempotency-key": "live-shell-assignment-1",
+                },
+                json=assignment_body,
+            )
+            task = client.get(
+                f"{BASE}/shell/tasks",
+                headers=ops,
+                params={"taskId": "LIVE-STORE-TASK-1"},
+            ).json()["items"][0]
+            inbox = client.get(f"{BASE}/shell/notifications", headers=ops).json()
+            preferences_after = client.get(
+                f"{BASE}/shell/notifications/preferences",
+                headers=ops,
+            ).json()
+            settings_after = client.get(
+                f"{BASE}/shell/settings",
+                headers=ops,
+            ).json()
+            admin_after = client.get(
+                f"{BASE}/shell/admin",
+                headers=ops,
+            ).json()
+            franchisee_after = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=franchisee,
+            ).json()
+
+            other_tenant_task = client.get(
+                f"{BASE}/shell/tasks",
+                headers=_ops_headers("tenant-shell-b"),
+                params={"taskId": "LIVE-STORE-TASK-1"},
+            ).json()["items"][0]
+            other_tenant_settings = client.get(
+                f"{BASE}/shell/settings",
+                headers=_ops_headers("tenant-shell-b"),
+            ).json()
+
+        assert replay.status_code == 200
+        assert replay.json()["idempotentReplay"] is True
+        assert replay.json()["auditEvent"] == assignment_receipt["auditEvent"]
+        assert task["assigneeName"] == "張珮珊"
+        assert task["slaState"] == "on-track"
+        assert inbox["items"][0]["acknowledged"] is True
+        assert preferences_after["preferences"]["severityFloor"] == "warning"
+        assert settings_after["values"]["density"] == "compact"
+        assert grant_audit_id in {
+            event["auditEventId"] for event in admin_after["auditFeed"]
+        }
+        assert franchisee_after["notifications"][0]["acknowledged"] is True
+        assert [report["message"] for report in franchisee_after["reports"]] == [
+            "冷藏櫃溫度異常"
+        ]
+        assert other_tenant_task["assigneeId"] is None
+        assert other_tenant_settings["isDefault"] is True
+    finally:
+        reopened_bundle.engine.close()
+
+
+def test_live_franchisee_routes_enforce_verified_store_scope_and_audit_denials(
+    tmp_path: Path,
+) -> None:
+    app, bundle = _live_app(
+        tmp_path / "operator-live-franchisee-scope.sqlite3",
+        live_repository=_StaticLiveRepository(),
+    )
+    headers = {
+        **_franchisee_headers("tenant-franchisee-scope"),
+        "x-correlation-id": "corr-franchisee-store-scope",
+    }
+    try:
+        with TestClient(app) as client:
+            default_view = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=headers,
+            )
+            denied_view = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=headers,
+                params={"storeId": "STORE-OTHER"},
+            )
+            denied_ack = client.post(
+                f"{BASE}/shell/franchisee/acknowledgement",
+                headers={**headers, "idempotency-key": "cross-store-ack"},
+                json={
+                    "notificationId": "LIVE-STORE-NOTIFICATION-1",
+                    "storeId": "STORE-OTHER",
+                },
+            )
+            denied_report = client.post(
+                f"{BASE}/shell/franchisee/reports",
+                headers={**headers, "idempotency-key": "cross-store-report"},
+                json={
+                    "category": "equipment",
+                    "message": "must not persist",
+                    "storeId": "STORE-OTHER",
+                },
+            )
+            after = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=headers,
+            )
+            missing_scope = client.get(
+                f"{BASE}/shell/franchisee",
+                headers={
+                    **_franchisee_headers(
+                        "tenant-franchisee-scope",
+                        store_ids="",
+                    ),
+                    "x-correlation-id": "corr-franchisee-missing-store-scope",
+                },
+            )
+
+        assert default_view.status_code == 200
+        assert default_view.json()["store"]["id"] == "STORE-001"
+        assert default_view.json()["meta"]["scope"]["storeId"] == "STORE-001"
+        assert [
+            denied_view.status_code,
+            denied_ack.status_code,
+            denied_report.status_code,
+        ] == [403, 403, 403]
+        assert after.json()["reports"] == []
+        assert missing_scope.status_code == 403
+
+        denials = [
+            event
+            for event in bundle.audit_log.list_events(
+                correlation_id="corr-franchisee-store-scope"
+            )
+            if event.outcome == "deny"
+        ]
+        assert len(denials) == 3
+        assert {event.action for event in denials} == {"view", "create"}
+        assert {event.resource for event in denials} == {
+            "franchisee_portal/STORE-OTHER"
+        }
+        assert {event.metadata["policy_id"] for event in denials} == {"scope.store"}
+
+        missing_scope_denials = bundle.audit_log.list_events(
+            correlation_id="corr-franchisee-missing-store-scope"
+        )
+        assert len(missing_scope_denials) == 1
+        assert missing_scope_denials[0].outcome == "deny"
+        assert missing_scope_denials[0].metadata["policy_id"] == (
+            "franchisee_isolation"
+        )
+    finally:
+        bundle.engine.close()
+
+
+def test_live_franchisee_selected_store_narrows_multi_store_repository_scope(
+    tmp_path: Path,
+) -> None:
+    live_repository = _ScopeCapturingLiveRepository()
+    app, bundle = _live_app(
+        tmp_path / "operator-live-franchisee-selection.sqlite3",
+        live_repository=live_repository,
+    )
+    try:
+        with TestClient(app) as client:
+            response = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=_franchisee_headers(
+                    "tenant-franchisee-selection",
+                    store_ids="STORE-001,STORE-002",
+                ),
+                params={"storeId": "STORE-001"},
+            )
+            missing_support_selection = client.get(
+                f"{BASE}/shell/franchisee",
+                headers=_ops_headers("tenant-franchisee-selection"),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["meta"]["scope"]["storeId"] == "STORE-001"
+        assert missing_support_selection.status_code == 422
+        assert "__missing_store_scope__" not in missing_support_selection.text
+        assert live_repository.load_scopes
+        assert {
+            tuple(scope["store_ids"]) for scope in live_repository.load_scopes
+        } == {("STORE-001",)}
+    finally:
+        bundle.engine.close()
+
+
+def test_durable_listings_seed_canonical_state_only_behind_test_reset_gate(
+    tmp_path: Path,
+) -> None:
+    # ODP-P10-DEV-LANDING-FIX-001: the durable listing aggregate serves the
+    # canonical Package 10 fixture state only when the explicit test-reset gate
+    # (ODP_E2E_MODE -> allow_test_reset) is on. Production keeps seed_fixtures
+    # off, which the empty-state test above already pins.
+    app, bundle = _live_app(
+        tmp_path / "operator-live-e2e-seed.sqlite3",
+        allow_test_reset=True,
+    )
+    try:
+        with TestClient(app) as client:
+            headers = _headers("tenant-e2e-seeded")
+            snapshot = client.get(f"{BASE}/network-listings", headers=headers)
+            assert snapshot.status_code == 200
+            listing_ids = {
+                listing["id"] for listing in snapshot.json()["listings"]
+            }
+            assert {"L-2024", "L-2025", "L-2029", "L-2030"} <= listing_ids
+
+            converted = client.post(
+                f"{BASE}/network-listings/listings/L-2024/convert",
+                headers=_headers(
+                    "tenant-e2e-seeded",
+                    idempotency_key="e2e-seed-convert-1",
+                ),
+                json={"actorRoleId": "expansionManager"},
+            )
+            assert converted.status_code == 200
+
+            # The conversion is durable: a fresh request rebuilds the service
+            # from persisted state and still sees candidate linkage.
+            after = client.get(
+                f"{BASE}/network-listings", headers=headers
+            ).json()
+            l2024 = next(
+                listing
+                for listing in after["listings"]
+                if listing["id"] == "L-2024"
+            )
+            assert l2024["status"] == "candidate"
+            assert l2024["candidateId"] == "CS-1001"
+
+            # Reset stays available behind the gate and restores the canonical
+            # seed, discarding the conversion.
+            reset = client.post(
+                f"{BASE}/network-listings/reset", headers=headers
+            )
+            assert reset.status_code == 200
+            reseeded = client.get(
+                f"{BASE}/network-listings", headers=headers
+            ).json()
+            l2024_reset = next(
+                listing
+                for listing in reseeded["listings"]
+                if listing["id"] == "L-2024"
+            )
+            assert l2024_reset.get("candidateId") in (None, "")
+    finally:
+        bundle.engine.close()
+
+
+def test_local_durable_operator_writes_use_the_fixed_verified_tenant_partition(
+    tmp_path: Path,
+) -> None:
+    bundle = _durable_bundle(tmp_path / "operator-local-e2e-scope.sqlite3")
+    document_store = SqliteDocumentStore(bundle.engine)
+
+    def listing_for_tenant(tenant_id: str) -> DurableListingRepository:
+        return DurableListingRepository(TenantScopedDocumentStore(document_store, tenant_id))
+
+    app = FastAPI()
+    app.include_router(
+        create_operator_router(
+            audit_log=bundle.audit_log,
+            document_store=document_store,
+            listing_repository=bundle.listing_repository,
+            listing_repository_for_tenant=listing_for_tenant,
+            allow_test_reset=True,
+        ),
+        prefix="/api/v1",
+    )
+    try:
+        with TestClient(app) as client:
+            reset = client.post(
+                f"{BASE}/network-listings/reset",
+                headers=_headers("tenant-a"),
+            )
+
+        assert reset.status_code == 200
+        scoped_ids = {
+            listing.listing_id
+            for listing in listing_for_tenant("tenant-a").list_listings()
+        }
+        assert {"L-2024", "L-2025", "L-2029", "L-2030"} <= scoped_ids
+        assert bundle.listing_repository.list_listings() == []
     finally:
         bundle.engine.close()
 
@@ -432,8 +939,24 @@ def test_live_router_without_document_store_mounts_routes_and_returns_503(
                 f"{BASE}/network-scoring",
                 headers=_headers("tenant-unavailable"),
             )
+            shell_response = client.get(
+                f"{BASE}/shell/settings",
+                headers=_ops_headers("tenant-unavailable"),
+            )
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == ("OPERATOR_DOMAIN_PERSISTENCE_UNAVAILABLE")
+        assert shell_response.status_code == 503
+        assert shell_response.json()["detail"] == {
+            "code": "OPERATOR_SHELL_CONTRACT_UNAVAILABLE",
+            "operation": "operator.shell.persistence",
+            "dependency": "operator_shell_document_store",
+            "state": "unavailable",
+            "reasonCode": "TENANT_BOUND_DURABLE_SHELL_NOT_WIRED",
+            "message": (
+                "operator_shell_document_store has no tenant-bound durable "
+                "production repository wiring"
+            ),
+        }
     finally:
         bundle.engine.close()
 
@@ -568,3 +1091,38 @@ def test_live_governance_write_and_idempotency_survive_restart(
         assert replay.json()["idempotentReplay"] is True
     finally:
         reopened_bundle.engine.close()
+
+
+def test_tenant_scoped_document_store_never_queries_unpartitioned_collections() -> None:
+    called_collections: list[str] = []
+
+    class SpyStore:
+        def get(self, collection: str, doc_id: str) -> Any | None:
+            called_collections.append(collection)
+            return None
+
+        def list_all(self, collection: str) -> list[Any]:
+            called_collections.append(collection)
+            return []
+
+        def list_by_group(self, collection: str, group_key: str) -> list[Any]:
+            called_collections.append(collection)
+            return []
+
+        def latest_in_group(self, collection: str, group_key: str) -> Any | None:
+            called_collections.append(collection)
+            return None
+
+    spy = SpyStore()
+    scoped = TenantScopedDocumentStore(spy, "tenant-spy-probe")
+    base_coll = "listing.listings"
+
+    scoped.get(base_coll, "doc-1")
+    scoped.list_all(base_coll)
+    scoped.list_by_group(base_coll, "group-1")
+    scoped.latest_in_group(base_coll, "group-1")
+
+    assert called_collections
+    for coll in called_collections:
+        assert coll.startswith(f"{base_coll}.tenant.")
+        assert coll != base_coll

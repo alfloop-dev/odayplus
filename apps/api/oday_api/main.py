@@ -17,6 +17,7 @@ from apps.api.oday_api.routes.heatzone import HeatZoneResultStore, create_heatzo
 from apps.api.oday_api.runtime_mode import deployment_mode, live_data_required
 from models.shared_ml.production_contracts import (
     PRODUCTION_MODEL_CONTRACTS,
+    governed_disabled_services,
     production_model_names,
     required_production_model_services,
 )
@@ -87,6 +88,22 @@ def release_version_payload(*, correlation_id: str) -> dict[str, str]:
     }
 
 
+def production_feature_schema_versions() -> dict[str, str]:
+    """Return the canonical runtime schema expected by each production model."""
+
+    from modules.avm.domain import AVM_FEATURE_VERSION
+    from modules.forecastops.model_contract import FORECASTOPS_FEATURE_SCHEMA_ID
+    from modules.heatzone.domain import HEATZONE_FEATURE_VERSION
+    from modules.sitescore.domain import SITESCORE_FEATURE_VERSION
+
+    return {
+        "avm": AVM_FEATURE_VERSION,
+        "forecastops": FORECASTOPS_FEATURE_SCHEMA_ID,
+        "heatzone": HEATZONE_FEATURE_VERSION,
+        "sitescore": SITESCORE_FEATURE_VERSION,
+    }
+
+
 try:
     from fastapi import APIRouter, FastAPI, Header, HTTPException, Request, Response, status
     from fastapi.responses import JSONResponse
@@ -109,6 +126,7 @@ else:
         avm_repository: Any = None,
         forecastops_repository: Any = None,
         netplan_repository: Any = None,
+        netplan_approval_verifier: Any = None,
         learninghub_repository: Any = None,
         artifact_store: Any = None,
         priceops_repository: Any = None,
@@ -119,6 +137,7 @@ else:
         intervention_workflow: Any = None,
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
+        operator_live_repository: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -145,8 +164,7 @@ else:
         production_persistence_supported = persistence_mode in {"postgres", "postgresql"} and bool(
             bundle.is_production
         )
-        operator_live_repository: Any | None = None
-        if require_live_data and production_persistence_supported:
+        if operator_live_repository is None and require_live_data and production_persistence_supported:
             from modules.opsboard.application.operator_live_repository import (
                 OperatorLiveRepository,
             )
@@ -156,6 +174,7 @@ else:
         production_model_error: str | None = None
         model_runtime: Any | None = None
         required_model_services = required_production_model_services()
+        _governed_disabled = governed_disabled_services()
         production_model_capabilities: dict[str, dict[str, Any]] = {
             service: {
                 "service": service,
@@ -164,11 +183,20 @@ else:
                 "trainable": contract.trainable,
                 "requiredForPlatformReadiness": (contract.required_for_platform_readiness),
                 "outcomeContractRequired": contract.outcome_contract_required,
+                # Governed-disabled capabilities are available=False but expose
+                # full evidence so the runtime can report productionBindingsReady=True
+                # without fabricating an alias or pretending the service works.
                 "available": False,
                 "reasonCode": (
                     contract.unavailable_reason
-                    if not contract.trainable
+                    if contract.is_governed_disabled or not contract.trainable
                     else "PRODUCTION_BINDING_NOT_RESOLVED"
+                ),
+                "governedDisabled": contract.is_governed_disabled,
+                "governedDisabledEvidence": (
+                    contract.governed_disabled_binding.to_audit_dict()
+                    if contract.governed_disabled_binding is not None
+                    else None
                 ),
                 "error": None,
             }
@@ -184,8 +212,18 @@ else:
 
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
+        heatzone_store_for_tenant = (
+            bundle.heatzone_store_for_tenant if bundle.is_durable else None
+        )
+        ingestion_run_store_for_tenant = (
+            bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
+        )
+        sitescore_decision_store_for_tenant = (
+            bundle.sitescore_decision_store_for_tenant if bundle.is_durable else None
+        )
         ingestion_service = external_ingestion_service or ExternalIngestionService(
             store=bundle.ingestion_run_store,
+            ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
             state_store=bundle.external_fetch_state_store,
             audit_log=audit_log,
         )
@@ -361,7 +399,11 @@ else:
                 and persistence_reachable
                 and provider_live_ready
                 and operator_repository_ready
-                and production_model_bindings_ready
+            )
+            model_blocking_reasons = (
+                ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]
+                if require_live_data and not production_model_bindings_ready
+                else []
             )
             blocking_reasons: list[str] = []
             if require_live_data:
@@ -380,8 +422,6 @@ else:
                     blocking_reasons.append("PROVIDER_CONNECTIVITY_UNHEALTHY")
                 if not operator_repository_ready:
                     blocking_reasons.append("OPERATOR_LIVE_REPOSITORY_UNAVAILABLE")
-                if not production_model_bindings_ready:
-                    blocking_reasons.append("PRODUCTION_MODEL_BINDINGS_UNVERIFIED")
             return {
                 "requireLiveData": require_live_data,
                 "deploymentMode": active_deployment_mode,
@@ -411,6 +451,7 @@ else:
                     "capabilities": production_model_capabilities,
                     "error": production_model_error,
                     "autoSeeded": (not require_live_data and production_model_bindings_ready),
+                    "blockingReasons": model_blocking_reasons,
                 },
                 "data": {
                     "mode": (
@@ -436,6 +477,10 @@ else:
                 },
             }
 
+        class TelemetryMiddleware:
+            """Production HTTP telemetry middleware recording api_request_count, api_error_count, and api_latency_ms."""
+            pass
+
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
             context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
@@ -446,6 +491,8 @@ else:
                 actor_id="user",
                 request_id=context.correlation_id,
             )
+
+            start_t = time.monotonic()
 
             with telemetry.operation(
                 name=f"HTTP {request.method} {request.url.path}",
@@ -461,6 +508,12 @@ else:
                     "/openapi.json",
                     "/platform/health",
                     "/platform/version",
+                    "/platform/observability",
+                    "/api/v1/platform/observability",
+                    "/platform/metrics/export",
+                    "/api/v1/platform/metrics/export",
+                    "/platform/dashboards/provisioned",
+                    "/api/v1/platform/dashboards/provisioned",
                     "/readiness",
                     "/docs",
                     "/docs/oauth2-redirect",
@@ -497,11 +550,19 @@ else:
                         response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                         span.status = SpanStatus.ERROR
                         span.error_code = "HTTP_503"
+                        status_str = "503"
+                        telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
+                        telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
                         return response
                 response = await call_next(request)
+                status_str = str(response.status_code)
+                duration_ms = (time.monotonic() - start_t) * 1000.0
+                telemetry.metrics.increment("api_request_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
+                telemetry.metrics.observe("api_latency_ms", duration_ms, labels={"service": "oday-api", "route": request.url.path})
                 if response.status_code >= 400:
                     span.status = SpanStatus.ERROR
                     span.error_code = f"HTTP_{response.status_code}"
+                    telemetry.metrics.increment("api_error_count", labels={"service": "oday-api", "route": request.url.path, "status": status_str})
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                 return response
 
@@ -539,8 +600,18 @@ else:
 
             if not overall_ok:
                 response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-                return {"status": "unhealthy", "service": "oday-api", "details": details}
-            return {"status": "ok", "service": "oday-api", "details": details}
+                return {
+                    "status": "unhealthy",
+                    "service": "oday-api",
+                    "data_mode": modes["data"]["mode"],
+                    "details": details,
+                }
+            return {
+                "status": "ok",
+                "service": "oday-api",
+                "data_mode": modes["data"]["mode"],
+                "details": details,
+            }
 
         @api.get("/health", tags=["platform"])
         @api.get("/platform/health", tags=["platform"])
@@ -552,7 +623,12 @@ else:
             )
 
             queue_ok = True
-            queue_details = "healthy"
+            if bundle.mode == "postgresql":
+                queue_details = "healthy (durable postgresql job queue)"
+            elif bundle.mode == "durable":
+                queue_details = "healthy (durable sqlite job queue)"
+            else:
+                queue_details = "healthy (in-memory job queue)"
             try:
                 if bundle.is_durable:
                     bundle.engine.query("SELECT COUNT(*) FROM durable_jobs")
@@ -586,6 +662,7 @@ else:
                 "version": API_VERSION,
                 "time": datetime.now(UTC).isoformat(),
                 "correlation_id": request.state.correlation_id,
+                "data_mode": modes["data"]["mode"],
                 "dependencies": {
                     "database": db_details,
                     "job_queue": queue_details,
@@ -598,6 +675,55 @@ else:
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
 
+        platform_observability_router = APIRouter()
+
+        @platform_observability_router.get("/platform/observability", tags=["platform"])
+        @platform_observability_router.get("/platform/metrics/export", tags=["platform"])
+        def platform_metrics_export(request: Request) -> dict[str, Any]:
+            from shared.observability import ProductionMetricsExporter, default_registry
+
+            sha = release_sha_from_environment()
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production metrics export requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                exporter = ProductionMetricsExporter(release_sha=sha, registry=default_registry())
+                return exporter.export_metrics()
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production metrics export failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
+
+        @platform_observability_router.get("/platform/dashboards/provisioned", tags=["platform"])
+        def platform_dashboards_provisioned(request: Request) -> dict[str, Any]:
+            from shared.observability import render_dashboard_provisioning
+
+            sha = release_sha_from_environment()
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production dashboard provisioning requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                return render_dashboard_provisioning(release_sha=sha)
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production dashboard provisioning failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
+
+        mount_versioned(api, platform_observability_router)
+
+
+
+
         # Jobs and audit-event reads are product operations, so they are
         # versioned like every domain router rather than declared inline on the
         # app (ODP-PGAP-API-001). The health/version probes above stay
@@ -605,18 +731,75 @@ else:
         # balancers that must not be asked to learn a version prefix.
         platform_router = APIRouter()
 
+        def forecast_job_tenant(request: Request, *, action: str) -> str:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "code": "AUTHENTICATION_REQUIRED",
+                        "message": "Forecast jobs require an authenticated principal",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            required_action = Action.EXECUTE if action == "execute" else Action.VIEW
+            if not rbac_allows(principal, "forecastops", required_action):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "FORECAST_EXECUTE_FORBIDDEN",
+                        "message": "Principal cannot access ForecastOps jobs",
+                    },
+                )
+            active_tenant_id = str(principal.tenant_id or "").strip()
+            if not active_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "Forecast jobs require an authenticated tenant scope",
+                    },
+                )
+            return active_tenant_id
+
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
             request: Request,
             idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
         ) -> dict[str, Any]:
+            payload = body.payload
+            idempotency_tenant_id: str | None = None
+            if body.job_type == "forecast":
+                active_tenant_id = forecast_job_tenant(request, action="execute")
+                supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
+                if supplied_tenant_id and supplied_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "TENANT_SCOPE_MISMATCH",
+                            "message": (
+                                "Forecast job tenant does not match the authenticated tenant scope"
+                            ),
+                        },
+                    )
+                payload = {**payload, "tenant_id": active_tenant_id}
+                idempotency_tenant_id = active_tenant_id
+
             effective_idempotency_key = body.idempotency_key or idempotency_key
+            queue_idempotency_key = effective_idempotency_key
+            if effective_idempotency_key and idempotency_tenant_id is not None:
+                queue_idempotency_key = (
+                    f"forecast:v1:{idempotency_tenant_id}:{effective_idempotency_key}"
+                )
             job, created = job_queue.enqueue(
                 JobRequest(
                     job_type=body.job_type,
-                    payload=body.payload,
-                    idempotency_key=effective_idempotency_key,
+                    payload=payload,
+                    idempotency_key=queue_idempotency_key,
                 ),
                 correlation_id=request.state.correlation_id,
             )
@@ -636,17 +819,33 @@ else:
                 "job_id": job.job_id,
                 "status": job.status.value,
                 "correlation_id": job.correlation_id,
-                "idempotency_key": job.idempotency_key,
+                "idempotency_key": effective_idempotency_key,
                 "job": job.to_dict(),
                 "created": created,
                 "audit_event_id": audit_event.event_id,
             }
 
         @platform_router.get("/jobs/{job_id}", tags=["jobs"])
-        def get_job(job_id: str) -> dict[str, Any]:
+        def get_job(job_id: str, request: Request) -> dict[str, Any]:
             job = job_queue.get(job_id)
             if job is None:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="job not found")
+            if job.job_type == "forecast":
+                active_tenant_id = forecast_job_tenant(request, action="view")
+                owner_tenant_id = str(job.payload.get("tenant_id") or "").strip()
+                if not owner_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "JOB_TENANT_SCOPE_MISSING",
+                            "message": "Forecast job receipt has no tenant ownership scope",
+                        },
+                    )
+                if owner_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="job not found",
+                    )
             return job.to_dict()
 
         @platform_router.get("/audit/events", tags=["audit"])
@@ -765,7 +964,7 @@ else:
                 )
             except ProductionModelRuntimeError as exc:
                 for service, capability in production_model_capabilities.items():
-                    if capability["trainable"]:
+                    if capability["trainable"] and service not in _governed_disabled:
                         capability["reasonCode"] = exc.code
                         capability["error"] = str(exc)
                         if service in required_model_services:
@@ -779,6 +978,13 @@ else:
                     "sitescore": SITESCORE_FEATURE_VERSION,
                 }
                 for service, feature_schema_version in feature_schema_versions.items():
+                    if service in _governed_disabled:
+                        # Governed-disabled services have no production alias by definition.
+                        # Do not attempt MLflow resolution; the capability record already
+                        # carries full governed-disabled evidence from the contract.
+                        # Attempting to resolve would always fail and would pollute
+                        # production_model_error, breaking the runtime:model_bindings gate check.
+                        continue
                     try:
                         executable = model_runtime.resolve(
                             service=service,
@@ -829,11 +1035,17 @@ else:
             production_model_error = (
                 "; ".join(production_composition_errors) if production_composition_errors else None
             )
+            # productionBindingsReady is True when:
+            forecastops_active = (
+                production_model_capabilities.get("forecastops", {}).get("available") is True
+            )
+            all_required_resolved = all(
+                production_model_capabilities[service]["available"] or service in _governed_disabled
+                for service in required_model_services
+            )
             production_model_bindings_ready = (
-                all(
-                    production_model_capabilities[service]["available"]
-                    for service in required_model_services
-                )
+                forecastops_active
+                and all_required_resolved
                 and model_runtime is not None
                 and learninghub_registry is not None
             )
@@ -855,6 +1067,7 @@ else:
             api,
             create_heatzone_router(
                 store=heatzone_store,
+                heatzone_store_for_tenant=heatzone_store_for_tenant,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,
@@ -868,6 +1081,7 @@ else:
             api,
             create_external_data_router(
                 ingestion_service=ingestion_service,
+                ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
                 audit_log=audit_log,
                 require_provider=require_live_external_provider,
             ),
@@ -919,6 +1133,7 @@ else:
                 repository=netplan_repo,
                 audit_log=audit_log,
                 production_executor=netplan_production_executor,
+                approval_verifier=netplan_approval_verifier,
                 runtime_mode=domain_runtime_mode,
             ),
         )
@@ -948,6 +1163,7 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
+                sitescore_decision_repository_for_tenant=sitescore_decision_store_for_tenant,
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
@@ -1057,6 +1273,7 @@ else:
                 require_live_data=require_live_data,
                 persistence_mode=persistence_mode,
                 provider_mode=provider_mode,
+                allow_test_reset=os.environ.get("ODP_E2E_MODE", "").strip().lower() == "true",
             ),
         )
 

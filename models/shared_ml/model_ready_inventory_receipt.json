@@ -1,0 +1,36 @@
+{
+  "auto_seeded": false,
+  "capabilities": {
+    "avm": {
+      "eligible_count": 0,
+      "observed_count": 0,
+      "relation": "model_ready.valuation_view",
+      "view_version": "valuation-view-v1"
+    },
+    "forecastops": {
+      "eligible_count": 1303,
+      "observed_count": 1303,
+      "relation": "model_ready.forecast_training_view",
+      "view_version": "forecast-training-view-v2"
+    },
+    "heatzone": {
+      "eligible_count": 0,
+      "observed_count": 0,
+      "relation": "model_ready.heatzone_training_view",
+      "view_version": "heatzone-training-view-v2"
+    },
+    "sitescore": {
+      "eligible_count": 0,
+      "observed_count": 0,
+      "relation": "model_ready.candidate_site_view",
+      "view_version": "candidate-site-view-v2"
+    }
+  },
+  "integrity": {
+    "content_sha256": "3f1c8ec4baa1e2f06f5c4e93e82a6258315012b46aacfd3f3e578221aa8b5f44"
+  },
+  "inventory_version": "pg16-production-model-inventory-2026-07-25-v1",
+  "kind": "pg16-model-ready-inventory-receipt",
+  "observed_at": "2026-07-25T15:20:00Z",
+  "schema_version": 1
+}

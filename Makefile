@@ -5,7 +5,7 @@ PYTEST_MARK_EXPR ?= not requires_live_env
 LOCAL_CONFIG := .orchestrator/config.json
 LOCAL_CONFIG_EXAMPLE := .orchestrator/config.example.json
 
-.PHONY: help bootstrap lint test smoke dependency-audit security node-check api-contract api-contract-refresh product-e2e-gate product-release-gate ci clean
+.PHONY: help bootstrap lint test smoke dependency-audit security node-check api-contract api-contract-refresh release-gate-registry task-dependency-check product-e2e-gate product-release-gate ci clean
 
 help:
 	@printf "ODay Plus developer commands\n\n"
@@ -15,7 +15,10 @@ help:
 	@printf "  make smoke       Run fast foundation smoke tests\n"
 	@printf "  make security    Run dependency audit and security acceptance tests\n"
 	@printf "  make node-check  Run Node workspace checks when a lockfile exists\n"
-	@printf "  make product-e2e-gate  Run product E2E release gate checks\n"
+	@printf "  make release-gate-registry  Validate the Gate 0-6 release registry\n"
+	@printf "  make task-dependency-check Verify every task depends_on resolves (Control Pack 3.1)\n"
+	@printf "  make product-e2e-gate  Run ordinary dev-merge product E2E checks\n"
+	@printf "  make product-release-gate  Require final production GO authorization\n"
 	@printf "  make ci          Run the full CI baseline\n"
 	@printf "  make clean       Remove local test and lint caches\n"
 
@@ -71,11 +74,30 @@ node-check:
 		printf "Skipping Node workspace checks: package-lock.json is not present yet.\n"; \
 	fi
 
-product-e2e-gate:
-	python3 scripts/e2e/check_product_release_gate.py
+release-gate-registry:
+	python3 scripts/e2e/check_release_gate_registry.py
 
-product-release-gate: product-e2e-gate
+# Dispatch preflight for Control Pack 3.1: every task `depends_on` entry must
+# resolve through the live board or the official archive. Supervisor state lives
+# outside this repo, so point the target at it explicitly:
+#   make task-dependency-check \
+#     ODP_SUPERVISOR_STATUS_FILE=/path/to/ai-status.json \
+#     ODP_SUPERVISOR_ARCHIVE_DIR=/path/to/ai-task-archive/tasks
+task-dependency-check:
+	@if [[ -z "$(ODP_SUPERVISOR_STATUS_FILE)" || -z "$(ODP_SUPERVISOR_ARCHIVE_DIR)" ]]; then \
+		printf "Set ODP_SUPERVISOR_STATUS_FILE and ODP_SUPERVISOR_ARCHIVE_DIR to the live supervisor state.\n"; \
+		exit 2; \
+	fi
+	python3 scripts/orchestrator/check_task_dependency_resolvability.py \
+		--status "$(ODP_SUPERVISOR_STATUS_FILE)" \
+		--archive-dir "$(ODP_SUPERVISOR_ARCHIVE_DIR)"
+
+product-e2e-gate: release-gate-registry
+	python3 scripts/e2e/check_product_release_gate.py --dev-merge
 	scripts/e2e/run_product_e2e.sh
+
+product-release-gate:
+	python3 scripts/e2e/check_product_release_gate.py --require-go $(if $(EXPECTED_SHA),--expected-sha $(EXPECTED_SHA))
 
 ci: bootstrap lint security test smoke node-check
 
