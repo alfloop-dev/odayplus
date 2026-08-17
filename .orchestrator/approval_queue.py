@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
-import os
 import sys
 import time
 from contextlib import contextmanager
@@ -26,6 +25,8 @@ from common import (
     load_config,
     load_json,
     new_runtime_id,
+    parse_iso_timestamp,
+    pid_is_alive,
     resolve_path,
     utc_now,
     write_activity_log,
@@ -55,13 +56,7 @@ def list_pending(config: dict[str, Any], include_history: bool = False) -> dict[
     return payload
 
 
-def _parse_utc(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+_parse_utc = parse_iso_timestamp
 
 
 def _stale_pending_seconds(config: dict[str, Any]) -> float:
@@ -79,14 +74,6 @@ def _is_stale_pending(item: dict[str, Any], *, now: datetime, stale_after_second
     return (now - created_at).total_seconds() >= stale_after_seconds
 
 
-def _pid_is_alive(pid: Any) -> bool:
-    try:
-        value = int(pid)
-    except (TypeError, ValueError):
-        return False
-    return os.path.exists(f"/proc/{value}")
-
-
 def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers: dict[str, Any]) -> str | None:
     run_id = item.get("worker_run_id")
     if not run_id:
@@ -102,7 +89,7 @@ def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers:
         # Claude can resume from session state after approval even if the original
         # worker process exited, so keep the approval entry live.
         return None
-    if not _pid_is_alive(worker.get("pid")):
+    if not pid_is_alive(worker.get("pid")):
         return "Auto-pruned approval because the worker exited before approval could be applied."
     return None
 

@@ -120,8 +120,3 @@ def evaluate_finalize_gate(task: dict[str, Any]) -> FinalizeGateResult:
         pr_status=pr_status,
         ci_status=ci_status,
     )
-
-
-def final_gate_status(task: dict[str, Any]) -> str:
-    """Backward-compatible helper returning only the gate status token."""
-    return evaluate_finalize_gate(task).status

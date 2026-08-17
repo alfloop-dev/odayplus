@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import DeliveryRequest
+from common import parse_iso_timestamp
 import status_transition
 
 
@@ -263,14 +264,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "unknown_critical", "transient": False, "label": "unknown critical error"}
     return {"kind": "terminal", "transient": False, "label": "terminal"}
 
-@_entrypoint
-def _parse_iso_utc(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+# Pure parser: no supervisor globals to sync, so it needs no @_entrypoint wrapper.
+_parse_iso_utc = parse_iso_timestamp
 
 @_entrypoint
 def worker_runtime_settings(config: dict[str, Any]) -> dict[str, Any]:
