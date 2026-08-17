@@ -16,7 +16,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 NOTICE = ROOT / "NOTICE-THIRD-PARTY.md"
-GENERATOR = ROOT / "scripts/security/generate_oss_notice.py"
+GENERATOR = ROOT / "delivery_toolchain/security/generate_oss_notice.py"
 
 
 def _load_generator():
@@ -40,7 +40,7 @@ def test_notice_matches_the_installed_trees() -> None:
         pytest.skip("node_modules absent; licences can only be read from an install")
     generator = _load_generator()
     assert NOTICE.read_text(encoding="utf-8") == generator.build(), (
-        "NOTICE-THIRD-PARTY.md is stale. Run scripts/security/generate_oss_notice.py."
+        "NOTICE-THIRD-PARTY.md is stale. Run delivery_toolchain/security/generate_oss_notice.py."
     )
 
 
