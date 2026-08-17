@@ -256,17 +256,31 @@ def reassign_unavailable_reviewers(
         claimed_agent = str(task.get(claimed_field) or "").strip()
         if not claimed_agent or is_human_gate_agent(claimed_agent):
             continue
-        claimed_block_reason = agent_auto_dispatch_block_reason(
-            config,
-            state,
-            normalize_agent_id(claimed_agent),
-            provider_report,
-        )
-        reviewer_same_pool = claimed_role == "reviewer" and bool(
-            counterpart
-            and not is_human_gate_agent(counterpart)
-            and not review_is_independent(config, counterpart, claimed_agent)
-        )
+        if claimed_role == "owner":
+            claimed_id = normalize_agent_id(claimed_agent)
+            if agent_dispatch_paused(config, state, claimed_id):
+                claimed_block_reason = (
+                    f"dispatch is paused or disabled for {display_name_for(config, claimed_id) or claimed_agent}"
+                )
+            elif account_pool_dispatch_block_reason(config, claimed_id, runtime_state=state):
+                claimed_block_reason = account_pool_dispatch_block_reason(
+                    config, claimed_id, runtime_state=state
+                )
+            else:
+                claimed_block_reason = None
+            reviewer_same_pool = False
+        else:
+            claimed_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                normalize_agent_id(claimed_agent),
+                provider_report,
+            )
+            reviewer_same_pool = bool(
+                counterpart
+                and not is_human_gate_agent(counterpart)
+                and not review_is_independent(config, counterpart, claimed_agent)
+            )
         if not claimed_block_reason and not reviewer_same_pool:
             continue
 

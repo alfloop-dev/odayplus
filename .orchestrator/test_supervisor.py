@@ -12147,6 +12147,91 @@ class BlockedTaskRoleReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Antigravity")
         self.assertEqual(kwargs["new_reviewer"], "Claude")
 
+    def test_transient_quota_saturated_owner_is_not_reassigned(self) -> None:
+        """A healthy owner whose quota group is temporarily at capacity (active workers == limit)
+
+        must NOT have in_progress/todo/review_approved tasks durably reassigned away.
+        """
+        config = self._config()
+        config["agents"]["antigravity2"] = {
+            "id": "antigravity2",
+            "display_name": "Antigravity2",
+            "provider": "antigravity",
+        }
+        config["account_pools"] = {
+            "antigravity": {
+                "id": "antigravity",
+                "max_concurrency": 1,
+            }
+        }
+        # Antigravity's quota group has 1/1 active workers running on an unrelated task
+        state = {
+            "queue": {"events": {}},
+            "workers": {
+                "w-1": {
+                    "status": "running",
+                    "agent": "antigravity",
+                    "task_id": "T-OTHER",
+                }
+            },
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        status = {
+            "tasks": [
+                {"id": "T-9", "status": "review_approved", "owner": "Antigravity2", "reviewer": "Claude"},
+                {"id": "T-10", "status": "in_progress", "owner": "Antigravity2", "reviewer": "Claude"},
+                {"id": "T-11", "status": "todo", "owner": "Antigravity2", "reviewer": "Claude"},
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(
+                supervisor, "outstanding_delivery_indexes", return_value=(set(), set(), set())
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "console_log"),
+        ):
+            supervisor.reassign_unavailable_reviewers(config, state, status)
+
+        persist.assert_not_called()
+
+    def test_account_pool_exhausted_owner_is_reassigned(self) -> None:
+        config = self._config()
+        config["account_pools"] = {
+            "codex": {
+                "id": "codex",
+                "state": "exhausted",
+                "reason": "monthly quota limit reached",
+            }
+        }
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        status = {
+            "tasks": [
+                {"id": "T-12", "status": "review_approved", "owner": "Codex", "reviewer": "Claude"}
+            ]
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(
+                supervisor, "outstanding_delivery_indexes", return_value=(set(), set(), set())
+            ),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "console_log"),
+        ):
+            supervisor.reassign_unavailable_reviewers(config, state, status)
+
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["task_id"], "T-12")
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertEqual(kwargs["handoff_from"], "Codex")
+        self.assertIn("account pool codex is exhausted", kwargs["message"])
+
 
 
 class AgentLoadBalancingTests(unittest.TestCase):
