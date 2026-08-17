@@ -7,8 +7,8 @@
 | Sidecar task | `ODP-PLAN-AVM-OUTCOME-001-SIDECAR-ACCEPTANCE` |
 | Parent task | `ODP-PLAN-AVM-OUTCOME-001` |
 | Gap | `GAP-P1-003` |
-| Sidecar owner / reviewer | `Codex6` / `Antigravity` |
-| Current parent owner / reviewer | `Antigravity` / `Antigravity5` |
+| Sidecar owner / reviewer | `Claude2` / `Antigravity2` (live task state; originally authored under `Codex6` / `Antigravity`) |
+| Parent owner / reviewer | `Antigravity` / `Antigravity5` as recorded at authoring time; unverifiable at this HEAD (see below) |
 | Packet purpose | Pre-review checklist, dependency map, and evidence handoff aid |
 | Verdict | **No parent acceptance verdict. No activation claim.** |
 
@@ -59,6 +59,25 @@ confidential-access gates in this packet.
 
 Planning documents and live task state may show different historical assignees.
 Use current task state for routing and the execution packet for acceptance content.
+
+Routing caveat as of 2026-08-17: the live `ai-status.json` task set was rebuilt
+from open GitHub PRs (`source: github-pr-reimport-2026-08-17`) and no longer
+contains task records for `ODP-PLAN-AVM-OUTCOME-001`,
+`ODP-PLAN-OSS-LICENSE-GATE-001`, or `ODP-PLAN-AVM-OUTCOME-BACKFILL-001`; they are
+also absent from `ai-task-archive/`. The parent owner, parent reviewer, and the
+prerequisite/backfill task statuses named above therefore cannot be confirmed
+from live state at this commit. Whoever picks up the parent work must
+re-establish those task records and their current assignees before treating any
+row in the dependency map as routable. The acceptance content below is unaffected
+by this, because it is bound to repository contracts rather than to assignees.
+
+The surviving in-repository reference for those task dispositions is
+`docs/evidence/gates/RELEASE_GATE_REGISTRY.json`, which at this commit records
+`ODP-PLAN-AVM-OUTCOME-001` as still open under Gate 3 and
+`ODP-PLAN-OSS-LICENSE-GATE-001` as archived done under Gate 4 with no
+exact-candidate Gate 4 receipt or Human/Ops legal approval. Read against the
+dependency map, that means the license prerequisite is closed as a task but still
+short of the release-gate evidence an activation or release claim would need.
 
 ## Acceptance checklist
 
@@ -140,8 +159,10 @@ calibration verification.
 
 ## Reviewer handoff decision record
 
-Reviewer `Antigravity` reviews this sidecar packet for completeness and routing
-usefulness only. Parent reviewer `Antigravity5` owns the implementation verdict.
+Sidecar reviewer `Antigravity2` reviews this packet for completeness and routing
+usefulness only. The parent reviewer of record owns the implementation verdict;
+that assignment must be re-confirmed from live task state per the routing caveat
+above before the parent verdict is stamped.
 
 | Review question | Expected answer |
 |---|---|
