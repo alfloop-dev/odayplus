@@ -670,7 +670,7 @@ def _pr_title_names_task(title: str | None, task_id: str) -> bool:
     return rest == "" or rest[0].isspace()
 
 
-def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, Any] | None:
+def find_existing_pr(repo: str, task_id: str, branch: str | None, base: str | None = None) -> dict[str, Any] | None:
     """Find the open PR for a task, preferring its head branch over its title.
 
     Title was the only lookup until 2026-08-05, matched as
@@ -684,13 +684,36 @@ def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, A
     GitHub allows exactly one open PR per (head, base) pair, so the head branch
     is the authoritative key and the title is a heuristic. Trying the branch
     first also self-heals bus-state entries left with `number: null`.
+
+    `base` narrows the search to the task-PR target. One head branch can carry
+    several open PRs as long as their bases differ, and a PR aimed anywhere but
+    the task base is not this task's review PR: the review gate, auto-merge, and
+    the `done` ancestor check all reason about the task base, so adopting a PR
+    aimed elsewhere strands the task in a repair loop it cannot leave. Verified
+    live: `task/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001` had both merged PR
+    616 into `dev` and stale PR 621 into `main`; unfiltered head discovery
+    adopted 621, and the task could never reach `done` because its recorded PR
+    targeted the promotion branch.
     """
 
     fields = "number,title,url,headRefName,baseRefName,state"
+
+    def base_matches(candidate: dict[str, Any]) -> bool:
+        if not base:
+            return True
+        return str(candidate.get("baseRefName") or "") == base
+
     if branch:
-        data = gh_json(["pr", "list", "--repo", repo, "--state", "open", "--head", branch, "--json", fields])
-        if isinstance(data, list) and data:
-            return data[0]
+        query = ["pr", "list", "--repo", repo, "--state", "open", "--head", branch, "--json", fields]
+        if base:
+            # Server-side filter; the client-side check below still stands so a
+            # gh version that ignores `--base` cannot reintroduce the bug.
+            query += ["--base", base]
+        data = gh_json(query)
+        if isinstance(data, list):
+            for candidate in data:
+                if base_matches(candidate):
+                    return candidate
 
     # No branch known, or no PR open from it: fall back to the title convention,
     # which still catches a PR this bus opened from a branch that has since moved.
@@ -710,7 +733,7 @@ def find_existing_pr(repo: str, task_id: str, branch: str | None) -> dict[str, A
     ])
     if isinstance(data, list):
         for candidate in data:
-            if _pr_title_names_task(candidate.get("title"), task_id):
+            if _pr_title_names_task(candidate.get("title"), task_id) and base_matches(candidate):
                 return candidate
     return None
 
@@ -1073,7 +1096,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         edit_pull_request_rest(repo, number, title, body, labels)
         pr = dict(pr_ref)
     else:
-        found = find_existing_pr(repo, task["id"], branch)
+        found = find_existing_pr(repo, task["id"], branch, base)
         if found:
             number = int(found["number"])
             edit_pull_request_rest(repo, number, title, body, labels)
