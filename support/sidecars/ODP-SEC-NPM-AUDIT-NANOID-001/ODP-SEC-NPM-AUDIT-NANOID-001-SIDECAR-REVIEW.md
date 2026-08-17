@@ -10,7 +10,11 @@
 - **Sidecar Reviewer**: `CodexCoordinator`
 - **Phase**: Unassigned
 - **Parent head reviewed by this packet**: `e497a465` (`approved_head` / `review_gate_sha`, head of PR #693 *and* PR #692)
-- **Last Updated**: 2026-08-08T08:57Z (first round)
+- **Last Updated**: 2026-08-17T15:27Z (round 2 — outcome verification, §6)
+- **Round 1 status**: 2026-08-08T08:57Z. §1–§5 below are preserved verbatim as
+  the point-in-time record. **B1 and B2 are now resolved** — PR #693 merged at
+  2026-08-08T09:34:01Z and PR #692 was closed. Read §6 before acting on §3's
+  recovery path; it is already carried out.
 
 ---
 
@@ -578,3 +582,135 @@ behind.
   the fix is correct and the vulnerability is objectively resolved on `dev`.
   **B1 blocks the parent's `done`**, and will keep blocking it until PR #693
   merges. That is the one thing to carry out of this packet.
+
+---
+
+## 6. Round 2 — outcome verification (2026-08-17)
+
+Round 1 (§1–§5) was written 2026-08-08T08:57Z and is preserved above unedited.
+This section records what actually happened to its findings, re-runs the two
+claims that could decay with time, and states what is left.
+
+All round-2 commands were run 2026-08-17 by `Claude` in the sidecar worktree
+after composing the current base — `origin/dev` (`3ad0b503`) merged into
+`task/ODP-SEC-NPM-AUDIT-NANOID-001-SIDECAR-REVIEW`, 780 commits, no conflicts.
+
+### 6.1 B1 — RESOLVED. The recommended recovery was carried out.
+
+```
+$ gh pr view 693 --json state,mergedAt,mergeCommit,headRefOid
+state       MERGED
+mergedAt    2026-08-08T09:34:01Z
+headRefOid  e497a46551d96b2e1163493a5f45284731b6100c
+mergeCommit 7c21c070ec7aa9afd70a6a1a42516e0a3bf73373
+
+$ git merge-base --is-ancestor e497a465 origin/dev  &&  echo yes
+yes                                    # round 1 observed: NOT an ancestor
+$ git merge-base --is-ancestor 7c21c070 origin/dev  &&  echo yes
+yes
+```
+
+PR #693 merged **37 minutes after this packet was written**, with `e497a465`
+preserved as an ancestor rather than rewritten — exactly as §3 predicted from the
+PR #668 precedent. `require_merged_pr`'s three conditions (`state == MERGED`,
+`pr_head == approved_head`, merge commit on target) are all satisfiable for the
+parent today. B1 is closed and needs no further action.
+
+### 6.2 B2 — RESOLVED, but the ordering played out differently than recommended.
+
+```
+$ gh pr view 692 --json state,closedAt,mergedAt
+state     CLOSED
+closedAt  2026-08-08T09:01:26Z
+mergedAt  null
+```
+
+§3 said "close #692 **after** #693 merges". In practice #692 was closed at
+09:01:26Z, **32m35s before** #693 merged at 09:34:01Z — the reverse order. No
+harm resulted, and the round-1 warning was not wrong so much as imprecisely
+scoped: the hazard it describes requires #692 to be **merged** first, which is
+what makes GitHub auto-close #693 and leaves `require_merged_pr` reading
+ambiguous `state`/`mergedAt`/`mergeCommit` fields. Closing a PR *without*
+merging it touches neither the shared SHA's status nor #693's head branch, so
+that direction is order-independent. **Correction of emphasis for future
+readers: the ordering constraint is on merging, not on closing.**
+
+### 6.3 A1 re-verified at the composed base — the advisory-drift caveat cleared.
+
+§5 flagged that §4.2's evidence is the one claim a moving advisory database could
+undermine. Re-run on the current tree:
+
+```
+$ grep -A2 '"node_modules/nanoid"' package-lock.json
+      "version": "3.3.18",
+
+$ npm audit --omit=dev --audit-level=high
+found 0 vulnerabilities
+EXIT=0
+```
+
+Nine days and 780 `dev` commits later the gate is still green on the production
+dependency tree, and no new high-severity advisory has appeared. The *pre-fix*
+half of §4.2 (exit `1` at `1c2c061a` naming `GHSA-2v37-7h3g-55p8`) was **not**
+re-run — it needs a throwaway detached worktree, and re-running it would test the
+advisory database rather than the parent's change, which is already merged.
+
+### 6.4 A5 re-verified — §4.3's four failures were environmental, as claimed.
+
+```
+$ uv run -p 3.12 python -m pytest tests/security/test_supply_chain_security_gate.py -p no:randomly -q
+.............                       [100%]
+13 passed
+```
+
+Round 1 reported `9 passed, 4 failed` and attributed all four failures to `uv`
+being absent (`test_pip_audit_passes`, `test_sast_scan_passes`, and the two
+`uv lock` negative twins). With `uv` present the suite is fully green, which
+confirms that attribution rather than merely asserting it. It also matches the
+parent commit `e497a465`'s own message body, which claims
+`test_supply_chain_security_gate.py: 13 passed`.
+
+### 6.5 B3 — still open, still non-blocking.
+
+```
+$ git log -1 --format=%B e497a465 | tail -2
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+$ git log -1 --format=%B 0e14ff41 | tail -2
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+```
+
+Neither delivering commit gained `LLM-Agent` / `Task-ID` / `Reviewer` trailers.
+Both are merged and must not be rewritten, so B3 is now permanent history. It
+remains non-blocking (the gate checks ancestry, not trailers). The forward-looking
+half of B3 stands: the authoring lane bypassed or had not installed
+`.githooks/commit-msg`, and a hook-installation check there is still worth doing.
+
+### 6.6 Parent task record
+
+`ODP-SEC-NPM-AUDIT-NANOID-001` is no longer present in `ai-status.json` or
+`current-work.md`. This packet cannot therefore state whether it reached `done`
+through `scripts/ai-status.sh` or was dropped from the board by the
+`github-pr-reimport-2026-08-17` pass that also rewrote this sidecar's own record.
+What *is* durably auditable is the delivery itself: PR #693's merge commit
+`7c21c070` carries `e497a465` onto `dev`, and §6.3 shows the vulnerability
+resolved in the current tree. Flagging the gap rather than guessing at it — if
+the parent needs a board record, that is a separate task, not this sidecar's.
+
+### 6.7 Base advance
+
+§5's round-1 note "Base advance: none" is superseded. This branch had fallen 780
+commits behind `origin/dev`; the base was composed by merge (not rebase), so
+`5d889a94` — the head the reviewer approved in round 1 — survives as an ancestor
+of the new head rather than being rewritten. `npm audit` (§6.3) and the
+supply-chain suite (§6.4) were both run *after* the merge, so this packet's
+surviving claims are verified against the composed tree, not the stale one.
+
+### 6.8 What is left
+
+Nothing in this packet blocks anything. B1 and B2 are resolved by events, A1 and
+A5 re-verified, B3 is closed as unfixable-in-place. The two round-1 follow-up
+observations remain unclaimed and are still worth separate tasks: a
+`test_nanoid_advisory_resolved` version assertion mirroring the postcss one
+(observation 2), and a scheduled audit job so advisory drift arrives as a dated
+alert instead of a red check on an unrelated PR (observation 4) — which is
+precisely the failure mode that produced the duplicate-authoring mess in B1.
