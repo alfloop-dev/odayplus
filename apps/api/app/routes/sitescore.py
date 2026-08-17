@@ -56,6 +56,7 @@ else:
         *,
         repository: InMemorySiteScoreRepository | None = None,
         workflow: SiteScoreDecisionWorkflow | None = None,
+        sitescore_decision_repository_for_tenant: Any | None = None,
         realization_hook: CandidateSiteRealizationHook | None = None,
         audit_log: InMemoryAuditLog | None = None,
         model_binding: ModelBinding | None = None,
@@ -65,6 +66,7 @@ else:
         require_durable_jobs: bool | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
+        from apps.api.app.routes._common import resolve_tenant_id, runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
@@ -123,15 +125,24 @@ else:
                 service = None
         local_job_queue = None if durable_jobs_required else InMemoryJobQueue()
 
-        def require_runtime_binding() -> None:
-            if composition_error is not None:
+        require_runtime_binding = runtime_binding_guard(composition_error)
+
+        def workflow_for_request(request: Request) -> SiteScoreDecisionWorkflow:
+            tid = resolve_tenant_id(request)
+            if sitescore_decision_repository_for_tenant is not None:
+                scoped_store = sitescore_decision_repository_for_tenant(tid)
+                if scoped_store is not None:
+                    return SiteScoreDecisionWorkflow(
+                        audit_log=active_audit_log,
+                        hooks=decision_workflow.hooks,
+                        policy_version=decision_workflow.policy_version,
+                        store=scoped_store,
+                    )
                 raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "code": composition_error.code,
-                        "message": str(composition_error),
-                    },
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to resolve tenant-scoped sitescore decision store",
                 )
+            return decision_workflow
 
         router = APIRouter(
             prefix="/sitescore",
@@ -339,12 +350,15 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="report not found"
                 )
-            decision = decision_workflow.open_decision(
+            active_wf = workflow_for_request(request)
+            tid = resolve_tenant_id(request)
+            decision = active_wf.open_decision(
                 report,
                 created_by=body.created_by,
                 correlation_id=request.state.correlation_id,
+                tenant_id=tid,
             )
-            decision = decision_workflow.submit_for_review(
+            decision = active_wf.submit_for_review(
                 decision.decision_id,
                 submitted_by=body.created_by,
                 correlation_id=request.state.correlation_id,
@@ -364,8 +378,9 @@ else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
                 ) from exc
+            active_wf = workflow_for_request(request)
             try:
-                outcome = decision_workflow.decide(
+                outcome = active_wf.decide(
                     decision_id,
                     action=action,
                     actor=body.actor,
@@ -386,8 +401,9 @@ else:
                 Depends(require_permission("sitescore", Action.VIEW, engine=authz_engine))
             ],
         )
-        def get_decision(decision_id: str) -> dict[str, Any]:
-            decision = decision_workflow.get(decision_id)
+        def get_decision(decision_id: str, request: Request) -> dict[str, Any]:
+            active_wf = workflow_for_request(request)
+            decision = active_wf.get(decision_id)
             if decision is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="decision not found"

@@ -17,6 +17,6 @@ Closeout verification on the merged approved head:
 uv run pytest tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_live_data_fail_closed.py tests/integration/test_operator_live_repository.py
 62 passed, 1 warning
 
-uv run ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_live_data_fail_closed.py tests/integration/test_operator_live_repository.py
+uv run ruff check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py tests/reliability/test_live_data_fail_closed.py tests/integration/test_operator_live_repository.py
 All checks passed!
 ```

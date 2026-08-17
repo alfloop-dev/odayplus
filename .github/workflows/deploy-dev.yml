@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run E2E deployment health, backup, restore, and rollback proof
-        run: python3 scripts/e2e/verify_deployment_health_backup_rollback.py
+        run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
 
   deploy:
     needs: e2e-operational-evidence
@@ -62,6 +62,10 @@ jobs:
       ODP_AUTH_ISSUER: ${{ vars.ODP_AUTH_ISSUER }}
       ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
       ODP_AUTH_JWKS_URI: ${{ vars.ODP_AUTH_JWKS_URI }}
+      # ODP-OPERATOR-SMOKE-RBAC-LIVE-001: ODP_AUTH_PRINCIPAL_MAP_SECRET must map
+      # ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT (numeric subject & SA email) to the least-privilege
+      # composite read roles ["operations_manager", "model_owner", "data_owner"] required
+      # by the canonical live E2E contract (operator_console:view, model:view, integration:view, audit:view).
       ODP_AUTH_PRINCIPAL_MAP_SECRET: ${{ vars.ODP_AUTH_PRINCIPAL_MAP_SECRET }}
       ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
@@ -94,6 +98,11 @@ jobs:
       ODP_EXTERNAL_PROVIDER_MODE: live
       ODP_PERSISTENCE: postgresql
       ODP_OBJECT_STORE: gcs
+      # Both values must match the smoke principal's tenant claim. Do not add a
+      # placeholder fallback: deploy_cloud_run_waji.sh fails closed when the
+      # environment has not configured a tenant explicitly.
+      ODP_SCHEDULED_INGESTION_TENANT_ID: ${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID }}
+      ODP_TENANT_ID: ${{ vars.ODP_TENANT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -106,13 +115,13 @@ jobs:
         run: uv python install 3.12
 
       - name: Run Secret Scan
-        run: python3 scripts/security/secret_scan.py
+        run: python3 delivery_toolchain/security/secret_scan.py
 
       - name: Run Python SAST Scan
-        run: python3 scripts/security/sast_scan.py
+        run: python3 delivery_toolchain/security/sast_scan.py
 
       - name: Generate SBOM
-        run: python3 scripts/security/generate_sbom.py
+        run: python3 delivery_toolchain/security/generate_sbom.py
 
       # The preflight's repository capability checks import the real provider
       # registry (httpx and friends), so the locked project environment must
@@ -126,7 +135,7 @@ jobs:
             echo "Error: Workload Identity Federation variables are required." >&2
             exit 1
           fi
-          uv run --frozen python scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+          uv run --frozen python product_ops/deployment/validate_cloud_run_live_deployment.py preflight \
             --environment dev \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --output .odp_data/deployment/cloud-run-preflight.json
@@ -147,7 +156,7 @@ jobs:
       - name: Build, push, deploy, and verify Cloud Run
         env:
           IMAGE_TAG: dev-${{ github.sha }}
-        run: ./scripts/deploy_cloud_run_waji.sh
+        run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
       - name: Upload deployment validation reports
         if: always()
@@ -165,8 +174,8 @@ jobs:
           # `*-execution.json`, `*-execution-list.json`). Those carry the deployed env
           # block and secret selectors verbatim and must never leave the runner. Every
           # file named below is written by
-          # `scripts/deployment/validate_cloud_run_live_deployment.py` (or
-          # `scripts/e2e/check_live_e2e_gate.py`) and carries
+          # `product_ops/deployment/validate_cloud_run_live_deployment.py` (or
+          # `delivery_toolchain/e2e/check_live_e2e_gate.py`) and carries
           # `secret_values_redacted: true`: check names, outcomes, and env-var *names*
           # only, never a bound value. `tests/ops/test_deploy_workflow_contract.py`
           # holds this list to the receipts the deploy script actually produces.

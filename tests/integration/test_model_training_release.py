@@ -19,7 +19,7 @@ from modules.learninghub import (
     LearningHubService,
     ReleaseSagaState,
 )
-from scripts.models.contracts import (
+from product_ops.modeling.contracts import (
     MODEL_SPECS,
     DataBounds,
     ModelTrainingConfigurationError,
@@ -27,23 +27,23 @@ from scripts.models.contracts import (
     require_approval_document,
     require_production_database_url,
 )
-from scripts.models.install_views import (
+from product_ops.modeling.install_views import (
     MODEL_READY_SQL_PATH,
     ModelReadyViewInstaller,
 )
-from scripts.models.install_views import (
+from product_ops.modeling.install_views import (
     main as install_views_main,
 )
-from scripts.models.release import (
+from product_ops.modeling.release import (
     BoundedModelTrainingRelease,
     _temporal_split,
     _validate_regression_temporally,
     prepare_model_rows,
 )
-from scripts.models.release import (
+from product_ops.modeling.release import (
     main as release_main,
 )
-from scripts.models.storage import (
+from product_ops.modeling.storage import (
     GcsArtifactStore,
     GcsObject,
     LoadedModelReadyRows,
@@ -160,7 +160,7 @@ class FakeInstallationClient:
         *,
         missing_relations: tuple[str, ...] = (),
     ) -> None:
-        from scripts.models.install_views import PREREQUISITE_COLUMNS
+        from product_ops.modeling.install_views import PREREQUISITE_COLUMNS
 
         self.columns = {
             relation: tuple(columns) for relation, columns in PREREQUISITE_COLUMNS.items()
@@ -196,7 +196,7 @@ class FakeInstallationClient:
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         self.executions.append((sql, params))
         if "CREATE OR REPLACE VIEW model_ready.forecast_training_view" in sql:
-            from scripts.models.install_views import ACTIVE_VIEW_CONTRACTS
+            from product_ops.modeling.install_views import ACTIVE_VIEW_CONTRACTS
 
             for relation_name, version in ACTIVE_VIEW_CONTRACTS.items():
                 self.relations.add(relation_name)
@@ -1359,7 +1359,7 @@ def test_documented_package_contains_no_embedded_credentials() -> None:
     paths = (
         Path("infra/mlflow/Dockerfile"),
         Path("infra/mlflow/README.md"),
-        Path("scripts/models/README.md"),
+        Path("product_ops/modeling/README.md"),
     )
     combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "BEGIN PRIVATE KEY" not in combined

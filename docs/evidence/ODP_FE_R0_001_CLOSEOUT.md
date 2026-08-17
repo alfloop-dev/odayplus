@@ -95,6 +95,6 @@ finalization pass because the worktree has no installed `node_modules`; the
 reviewer already validated the OpsBoard shell and shell smoke against
 `origin/dev`, and this is not a closeout evidence blocker.
 
-`scripts/e2e/check_product_release_gate.py` currently fails on unrelated
+`delivery_toolchain/e2e/check_product_release_gate.py` currently fails on unrelated
 closeout-queue actor mismatches for `ODP-FE-XCUT-001` and
 `ODP-FE-XCUT-DOMAIN-001`; that is outside ODP-FE-R0-001 scope.

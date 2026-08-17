@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from pathlib import Path
 from typing import Any
+
+from shared.integrity import compute_content_sha256
 
 RECEIPT_SCHEMA_VERSION = 1
 RECEIPT_KIND = "pg16-model-ready-inventory-receipt"
@@ -25,12 +26,7 @@ class ModelReadyReceiptError(RuntimeError):
 
 def compute_receipt_sha256(body: dict[str, Any]) -> str:
     """Return the canonical content hash, excluding the integrity envelope."""
-    canonical = json.dumps(
-        {key: value for key, value in body.items() if key != "integrity"},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return compute_content_sha256(body)
 
 
 def load_model_ready_receipt(path: Path = RECEIPT_PATH) -> dict[str, Any]:

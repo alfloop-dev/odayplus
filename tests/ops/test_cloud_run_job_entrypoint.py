@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from types import SimpleNamespace
 
-from scripts.deployment import cloud_run_job_entrypoint as entrypoint
+from product_ops.deployment import cloud_run_job_entrypoint as entrypoint
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs.queue import InMemoryJobQueue, JobRequest, JobStatus
 
@@ -60,6 +60,16 @@ class ExplodingQueue(InMemoryJobQueue):
 def test_scheduler_fails_when_run_once_swallows_enqueue_exception(monkeypatch) -> None:
     bundle = replace(build_persistence(), job_queue=ExplodingQueue())
     monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+    monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", "tenant-ops")
+
+    assert entrypoint.run_scheduler() == entrypoint.EXIT_FAILED
+
+
+def test_scheduler_fails_when_tenant_unconfigured(monkeypatch) -> None:
+    bundle = build_persistence()
+    monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+    monkeypatch.delenv("ODP_SCHEDULED_INGESTION_TENANT_ID", raising=False)
+    monkeypatch.delenv("ODP_TENANT_ID", raising=False)
 
     assert entrypoint.run_scheduler() == entrypoint.EXIT_FAILED
 
@@ -67,6 +77,7 @@ def test_scheduler_fails_when_run_once_swallows_enqueue_exception(monkeypatch) -
 def test_scheduler_requires_persisted_enqueue_receipt(monkeypatch) -> None:
     bundle = build_persistence()
     monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+    monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", "tenant-ops")
 
     assert entrypoint.run_scheduler() == 0
     assert bundle.job_queue.count_active_jobs() == 1
@@ -151,6 +162,7 @@ LIVE_DEV_WORKER_ENV = {
 }
 
 SCHEDULED_FETCH_PAYLOAD = {
+    "tenant_id": "tenant-dev",
     "provider_id": "listing.partner_feed",
     "schedule_id": "hourly-listing",
     "freshness_sla_hours": 6,

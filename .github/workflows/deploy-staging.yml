@@ -81,6 +81,11 @@ jobs:
       ODP_EXTERNAL_PROVIDER_MODE: live
       ODP_PERSISTENCE: postgresql
       ODP_OBJECT_STORE: gcs
+      # Both values must match the smoke principal's tenant claim. Do not add a
+      # placeholder fallback: deploy_cloud_run_waji.sh fails closed when the
+      # environment has not configured a tenant explicitly.
+      ODP_SCHEDULED_INGESTION_TENANT_ID: ${{ vars.ODP_SCHEDULED_INGESTION_TENANT_ID }}
+      ODP_TENANT_ID: ${{ vars.ODP_TENANT_ID }}
     steps:
       - uses: actions/checkout@v4
 
@@ -93,13 +98,13 @@ jobs:
         run: uv python install 3.12
 
       - name: Run Secret Scan
-        run: python3 scripts/security/secret_scan.py
+        run: python3 delivery_toolchain/security/secret_scan.py
 
       - name: Run Python SAST Scan
-        run: python3 scripts/security/sast_scan.py
+        run: python3 delivery_toolchain/security/sast_scan.py
 
       - name: Generate SBOM
-        run: python3 scripts/security/generate_sbom.py
+        run: python3 delivery_toolchain/security/generate_sbom.py
 
       - name: Validate release authority, WIF, and live runtime
         run: |
@@ -111,7 +116,7 @@ jobs:
             echo "Error: Workload Identity Federation variables are required." >&2
             exit 1
           fi
-          python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+          python3 product_ops/deployment/validate_cloud_run_live_deployment.py preflight \
             --environment staging \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --output .odp_data/deployment/cloud-run-preflight.json
@@ -132,7 +137,7 @@ jobs:
       - name: Build, push, deploy, and verify Cloud Run
         env:
           IMAGE_TAG: staging-${{ github.sha }}
-        run: ./scripts/deploy_cloud_run_waji.sh
+        run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
       - name: Verify configured staging authority endpoint
         env:
@@ -140,7 +145,7 @@ jobs:
           ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
           ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
         run: |
-          python3 scripts/e2e/check_remote_staging_proof.py \
+          python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
             --expected-sha "$ODAY_RELEASE_SHA" \
             --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
             --output ".odp_data/remote-staging-proof/staging-${GITHUB_RUN_ID}.json"
@@ -165,9 +170,9 @@ jobs:
           # `*-execution-list.json`), which restate the deployed env block and its
           # secret selectors verbatim and must never leave the runner. Every file
           # named below is written by
-          # `scripts/deployment/validate_cloud_run_live_deployment.py`,
-          # `scripts/e2e/check_live_e2e_gate.py`, or
-          # `scripts/e2e/check_remote_staging_proof.py`, and carries redacted
+          # `product_ops/deployment/validate_cloud_run_live_deployment.py`,
+          # `delivery_toolchain/e2e/check_live_e2e_gate.py`, or
+          # `delivery_toolchain/e2e/check_remote_staging_proof.py`, and carries redacted
           # check results only. The staging proof keeps the run-scoped name the
           # checker step above writes. `tests/ops/test_deploy_workflow_contract.py`
           # holds both this list and Deploy Dev's to the receipts those scripts

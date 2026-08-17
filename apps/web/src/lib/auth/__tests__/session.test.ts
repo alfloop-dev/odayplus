@@ -26,7 +26,7 @@ describe("encrypted web session", () => {
       readWebSession(sealed, { secret: SECRET, nowSeconds: 1_500 }),
     ).resolves.toEqual(session);
     await expect(
-      readWebSession(`${sealed.slice(0, -1)}x`, {
+      readWebSession(`${sealed}tampered`, {
         secret: SECRET,
         nowSeconds: 1_500,
       }),

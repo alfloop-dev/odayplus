@@ -29,7 +29,7 @@ import yaml
 ROOT = pathlib.Path(__file__).resolve().parents[4]
 WORKFLOW = ROOT / ".github/workflows/deploy-dev.yml"
 
-# Written by scripts/deploy_cloud_run_waji.sh on a green deploy.
+# Written by product_ops/deployment/deploy_cloud_run_waji.sh on a green deploy.
 VALIDATOR_REPORTS = (
     ".odp_data/deployment/cloud-run-preflight.json",
     ".odp_data/deployment/cloud-run-smoke.json",

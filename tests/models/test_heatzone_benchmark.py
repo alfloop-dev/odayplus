@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from models.shared_ml.production_contracts import PRODUCTION_MODEL_CONTRACTS
-from scripts.models.heatzone_benchmark import (
+from product_ops.modeling.heatzone_benchmark import (
     MINIMUM_REQUIRED_LABELS,
     compute_benchmark_receipt_sha256,
     evaluate_heatzone_benchmark,
@@ -82,7 +82,7 @@ def test_heatzone_benchmark_evaluation_passes_when_sufficient_labels_evidence_an
     auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
     import json
     auth_file.write_text(json.dumps(evidence), encoding="utf-8")
-    monkeypatch.setattr("scripts.models.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
+    monkeypatch.setattr("product_ops.modeling.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
 
     result = evaluate_heatzone_benchmark(
         observed_labels=250,
@@ -107,7 +107,7 @@ def test_heatzone_benchmark_evaluation_fails_closed_when_metrics_below_baseline(
     auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
     import json
     auth_file.write_text(json.dumps(evidence), encoding="utf-8")
-    monkeypatch.setattr("scripts.models.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
+    monkeypatch.setattr("product_ops.modeling.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
 
     result = evaluate_heatzone_benchmark(
         observed_labels=250,
@@ -201,7 +201,7 @@ def test_validate_gate1_receipt_fails_closed_on_inventory_loader_failure(monkeyp
     def _mock_failing_loader():
         raise OSError("canonical inventory receipt unreadable")
 
-    monkeypatch.setattr("scripts.models.heatzone_benchmark.load_model_ready_receipt", _mock_failing_loader)
+    monkeypatch.setattr("product_ops.modeling.heatzone_benchmark.load_model_ready_receipt", _mock_failing_loader)
 
     with pytest.raises(ValueError, match="Gate 1 receipt lineage validation failed closed"):
         validate_gate1_receipt(receipt, inventory_receipt=None)
@@ -242,7 +242,7 @@ def test_gate1_receipt_validate_rejects_forged_passed_with_ndcg_below_baseline(t
     evidence = _mock_valid_evidence()
     auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
     auth_file.write_text(json.dumps(evidence), encoding="utf-8")
-    monkeypatch.setattr("scripts.models.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
+    monkeypatch.setattr("product_ops.modeling.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
 
     inv = _mock_inventory_receipt()
     inv["capabilities"]["heatzone"]["observed_count"] = 250
@@ -274,7 +274,7 @@ def test_gate1_receipt_validate_rejects_forged_passed_with_survey_rate_below_bas
     evidence = _mock_valid_evidence()
     auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
     auth_file.write_text(json.dumps(evidence), encoding="utf-8")
-    monkeypatch.setattr("scripts.models.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
+    monkeypatch.setattr("product_ops.modeling.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
 
     inv = _mock_inventory_receipt()
     inv["capabilities"]["heatzone"]["observed_count"] = 250
@@ -305,7 +305,7 @@ def test_gate1_receipt_validate_rejects_metric_and_baseline_drift(tmp_path, monk
     evidence = _mock_valid_evidence()
     auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
     auth_file.write_text(json.dumps(evidence), encoding="utf-8")
-    monkeypatch.setattr("scripts.models.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
+    monkeypatch.setattr("product_ops.modeling.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
 
     inv = _mock_inventory_receipt()
     inv["capabilities"]["heatzone"]["observed_count"] = 250
@@ -346,7 +346,7 @@ def test_benchmark_public_apis_reject_custom_authority_path_kwarg() -> None:
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         validate_gate1_receipt(receipt, inv, authoritative_evidence_path="/tmp/foo.json")
 
-    from scripts.models.heatzone_benchmark import resolve_heatzone_benchmark_evidence
+    from product_ops.modeling.heatzone_benchmark import resolve_heatzone_benchmark_evidence
     with pytest.raises(TypeError, match="unexpected keyword argument"):
         resolve_heatzone_benchmark_evidence(evidence, allow_custom_path=True)
 
@@ -467,7 +467,7 @@ def test_report_md_and_handback_json_verdict_aware_when_passed_and_fail_closed(t
     evidence = _mock_valid_evidence()
     auth_file = tmp_path / "AUTHORITATIVE_EVIDENCE.json"
     auth_file.write_text(json.dumps(evidence), encoding="utf-8")
-    monkeypatch.setattr("scripts.models.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
+    monkeypatch.setattr("product_ops.modeling.heatzone_benchmark.AUTHORITATIVE_EVIDENCE_PATH", auth_file)
 
     inv = _mock_inventory_receipt()
     inv["capabilities"]["heatzone"]["observed_count"] = 250

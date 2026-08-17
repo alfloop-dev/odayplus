@@ -212,7 +212,7 @@ against the same DSN:
 ```
 
 Actual train/validation/test = **0/0/0 against the contract minimum of 200
-rows** (`scripts/models/contracts.py`, `minimum_rows=200`). The geography
+rows** (`product_ops/modeling/contracts.py`, `minimum_rows=200`). The geography
 layer this task owns is complete (478 distinct stores with both geography and
 transactions), but three independent upstream gates in
 `model_ready.heatzone_training_view` each evaluate to zero on the real data:

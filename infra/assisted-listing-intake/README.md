@@ -3,7 +3,7 @@
 Task: ODP-INTAKE-RELEASE-001 · Design: ODP-SD-INTAKE-001 v0.2.1
 
 Machine-readable release governance for the assisted listing intake rollout.
-Consumed by `scripts/release/assisted_listing_intake/run.py` (the release
+Consumed by `delivery_toolchain/release/assisted_listing_intake/run.py` (the release
 drill/gate harness) and by human release authority.
 
 | File | Purpose |
@@ -17,7 +17,7 @@ drill/gate harness) and by human release authority.
 Run the gates:
 
 ```bash
-python3 scripts/release/assisted_listing_intake/run.py --phase all \
+python3 delivery_toolchain/release/assisted_listing_intake/run.py --phase all \
   --output-dir docs/evidence/completion/ODP-INTAKE-RELEASE-001
 ```
 

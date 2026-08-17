@@ -18,7 +18,7 @@ enrichment/reference providers that have a live upstream today:
 `REQUIRED_PRODUCTION_PROVIDER_IDS` in
 `modules/external_data/connectors/provider_registry.py` and
 `REQUIRED_PRODUCT_PROVIDER_IDS` in
-`scripts/deployment/validate_cloud_run_live_deployment.py`). It is **not deleted**:
+`product_ops/deployment/validate_cloud_run_live_deployment.py`). It is **not deleted**:
 `ListingPartnerFeedProvider`, its scheduled-fetch worker, connectivity probe, and
 its full test suite remain intact.
 

@@ -120,6 +120,7 @@ class IngestionRunRecord:
     lineage: tuple[LineageRecord, ...] = ()
     alerts: tuple[dict[str, Any], ...] = ()
     audit_events: tuple[dict[str, Any], ...] = ()
+    tenant_id: str = ""
 
     def freshness_dict(self) -> dict[str, Any]:
         return self.freshness.to_dict()
@@ -152,6 +153,7 @@ class IngestionRunRecord:
             "total_count": self.total_count,
             "retry_after": _iso(self.retry_after),
             "message": self.message,
+            "tenant_id": self.tenant_id,
             "freshness": self.freshness.to_dict(),
             "quarantine": [record.to_dict() for record in self.quarantine],
             "lineage": [record.to_dict() for record in self.lineage],
@@ -198,6 +200,7 @@ def build_ingestion_run_record(
     freshness_sla: timedelta,
     trigger: str,
     api_idempotency_key: str | None = None,
+    tenant_id: str = "",
 ) -> IngestionRunRecord:
     """Fold a scheduler run + provider result into one persistable aggregate."""
 
@@ -249,9 +252,11 @@ def build_ingestion_run_record(
                 )
 
     freshness = freshness_evidence_from_run(run, freshness_sla=freshness_sla)
+    clean_tid = str(tenant_id).strip() if tenant_id else ""
+    record_run_id = f"{run.job_id}:{clean_tid}" if clean_tid else run.job_id
 
     return IngestionRunRecord(
-        run_id=run.job_id,
+        run_id=record_run_id,
         provider_id=run.provider_id,
         schedule_id=run.schedule_id,
         trigger=trigger,
@@ -277,6 +282,7 @@ def build_ingestion_run_record(
         total_count=total_count,
         message=run.message,
         retry_after=run.retry_after,
+        tenant_id=tenant_id,
         freshness=freshness,
         quarantine=tuple(quarantine),
         lineage=tuple(lineage),
