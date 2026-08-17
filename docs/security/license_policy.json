@@ -9,22 +9,25 @@
   "prepared_from": {
     "$comment": "Inventory taken from the installed trees, not from a template. npm from node_modules package.json license fields; python from uv.lock names intersected with installed distribution metadata, which excludes Ubuntu system packages.",
     "npm_packages_scanned": 464,
-    "python_packages_declared": 240
+    "python_packages_declared": 241
   },
 
   "allow": {
     "$comment": "Permissive licenses observed in the tree. Counts are npm unless noted.",
     "licenses": [
-      { "id": "MIT", "observed": 368, "note": "Also 25+19 python distributions." },
-      { "id": "ISC", "observed": 32 },
-      { "id": "Apache-2.0", "observed": 23, "obligation": "NOTICE file retention; state changes on modification." },
-      { "id": "BSD-2-Clause", "observed": 11 },
-      { "id": "BSD-3-Clause", "observed": 7 },
+      { "id": "MIT", "observed": 368, "note": "Also 99 python distributions." },
+      { "id": "ISC", "observed": 32, "note": "Also 1 python distribution." },
+      { "id": "Apache-2.0", "observed": 23, "note": "Also 68 python distributions.", "obligation": "NOTICE file retention; state changes on modification." },
+      { "id": "BSD-2-Clause", "observed": 11, "note": "Also 4 python distributions." },
+      { "id": "BSD-3-Clause", "observed": 7, "note": "Also 43 python distributions." },
       { "id": "0BSD", "observed": 1 },
       { "id": "BlueOak-1.0.0", "observed": 1, "example": "minimatch@10.2.5" },
       { "id": "CC0-1.0", "observed": 1, "example": "language-subtag-registry@0.3.23" },
       { "id": "Python-2.0", "observed": 1, "example": "argparse@2.0.1" },
-      { "id": "PSF-2.0", "observed": 2, "note": "python" }
+      { "id": "PSF-2.0", "observed": 5, "note": "python distributions" },
+      { "id": "MIT-0", "observed": 1, "example": "cffi" },
+      { "id": "MIT-CMU", "observed": 1, "example": "pillow" },
+      { "id": "ZPL-2.1", "observed": 1, "example": "waitress" }
     ]
   },
 
@@ -39,7 +42,8 @@
           { "package": "lightningcss-linux-x64-musl", "version": "1.33.0", "scope": "prod" },
           { "package": "axe-core", "version": "4.12.1", "scope": "dev" },
           { "package": "@axe-core/playwright", "version": "4.12.1", "scope": "dev" },
-          { "package": "certifi", "version": "2023.11.17", "scope": "prod", "ecosystem": "python" }
+          { "package": "certifi", "version": "2023.11.17", "scope": "prod", "ecosystem": "python" },
+          { "package": "tqdm", "version": "4.69.0", "scope": "prod", "ecosystem": "python" }
         ],
         "obligation": "File-level copyleft. If an MPL-2.0 source file is modified, that file's source must be made available under MPL-2.0. Combining with proprietary code in a larger work is permitted.",
         "current_state": "No MPL-2.0 source file is modified in this repository. Consumption is unmodified upstream artifacts only."
@@ -100,19 +104,47 @@
   },
 
   "deny": {
-    "$comment": "None of these were found in either tree at the time of preparation. The list is prospective.",
-    "licenses": ["GPL-2.0-only", "GPL-2.0-or-later", "GPL-3.0-only", "GPL-3.0-or-later", "AGPL-3.0-only", "AGPL-3.0-or-later", "SSPL-1.0", "BUSL-1.1", "Commons-Clause"],
+    "$comment": "None of these were found in either tree at the time of preparation. The list is prospective. Note: Commons Clause is a license condition/rider rather than a standalone SPDX identifier.",
+    "licenses": [
+      "GPL-2.0-only",
+      "GPL-2.0-or-later",
+      "GPL-3.0-only",
+      "GPL-3.0-or-later",
+      "AGPL-3.0-only",
+      "AGPL-3.0-or-later",
+      "SSPL-1.0",
+      "BUSL-1.1"
+    ],
+    "license_riders": [
+      "Commons-Clause"
+    ],
     "observed_in_tree": []
+  },
+
+  "compound_expressions": {
+    "$comment": "SPDX compound expression resolution rules for evaluation against SBOM component licenses.",
+    "or_rule": "allowed_if_any_disjunct_allowed",
+    "and_rule": "most_restrictive_term_governs",
+    "precedence_order": [
+      "deny",
+      "review_required",
+      "allow_with_obligations",
+      "allow"
+    ]
   },
 
   "unknown_handling": {
     "third_party": "review_required",
     "first_party_workspace": "resolve_by_declaring_license",
+    "compound_expressions": {
+      "or_operator": "allowed if at least one disjunct is in allow or allow_with_obligations (subject to that disjunct's obligations)",
+      "and_operator": "governed by the most restrictive conjunct across deny > review_required > allow_with_obligations > allow"
+    },
     "$comment": "PROPRIETARY is not currently observed. If it appears it is review_required."
   },
 
   "enforcement": {
-    "$comment": "There is no license gate implemented today. scripts/security/ contains generate_sbom.py, sast_scan.py, secret_scan.py and sign_images.sh only, and the committed SBOM carries no license data for any of its 778 components. Enforcement below describes what must be built once this policy is approved; approving the policy does not by itself create a gate.",
+    "$comment": "There is no license gate implemented today. scripts/security/ contains generate_sbom.py, sast_scan.py, secret_scan.py and sign_images.sh only, and the committed SBOM carries no license data for any of its 780 components. Enforcement below describes what must be built once this policy is approved; approving the policy does not by itself create a gate.",
     "gate_implemented": false,
     "sbom_carries_license_data": false,
     "required_before_enforcement": [
