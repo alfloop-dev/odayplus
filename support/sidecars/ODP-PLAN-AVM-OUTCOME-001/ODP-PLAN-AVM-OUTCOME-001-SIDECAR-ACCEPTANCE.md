@@ -161,8 +161,8 @@ usefulness only. Parent reviewer `Antigravity5` owns the implementation verdict.
   handoff gate, and program deployment boundary.
 - `docs/evidence/DEVELOPMENT_PLAN_GAP_EXECUTION_TASKS_2026-07-30.md`, AVM
   acceptance, Human/Ops backfill gate, and dependency table.
-- `models/shared_ml/production_contracts.py`, `scripts/models/contracts.py`,
-  `scripts/models/install_views.py`, and
+- `models/shared_ml/production_contracts.py`, `models/model_ready/contracts.py`,
+  `product_ops/modeling/install_views.py`, and
   `tests/integration/test_avm_official_outcome_contract.py`, current repository
   identifiers, thresholds, governed-disabled reasons, and model-surface
   separation.
