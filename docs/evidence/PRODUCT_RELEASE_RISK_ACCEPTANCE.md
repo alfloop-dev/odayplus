@@ -31,8 +31,8 @@ proof below is captured and accepted.
 
 | Area | Accepted basis | Evidence |
 |---|---|---|
-| Product E2E readiness | Deterministic Docker product stack, seeded API/source data, Playwright P0 specs (PV-005/006/007), map canvas/a11y specs | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md`, `scripts/e2e/run_product_e2e.sh` |
-| Go/No-Go boundary | Conditional-go packet keeps live provider, live map, and remote staging explicitly conditional | `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`, `scripts/e2e/check_product_go_no_go.py` |
+| Product E2E readiness | Deterministic Docker product stack, seeded API/source data, Playwright P0 specs (PV-005/006/007), map canvas/a11y specs | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md`, `delivery_toolchain/e2e/run_product_e2e.sh` |
+| Go/No-Go boundary | Conditional-go packet keeps live provider, live map, and remote staging explicitly conditional | `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`, `delivery_toolchain/e2e/check_product_go_no_go.py` |
 | Audit evidence | Retained audit bundle checksums and correlation IDs in product specs | `corr-pv006-ops-intervention-price-ad`, `corr-pv007-avm-netplan-learning-audit`, `corr-product-e2e-seed-001` |
 | Deployment/backup/rollback | Deterministic E2E backup/restore/rollback proof | `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md` |
 
@@ -48,12 +48,12 @@ mock-live evidence.
 |---|---|---|---|
 | Live external provider proof (credentials / license / geocoder) | `ODP-EXT-PROD-001/002/003` — issues #132, #133, #134 | `external_blocked` | Redacted production credential/license/geocoder runtime proof |
 | Live map endpoint proof (remote tile + geocoder smoke) | `ODP-MAP-STAGE-001/002` — issues #135, #136 | `external_blocked` | Remote staging map endpoint + geocoder smoke |
-| Remote staging rollout proof | `ODP-PV-STAGE-001/002` — issues #137, #138 | `external_blocked` | Configured remote staging target passing `scripts/e2e/check_remote_staging_proof.py` + staging drill |
+| Remote staging rollout proof | `ODP-PV-STAGE-001/002` — issues #137, #138 | `external_blocked` | Configured remote staging target passing `delivery_toolchain/e2e/check_remote_staging_proof.py` + staging drill |
 
 Live closeout state for all of the above is tracked in
 `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`, and each redacted
 handback must pass
-`scripts/e2e/check_external_proof_handback_bundle.py` against the release
+`delivery_toolchain/e2e/check_external_proof_handback_bundle.py` against the release
 target PR #82 `headRefOid` before its issue may be closed.
 
 ## Automated Gate Posture (Deliberately Fail-Closed)
@@ -63,12 +63,12 @@ acceptance is a **human** decision layered on top of the machine gate; it does
 **not** flip the machine gate to pass, and no code change may be made to force
 the gate green for the deferred live items.
 
-- `make product-release-gate` (`scripts/e2e/check_product_release_gate.py` +
-  `scripts/e2e/run_product_e2e.sh`) remains the release-blocking command and
+- `make product-release-gate` (`delivery_toolchain/e2e/check_product_release_gate.py` +
+  `delivery_toolchain/e2e/run_product_e2e.sh`) remains the release-blocking command and
   continues to fail-closed until the deferred live proof and closeout-queue
   reconciliation are satisfied. It is intentionally not overridden for this
   internal milestone.
-- `scripts/e2e/check_product_go_no_go.py` verifies the go/no-go packet still
+- `delivery_toolchain/e2e/check_product_go_no_go.py` verifies the go/no-go packet still
   keeps live provider, live map, and remote staging **conditional** until
   issues #132–#138 are accepted. This guard passing is the required proof that
   this risk acceptance did not silently promote a live claim.
@@ -96,8 +96,8 @@ the gate green for the deferred live items.
 - `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`
 - `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`
 - `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`
-- `scripts/e2e/check_product_release_gate.py`
-- `scripts/e2e/check_product_go_no_go.py`
+- `delivery_toolchain/e2e/check_product_release_gate.py`
+- `delivery_toolchain/e2e/check_product_go_no_go.py`
 
 ---
 
@@ -160,7 +160,7 @@ full URL as sensitive and do not commit it.
 ### Remote Staging: Code Path and Required Config
 
 `.github/workflows/deploy-staging.yml` runs
-`scripts/e2e/check_remote_staging_proof.py`. Missing host/url/secret owner
+`delivery_toolchain/e2e/check_remote_staging_proof.py`. Missing host/url/secret owner
 produce a failed check, not a fabricated pass.
 
 **Required GitHub `staging` environment configuration:**
@@ -205,7 +205,7 @@ the time of writing and gate any production-go decision:
 - `ODP-PGAP-RELIABILITY-001` — incomplete
 
 Verification is limited to deterministic commands run in this repo (e.g.
-`python3 scripts/e2e/check_product_release_gate.py`, `python3 -m pytest`). Live
+`python3 delivery_toolchain/e2e/check_product_release_gate.py`, `python3 -m pytest`). Live
 external-provider, live map tile/geocoder, and remote-staging proofs remain
 **absent** and fail-closed, as tabled above. No `file://` worktree-local paths are
 cited as evidence; only repo-relative paths and committed artifacts are authoritative.

@@ -7,9 +7,7 @@
     "state_file": ".orchestrator/state.json",
     "event_queue": ".orchestrator/event-queue.jsonl",
     "approval_queue": ".orchestrator/approval-queue.json",
-    "sidecar_catalog": ".orchestrator/sidecar_catalog.json",
     "github_bus_state": ".orchestrator/github-bus-state.json",
-    "github_webhook_events": ".orchestrator/github-webhook-events.jsonl",
     "github_relay_state": ".orchestrator/github-relay-state.json",
     "provider_capabilities": ".orchestrator/provider_capabilities.json",
     "claude_mcp_config": ".orchestrator/claude-approval-broker.mcp.json"
@@ -17,7 +15,8 @@
   "permission_broker": {
     "allowed_workspace_roots": [
       ".",
-      "../execute-plans"
+      "../execute-plans",
+      "../oday-data-platform"
     ]
   },
   "watcher": {
@@ -30,6 +29,7 @@
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
+    "external_command_timeout_seconds": 30,
     "auto_refresh_provider_capabilities": true
   },
   "worker_runtime": {
@@ -71,7 +71,8 @@
     "pause_on_capacity_failure": true,
     "pause_on_auth_failure": true,
     "capacity_pause_seconds": 900,
-    "auth_pause_seconds": 900
+    "auth_pause_seconds": 900,
+    "quota_terminal_hint_max_seconds": 3600
   },
   "worker_tree_guard": {
     "enabled": false,
@@ -100,12 +101,13 @@
     "root": "/tmp/pantheon-worker-worktrees",
     "base_ref": "origin/main",
     "reuse_existing": true,
+    "recover_clean_diverged_worktrees": true,
+    "git_network_timeout_seconds": 30,
     "execution_reasons": [
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
-      "review_ready_dispatch",
-      "chair_review:*"
+      "review_ready_dispatch"
     ]
   },
   "worker_retry": {
@@ -201,20 +203,6 @@
       "Copilot": ["Codex", "Codex2", "Claude", "Claude2", "Antigravity", "Antigravity2"]
     }
   },
-  "underutilization_dispatch": {
-    "enabled": false,
-    "threshold_ratio": 0.5,
-    "continuous_window_seconds": 900,
-    "cooldown_seconds": 900,
-    "max_new_sidecars_per_wave": 2,
-    "max_active_sidecars_per_agent": 1,
-    "productive_worker_statuses": [
-      "running",
-      "waiting_approval",
-      "suspended_approval",
-      "retry_backoff"
-    ]
-  },
   "approvals": {
     "stale_pending_seconds": 1800
   },
@@ -271,11 +259,13 @@
   "github_bus": {
     "enabled": true,
     "command_timeout_seconds": 8,
+    "remote_ref_snapshot_ttl_seconds": 30,
+    "remote_ref_snapshot_max_stale_seconds": 300,
     "poll_interval_seconds": 30,
     "repo": null,
     "default_branch": "main",
     "offline_backoff_seconds": 300,
-    "auto_request_reviewers": true,
+    "archive_housekeeping_auto_merge": true,
     "close_resolved_issues": true,
     "labels": {
       "review": [
@@ -329,18 +319,6 @@
       "review_pr": ".orchestrator/templates/github_review_pr.md"
     },
     "phase3": {
-      "github_app": {
-        "enabled": false,
-        "app_id_env": "PANTHEON_GITHUB_APP_ID",
-        "private_key_env": "PANTHEON_GITHUB_APP_PRIVATE_KEY",
-        "installation_id_env": "PANTHEON_GITHUB_INSTALLATION_ID"
-      },
-      "webhook": {
-        "enabled": false,
-        "host": "127.0.0.1",
-        "port": 8776,
-        "secret_env": "PANTHEON_GITHUB_WEBHOOK_SECRET"
-      },
       "cloud_relay": {
         "enabled": false,
         "url_env": "PANTHEON_GITHUB_RELAY_URL",
@@ -379,9 +357,16 @@
       "pending"
     ]
   },
+  "account_pools": {
+    "antigravity_main": {"state": "healthy", "max_concurrent": 3},
+    "claude_main": {"state": "healthy", "max_concurrent": 2},
+    "codex_bjoe": {"state": "healthy", "max_concurrent": 3},
+    "codex_lupin": {"state": "healthy", "max_concurrent": 2}
+  },
   "agents": {
     "claude": {
       "display_name": "Claude",
+      "account_pool": "claude_main",
       "provider": "claude",
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -389,6 +374,7 @@
     },
     "claude2": {
       "display_name": "Claude2",
+      "account_pool": "claude_main",
       "provider": "claude",
       "adapter": "claude_cli",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -396,6 +382,7 @@
     },
     "antigravity": {
       "display_name": "Antigravity",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -403,6 +390,7 @@
     },
     "antigravity2": {
       "display_name": "Antigravity2",
+      "account_pool": "antigravity_main",
       "provider": "antigravity2",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -410,6 +398,7 @@
     },
     "antigravity3": {
       "display_name": "Antigravity3",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -417,6 +406,7 @@
     },
     "antigravity4": {
       "display_name": "Antigravity4",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -424,6 +414,7 @@
     },
     "antigravity5": {
       "display_name": "Antigravity5",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -431,6 +422,7 @@
     },
     "antigravity6": {
       "display_name": "Antigravity6",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -438,6 +430,7 @@
     },
     "antigravity7": {
       "display_name": "Antigravity7",
+      "account_pool": "antigravity_main",
       "provider": "antigravity",
       "adapter": "antigravity",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -445,6 +438,7 @@
     },
     "codex": {
       "display_name": "Codex",
+      "account_pool": "codex_bjoe",
       "provider": "codex",
       "adapter": "codex",
       "wake_template": ".orchestrator/templates/wakeup.txt",
@@ -452,11 +446,22 @@
     },
     "codex2": {
       "display_name": "Codex2",
+      "account_pool": "codex_lupin",
       "provider": "codex",
       "adapter": "codex",
       "wake_template": ".orchestrator/templates/wakeup.txt",
       "file_inbox_path": ".llm-inbox/codex2.md"
-    }
+    },
+    "antigravity_slot_1": {"display_name": "antigravity_slot_1", "provider": "antigravity", "adapter": "antigravity", "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main", "slot_id": "antigravity_slot_1"},
+    "antigravity_slot_2": {"display_name": "antigravity_slot_2", "provider": "antigravity", "adapter": "antigravity", "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main", "slot_id": "antigravity_slot_2"},
+    "antigravity_slot_3": {"display_name": "antigravity_slot_3", "provider": "antigravity", "adapter": "antigravity", "account_pool": "antigravity_main", "dispatch_slot_for_pool": "antigravity_main", "slot_id": "antigravity_slot_3"},
+    "claude_slot_1": {"display_name": "claude_slot_1", "provider": "claude", "adapter": "claude_cli", "account_pool": "claude_main", "dispatch_slot_for_pool": "claude_main", "slot_id": "claude_slot_1"},
+    "claude_slot_2": {"display_name": "claude_slot_2", "provider": "claude", "adapter": "claude_cli", "account_pool": "claude_main", "dispatch_slot_for_pool": "claude_main", "slot_id": "claude_slot_2"},
+    "codex_bjoe_slot_1": {"display_name": "codex_bjoe_slot_1", "provider": "codex", "adapter": "codex", "account_pool": "codex_bjoe", "dispatch_slot_for_pool": "codex_bjoe", "slot_id": "codex_bjoe_slot_1"},
+    "codex_bjoe_slot_2": {"display_name": "codex_bjoe_slot_2", "provider": "codex", "adapter": "codex", "account_pool": "codex_bjoe", "dispatch_slot_for_pool": "codex_bjoe", "slot_id": "codex_bjoe_slot_2"},
+    "codex_bjoe_slot_3": {"display_name": "codex_bjoe_slot_3", "provider": "codex", "adapter": "codex", "account_pool": "codex_bjoe", "dispatch_slot_for_pool": "codex_bjoe", "slot_id": "codex_bjoe_slot_3"},
+    "codex_lupin_slot_1": {"display_name": "codex_lupin_slot_1", "provider": "codex", "adapter": "codex", "account_pool": "codex_lupin", "dispatch_slot_for_pool": "codex_lupin", "slot_id": "codex_lupin_slot_1"},
+    "codex_lupin_slot_2": {"display_name": "codex_lupin_slot_2", "provider": "codex", "adapter": "codex", "account_pool": "codex_lupin", "dispatch_slot_for_pool": "codex_lupin", "slot_id": "codex_lupin_slot_2"}
   },
   "providers": {
     "claude": {
@@ -581,102 +586,24 @@
       "manual_pending",
       "stalled"
     ],
-    "helper_claim": {
-      "enabled": true,
-      "task_statuses": [
-        "todo"
-      ],
-      "require_owner_higher_priority_load": true
-    },
-    "worker_self_claim": {
-      "enabled": true,
-      "claim_command": "AI_NAME=$AI_NAME python3 .orchestrator/supervisor.py --claim-agent \"$AI_NAME\" --release-task \"$TASK_ID\" --quiet",
-      "release_task_statuses": [
-        "review",
-        "review_approved",
-        "done",
-        "blocked"
-      ]
-    },
-    "max_tasks_per_agent_by_agent": {
-      "Claude": 3,
-      "Claude2": 3,
-      "Antigravity": 2,
-      "Antigravity2": 2,
-      "Codex": 4,
-      "Codex2": 4
-    },
     "max_dispatches_per_tick": 3,
     "max_active_workers_per_task": 1,
-    "max_concurrent_per_quota_group": {
-      "claude": 4,
-      "antigravity": 2,
-      "antigravity2": 2,
-      "codex": 6
-    },
-    "max_concurrent_workers": 6
+    "reviewer_failover": {
+      "enabled": true
+    }
   },
   "branch_workflow": {
     "enabled": true,
     "task_branch_prefix": "task/",
-    "publish_branch_prefix": "publish/",
-    "release_tag_prefix": "release/",
-    "prod_tag_prefix": "prod/",
-    "archive_tag_prefix": "archive/",
     "dev_branch": "dev",
     "main_branch": "main",
-    "nightly_publish": {
-      "enabled": true,
-      "cron_utc": "0 3 * * *",
-      "version_format": "vYYYY.MM.DD.N",
-      "skip_if_no_new_commits": true
-    },
-    "environments": {
-      "dev": {
-        "branch": "dev",
-        "auto_deploy": true,
-        "deploy_trigger": "on_push",
-        "url_env": "ODP_DEV_DEPLOY_URL"
-      },
-      "staging": {
-        "branch": "main",
-        "auto_deploy": true,
-        "deploy_trigger": "on_push",
-        "url_env": "ODP_STAGING_DEPLOY_URL"
-      }
-    },
-    "promote": {
-      "source_branch": "dev",
-      "target_branch": "main",
-      "trigger": "ci_green",
-      "require_dev_ci_green": true,
-      "soak_days": 0,
-      "regression_label_prefix": "regression/",
-      "block_labels": [
-        "hold-promote",
-        "regression"
-      ],
-      "promote_pr_label": "auto-promote",
-      "auto_merge": true,
-      "auto_revert_on_red_main_ci": true
-    },
     "task_pr": {
       "target_branch": "dev",
-      "auto_merge": true,
-      "required_status_checks": [
-        "CI / test"
-      ],
-      "max_open_hours": 24
+      "auto_merge": true
     },
     "drift_alarms": {
       "task_pr_must_merge_within_minutes": 120,
-      "publish_must_promote_within_minutes": 30,
       "dev_must_not_diverge_from_main_more_than_minutes": 60
-    },
-    "orchestrator_sync_webhook": {
-      "enabled": false,
-      "url_env": "PANTHEON_ORCHESTRATOR_SYNC_URL",
-      "secret_env": "PANTHEON_ORCHESTRATOR_SYNC_SECRET"
     }
   }
 }

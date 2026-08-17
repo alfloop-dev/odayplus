@@ -1,6 +1,6 @@
 # ODay Plus Live E2E Gate
 
-`scripts/e2e/check_live_e2e_gate.py` is the post-deployment proof that the
+`delivery_toolchain/e2e/check_live_e2e_gate.py` is the post-deployment proof that the
 **promoted release actually works as a product**: an operator can authenticate,
 the runtime is bound to live PostgreSQL / GCS / providers, every required MLflow
 `production` alias resolves, real source rows carry complete lineage, the worker
@@ -13,11 +13,11 @@ Three gates, three different questions:
 
 | Gate | Question |
 | --- | --- |
-| `scripts/deployment/validate_cloud_run_live_deployment.py` | Is the *deployment topology* correct (preflight config, image signing, job receipts, candidate smoke)? |
-| `scripts/e2e/check_live_production_data.py` | Is the *data plane* real (direct PostgreSQL reconciliation against a commit-bound evidence manifest)? |
-| `scripts/e2e/check_live_e2e_gate.py` | Does the *product path through the promoted release* work end to end over HTTP? |
+| `product_ops/deployment/validate_cloud_run_live_deployment.py` | Is the *deployment topology* correct (preflight config, image signing, job receipts, candidate smoke)? |
+| `delivery_toolchain/e2e/check_live_production_data.py` | Is the *data plane* real (direct PostgreSQL reconciliation against a commit-bound evidence manifest)? |
+| `delivery_toolchain/e2e/check_live_e2e_gate.py` | Does the *product path through the promoted release* work end to end over HTTP? |
 
-The live E2E gate runs inside `scripts/deploy_cloud_run_waji.sh` **after**
+The live E2E gate runs inside `product_ops/deployment/deploy_cloud_run_waji.sh` **after**
 `promote_service_traffic` and **before** `DEPLOYMENT_COMMITTED=true`. That
 placement is the fail-closed contract: the gate exercises exactly the revision
 users will get, and a non-zero exit falls through the script's `EXIT` trap so
@@ -40,7 +40,7 @@ release SHA.
    `deploymentMode` binds the served runtime to the env *this* deploy
    configured. `apps/api/oday_api/runtime_mode.deployment_mode()` reads the
    `ODP_DEPLOY_ENV`/`ODAY_ENV`/`ODP_ENV` triple that
-   `scripts/deploy_cloud_run_waji.sh` writes into the API env payload, so a dev
+   `product_ops/deployment/deploy_cloud_run_waji.sh` writes into the API env payload, so a dev
    deploy reports `deploymentMode=dev`. The deploy script therefore passes
    `--expected-deployment "${ODP_LIVE_E2E_DEPLOYMENT_MODE:-${ODP_DEPLOY_ENV}}"`
    and the gate has **no** default for it (`config:expected_deployment` blocks
@@ -158,7 +158,7 @@ of sending an operator to republish an MLflow alias that already exists.
 ```bash
 export ODP_OPERATOR_SMOKE_BEARER_TOKEN="<operator smoke token>"
 
-python3 scripts/e2e/check_live_e2e_gate.py \
+python3 delivery_toolchain/e2e/check_live_e2e_gate.py \
   --api-url "https://<promoted-api-origin>" \
   --web-url "https://<promoted-web-origin>" \
   --expected-sha "<deployed commit SHA>" \
@@ -229,7 +229,7 @@ serves a hardcoded fixture entry (`snap-expansion-20260628-0100`, echoing the
 *reader's* correlation id) only while the store is empty, so that fallback used
 to be the only thing the expansion spec ever saw. It now sees the ingested
 snapshot (`listing-2026-06-26`) instead — whichever one, decided by container
-start-up timing. `scripts/e2e/seed_product_e2e_data.py` therefore waits for
+start-up timing. `delivery_toolchain/e2e/seed_product_e2e_data.py` therefore waits for
 `availability.source == "persisted"` before Playwright starts, and
 `tests/e2e/e2e-expansion-product.spec.ts` asserts that persisted evidence and
 cross-checks it against the ingestion run that produced it. If the scheduled
@@ -292,7 +292,7 @@ schedulable provider if that window is contended.
 
 ### Known latent defect in a neighbouring gate (not fixed here)
 
-`scripts/e2e/check_live_production_data.py` asserts
+`delivery_toolchain/e2e/check_live_production_data.py` asserts
 `origin.get("kind") == "live"` against the same `/readiness` surface, which the
 runtime never emits there. That gate is not wired into any deploy workflow, so
 it blocks nothing today, but it would fail closed on the wrong dependency the
@@ -347,7 +347,7 @@ Run on `task/ODP-LIVE-E2E-001` before review handoff:
 uv run pytest tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py -q
 # 89 passed
 
-uv run ruff check scripts/e2e/check_live_e2e_gate.py \
+uv run ruff check delivery_toolchain/e2e/check_live_e2e_gate.py \
   tests/e2e/test_live_e2e_gate.py tests/ops/test_cloud_run_live_deployment.py
 # All checks passed!
 

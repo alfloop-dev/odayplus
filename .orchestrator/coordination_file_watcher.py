@@ -10,7 +10,6 @@ from common import (
     agent_config_for,
     display_name_for,
     execution_context_files,
-    new_runtime_id,
     relpath,
     to_bool,
     utc_now,
@@ -192,8 +191,6 @@ def queue_coordination_dispatch(
 
     payload_path_list = [source_path] if source_path else []
     queue_payload = {
-        "event_id": new_runtime_id("coord"),
-        "created_at": utc_now(),
         "event_key": f"coordination:{worker_kind}:{feature_id}:{reason}:{payload.get('dispatch_nonce') or utc_now()}",
         "task_id": feature_id,
         "target_agent": agent["id"],
@@ -218,7 +215,7 @@ def queue_coordination_dispatch(
             },
         },
     }
-    enqueue_event(config, queue_payload)
+    queue_payload = enqueue_event(config, queue_payload)
     write_activity_log(
         config,
         {

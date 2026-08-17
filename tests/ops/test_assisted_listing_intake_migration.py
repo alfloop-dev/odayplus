@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from modules.listing.domain.models import CandidateSiteDraft
-from scripts.migrations.assisted_listing_intake.migrate import IntakeMigrator, ensure_uuid
+from product_ops.migrations.assisted_listing_intake.migrate import IntakeMigrator, ensure_uuid
 from shared.domain.models import AddressLocation, CandidateSite, Listing
 
 # Mark all tests as requiring a live PostgreSQL 16 server
@@ -714,7 +714,7 @@ def test_cli_subprocess_against_pg_fixture(intake_blank_db, tmp_path) -> None:
         [
             sys.executable,
             "-m",
-            "scripts.migrations.assisted_listing_intake.migrate",
+            "product_ops.migrations.assisted_listing_intake.migrate",
             "--action",
             "backfill",
             "--tenant-id",
@@ -736,7 +736,7 @@ def test_cli_subprocess_against_pg_fixture(intake_blank_db, tmp_path) -> None:
         [
             sys.executable,
             "-m",
-            "scripts.migrations.assisted_listing_intake.migrate",
+            "product_ops.migrations.assisted_listing_intake.migrate",
             "--action",
             "backfill",
             "--tenant-id",
@@ -762,7 +762,7 @@ def test_cli_subprocess_against_pg_fixture(intake_blank_db, tmp_path) -> None:
         [
             sys.executable,
             "-m",
-            "scripts.migrations.assisted_listing_intake.migrate",
+            "product_ops.migrations.assisted_listing_intake.migrate",
             "--action",
             "verify",
             "--tenant-id",
@@ -781,7 +781,7 @@ def test_cli_subprocess_against_pg_fixture(intake_blank_db, tmp_path) -> None:
         [
             sys.executable,
             "-m",
-            "scripts.migrations.assisted_listing_intake.migrate",
+            "product_ops.migrations.assisted_listing_intake.migrate",
             "--action",
             "rollback",
             "--tenant-id",
@@ -809,7 +809,7 @@ def test_cli_fail_closed_without_database_target() -> None:
         [
             sys.executable,
             "-m",
-            "scripts.migrations.assisted_listing_intake.migrate",
+            "product_ops.migrations.assisted_listing_intake.migrate",
             "--action",
             "backfill",
         ],

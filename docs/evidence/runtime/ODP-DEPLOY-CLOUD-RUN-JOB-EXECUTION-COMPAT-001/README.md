@@ -2,7 +2,7 @@
 
 ## Version dependency removed
 
-`scripts/deploy_cloud_run_waji.sh` captured every Cloud Run Job receipt with
+`product_ops/deployment/deploy_cloud_run_waji.sh` captured every Cloud Run Job receipt with
 gcloud's shortcut subcommand for a job's newest execution. That subcommand only
 exists on recent gcloud releases, so whether Deploy Dev could produce migration,
 scheduler, and worker proof at all depended on the runner image's CLI version
@@ -10,7 +10,7 @@ rather than on the deployment itself. On a runner without it the command exits
 with an unrecognised-argument error, which aborts the deployment inside the
 migration gate — before the API/Web candidates are ever deployed.
 
-The shortcut is gone. `grep -c describe-latest scripts/deploy_cloud_run_waji.sh`
+The shortcut is gone. `grep -c describe-latest product_ops/deployment/deploy_cloud_run_waji.sh`
 now returns `0`, and `tests/ops/test_cloud_run_live_deployment.py::
 test_deploy_script_captures_job_proof_without_describe_latest` pins that.
 
@@ -82,10 +82,10 @@ Executed from the task branch at commit
 `b49de876dd65c5873cb27763fb48441b7786d9a4`:
 
 ```text
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 59 passed
-uv run --frozen ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
-uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py
+uv run --frozen ruff check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff format --check product_ops/deployment/validate_cloud_run_live_deployment.py
 git diff --check
 ```
 
@@ -117,10 +117,10 @@ still reports exactly the four task artifacts (543 insertions, 32 deletions).
 The same focused checks were re-executed at `499c0f28`, all passing:
 
 ```text
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 pytest tests/ops/test_cloud_run_live_deployment.py -q   # 59 passed
 ruff check .
-ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+ruff format --check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check origin/dev HEAD
 ```
 
@@ -147,10 +147,10 @@ The full focused checks were re-executed at anchor commit `077aeb2a`, all
 passing:
 
 ```text
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 62 passed
-uv run --frozen ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
-uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff format --check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check origin/dev HEAD
 ```
 
@@ -170,10 +170,10 @@ The focused checks were re-executed against the task-owned working-tree diff on
 top of `0960cfd`, all passing:
 
 ```text
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q   # 63 passed
-uv run --frozen ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
-uv run --frozen ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+uv run --frozen ruff format --check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check origin/dev
 ```
 

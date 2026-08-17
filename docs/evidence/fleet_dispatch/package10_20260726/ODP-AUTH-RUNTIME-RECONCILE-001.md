@@ -67,8 +67,8 @@ modules/opsboard/auth/**
 tests/security/test_opsboard_auth_boundary.py
 .github/workflows/deploy-dev.yml
 .github/workflows/deploy-staging.yml
-scripts/deploy_cloud_run_waji.sh
-scripts/deployment/validate_cloud_run_live_deployment.py
+product_ops/deployment/deploy_cloud_run_waji.sh
+product_ops/deployment/validate_cloud_run_live_deployment.py
 tests/ops/test_cloud_run_live_deployment.py
 docs/deployment/GCP_DEPLOY_GUIDE.md
 docs/evidence/runtime/**
@@ -102,8 +102,8 @@ uv run pytest -q tests/security/test_opsboard_auth_boundary.py
 uv run pytest -q tests/ops/test_cloud_run_live_deployment.py
 uv run pytest -q tests/e2e/test_live_e2e_gate.py
 python3 infra/terraform/validate_contract.py
-python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight ...
-bash -n scripts/deploy_cloud_run_waji.sh
+python3 product_ops/deployment/validate_cloud_run_live_deployment.py preflight ...
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 git diff --check
 ```
 

@@ -59,10 +59,6 @@ def current_branch(repo: Path) -> str | None:
     return _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 
-def is_detached(repo: Path) -> bool:
-    return current_branch(repo) == DETACHED_HEAD_SENTINEL
-
-
 def commits_behind(repo: Path, tracking_ref: str) -> int | None:
     out = _git(repo, "rev-list", "--count", f"HEAD..{tracking_ref}")
     if out is None:
@@ -71,6 +67,18 @@ def commits_behind(repo: Path, tracking_ref: str) -> int | None:
         return int(out)
     except ValueError:
         return None
+
+
+def working_tree_dirty(repo: Path) -> bool | None:
+    """Return whether tracked runtime files differ from its checked-out commit.
+
+    A runtime with a current-looking HEAD but locally overlaid old files is just
+    as unsafe as a runtime that is behind.  It was the direct cause of the
+    account-pool scheduler rollback: the service ran dirty copies of old files
+    while git reported a much newer commit.
+    """
+    out = _git(repo, "status", "--porcelain", "--untracked-files=no")
+    return None if out is None else bool(out)
 
 
 def evaluate(
@@ -82,6 +90,7 @@ def evaluate(
     head = _git(repo, "rev-parse", "HEAD")
     branch = current_branch(repo)
     behind = commits_behind(repo, tracking_ref)
+    dirty = working_tree_dirty(repo)
 
     facts: dict[str, object] = {
         "repo": str(repo),
@@ -90,6 +99,7 @@ def evaluate(
         "tracking_ref": tracking_ref,
         "behind": behind,
         "max_behind": max_behind,
+        "dirty": dirty,
     }
 
     if head is None or branch is None:
@@ -101,6 +111,14 @@ def evaluate(
             "runtime is on a detached HEAD; current_branch() reports the literal "
             'string "HEAD", which ReviewBus records as a branch name and then '
             "skips PR creation for. Check out a named branch."
+        )
+
+    if dirty is None:
+        problems.append("cannot determine whether the runtime working tree is clean")
+    elif dirty:
+        problems.append(
+            "runtime has tracked local modifications; a dirty overlay can silently run "
+            "older code than HEAD. Create a fresh runtime worktree instead of updating in place."
         )
 
     if behind is None:
@@ -132,7 +150,8 @@ def main(argv: list[str] | None = None) -> int:
         f"runtime={facts['repo']}\n"
         f"  head={facts['head']} branch={facts['branch']}\n"
         f"  behind {facts['tracking_ref']}: {behind if behind is not None else 'unknown'} "
-        f"(tolerance {facts['max_behind']})"
+        f"(tolerance {facts['max_behind']})\n"
+        f"  tracked working tree dirty: {facts['dirty'] if facts['dirty'] is not None else 'unknown'}"
     )
 
     if ok:

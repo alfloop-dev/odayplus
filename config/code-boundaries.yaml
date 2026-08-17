@@ -1,0 +1,250 @@
+schema_version: 1
+tracked_extensions:
+  - .py
+inventory_path: docs/audits/code-boundary-inventory.csv
+
+retention_classes:
+  product_required:
+    removable: false
+    removal_condition: Product capability is retired through a product migration.
+  operations_required:
+    removable: conditional
+    removal_condition: Deployment, migration, recurring-job, and rollback support windows have ended.
+  development_only:
+    removable: true
+    removal_condition: The internal development platform is retired or moved to its own repository.
+  delivery_only:
+    removable: true
+    removal_condition: The product will no longer be built, secured, released, or maintained from this repository.
+  verification_only:
+    removable: true
+    removal_condition: The corresponding maintained code and its support obligation have been removed.
+  evidence_only:
+    removable: conditional
+    removal_condition: The evidence retention period and audit obligations have ended.
+  archived:
+    removable: conditional
+    removal_condition: Repository archive retention policy permits permanent deletion.
+
+boundaries:
+  product_system:
+    description: Deployable product applications, domain code, shared product libraries, models, solvers, pipelines, and runtime services.
+    retention_class: product_required
+    is_product_runtime: true
+    allowed_import_scopes:
+      - product_system
+    include:
+      - apps/*.py
+      - apps/**/*.py
+      - modules/*.py
+      - modules/**/*.py
+      - shared/*.py
+      - shared/**/*.py
+      - models/*.py
+      - models/**/*.py
+      - solver/*.py
+      - solver/**/*.py
+      - pipelines/*.py
+      - pipelines/**/*.py
+      - services/*.py
+      - services/**/*.py
+      - infra/mlflow/*.py
+      - infra/mlflow/**/*.py
+    exclude:
+      - '**/test_*.py'
+      - '**/tests/*.py'
+      - '**/tests/**/*.py'
+      - '**/conftest.py'
+
+  product_operations_tooling:
+    description: Product deployment, schema migration, data/model backfill, and infrastructure operation commands outside request-serving runtime.
+    retention_class: operations_required
+    is_product_runtime: false
+    allowed_import_scopes:
+      - product_system
+      - product_operations_tooling
+    include:
+      - product_ops/*.py
+      - product_ops/**/*.py
+      - infra/db/migrations/*.py
+      - infra/db/migrations/**/*.py
+      - infra/k8s/data-platform/*.py
+      - infra/k8s/data-platform/**/*.py
+    exclude:
+      - '**/test_*.py'
+      - '**/tests/*.py'
+      - '**/tests/**/*.py'
+      - '**/conftest.py'
+
+  development_platform_system:
+    description: Internal supervisor, task-state, provider, approval, and orchestration control plane.
+    retention_class: development_only
+    is_product_runtime: false
+    allowed_import_scopes:
+      - product_system
+      - product_operations_tooling
+      - development_platform_system
+      - development_delivery_tooling
+    include:
+      - development_platform/*.py
+      - development_platform/**/*.py
+      - .orchestrator/*.py
+      - .orchestrator/**/*.py
+      - scripts/ai_status.py
+      - scripts/orchestrator/*.py
+      - scripts/orchestrator/**/*.py
+      - scripts/supervisor_runtime_health.py
+      - scripts/supervisor_watchdog_install.py
+      - scripts/validate_external_data_boundary.py
+    exclude:
+      - '**/test_*.py'
+      - '**/tests/*.py'
+      - '**/tests/**/*.py'
+      - '**/conftest.py'
+
+  development_delivery_tooling:
+    description: Build, CI, release, E2E, API contract, security, source-control, load, and development governance tools.
+    retention_class: delivery_only
+    is_product_runtime: false
+    allowed_import_scopes:
+      - product_system
+      - product_operations_tooling
+      - development_platform_system
+      - development_delivery_tooling
+    include:
+      - delivery_toolchain/*.py
+      - delivery_toolchain/**/*.py
+      - infra/terraform/*.py
+      - infra/terraform/**/*.py
+    exclude:
+      - '**/test_*.py'
+      - '**/tests/*.py'
+      - '**/tests/**/*.py'
+      - '**/conftest.py'
+
+  verification:
+    description: Tests and test support; never included in a deployed artifact.
+    retention_class: verification_only
+    is_product_runtime: false
+    allowed_import_scopes:
+      - product_system
+      - product_operations_tooling
+      - development_platform_system
+      - development_delivery_tooling
+      - verification
+    include:
+      - tests/*.py
+      - tests/**/*.py
+      - '**/test_*.py'
+      - '**/tests/*.py'
+      - '**/tests/**/*.py'
+      - '**/conftest.py'
+    exclude:
+      - archive/*.py
+      - archive/**/*.py
+      - docs/*.py
+      - docs/**/*.py
+
+  evidence_artifact:
+    description: Executable proof captured under documentation; retained as evidence, not active runtime or tooling.
+    retention_class: evidence_only
+    is_product_runtime: false
+    allowed_import_scopes: []
+    include:
+      - docs/*.py
+      - docs/**/*.py
+
+  archived:
+    description: Retired code retained only for repository history and audit traceability.
+    retention_class: archived
+    is_product_runtime: false
+    allowed_import_scopes: []
+    include:
+      - archive/*.py
+      - archive/**/*.py
+
+verification_ownership:
+  description: Links every verification file to the removable system or tool scope it verifies.
+  default_scope: product_system
+  rules:
+    - scope: development_platform_system
+      include:
+        - .orchestrator/test_*.py
+        - .orchestrator/**/test_*.py
+        - .orchestrator/**/conftest.py
+        - scripts/orchestrator/test_*.py
+        - scripts/test_ai_status.py
+        - scripts/test_supervisor_runtime_health.py
+        - scripts/test_supervisor_watchdog_install.py
+        - tests/orchestrator/*.py
+        - tests/orchestrator/**/*.py
+    - scope: development_delivery_tooling
+      include:
+        - delivery_toolchain/**/test_*.py
+        - infra/terraform/**/test_*.py
+        - infra/terraform/**/tests/*.py
+        - infra/terraform/**/tests/**/*.py
+        - tests/e2e/*.py
+        - tests/e2e/**/*.py
+        - tests/security/*.py
+        - tests/security/**/*.py
+        - tests/tooling/*.py
+        - tests/tooling/**/*.py
+        - tests/contract/test_openapi_artifact_and_client.py
+    - scope: product_operations_tooling
+      include:
+        - tests/ops/*.py
+        - tests/ops/**/*.py
+        - tests/performance/*.py
+        - tests/performance/**/*.py
+        - tests/reliability/*.py
+        - tests/reliability/**/*.py
+
+removal_bundles:
+  development_platform:
+    description: Internal supervisor/control-plane code and its stable operator entrypoints.
+    code_scopes:
+      - development_platform_system
+    roots:
+      - .orchestrator/
+      - scripts/
+    verification_scopes:
+      - development_platform_system
+  delivery_toolchain:
+    description: Build, CI, release, security, E2E, and repository-governance tooling.
+    code_scopes:
+      - development_delivery_tooling
+    roots:
+      - delivery_toolchain/
+      - infra/terraform/
+    verification_scopes:
+      - development_delivery_tooling
+  product_operations:
+    description: Separately operated product deployment, migration, and data/model maintenance commands.
+    code_scopes:
+      - product_operations_tooling
+    roots:
+      - product_ops/
+      - infra/db/migrations/
+      - infra/k8s/data-platform/
+    verification_scopes:
+      - product_operations_tooling
+
+artifact_profiles:
+  production:
+    description: Files permitted in product runtime images.
+    include_scopes:
+      - product_system
+  operations:
+    description: Product runtime plus separately operated deployment, migration, and data/model tools.
+    include_scopes:
+      - product_system
+      - product_operations_tooling
+  engineering:
+    description: Maintained source used to develop, validate, and deliver the product; archive and historical evidence remain separate.
+    include_scopes:
+      - product_system
+      - product_operations_tooling
+      - development_platform_system
+      - development_delivery_tooling
+      - verification

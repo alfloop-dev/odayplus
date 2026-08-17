@@ -10,7 +10,7 @@ Anchor commit: `ce76cb9e`. Deliverable:
 
 ## The defect
 
-`scripts/deploy_cloud_run_waji.sh` writes three Cloud Run Job validation
+`product_ops/deployment/deploy_cloud_run_waji.sh` writes three Cloud Run Job validation
 receipts under `.odp_data/deployment/cloud-run-jobs/`:
 
 ```

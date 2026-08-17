@@ -17,9 +17,11 @@ import uuid
 from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
 from task_archive import TaskResolver
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +32,8 @@ CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.m
 WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
+CONFIG_SCHEMA_PATH = ORCHESTRATOR_DIR / "config.schema.json"
+CONFIG_PATH_ENV_VAR = "PANTHEON_CONFIG_PATH"
 STATUS_ROOT_ENV_VAR = "PANTHEON_STATUS_ROOT"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
 DEFAULT_PLANNING_SHARED_FILES = [
@@ -63,6 +67,50 @@ def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def strip_json_comments(text: str) -> str:
+    """Remove `//` and `/* */` comments that sit outside string literals.
+
+    A plain ``re.sub(r"//.*?$", ...)`` also eats the second half of every URL
+    in the document, turning `"https://github.com/x"` into an unterminated
+    `"https:` and reporting the resulting stray newline as an "Invalid control
+    character" hundreds of lines away from the real defect. Scanning for string
+    boundaries keeps the tolerance for commented config without inventing a
+    corruption that was never in the file.
+    """
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    in_string = False
+    while index < length:
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if char == "\\" and index + 1 < length:
+                out.append(text[index + 1])
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+            continue
+        if text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = length if newline == -1 else newline
+            continue
+        if text.startswith("/*", index):
+            close = text.find("*/", index + 2)
+            index = length if close == -1 else close + 2
+            continue
+        out.append(char)
+        index += 1
+    return "".join(out)
+
+
 def load_json(path: Path, default: Any | None = None) -> Any:
     if not path.exists():
         return deepcopy(default)
@@ -74,16 +122,17 @@ def load_json(path: Path, default: Any | None = None) -> Any:
         try:
             return json.loads(text)
         except json.JSONDecodeError as exc:
-            sanitized = re.sub(r"//.*?$", "", text, flags=re.MULTILINE)
-            sanitized = re.sub(r"/\*.*?\*/", "", sanitized, flags=re.DOTALL)
+            # Report the error from the file as written. A sanitizer failure
+            # describes a document nobody has on disk, which sends whoever is
+            # reading the traceback after the wrong defect.
+            last_error = exc
+            sanitized = strip_json_comments(text)
             sanitized = re.sub(r",(\s*[}\]])", r"\1", sanitized)
             if sanitized != text:
                 try:
                     return json.loads(sanitized)
-                except json.JSONDecodeError as sanitized_exc:
-                    last_error = sanitized_exc
-            else:
-                last_error = exc
+                except json.JSONDecodeError:
+                    pass
             if attempt < 9:
                 time.sleep(0.05 * (attempt + 1))
     if last_error is not None:
@@ -143,6 +192,58 @@ def deep_merge(base: Any, overlay: Any) -> Any:
     return deepcopy(overlay)
 
 
+class ConfigError(RuntimeError):
+    """The orchestrator configuration is missing, malformed or outside its contract."""
+
+
+@lru_cache(maxsize=1)
+def config_validator() -> Draft202012Validator:
+    try:
+        schema = json.loads(CONFIG_SCHEMA_PATH.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(schema)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"Unable to load config schema {CONFIG_SCHEMA_PATH}: {exc}") from exc
+    return Draft202012Validator(schema)
+
+
+def validate_config(config: Any, *, source: str | Path) -> dict[str, Any]:
+    """Validate one base, overlay or merged config and return it unchanged."""
+    if not isinstance(config, dict):
+        raise ConfigError(f"Orchestrator config {source} must contain a JSON object")
+    errors = sorted(
+        config_validator().iter_errors(config),
+        key=lambda error: tuple(str(part) for part in error.absolute_path),
+    )
+    if errors:
+        details: list[str] = []
+        for error in errors[:10]:
+            location = ".".join(str(part) for part in error.absolute_path) or "<root>"
+            details.append(f"{location}: {error.message}")
+        if len(errors) > 10:
+            details.append(f"... and {len(errors) - 10} more validation errors")
+        raise ConfigError(f"Invalid orchestrator config {source}: " + "; ".join(details))
+    return config
+
+
+def load_config_document(path: Path) -> dict[str, Any]:
+    """Read and validate a single config document without any fallback source."""
+    if not path.is_file():
+        raise ConfigError(
+            f"Orchestrator config does not exist: {path}. "
+            "Run `make bootstrap` for a development checkout or pass --config explicitly."
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+        if not text.strip():
+            raise ConfigError(f"Orchestrator config is empty: {path}")
+        payload = json.loads(text)
+    except ConfigError:
+        raise
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ConfigError(f"Unable to parse orchestrator config {path}: {exc}") from exc
+    return validate_config(payload, source=path)
+
+
 def resolve_path(value: str | Path | None) -> Path | None:
     if value is None:
         return None
@@ -167,18 +268,40 @@ def evidence_dir(config: dict[str, Any]) -> Path:
     return path
 
 
-def load_config(config_path: str | Path | None = None) -> dict[str, Any]:
-    config_file = resolve_path(config_path) if config_path else DEFAULT_CONFIG_PATH
+def load_config(
+    config_path: str | Path | None = None,
+    *,
+    overlay_paths: list[str | Path] | tuple[str | Path, ...] | None = None,
+) -> dict[str, Any]:
+    """Load the one authoritative config plus explicit local overlays.
+
+    The tracked example is bootstrap input only and is never a runtime
+    fallback. The repository's default config gets its sibling local overlay;
+    an explicitly selected external config is self-contained unless callers
+    explicitly provide overlay paths.
+    """
+    selected_path = config_path
+    if selected_path is None:
+        selected_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip() or None
+    config_file = resolve_path(selected_path) if selected_path else DEFAULT_CONFIG_PATH
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
-    config = load_json(config_file, default={})
-    if not config and (config_path is None or resolve_path(config_path) == DEFAULT_CONFIG_PATH):
-        example_file = ORCHESTRATOR_DIR / "config.example.json"
-        if example_file.exists():
-            config = load_json(example_file, default={})
-    if LOCAL_CONFIG_PATH.exists():
-        config = deep_merge(config, load_json(LOCAL_CONFIG_PATH, default={}))
-    return config
+    config = load_config_document(config_file)
+    selected_overlays: tuple[str | Path, ...]
+    if overlay_paths is not None:
+        selected_overlays = tuple(overlay_paths)
+    elif config_file == DEFAULT_CONFIG_PATH:
+        selected_overlays = (LOCAL_CONFIG_PATH,)
+    else:
+        selected_overlays = ()
+    applied = [config_file]
+    for raw_overlay_path in selected_overlays:
+        overlay_path = resolve_path(raw_overlay_path)
+        if overlay_path is None or not overlay_path.exists():
+            continue
+        config = deep_merge(config, load_config_document(overlay_path))
+        applied.append(overlay_path)
+    return validate_config(config, source=" + ".join(str(path) for path in applied))
 
 
 def config_path(config: dict[str, Any], key: str, default: str | None = None) -> Path:
@@ -253,10 +376,15 @@ def anchor_config_paths(config: dict[str, Any], root: Path) -> dict[str, Any]:
 
 def load_config_for_status_root(root: Path) -> dict[str, Any]:
     """Load ``root``'s orchestrator config with every relative path anchored to it."""
-    config = load_json(root / ".orchestrator" / "config.json", default={})
-    local_path = root / ".orchestrator" / "config.local.json"
-    if local_path.exists():
-        config = deep_merge(config, load_json(local_path, default={}))
+    selected_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip()
+    if selected_path:
+        config = load_config(selected_path)
+    else:
+        local_path = root / ".orchestrator" / "config.local.json"
+        config = load_config(
+            root / ".orchestrator" / "config.json",
+            overlay_paths=(local_path,),
+        )
     return anchor_config_paths(config, root)
 
 
@@ -297,6 +425,9 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
         "ORCH_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
     }
+    config_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip()
+    if config_path:
+        result[CONFIG_PATH_ENV_VAR] = config_path
     actor_name = str((metadata or {}).get("target_display_name") or "").strip()
     if actor_name:
         # The live Supervisor has already authorized this dispatch target from
@@ -517,6 +648,42 @@ def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, 
         return False
     refreshed = refresh_claude_oauth_tokens(env)
     return bool(refreshed and not claude_oauth_token_expired(refreshed, skew_seconds=0))
+
+
+# Every provider wrapper in `.orchestrator/bin/` reports a missing target with
+# the same sentence: "Codex CLI binary not found at ...", "Antigravity CLI (agy)
+# binary not found under ...", and so on. This is the one output that proves a
+# lane is dead rather than merely unhappy, so it is shared by the worker-failure
+# classifier and the capability probe instead of being spelled twice.
+#
+# Deliberately narrow. An earlier version matched any line-initial
+# "<token> binary not found", which ordinary task output can produce ("protoc
+# binary not found") and which would pause a healthy lane for 900s. Requiring a
+# known CLI name *and* the literal "CLI" keeps it to the wrappers' own wording,
+# mirroring how AGY_QUOTA_SIGNATURE_PATTERN insists on agy's full signature.
+PROVIDER_CLI_NAMES = ("codex", "claude", "antigravity", "copilot", "github", "gemini")
+PROVIDER_LAUNCHER_MISSING_PATTERN = re.compile(
+    r"^(?P<cli>" + "|".join(PROVIDER_CLI_NAMES) + r")\s+CLI\s*(?:\([^)]*\)\s*)?binary not found\b",
+    re.IGNORECASE,
+)
+
+# Which provider family each wrapper belongs to, so a message about someone
+# else's CLI is not read as this worker's lane dying.
+PROVIDER_CLI_FAMILY = {
+    "codex": "codex",
+    "claude": "claude",
+    "antigravity": "antigravity",
+    "gemini": "antigravity",
+    "copilot": "copilot",
+    "github": "copilot",
+}
+
+
+def provider_launcher_missing_cli(text: str | None) -> str | None:
+    """Return the CLI name a wrapper reported as missing, if any."""
+
+    match = PROVIDER_LAUNCHER_MISSING_PATTERN.search((text or "").strip())
+    return match.group("cli").lower() if match else None
 
 
 def command_exists(name: str) -> str | None:
@@ -757,10 +924,6 @@ def selected_shared_files(config: dict[str, Any]) -> list[Path]:
     return files
 
 
-def serialize_shared_files(paths: list[Path]) -> str:
-    return "\n".join(f"- {relpath(path)}" for path in paths)
-
-
 def compact_whitespace(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -903,10 +1066,31 @@ def normalize_source_doc_path(rel_path: str) -> str:
     return path_str.lstrip("/")
 
 
-def validate_source_doc_path(rel_path: str, status_root: Path, *, task: dict[str, Any] | None = None) -> tuple[bool, str, str | None]:
+def validate_source_doc_path(
+    rel_path: str,
+    status_root: Path,
+    *,
+    task: dict[str, Any] | None = None,
+    config: dict[str, Any] | None = None,
+) -> tuple[bool, str, str | None]:
     raw_str = str(rel_path or "").strip().replace("\\", "/")
     if raw_str.startswith("/") or Path(raw_str).is_absolute():
         return False, raw_str, "raw absolute path rejected"
+    if config is not None:
+        try:
+            from source_document_router import (
+                SourceDocumentRoutingError,
+                resolve_source_document,
+            )
+            resolved = resolve_source_document(
+                config,
+                status_root,
+                raw_str,
+                task=task,
+            )
+            return True, resolved.context_path, None
+        except SourceDocumentRoutingError as exc:
+            return False, raw_str, str(exc)
     norm = normalize_source_doc_path(rel_path)
     if not norm:
         return False, norm, "empty path"
@@ -1295,7 +1479,9 @@ def execution_context_files(config: dict[str, Any], task_id: str | None) -> list
         )
         source_docs = task.get("source_docs") or []
         for doc_entry in source_docs:
-            valid, norm_path, err_reason = validate_source_doc_path(doc_entry, status_root, task=task)
+            valid, norm_path, err_reason = validate_source_doc_path(
+                doc_entry, status_root, task=task, config=config
+            )
             if not valid:
                 if is_mutating_or_p0:
                     raise ValueError(f"Fail-closed on task {task_id}: {err_reason} for source_doc '{doc_entry}'")

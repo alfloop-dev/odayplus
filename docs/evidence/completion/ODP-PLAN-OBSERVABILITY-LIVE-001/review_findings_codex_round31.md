@@ -9,7 +9,7 @@
 ## Verification performed
 
 - `pytest -q tests -k "observability or telemetry or alert or dlq"` — 79 passed.
-- `ruff check shared/observability tests/reliability scripts/deployment modules/notifications scripts/e2e/generate_observability_evidence.py` — passed.
+- `ruff check shared/observability tests/reliability product_ops/deployment modules/notifications delivery_toolchain/e2e/generate_observability_evidence.py` — passed.
 - `git diff --check` and `git diff --check 1d78bd76..38ad83cc` — passed.
 - Independent caller-minted authority mutation — returned
   `(True, 'DELIVERED', None)`.
@@ -85,7 +85,7 @@ WATCH_CALLER_MINT WATCH_PASSED True
  'custom.googleapis.com/api_latency_ms']
 ```
 
-`scripts/deployment/validate_cloud_run_live_deployment.py:396-483` still does
+`product_ops/deployment/validate_cloud_run_live_deployment.py:396-483` still does
 exactly this in the runtime validator. Round 31 only renames its fallback from
 `test-provider-secret-key` to
 `live-authentic-provider-secret-for-preflight`; the same in-process mock builds

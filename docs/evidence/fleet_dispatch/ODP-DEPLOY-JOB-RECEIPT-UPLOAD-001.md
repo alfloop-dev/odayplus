@@ -39,7 +39,7 @@ written; only their publication was broken.**
   changes.
 - `tests/ops/test_deploy_workflow_contract.py` — 8 tests that parse the
   workflow as YAML and derive the expected file set from
-  `scripts/deploy_cloud_run_waji.sh`, so the allowlist and the receipt writers
+  `product_ops/deployment/deploy_cloud_run_waji.sh`, so the allowlist and the receipt writers
   cannot drift apart.
 
 An allowlist rather than a recursive include: `cloud-run-jobs/` also holds the
@@ -88,8 +88,8 @@ and exercises a file this task does not touch. Exact-head CI, which installs
 ## 5. Scope
 
 No deployment behaviour, Cloud Run traffic, Package 10 UI, API response, or
-worker logic changed. `scripts/deploy_cloud_run_waji.sh` and
-`scripts/deployment/validate_cloud_run_live_deployment.py` are untouched.
+worker logic changed. `product_ops/deployment/deploy_cloud_run_waji.sh` and
+`product_ops/deployment/validate_cloud_run_live_deployment.py` are untouched.
 
 **Flagged, not fixed:** `.github/workflows/deploy-staging.yml` (line 154)
 carries the same non-recursive glob and loses Job receipts identically. It is

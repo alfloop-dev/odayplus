@@ -38,14 +38,14 @@ Product Validation must not close those blockers from this ledger alone. Each
 runtime handback must use the external-proof handback flow:
 
 ```bash
-python3 scripts/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
-python3 scripts/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 scripts/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 scripts/e2e/update_external_proof_handback_status_board.py --help
-python3 scripts/e2e/check_external_proof_handback_status_board.py
-python3 scripts/e2e/check_external_proof_live_blockers.py --require-assignees
-python3 scripts/e2e/check_external_proof_fleet_notifications.py
-python3 scripts/e2e/check_external_proof_issue_sync.py --require-assignees
+python3 delivery_toolchain/e2e/generate_external_proof_handback_skeleton.py --task <task-id> --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --output <handback.json>
+python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 delivery_toolchain/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"
+python3 delivery_toolchain/e2e/update_external_proof_handback_status_board.py --help
+python3 delivery_toolchain/e2e/check_external_proof_handback_status_board.py
+python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees
+python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py
+python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees
 ```
 
 Accepted #132-#138 handbacks must cite the current PR #82 `headRefOid`, include
@@ -193,7 +193,7 @@ Covered tasks:
 - Preflight passed in `/home/lupin/odayplus-dev` for:
   - `docs/evidence/fleet_dispatch/ODP-PV-STAGE-001.md`
   - `docs/evidence/fleet_dispatch/ODP-PV-STAGE-002.md`
-  - `scripts/e2e/check_remote_staging_proof.py`
+  - `delivery_toolchain/e2e/check_remote_staging_proof.py`
 - Reviewed `REMOTE_STAGING_PROOF_RUNBOOK.md`.
 - Checked GitHub repo/environment inventory without printing secret values.
 - Ran the remote staging checker with PR #82 `headRefOid`.

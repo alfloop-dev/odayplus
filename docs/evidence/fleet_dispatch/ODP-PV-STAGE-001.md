@@ -43,7 +43,7 @@ gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 export ODP_STAGING_DEPLOY_URL="https://<staging-web-host>"
 export ODP_STAGING_API_URL="https://<staging-api-host>"
 export ODP_STAGING_SECRET_OWNER="<team-or-person>"
-python3 scripts/e2e/check_remote_staging_proof.py \
+python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
   --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
   --correlation-id "corr-odp-pv-stage-001"
 ```

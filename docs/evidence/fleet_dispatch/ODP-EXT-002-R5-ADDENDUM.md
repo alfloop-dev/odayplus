@@ -15,7 +15,7 @@ This addendum does not rewrite or close the historical PR #82
 human-assisted Package 7 workflow. `ODP-OC-R5-001` owns the integrated UI/API
 delivery and composes the existing ingestion primitives.
 
-- Allowed paths: `apps/web/features/listing/`, `modules/external_data/`, `modules/integration/`, `packages/schemas/source_contracts/external/`, `scripts/external_data_backfill.py`, listing-related E2E/integration tests, and task-specific files under `docs/evidence/completion/`.
+- Allowed paths: `apps/web/features/listing/`, `modules/external_data/`, `modules/integration/`, `packages/schemas/source_contracts/external/`, `product_ops/external_data_backfill.py`, listing-related E2E/integration tests, and task-specific files under `docs/evidence/completion/`.
 - Out of scope: map UI implementation, remote staging deployment changes, unrelated product workflows, and any committed provider secrets or raw sensitive provider data.
 - External dependencies: provider terms approval remains external operational state. A provider credential is required only when the approved retrieval method requires one.
 
@@ -91,7 +91,7 @@ Human finds listing
 ## Execution Commands
 
 - `unzip -t 'docs_archive/00_source_zips/operator_console/r5-20260715-package-7/Oday Plus 營運管理後台 (7).zip'`
-- `python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-002`
+- `python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-002`
 - `uv run pytest tests/integration/test_external_source_connectors.py tests/e2e/test_external_source_product_e2e.py -q`
 
 ## Blocking Dependencies
@@ -146,7 +146,7 @@ Human finds listing
 
 - `python3 -m pytest tests/integration/test_external_source_connectors.py` -> `6 passed in 0.14s`
 - `python3 -m pytest tests/e2e/test_external_source_product_e2e.py` -> `5 passed in 2.21s`
-- `python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-002` -> `Fleet dispatch checks passed for ODP-EXT-002.`
+- `python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-002` -> `Fleet dispatch checks passed for ODP-EXT-002.`
 
 ## Completion Rules
 

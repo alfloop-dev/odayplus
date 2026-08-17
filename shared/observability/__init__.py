@@ -6,7 +6,11 @@ application/worker stage uses to emit all three signals under one
 ``correlation_id``.
 """
 
-from shared.observability.alerts import AlertRouter
+from shared.observability.alerts import (
+    ALERT_DELIVERY_FAILURE_METRIC,
+    AlertRouter,
+    try_trigger_alert,
+)
 from shared.observability.audit import (
     AUDIT_EVIDENCE_EXPORT_EVENT_TYPE,
     HIGH_RISK_AUDIT_ACTIONS,
@@ -36,7 +40,9 @@ from shared.observability.logging import (
     stream_sink,
 )
 from shared.observability.metrics import (
+    OVERFLOW_LABEL_VALUE,
     PLATFORM_METRICS,
+    CardinalityPolicy,
     MetricCategory,
     MetricDefinition,
     MetricsRegistry,
@@ -44,6 +50,11 @@ from shared.observability.metrics import (
     ProductionMetricsExporter,
     default_registry,
     render_dashboard_provisioning,
+)
+from shared.observability.routes import (
+    UNMATCHED_ROUTE_TEMPLATE,
+    RouteTemplateResolver,
+    compile_route_template,
 )
 from shared.observability.runtime import Telemetry
 from shared.observability.tracing import (
@@ -60,7 +71,9 @@ from shared.observability.watch_window import (
 )
 
 __all__ = [
+    "ALERT_DELIVERY_FAILURE_METRIC",
     "AlertRouter",
+    "try_trigger_alert",
     "AUDIT_EVIDENCE_EXPORT_EVENT_TYPE",
     "HIGH_RISK_AUDIT_ACTIONS",
     "AuditCompletenessReport",
@@ -80,6 +93,11 @@ __all__ = [
     "StructuredLogRecord",
     "redact",
     "stream_sink",
+    "CardinalityPolicy",
+    "OVERFLOW_LABEL_VALUE",
+    "RouteTemplateResolver",
+    "UNMATCHED_ROUTE_TEMPLATE",
+    "compile_route_template",
     "MetricCategory",
     "MetricDefinition",
     "MetricsRegistry",
