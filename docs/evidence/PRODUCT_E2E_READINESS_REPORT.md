@@ -24,8 +24,8 @@ make product-release-gate
 
 It runs:
 
-- `python3 scripts/e2e/check_product_release_gate.py`
-- `scripts/e2e/run_product_e2e.sh`
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py`
+- `delivery_toolchain/e2e/run_product_e2e.sh`
 
 The runner builds the Docker product stack, seeds deterministic API/source data, runs the live API-bound UI checks, MapLibre/deck.gl map checks, expansion, PV-006, PV-007, and product environment checks, then writes diagnostics to `.odp_data/e2e-diagnostics`.
 
@@ -63,7 +63,7 @@ The runner builds the Docker product stack, seeds deterministic API/source data,
 
 The `product-e2e-gate` CI job fails if:
 
-- the MapLibre/deck.gl map spec is removed from `scripts/e2e/run_product_e2e.sh`;
+- the MapLibre/deck.gl map spec is removed from `delivery_toolchain/e2e/run_product_e2e.sh`;
 - map follow-up specs for live boundary, resilience, tooltip/evidence, or a11y are removed from the product-grade follow-up evidence packet;
 - the deterministic product environment or source stub fixture is missing;
 - PV-005/PV-006/PV-007 product specs or evidence documents are missing;
@@ -72,7 +72,7 @@ The `product-e2e-gate` CI job fails if:
 
 ## Residual Release Risk
 
-- Remote staging rollout is still a deployment environment configuration item because staging host/url/secret owner variables are not configured. The API now exposes `/platform/version`, and `scripts/e2e/check_remote_staging_proof.py` is the required smoke/version checker once staging exists.
+- Remote staging rollout is still a deployment environment configuration item because staging host/url/secret owner variables are not configured. The API now exposes `/platform/version`, and `delivery_toolchain/e2e/check_remote_staging_proof.py` is the required smoke/version checker once staging exists.
 - Live external proof closeout is tracked in `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`; provider credentials/licensing/geocoder proof, remote live map endpoint smoke, and remote staging smoke/drill evidence remain external tasks.
 - Model alias rollback is covered by PV-007; policy/image rollback is documented as redeploying immutable previous image tags.
 - Formal Human/Ops sign-off is tracked in `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`.
@@ -101,7 +101,7 @@ provider activation and remote staging require human/ops action documented in
 | Live listing feed adapter | `modules/external_data/providers/live.py` | `ListingPartnerFeedProvider`, `PrimaryGeocodeProvider` |
 | Live geocoder HTTP client | `modules/external_data/providers/live.py` | `HttpGeocodeClient` |
 | Map tile / geocoder wiring | `apps/web/features/map/HeatZoneMap.tsx` | `readMapBoundaryConfig()` (lines 350–375) |
-| Remote staging checker | `scripts/e2e/check_remote_staging_proof.py` | — |
+| Remote staging checker | `delivery_toolchain/e2e/check_remote_staging_proof.py` | — |
 | Staging workflow | `.github/workflows/deploy-staging.yml` | — |
 | Risk acceptance + secret inventory | `docs/evidence/PRODUCT_RELEASE_RISK_ACCEPTANCE.md` | §2, §3, §4 |
 

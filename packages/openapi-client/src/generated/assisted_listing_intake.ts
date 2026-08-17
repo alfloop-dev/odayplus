@@ -2,13 +2,13 @@
  * GENERATED FILE — DO NOT EDIT.
  *
  * Source:    packages/openapi-client/openapi.json
- * Generator: scripts/openapi/generate_client.py
+ * Generator: delivery_toolchain/openapi/generate_client.py
  *
  * Regenerate with:
- *   python3 scripts/openapi/export_openapi.py     # refresh the artifact from the app
- *   python3 scripts/openapi/generate_client.py    # refresh this file
+ *   python3 delivery_toolchain/openapi/export_openapi.py     # refresh the artifact from the app
+ *   python3 delivery_toolchain/openapi/generate_client.py    # refresh this file
  *
- * CI runs `scripts/openapi/check_drift.py`, which fails if this file does not
+ * CI runs `delivery_toolchain/openapi/check_drift.py`, which fails if this file does not
  * match the artifact, or the artifact does not match the live API.
  */
 

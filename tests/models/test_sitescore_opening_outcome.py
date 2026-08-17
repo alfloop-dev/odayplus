@@ -16,7 +16,10 @@ from models.sitescore.opening_outcome import (
     evaluate_sitescore_opening_outcome_benchmark,
     verify_sitescore_gate2_receipt,
 )
-from scripts.models.sitescore_outcome_benchmark import (
+from models.sitescore.prediction_source import (
+    build_sitescore_prediction_source_receipt,
+)
+from product_ops.modeling.sitescore_outcome_benchmark import (
     run_benchmark_from_inventory,
     write_evidence_markdown,
 )
@@ -29,7 +32,7 @@ def _generate_candidate_records(
     m6_days: int = 180,
     m12_days: int = 365,
     revenue: float = 500_000.0,
-    pred_revenue: float | None = 500_000.0,
+    pred_revenue: float | None = 475_000.0,
     target_format: str = "CONVENIENCE_STANDARD",
     include_m6_m12_realized: bool = False,
     include_bounds: bool = True,
@@ -39,23 +42,28 @@ def _generate_candidate_records(
 ) -> list[dict]:
     records = []
     for i in range(count):
+        cur_rev = (revenue + (i * 1000.0)) if revenue == 500_000.0 else revenue
+        cur_pred = (cur_rev * 0.95) if pred_revenue == 475_000.0 else pred_revenue
         r = {
             "entity_id": f"tenant-001:store-{i:04d}",
             "store_id": f"store-{i:04d}",
             "target_format_code": target_format,
             "opened_on": "2025-01-01",
             "is_training_eligible": eligible,
-            "realized_90d_net_revenue": revenue,
-            "predicted_revenue": pred_revenue,
+            "realized_90d_net_revenue": cur_rev,
+            "predicted_revenue": cur_pred,
             "m6_days": m6_days,
             "m12_days": m12_days,
         }
         if include_m6_m12_realized:
-            r["realized_m6_net_revenue"] = revenue * 2.0
-            r["realized_m12_net_revenue"] = revenue * 4.0
-        if include_bounds and pred_revenue is not None:
-            r["p10"] = pred_revenue * 0.85
-            r["p90"] = pred_revenue * 1.15
+            r["realized_m6_net_revenue"] = (cur_rev * 2.15) + ((i % 7) * 500.0)
+            r["realized_m12_net_revenue"] = (cur_rev * 4.30) + ((i % 11) * 1000.0)
+            if cur_pred is not None:
+                r["predicted_m6_revenue"] = (cur_pred * 2.15) + ((i % 7) * 500.0)
+                r["predicted_m12_revenue"] = (cur_pred * 4.30) + ((i % 11) * 1000.0)
+        if include_bounds and cur_pred is not None:
+            r["p10"] = cur_pred * 0.85
+            r["p90"] = cur_pred * 1.15
         if dataset_snapshot_id:
             r["dataset_snapshot_id"] = dataset_snapshot_id
         if model_version:
@@ -103,7 +111,13 @@ def test_sitescore_opening_outcome_90d_only_old_stores_fails_coverage():
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt, provenance="authenticated_governed_records")
 
     assert result.mature_label_count == 220
     assert result.m6_coverage_ratio == 0.0
@@ -111,7 +125,8 @@ def test_sitescore_opening_outcome_90d_only_old_stores_fails_coverage():
     assert not result.is_coverage_passed
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert result.reason_code == "M6_M12_COVERAGE_INSUFFICIENT"
+
 
 
 def test_sitescore_opening_outcome_missing_interval_bounds_fails_closed():
@@ -184,14 +199,20 @@ def test_sitescore_opening_outcome_insufficient_labels_fails_closed():
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt, provenance="authenticated_governed_records")
 
     assert result.observed_count == 50
     assert result.mature_label_count == 50
     assert not result.is_labels_sufficient
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert result.reason_code == "MATURE_LABELS_BELOW_THRESHOLD"
 
     handback = result.handback_payload
     assert handback["handback_required"] is True
@@ -254,7 +275,7 @@ def test_sitescore_model_card_generation():
 
     assert isinstance(model_card, ModelCard)
     assert model_card.model_name == "sitescore_propensity"
-    assert model_card.release_status == "GOVERNED_DISABLED"
+    assert model_card.release_status == ("DEV" if result.is_gate2_passed else "GOVERNED_DISABLED")
     assert not model_card.is_complete
     assert not model_card.is_approved
     assert model_card.privacy_review == "UNVERIFIED"
@@ -428,14 +449,20 @@ def test_sitescore_opening_outcome_zero_outcome_cohort_non_zero_mae_fails_closed
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt, provenance="authenticated_governed_records")
 
     assert result.mature_label_count == 220
     assert result.normalized_mae == 999.0  # Zero-denominator fail closed
     assert not result.is_mae_passed
     assert not result.is_gate2_passed
     assert result.status == "GOVERNED_DISABLED"
-    assert result.reason_code == "MISSING_GOVERNED_LINEAGE"
+    assert result.reason_code == "NORMALIZED_MAE_EXCEEDED"
     assert any("exceeds maximum threshold" in r for r in result.handback_payload["reasons"])
 
 
@@ -992,7 +1019,13 @@ def test_sitescore_opening_outcome_non_empty_population_counts_populated_and_ver
         model_version="candidate-site-view-v2",
         artifact_lineage_id="art_sitescore_sha256",
     )
-    result = evaluate_sitescore_opening_outcome_benchmark(records, provenance="authenticated_governed_records")
+    receipt_source = build_sitescore_prediction_source_receipt(
+        records,
+        dataset_snapshot_id="snapshot_sitescore_v2",
+        model_version="candidate-site-view-v2",
+        artifact_lineage_id="art_sitescore_sha256",
+    )
+    result = evaluate_sitescore_opening_outcome_benchmark(records, prediction_receipt=receipt_source, provenance="authenticated_governed_records")
 
     assert result.observed_count == 10
     assert result.eligible_count == 10
@@ -1004,7 +1037,7 @@ def test_sitescore_opening_outcome_non_empty_population_counts_populated_and_ver
     assert result.in_p80_count == 10
 
     model_card = build_sitescore_opening_outcome_model_card(result)
-    receipt = build_sitescore_gate2_receipt(result, model_card=model_card)
+    receipt = build_sitescore_gate2_receipt(result, model_card=model_card, prediction_receipt=receipt_source)
     assert receipt["benchmark_summary"]["m6_mature_count"] == 10
     assert receipt["benchmark_summary"]["m12_mature_count"] == 10
     assert receipt["benchmark_summary"]["interval_bounds_count"] == 10

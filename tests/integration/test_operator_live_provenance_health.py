@@ -184,6 +184,7 @@ def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
         assert health_res.status_code == 200, health_res.text
         health_data = health_res.json()
         assert health_data["status"] == "ok"
+        assert health_data["data_mode"] == "live"
         assert health_data["modes"]["data"]["mode"] == "live"
         assert health_data["modes"]["data"]["operatorRepositoryReady"] is True
         assert health_data["modes"]["data"]["liveReady"] is True
@@ -193,6 +194,7 @@ def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
         assert readiness_res.status_code == 200, readiness_res.text
         readiness_data = readiness_res.json()
         assert readiness_data["status"] == "ok"
+        assert readiness_data["data_mode"] == "live"
         assert readiness_data["details"]["data"]["mode"] == "live"
         assert readiness_data["details"]["data"]["liveReady"] is True
 
@@ -228,9 +230,9 @@ def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_re
     monkeypatch: Any,
     tmp_path: Path,
 ) -> None:
-    """Acceptance 4: ForecastOps remains explicitly governed-disabled with reason evidence until authentic 7/14/28-day history exists.
+    """Acceptance 4: ForecastOps remains required-active but unavailable until authentic 7/14/28-day history and an approved alias exist.
     No fixture, synthetic auto-seed, fabricated alias, or fake ready state is introduced.
-    Core Operator platform health returns 200 OK while forecastops capability reports available=False and governedDisabled=True.
+    Core Operator platform health returns 200 OK while forecastops reports available=False and governedDisabled=False.
     """
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")

@@ -15,7 +15,7 @@ ODP-PV-004 adds a deterministic product E2E stack that can start from a clean ch
 
 ```bash
 cp .env.e2e.example .env.e2e
-scripts/e2e/run_product_e2e.sh
+delivery_toolchain/e2e/run_product_e2e.sh
 ```
 
 The runner builds the stack, waits for API/source readiness, seeds deterministic data, runs the API-bound UI, map, and product environment E2E specs, then writes diagnostics under `.odp_data/e2e-diagnostics`.
@@ -24,7 +24,7 @@ Set `ODP_E2E_KEEP_STACK=1` to leave containers running for inspection.
 
 ## Seeded Data
 
-`scripts/e2e/seed_product_e2e_data.py` creates:
+`delivery_toolchain/e2e/seed_product_e2e_data.py` creates:
 
 - an AVM case for `e2e-store-taipei-001`;
 - a HeatZone scoring job from deterministic H3 features;

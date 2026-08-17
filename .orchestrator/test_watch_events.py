@@ -29,14 +29,26 @@ class WatcherBookkeepingTests(unittest.TestCase):
             "context_files": ["AI_COLLABORATION_GUIDE.md"],
             "task": {"artifacts": []},
         }
+        finalize_event = {
+            "task_id": "ODP-PROMPT-003",
+            "reason": "owned_finalize_dispatch",
+            "context_files": ["AI_COLLABORATION_GUIDE.md"],
+            "task": {"artifacts": [], "status": "review_approved"},
+        }
         owner_message = watch_events.render_wakeup_message(base, owner_event, "antigravity4")
         reviewer_message = watch_events.render_wakeup_message(base, reviewer_event, "codex6")
-        self.assertIn("必須用正式 handoff／re_review", owner_message)
+        finalize_message = watch_events.render_wakeup_message(base, finalize_event, "antigravity4")
+        self.assertIn("delivery_toolchain/git/task_finalize.sh", owner_message)
+        self.assertIn("不得直接 handoff／re_review", owner_message)
         self.assertIn("no-progress failure", owner_message)
         self.assertIn("必須做出可稽核的 review 決定", reviewer_message)
         self.assertIn("讓 task 留在 review", reviewer_message)
+        self.assertIn("immutable finalize dispatch", finalize_message)
+        self.assertIn("不可 merge、rebase", finalize_message)
+        self.assertIn("PR 尚未 merge 就保持 review_approved", finalize_message)
+        self.assertNotIn("delivery_toolchain/git/task_finalize.sh 推送", finalize_message)
 
-    def test_run_scan_updates_snapshot_without_queueing_when_runtime_enqueue_disabled(self) -> None:
+    def test_run_scan_is_noop_when_runtime_enqueue_disabled(self) -> None:
         config = {
             "schema": {
                 "tasks_path": "tasks",
@@ -87,11 +99,11 @@ class WatcherBookkeepingTests(unittest.TestCase):
         ):
             changed = watch_events.run_scan(config, state, replay=False, provider_capabilities={})
 
-        self.assertTrue(changed)
-        self.assertEqual(state["tasks"]["P3-001"]["status"], "review")
-        self.assertEqual(state["recent_terminal_tasks"], [{"task_id": "OPS-001"}])
+        self.assertFalse(changed)
+        self.assertEqual(state["tasks"]["P3-001"]["status"], "in_progress")
+        self.assertNotIn("recent_terminal_tasks", state)
         self.assertEqual(state["pending_handoff_keys"], [])
-        self.assertIsNotNone(state["last_scan_at"])
+        self.assertEqual(state["last_scan_at"], "2026-04-06T09:00:00Z")
 
 
 if __name__ == "__main__":

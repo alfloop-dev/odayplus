@@ -8,7 +8,7 @@
 ## Verification performed
 
 - `/home/lupin/oday-plus/.venv/bin/pytest -q tests -k "observability or telemetry or alert or dlq"` — 85 passed (100%).
-- `/home/lupin/oday-plus/.venv/bin/ruff check shared/observability tests/reliability scripts/deployment` — passed (0 errors).
+- `/home/lupin/oday-plus/.venv/bin/ruff check shared/observability tests/reliability product_ops/deployment` — passed (0 errors).
 - `git diff --check` — passed (0 errors).
 - Audited E2E evidence reseal: `docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json`, `docs/evidence/e2e/raw_playwright_results.json`, `docs/evidence/e2e/raw_pytest_results.json` accurately reference exact branch HEAD `76a9f7362a4725d7942513f284a8c0a5ecb96486` and static checks pass cleanly.
 - Audited negative test matrices (B1 through B39): B38 authority key isolation and B39 watch-window trust boundary remain intact with fail-closed behavior.

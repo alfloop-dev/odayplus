@@ -5,6 +5,8 @@ import ast
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -27,6 +29,7 @@ if "ai_status" not in sys.modules:
     os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 try:
     import ai_status
+    import multi_repo_registry
     import task_archive
 finally:
     if _IMPORT_STATUS_ROOT is None:
@@ -173,7 +176,7 @@ class StatusRootRoutingTests(unittest.TestCase):
                 mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", status_root / ".orchestrator" / "state.json"),
                 mock.patch.object(ai_status, "APPROVAL_QUEUE_FILE", status_root / ".orchestrator" / "approval-queue.json"),
             ):
-                config = ai_status.load_config()
+                config = ai_status.status_runtime_config()
 
         self.assertEqual(config["paths"]["status_file"], str(status_root / "ai-status.json"))
         self.assertEqual(config["paths"]["activity_log"], str(status_root / "ai-activity-log.jsonl"))
@@ -198,6 +201,12 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
                     "owner": "Codex",
                     "reviewer": "Claude",
                     "status": "review",
+                    "review_submission": {
+                        "pr_number": 123,
+                        "remote_sha": "1111111122222222333333334444444455555555",
+                        "branch": "task/REG-002",
+                        "base_branch": "dev",
+                    },
                     "depends_on": [],
                     "artifacts": [],
                     "acceptance": [],
@@ -255,9 +264,14 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         with (
             mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
-            mock.patch.object(ai_status, "resolve_task_sha", return_value=approved_head),
-            mock.patch.object(ai_status, "task_pr_head_and_merge_commit", return_value=(approved_head, None)),
-            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value={}),
+            mock.patch.object(
+                ai_status,
+                "collect_done_delivery_metadata",
+                return_value={
+                    "verified_head": approved_head,
+                    "pull_request": {"head_sha": approved_head, "merge_commit": "merge-sha"},
+                },
+            ),
             mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": "REG-002"}) as archive_task_snapshot,
         ):
             ai_status.command_done(self.state, ["REG-002", "Owner finalized approved task"])
@@ -277,10 +291,40 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 ai_status.command_handoff(self.state, ["REG-002", "Gemini", "Wrong reviewer"])
 
+        self.state["tasks"][0].pop("review_submission", None)
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            with self.assertRaises(SystemExit):
+                ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
+
+        self.state["tasks"][0]["review_submission"] = {
+            "pr_number": 123,
+            "remote_sha": "1111111122222222333333334444444455555555",
+        }
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
             ai_status.command_handoff(self.state, ["REG-002", "Claude", "Ready for review"])
 
         self.assertEqual(self.state["tasks"][0]["status"], "review")
+
+    def test_submit_review_requires_verified_remote_pr_before_review_transition(self) -> None:
+        evidence = {
+            "pr_number": 123,
+            "pr_url": "https://github.com/example/repo/pull/123",
+            "branch": "task/REG-002",
+            "remote_sha": "1111111122222222333333334444444455555555",
+            "base_branch": "dev",
+            "verified_at": "2026-08-11T00:00:00Z",
+        }
+        with (
+            mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False),
+            mock.patch.object(ai_status, "review_submission_for_task", return_value=evidence),
+        ):
+            ai_status.command_submit_review(self.state, ["REG-002", "123", "Ready for review"])
+
+        task = ai_status.get_task(self.state, "REG-002")
+        self.assertEqual(task["status"], "review")
+        self.assertEqual(task["review_submission"], evidence)
+        pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
+        self.assertEqual(pending[0]["to"], "Claude")
 
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
@@ -376,7 +420,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
     def test_collect_done_delivery_metadata_reports_all_missing_trailers_at_once(self) -> None:
         responses = iter(
             [
-                "feat/bg-006",
+                "task/BG-006",
                 "abc123",
                 "BG-006 finalize operator acceptance matrix",
                 "Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>",
@@ -389,6 +433,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Claude",
             "reviewer": "Codex",
             "status": "review_approved",
+            "approved_head": "abc123",
         }
 
         with mock.patch.object(ai_status, "run_git_command", side_effect=lambda *args, **kwargs: next(responses)):
@@ -403,7 +448,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
     def test_collect_done_delivery_metadata_uses_execute_plans_artifact_repo(self) -> None:
         responses = iter(
             [
-                "bff-luv-fe-006-dev-deploy",
+                "task/FE-INT-GATE-DUMMY",
                 "abc123",
                 "FE-INT-GATE-DUMMY finalize execute-plans artifact",
                 "LLM-Agent: Codex2\nTask-ID: FE-INT-GATE-DUMMY\nReviewer: Claude\n",
@@ -424,11 +469,13 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex2",
             "reviewer": "Claude",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": ["execute-plans/e2e/dummy.spec.ts"],
         }
         with (
-            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
+            mock.patch.object(ai_status, "enforce_delivery_merged_gate"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="ajoe734/execute-plans"),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
@@ -436,7 +483,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["repository_id"], "execute_plans")
         self.assertEqual(delivery["repository_path"], str(execute_plans_root))
         self.assertEqual(delivery["repository_slug"], "ajoe734/execute-plans")
-        self.assertEqual(delivery["branch"], "bff-luv-fe-006-dev-deploy")
+        self.assertEqual(delivery["branch"], "task/FE-INT-GATE-DUMMY")
         self.assertTrue(calls)
         self.assertTrue(all(cwd == execute_plans_root for _, cwd in calls))
 
@@ -464,6 +511,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex2",
             "reviewer": "Claude2",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": [
                 "execute-plans/src/lib/bff-v1/management.ts",
                 "services/control-plane/bff/main.py",
@@ -480,9 +528,10 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             return None
 
         with (
-            mock.patch.dict(os.environ, {"TASK_REQUIRE_MERGED_PR": "false"}, clear=False),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "repository_local_path", side_effect=fake_repository_local_path),
+            mock.patch.object(ai_status, "enforce_delivery_merged_gate"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex2")
 
@@ -500,6 +549,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": [],
         }
 
@@ -508,15 +558,15 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "task/REG-002"
             if args == ["rev-parse", "HEAD"]:
                 return "abc123"
-            if args == ["show", "-s", "--format=%s", "HEAD"]:
+            if args == ["show", "-s", "--format=%s", "abc123"]:
                 return "REG-002 finalize"
-            if args == ["show", "-s", "--format=%b", "HEAD"]:
+            if args == ["show", "-s", "--format=%b", "abc123"]:
                 return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
-            if args == ["show", "-s", "--format=%an", "HEAD"]:
+            if args == ["show", "-s", "--format=%an", "abc123"]:
                 return "Codex"
-            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+            if args == ["show", "-s", "--format=%ae", "abc123"]:
                 return "codex@example.com"
-            if args == ["status", "--porcelain"]:
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
                 return ""
             if args == ["remote"]:
                 return "origin"
@@ -545,15 +595,17 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     "url": "https://github.com/ajoe734/pantheon/pull/152",
                 },
             ),
+            mock.patch.object(ai_status, "repository_slug", return_value="alfloop-dev/odayplus"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
         ):
             with self.assertRaises(SystemExit) as exc_info:
                 ai_status.collect_done_delivery_metadata(task, "Codex")
 
         message = str(exc_info.exception)
-        self.assertIn("not merged into `origin/dev`", message)
+        self.assertIn("immutable approved-head PR provenance", message)
         self.assertIn("PR #152", message)
         self.assertIn("mergeState=BEHIND", message)
-        self.assertIn("review_approved", message)
+        self.assertIn("matching approved PR head", message)
 
     def test_collect_done_delivery_metadata_allows_head_merged_to_dev(self) -> None:
         task = {
@@ -561,6 +613,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
             "status": "review_approved",
+            "approved_head": "abc123",
             "artifacts": [],
         }
 
@@ -569,15 +622,15 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "task/REG-002"
             if args == ["rev-parse", "HEAD"]:
                 return "abc123"
-            if args == ["show", "-s", "--format=%s", "HEAD"]:
+            if args == ["show", "-s", "--format=%s", "abc123"]:
                 return "REG-002 finalize"
-            if args == ["show", "-s", "--format=%b", "HEAD"]:
+            if args == ["show", "-s", "--format=%b", "abc123"]:
                 return "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n"
-            if args == ["show", "-s", "--format=%an", "HEAD"]:
+            if args == ["show", "-s", "--format=%an", "abc123"]:
                 return "Codex"
-            if args == ["show", "-s", "--format=%ae", "HEAD"]:
+            if args == ["show", "-s", "--format=%ae", "abc123"]:
                 return "codex@example.com"
-            if args == ["status", "--porcelain"]:
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
                 return ""
             if args == ["remote"]:
                 return "origin"
@@ -591,10 +644,25 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
+        merged_pr = {
+            "number": 152,
+            "state": "MERGED",
+            "headRefOid": "abc123",
+            "headRefName": "task/REG-002",
+            "baseRefName": "dev",
+            "mergedAt": "2026-08-02T00:55:48Z",
+            "mergeCommit": {"oid": "merge123"},
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ],
+        }
         with (
             mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=merged_pr),
+            mock.patch.object(ai_status, "repository_slug", return_value="alfloop-dev/odayplus"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
 
@@ -609,6 +677,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             "owner": "Codex",
             "reviewer": "Claude",
             "status": "review_approved",
+            "approved_head": "sourcehead",
             "artifacts": [],
         }
 
@@ -616,11 +685,11 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             responses = {
                 ("rev-parse", "--abbrev-ref", "HEAD"): "task/REG-002",
                 ("rev-parse", "HEAD"): "sourcehead",
-                ("show", "-s", "--format=%s", "HEAD"): "REG-002 finalize",
-                ("show", "-s", "--format=%b", "HEAD"): "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n",
-                ("show", "-s", "--format=%an", "HEAD"): "Codex",
-                ("show", "-s", "--format=%ae", "HEAD"): "codex@example.com",
-                ("status", "--porcelain"): "",
+                ("show", "-s", "--format=%s", "sourcehead"): "REG-002 finalize",
+                ("show", "-s", "--format=%b", "sourcehead"): "LLM-Agent: Codex\nTask-ID: REG-002\nReviewer: Claude\n",
+                ("show", "-s", "--format=%an", "sourcehead"): "Codex",
+                ("show", "-s", "--format=%ae", "sourcehead"): "codex@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): "",
                 ("remote",): "origin",
                 ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "origin/task/REG-002",
                 ("rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"): "0 0",
@@ -633,7 +702,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             return responses[key]
 
         def fake_git_succeeds(args: list[str], **kwargs: object) -> bool:
-            if args == ["merge-base", "--is-ancestor", "HEAD", "origin/dev"]:
+            if args == ["merge-base", "--is-ancestor", "sourcehead", "origin/dev"]:
                 return False
             if args == ["merge-base", "--is-ancestor", "squashmerge", "origin/dev"]:
                 return True
@@ -649,12 +718,19 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                     "number": 533,
                     "state": "MERGED",
                     "headRefOid": "sourcehead",
+                    "headRefName": "task/REG-002",
                     "baseRefName": "dev",
                     "mergedAt": "2026-07-31T08:08:36Z",
                     "mergeCommit": {"oid": "squashmerge"},
                     "url": "https://github.com/example/repo/pull/533",
+                    "statusCheckRollup": [
+                        {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                        {"__typename": "StatusContext", "context": "task-review-gate", "state": "SUCCESS"},
+                    ],
                 },
             ),
+            mock.patch.object(ai_status, "repository_slug", return_value="alfloop-dev/odayplus"),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="alfloop-dev/odayplus"),
         ):
             delivery = ai_status.collect_done_delivery_metadata(task, "Codex")
 
@@ -663,6 +739,385 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
         self.assertEqual(delivery["pull_request"]["head_sha"], "sourcehead")
         self.assertEqual(delivery["pull_request"]["base_branch"], "dev")
         self.assertEqual(delivery["pull_request"]["merge_commit"], "squashmerge")
+
+
+class DoneDeliveryProvenanceRegressionTests(unittest.TestCase):
+    TASK_ID = "ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001"
+    APPROVED_HEAD = "ca262d1737fcb8d9fc077eca13efa803bc56d0bc"
+    MERGE_COMMIT = "8757c2d10fdfd6c972d586b0e6b7ac21712088c6"
+    REPOSITORY = "alfloop-dev/odayplus"
+
+    def pr_552(self) -> dict[str, object]:
+        return {
+            "number": 552,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": f"task/{self.TASK_ID}",
+            "baseRefName": "dev",
+            "mergedAt": "2026-08-02T00:55:48Z",
+            "mergeCommit": {"oid": self.MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/552",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "orchestrator",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "product",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                },
+                {
+                    "__typename": "StatusContext",
+                    "context": "task-review-gate",
+                    "state": "SUCCESS",
+                },
+            ],
+        }
+
+    def enforce_pr(self, pr_status: dict[str, object] | None, *, merge_on_target: bool = True) -> dict[str, object]:
+        delivery: dict[str, object] = {}
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return "dev-tip"
+            raise AssertionError(f"unexpected git command: {args}")
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return merge_on_target
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status),
+        ):
+            ai_status.enforce_delivery_merged_gate(
+                {"branch_workflow": {"dev_branch": "dev"}},
+                delivery,
+                repository_root=Path("/task-checkout"),
+                repository_id="pantheon",
+                branch=f"task/{self.TASK_ID}",
+                remote_names=["origin"],
+                approved_head=self.APPROVED_HEAD,
+                repository_slug_value=self.REPOSITORY,
+            )
+        return delivery
+
+    def test_pr_552_squash_topology_records_immutable_delivery_and_green_checks(self) -> None:
+        delivery = self.enforce_pr(self.pr_552())
+
+        self.assertFalse(delivery["head_merged_to_target"])
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertEqual(delivery["pull_request"]["number"], 552)
+        self.assertEqual(delivery["pull_request"]["head_sha"], self.APPROVED_HEAD)
+        self.assertEqual(delivery["pull_request"]["merge_commit"], self.MERGE_COMMIT)
+        self.assertEqual(delivery["ci_status"], "success")
+        self.assertEqual([check["name"] for check in delivery["ci_checks"]], ["orchestrator", "product", "task-review-gate"])
+
+    def test_pr_provenance_rejects_unmerged_closed_moved_wrong_task_and_wrong_base(self) -> None:
+        cases = {
+            "open": {"state": "OPEN"},
+            "closed": {"state": "CLOSED"},
+            "moved-head": {"headRefOid": "b" * 40},
+            "wrong-task": {"headRefName": "task/OTHER-001"},
+            "wrong-base": {"baseRefName": "main"},
+            "missing-merge-time": {"mergedAt": ""},
+            "missing-merge-commit": {"mergeCommit": None},
+        }
+        for label, mutation in cases.items():
+            with self.subTest(label=label):
+                pr_status = self.pr_552()
+                pr_status.update(mutation)
+                with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+                    self.enforce_pr(pr_status)
+
+    def test_pr_provenance_rejects_unverifiable_network_and_merge_commit(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "Network and repository provenance fail closed"):
+            self.enforce_pr(None)
+        with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+            self.enforce_pr(self.pr_552(), merge_on_target=False)
+
+    def test_pr_checks_reject_empty_red_pending_and_unknown_shapes(self) -> None:
+        cases = {
+            "empty": [],
+            "red": [{"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "FAILURE"}],
+            "pending": [{"__typename": "CheckRun", "name": "product", "status": "IN_PROGRESS", "conclusion": ""}],
+            "unknown": [{"__typename": "Mystery", "name": "product", "state": "SUCCESS"}],
+        }
+        for label, checks in cases.items():
+            with self.subTest(label=label):
+                pr_status = self.pr_552()
+                pr_status["statusCheckRollup"] = checks
+                with self.assertRaises(SystemExit):
+                    self.enforce_pr(pr_status)
+
+    def test_task_checkout_resolution_ignores_unrelated_canonical_writer_head(self) -> None:
+        task_path = Path("/tmp/task-owned-checkout")
+        worktrees = (
+            "worktree /home/lupin/oday-plus-supervisor-live\n"
+            "HEAD e496be62c47c45d758681b8a4d3abfae16f1c96d\n"
+            "branch refs/heads/dev\n\n"
+            f"worktree {task_path}\n"
+            f"HEAD {self.APPROVED_HEAD}\n"
+            f"branch refs/heads/task/{self.TASK_ID}\n\n"
+        )
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return worktrees
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            checkout, branch = ai_status.task_delivery_checkout(Path("/home/lupin/oday-plus-supervisor-live"), self.TASK_ID)
+
+        self.assertEqual(checkout, task_path)
+        self.assertEqual(branch, f"task/{self.TASK_ID}")
+
+    def test_done_finalizes_from_merged_pr_despite_post_merge_checkout_advance(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Antigravity4",
+            "reviewer": "Codex4",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+
+        POST_MERGE_DEV_HEAD = "80ba278623b8d4ad4ce81ea749a5aee030e5c18d"
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return f"task/{self.TASK_ID}"
+            if args == ["rev-parse", "HEAD"]:
+                return POST_MERGE_DEV_HEAD
+            if args == ["show", "-s", "--format=%s", self.APPROVED_HEAD]:
+                return f"{self.TASK_ID}: seal done provenance"
+            if args == ["show", "-s", "--format=%b", self.APPROVED_HEAD]:
+                return f"LLM-Agent: Antigravity4\nTask-ID: {self.TASK_ID}\nReviewer: Codex4\n"
+            if args == ["show", "-s", "--format=%an", self.APPROVED_HEAD]:
+                return "Antigravity4"
+            if args == ["show", "-s", "--format=%ae", self.APPROVED_HEAD]:
+                return "antigravity4@example.com"
+            if args == ["status", "--porcelain", "--untracked-files=all"]:
+                return ""
+            if args == ["remote"]:
+                return "origin"
+            if args == ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]:
+                return f"origin/task/{self.TASK_ID}"
+            if args == ["rev-list", "--left-right", "--count", f"origin/task/{self.TASK_ID}...HEAD"]:
+                return "0 0"
+            if args == ["fetch", "origin", "dev"]:
+                return ""
+            if args == ["rev-parse", "--verify", "origin/dev"]:
+                return POST_MERGE_DEV_HEAD
+            raise AssertionError(f"unexpected git command: {args}")
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, POST_MERGE_DEV_HEAD]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, POST_MERGE_DEV_HEAD]:
+                return True
+            if args == ["merge-base", "--is-ancestor", POST_MERGE_DEV_HEAD, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        pr_status = self.pr_552()
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=pr_status),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            delivery = ai_status.collect_done_delivery_metadata(task, "Antigravity4", approved_head=self.APPROVED_HEAD)
+
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertTrue(delivery["post_merge_checkout_advanced"])
+        self.assertEqual(delivery["verified_head"], POST_MERGE_DEV_HEAD)
+        self.assertEqual(delivery["approved_head"], self.APPROVED_HEAD)
+
+    def test_git_clean_gate_ignores_only_exact_worker_seed_context(self) -> None:
+        entries = [
+            "?? AI_COLLABORATION_GUIDE.md",
+            "?? ai-status.json",
+            "?? .orchestrator/task-briefs/odp_operator_live_provenance_health_001.md",
+            "?? .orchestrator/task-briefs/other-task.md",
+            " M scripts/ai_status.py",
+        ]
+
+        owned, ignored = ai_status.split_task_owned_dirty_entries(entries, self.TASK_ID)
+
+        self.assertEqual(ignored, entries[:3])
+        self.assertEqual(owned, entries[3:])
+
+    def test_collector_rejects_moved_or_dirty_task_checkout_even_if_env_disables_gates(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Codex",
+            "reviewer": "Codex8",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+        with (
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={"checkout": Path("/task"), "branch": f"task/{self.TASK_ID}", "present": True},
+            ),
+            mock.patch.object(ai_status, "run_git_command", return_value="b" * 40),
+        ):
+            with self.assertRaisesRegex(SystemExit, "task-owned checkout HEAD"):
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "HEAD"): self.APPROVED_HEAD,
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: bind E2E evidence",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): f"LLM-Agent: Codex\nTask-ID: {self.TASK_ID}\nReviewer: Codex8\n",
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Codex",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "codex@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): " M scripts/ai_status.py",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        disabled = {
+            "TASK_REQUIRE_COMMIT_HASH": "false",
+            "TASK_REQUIRE_GIT_CLEAN": "false",
+            "TASK_REQUIRE_MERGED_PR": "false",
+            "TASK_REQUIRE_SUBJECT_TASK_ID": "false",
+            "TASK_COMMIT_REQUIRED_FIELDS": "Verified",
+        }
+        with (
+            mock.patch.dict(os.environ, disabled, clear=False),
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={"checkout": Path("/task"), "branch": f"task/{self.TASK_ID}", "present": True},
+            ),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+        ):
+            with self.assertRaisesRegex(SystemExit, "task-owned git working tree is dirty"):
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def test_collector_rejects_checkout_from_wrong_repository(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Codex",
+            "reviewer": "Codex8",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("rev-parse", "HEAD"): self.APPROVED_HEAD,
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: bind E2E evidence",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): f"LLM-Agent: Codex\nTask-ID: {self.TASK_ID}\nReviewer: Codex8\n",
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Codex",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "codex@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): "",
+                ("remote",): "origin",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={"checkout": Path("/task"), "branch": f"task/{self.TASK_ID}", "present": True},
+            ),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value="attacker/wrong-repo"),
+        ):
+            with self.assertRaisesRegex(SystemExit, "does not match configured repository"):
+                ai_status.collect_done_delivery_metadata(task, "Codex")
+
+    def done_state(self) -> dict[str, object]:
+        return {
+            "agents": [],
+            "tasks": [
+                {
+                    "id": self.TASK_ID,
+                    "owner": "Codex7",
+                    "reviewer": "Codex8",
+                    "status": "review_approved",
+                    "approved_head": self.APPROVED_HEAD,
+                }
+            ],
+            "handoffs": [],
+            "blockers": [],
+        }
+
+    def done_delivery(self, *, checkout_head: str | None = None, pr_head: str | None = None) -> dict[str, object]:
+        return {
+            "verified_head": checkout_head or self.APPROVED_HEAD,
+            "pull_request": {
+                "head_sha": pr_head or self.APPROVED_HEAD,
+                "merge_commit": self.MERGE_COMMIT,
+            },
+        }
+
+    def test_command_done_allows_deleted_remote_ref_after_merged_pr_provenance(self) -> None:
+        state = self.done_state()
+        registered_actor = {"AI_NAME": "Codex7", "AI_STATUS_EXTRA_AGENTS": "Codex7,Codex8"}
+        with (
+            mock.patch.dict(os.environ, registered_actor, clear=False),
+            mock.patch.object(
+                ai_status,
+                "resolve_task_sha",
+                side_effect=AssertionError("done must not require an ephemeral remote task ref"),
+            ),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value=self.done_delivery()),
+            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": self.TASK_ID}),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_done(state, [self.TASK_ID, "done"])
+
+        self.assertEqual(state["tasks"], [])
+
+    def test_command_done_rejects_moved_checkout_or_pr_head(self) -> None:
+        cases = {
+            "checkout-moved": self.done_delivery(checkout_head="b" * 40),
+            "pr-head-moved": self.done_delivery(pr_head="b" * 40),
+            "pr-head-missing": {
+                "verified_head": self.APPROVED_HEAD,
+                "pull_request": {"merge_commit": self.MERGE_COMMIT},
+            },
+        }
+        registered_actor = {"AI_NAME": "Codex7", "AI_STATUS_EXTRA_AGENTS": "Codex7,Codex8"}
+        for label, delivery in cases.items():
+            with self.subTest(label=label):
+                with (
+                    mock.patch.dict(os.environ, registered_actor, clear=False),
+                    mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value=delivery),
+                ):
+                    with self.assertRaisesRegex(SystemExit, "differs from reviewer-approved head"):
+                        ai_status.command_done(self.done_state(), [self.TASK_ID, "done"])
 
 
 class ArchiveWorkflowTests(unittest.TestCase):
@@ -817,6 +1272,7 @@ class SidecarTaskTests(unittest.TestCase):
             "TASK_AUTO_GENERATED": "true",
             "TASK_MUTATES_CANONICAL": "false",
             "TASK_AUTO_CREATED_BY": "supervisor-underutilization",
+            "TASK_PRIORITY": "P1",
         }
         with (
             mock.patch.dict(os.environ, env, clear=False),
@@ -838,6 +1294,7 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(task["helper_kind"], "bff_handoff_packet")
         self.assertFalse(task["mutates_canonical"])
         self.assertEqual(task["auto_created_by"], "supervisor-underutilization")
+        self.assertEqual(task["priority"], "P1")
         self.assertEqual(task["depends_on"], ["PER-001"])
 
     def test_display_task_title_marks_sidecar_parent(self) -> None:
@@ -908,7 +1365,7 @@ class HumanOpsAgentTests(unittest.TestCase):
         self.assertEqual(human_ops["status"], "blocked")
         self.assertEqual(human_ops["current_task_ids"], ["PROD-WRITES-001-V2"])
         self.assertEqual(ai_status.get_agent(state, "Claude")["status"], "idle")
-        self.assertEqual(state["workload"]["Human/Ops"], 0)
+        self.assertNotIn("workload", state)
         self.assertEqual(state["workload_summary"]["Human/Ops"]["blocked"], 1)
 
 
@@ -1619,8 +2076,6 @@ class PortableStateRenderingTests(unittest.TestCase):
 
         self.assertEqual(bundle["focus_mode"], "execution")
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
-        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Codex"], 5)
-        self.assertEqual(bundle["runtime_summary"]["dispatch_targets"]["Gemini"], 5)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 0)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
         self.assertEqual(bundle["execution_summary"]["in_review"], 1)
@@ -1992,7 +2447,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="ai-status-dashboard-bundle-") as temp_dir:
             output_path = Path(temp_dir) / "dashboard-bundle.json"
             with mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", output_path):
-                with mock.patch.object(ai_status, "load_config", return_value=config):
+                with mock.patch.object(ai_status, "status_runtime_config", return_value=config):
                     with mock.patch.object(ai_status, "load_planning_state", return_value=planning_state):
                         with mock.patch.object(ai_status, "load_runtime_state", return_value=orchestrator_state) as load_runtime_state:
                             with mock.patch.object(ai_status, "load_json_file", return_value=approval_state) as load_json_file:
@@ -2140,7 +2595,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Claude": 1}}}
 
         with (
-            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "status_runtime_config", return_value=config),
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
@@ -2197,10 +2652,17 @@ class PortableStateRenderingTests(unittest.TestCase):
             "provider_guardrails": {"dispatch_pauses": {}},
         }
         approval_state = {"pending": [], "history": []}
-        config = {"ready_dispatcher": {"max_tasks_per_agent_by_agent": {"Codex": 2}}}
+        config = {
+            "agents": {
+                "codex": {"display_name": "Codex", "account_pool": "codex_main"},
+                "codex_slot_1": {"dispatch_slot_for_pool": "codex_main"},
+                "codex_slot_2": {"dispatch_slot_for_pool": "codex_main"},
+            },
+            "ready_dispatcher": {},
+        }
 
         with (
-            mock.patch.object(ai_status, "load_config", return_value=config),
+            mock.patch.object(ai_status, "status_runtime_config", return_value=config),
             mock.patch.object(ai_status, "load_archive_index", return_value={"updated_at": None, "counts": {"total": 0, "completed": 0, "superseded": 0}, "recent_terminal_ids": []}),
             mock.patch.object(ai_status, "pid_is_alive", return_value=True),
         ):
@@ -2209,8 +2671,21 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertEqual(bundle["runtime_summary"]["running_workers"], 1)
         self.assertEqual(bundle["execution_summary"]["ready_now"], 1)
         self.assertEqual(bundle["execution_summary"]["dependency_ready"], 1)
-        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent"], None)
-        self.assertEqual(bundle["dispatch_policy"]["max_tasks_per_agent_by_agent"], {"Codex": 2})
+        self.assertEqual(bundle["dispatch_policy"]["capacity_authority"], "account_pools_and_dispatch_slots")
+
+    def test_dashboard_slots_override_legacy_alias_capacity(self) -> None:
+        config = {
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "account_pool": "antigravity_main"},
+                "antigravity2": {"display_name": "Antigravity2", "account_pool": "antigravity_main"},
+                "antigravity_slot_1": {"dispatch_slot_for_pool": "antigravity_main"},
+                "antigravity_slot_2": {"dispatch_slot_for_pool": "antigravity_main"},
+            },
+            "ready_dispatcher": {},
+        }
+
+        self.assertEqual(ai_status.dashboard_agent_capacity(config, "Antigravity"), 2)
+        self.assertEqual(ai_status.dashboard_agent_capacity(config, "Antigravity2"), 2)
 
     def test_build_dashboard_bundle_includes_coordination_summary(self) -> None:
         state = {
@@ -3007,9 +3482,45 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
     def test_get_repository_slug_safe_config(self) -> None:
         with mock.patch.dict(os.environ, {}, clear=True):
-            with mock.patch.object(ai_status, "load_config", return_value={"repository": "foo/bar"}), \
+            with mock.patch.object(ai_status, "status_runtime_config", return_value={"repository": "foo/bar"}), \
                  mock.patch.object(ai_status, "repository_slug", return_value="foo/bar"):
                 self.assertEqual(ai_status.get_repository_slug_safe(), "foo/bar")
+
+    def test_review_gate_posts_to_the_repository_that_owns_the_task(self) -> None:
+        # A status is addressed as repos/<slug>/statuses/<sha>. Posting a
+        # data-platform commit against the fleet repo returns HTTP 422
+        # "No commit found for SHA" on every retry, forever.
+        task = {
+            "id": "DPF-GOV-001",
+            "reviewer": "Codex",
+            "repository": "alfloop-dev/oday-data-platform",
+        }
+        binding = multi_repo_registry.RepositoryBinding(
+            repo_id="oday_data_platform",
+            slug="alfloop-dev/oday-data-platform",
+            root=Path("/tmp/oday-data-platform"),
+            source="repository:oday_data_platform",
+        )
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40),
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "resolve_task_repository", return_value=binding),
+            mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+        ):
+            payload = ai_status.task_review_status_payload(task, "review")
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(payload["repo_slug"], "alfloop-dev/oday-data-platform")
+
+    def test_review_gate_falls_back_to_the_fleet_slug_without_a_binding(self) -> None:
+        with (
+            mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40),
+            mock.patch.object(ai_status, "status_runtime_config", side_effect=RuntimeError("no config")),
+            mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
+        ):
+            payload = ai_status.task_review_status_payload({"id": "ODP-001"}, "review")
+
+        self.assertEqual(payload["repo_slug"], "alfloop-dev/odayplus")
 
     def test_resolve_task_sha_rejects_branch_absent_old_pr_and_local_head(self) -> None:
         mock_result = mock.Mock(returncode=0, stdout="")
@@ -3145,7 +3656,7 @@ class StatusCheckEmissionTests(unittest.TestCase):
             fourth_sha = ai_status.resolve_task_sha(task_id, force_refresh=True)
             self.assertIsNone(fourth_sha)
 
-    def test_governance_transitions_force_fresh_query_and_reject_warmed_stale_sha(self) -> None:
+    def test_active_branch_governance_refreshes_but_done_uses_delivery_provenance(self) -> None:
         task_id = "ODP-GOV-TEST-001"
         stale_sha = "1" * 40
         remote_sha = "2" * 40
@@ -3158,7 +3669,13 @@ class StatusCheckEmissionTests(unittest.TestCase):
 
         # 2. Test command_approve when origin changes to remote_sha
         state_approve = {
-            "tasks": [{"id": task_id, "status": "review", "owner": "Codex", "reviewer": "Claude"}]
+            "tasks": [{
+                "id": task_id,
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "review_submission": {"remote_sha": remote_sha},
+            }]
         }
         mock_changed = mock.Mock(returncode=0, stdout=f"{remote_sha}\trefs/heads/task/{task_id}\n")
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
@@ -3168,17 +3685,43 @@ class StatusCheckEmissionTests(unittest.TestCase):
             self.assertEqual(task["approved_head"], remote_sha)
             self.assertNotEqual(task["approved_head"], stale_sha)
 
-        # 3. Test command_done when origin returns remote error
+        # A branch update after task_finalize invalidates the submitted review
+        # packet. The reviewer must never approve a different remote head.
+        state_mismatch = {
+            "tasks": [{
+                "id": task_id,
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "review_submission": {"remote_sha": stale_sha},
+            }]
+        }
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False), \
+             mock.patch("subprocess.run", return_value=mock_changed):
+            with self.assertRaises(SystemExit) as cm:
+                ai_status.command_approve(state_mismatch, [task_id, "Must not approve moved head"])
+        self.assertIn("does not match current remote task head", str(cm.exception))
+        self.assertEqual(ai_status.get_task(state_mismatch, task_id)["status"], "review")
+
+        # 3. Once merged, command_done uses the unique checkout and immutable
+        # PR head from delivery provenance, not the now-ephemeral remote ref.
         state_done = {
             "tasks": [{"id": task_id, "status": "review_approved", "approved_head": stale_sha, "owner": "Codex", "reviewer": "Claude"}]
         }
-        with mock.patch("subprocess.run", return_value=mock_warm):
-            ai_status.clear_ai_status_caches()
-            self.assertEqual(ai_status.resolve_task_sha(task_id), stale_sha)
-
-        mock_err = mock.Mock(returncode=1, stdout="")
         with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False), \
-             mock.patch("subprocess.run", return_value=mock_err):
+             mock.patch.object(
+                 ai_status,
+                 "resolve_task_sha",
+                 side_effect=AssertionError("done must not query the ephemeral remote ref"),
+             ), \
+             mock.patch.object(
+                 ai_status,
+                 "collect_done_delivery_metadata",
+                 return_value={
+                     "verified_head": remote_sha,
+                     "pull_request": {"head_sha": stale_sha, "merge_commit": "3" * 40},
+                 },
+             ):
             with self.assertRaises(SystemExit) as cm:
                 ai_status.command_done(state_done, [task_id, "Done attempt"])
             self.assertIn("differs from reviewer-approved head", str(cm.exception))
@@ -3491,7 +4034,7 @@ class ActorReferenceValidationTests(unittest.TestCase):
 
         roster = [agent["name"] for agent in state["agents"]]
         self.assertNotIn(self.PROSE, roster)
-        self.assertNotIn(self.PROSE, state["workload"])
+        self.assertNotIn("workload", state)
         self.assertIn("Claude", roster)
 
     def test_invalid_actor_references_are_reported(self) -> None:
@@ -3576,7 +4119,7 @@ class ActorReferenceValidationTests(unittest.TestCase):
 
     def _roster_state_for_prune(self) -> dict:
         state = self._state()
-        for name in (self.TASK_ID, "Codex7", "Nessie9"):
+        for name in (self.TASK_ID, "Codex77", "Nessie9"):
             state["agents"].append(
                 {
                     "name": name,
@@ -3616,9 +4159,9 @@ class ActorReferenceValidationTests(unittest.TestCase):
             ai_status.command_prune_agents(state, ["--apply", "cleanup"])
 
         roster = [agent["name"] for agent in state["agents"]]
-        # Removed: the task-id entry and the undeclared, unreferenced Codex7.
+        # Removed: the task-id entry and the undeclared, unreferenced Codex77.
         self.assertNotIn(self.TASK_ID, roster)
-        self.assertNotIn("Codex7", roster)
+        self.assertNotIn("Codex77", roster)
         # Kept: configured agents and the undeclared-but-referenced Nessie9.
         self.assertIn("Claude", roster)
         self.assertIn("Codex2", roster)
@@ -3813,7 +4356,7 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
                 )
 
     def test_live_path_delegates_to_common_load_config(self) -> None:
-        """When pointed at the real config path, use Supervisor's loader verbatim."""
+        """Actor authority always uses Supervisor's canonical loader."""
         import common
 
         self.assertEqual(common.DEFAULT_CONFIG_PATH, ai_status.CONFIG_FILE)
@@ -3822,8 +4365,62 @@ class MergedConfigActorAuthorityTests(unittest.TestCase):
         ) as load_config:
             ai_status._MERGED_CONFIG_CACHE.clear()
             names = ai_status.configured_agent_names()
-        load_config.assert_called_once_with()
+        load_config.assert_called_once_with(ai_status.CONFIG_FILE, overlay_paths=())
         self.assertIn("Nessie9", names)
+
+    def test_runtime_config_env_is_resolved_after_module_import(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-runtime-config-") as temp_dir:
+            runtime = self._write_config(
+                Path(temp_dir),
+                {"agents": {"late": {"display_name": "LateWorker", "provider": "codex"}}},
+                name="supervisor-runtime.json",
+            )
+            with mock.patch.dict(
+                ai_status.os.environ,
+                {"PANTHEON_CONFIG_PATH": str(runtime)},
+                clear=False,
+            ):
+                names = ai_status.configured_agent_names()
+
+        self.assertEqual(names, {"LateWorker"})
+
+    def test_explicit_runtime_config_ignores_status_root_overlay(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="ai-status-runtime-config-overlay-") as temp_dir:
+            root = Path(temp_dir)
+            runtime = self._write_config(
+                root,
+                {"agents": {"runtime": {"display_name": "RuntimeWorker", "provider": "codex"}}},
+                name="supervisor-runtime.json",
+            )
+            status_overlay = self._write_config(
+                root / "status" / ".orchestrator",
+                {
+                    "agents": {
+                        "shadow": {"display_name": "ShadowWorker", "provider": "codex"}
+                    },
+                    "ready_dispatcher": {
+                        "max_tasks_per_agent_by_agent": {"codex": 9},
+                        "target_workload": 9,
+                    },
+                },
+                name="config.local.json",
+            )
+            with (
+                mock.patch.dict(
+                    ai_status.os.environ,
+                    {"PANTHEON_CONFIG_PATH": str(runtime)},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    ai_status,
+                    "STATUS_ROOT_CONFIG_LOCAL_FILE",
+                    status_overlay,
+                ),
+            ):
+                ai_status._MERGED_CONFIG_CACHE.clear()
+                names = ai_status.configured_agent_names()
+
+        self.assertEqual(names, {"RuntimeWorker"})
 
     def test_codex3_is_its_own_worker_not_an_alias_of_codex(self) -> None:
         """The retired `codex3 -> Codex` alias would silently reassign a real worker."""
@@ -3992,6 +4589,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "reopen": [TASK_ID, "reopening"],
         "re_review": [TASK_ID, "re-reviewing"],
         "re-review": [TASK_ID, "re-reviewing"],
+        "submit_review": [TASK_ID, "123", "submit for review"],
         "handoff": [TASK_ID, "Codex2", "please review"],
         "blocker": [TASK_ID, "blocked", "Codex2"],
         "retarget_blocker": [TASK_ID, "Codex2", "repair"],
@@ -4045,6 +4643,1049 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         ]
         self.assertEqual([], offenders)
         self.assertFalse(hasattr(ai_status, "current_actor"))
+
+
+class HistoricalClosemergeProvenanceTests(unittest.TestCase):
+    """Closeout of work that merged before its evidence was cleaned up.
+
+    Every fixture here is taken from live state on 2026-08-09, when the
+    finalize lane held tasks whose work had demonstrably landed on ``dev``
+    yet could not be finalized. The point of these tests is that the two
+    reasons were reading defects, not missing delivery -- and that removing
+    them does not create a way to finalize something unmerged.
+    """
+
+    TASK_ID = "ODP-ORCH-WORKTREE-BASE-ADVANCE-LIVE-ROLLOUT-001"
+    BRANCH = f"task/{TASK_ID}"
+    APPROVED_HEAD = "cc560e00ee5f268dc595150e1221c7f15b86ffa1"
+    DEV_MERGE_COMMIT = "8227d0d923bc2b456970e6af2a2ccd809e6bd6cb"
+    MAIN_MERGE_COMMIT = "574dde52b56992b5088aedc74332e2e90fb40b44"
+    REPOSITORY = "alfloop-dev/odayplus"
+
+    def pr_575_into_dev(self) -> dict[str, object]:
+        """The task PR. Its rollup still carries the ``product`` run that failed."""
+
+        return {
+            "number": 575,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": self.BRANCH,
+            "baseRefName": "dev",
+            "mergedAt": "2026-08-07T01:26:54Z",
+            "mergeCommit": {"oid": self.DEV_MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/575",
+            "statusCheckRollup": [
+                {
+                    "__typename": "CheckRun",
+                    "name": "product",
+                    "workflowName": "CI",
+                    "status": "COMPLETED",
+                    "conclusion": "FAILURE",
+                    "startedAt": "2026-08-04T06:21:34Z",
+                    "completedAt": "2026-08-04T06:31:02Z",
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "product",
+                    "workflowName": "CI",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-08-06T22:10:04Z",
+                    "completedAt": "2026-08-06T22:19:41Z",
+                },
+                {
+                    "__typename": "CheckRun",
+                    "name": "orchestrator",
+                    "workflowName": "CI",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS",
+                    "startedAt": "2026-08-06T22:10:04Z",
+                    "completedAt": "2026-08-06T22:12:27Z",
+                },
+                {
+                    "__typename": "StatusContext",
+                    "context": "task-review-gate",
+                    "state": "SUCCESS",
+                    "startedAt": "2026-08-06T22:24:34Z",
+                },
+            ],
+        }
+
+    def pr_617_into_main(self) -> dict[str, object]:
+        """The ReviewBus PR: same branch, same head, merged later, wrong base."""
+
+        return {
+            "number": 617,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": self.BRANCH,
+            "baseRefName": "main",
+            "mergedAt": "2026-08-07T12:25:14Z",
+            "mergeCommit": {"oid": self.MAIN_MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/617",
+            "statusCheckRollup": [],
+        }
+
+    # -- stale rollup ----------------------------------------------------
+
+    def test_rerun_supersedes_the_earlier_red_run_of_the_same_check(self) -> None:
+        latest, superseded = ai_status.latest_status_check_runs(
+            self.pr_575_into_dev()["statusCheckRollup"]
+        )
+
+        self.assertEqual(
+            [(c["name"] if "name" in c else c["context"], c.get("conclusion") or c.get("state")) for c in latest],
+            [("product", "SUCCESS"), ("orchestrator", "SUCCESS"), ("task-review-gate", "SUCCESS")],
+        )
+        self.assertEqual([c["conclusion"] for c in superseded], ["FAILURE"])
+
+    def test_stale_red_run_no_longer_blocks_a_merged_pr_but_stays_on_record(self) -> None:
+        checks = ai_status.normalized_green_pr_checks(self.pr_575_into_dev())
+
+        by_name = [(check["name"], check["conclusion"], check.get("superseded", False)) for check in checks]
+        self.assertIn(("product", "SUCCESS", False), by_name)
+        self.assertIn(("product", "FAILURE", True), by_name)
+
+    def test_latest_run_still_decides_when_it_is_the_red_one(self) -> None:
+        """Collapsing to the newest run is not a way to bury a current failure."""
+
+        pr_status = self.pr_575_into_dev()
+        rollup = pr_status["statusCheckRollup"]
+        rollup[1]["conclusion"] = "FAILURE"
+        rollup[0]["conclusion"] = "SUCCESS"
+
+        with self.assertRaisesRegex(SystemExit, r"CI is not green.*product"):
+            ai_status.normalized_green_pr_checks(pr_status)
+
+    def test_untimestamped_runs_fall_back_to_rollup_order(self) -> None:
+        rollup = [
+            {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "SUCCESS"},
+            {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "FAILURE"},
+        ]
+        latest, superseded = ai_status.latest_status_check_runs(rollup)
+
+        self.assertEqual([c["conclusion"] for c in latest], ["FAILURE"])
+        self.assertEqual([c["conclusion"] for c in superseded], ["SUCCESS"])
+
+    def test_a_timestamped_run_outranks_one_with_no_timestamps(self) -> None:
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "completedAt": "2026-08-06T22:19:41Z",
+            },
+            {"__typename": "CheckRun", "name": "product", "status": "COMPLETED", "conclusion": "FAILURE"},
+        ]
+        latest, _ = ai_status.latest_status_check_runs(rollup)
+
+        self.assertEqual([c["conclusion"] for c in latest], ["SUCCESS"])
+
+    def test_re_run_of_a_different_workflow_is_not_treated_as_the_same_check(self) -> None:
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "COMPLETED",
+                "conclusion": "FAILURE",
+                "completedAt": "2026-08-06T22:19:41Z",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "Nightly",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "completedAt": "2026-08-07T22:19:41Z",
+            },
+        ]
+        with self.assertRaisesRegex(SystemExit, "CI is not green"):
+            ai_status.normalized_green_pr_checks({"statusCheckRollup": rollup})
+
+    # -- zero-timestamp sentinel -----------------------------------------
+
+    def rerun_in_progress_over_an_older_success(self) -> list[dict[str, object]]:
+        """The `gh pr view --json statusCheckRollup` shape for a running re-run.
+
+        Verbatim field set, including the two details `gh` emits that a
+        hand-written fixture omits: `conclusion` is the empty string rather than
+        absent, and `completedAt` is Go's zero time rather than absent.
+        """
+
+        return [
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "startedAt": "2026-08-06T22:10:04Z",
+                "completedAt": "2026-08-06T22:19:41Z",
+                "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/1/job/1",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "IN_PROGRESS",
+                "conclusion": "",
+                "startedAt": "2026-08-09T13:02:11Z",
+                "completedAt": "0001-01-01T00:00:00Z",
+                "detailsUrl": "https://github.com/alfloop-dev/odayplus/actions/runs/2/job/2",
+            },
+        ]
+
+    def test_a_running_rerun_supersedes_the_success_it_was_started_to_replace(self) -> None:
+        """The zero `completedAt` must not sort the running re-run into the past."""
+
+        latest, superseded = ai_status.latest_status_check_runs(
+            self.rerun_in_progress_over_an_older_success()
+        )
+
+        self.assertEqual([check["status"] for check in latest], ["IN_PROGRESS"])
+        self.assertEqual([check["conclusion"] for check in superseded], ["SUCCESS"])
+
+    def test_an_older_success_cannot_green_a_pr_whose_rerun_is_still_running(self) -> None:
+        """Fail closed: unfinished is not green, however old the passing run is."""
+
+        with self.assertRaisesRegex(SystemExit, r"CI is not green.*pending checks: product"):
+            ai_status.normalized_green_pr_checks(
+                {"statusCheckRollup": self.rerun_in_progress_over_an_older_success()}
+            )
+
+    def test_zero_completed_at_falls_back_to_started_at_not_to_no_timestamp(self) -> None:
+        """A sentinel means "unfinished", so the entry still ranks by its start."""
+
+        self.assertEqual(
+            ai_status.status_check_timestamp(
+                {"startedAt": "2026-08-09T13:02:11Z", "completedAt": "0001-01-01T00:00:00Z"}
+            ),
+            "2026-08-09T13:02:11Z",
+        )
+        self.assertEqual(
+            ai_status.status_check_timestamp(
+                {"startedAt": "0001-01-01T00:00:00Z", "completedAt": "0001-01-01T00:00:00Z"}
+            ),
+            "",
+        )
+
+    def test_a_queued_rerun_with_no_real_timestamp_still_wins_on_rollup_order(self) -> None:
+        """`gh` zeroes both stamps on a queued run; order is then all that is left.
+
+        GitHub appends re-runs, so the later entry is the newer one -- and it is
+        unfinished, which must read as pending rather than as the earlier pass.
+        """
+
+        rollup = [
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "COMPLETED",
+                "conclusion": "SUCCESS",
+                "startedAt": "0001-01-01T00:00:00Z",
+                "completedAt": "0001-01-01T00:00:00Z",
+            },
+            {
+                "__typename": "CheckRun",
+                "name": "product",
+                "workflowName": "CI",
+                "status": "QUEUED",
+                "conclusion": "",
+                "startedAt": "0001-01-01T00:00:00Z",
+                "completedAt": "0001-01-01T00:00:00Z",
+            },
+        ]
+
+        latest, _ = ai_status.latest_status_check_runs(rollup)
+
+        self.assertEqual([check["status"] for check in latest], ["QUEUED"])
+
+    # -- provenance selection --------------------------------------------
+
+    def test_dev_merge_is_selected_over_the_later_main_merge(self) -> None:
+        selected = ai_status.select_merged_pull_request(
+            [self.pr_617_into_main(), self.pr_575_into_dev()],
+            branch=self.BRANCH,
+            base_branch="dev",
+            head_sha=self.APPROVED_HEAD,
+        )
+
+        self.assertEqual(selected["number"], 575)
+
+    def test_no_candidate_matches_when_the_approved_head_never_merged(self) -> None:
+        """ODP-ORCH-REBASE-HEAD-LIVENESS-001: merged, but at an earlier head."""
+
+        merged_at_other_head = self.pr_575_into_dev()
+        merged_at_other_head["headRefOid"] = "cdc5e5b68590a6b864455cadc9e1d12660876cbf"
+
+        self.assertIsNone(
+            ai_status.select_merged_pull_request(
+                [merged_at_other_head],
+                branch=self.BRANCH,
+                base_branch="dev",
+                head_sha=self.APPROVED_HEAD,
+            )
+        )
+
+    def test_selection_rejects_open_wrong_base_and_wrong_branch_candidates(self) -> None:
+        cases = {
+            "open": {"state": "OPEN"},
+            "wrong-base": {"baseRefName": "main"},
+            "wrong-branch": {"headRefName": "task/OTHER-001"},
+            "no-merge-time": {"mergedAt": ""},
+            "no-merge-commit": {"mergeCommit": None},
+        }
+        for label, mutation in cases.items():
+            with self.subTest(label=label):
+                candidate = self.pr_575_into_dev()
+                candidate.update(mutation)
+                self.assertIsNone(
+                    ai_status.select_merged_pull_request(
+                        [candidate],
+                        branch=self.BRANCH,
+                        base_branch="dev",
+                        head_sha=self.APPROVED_HEAD,
+                    )
+                )
+
+    def test_two_merge_commits_for_one_head_are_ambiguous_and_fail_closed(self) -> None:
+        duplicate = self.pr_575_into_dev()
+        duplicate["number"] = 999
+        duplicate["mergeCommit"] = {"oid": "f" * 40}
+
+        with self.assertRaisesRegex(SystemExit, "ambiguous merge provenance"):
+            ai_status.select_merged_pull_request(
+                [self.pr_575_into_dev(), duplicate],
+                branch=self.BRANCH,
+                base_branch="dev",
+                head_sha=self.APPROVED_HEAD,
+            )
+
+    def test_lookup_asks_for_every_pr_on_the_branch_before_choosing(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_list(args: list[str], **kwargs: object) -> list[dict[str, object]]:
+            calls.append(args)
+            return [self.pr_617_into_main(), self.pr_575_into_dev()]
+
+        with (
+            mock.patch.object(ai_status, "run_gh_json_list_command", side_effect=fake_list),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=self.pr_617_into_main()),
+        ):
+            pr_status = ai_status.pull_request_status_for_branch(
+                Path("/repo"),
+                self.BRANCH,
+                self.REPOSITORY,
+                base_branch="dev",
+                head_sha=self.APPROVED_HEAD,
+            )
+
+        self.assertEqual(pr_status["number"], 575)
+        self.assertIn("--state", calls[0])
+        self.assertIn("all", calls[0])
+
+    def test_lookup_without_a_target_keeps_the_historical_recency_behaviour(self) -> None:
+        with (
+            mock.patch.object(ai_status, "run_gh_json_list_command", return_value=[]),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=self.pr_617_into_main()),
+        ):
+            pr_status = ai_status.pull_request_status_for_branch(
+                Path("/repo"), self.BRANCH, self.REPOSITORY
+            )
+
+        self.assertEqual(pr_status["number"], 617)
+
+    # -- absent delivery checkout ----------------------------------------
+
+    def worktree_listing(self, *, include_task: bool) -> str:
+        listing = (
+            "worktree /home/lupin/oday-plus-supervisor-live\n"
+            "HEAD e496be62c47c45d758681b8a4d3abfae16f1c96d\n"
+            "branch refs/heads/dev\n\n"
+        )
+        if include_task:
+            listing += (
+                "worktree /tmp/task-owned-checkout\n"
+                f"HEAD {self.APPROVED_HEAD}\n"
+                f"branch refs/heads/{self.BRANCH}\n\n"
+            )
+        return listing
+
+    def resolve_with_worktrees(self, listing: str) -> dict[str, object]:
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return listing
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            return ai_status.resolve_task_delivery_checkout(
+                Path("/home/lupin/oday-plus-supervisor-live"), self.TASK_ID
+            )
+
+    def test_absent_checkout_is_reported_not_raised(self) -> None:
+        resolved = self.resolve_with_worktrees(self.worktree_listing(include_task=False))
+
+        self.assertFalse(resolved["present"])
+        self.assertEqual(resolved["branch"], self.BRANCH)
+        self.assertEqual(resolved["checkout"], Path("/home/lupin/oday-plus-supervisor-live"))
+
+    def test_two_task_checkouts_remain_ambiguous_and_fail_closed(self) -> None:
+        listing = self.worktree_listing(include_task=True) + (
+            "worktree /tmp/second-task-checkout\n"
+            f"HEAD {self.APPROVED_HEAD}\n"
+            f"branch refs/heads/{self.BRANCH}\n\n"
+        )
+        with self.assertRaisesRegex(SystemExit, "expected exactly one task-owned delivery"):
+            self.resolve_with_worktrees(listing)
+
+    def test_legacy_helper_still_raises_on_an_absent_checkout(self) -> None:
+        """`task_delivery_checkout` keeps its contract for callers that need one."""
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return self.worktree_listing(include_task=False)
+            raise AssertionError(f"unexpected git command: {args}")
+
+        with mock.patch.object(ai_status, "run_git_command", side_effect=fake_git):
+            with self.assertRaisesRegex(SystemExit, "found 0"):
+                ai_status.task_delivery_checkout(Path("/home/lupin/oday-plus-supervisor-live"), self.TASK_ID)
+
+    def task(self) -> dict[str, object]:
+        return {
+            "id": self.TASK_ID,
+            "owner": "Antigravity2",
+            "reviewer": "Codex2",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+
+    def collect_without_checkout(
+        self,
+        *,
+        approved_head_present: bool = True,
+        pr_status: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            responses = {
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: land base advance",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): (
+                    f"LLM-Agent: Antigravity2\nTask-ID: {self.TASK_ID}\nReviewer: Codex2\n"
+                ),
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Antigravity2",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "antigravity2@example.com",
+                ("remote",): "origin",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "dev-tip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["cat-file", "-e", f"{self.APPROVED_HEAD}^{{commit}}"]:
+                return approved_head_present
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.DEV_MERGE_COMMIT, "origin/dev"]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.MAIN_MERGE_COMMIT, "origin/dev"]:
+                return False
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={
+                    "checkout": Path("/home/lupin/oday-plus-supervisor-live"),
+                    "branch": self.BRANCH,
+                    "present": False,
+                },
+            ),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(
+                ai_status,
+                "pull_request_status_for_branch",
+                return_value=self.pr_575_into_dev() if pr_status is None else pr_status,
+            ),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            return ai_status.collect_done_delivery_metadata(
+                self.task(), "Antigravity2", approved_head=self.APPROVED_HEAD
+            )
+
+    def test_a_cleaned_up_checkout_finalizes_from_merged_pr_provenance_alone(self) -> None:
+        delivery = self.collect_without_checkout()
+
+        self.assertFalse(delivery["task_checkout_present"])
+        self.assertEqual(delivery["provenance_mode"], "merged_pr_without_task_checkout")
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertEqual(delivery["pull_request"]["number"], 575)
+        self.assertEqual(delivery["verified_head"], self.APPROVED_HEAD)
+
+    def test_absent_checkout_records_what_it_could_not_observe(self) -> None:
+        """Skipped gates are reported as unevaluated, never as passed."""
+
+        delivery = self.collect_without_checkout()
+
+        self.assertIsNone(delivery["git_clean"])
+        self.assertFalse(delivery["git_clean_evaluated"])
+        self.assertEqual(delivery["push_status"], "no_task_checkout")
+        self.assertIsNone(delivery["upstream"])
+
+    def test_absent_checkout_fails_closed_when_the_approved_head_is_gone(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "is not present in"):
+            self.collect_without_checkout(approved_head_present=False)
+
+    def test_absent_checkout_fails_closed_when_the_pr_does_not_prove_delivery(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+            self.collect_without_checkout(pr_status=self.pr_617_into_main())
+
+    def test_absent_checkout_is_not_a_route_around_the_merged_pr_gate(self) -> None:
+        """The one gate this path relies on cannot be switched off from the environment.
+
+        With no checkout, the merged-PR gate is the *only* remaining evidence:
+        the working-tree and push-status gates have nothing to read. A config
+        that turned it off would leave the path verifying nothing at all.
+        """
+
+        disabled = {
+            "TASK_REQUIRE_MERGED_PR": "false",
+            "TASK_REQUIRE_GIT_CLEAN": "false",
+            "TASK_REQUIRE_COMMIT_HASH": "false",
+        }
+        with mock.patch.dict(os.environ, disabled, clear=False):
+            with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+                self.collect_without_checkout(pr_status=self.pr_617_into_main())
+
+
+class StaleTaskCheckoutFinalizeTests(unittest.TestCase):
+    """Closeout when a superseded checkout of the same task branch survives.
+
+    A reassigned, restarted or helper-claimed lane can leave an older checkout of
+    `task/<ID>` behind in the configured repository. Finalize reads the task
+    checkout's HEAD as the task's delivery head, and only ever had a
+    carry-forward path for a HEAD *ahead* of the approved commit. A HEAD behind
+    it read as "the wrong head", so a task whose exact approved head had already
+    merged could not be closed out at all.
+
+    A behind checkout is history, not a second delivery: it holds a prefix of the
+    reviewed line. These tests pin that it is read that way, and that doing so
+    does not open a route past the wrong-head or unmerged gates.
+    """
+
+    TASK_ID = "ODP-ORCH-FINALIZE-STALE-WORKTREE-001"
+    BRANCH = f"task/{TASK_ID}"
+    APPROVED_HEAD = "3f0b1c9d5a8e47b26c1d0f9a4e7b2c8d16a5f309"
+    # The anchor commit the superseded lane stopped on: an ancestor of the head
+    # the reviewer went on to approve.
+    STALE_HEAD = "9c2e4a17b0d38f5619a7c4e2b8d0f36a5c1e9407"
+    # Not an ancestor of anything: a different line of work on the same name.
+    DIVERGED_HEAD = "7d41e8b2609fa35c1d8e074b2a9c6f3018de52ab"
+    MERGE_COMMIT = "5a7d2f81c93e64b0a8f1d7c2e5b394086af1cd23"
+    REPOSITORY = "alfloop-dev/odayplus"
+    STALE_CHECKOUT = Path("/tmp/pantheon-worker-worktrees/stale-lane")
+    LIVE_ROOT = Path("/home/lupin/oday-plus-supervisor-live")
+
+    # Verbs that would rewrite the branch or the working tree. `merge-base` and
+    # `fetch` are reads; everything below changes something.
+    MUTATING_GIT_VERBS = {
+        "reset", "rebase", "checkout", "switch", "branch", "push", "merge",
+        "commit", "cherry-pick", "revert", "restore", "clean", "stash",
+        "update-ref", "worktree", "am", "apply",
+    }
+
+    def task(self) -> dict[str, object]:
+        return {
+            "id": self.TASK_ID,
+            "owner": "Claude",
+            "reviewer": "Antigravity3",
+            "status": "review_approved",
+            "approved_head": self.APPROVED_HEAD,
+            "artifacts": [],
+        }
+
+    def merged_pr(self) -> dict[str, object]:
+        return {
+            "number": 812,
+            "state": "MERGED",
+            "headRefOid": self.APPROVED_HEAD,
+            "headRefName": self.BRANCH,
+            "baseRefName": "dev",
+            "mergedAt": "2026-08-11T09:14:02Z",
+            "mergeCommit": {"oid": self.MERGE_COMMIT},
+            "url": "https://github.com/alfloop-dev/odayplus/pull/812",
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "orchestrator", "status": "COMPLETED", "conclusion": "SUCCESS"},
+                {"__typename": "StatusContext", "context": "task-review-gate", "state": "SUCCESS"},
+            ],
+        }
+
+    def collect_with_stale_checkout(
+        self,
+        *,
+        checkout_head: str | None = None,
+        approved_head_present: bool = True,
+        pr_status: dict[str, object] | None = None,
+        porcelain: str = "",
+        commands: list[list[str]] | None = None,
+    ) -> dict[str, object]:
+        head = checkout_head or self.STALE_HEAD
+        seen = commands if commands is not None else []
+
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            seen.append(args)
+            responses = {
+                ("rev-parse", "HEAD"): head,
+                ("show", "-s", "--format=%s", self.APPROVED_HEAD): f"{self.TASK_ID}: seal stale-worktree finalize",
+                ("show", "-s", "--format=%b", self.APPROVED_HEAD): (
+                    f"LLM-Agent: Claude\nTask-ID: {self.TASK_ID}\nReviewer: Antigravity3\n"
+                ),
+                ("show", "-s", "--format=%an", self.APPROVED_HEAD): "Claude",
+                ("show", "-s", "--format=%ae", self.APPROVED_HEAD): "claude@example.com",
+                ("status", "--porcelain", "--untracked-files=all"): porcelain,
+                ("remote",): "origin",
+                # The task branch's remote ref is deleted when its PR merges.
+                ("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"): "",
+                ("fetch", "origin", "dev"): "",
+                ("rev-parse", "--verify", "origin/dev"): "dev-tip",
+            }
+            key = tuple(args)
+            if key not in responses:
+                raise AssertionError(f"unexpected git command: {args}")
+            return responses[key]
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            seen.append(args)
+            if args == ["cat-file", "-e", f"{self.APPROVED_HEAD}^{{commit}}"]:
+                return approved_head_present
+            if args == ["merge-base", "--is-ancestor", head, self.APPROVED_HEAD]:
+                return head == self.STALE_HEAD
+            if args == ["merge-base", "--is-ancestor", self.APPROVED_HEAD, "origin/dev"]:
+                return False
+            if args == ["merge-base", "--is-ancestor", self.MERGE_COMMIT, "origin/dev"]:
+                return True
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(
+                ai_status,
+                "resolve_task_delivery_checkout",
+                return_value={"checkout": self.STALE_CHECKOUT, "branch": self.BRANCH, "present": True},
+            ),
+            # The advance path is exercised by its own tests; here it is only the
+            # first of the two carry-forward paths and it never applies to a HEAD
+            # that is behind, so hold it at False and test the second one.
+            mock.patch.object(ai_status, "is_approved_head_satisfied", return_value=False),
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+            mock.patch.object(
+                ai_status,
+                "pull_request_status_for_branch",
+                return_value=self.merged_pr() if pr_status is None else pr_status,
+            ),
+            mock.patch.object(ai_status, "repository_slug", return_value=self.REPOSITORY),
+            mock.patch.object(ai_status, "git_remote_repository_slug", return_value=self.REPOSITORY),
+        ):
+            return ai_status.collect_done_delivery_metadata(
+                self.task(), "Claude", approved_head=self.APPROVED_HEAD
+            )
+
+    # -- the behind checkout stops blocking ------------------------------
+
+    def test_a_behind_checkout_finalizes_from_the_exact_merged_approved_head(self) -> None:
+        delivery = self.collect_with_stale_checkout()
+
+        self.assertTrue(delivery["stale_task_checkout"])
+        self.assertEqual(delivery["provenance_mode"], "merged_pr_with_stale_task_checkout")
+        self.assertEqual(delivery["stale_checkout_head"], self.STALE_HEAD)
+        self.assertEqual(delivery["verified_head"], self.APPROVED_HEAD)
+        self.assertEqual(delivery["approved_head"], self.APPROVED_HEAD)
+        self.assertTrue(delivery["merge_verified_via_pr"])
+        self.assertEqual(delivery["pull_request"]["head_sha"], self.APPROVED_HEAD)
+
+    def test_done_accepts_the_delivery_a_behind_checkout_produced(self) -> None:
+        """The collector's answer has to survive `command_done`'s own freeze check."""
+
+        state = {
+            "agents": [],
+            "tasks": [dict(self.task(), owner="Claude")],
+            "handoffs": [],
+            "blockers": [],
+        }
+        registered_actor = {"AI_NAME": "Claude", "AI_STATUS_EXTRA_AGENTS": "Claude,Antigravity3"}
+        delivery = self.collect_with_stale_checkout()
+
+        with (
+            mock.patch.dict(os.environ, registered_actor, clear=False),
+            mock.patch.object(ai_status, "collect_done_delivery_metadata", return_value=delivery),
+            mock.patch.object(ai_status, "archive_task_snapshot", return_value={"task_id": self.TASK_ID}),
+            mock.patch.object(ai_status, "append_log"),
+        ):
+            ai_status.command_done(state, [self.TASK_ID, "closed out from merged PR 812"])
+
+        self.assertEqual(state["tasks"], [])
+
+    def test_the_superseded_tree_is_read_but_never_rewritten(self) -> None:
+        """No reset, rebase or branch move: finalize stays read-only on the branch."""
+
+        commands: list[list[str]] = []
+        self.collect_with_stale_checkout(commands=commands)
+
+        mutating = [args for args in commands if args and args[0] in self.MUTATING_GIT_VERBS]
+        self.assertEqual(mutating, [])
+        self.assertIn(["rev-parse", "HEAD"], commands)
+
+    def test_uncommitted_work_in_the_superseded_tree_is_recorded_not_gated(self) -> None:
+        """Those edits sit on a commit the PR already merged past; they cannot ship."""
+
+        delivery = self.collect_with_stale_checkout(porcelain=" M scripts/ai_status.py\n?? notes.txt")
+
+        self.assertIsNone(delivery["git_clean"])
+        self.assertFalse(delivery["git_clean_evaluated"])
+        self.assertEqual(
+            delivery["git_clean_skip_reason"],
+            "task-owned delivery checkout is behind the reviewer-approved head",
+        )
+        self.assertEqual(delivery["stale_checkout_dirty_entry_count"], 2)
+
+    # -- and nothing else got easier -------------------------------------
+
+    def test_a_diverged_checkout_is_still_the_wrong_head(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "differs from reviewer-approved head"):
+            self.collect_with_stale_checkout(checkout_head=self.DIVERGED_HEAD)
+
+    def test_a_behind_checkout_still_fails_closed_on_an_unmerged_pr(self) -> None:
+        open_pr = self.merged_pr()
+        open_pr.update({"state": "OPEN", "mergedAt": "", "mergeCommit": None})
+
+        with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+            self.collect_with_stale_checkout(pr_status=open_pr)
+
+    def test_a_behind_checkout_still_fails_closed_on_a_pr_merged_at_another_head(self) -> None:
+        moved = self.merged_pr()
+        moved["headRefOid"] = self.DIVERGED_HEAD
+
+        with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+            self.collect_with_stale_checkout(pr_status=moved)
+
+    def test_behind_is_not_claimed_when_the_approved_commit_is_not_here(self) -> None:
+        """Ancestry that cannot be checked is not ancestry that passed."""
+
+        with self.assertRaisesRegex(SystemExit, "differs from reviewer-approved head"):
+            self.collect_with_stale_checkout(approved_head_present=False)
+
+    def test_a_behind_checkout_is_not_a_route_around_the_merged_pr_gate(self) -> None:
+        disabled = {
+            "TASK_REQUIRE_MERGED_PR": "false",
+            "TASK_REQUIRE_GIT_CLEAN": "false",
+            "TASK_REQUIRE_COMMIT_HASH": "false",
+        }
+        open_pr = self.merged_pr()
+        open_pr.update({"state": "OPEN", "mergedAt": "", "mergeCommit": None})
+
+        with mock.patch.dict(os.environ, disabled, clear=False):
+            with self.assertRaisesRegex(SystemExit, "immutable approved-head PR provenance"):
+                self.collect_with_stale_checkout(pr_status=open_pr)
+
+    # -- selection among coexisting checkouts ----------------------------
+
+    def worktree_listing(self, *heads: tuple[str, str]) -> str:
+        listing = (
+            f"worktree {self.LIVE_ROOT}\n"
+            "HEAD e496be62c47c45d758681b8a4d3abfae16f1c96d\n"
+            "branch refs/heads/dev\n\n"
+        )
+        for path, head in heads:
+            listing += f"worktree {path}\nHEAD {head}\nbranch refs/heads/{self.BRANCH}\n\n"
+        return listing
+
+    def resolve(self, listing: str, *, approved_head: str | None = None) -> dict[str, object]:
+        def fake_git(args: list[str], **kwargs: object) -> str:
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return "dev"
+            if args == ["worktree", "list", "--porcelain"]:
+                return listing
+            raise AssertionError(f"unexpected git command: {args}")
+
+        def fake_succeeds(args: list[str], **kwargs: object) -> bool:
+            if args == ["merge-base", "--is-ancestor", self.STALE_HEAD, self.APPROVED_HEAD]:
+                return True
+            if args == ["merge-base", "--is-ancestor", self.DIVERGED_HEAD, self.APPROVED_HEAD]:
+                return False
+            raise AssertionError(f"unexpected git check: {args}")
+
+        with (
+            mock.patch.object(ai_status, "run_git_command", side_effect=fake_git),
+            mock.patch.object(ai_status, "git_command_succeeds", side_effect=fake_succeeds),
+        ):
+            return ai_status.resolve_task_delivery_checkout(
+                self.LIVE_ROOT, self.TASK_ID, approved_head=approved_head
+            )
+
+    def test_the_checkout_holding_the_approved_head_wins_over_a_behind_one(self) -> None:
+        listing = self.worktree_listing(
+            (str(self.STALE_CHECKOUT), self.STALE_HEAD),
+            ("/tmp/pantheon-worker-worktrees/current-lane", self.APPROVED_HEAD),
+        )
+
+        resolved = self.resolve(listing, approved_head=self.APPROVED_HEAD)
+
+        self.assertEqual(resolved["checkout"], Path("/tmp/pantheon-worker-worktrees/current-lane"))
+        self.assertEqual(resolved["superseded_checkouts"], [str(self.STALE_CHECKOUT)])
+
+    def test_a_diverged_claimant_keeps_the_selection_ambiguous(self) -> None:
+        listing = self.worktree_listing(
+            ("/tmp/pantheon-worker-worktrees/other-lane", self.DIVERGED_HEAD),
+            ("/tmp/pantheon-worker-worktrees/current-lane", self.APPROVED_HEAD),
+        )
+
+        with self.assertRaisesRegex(SystemExit, "expected exactly one task-owned delivery"):
+            self.resolve(listing, approved_head=self.APPROVED_HEAD)
+
+    def test_two_claimants_at_the_approved_head_stay_ambiguous(self) -> None:
+        """Naming the head disambiguates history, not two live claims to it."""
+
+        listing = self.worktree_listing(
+            ("/tmp/pantheon-worker-worktrees/lane-a", self.APPROVED_HEAD),
+            ("/tmp/pantheon-worker-worktrees/lane-b", self.APPROVED_HEAD),
+        )
+
+        with self.assertRaisesRegex(SystemExit, "expected exactly one task-owned delivery"):
+            self.resolve(listing, approved_head=self.APPROVED_HEAD)
+
+    def test_without_an_approved_head_coexisting_checkouts_still_fail_closed(self) -> None:
+        listing = self.worktree_listing(
+            (str(self.STALE_CHECKOUT), self.STALE_HEAD),
+            ("/tmp/pantheon-worker-worktrees/current-lane", self.APPROVED_HEAD),
+        )
+
+        with self.assertRaisesRegex(SystemExit, "expected exactly one task-owned delivery"):
+            self.resolve(listing)
+
+    def test_a_lone_checkout_records_no_superseded_siblings(self) -> None:
+        listing = self.worktree_listing((str(self.STALE_CHECKOUT), self.STALE_HEAD))
+
+        resolved = self.resolve(listing, approved_head=self.APPROVED_HEAD)
+
+        self.assertEqual(resolved["checkout"], self.STALE_CHECKOUT)
+        self.assertTrue(resolved["present"])
+        self.assertNotIn("superseded_checkouts", resolved)
+
+    # -- the predicate itself --------------------------------------------
+
+    def test_stale_predicate_reports_false_when_git_cannot_run(self) -> None:
+        """A missing checkout directory must fail closed, not raise."""
+
+        self.assertFalse(
+            ai_status.is_stale_task_checkout(
+                Path("/nonexistent-checkout-path"), self.STALE_HEAD, self.APPROVED_HEAD
+            )
+        )
+
+    def test_stale_predicate_rejects_an_equal_or_empty_head(self) -> None:
+        for label, args in {
+            "equal": (self.APPROVED_HEAD, self.APPROVED_HEAD),
+            "empty-checkout": ("", self.APPROVED_HEAD),
+            "empty-approved": (self.STALE_HEAD, ""),
+        }.items():
+            with self.subTest(label=label):
+                with mock.patch.object(
+                    ai_status,
+                    "git_command_succeeds",
+                    side_effect=AssertionError("must decide without shelling out"),
+                ):
+                    self.assertFalse(
+                        ai_status.is_stale_task_checkout(self.STALE_CHECKOUT, *args)
+                    )
+
+
+class EvidenceOnlyAdvanceTests(unittest.TestCase):
+    """Approval must survive a commit that only records the review.
+
+    Closeout requires writing evidence; writing evidence is a commit; the commit
+    moves the head; task-review-gate is bound to a commit SHA, so approval stops
+    applying and the task bounces back to review, where closeout moves the head
+    again. 62 evidence commits between 2026-07-20 and 2026-08-04 came out of that
+    loop, one task resealing seven times.
+    """
+
+    def _repo(self) -> Path:
+        repo = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+
+
+        def run(*a: str) -> None:
+            subprocess.run(list(a), cwd=repo, check=True, capture_output=True)
+
+        run("git", "init", "-q")
+        run("git", "config", "user.email", "t@example.com")
+        run("git", "config", "user.name", "t")
+        (repo / "src.py").write_text("x = 1\n", encoding="utf-8")
+        run("git", "add", "-A")
+        run("git", "commit", "-q", "-m", "base")
+        return repo
+
+    def _head(self, repo: Path) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    def _commit(self, repo: Path, rel: str, body: str, message: str) -> str:
+        target = repo / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", message], cwd=repo, check=True, capture_output=True
+        )
+        return self._head(repo)
+
+    def test_evidence_only_commit_carries_approval_forward(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(
+            repo, "docs/evidence/REVIEW.md", "reviewed\n", "record review evidence"
+        )
+
+        self.assertTrue(ai_status.is_evidence_only_advance(approved, current, repo))
+
+    def test_source_change_invalidates_even_when_evidence_is_included(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        (repo / "docs" / "evidence").mkdir(parents=True, exist_ok=True)
+        (repo / "docs/evidence/REVIEW.md").write_text("reviewed\n", encoding="utf-8")
+        (repo / "src.py").write_text("x = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", "evidence and source"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+        self.assertFalse(
+            ai_status.is_evidence_only_advance(approved, self._head(repo), repo)
+        )
+
+    def test_rewritten_history_is_never_carried_forward(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        self._commit(repo, "docs/evidence/A.md", "a\n", "evidence a")
+        subprocess.run(
+            ["git", "reset", "--hard", approved], cwd=repo, check=True, capture_output=True
+        )
+        diverged = self._commit(repo, "docs/evidence/B.md", "b\n", "evidence b")
+        subprocess.run(
+            ["git", "commit", "-q", "--amend", "-m", "amended"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        rewritten = self._head(repo)
+
+        self.assertNotEqual(diverged, rewritten)
+        # A head that is not a descendant of the approved head must never be
+        # carried forward, however evidence-shaped its diff looks.
+        self.assertFalse(ai_status.is_evidence_only_advance(approved, "0" * 40, repo))
+
+    def test_unreadable_repository_root_fails_closed(self) -> None:
+        """A check that could not run must never carry an approval forward.
+
+        subprocess raises on a missing cwd instead of returning a non-zero code,
+        so the returncode guard alone let the exception escape and broke an
+        unrelated provenance test.
+        """
+        self.assertFalse(
+            ai_status.is_evidence_only_advance(
+                "a" * 40, "b" * 40, Path("/nonexistent-repo-root")
+            )
+        )
+
+    def test_identical_heads_do_not_use_this_path(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+
+        self.assertFalse(ai_status.is_evidence_only_advance(approved, approved, repo))
+
+    def test_approved_head_satisfied_accepts_evidence_only_advance(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(
+            repo, "docs/evidence/REVIEW.md", "reviewed\n", "record review evidence"
+        )
+
+        self.assertTrue(
+            ai_status.is_approved_head_satisfied(
+                {"id": "ODP-T-001"}, current, approved, repository_root=repo
+            )
+        )
+
+    def test_approved_head_satisfied_still_rejects_source_change(self) -> None:
+        repo = self._repo()
+        approved = self._head(repo)
+        current = self._commit(repo, "src.py", "x = 2\n", "change source")
+
+        self.assertFalse(
+            ai_status.is_approved_head_satisfied(
+                {"id": "FREEZE-TEST-001"}, current, approved, repository_root=repo
+            )
+        )
+
+
+class ReviewGateHeadDriftTests(unittest.TestCase):
+    """The gate must exist on the head that GitHub is actually gating.
+
+    A GitHub status belongs to one commit. Emission fired only on a status
+    transition and nothing else in the orchestrator posted this check, so a branch
+    that advanced afterwards left the new head with no gate. Since it is a
+    *required* check, absent reads as unmergeable and nothing would put it back.
+    Seen live on 2026-08-04: #616 and #622 had four green checks and no gate;
+    #628, whose head had not moved, had all five.
+    """
+
+    def test_drift_detected_when_head_moved_past_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertTrue(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_when_head_matches_recorded_gate(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="a" * 40):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_no_drift_claimed_when_gate_was_never_recorded(self) -> None:
+        """Without a recorded SHA every sync would re-post for unrelated tasks."""
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value="b" * 40):
+            self.assertFalse(ai_status.review_gate_head_drifted({"id": "ODP-T-1"}))
+
+    def test_no_drift_claimed_when_head_cannot_be_resolved(self) -> None:
+        with mock.patch.object(ai_status, "resolve_task_sha", return_value=None):
+            self.assertFalse(
+                ai_status.review_gate_head_drifted(
+                    {"id": "ODP-T-1", "review_gate_sha": "a" * 40}
+                )
+            )
+
+    def test_missing_task_id_is_not_drift(self) -> None:
+        self.assertFalse(ai_status.review_gate_head_drifted({"review_gate_sha": "a" * 40}))
 
 
 if __name__ == "__main__":

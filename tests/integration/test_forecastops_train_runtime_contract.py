@@ -37,8 +37,8 @@ from modules.learninghub.infrastructure import (
 )
 from pipelines.features import FeaturePipelineRunner
 from pipelines.training import TrainingPipelineRunner
-from scripts.models.contracts import MODEL_SPECS
-from scripts.models.forecast_training import expand_forecast_horizon_rows
+from product_ops.modeling.contracts import MODEL_SPECS
+from product_ops.modeling.forecast_training import expand_forecast_horizon_rows
 
 NOW = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
 

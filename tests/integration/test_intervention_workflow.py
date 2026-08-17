@@ -35,7 +35,8 @@ from modules.intervention import (
     resolve_evidence_level,
     run_observation_sweep,
 )
-from tests.integration._authz import INTERVENTION_HEADERS
+from shared.auth import Role
+from tests.integration._authz import INTERVENTION_HEADERS, auth_headers
 
 START = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
 END = datetime(2026, 6, 15, 9, 0, tzinfo=UTC)
@@ -832,3 +833,139 @@ def test_api_close_case_with_follow_up_and_audit() -> None:
     audit = client.get("/audit/events", params={"correlation_id": "corr-iv-close"})
     actions = {e["action"] for e in audit.json()["events"]}
     assert "close" in actions
+
+
+def test_assignment_lifecycle_and_audit() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+    assert case.assigned_to is None
+    assert case.version == 1
+
+    assigned = workflow.assign_case(
+        case.intervention_id,
+        assignee="operator-jane",
+        actor="supervisor-a",
+        role="STORE_OPERATOR",
+    )
+    assert assigned.assigned_to == "operator-jane"
+    assert assigned.assigned_by == "supervisor-a"
+    assert assigned.assignment_role == "STORE_OPERATOR"
+    assert assigned.assigned_at is not None
+    assert assigned.version == 2
+
+    unassigned = workflow.unassign_case(case.intervention_id, actor="supervisor-a")
+    assert unassigned.assigned_to is None
+    assert unassigned.version == 3
+
+    # Close the case and verify terminal case cannot be assigned
+    _drive_to_completed(workflow, case.intervention_id)
+    workflow.close_case(
+        case.intervention_id,
+        actor="ops-manager",
+        disposition=CloseDisposition.KEEP,
+        reason="done",
+    )
+    terminal = workflow.get(case.intervention_id)
+    assert terminal.is_terminal is True
+    with pytest.raises(InterventionError, match="cannot assign terminal intervention"):
+        workflow.assign_case(
+            case.intervention_id, assignee="op-x", actor="supervisor-a"
+        )
+
+
+def test_stale_update_concurrency_conflict_detected() -> None:
+    workflow, _ = _new_workflow()
+    case = _open_case(workflow)
+
+    # Attempt assignment with expected_version mismatch
+    with pytest.raises(InterventionError, match="stale update: expected version 99"):
+        workflow.assign_case(
+            case.intervention_id,
+            assignee="op-y",
+            actor="supervisor-a",
+            expected_version=99,
+        )
+
+
+def test_api_assignment_rbac_and_inbox_deep_link_filtering() -> None:
+    client = TestClient(create_app(), headers=INTERVENTION_HEADERS)
+
+    create = client.post(
+        "/interventions",
+        json={
+            "store_id": "store-assign-1",
+            "kind": "PRICE_CHANGE",
+            "expected_outcome": "recover margin",
+            "planned_start": START.isoformat(),
+            "planned_end": END.isoformat(),
+            "created_by": "supervisor-a",
+        },
+    )
+    iid = create.json()["intervention_id"]
+
+    # Negative RBAC check: unauthorized caller (without required permission) is rejected with HTTP 403
+    unauth_client = TestClient(create_app(), headers=auth_headers(Role.AUDITOR))
+    forbidden_assign = unauth_client.post(
+        f"/interventions/{iid}/assign",
+        json={"assignee": "op-hero", "actor": "supervisor-a"},
+    )
+    assert forbidden_assign.status_code == 403
+
+    forbidden_unassign = unauth_client.post(
+        f"/interventions/{iid}/unassign",
+        json={"actor": "supervisor-a"},
+    )
+    assert forbidden_unassign.status_code == 403
+
+    # Assign case
+    assign = client.post(
+        f"/interventions/{iid}/assign",
+        json={
+            "assignee": "op-hero",
+            "actor": "supervisor-a",
+            "role": "OPERATOR",
+            "expected_version": 1,
+        },
+    )
+    assert assign.status_code == 200
+    res = assign.json()
+    assert res["assigned_to"] == "op-hero"
+    assert res["version"] == 2
+
+    # Stale assignment attempt (expected_version mismatch) returns HTTP 409
+    stale = client.post(
+        f"/interventions/{iid}/assign",
+        json={
+            "assignee": "op-another",
+            "actor": "supervisor-a",
+            "expected_version": 1,
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "STALE_UPDATE_CONFLICT"
+
+    # Deep-linkable inbox filtering query
+    inbox = client.get(
+        "/interventions",
+        params={"assigned_to": "op-hero", "store_id": "store-assign-1", "kind": "PRICE_CHANGE"},
+    )
+    assert inbox.status_code == 200
+    items = inbox.json()["items"]
+    assert len(items) == 1
+    assert items[0]["intervention_id"] == iid
+
+    # Invalid query parameters return HTTP 422 instead of 500
+    bad_status = client.get("/interventions", params={"status": "NOT_A_STATUS"})
+    assert bad_status.status_code == 422
+
+    bad_kind = client.get("/interventions", params={"kind": "NOT_A_KIND"})
+    assert bad_kind.status_code == 422
+
+    # Unassign case
+    unassign = client.post(
+        f"/interventions/{iid}/unassign",
+        json={"actor": "supervisor-a", "expected_version": 2},
+    )
+    assert unassign.status_code == 200
+    assert unassign.json()["assigned_to"] is None
+

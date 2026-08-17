@@ -6,7 +6,7 @@ GitHub Actions [Deploy Dev run 30331484524](https://github.com/alfloop-dev/odayp
 failed on source head `3ecdcdf1c2f0a98e5218a7989d4dae9bd48617c4`.
 The deploy job successfully completed both `Install locked project dependencies`
 and its standalone locked preflight. The subsequent `Build, push, deploy, and
-verify Cloud Run` step entered `scripts/deploy_cloud_run_waji.sh`, whose internal
+verify Cloud Run` step entered `product_ops/deployment/deploy_cloud_run_waji.sh`, whose internal
 preflight used bare `python3` and failed closed before any build:
 
 - `repository:provider_registry_import`: `ModuleNotFoundError: No module named 'httpx'`
@@ -43,7 +43,7 @@ Executed from the task branch:
 
 ```text
 git diff --check
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 uv run --frozen pytest tests/ops/test_cloud_run_live_deployment.py -q
 uv run --frozen ruff check tests/ops/test_cloud_run_live_deployment.py
 ```

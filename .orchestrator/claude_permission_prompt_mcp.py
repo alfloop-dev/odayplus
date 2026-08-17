@@ -23,6 +23,7 @@ from common import (
     write_activity_log,
 )
 from permission_broker import evaluate_tool_request
+from provider_runtime import claude_approval_provider, provider_config
 
 SERVER_NAME = "orchestrator_approval_broker"
 TOOL_NAME = "approval_prompt"
@@ -99,27 +100,15 @@ def approval_context() -> dict[str, Any]:
     }
 
 
-def approval_provider(config: dict[str, Any]) -> str:
-    provider_id = str(os.environ.get("ORCH_PROVIDER") or "claude").strip().lower() or "claude"
-    provider = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode and delivery_mode != "claude_cli":
-        return "claude"
-    if provider or provider_id.startswith("claude"):
-        return provider_id
-    return "claude"
-
-
 def handle_tool_call(config: dict[str, Any], args: dict[str, Any]) -> dict[str, Any]:
     tool_name = args.get("tool_name") or args.get("toolName")
     tool_input = args.get("input") or args.get("tool_input") or args.get("toolInput") or {}
     decision = evaluate_tool_request(str(tool_name or ""), tool_input, config)
     context = approval_context()
-    provider_id = approval_provider(config)
+    provider_id = claude_approval_provider(config)
 
     timeout = float(
-        config.get("providers", {})
-        .get(provider_id, {})
+        provider_config(config, provider_id)
         .get("broker", {})
         .get("approval_wait_seconds", 3600)
     )

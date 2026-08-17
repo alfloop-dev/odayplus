@@ -3,7 +3,7 @@
 Task: Fix candidate Web protected redirect smoke contract.
 Owner: Claude2 · Reviewer: Claude · Phase: Live Runtime Deployment · 2026-07-29
 
-Scope guard: This task updates `scripts/deployment/validate_cloud_run_live_deployment.py` to correctly resolve relative Location headers via urljoin before same-origin validation, and captures raw Location in check details and reports. `apps/web/src/middleware.ts` is **not changed** — the middleware emits a correct same-origin relative redirect. No Package 10 visual components, page layouts, design archives, or API business responses are touched.
+Scope guard: This task updates `product_ops/deployment/validate_cloud_run_live_deployment.py` to correctly resolve relative Location headers via urljoin before same-origin validation, and captures raw Location in check details and reports. `apps/web/src/middleware.ts` is **not changed** — the middleware emits a correct same-origin relative redirect. No Package 10 visual components, page layouts, design archives, or API business responses are touched.
 
 ## 1. Observed Incident (Deploy Dev run 30436771086)
 
@@ -28,12 +28,12 @@ The candidate web service responded with HTTP 307 (Temporary Redirect), but `val
 
 2. **Root Cause — Validator Prefix Match Rejected a Valid Same-Origin Relative Location**:
    - `apps/web/src/middleware.ts` correctly calls `new URL("/login", request.url)`, which produces a same-origin relative Location header: `/login?returnTo=%2Foperator`.
-   - The pre-fix `_is_safe_protected_redirect` in `scripts/deployment/validate_cloud_run_live_deployment.py` validated Location using a prefix test: `location.startswith(f"{web_url}/login?")`. A valid relative Location `/login?returnTo=%2Foperator` does not start with the absolute candidate origin, so it was incorrectly rejected, producing `protected_redirect=false`.
+   - The pre-fix `_is_safe_protected_redirect` in `product_ops/deployment/validate_cloud_run_live_deployment.py` validated Location using a prefix test: `location.startswith(f"{web_url}/login?")`. A valid relative Location `/login?returnTo=%2Foperator` does not start with the absolute candidate origin, so it was incorrectly rejected, producing `protected_redirect=false`.
    - **Middleware is not defective.** No middleware change is introduced or required.
 
 3. **Remediation — Validator-Only Fix**:
-   - **`scripts/deployment/validate_cloud_run_live_deployment.py`**: `_is_safe_protected_redirect` now resolves the raw Location via `urllib.parse.urljoin` against the candidate request URL before validation. Both absolute and relative same-origin redirects to `/login?returnTo=/operator` are now correctly accepted. All hostile patterns (scheme downgrade, host mismatch, port mismatch, external origin, protocol-relative, userinfo, fragment, hostile returnTo, double-encoded returnTo) are still rejected with fail-closed semantics.
-   - **`scripts/deployment/validate_cloud_run_live_deployment.py`**: `smoke_checks()` now captures the raw Location header in `report["web_operator_redirect"]` and in the `smoke:web:/operator` CheckResult detail for immediate diagnosability.
+   - **`product_ops/deployment/validate_cloud_run_live_deployment.py`**: `_is_safe_protected_redirect` now resolves the raw Location via `urllib.parse.urljoin` against the candidate request URL before validation. Both absolute and relative same-origin redirects to `/login?returnTo=/operator` are now correctly accepted. All hostile patterns (scheme downgrade, host mismatch, port mismatch, external origin, protocol-relative, userinfo, fragment, hostile returnTo, double-encoded returnTo) are still rejected with fail-closed semantics.
+   - **`product_ops/deployment/validate_cloud_run_live_deployment.py`**: `smoke_checks()` now captures the raw Location header in `report["web_operator_redirect"]` and in the `smoke:web:/operator` CheckResult detail for immediate diagnosability.
 
 ## 3. Implementation Code
 
@@ -117,7 +117,7 @@ def _is_safe_protected_redirect(
 
 - `pytest tests/ops/test_cloud_run_live_deployment.py`: `1 failed, 362 passed`. The single failure is `test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, a pre-existing environmental issue (`uv` not installed in the worker sandbox); it fails identically on `origin/dev` and is unrelated to this task.
 - `pytest tests/ops/test_cloud_run_live_deployment.py -k "protected_redirect or redact_location or raw_location"`: `7 passed`.
-- `ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py docs/evidence/runtime/ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001/mutation_harness.py`: `All checks passed!`.
+- `ruff check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py docs/evidence/runtime/ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001/mutation_harness.py`: `All checks passed!`.
 - `apps/web/src/lib/auth/__tests__/middleware.test.ts`: No new tests added; original 2 tests from the `origin/dev` baseline retained unchanged. `git diff origin/dev...HEAD -- apps/web` is empty.
 
 ## 6. Mutation Testing — Proof The Tests Are Not Vacuous

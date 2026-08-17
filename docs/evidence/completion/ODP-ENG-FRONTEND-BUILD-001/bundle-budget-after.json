@@ -1,0 +1,73 @@
+{
+  "ok": true,
+  "sharedFirstLoadKb": 103.3,
+  "routes": [
+    {
+      "route": "/operator",
+      "firstLoadKb": 273.1,
+      "budgetKb": 300,
+      "declared": true
+    },
+    {
+      "route": "/intake/[intakeId]",
+      "firstLoadKb": 273,
+      "budgetKb": 300,
+      "declared": true
+    },
+    {
+      "route": "/franchisee",
+      "firstLoadKb": 116.5,
+      "budgetKb": 130,
+      "declared": true
+    },
+    {
+      "route": "/_not-found",
+      "firstLoadKb": 104,
+      "budgetKb": 130,
+      "declared": false
+    },
+    {
+      "route": "/auth/logout",
+      "firstLoadKb": 103.5,
+      "budgetKb": 130,
+      "declared": false
+    },
+    {
+      "route": "/auth/session",
+      "firstLoadKb": 103.5,
+      "budgetKb": 130,
+      "declared": false
+    },
+    {
+      "route": "/avm/[...path]",
+      "firstLoadKb": 103.5,
+      "budgetKb": 130,
+      "declared": false
+    },
+    {
+      "route": "/login",
+      "firstLoadKb": 103.5,
+      "budgetKb": 130,
+      "declared": false
+    },
+    {
+      "route": "/api/v1",
+      "firstLoadKb": 103.5,
+      "budgetKb": 130,
+      "declared": false
+    },
+    {
+      "route": "/auth/callback",
+      "firstLoadKb": 103.5,
+      "budgetKb": 130,
+      "declared": false
+    },
+    {
+      "route": "/api/v1/[...path]",
+      "firstLoadKb": 103.5,
+      "budgetKb": 130,
+      "declared": false
+    }
+  ],
+  "violations": []
+}

@@ -113,7 +113,7 @@ review_trigger: "Review when production data scale, sub-10ms online feature late
 - **決策**: `defer`（延後）
 - **需求映射**: Online/Offline Feature Store、 point-in-time (PIT) 特徵時空旅行、即時推論特徵提供 (`ODP-HLR-INT-004`)。
 - **可驗證替代能力**:
-  - 離線與訓練特徵：BigQuery `model_ready` 視圖（如 `forecast_training_view`）與 PostgreSQL `model_ready` 物化表，具備 Point-in-Time (PIT) 時序分割 `_temporal_split(rows, *, holdout_fraction)`（於 `scripts/models/release.py:983`）與成熟度檢查 `spec.label_maturity_column`（於 `scripts/models/contracts.py`，`label_maturity_time` vs `loaded.as_of_time` 檢查於 `scripts/models/release.py:780`）。
+  - 離線與訓練特徵：BigQuery `model_ready` 視圖（如 `forecast_training_view`）與 PostgreSQL `model_ready` 物化表，具備 Point-in-Time (PIT) 時序分割 `_temporal_split(rows, *, holdout_fraction)`（於 `product_ops/modeling/release.py:983`）與成熟度檢查 `spec.label_maturity_column`（於 `product_ops/modeling/contracts.py`，`label_maturity_time` vs `loaded.as_of_time` 檢查於 `product_ops/modeling/release.py:780`）。
   - 模型履歷與快照：**MLflow** (`modules/learninghub/infrastructure/mlflow_adapter.py`) 記錄 Dataset Artifact 及 Commit SHA。
 - **替代限制**: 未部署以 Redis/DynamoDB 為底層之 Feast 即時線上 Feature Store 服務；線上推論讀取經治理之 Cloud SQL / BigQuery 視圖。
 - **元件 Owner**: Model Governance & Data Engineering

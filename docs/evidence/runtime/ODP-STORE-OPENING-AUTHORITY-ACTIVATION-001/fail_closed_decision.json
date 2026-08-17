@@ -75,7 +75,7 @@
   },
   "activation_path": {
     "engine": "apps/data_platform/store_opening.py",
-    "cli": "scripts/models/store_opening_backfill.py",
+    "cli": "product_ops/modeling/store_opening_backfill.py",
     "tests": "tests/integration/test_store_opening_backfill.py",
     "delivered_by": "ODP-STORE-OPENING-001 (PR #435, merged to dev)"
   },

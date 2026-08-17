@@ -619,6 +619,7 @@ def compute_solver_problem_hash(
     constraints: NetPlanConstraints,
     risk_penalty: float,
     alternative_limit: int = DEFAULT_ALTERNATIVE_LIMIT,
+    model_version: str = "netplan-network-baseline-v1",
 ) -> str:
     if alternative_limit < 0:
         raise ValueError("alternative_limit must be non-negative")
@@ -632,6 +633,7 @@ def compute_solver_problem_hash(
         "constraints": constraints.to_dict(),
         "risk_penalty": float(risk_penalty),
         "alternative_limit": alternative_limit,
+        "model_version": str(model_version),
     }
     return canonical_sha256(payload)
 

@@ -31,6 +31,7 @@ from common import (
     write_activity_log,
     write_approval_evidence,
 )
+from provider_runtime import provider_uses_claude_cli
 from runtime_state import load_approval_state, load_runtime_state, save_approval_state
 
 
@@ -86,17 +87,6 @@ def _pid_is_alive(pid: Any) -> bool:
     return os.path.exists(f"/proc/{value}")
 
 
-def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -> bool:
-    normalized = str(provider_id or "").strip().lower()
-    if not normalized:
-        return False
-    provider = (config.get("providers", {}) or {}).get(normalized, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode:
-        return delivery_mode == "claude_cli"
-    return normalized.startswith("claude")
-
-
 def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers: dict[str, Any]) -> str | None:
     run_id = item.get("worker_run_id")
     if not run_id:
@@ -105,7 +95,7 @@ def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers:
     if worker is None:
         return "Auto-pruned orphaned approval after its worker state disappeared."
     if (
-        _provider_uses_claude_cli(config, worker.get("provider"))
+        provider_uses_claude_cli(config, worker.get("provider"))
         and worker.get("status") in {"waiting_approval", "suspended_approval"}
         and (worker.get("session_id") or worker.get("resume_token"))
     ):
@@ -440,7 +430,7 @@ def resolve_approval(
             "remember": remember,
             "resume_override_active": bool(
                 decision == "allow"
-                and _provider_uses_claude_cli(config, item.get("provider"))
+                and provider_uses_claude_cli(config, item.get("provider"))
                 and not remember
             ),
             "resume_override_consumed_at": None,
@@ -489,7 +479,7 @@ def resolve_approval(
     return item
 
 
-def _approval_signature(
+def approval_signature(
     session_id: str | None,
     tool_name: str,
     tool_input: dict[str, Any] | None = None,
@@ -510,7 +500,7 @@ def find_resume_override(
     tool_input: dict[str, Any],
 ) -> dict[str, Any] | None:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = approval_signature(session_id, tool_name, tool_input)
     for item in reversed(state.get("history", [])):
         if not item.get("resume_override_active"):
             continue
@@ -518,7 +508,7 @@ def find_resume_override(
             continue
         if item.get("resume_override_consumed_at"):
             continue
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),

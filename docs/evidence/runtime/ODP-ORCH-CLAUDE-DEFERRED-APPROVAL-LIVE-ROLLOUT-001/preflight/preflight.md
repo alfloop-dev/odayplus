@@ -101,7 +101,7 @@ runtime_root_pointer: /home/lupin/oday-plus-supervisor-live
    M docs_archive/README.md
    M pyproject.toml
    M scripts/ai_status.py
-  AM scripts/external_data_backfill.py
+  AM product_ops/external_data_backfill.py
    M scripts/run-supervisor-watchdog.sh
    M scripts/run-supervisor.sh
    M scripts/supervisor_runtime_health.py

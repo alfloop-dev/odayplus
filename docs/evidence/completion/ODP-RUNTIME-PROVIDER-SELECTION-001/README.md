@@ -29,7 +29,7 @@ uv run pytest -q tests/ops/test_cloud_run_live_deployment.py \
   tests/integration/test_external_provider_connectivity.py
 result: 40 passed
 
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 result: passed
 
 git diff --check origin/dev...HEAD

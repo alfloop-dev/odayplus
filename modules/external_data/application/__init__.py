@@ -26,6 +26,15 @@ if TYPE_CHECKING:
         QuarantineRecord,
         build_ingestion_run_record,
     )
+    from modules.external_data.application.xlsx_import import (
+        XlsxCommitReceipt,
+        XlsxImportError,
+        XlsxPreviewResult,
+        XlsxRowError,
+        commit_xlsx_import,
+        export_xlsx_import_errors,
+        preview_xlsx_import,
+    )
 
 __all__ = [
     "ExternalIngestionService",
@@ -35,6 +44,13 @@ __all__ = [
     "LineageRecord",
     "QuarantineRecord",
     "build_ingestion_run_record",
+    "XlsxCommitReceipt",
+    "XlsxImportError",
+    "XlsxPreviewResult",
+    "XlsxRowError",
+    "commit_xlsx_import",
+    "export_xlsx_import_errors",
+    "preview_xlsx_import",
 ]
 
 _SERVICE_EXPORTS = {"ExternalIngestionService", "IngestionOutcome"}
@@ -44,6 +60,15 @@ _STORE_EXPORTS = {
     "LineageRecord",
     "QuarantineRecord",
     "build_ingestion_run_record",
+}
+_XLSX_EXPORTS = {
+    "XlsxCommitReceipt",
+    "XlsxImportError",
+    "XlsxPreviewResult",
+    "XlsxRowError",
+    "commit_xlsx_import",
+    "export_xlsx_import_errors",
+    "preview_xlsx_import",
 }
 
 
@@ -56,8 +81,13 @@ def __getattr__(name: str) -> Any:
         from modules.external_data.application import ingestion_store
 
         return getattr(ingestion_store, name)
+    if name in _XLSX_EXPORTS:
+        from modules.external_data.application import xlsx_import
+
+        return getattr(xlsx_import, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def __dir__() -> list[str]:
     return sorted(__all__)
+

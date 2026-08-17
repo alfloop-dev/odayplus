@@ -87,7 +87,7 @@ exclusion pattern, nothing outside `.odp_data/deployment/`, no `..`. A file
 that is not named cannot be published, including one added later. The
 `.env` files, traffic snapshots, and candidate descriptions the deploy script
 handles all live in `mktemp` files outside the repository tree
-(`scripts/deploy_cloud_run_waji.sh` lines 115–122) and are `rm -f`'d by
+(`product_ops/deployment/deploy_cloud_run_waji.sh` lines 115–122) and are `rm -f`'d by
 `cleanup()`; the operator bearer token is `unset` there too. None of them was
 ever a candidate under either path.
 
@@ -104,8 +104,8 @@ directory. The defect was not only that the glob missed a subdirectory — it
 was open at the top, so any future JSON written there would ship unreviewed.
 
 **The contents are redacted by construction.** Each allowlisted file is
-written by `scripts/deployment/validate_cloud_run_live_deployment.py` (or
-`scripts/e2e/check_live_e2e_gate.py`) and carries `secret_values_redacted:
+written by `product_ops/deployment/validate_cloud_run_live_deployment.py` (or
+`delivery_toolchain/e2e/check_live_e2e_gate.py`) and carries `secret_values_redacted:
 true`. A receipt holds the job kind, job name, execution name, selected
 provider IDs, required and bound secret *env-var names*, and the check list —
 never a bound value. `_secret_binding_proof` reports *how* a binding is
@@ -124,7 +124,7 @@ the emitted report reproduces neither while still carrying the redaction flag.
 ## 4. The path contract is tested, and the test is tested
 
 `tests/ops/test_deploy_workflow_contract.py` (8 tests) parses the workflow as
-YAML and derives its expectations from `scripts/deploy_cloud_run_waji.sh`
+YAML and derives its expectations from `product_ops/deployment/deploy_cloud_run_waji.sh`
 rather than restating them:
 
 - job kinds from the literal `execute_job "<kind>"` call sites → each needs a
@@ -168,14 +168,14 @@ The single failure is
 `test_cloud_run_live_deployment.py::test_deploy_preflight_imports_runtime_dependencies_via_locked_python`:
 `Error: required command 'uv' is not installed.` It reproduces unchanged on a
 clean tree at the merge base (`git stash -u` → same failure), it exercises
-`scripts/deploy_cloud_run_waji.sh`, which this task does not touch, and it is
+`product_ops/deployment/deploy_cloud_run_waji.sh`, which this task does not touch, and it is
 an absent binary in the worker sandbox rather than a defect. CI installs `uv`
 via `astral-sh/setup-uv@v5`; exact-head CI is the authority for it.
 
 ## 6. Out of scope, and one flagged gap
 
 No deployment behaviour, Cloud Run traffic, Package 10 UI, API response, or
-worker logic is touched. `scripts/deploy_cloud_run_waji.sh` and
+worker logic is touched. `product_ops/deployment/deploy_cloud_run_waji.sh` and
 `validate_cloud_run_live_deployment.py` are unchanged — the receipts were
 already correct and already written; only their publication was broken.
 
