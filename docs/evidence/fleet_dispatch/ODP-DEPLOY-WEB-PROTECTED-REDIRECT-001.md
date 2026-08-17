@@ -9,7 +9,7 @@ Full runtime detail:
 
 ## 1. Root Cause Analysis
 
-In Deploy Dev run [30436771086](https://github.com/alfloop-dev/odayplus/actions/runs/30436771086), candidate Web `/operator` returned status 307 when queried by the deployment validator `scripts/deployment/validate_cloud_run_live_deployment.py`.
+In Deploy Dev run [30436771086](https://github.com/alfloop-dev/odayplus/actions/runs/30436771086), candidate Web `/operator` returned status 307 when queried by the deployment validator `product_ops/deployment/validate_cloud_run_live_deployment.py`.
 
 However, the validation check evaluated `protected_redirect` to `false`:
 ```
@@ -19,7 +19,7 @@ However, the validation check evaluated `protected_redirect` to `false`:
 Investigation confirmed (coordinator live no-follow probe of the preserved candidate revision):
 - The real Location header returned by the candidate was relative: `/login?returnTo=%2Foperator`.
 - `apps/web/src/middleware.ts` is correct and unchanged — it calls `new URL("/login", request.url)`, which produces a same-origin relative Location when Next.js runs in standalone mode.
-- The failure was caused entirely by rigid string prefix matching in `scripts/deployment/validate_cloud_run_live_deployment.py`:
+- The failure was caused entirely by rigid string prefix matching in `product_ops/deployment/validate_cloud_run_live_deployment.py`:
   ```python
   expected_login_prefix = f"{web_url.rstrip('/')}/login?"
   auth_redirect = (
@@ -33,7 +33,7 @@ Investigation confirmed (coordinator live no-follow probe of the preserved candi
 
 ## 2. What Changed
 
-1. **Validator Contract Rework (`scripts/deployment/validate_cloud_run_live_deployment.py`)**:
+1. **Validator Contract Rework (`product_ops/deployment/validate_cloud_run_live_deployment.py`)**:
    - Implemented strict `_is_safe_protected_redirect` helper using `urllib.parse.urljoin` to resolve relative and absolute Location headers against the candidate request URL before validation:
      - **Status code**: Must be in `{302, 303, 307, 308}` (unauthenticated 200 OK fails closed).
      - **urljoin resolution**: Relative `/login?returnTo=%2Foperator` and absolute same-origin URLs are both resolved and validated identically.
@@ -71,7 +71,7 @@ Investigation confirmed (coordinator live no-follow probe of the preserved candi
 
 - `pytest tests/ops/test_cloud_run_live_deployment.py::test_is_safe_protected_redirect_contract`: Passed.
 - `pytest tests/ops/test_cloud_run_live_deployment.py`: 1 pre-existing env failure (`test_deploy_preflight_imports_runtime_dependencies_via_locked_python`, `uv` not installed in sandbox), unrelated to this task.
-- `ruff check --diff scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py`: Clean.
+- `ruff check --diff product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py`: Clean.
 - `git diff --check`: Clean.
 - Zero Package 10 visual components, page layouts, design archives, or API business responses were modified.
 - Middleware unchanged; no fabricated evidence introduced.

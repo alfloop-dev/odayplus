@@ -16,7 +16,7 @@ What this script does:
      ``ai-task-archive/index.json``.
   2. If trigger conditions are met (>= MIN_FILES pending OR oldest file
      >= MIN_AGE_SECONDS old), opens a per-task PR via the same flow as
-     scripts/git/task_start.sh + worker_commit.py + task_finalize.sh.
+     delivery_toolchain/git/task_start.sh + worker_commit.py + task_finalize.sh.
   3. Skips if an OPS-ARCHIVE-AUTO-COMMIT-* PR is already open (avoid
      duplicate PRs while one is mid-merge).
   4. Holds .orchestrator/auto_commit_archive.lock during execution;
@@ -238,7 +238,7 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
 
         cmd = [
             "python3",
-            "scripts/git/worker_commit.py",
+            "delivery_toolchain/git/worker_commit.py",
             "--task-id",
             task_id,
             "--message-file",
@@ -252,7 +252,10 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
         cleanup_paths.append(index_file)
 
         _run(["git", "-C", str(worktree_path), "reset", "--mixed", "HEAD", "--quiet"], check=False)
-        _run(["bash", "scripts/git/task_finalize.sh", task_id], cwd=worktree_path)
+        # This is supervisor housekeeping, not a canonical board task.  It has
+        # no owner/reviewer row to transition, so opt out explicitly; every
+        # normal worker task must use task_finalize's atomic review submission.
+        _run(["bash", "delivery_toolchain/git/task_finalize.sh", task_id, "--no-status-submit"], cwd=worktree_path)
         pr_opened = True
         return True, f"opened PR for {task_id} ({len(files)} files)"
     except subprocess.CalledProcessError as exc:

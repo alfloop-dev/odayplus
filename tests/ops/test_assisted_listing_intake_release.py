@@ -17,14 +17,14 @@ from pathlib import Path
 import pytest
 import yaml
 
-from scripts.release.assisted_listing_intake import drills
-from scripts.release.assisted_listing_intake.config import (
+from delivery_toolchain.release.assisted_listing_intake import drills
+from delivery_toolchain.release.assisted_listing_intake.config import (
     INFRA_DIR,
     REQUIRED_LIVE_TARGETS,
     ReleaseConfigError,
     load_release_config,
 )
-from scripts.release.assisted_listing_intake.gates import (
+from delivery_toolchain.release.assisted_listing_intake.gates import (
     check_feature_flags,
     check_live_runtime_evidence,
     check_production_readiness,
@@ -504,7 +504,7 @@ def test_canary_recorded_live_failure_fails_ladder(infra_copy: Path, tmp_path: P
 
 
 def test_cutover_blocked_without_live_evidence_even_when_approved(infra_copy: Path, tmp_path: Path) -> None:
-    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+    from delivery_toolchain.release.assisted_listing_intake.run import run_cutover_gate
 
     _approve_all_authority(infra_copy)
     cfg = load_release_config(infra_copy)
@@ -519,7 +519,7 @@ def test_cutover_blocked_without_live_evidence_even_when_approved(infra_copy: Pa
 
 def test_cutover_authorized_when_approvals_and_live_evidence_recorded(infra_copy: Path, tmp_path: Path) -> None:
     """Cutover unblocks only after approvals and the full live ladder."""
-    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+    from delivery_toolchain.release.assisted_listing_intake.run import run_cutover_gate
 
     _approve_all_authority(infra_copy)
     _record_live_evidence(infra_copy, canary_units=[_live_unit(u) for u in (3, 4, 5, 6, 7)])
@@ -551,7 +551,7 @@ def test_cutover_authorized_when_approvals_and_live_evidence_recorded(infra_copy
 def test_cutover_rejects_forged_cached_canary_summary(
     infra_copy: Path, tmp_path: Path
 ) -> None:
-    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+    from delivery_toolchain.release.assisted_listing_intake.run import run_cutover_gate
 
     _approve_all_authority(infra_copy)
     _record_live_evidence(
@@ -582,7 +582,7 @@ def test_cutover_rejects_forged_cached_canary_summary(
 def test_cutover_blocks_until_all_live_canary_results_are_recorded(
     infra_copy: Path, tmp_path: Path
 ) -> None:
-    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+    from delivery_toolchain.release.assisted_listing_intake.run import run_cutover_gate
 
     _approve_all_authority(infra_copy)
     _record_live_evidence(infra_copy)
@@ -613,7 +613,7 @@ def test_cutover_blocks_until_all_live_canary_results_are_recorded(
 
 
 def test_cutover_rejects_stale_canary_evidence(infra_copy: Path, tmp_path: Path) -> None:
-    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+    from delivery_toolchain.release.assisted_listing_intake.run import run_cutover_gate
 
     _approve_all_authority(infra_copy)
     _record_live_evidence(infra_copy, canary_units=[_live_unit(u) for u in (3, 4, 5, 6, 7)])
@@ -649,7 +649,7 @@ def test_cutover_rejects_stale_canary_evidence(infra_copy: Path, tmp_path: Path)
 def test_cutover_blocks_when_live_error_budget_is_exhausted(
     infra_copy: Path, tmp_path: Path
 ) -> None:
-    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+    from delivery_toolchain.release.assisted_listing_intake.run import run_cutover_gate
 
     _approve_all_authority(infra_copy)
     _record_live_evidence(
@@ -684,7 +684,7 @@ def test_cutover_blocks_when_live_error_budget_is_exhausted(
 
 
 def test_cutover_gate_blocks_while_pending(config, tmp_path: Path) -> None:
-    from scripts.release.assisted_listing_intake.run import run_cutover_gate
+    from delivery_toolchain.release.assisted_listing_intake.run import run_cutover_gate
 
     prior = {name: {"passed": True} for name in ("readiness", "migration", "shadow", "killswitch", "restore", "canary", "uat")}
     result = run_cutover_gate(

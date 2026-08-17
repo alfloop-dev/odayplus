@@ -48,7 +48,7 @@ provider-probe defect.** Full detail and raw log extracts:
 
 ## 2. What shipped
 
-`scripts/deployment/validate_cloud_run_live_deployment.py`
+`product_ops/deployment/validate_cloud_run_live_deployment.py`
 
 - `ProbeAttempt` / `ProbeRetryPolicy` / `ProbeResult`, `probe_json_endpoint`,
   `probe_with_bounded_retry`, `probe_failure_is_transient` — a bounded,
@@ -81,7 +81,7 @@ provider-probe defect.** Full detail and raw log extracts:
   reporting **`"unhealthy"` pass the gate** (`"unhealthy"` contains
   `"healthy"`). See § 4.
 
-`scripts/deploy_cloud_run_waji.sh`
+`product_ops/deployment/deploy_cloud_run_waji.sh`
 
 - `run_migration_compatibility_gate` passes all five bounds explicitly, sourced
   from overridable `MIGRATION_COMPAT_*` variables with defaults 15 / 4 / 2 / 8 /
@@ -161,7 +161,7 @@ reports the bare string `"healthy"` and still passes.
   (`uv` binary absent from the worker sandbox; identical on the unmodified base)
 - `ruff format --check`, `ruff check .orchestrator scripts`,
   `ruff check tests modules apps shared models solver pipelines infra`,
-  `bash -n scripts/deploy_cloud_run_waji.sh` — clean
+  `bash -n product_ops/deployment/deploy_cloud_run_waji.sh` — clean
 - shipped CLI re-run at round-4 head against the real serving revision →
   attempt 1 reproduces `The read operation timed out` at 15.067 s classified
   `no_response`, attempt 2 returns 200 in 1.948 s, gate **passes**

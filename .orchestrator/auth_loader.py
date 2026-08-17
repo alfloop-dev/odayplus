@@ -28,11 +28,6 @@ class GitCredentials:
     secret_file_paths: tuple[str, ...]
     source: str
 
-    def as_subprocess_env(self, base_env: Mapping[str, str] | None = None) -> dict[str, str]:
-        merged = dict(os.environ if base_env is None else base_env)
-        merged.update(self.env)
-        return merged
-
     def safe_summary(self) -> dict[str, object]:
         return {
             "mode": self.mode,

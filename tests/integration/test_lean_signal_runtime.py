@@ -40,11 +40,14 @@ class Message:
         self.rejection = (retryable, reason)
 
 
-def consumer(handler=lambda envelope: f"lean:{envelope['signal_id']}"):
+def consumer(
+    handler=lambda envelope: f"lean:{envelope['signal_id']}",
+    now=datetime(2026, 6, 26, 4, tzinfo=UTC),
+):
     return runtime.LeanSignalConsumer(
         handler=handler,
         receipts=runtime.InMemoryReceiptStore(),
-        now=lambda: datetime(2026, 6, 26, 4, tzinfo=UTC),
+        now=lambda: now,
     )
 
 
@@ -188,16 +191,173 @@ def test_time_window_and_handler_failures_have_explicit_retry_semantics() -> Non
     assert failed.rejection == (True, "handler_failure: RuntimeError")
 
 
-def test_broker_configuration_is_validated_at_composition_boundary() -> None:
-    config = runtime.BrokerConfig.from_mapping(
-        {
-            "LEAN_SIGNAL_BROKER_SERVERS": "broker-a:9093, broker-b:9093",
-            "LEAN_SIGNAL_TOPIC": "research.signals.v1",
-            "LEAN_SIGNAL_CONSUMER_GROUP": "lean-runtime",
-        }
+def test_expired_signal_is_rejected_without_retry() -> None:
+    message = Message(signal())
+
+    outcome = consumer(now=datetime(2026, 6, 28, 4, tzinfo=UTC)).consume(message)
+
+    assert outcome == runtime.ConsumptionOutcome.REJECTED
+    assert message.rejection == (False, "signal_expired")
+    assert message.acked is False
+
+
+def test_additive_payload_fields_stay_consumable_within_major_one() -> None:
+    # Schema evolution policy: 1.x consumers must accept additive payload keys.
+    value = signal()
+    value["signal_version"] = "1.1.0"
+    value["payload"]["future_optional_field"] = {"introduced_in": "1.1.0"}
+    value["payload"]["evidence"]["drift_score"] = 0.02
+    message = Message(value)
+
+    assert consumer().consume(message) == runtime.ConsumptionOutcome.CONSUMED
+    assert message.acked is True
+
+
+def test_undecodable_body_is_rejected_without_retry() -> None:
+    message = Message(None)
+    message.body = b"{not json"
+
+    assert consumer().consume(message) == runtime.ConsumptionOutcome.REJECTED
+    assert message.rejection and message.rejection[0] is False
+
+
+def test_handler_failure_releases_claim_so_a_later_retry_can_execute() -> None:
+    attempts = 0
+
+    def flaky(_envelope):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("execution venue unavailable")
+        return "execution:42"
+
+    instance = consumer(flaky)
+    failed = Message(signal())
+    retried = Message(signal())
+
+    assert instance.consume(failed) == runtime.ConsumptionOutcome.RETRYABLE_FAILURE
+    # The released claim must not permanently poison the idempotency key.
+    assert instance.consume(retried) == runtime.ConsumptionOutcome.CONSUMED
+    assert attempts == 2
+    assert retried.acked is True
+
+
+def test_idempotency_key_reused_by_another_signal_never_executes() -> None:
+    calls = 0
+
+    def handle(_envelope):
+        nonlocal calls
+        calls += 1
+        return "execution:42"
+
+    instance = consumer(handle)
+    assert instance.consume(Message(signal())) == runtime.ConsumptionOutcome.CONSUMED
+
+    colliding = signal()
+    colliding["signal_id"] = "sig_01J2SITE000000000000000002"
+    message = Message(colliding)
+
+    assert instance.consume(message) == runtime.ConsumptionOutcome.RETRYABLE_FAILURE
+    assert message.rejection == (True, "receipt_claim_failure: ValueError")
+    assert message.acked is False
+    assert calls == 1
+
+
+def test_empty_handler_result_reference_is_not_recorded_as_consumed() -> None:
+    message = Message(signal())
+
+    assert consumer(lambda _envelope: "").consume(message) == (
+        runtime.ConsumptionOutcome.RETRYABLE_FAILURE
     )
+    assert message.acked is False
+
+
+BROKER_ENV = {
+    "LEAN_SIGNAL_BROKER_SERVERS": "broker-a:9093, broker-b:9093",
+    "LEAN_SIGNAL_TOPIC": "research.signals.v1",
+    "LEAN_SIGNAL_CONSUMER_GROUP": "lean-runtime",
+}
+
+
+def test_broker_configuration_is_validated_at_composition_boundary() -> None:
+    config = runtime.BrokerConfig.from_mapping(BROKER_ENV)
     assert config.bootstrap_servers == ("broker-a:9093", "broker-b:9093")
     assert config.security_protocol == "SASL_SSL"
+    assert config.dead_letter_topic is None
 
     with pytest.raises(ValueError, match="required"):
         runtime.BrokerConfig.from_mapping({})
+
+
+@pytest.mark.parametrize(
+    "setting",
+    ["LEAN_SIGNAL_BROKER_SERVERS", "LEAN_SIGNAL_TOPIC", "LEAN_SIGNAL_CONSUMER_GROUP"],
+)
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_required_broker_setting_fails_startup(setting, blank) -> None:
+    with pytest.raises(ValueError, match="required"):
+        runtime.BrokerConfig.from_mapping({**BROKER_ENV, setting: blank})
+
+
+@pytest.mark.parametrize("servers", [" , ", ",", " ,, "])
+def test_endpoint_list_of_only_separators_fails_startup(servers) -> None:
+    with pytest.raises(ValueError, match="required"):
+        runtime.BrokerConfig.from_mapping(
+            {**BROKER_ENV, "LEAN_SIGNAL_BROKER_SERVERS": servers}
+        )
+
+
+def test_blank_endpoints_are_dropped_and_survivors_kept() -> None:
+    config = runtime.BrokerConfig.from_mapping(
+        {**BROKER_ENV, "LEAN_SIGNAL_BROKER_SERVERS": " broker-a:9093 , ,broker-b:9093"}
+    )
+    assert config.bootstrap_servers == ("broker-a:9093", "broker-b:9093")
+
+
+@pytest.mark.parametrize("protocol", ["PLAINTEXT", "SSL", "SASL_PLAINTEXT", "SASL_SSL"])
+def test_supported_security_protocols_are_accepted(protocol) -> None:
+    config = runtime.BrokerConfig.from_mapping(
+        {**BROKER_ENV, "LEAN_SIGNAL_SECURITY_PROTOCOL": protocol}
+    )
+    assert config.security_protocol == protocol
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_security_protocol_falls_back_to_the_strict_default(blank) -> None:
+    # Deployment templates render an unset optional variable as an empty string;
+    # that must mean "default", not "unsupported protocol: ".
+    config = runtime.BrokerConfig.from_mapping(
+        {**BROKER_ENV, "LEAN_SIGNAL_SECURITY_PROTOCOL": blank}
+    )
+    assert config.security_protocol == "SASL_SSL"
+
+
+def test_unsupported_security_protocol_fails_startup() -> None:
+    with pytest.raises(ValueError, match="unsupported LEAN_SIGNAL_SECURITY_PROTOCOL"):
+        runtime.BrokerConfig.from_mapping(
+            {**BROKER_ENV, "LEAN_SIGNAL_SECURITY_PROTOCOL": "TELNET"}
+        )
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_dead_letter_topic_is_unset_not_a_whitespace_topic(blank) -> None:
+    config = runtime.BrokerConfig.from_mapping(
+        {**BROKER_ENV, "LEAN_SIGNAL_DEAD_LETTER_TOPIC": blank}
+    )
+    assert config.dead_letter_topic is None
+
+
+def test_dead_letter_topic_equal_to_input_topic_fails_startup() -> None:
+    # Otherwise every permanent rejection is republished to the input topic and
+    # redelivered forever.
+    with pytest.raises(ValueError, match="must differ from LEAN_SIGNAL_TOPIC"):
+        runtime.BrokerConfig.from_mapping(
+            {**BROKER_ENV, "LEAN_SIGNAL_DEAD_LETTER_TOPIC": BROKER_ENV["LEAN_SIGNAL_TOPIC"]}
+        )
+
+
+def test_distinct_dead_letter_topic_is_stripped_and_retained() -> None:
+    config = runtime.BrokerConfig.from_mapping(
+        {**BROKER_ENV, "LEAN_SIGNAL_DEAD_LETTER_TOPIC": " research.signals.dlq "}
+    )
+    assert config.dead_letter_topic == "research.signals.dlq"

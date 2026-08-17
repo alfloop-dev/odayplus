@@ -30,7 +30,7 @@ copy therefore cannot duplicate a canonical entity or lineage tuple. Foreign
 keys preserve store/tenant ownership, and lineage retains its original
 `tenant_id`; no cross-tenant remapping was performed.
 
-The versioned `scripts/models/sql/model_ready_views.sql` artifact was installed
+The versioned `product_ops/modeling/sql/model_ready_views.sql` artifact was installed
 under a transaction advisory lock. After composing the official-outcome
 contract from `dev`, the installed SQL SHA-256 is
 `0bbcad43ed07f81ecd1a6f6a4e7e387efb3abb540b4d98c8d101a0bdd292dca8`.

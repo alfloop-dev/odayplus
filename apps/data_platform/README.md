@@ -212,7 +212,7 @@ an unbounded 158M trade or 14.8M device-log load.
 Example bounded backfill:
 
 ```bash
-python -m scripts.data_platform.backfill \
+python -m product_ops.data_platform.backfill \
   --kind merchant --kind place --kind device \
   --start 2026-07-20T00:00:00Z \
   --end 2026-07-24T00:00:00Z \
@@ -227,7 +227,7 @@ landing and per-record canonical/quarantine accounting complete.
 Device logs likewise require:
 
 ```bash
-python -m scripts.data_platform.backfill \
+python -m product_ops.data_platform.backfill \
   --kind device_log \
   --start 2026-07-23T00:00:00Z \
   --end 2026-07-24T00:00:00Z \
@@ -263,4 +263,4 @@ approved cloud-sql-python-connector transport for `/cloudsql/` socket DSNs.
 
 `python -m apps.data_platform.geography_backfill inventory --model heatzone`
 prints the model-ready inventory for the same DSN through
-`scripts.models.storage.PostgresModelReadySource`.
+`product_ops.modeling.storage.PostgresModelReadySource`.

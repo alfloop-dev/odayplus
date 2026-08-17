@@ -80,8 +80,8 @@ Any base refresh, force push, or commit of a new PR head invalidates this observ
 | ID | Required proof | Reject when | Status | Evidence |
 |---|---|---|---|---|
 | E1 | Task file suite (57 passed), focused models suite (59 passed), broad filter suite (107 passed at frozen parent HEAD `d77785af`; 78 passed at composed dev baseline `830c1bfd` & delivery HEAD), and acceptance coverage suite (28 passed at frozen parent & baseline `830c1bfd`; 27 passed / 1 failed at sidecar delivery HEAD due to intervening support path) are truthfully recorded. | Test suite fails, skips required assertions, or swallows exceptions without truthful provenance. | `PASSED` | `.venv/bin/pytest -q tests/models/test_sitescore_opening_outcome.py` (57 passed), `.venv/bin/pytest -q tests/models -k "sitescore or opening_outcome"` (59 passed), `.venv/bin/pytest -q tests -k "sitescore or opening_outcome"` (78 passed at delivery HEAD), `.venv/bin/pytest -q tests/e2e/test_acceptance_coverage.py` (28 passed at baseline `830c1bfd`; 27 passed, 1 failed at delivery HEAD) |
-| E2 | Ruff linter passes with zero errors; `git diff --check` reports clean formatting. | Lint errors, unused imports, or trailing whitespace are present. | `PASSED` | `.venv/bin/ruff check scripts/models models tests/models` |
-| E3 | Product release gate and E2E checks verify zero regressions across 117 tests on baseline `830c1bfd`; delivery-HEAD release gate exit 1 due to intervening support path is truthfully declared. | Product release gate fails or E2E tests report validation errors without declared sidecar path constraints. | `PASSED` | `docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json` (baseline), `scripts/e2e/check_product_release_gate.py` (exit 1 at delivery HEAD due to support path) |
+| E2 | Ruff linter passes with zero errors; `git diff --check` reports clean formatting. | Lint errors, unused imports, or trailing whitespace are present. | `PASSED` | `.venv/bin/ruff check product_ops/modeling models tests/models` |
+| E3 | Product release gate and E2E checks verify zero regressions across 117 tests on baseline `830c1bfd`; delivery-HEAD release gate exit 1 due to intervening support path is truthfully declared. | Product release gate fails or E2E tests report validation errors without declared sidecar path constraints. | `PASSED` | `docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json` (baseline), `delivery_toolchain/e2e/check_product_release_gate.py` (exit 1 at delivery HEAD due to support path) |
 
 ## Upstream & downstream dependency map
 
@@ -127,14 +127,14 @@ Normalized verification results mapping each command to frozen parent source HEA
 #  is an intervening non-evidence path relative to PRODUCT_E2E_EXECUTION_RECEIPT.json)
 
 # 5. Product release gate check
-python3 scripts/e2e/check_product_release_gate.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py
 # Frozen parent HEAD (d77785af / dev 6963ca40): exit code 0, clean
 # Composed dev baseline (830c1bfd):            exit code 0, clean
 # Sidecar delivery HEAD:                       exit code 1
 # (Failure: intervening commits touch non-evidence paths: support/sidecars/ODP-PLAN-SITESCORE-OUTCOME-001/ODP-PLAN-SITESCORE-OUTCOME-001-SIDECAR-ACCEPTANCE.md)
 
 # 6. Ruff static analysis
-.venv/bin/ruff check scripts/models models tests/models
+.venv/bin/ruff check product_ops/modeling models tests/models
 # Result: exit code 0, 0 errors (clean) on frozen parent, composed baseline, and sidecar delivery HEAD
 
 # 7. Git diff check
@@ -147,8 +147,8 @@ Verification Ledger Summary:
 - **Focused models pytest** (`tests/models -k "sitescore or opening_outcome"`): 59 passed (frozen parent, composed baseline, and delivery HEAD)
 - **Broad pytest** (`tests -k "sitescore or opening_outcome"`): 107 passed at frozen parent `d77785af` / 78 passed at composed baseline `830c1bfd` & delivery HEAD
 - **Acceptance-coverage pytest** (`tests/e2e/test_acceptance_coverage.py`): 28 passed on baseline `830c1bfd`; 27 passed, 1 failed at sidecar delivery HEAD (intervening non-evidence path)
-- **Product release gate** (`scripts/e2e/check_product_release_gate.py`): exit 0 on baseline `830c1bfd`; exit 1 at sidecar delivery HEAD (intervening non-evidence path)
-- **Ruff check** (`scripts/models models tests/models`): clean (0 errors, exit code 0)
+- **Product release gate** (`delivery_toolchain/e2e/check_product_release_gate.py`): exit 0 on baseline `830c1bfd`; exit 1 at sidecar delivery HEAD (intervening non-evidence path)
+- **Ruff check** (`product_ops/modeling models tests/models`): clean (0 errors, exit code 0)
 - **Git diff check**: clean (0 errors, exit code 0)
 
 ## Absorption & PR constraints for parent owner

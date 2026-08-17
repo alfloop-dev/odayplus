@@ -116,7 +116,7 @@ error list instead of only an assertion string.
 
 ## 5. Scope boundaries
 
-- PR #484's files (`scripts/deployment/**`, `tests/ops/test_cloud_run_live_deployment.py`,
+- PR #484's files (`product_ops/deployment/**`, `tests/ops/test_cloud_run_live_deployment.py`,
   `docs/evidence/runtime/ODP-DEPLOY-JOB-SECRET-BINDING-SELECTION-001/**`) are untouched.
 - Package 10 product paths (`apps/**`, `modules/**`) are untouched.
 - This should merge into `dev` before #484 is refreshed from `dev`, preserving

@@ -34,7 +34,7 @@ Receipts in this directory:
 | deploy gate | `Error: worker Cloud Run Job failed; deployment stopped.` | `Cloud Run worker Job smoke passed.` |
 
 The `oday-worker-r-93ae1b2e75e1` job name is derived from the release SHA by
-`scripts/deploy_cloud_run_waji.sh`, and the same script labels the job
+`product_ops/deployment/deploy_cloud_run_waji.sh`, and the same script labels the job
 `oday-release-sha=93ae1b2e…,oday-runtime=worker,oday-data-binding=live`. So the
 execution above is bound to this head and to no other.
 
@@ -164,7 +164,7 @@ docs/evidence/**            (this task's receipts + ODP-ORCH-APPROVAL-RESUME-ROO
 `.orchestrator/**` is supervisor tooling and is listed in `.dockerignore:11`, so
 `infra/docker/worker.Dockerfile`'s `COPY . .` never sees it; `docs/evidence/**`
 is inert. No file under `apps/worker/`, `modules/external_data/`,
-`shared/`, `scripts/deployment/`, `scripts/deploy_cloud_run_waji.sh`,
+`shared/`, `product_ops/deployment/`, `product_ops/deployment/deploy_cloud_run_waji.sh`,
 `infra/docker/`, or `tests/` differs between `93ae1b2e` and the reviewed head.
 The worker image and the deploy gate at the reviewed head are byte-identical to
 the ones that produced `oday-worker-r-93ae1b2e75e1-c9gms`, and `93ae1b2e` is an

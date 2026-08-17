@@ -22,10 +22,10 @@ Task `ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001` closes repository-owned runtime conf
   3. `RELEASE_SHA` (generic release identity)
   4. `GITHUB_SHA` (CI/CD build context)
   5. `COMMIT_SHA` (VCS context)
-- Updated API (`apps/api/oday_api/main.py`), Scheduler (`apps/scheduler/oday_scheduler/main.py`), Worker (`apps/worker/oday_worker/main.py`), Notifications (`modules/notifications/infrastructure/adapters.py`), and Cloud Run Job Entrypoint (`scripts/deployment/cloud_run_job_entrypoint.py`) to consume `get_release_identity()`.
+- Updated API (`apps/api/oday_api/main.py`), Scheduler (`apps/scheduler/oday_scheduler/main.py`), Worker (`apps/worker/oday_worker/main.py`), Notifications (`modules/notifications/infrastructure/adapters.py`), and Cloud Run Job Entrypoint (`product_ops/deployment/cloud_run_job_entrypoint.py`) to consume `get_release_identity()`.
 
 ### B. Fail-Closed Required Environment Values
-- Enforced top-level required environment assertions in `scripts/deploy_cloud_run_waji.sh`.
+- Enforced top-level required environment assertions in `product_ops/deployment/deploy_cloud_run_waji.sh`.
 - Added fail-closed checks for `ODP_SCHEDULED_INGESTION_TENANT_ID` / `ODP_TENANT_ID` at both bash script initialization and Python env file serialization boundaries.
 - Replaced implicit fallback to `"tenant-dev"` with explicit `ValueError` when required tenant variables are unwired in deployment environments.
 
@@ -34,7 +34,7 @@ Task `ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001` closes repository-owned runtime conf
 - Added explicit exception handling in `cloud_run_job_entrypoint.py` for `SchedulerTenantConfigurationError`, emitting a structured `failed` receipt with `reason="missing_tenant_configuration"` and returning `EXIT_FAILED`.
 
 ### D. Explicit Rollback Targets
-- Verified `scripts/deploy_cloud_run_waji.sh` and `scripts/deployment/cloud_run_release_traffic.sh` arm explicit rollback traps (`ROLLBACK_ARMED=true` and `SCHEDULER_ROLLBACK_ARMED=true`).
+- Verified `product_ops/deployment/deploy_cloud_run_waji.sh` and `product_ops/deployment/cloud_run_release_traffic.sh` arm explicit rollback traps (`ROLLBACK_ARMED=true` and `SCHEDULER_ROLLBACK_ARMED=true`).
 - Confirmed pre-deployment traffic snapshots (`API_TRAFFIC_SNAPSHOT`, `WEB_TRAFFIC_SNAPSHOT`) and trigger snapshots (`SCHEDULER_TRIGGER_SNAPSHOT`, `WORKER_TRIGGER_SNAPSHOT`) capture explicit target revisions and trigger definitions prior to any runtime mutation.
 - Enforced automatic restoration of recorded revision splits and trigger targets upon deployment failure or live E2E gate rejection before committing the deployment (`DEPLOYMENT_COMMITTED=true`).
 
@@ -48,8 +48,8 @@ Task `ODP-RUNTIME-CONFIG-CODE-CLOSEOUT-001` closes repository-owned runtime conf
 - `apps/scheduler/oday_scheduler/main.py`
 - `apps/worker/oday_worker/main.py`
 - `modules/notifications/infrastructure/adapters.py`
-- `scripts/deploy_cloud_run_waji.sh`
-- `scripts/deployment/cloud_run_job_entrypoint.py`
+- `product_ops/deployment/deploy_cloud_run_waji.sh`
+- `product_ops/deployment/cloud_run_job_entrypoint.py`
 
 ### Tests & Verification:
 - `tests/ops/test_runtime_config_code_closeout.py` (new, 5 contract tests)

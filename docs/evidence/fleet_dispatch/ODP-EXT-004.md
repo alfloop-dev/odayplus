@@ -45,7 +45,7 @@ gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url
 ```
 
 ```bash
-python3 scripts/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1
+python3 product_ops/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1
 ```
 
 ```bash

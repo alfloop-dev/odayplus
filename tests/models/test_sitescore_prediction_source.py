@@ -424,7 +424,7 @@ def test_sitescore_prediction_source_general_no_receipt_plausible_hex_bypass_fai
 
 def test_sitescore_outcome_benchmark_pg16_query_path_with_receipt_active(monkeypatch):
     # PG-path mutation test: run_benchmark_from_inventory under pg16_query with a valid receipt achieves ACTIVE
-    from scripts.models.sitescore_outcome_benchmark import run_benchmark_from_inventory
+    from product_ops.modeling.sitescore_outcome_benchmark import run_benchmark_from_inventory
 
     records = _generate_valid_prediction_records(220, include_outcomes=True)
     for r in records:
@@ -488,7 +488,7 @@ def test_sitescore_outcome_benchmark_pg16_query_path_with_receipt_active(monkeyp
 
 def test_sitescore_outcome_benchmark_pg16_query_path_without_receipt_governed_disabled(monkeypatch):
     # PG-path mutation test: run_benchmark_from_inventory under pg16_query WITHOUT a receipt stays GOVERNED_DISABLED
-    from scripts.models.sitescore_outcome_benchmark import run_benchmark_from_inventory
+    from product_ops.modeling.sitescore_outcome_benchmark import run_benchmark_from_inventory
 
     records = _generate_valid_prediction_records(220, include_outcomes=True)
     for r in records:

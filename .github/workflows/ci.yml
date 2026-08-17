@@ -14,6 +14,55 @@ on:
     types: [checks_requested]
 
 jobs:
+  change-scope:
+    runs-on: ubuntu-latest
+    outputs:
+      scope: ${{ steps.classify.outputs.scope }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify change scope
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MERGE_GROUP_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            pull_request)
+              base_sha="$PR_BASE_SHA"
+              head_sha="$PR_HEAD_SHA"
+              ;;
+            merge_group)
+              base_sha="$MERGE_GROUP_BASE_SHA"
+              head_sha="$MERGE_GROUP_HEAD_SHA"
+              ;;
+            push)
+              base_sha="$PUSH_BEFORE_SHA"
+              head_sha="$PUSH_AFTER_SHA"
+              ;;
+            *)
+              echo "scope=product_or_mixed" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+          if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+            echo "scope=product_or_mixed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git diff --name-only "$base_sha" "$head_sha" > changed-paths.txt
+          python3 delivery_toolchain/governance/classify_change_review_scope.py \
+            --paths-file changed-paths.txt > scope.json
+          scope="$(python3 -c "import json; print(json.load(open('scope.json'))['scope'])")"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
   orchestrator:
     runs-on: ubuntu-latest
     steps:
@@ -38,16 +87,23 @@ jobs:
       - name: Prepare local config
         run: make bootstrap
 
+      - name: Enforce product and development code boundaries
+        run: uv run python delivery_toolchain/governance/check_code_boundaries.py
+
       - name: Lint orchestrator code
-        run: uv run ruff check .orchestrator scripts
+        run: uv run ruff check .orchestrator delivery_toolchain scripts
 
       - name: Check config wiring
-        run: uv run python scripts/check_config_wiring.py
+        run: |
+          uv run python delivery_toolchain/governance/check_orchestrator_config.py
+          uv run python delivery_toolchain/governance/check_config_wiring.py
 
       - name: Test orchestrator code
-        run: uv run pytest -m "not requires_live_env" .orchestrator scripts
+        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts
 
   product:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -124,7 +180,7 @@ jobs:
       # Blocks: an API change that never reached the checked-in OpenAPI
       # artifact, an artifact change that never reached the generated client,
       # and any breaking change not listed in
-      # scripts/openapi/approved_breaking_changes.json (ODP-PGAP-API-001).
+      # delivery_toolchain/openapi/approved_breaking_changes.json (ODP-PGAP-API-001).
       - name: Check API contract drift
         run: make api-contract
         env:
@@ -150,6 +206,8 @@ jobs:
   # the 150-request volume exactly as ratified, and runs the measurement three
   # times in separate processes so a single pass cannot be a lucky sample.
   performance-gate:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,12 +234,22 @@ jobs:
           mkdir -p performance-reports
           for attempt in 1 2 3; do
             echo "::group::performance gate attempt ${attempt}"
-            # The test writes its report before asserting, so a red attempt
-            # still produces the measured numbers. Remove any stale copy first
-            # so a missing report can never be mistaken for a fresh one.
+            # The API load/soak test is a strict ratified P95 gate. The durable
+            # SQLite queue measurement is also collected each run, but its
+            # wall-clock SLO is an observation on a shared runner: thread and
+            # SQLite lock scheduling are not product latency. Its report is
+            # retained for the dedicated performance environment.
             rm -f /tmp/load_soak_performance_report.json
             status=0
             uv run pytest -m performance tests/performance || status=$?
+            capacity_status=0
+            uv run python delivery_toolchain/load/assisted_listing_intake/run.py \
+              --volume 120 --concurrency 20 --observe-only \
+              --output "performance-reports/assisted_intake_capacity_attempt_${attempt}.json" \
+              || capacity_status=$?
+            if [[ "${status}" -eq 0 && "${capacity_status}" -ne 0 ]]; then
+              status="${capacity_status}"
+            fi
             if [[ -f /tmp/load_soak_performance_report.json ]]; then
               cp /tmp/load_soak_performance_report.json \
                 "performance-reports/load_soak_performance_report_attempt_${attempt}.json"
@@ -204,6 +272,8 @@ jobs:
           if-no-files-found: warn
 
   product-e2e-gate:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.scope != 'development_tooling' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

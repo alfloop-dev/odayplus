@@ -15,7 +15,7 @@ All required verification gates have been successfully run and passed on the act
    - Command: `ODP_API_BASE_URL="http://127.0.0.1:8099" OPSBOARD_PORT="3100" ODP_PLAYWRIGHT_REUSE_EXISTING=1 npx playwright test tests/e2e/e2e-pgap-ux-001.spec.ts --project=chromium`
    - Outcome: 4 tests passed successfully.
 4. **Product Release Gate Static Check**:
-   - Command: `python3 scripts/e2e/check_product_release_gate.py`
+   - Command: `python3 delivery_toolchain/e2e/check_product_release_gate.py`
    - Outcome: Passed (exit code 0).
 5. **Git Diff Check**:
    - Command: `git diff --check origin/dev...HEAD`
@@ -32,7 +32,7 @@ The following files have been modified to close the UX gap:
   - Changed AVM case decision API fetch URL to relative path (`/api/v1/operator/approvals/...`).
 - [ClientCreateCaseButton.tsx](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-ux-001/apps/web/src/components/ClientCreateCaseButton.tsx)
   - Changed AVM case creation fetch URL to relative path.
-- [seed_product_e2e_data.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-ux-001/scripts/e2e/seed_product_e2e_data.py)
+- [seed_product_e2e_data.py](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-ux-001/delivery_toolchain/e2e/seed_product_e2e_data.py)
   - Handled cases where `audit_event_id` is missing in idempotent (cached) API response. Resolves `KeyError` crashes in regression and E2E runs.
 - [e2e-pgap-ux-001.spec.ts](file:///tmp/pantheon-worker-worktrees/oday-plus/odp-pgap-ux-001/tests/e2e/e2e-pgap-ux-001.spec.ts)
   - Configured `x-production-mode: true` page headers for test 3 to ensure AVM case details correctly bypass development fallback mocks.

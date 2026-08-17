@@ -109,7 +109,7 @@ Unchanged: the worker claim/retry/dead-letter state machine, the Cloud Run job
 entrypoint receipt shape, the scheduler enqueue contract, and the provider
 allowlist/registry rules themselves. The migration job, migration compatibility,
 scheduler, fail-closed rollback, provider readiness, model readiness, and secret
-binding gates in `scripts/deploy_cloud_run_waji.sh` are untouched.
+binding gates in `product_ops/deployment/deploy_cloud_run_waji.sh` are untouched.
 
 A drained job is **not** a silent success: the blocked ingestion run and its
 alert are still persisted, no snapshot is written, and no watermark advances —

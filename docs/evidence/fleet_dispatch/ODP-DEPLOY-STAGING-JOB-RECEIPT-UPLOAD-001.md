@@ -63,14 +63,14 @@ them. Nothing in the tests restates a path per environment:
 
 | Expected set | Derived from |
 | --- | --- |
-| Cloud Run Job receipts | `execute_job "<kind>"` call sites in `scripts/deploy_cloud_run_waji.sh` |
+| Cloud Run Job receipts | `execute_job "<kind>"` call sites in `product_ops/deployment/deploy_cloud_run_waji.sh` |
 | top-level validator reports | that script's `NAME="${NAME:-.odp_data/deployment/...}"` defaults |
 | per-environment reports | each workflow's own `--output .odp_data/...` step arguments |
 | excluded raw dumps | the `capture_job_proof` / `capture_latest_execution` lines that write them |
 
 `test_every_deploy_workflow_runs_the_same_receipt_writing_script` asserts the
 premise that makes one derivation valid for two environments: both workflows
-invoke `./scripts/deploy_cloud_run_waji.sh`. If an environment forks to its own
+invoke `./product_ops/deployment/deploy_cloud_run_waji.sh`. If an environment forks to its own
 deploy script, that test fails rather than the shared expectations quietly
 becoming fiction.
 

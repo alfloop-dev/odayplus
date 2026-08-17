@@ -50,9 +50,9 @@ Current status of parent task & dependencies:
 
 ### Detailed status of parent deliverables
 
-1. **PR #672 open** — files changed: `.github/branch-protection/policy.json`, `.orchestrator/auto_merge_green_prs.py`, `docs/runbooks/README.md`, `docs/runbooks/dev-merge-queue.md`, `scripts/apply_branch_protection.py`, `tests/security/test_auto_merge_green_prs.py`.
+1. **PR #672 open** — files changed: `.github/branch-protection/policy.json`, `.orchestrator/auto_merge_green_prs.py`, `docs/runbooks/README.md`, `docs/runbooks/dev-merge-queue.md`, `delivery_toolchain/github/apply_branch_protection.py`, `tests/security/test_auto_merge_green_prs.py`.
    - Codifies `dev` merge queue ruleset (`dev-merge-queue`: `MERGE` method, `ALLGREEN` concurrency, 60 min timeout, 5-5-1 retry limit, 5 min minimum wait).
-   - Extends `scripts/apply_branch_protection.py` with standard apply, rollback (`--disable-merge-queue`), and dry-run verification (`--verify-only`).
+   - Extends `delivery_toolchain/github/apply_branch_protection.py` with standard apply, rollback (`--disable-merge-queue`), and dry-run verification (`--verify-only`).
    - Updates `.orchestrator/auto_merge_green_prs.py` to enqueue via `gh pr merge --auto`, with coverage for queue-on, queue-off, and probe-fail states.
    - Adds operational procedures in `docs/runbooks/dev-merge-queue.md`. Note: this file **does not yet exist on `dev`** — it lands only when PR #672 merges.
 2. **Current governance & branch protection state** (re-measured 2026-08-07):
@@ -69,7 +69,7 @@ Ownership is split deliberately: some files listed as in-scope for review were d
 | Layer | Path | Owned by | In PR #672? | Intended responsibility |
 |---|---|---|---|---|
 | Review gate & CI workflow | `.github/workflows/merge-queue-review-gate.yml` | `ODP-ORCH-MERGE-QUEUE-ENABLEMENT-001` (PR #664, `037b1a9f`) | No — inherited, already on `dev` | Re-asserts `task-review-gate` status checks for queued PRs during `merge_group` events. |
-| Branch protection tooling | `scripts/apply_branch_protection.py` | `ODP-ORCH-MERGE-QUEUE-ACTIVATION-001` (extends `ODP-OC-R5-012`) | Yes | Enforces GitHub API branch protection rules, dry-run readbacks, `--disable-merge-queue` rollback. |
+| Branch protection tooling | `delivery_toolchain/github/apply_branch_protection.py` | `ODP-ORCH-MERGE-QUEUE-ACTIVATION-001` (extends `ODP-OC-R5-012`) | Yes | Enforces GitHub API branch protection rules, dry-run readbacks, `--disable-merge-queue` rollback. |
 | PR auto-merge automation | `.orchestrator/auto_merge_green_prs.py` | `ODP-ORCH-MERGE-QUEUE-ACTIVATION-001` | Yes | Automatically enqueues reviewer-approved green PRs via `gh pr merge --auto`. |
 | Branch protection policy | `.github/branch-protection/policy.json` | `ODP-ORCH-MERGE-QUEUE-ACTIVATION-001` (extends `ODP-OC-R5-012`) | Yes | Declarative configuration for status checks, review requirements, admin enforcement. |
 | Operational runbook | `docs/runbooks/dev-merge-queue.md`, `docs/runbooks/README.md` | `ODP-ORCH-MERGE-QUEUE-ACTIVATION-001` | Yes — not yet on `dev` | On-call procedures for merge queue monitoring, troubleshooting, emergency rollback. |
@@ -105,7 +105,7 @@ Ownership is split deliberately: some files listed as in-scope for review were d
 
 | ID | Required proof | Reject when | Status | Evidence |
 |---|---|---|---|---|
-| D1 | `scripts/apply_branch_protection.py` supports `--disable-merge-queue` for fast rollback to the pre-queue state. | Rollback command fails or leaves branch protection in a corrupted state. | `PASSED` | `scripts/apply_branch_protection.py` |
+| D1 | `delivery_toolchain/github/apply_branch_protection.py` supports `--disable-merge-queue` for fast rollback to the pre-queue state. | Rollback command fails or leaves branch protection in a corrupted state. | `PASSED` | `delivery_toolchain/github/apply_branch_protection.py` |
 | D2 | `.orchestrator/auto_merge_green_prs.py` gracefully handles queue-on, queue-off, and probe-fail states. | Unhandled exceptions when probing merge queue capabilities or auto-enqueueing PRs. | `PASSED` | `tests/security/test_auto_merge_green_prs.py` |
 
 ### E. Test & quality verification
@@ -163,7 +163,7 @@ Commands run in this worktree (`task/ODP-ORCH-MERGE-QUEUE-ACTIVATION-001-SIDECAR
 
 # 2. Static analysis (ruff) — note the corrected auto-merge path
 /home/lupin/oday-plus/.venv/bin/ruff check \
-  scripts/apply_branch_protection.py \
+  delivery_toolchain/github/apply_branch_protection.py \
   .orchestrator/auto_merge_green_prs.py \
   tests/security/test_auto_merge_green_prs.py
 # Result: All checks passed!
