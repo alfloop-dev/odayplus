@@ -187,6 +187,6 @@ COMMIT;
 -- Production migration gate:
 -- 1. Apply all four schema artifacts in a transaction on an empty database.
 -- 2. Reconcile data and validate every NOT VALID constraint before cutover.
--- 3. Execute scripts/validate_assisted_listing_intake_schema.sql.
+-- 3. Execute delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql.
 -- 4. Application connections must SET LOCAL app.tenant_id inside every request
 --    transaction. Missing/empty tenant context fails closed under the policy.

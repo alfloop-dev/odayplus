@@ -868,7 +868,7 @@
               "containers": [
                 {
                   "args": [
-                    "scripts/deployment/cloud_run_job_entrypoint.py",
+                    "product_ops/deployment/cloud_run_job_entrypoint.py",
                     "worker",
                     "--max-jobs",
                     "1"

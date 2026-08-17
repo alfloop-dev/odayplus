@@ -14,8 +14,6 @@ if str(THIS_DIR) not in sys.path:
 from adapters.base import DeliveryRequest
 from adapters.claude_cli import ClaudeCLIAdapter
 from adapters.codex import CodexAdapter
-from adapters.copilot_local import CopilotLocalAdapter
-from adapters.gemini import GeminiAdapter
 from common import delivery_runtime_env
 
 
@@ -90,7 +88,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                     clear=False,
                 ),
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
-                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
             ):
                 result = adapter.deliver(request)
 
@@ -140,7 +138,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             with (
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
                 mock.patch(
-                    "adapters.codex.spawn_background_process",
+                    "adapters.base.spawn_background_process",
                     return_value=(fake_process, Path("/tmp/codex2.log")),
                 ),
             ):
@@ -182,7 +180,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             with (
                 mock.patch.dict(os.environ, {"OPENAI_API_KEY": "parent-key", "CODEX_THREAD_ID": "parent-thread"}, clear=False),
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
-                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, Path("/tmp/codex2.log"))) as spawn,
             ):
                 result = adapter.deliver(request)
 
@@ -217,7 +215,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
 
             with (
                 mock.patch("adapters.codex.command_exists", return_value="codex"),
-                mock.patch("adapters.codex.spawn_background_process", return_value=(fake_process, root / "codex.log")) as spawn,
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "codex.log")) as spawn,
             ):
                 result = adapter.deliver(request)
 
@@ -242,8 +240,8 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
         adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
         with (
-            mock.patch("adapters.claude_cli._configured_claude_cli", return_value=None),
-            mock.patch("adapters.claude_cli._claude_auth_ready", return_value=False),
+            mock.patch("adapters.claude_cli.configured_provider_binary", return_value=None),
+            mock.patch("adapters.claude_cli.claude_auth_ready", return_value=False),
         ):
             result = adapter.deliver(request)
         self.assertFalse(result.ok)
@@ -292,10 +290,10 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                     {"HOME": str(root), "XDG_CONFIG_HOME": str(root / ".config"), "GH_CONFIG_DIR": ""},
                     clear=False,
                 ),
-                mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
-                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
+                mock.patch("adapters.claude_cli.configured_provider_binary", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli.claude_auth_ready", return_value=True),
                 mock.patch(
-                    "adapters.claude_cli.spawn_background_process",
+                    "adapters.base.spawn_background_process",
                     return_value=(fake_process, Path("/tmp/claude2.log")),
                 ) as spawn,
             ):
@@ -332,128 +330,15 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
             fake_process = mock.Mock(pid=1234)
 
             with (
-                mock.patch("adapters.claude_cli._configured_claude_cli", return_value=".orchestrator/bin/claude"),
-                mock.patch("adapters.claude_cli._claude_auth_ready", return_value=True),
-                mock.patch("adapters.claude_cli.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
+                mock.patch("adapters.claude_cli.configured_provider_binary", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli.claude_auth_ready", return_value=True),
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
             ):
                 result = adapter.deliver(request)
 
         self.assertTrue(result.ok)
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-test-token")
-
-    def test_gemini_can_disable_inbox_fallback(self) -> None:
-        config = {
-            "agents": {"gemini": {"id": "gemini", "display_name": "Gemini", "provider": "gemini"}},
-            "providers": {
-                "gemini": {
-                    "allow_inbox_fallback": False,
-                    "gemini": {"cli": "gemini"},
-                }
-            },
-        }
-        request = DeliveryRequest(agent_id="gemini", provider="gemini", delivery_mode="gemini", message="wake")
-        adapter = GeminiAdapter(config=config, provider_capabilities={})
-        with mock.patch("adapters.gemini.command_exists", return_value=None):
-            result = adapter.deliver(request)
-        self.assertFalse(result.ok)
-        self.assertFalse(result.manual_confirmation_required)
-        self.assertEqual(result.mode, "gemini")
-
-    def test_gemini_alias_uses_provider_specific_config_and_identity_env(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            config = {
-                "paths": {"status_file": str(root / "ai-status.json")},
-                "agents": {
-                    "gemini2": {
-                        "id": "gemini2",
-                        "display_name": "Gemini2",
-                        "provider": "gemini2",
-                        "adapter": "gemini",
-                    }
-                },
-                "providers": {
-                    "gemini2": {
-                        "delivery_mode": "gemini",
-                        "allow_inbox_fallback": False,
-                        "gemini": {
-                            "cli": "gemini",
-                            "config_home": str(root / "gemini2-home"),
-                            "include_directories": True,
-                            "model": "gemini-2.5-flash-lite",
-                            "output_format": "json",
-                            "env": {"GOOGLE_CLOUD_PROJECT": "gemini2-project"},
-                        },
-                        "approval": {"default_approval_mode": "yolo"},
-                    }
-                },
-            }
-            request = DeliveryRequest(
-                agent_id="gemini2",
-                provider="gemini2",
-                delivery_mode="gemini",
-                message="wake",
-                task_id="T-GEMINI2",
-                reason="owned_ready_dispatch",
-                metadata={
-                    "workspace_path": str(root / "task-worktree"),
-                    "status_root": str(root / "supervisor-root"),
-                },
-            )
-            adapter = GeminiAdapter(config=config, provider_capabilities={})
-            fake_process = mock.Mock(pid=1234)
-            with (
-                mock.patch("adapters.gemini.command_exists", return_value="gemini"),
-                mock.patch("adapters.gemini._gemini_auth_ready", return_value=True),
-                mock.patch("adapters.gemini.spawn_background_process", return_value=(fake_process, root / "gemini2.log")) as spawn,
-            ):
-                result = adapter.deliver(request)
-
-        self.assertTrue(result.ok)
-        self.assertEqual(result.target, "Gemini2")
-        self.assertIn("-gemini2-gemini2-", Path(str(result.log_path)).name)
-        self.assertIn("--model", result.command)
-        self.assertEqual(result.command[result.command.index("--model") + 1], "gemini-2.5-flash-lite")
-        self.assertIn("--output-format", result.command)
-        self.assertEqual(result.command[result.command.index("--output-format") + 1], "json")
-        self.assertIn("--approval-mode", result.command)
-        self.assertEqual(result.command[result.command.index("--approval-mode") + 1], "yolo")
-        self.assertIn("--include-directories", result.command)
-        self.assertEqual(result.command[result.command.index("--include-directories") + 1], str(root / "task-worktree"))
-        self.assertEqual(spawn.call_args.kwargs["cwd"], root / "task-worktree")
-        env = spawn.call_args.kwargs["env"]
-        self.assertEqual(env["AI_NAME"], "Gemini2")
-        self.assertEqual(env["ORCH_AGENT_ID"], "gemini2")
-        self.assertEqual(env["ORCH_PROVIDER"], "gemini2")
-        self.assertEqual(env["GEMINI_CLI_HOME"], str(root / "gemini2-home"))
-        self.assertEqual(env["GOOGLE_CLOUD_PROJECT"], "gemini2-project")
-        self.assertEqual(env["GEMINI_CLI_TRUST_WORKSPACE"], "true")
-        self.assertEqual(env["ORCH_TASK_ID"], "T-GEMINI2")
-        self.assertEqual(env["ORCH_REASON"], "owned_ready_dispatch")
-        self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(root / "supervisor-root"))
-
-    def test_copilot_can_disable_inbox_fallback(self) -> None:
-        config = {
-            "providers": {
-                "copilot": {
-                    "allow_inbox_fallback": False,
-                    "local": {"cli": "copilot"},
-                    "cloud": {"cli": "gh"},
-                }
-            }
-        }
-        request = DeliveryRequest(agent_id="copilot", provider="copilot", delivery_mode="copilot_local", message="wake")
-        adapter = CopilotLocalAdapter(config=config, provider_capabilities={})
-        with (
-            mock.patch("adapters.copilot_local._configured_copilot_cli", return_value=None),
-            mock.patch("adapters.copilot_local._copilot_auth_ready", return_value=False),
-        ):
-            result = adapter.deliver(request)
-        self.assertFalse(result.ok)
-        self.assertFalse(result.manual_confirmation_required)
-        self.assertEqual(result.mode, "copilot_local")
-
 
 if __name__ == "__main__":
     unittest.main()

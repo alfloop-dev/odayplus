@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from scripts.e2e import seed_product_e2e_data
+from delivery_toolchain.e2e import seed_product_e2e_data
 
 FIXTURE_FRESHNESS = {
     "availability": {"status": "AVAILABLE", "source": "fixture"},

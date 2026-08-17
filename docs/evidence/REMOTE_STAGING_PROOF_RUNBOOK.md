@@ -16,7 +16,7 @@ tasks.
 The GitHub `staging` environment exists, but repository variables and secrets
 are not configured in the current external state. The workflow
 `.github/workflows/deploy-staging.yml` is a fail-closed verifier: it runs
-`scripts/e2e/check_remote_staging_proof.py` and uploads the redacted proof
+`delivery_toolchain/e2e/check_remote_staging_proof.py` and uploads the redacted proof
 report. It does not contain provider secrets, and it does not fabricate a
 successful deployment when the staging host/API URL/secret owner are absent.
 
@@ -74,7 +74,7 @@ export ODP_STAGING_SECRET_OWNER="<team-or-person>"
 3. Run remote staging config and smoke proof.
 
 ```bash
-python3 scripts/e2e/check_remote_staging_proof.py \
+python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
   --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
   --correlation-id "corr-odp-pv-stage-001"
 ```
@@ -112,7 +112,7 @@ orchestrator command. The command must record a correlation id and must not
 reuse local-only evidence.
 
 ```bash
-python3 scripts/e2e/verify_deployment_health_backup_rollback.py \
+python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py \
   --correlation-id "corr-odp-pv-stage-002"
 ```
 
@@ -128,7 +128,7 @@ the local compose topology, attach the equivalent platform-native output with:
 3. Re-run the version proof.
 
 ```bash
-python3 scripts/e2e/check_remote_staging_proof.py \
+python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
   --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
   --correlation-id "corr-odp-pv-stage-002-version"
 ```

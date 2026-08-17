@@ -16,11 +16,11 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-VALIDATOR_PATH = ROOT / "scripts/deployment/validate_cloud_run_live_deployment.py"
-TRAFFIC_HELPER_PATH = ROOT / "scripts/deployment/cloud_run_traffic.py"
-TRAFFIC_SHELL_HELPER = ROOT / "scripts/deployment/cloud_run_release_traffic.sh"
-SCHEDULER_HELPER_PATH = ROOT / "scripts/deployment/cloud_scheduler_trigger.py"
-DEPLOY_SCRIPT = ROOT / "scripts/deploy_cloud_run_waji.sh"
+VALIDATOR_PATH = ROOT / "product_ops/deployment/validate_cloud_run_live_deployment.py"
+TRAFFIC_HELPER_PATH = ROOT / "product_ops/deployment/cloud_run_traffic.py"
+TRAFFIC_SHELL_HELPER = ROOT / "product_ops/deployment/cloud_run_release_traffic.sh"
+SCHEDULER_HELPER_PATH = ROOT / "product_ops/deployment/cloud_scheduler_trigger.py"
+DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 WORKFLOWS = (
     ROOT / ".github/workflows/deploy-dev.yml",
     ROOT / ".github/workflows/deploy-staging.yml",
@@ -55,6 +55,8 @@ def complete_env() -> dict[str, str]:
     env["ODAY_RELEASE_SHA"] = EXPECTED_SHA
     env["ODP_FORECAST_ENGINE"] = "statsforecast"
     env["ODP_FORECAST_MODEL"] = "seasonal_naive"
+    env["ODP_SCHEDULED_INGESTION_TENANT_ID"] = "tenant-dev"
+    env["ODP_TENANT_ID"] = "tenant-dev"
     for provider in validator._provider_definitions(ROOT):
         if provider.provider_id not in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
             continue
@@ -170,6 +172,8 @@ def _run_deploy_config_gate(
         "ODP_SCHEDULER_CRON": "0 * * * *",
         "ODP_SCHEDULER_TIME_ZONE": "Asia/Taipei",
         "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": "8",
+        "ODP_SCHEDULED_INGESTION_TENANT_ID": "tenant-dev",
+        "ODP_TENANT_ID": "tenant-dev",
     }
     if forecast_engine is not None:
         env["ODP_FORECAST_ENGINE"] = forecast_engine
@@ -233,17 +237,17 @@ def test_deploy_script_runs_repository_validators_with_locked_python() -> None:
     assert "for cmd in python3 uv gcloud docker; do" in text
     assert 'uv run --frozen python "$@"' in text
     for invocation in (
-        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py preflight",
-        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py jobs-smoke",
+        "run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py preflight",
+        "run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py jobs-smoke",
         "run_locked_python "
-        "scripts/deployment/validate_cloud_run_live_deployment.py compatibility-smoke",
-        "run_locked_python scripts/deployment/validate_cloud_run_live_deployment.py smoke",
-        "run_locked_python scripts/e2e/check_live_e2e_gate.py",
+        "product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke",
+        "run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py smoke",
+        "run_locked_python delivery_toolchain/e2e/check_live_e2e_gate.py",
     ):
         assert invocation in text
 
-    assert "python3 scripts/deployment/validate_cloud_run_live_deployment.py" not in text
-    assert "python3 scripts/e2e/check_live_e2e_gate.py" not in text
+    assert "python3 product_ops/deployment/validate_cloud_run_live_deployment.py" not in text
+    assert "python3 delivery_toolchain/e2e/check_live_e2e_gate.py" not in text
     assert text.count("python3 - ") == 2
     assert text.count("imports only Python's standard library") == 2
 
@@ -1997,9 +2001,9 @@ def test_dev_workflow_bootstraps_locked_dependencies_before_preflight() -> None:
     assert sync < preflight
     assert (
         "uv run --frozen python "
-        "scripts/deployment/validate_cloud_run_live_deployment.py preflight" in text
+        "product_ops/deployment/validate_cloud_run_live_deployment.py preflight" in text
     )
-    assert "python3 scripts/deployment/validate_cloud_run_live_deployment.py" not in text
+    assert "python3 product_ops/deployment/validate_cloud_run_live_deployment.py" not in text
 
 
 def test_provider_probe_timeout_band_matches_runtime_connector() -> None:
@@ -2322,6 +2326,10 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     assert "--oidc-service-account-email=scheduler-sa@example.test" in call
     assert "--oidc-token-audience=https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run" in call
     assert "--max-retry-attempts=3" in call
+    assert "--min-backoff=10s" in call
+    assert "--max-backoff=600s" in call
+    assert "--update-headers=Content-Type=application/json" in call
+    assert "--headers=Content-Type=application/json" not in call
 
 
 def test_scheduler_trigger_restore_handles_paused_state(tmp_path: Path) -> None:
@@ -2704,7 +2712,7 @@ def test_worker_and_scheduler_images_use_bounded_job_entrypoint() -> None:
 
     for dockerfile in (worker, scheduler):
         assert (
-            'ENTRYPOINT ["python", "scripts/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
+            'ENTRYPOINT ["python", "product_ops/deployment/cloud_run_job_entrypoint.py"]' in dockerfile
         )
         assert '"alembic>=1.13"' in dockerfile
         assert '"psycopg[binary,pool]>=3.2"' in dockerfile
@@ -2767,7 +2775,7 @@ def _job_container(
     return {
         "image": f"registry/{kind}:dev-{sha}",
         "command": ["python"],
-        "args": ["scripts/deployment/cloud_run_job_entrypoint.py", mode],
+        "args": ["product_ops/deployment/cloud_run_job_entrypoint.py", mode],
         "env": env,
     }
 
@@ -3589,7 +3597,7 @@ _OVER_INT64 = str(2**63)
 _LONG_OVER_INT64 = "1" + "0" * 29
 
 #: The two forms a Cloud Run secret binding may name a secret in. Both are kept
-#: accepted because `scripts/deploy_cloud_run_waji.sh` takes every name from an
+#: accepted because `product_ops/deployment/deploy_cloud_run_waji.sh` takes every name from an
 #: operator-supplied `*_SECRET` variable, so a cross-project secret is a
 #: deployment this proof must not fail.
 _CROSS_PROJECT_SECRET = f"projects/oday-plus-prod/secrets/{_POI_SECRET}"
@@ -4333,7 +4341,7 @@ def test_job_smoke_rejects_a_v2_binding_beside_a_padded_twin() -> None:
 def test_job_smoke_accepts_exact_env_names_beside_unrelated_ones() -> None:
     """Rejecting twins must not reject the names a real description carries.
 
-    Every env var `scripts/deploy_cloud_run_waji.sh` sets is an exact
+    Every env var `product_ops/deployment/deploy_cloud_run_waji.sh` sets is an exact
     identifier, and distinct names that merely share a prefix are not twins.
     """
 
@@ -4620,7 +4628,7 @@ def test_job_smoke_rejects_failed_execution_and_missing_provider_secrets() -> No
                                 {
                                     "image": "registry/scheduler:latest",
                                     "args": [
-                                        "scripts/deployment/cloud_run_job_entrypoint.py",
+                                        "product_ops/deployment/cloud_run_job_entrypoint.py",
                                         "scheduler",
                                     ],
                                     "env": [
@@ -4992,7 +5000,7 @@ def test_deploy_script_captures_job_proof_without_describe_latest() -> None:
     # The resolver runs under the locked interpreter like every other validator.
     assert (
         'execution_name="$(run_locked_python \\\n'
-        "    scripts/deployment/validate_cloud_run_live_deployment.py "
+        "    product_ops/deployment/validate_cloud_run_live_deployment.py "
         "resolve-latest-execution \\\n"
     ) in text
     # Both the success proof and the failure forensics share one resolver.
@@ -5021,7 +5029,7 @@ def test_deploy_script_runs_the_live_e2e_gate_before_committing_the_release() ->
     """ODP-LIVE-E2E-001: a red live E2E gate must fall through to the rollback trap."""
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
-    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    gate = text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
     web_cut = text.index('promote_service_traffic "${WEB_SERVICE}"')
     committed = text.index("DEPLOYMENT_COMMITTED=true")
 
@@ -5050,7 +5058,7 @@ def test_live_e2e_gate_urls_are_resolved_before_the_gate_invocation() -> None:
         'LIVE_E2E_API_URL="$(service_snapshot_url "${API_CANDIDATE_DESCRIPTION}")"'
     )
     guard = text.index('if [[ -z "${LIVE_E2E_API_URL}" || -z "${LIVE_E2E_WEB_URL}" ]]; then')
-    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    gate = text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
 
     assert resolve < guard < gate
     assert '--api-url "${LIVE_E2E_API_URL}"' in text
@@ -5156,7 +5164,7 @@ def test_live_e2e_gate_refuses_to_run_without_a_deployment_mode() -> None:
     text = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 
     guard = text.index('if [[ -z "${LIVE_E2E_DEPLOYMENT_MODE}" ]]; then')
-    gate = text.index("scripts/e2e/check_live_e2e_gate.py")
+    gate = text.index("delivery_toolchain/e2e/check_live_e2e_gate.py")
 
     assert guard < gate
     assert _deploy_script_expected_deployment({"ODP_DEPLOY_ENV": "staging"}) == "staging"
@@ -5242,6 +5250,31 @@ def test_real_app_platform_health_job_queue_contract(tmp_path: Path) -> None:
     assert not validator.is_valid_job_queue_health(bare_queue_text), (
         f"bare 'healthy' must fail is_valid_job_queue_health; got: {bare_queue_text!r}"
     )
+
+
+def test_declared_data_mode_handles_all_envelope_shapes() -> None:
+    """Verify _declared_data_mode across the supported API envelopes."""
+    assert validator._declared_data_mode({"modes": {"data": {"mode": "live"}}}) == "live"
+    assert validator._declared_data_mode({"details": {"data": {"mode": "live"}}}) == "live"
+    assert validator._declared_data_mode({"data_mode": "live"}) == "live"
+    assert validator._declared_data_mode({"dataMode": "live"}) == "live"
+    assert validator._declared_data_mode({"details": {"data_mode": "live"}}) == "live"
+    assert validator._declared_data_mode({"meta": {"dataMode": "live"}}) == "live"
+    assert validator._declared_data_mode({"dependencies": {"data_mode": "live"}}) == "live"
+    assert validator._declared_data_mode({"details": {"bindingMode": "live"}}) == "live"
+    assert validator._declared_data_mode({"binding_mode": "live"}) == "live"
+    assert validator._declared_data_mode({}) == ""
+    assert validator._declared_data_mode({"status": "ok"}) == ""
+
+
+def test_declared_data_mode_prefers_canonical_root_contract() -> None:
+    payload = {
+        "data_mode": "fixture",
+        "modes": {"data": {"mode": "live"}},
+        "details": {"binding_mode": "live"},
+    }
+
+    assert validator._declared_data_mode(payload) == "fixture"
 
 
 def test_real_app_health_data_mode_matches_unchanged_deploy_validator(

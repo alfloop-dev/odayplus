@@ -32,7 +32,7 @@ Any base refresh, force push, or commit of a new PR head invalidates this observ
 
 | Layer | Parent task-owned paths | Intended responsibility |
 |---|---|---|
-| Model Pipeline & Benchmarks | `scripts/models/` | Implements `forecast_training.py`, `release.py`, `install_views.py`, `avm_benchmark.py`, `heatzone_benchmark.py`, `sitescore_outcome_benchmark.py`, and `real_estate_outcomes.py`. |
+| Model Pipeline & Benchmarks | `product_ops/modeling/` | Implements `forecast_training.py`, `release.py`, `install_views.py`, `avm_benchmark.py`, `heatzone_benchmark.py`, `sitescore_outcome_benchmark.py`, and `real_estate_outcomes.py`. |
 | Core OSS Model Framework | `models/shared_ml/` | Implements `oss_capabilities.py`, `oss_estimators.py`, `production_runtime.py`, `production_contracts.py`, `scoring_binding.py`, `registry.py`, `model_card.py`, and `feature_registry.py`. |
 | LearningHub Integration | `modules/learninghub/` | Implements LearningHub worker and API integration with governed ML capabilities. |
 | Evidence & Audit Receipts | `docs/evidence/runtime/ODP-PRODUCTION-MODEL-REGISTRY-001/` | Contains redacted PG16 binding receipts, inventory run outputs, training execution logs, MLflow lineage, and model cards. |
@@ -44,7 +44,7 @@ Any base refresh, force push, or commit of a new PR head invalidates this observ
 
 | ID | Required proof | Reject when | Status | Evidence |
 |---|---|---|---|---|
-| A1 | Redacted PG16 evidence states real label counts, source, cutoff, eligibility, and binding decisions for AVM, ForecastOps, HeatZone, and SiteScore. | Placeholder, unverified, or hardcoded counts are used without PG16 readback. | `PASSED` | `models/shared_ml/production_runtime.py`, `scripts/models/contracts.py` |
+| A1 | Redacted PG16 evidence states real label counts, source, cutoff, eligibility, and binding decisions for AVM, ForecastOps, HeatZone, and SiteScore. | Placeholder, unverified, or hardcoded counts are used without PG16 readback. | `PASSED` | `models/shared_ml/production_runtime.py`, `product_ops/modeling/contracts.py` |
 | A2 | Inventory execution validates PIT-safe (point-in-time) labeled rows. | Non-PIT, leaked future data, or unverified rows are included. | `PASSED` | Inventory execution `pmb8m` (1,303 eligible rows verified) |
 | A3 | Production binding decisions reflect exact database snapshot hashes and tenant boundaries. | Cross-tenant leakage or untracked snapshot hashes occur. | `PASSED` | `models/shared_ml/scoring_binding.py` |
 
@@ -80,7 +80,7 @@ Any base refresh, force push, or commit of a new PR head invalidates this observ
 
 | ID | Required proof | Reject when | Status | Evidence |
 |---|---|---|---|---|
-| F1 | Python linter (`ruff check`) passes with zero errors across `scripts/models`, `models/shared_ml`, and `modules/learninghub`. | Syntax errors, unhandled imports, or lint violations exist. | `PASSED` | `python3 -m ruff check scripts/models models/shared_ml modules/learninghub` (0 errors) |
+| F1 | Python linter (`ruff check`) passes with zero errors across `product_ops/modeling`, `models/shared_ml`, and `modules/learninghub`. | Syntax errors, unhandled imports, or lint violations exist. | `PASSED` | `python3 -m ruff check product_ops/modeling models/shared_ml modules/learninghub` (0 errors) |
 | F2 | Workspace formatting passes `git diff --check` clean. | Trailing whitespace or formatting issues exist. | `PASSED` | `git diff --check` (0 errors) |
 | F3 | Independent exact-head review and authenticated non-mock E2E pass. | Unverified changes or unauthenticated mock passes. | `PENDING` | Blocked until parent task training execution unblocks and completes review |
 
@@ -112,7 +112,7 @@ graph TD
 
 ```bash
 # 1. Static Analysis Check (Ruff Linter)
-python3 -m ruff check scripts/models models/shared_ml modules/learninghub
+python3 -m ruff check product_ops/modeling models/shared_ml modules/learninghub
 # Result: exit code 0, 0 errors (clean)
 
 # 2. Git Formatting & Diff Check
@@ -125,7 +125,7 @@ python3 -m pytest -q tests/models
 ```
 
 Verification Ledger Summary:
-- **Ruff Linter**: Clean (0 errors across `scripts/models`, `models/shared_ml`, `modules/learninghub`).
+- **Ruff Linter**: Clean (0 errors across `product_ops/modeling`, `models/shared_ml`, `modules/learninghub`).
 - **Git Diff Check**: Clean (0 formatting / whitespace errors).
 - **Pytest Models Filter**: Passed.
 
@@ -152,4 +152,4 @@ Parent owner / reviewer: `Codex5` / `Codex8`.
 - Live canonical task state (`ai-status.json`) read on 2026-08-05 UTC.
 - Parent task brief `.orchestrator/task-briefs/odp_production_model_registry_001_sidecar_acceptance.md`.
 - PG16 Cloud SQL inventory execution `pmb8m` and training execution `2dzlg` logs.
-- Code contracts in `scripts/models/`, `models/shared_ml/`, and `modules/learninghub/`.
+- Code contracts in `product_ops/modeling/`, `models/shared_ml/`, and `modules/learninghub/`.

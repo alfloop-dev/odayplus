@@ -9,7 +9,7 @@
 ## Verification performed
 
 - `pytest -q tests -k "observability or telemetry or alert or dlq"` — 85 passed (100%).
-- `ruff check shared/observability tests/reliability scripts/deployment modules/notifications scripts/e2e/generate_observability_evidence.py` — passed (0 errors).
+- `ruff check shared/observability tests/reliability product_ops/deployment modules/notifications delivery_toolchain/e2e/generate_observability_evidence.py` — passed (0 errors).
 - `git diff --check` — passed (0 errors).
 - Audited B38 remediation: `get_pinned_authority_private_key` and `create_authentic_authority_record` removed from `modules/notifications/domain/authority.py`. Store population helper renamed to `_store_authority_record_for_testing`.
   Regression test `test_b38_caller_minted_records_cannot_become_delivered` verified.

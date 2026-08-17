@@ -8,7 +8,7 @@ that the current tests are non-vacuous.
 Each mutant disables exactly one guard in the reviewed surface
 (``_effective_port``, ``_is_safe_protected_redirect``, ``_redact_location``,
 ``_is_plain_relative_path``) inside
-``scripts/deployment/validate_cloud_run_live_deployment.py``. A mutant is
+``product_ops/deployment/validate_cloud_run_live_deployment.py``. A mutant is
 KILLED when the focused test selection fails, and SURVIVES when the tests still
 pass without the guard — a survivor is a coverage gap, not a nit.
 
@@ -27,7 +27,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[4]
-TARGET = pathlib.Path("scripts/deployment/validate_cloud_run_live_deployment.py")
+TARGET = pathlib.Path("product_ops/deployment/validate_cloud_run_live_deployment.py")
 TESTS = "tests/ops/test_cloud_run_live_deployment.py"
 SELECTION = "protected_redirect or redact_location or effective_port"
 

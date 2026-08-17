@@ -23,7 +23,7 @@ At readiness time `/readiness` reports
 ## Why this is accepted, not a defect
 
 The training + registration pipeline is fully built and governed
-(`scripts/models/release.py`, OSS estimators — CatBoost/LightGBM/StatsForecast —
+(`product_ops/modeling/release.py`, OSS estimators — CatBoost/LightGBM/StatsForecast —
 MLflow registry, DEV→SHADOW→production promotion with a required rollback
 candidate). It refuses to train below `minimum_rows` of **real labeled** data
 rather than inventing a model.
@@ -48,6 +48,6 @@ the per-model minimums, and accept the interim state.
 ## Exit criteria (to close this risk)
 
 For each model, once `labeled_row_count >= minimum_rows` in the model-ready
-views, run `scripts/models/release.py` to register a DEV candidate, promote
+views, run `product_ops/modeling/release.py` to register a DEV candidate, promote
 through SHADOW to a production alias with a rollback candidate, and re-verify
 `/readiness` shows the model bindings ready.

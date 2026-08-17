@@ -58,7 +58,7 @@
       "sha256": "e2764c7e51ebae4690364da942606c1b997ba43c816ac2a38a6f9dd916c0245e"
     },
     {
-      "path": "scripts/models/sql/model_ready_views.sql",
+      "path": "product_ops/modeling/sql/model_ready_views.sql",
       "sha256": "0bbcad43ed07f81ecd1a6f6a4e7e387efb3abb540b4d98c8d101a0bdd292dca8"
     }
   ],

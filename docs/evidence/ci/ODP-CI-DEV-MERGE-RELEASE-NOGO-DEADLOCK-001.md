@@ -40,8 +40,8 @@ so this change does not weaken or bypass dependency installation.
 
 - **Immutable promotion SHA**: `promote-dev-to-main.yml` binds `PROMOTION_SHA` to `${{ github.event.workflow_run.head_sha }}` and passes `EXPECTED_SHA` into `make product-release-gate`.
 - **PR-head drift failure**: `promote-dev-to-main.yml` asserts that `PR headRefOid` matches `PROMOTION_SHA`. If `dev` advances after CI validation, the workflow logs `::error::Promotion SHA drift detected!...` and aborts before status stamping or auto-merging.
-- **Candidate ancestry policy**: `scripts/e2e/check_release_gate_registry.py` accepts `--expected-sha` and verifies that the registry's `release.candidate_sha` is either an exact match or an evidence-only ancestor (where intervening commits touch only `docs/evidence/`, `docs/release/`, `docs/runbooks/`, etc.). Intervening non-evidence (product or test code) commits fail closed.
-- **First-parent merge delta semantics**: `scripts/e2e/check_release_gate_registry.py` uses `git log --first-parent -m` for commit traversal in `check_candidate_ancestry`. This evaluates merge commits against their first-parent (candidate) tree rather than all parents, preventing false-positive re-reporting of candidate product changes when merging evidence from stale task branches, while retaining fail-closed protection against non-evidence merge resolutions and product changes.
+- **Candidate ancestry policy**: `delivery_toolchain/e2e/check_release_gate_registry.py` accepts `--expected-sha` and verifies that the registry's `release.candidate_sha` is either an exact match or an evidence-only ancestor (where intervening commits touch only `docs/evidence/`, `docs/release/`, `docs/runbooks/`, etc.). Intervening non-evidence (product or test code) commits fail closed.
+- **First-parent merge delta semantics**: `delivery_toolchain/e2e/check_release_gate_registry.py` uses `git log --first-parent -m` for commit traversal in `check_candidate_ancestry`. This evaluates merge commits against their first-parent (candidate) tree rather than all parents, preventing false-positive re-reporting of candidate product changes when merging evidence from stale task branches, while retaining fail-closed protection against non-evidence merge resolutions and product changes.
 - **Negative dev-advance & merge regressions**: `tests/e2e/test_release_gate_registry.py` tests `check_candidate_ancestry` against simulated non-evidence commit diffs, merge-resolution product changes (failing closed), and evidence-only merges from stale second-parent branches (`test_cli_expected_sha_ancestry_stale_second_parent_evidence_merge_passes`).
 
 ## Release truth after reconciliation
@@ -68,9 +68,9 @@ The final verification batch was:
 
 ```text
 uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py
-uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py
-python3 scripts/e2e/check_release_gate_registry.py
-python3 scripts/e2e/check_product_release_gate.py --dev-merge
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py
+python3 delivery_toolchain/e2e/check_release_gate_registry.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
 git diff --check
 ```
 
@@ -80,7 +80,7 @@ failure selectors and the composed dev-merge checker passed:
 
 ```text
 pytest -q tests/e2e/test_acceptance_coverage.py::test_no_deleted_specs_referenced_and_inventory_consistent tests/integration/test_flow_002_expansion_persistence.py::test_expansion_flow_persists_across_restart
-python3 scripts/e2e/check_product_release_gate.py --dev-merge
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
 ```
 
 Required semantic regressions prove both directions:
@@ -112,10 +112,10 @@ Verification on that exact implementation head:
 
 ```text
 uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
-uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
-python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
-python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
-python3 scripts/e2e/check_product_release_gate.py --require-go  # exit 1 as required; explicit NO-GO
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go  # exit 1 as required; explicit NO-GO
 git diff --check origin/dev...HEAD  # exit 0
 python3 YAML safe-load of .github/workflows/ci.yml and .github/workflows/promote-dev-to-main.yml  # exit 0
 ```
@@ -140,10 +140,10 @@ Verification on that composed implementation head:
 
 ```text
 uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
-uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
-python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
-python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
-python3 scripts/e2e/check_product_release_gate.py --require-go --expected-sha 7338962c2fe21a39266db0ac6b98a3f79c79bd7b  # exit 1 as required; authentic NO-GO
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go --expected-sha 7338962c2fe21a39266db0ac6b98a3f79c79bd7b  # exit 1 as required; authentic NO-GO
 python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
 git diff --check origin/dev...HEAD  # exit 0
 ```
@@ -165,10 +165,10 @@ Verification on that composed implementation head:
 
 ```text
 pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
-ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
-python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
-python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
-python3 scripts/e2e/check_product_release_gate.py --require-go --expected-sha <HEAD>  # exit 1 as required; authentic NO-GO
+ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go --expected-sha <HEAD>  # exit 1 as required; authentic NO-GO
 python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
 git diff --check origin/dev...HEAD  # exit 0
 ```
@@ -190,10 +190,10 @@ Verification on that composed implementation head:
 
 ```text
 uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
-uv run ruff check scripts/e2e/check_product_release_gate.py scripts/e2e/check_release_gate_registry.py scripts/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
-python3 scripts/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
-python3 scripts/e2e/check_product_release_gate.py --dev-merge  # exit 0
-python3 scripts/e2e/check_product_release_gate.py --require-go --expected-sha 756f3cb5ead6b8cc428681e5a04da9e195be4999  # exit 1 as required; authentic NO-GO
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go --expected-sha 756f3cb5ead6b8cc428681e5a04da9e195be4999  # exit 1 as required; authentic NO-GO
 python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
 git merge-base --is-ancestor origin/dev HEAD  # exit 0
 git diff --check origin/dev...HEAD  # exit 0 after this evidence reseal removes the pre-existing blank line at EOF

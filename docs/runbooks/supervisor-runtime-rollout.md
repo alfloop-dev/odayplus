@@ -1,13 +1,22 @@
 ---
 doc_id: ODP-RUNBOOK-SUPERVISOR-RUNTIME-ROLLOUT
 title: Supervisor Runtime Rollout
-status: executed
-date: 2026-08-04
+status: maintained
+date: 2026-08-11
 language: zh-TW
 owner: "Platform/Ops"
 ---
 
 # Supervisor Runtime Rollout
+
+## 0. 設定檔 contract（2026-08-14 起）
+
+- `.orchestrator/config.schema.json` 是唯一欄位與型別 contract；固定 object 拒絕未知鍵，worker、provider、account pool 等具名 map 才允許動態 id。
+- `config.example.json` 只供 `make bootstrap` 建立開發用、gitignored 的 `config.json`，runtime 缺檔時不會 fallback 到 example。
+- 正式服務必須用 `--config /absolute/path/to/runtime.json`；Supervisor 會以 `PANTHEON_CONFIG_PATH` 把同一路徑傳給 worker、permission broker 與 `ai_status.py`。
+- 只有預設的 `.orchestrator/config.json` 會自動套用同目錄 `config.local.json`；外部正式 config 預設為 self-contained。
+- rollout 前依序執行 `check_orchestrator_config.py` 與 `check_config_wiring.py`，並用 `check_orchestrator_config.py --config <runtime.json>` 驗證正式檔。缺檔、非標準 JSON、未知鍵與錯誤型別一律 fail closed。
+- schema 中的固定設定必須有 production code 讀取；不再使用 dead-key allowlist。
 
 ## 1. 為什麼需要這份 runbook
 
@@ -93,21 +102,19 @@ config 用小寫（`codex2`）而 board 用大寫（`Codex2`），派工與審�
 
 ## 4. 預檢結果（2026-08-04 已執行）
 
-### 4.1 config wiring guard — 通過，且原先的疑慮不成立
+### 4.1 config contract 與 wiring guard
 
 ```
-$ python3 scripts/check_config_wiring.py
-All 245 config keys are read by code or allowlisted.
+$ uv run python delivery_toolchain/governance/check_orchestrator_config.py
+Validated 3 config documents and their merged runtime views.
+$ uv run python delivery_toolchain/governance/check_config_wiring.py
+All 148 config keys are read by production code.
 exit=0
 ```
 
-初版風險評估曾標記「rollout 後若現行 config 有未接線設定，CI 會開始失敗」。
-**該疑慮不成立**：`scripts/check_config_wiring.py:26` 讀的是
-`.orchestrator/config.example.json`（committed），不是生產用的 `config.json`。
-這是 repo 內的規範檢查，與 live config 無關。
-
-注意此檢查是**雙向**的：宣告了沒接線會失敗，allowlist 中的項目變成已接線也會失敗，
-所以清單不會悄悄過期。
+現在的 guard 直接讀 authoritative schema，且同時驗證 bootstrap config、local overlay
+與傳入的正式 runtime config。任何未接線設定都必須刪除或先完成程式實作，不能放入
+allowlist 延後處理。
 
 ### 4.2 dev tip orchestrator 測試 — 通過
 
@@ -125,6 +132,28 @@ $ uv run pytest .orchestrator/ -q
 例如只推 #612 的權限限制而沒有 #611 的 base 修正，會讓 task PR 完全無法建立。
 
 ## 6. 執行步驟
+
+從 2026-08-11 起，**不得在既有 runtime checkout 直接 fetch/checkout 或覆蓋檔案**。
+這種做法會讓 Git 的 HEAD 看似最新、實際執行檔卻是舊的 dirty overlay。請一律用
+`rollout_supervisor_runtime.py` 建立乾淨、具名分支的新 worktree，預檢 HEAD、距離與
+tracked working tree 後，才原子切換 `runtime-current` symlink：
+
+```bash
+python3 scripts/orchestrator/rollout_supervisor_runtime.py \
+  --source-root /path/to/clean-origin-dev-worktree \
+  --runtime-link /home/lupin/oday-plus-supervisor-runtime-current \
+  --runtime-parent /home/lupin \
+  --status-root /home/lupin/oday-plus-supervisor-live \
+  --service pantheon-supervisor.service
+```
+
+此指令拒絕 dirty source、非 `origin/dev` 的 source HEAD、dirty target、detached target
+與落後目標 ref。它也會原子更新 canonical status root 的 `scripts/ai-status.sh`，使所有
+supervisor、worker 與人工狀態命令都由 `runtime-current/scripts/ai_status.py` 執行，避免
+舊 checkout 的 writer 把已修正狀態寫回舊格式。重啟失敗時會把 runtime symlink 與
+status launcher 一起回復，再重新啟動前一版服務。
+
+以下是舊版的人工流程，僅保留作為歷史與回復說明：
 
 ```bash
 RUNTIME=/home/lupin/oday-plus-supervisor-runtime-d9c4b474
@@ -153,7 +182,7 @@ git -C "$RUNTIME" checkout -q origin/dev
 # 6. 驗證
 git -C "$RUNTIME" rev-parse HEAD
 grep -c "task_pr_base_branch" "$RUNTIME/.orchestrator/github_bus.py"   # 應為 >=1
-python3 "$RUNTIME/scripts/check_config_wiring.py"
+python3 "$RUNTIME/delivery_toolchain/governance/check_config_wiring.py"
 
 # 7. 重啟 supervisor
 ```

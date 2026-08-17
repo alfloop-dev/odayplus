@@ -9,7 +9,7 @@
   "validator_durable_sqlite_check": "FAIL_CLOSED (contains forbidden marker 'sqlite')",
   "validator_in_memory_check": "FAIL_CLOSED (contains forbidden marker 'in-memory')",
   "validator_bare_healthy_check": "FAIL_CLOSED (missing required marker ('worker', 'cloud', 'durable'))",
-  "linter_check": "PASS — ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py scripts/deployment/validate_cloud_run_live_deployment.py → All checks passed",
+  "linter_check": "PASS — ruff check apps/api/oday_api/main.py tests/ops/test_cloud_run_live_deployment.py product_ops/deployment/validate_cloud_run_live_deployment.py → All checks passed",
   "format_check": "PASS — ruff format --diff → 3 files already formatted (after applying ruff format corrections to main.py and test file)",
   "diff_whitespace_check": "PASS — git diff origin/dev...HEAD --check → (no output, exit 0)",
   "regression_tests": {

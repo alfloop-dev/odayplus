@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from scripts.models.contracts import MODEL_SPECS
-from scripts.models.install_views import MODEL_READY_SQL_PATH
+from product_ops.modeling.contracts import MODEL_SPECS
+from product_ops.modeling.install_views import MODEL_READY_SQL_PATH
 
 
 def _view_body(sql: str, relation: str, next_marker: str) -> str:

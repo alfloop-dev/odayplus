@@ -46,7 +46,7 @@ asking the owner to make beyond two ~5-minute evidence-hygiene fixes (R3-1, R3-2
 | `git diff --check origin/dev...HEAD` | **FAIL — 22 hits** | **pass (clean)** |
 | `pytest tests/e2e/test_external_source_product_e2e.py tests/integration/test_live_geocode_provider_adapter.py` | **FAIL — 6 failed** | **pass — 25 passed** (matches `dev`) |
 | `pytest tests/` (full suite) | not run | **pass — 533 passed** |
-| `python3 scripts/e2e/check_product_release_gate.py` | pass | pass |
+| `python3 delivery_toolchain/e2e/check_product_release_gate.py` | pass | pass |
 
 **R2-2 repro, re-run.** Built a DB with the `origin/dev`-era schema, then booted it on this
 branch. Round 2 died with `no column named attempts`. Now:
@@ -197,7 +197,7 @@ but the code changed under `modules/` and `infra/`, whose tests live elsewhere.
 | --- | --- |
 | `python3 -m ruff check tests/performance tests/reliability shared/infrastructure apps/worker` | pass (scope excludes every changed prod file) |
 | `uv run pytest tests/performance tests/reliability -q` | pass (32 tests) |
-| `python3 scripts/e2e/check_product_release_gate.py` | pass |
+| `python3 delivery_toolchain/e2e/check_product_release_gate.py` | pass |
 | `git diff --check origin/dev...HEAD` | **FAIL — 22 trailing-whitespace hits** |
 | `uv run pytest tests/e2e/test_external_source_product_e2e.py tests/integration/test_live_geocode_provider_adapter.py -q` | **FAIL — 6 failed** (same tests: **25 passed on `origin/dev`**) |
 | `uv run ruff check .orchestrator scripts` (CI job) | **FAIL — 2 errors** |

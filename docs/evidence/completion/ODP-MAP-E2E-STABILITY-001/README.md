@@ -62,7 +62,7 @@ npx playwright test tests/e2e/e2e-map.spec.ts --project=chromium \
   --workers=1 --retries=0
 result: 9 passed (1.8m)
 
-./scripts/e2e/run_product_e2e.sh
+./delivery_toolchain/e2e/run_product_e2e.sh
 result: product workflows 7 passed (25.8s); map suite 9 passed (1.5m)
 diagnostics: .odp_data/e2e-diagnostics/ODP-MAP-E2E-STABILITY-001
 ```

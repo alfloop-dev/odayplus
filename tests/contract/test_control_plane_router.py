@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import runpy
 from copy import deepcopy
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -28,6 +28,11 @@ def _example() -> dict[str, object]:
 def _router(contract: dict[str, object]):
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     return contract["SignalRouter"](schema, now=lambda: NOW)
+
+
+def _router_with_routes(contract: dict[str, object], routes):
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    return contract["SignalRouter"](schema, routes=routes, now=lambda: NOW)
 
 
 def test_router_contract_is_versioned_and_preserves_delivery_identity() -> None:
@@ -101,6 +106,31 @@ def test_not_effective_failure_exposes_minimum_retry_delay() -> None:
     assert exc_info.value.failure.retry_after_seconds == 60
 
 
+@pytest.mark.parametrize(
+    ("effective_at", "expected"),
+    [
+        ("2026-06-26T12:01:00.400000Z", 61),
+        ("2026-06-26T12:01:00.000001Z", 61),
+        ("2026-06-26T12:00:00.200000Z", 1),
+    ],
+)
+def test_fractional_delay_rounds_up_so_retry_is_never_early(
+    effective_at: str, expected: int
+) -> None:
+    contract = _contract()
+    signal = _example()
+    signal["effective_at"] = effective_at
+
+    with pytest.raises(contract["SignalRouteError"]) as exc_info:
+        _router(contract).route(signal)
+
+    retry_after = exc_info.value.failure.retry_after_seconds
+    assert retry_after == expected
+    assert NOW + timedelta(seconds=retry_after) >= datetime.fromisoformat(
+        effective_at.replace("Z", "+00:00")
+    )
+
+
 def test_delivery_failure_retries_then_dead_letters_with_same_semantics() -> None:
     contract = _contract()
 
@@ -151,3 +181,38 @@ def test_every_default_route_has_an_explicit_owner() -> None:
 
     assert routes
     assert all(target.name and target.owner for target in routes.values())
+
+
+@pytest.mark.parametrize(("name", "owner"), [("shadow-review", "  "), ("", "network-platform")])
+def test_injected_routes_must_declare_a_non_empty_destination_and_owner(
+    name: str, owner: str
+) -> None:
+    contract = _contract()
+    routes = {("sitescore", "decision_recommended"): contract["RouteTarget"](name, owner)}
+
+    with pytest.raises(ValueError, match="sitescore/decision_recommended"):
+        _router_with_routes(contract, routes)
+
+
+def test_injected_routes_with_owners_are_accepted() -> None:
+    contract = _contract()
+    routes = {("sitescore", "decision_recommended"): contract["RouteTarget"]("shadow", "growth")}
+
+    decision = _router_with_routes(contract, routes).route(_example())
+
+    assert (decision.destination, decision.destination_owner) == ("shadow", "growth")
+
+
+def test_failure_contract_declares_semantics_for_every_code() -> None:
+    contract = _contract()
+    failure_contract = contract["FAILURE_CONTRACT"]
+
+    assert set(failure_contract) == set(contract["RouteErrorCode"])
+    assert all(
+        semantics.disposition in set(contract["FailureDisposition"])
+        for semantics in failure_contract.values()
+    )
+    assert all(
+        semantics.retryable is (semantics.disposition == "retry")
+        for semantics in failure_contract.values()
+    )

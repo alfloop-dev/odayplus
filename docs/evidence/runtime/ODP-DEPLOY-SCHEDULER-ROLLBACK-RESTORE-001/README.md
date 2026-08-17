@@ -10,14 +10,14 @@ Deploy Dev runs `30745285034` and `30747676117` failed during rollback when atte
 
 ### Observed Root Cause:
 1. **OIDC Token Schema Incompatibility in Validator:**
-   `scripts/deployment/cloud_scheduler_trigger.py` enforced `REQUIRED_FIELDS` containing strictly:
+   `product_ops/deployment/cloud_scheduler_trigger.py` enforced `REQUIRED_FIELDS` containing strictly:
    - `httpTarget.oauthToken.serviceAccountEmail`
    - `httpTarget.oauthToken.scope`
 
    However, production Cloud Run Job triggers in Cloud Scheduler use **`oidcToken`** (`httpTarget.oidcToken.serviceAccountEmail` and `httpTarget.oidcToken.audience`). When `gcloud scheduler jobs describe` returned an OIDC trigger snapshot, `cloud_scheduler_trigger.py` threw `ValueError: scheduler snapshot is missing httpTarget.oauthToken.serviceAccountEmail` during validation and field extraction.
 
 2. **Hardcoded OAuth Flags & Loss of Contract Fields:**
-   `scripts/deployment/cloud_run_release_traffic.sh` hardcoded `--oauth-service-account-email` and `--oauth-token-scope` in `restore_scheduler_trigger`, causing `gcloud scheduler jobs update http` to fail when updating OIDC-configured triggers. Furthermore, the previous script ignored custom HTTP methods, body payloads, headers, retry policy (`maxRetryAttempts`, backoff bounds, doublings), and job state (`PAUSED` vs `ENABLED`).
+   `product_ops/deployment/cloud_run_release_traffic.sh` hardcoded `--oauth-service-account-email` and `--oauth-token-scope` in `restore_scheduler_trigger`, causing `gcloud scheduler jobs update http` to fail when updating OIDC-configured triggers. Furthermore, the previous script ignored custom HTTP methods, body payloads, headers, retry policy (`maxRetryAttempts`, backoff bounds, doublings), and job state (`PAUSED` vs `ENABLED`).
 
 3. **Absence & Multi-Trigger Error Isolation:**
    When a trigger was absent before deployment (`exists: false`), restoration did not safely delete candidate triggers created during deploy. Additionally, a failure restoring one trigger could abort execution before attempting the second trigger.
@@ -27,12 +27,12 @@ Deploy Dev runs `30745285034` and `30747676117` failed during rollback when atte
 
 ## 2. Remediation Architecture
 
-### A. Python Helper (`scripts/deployment/cloud_scheduler_trigger.py`):
+### A. Python Helper (`product_ops/deployment/cloud_scheduler_trigger.py`):
 - **Flexible Auth Token Contract:** Supports both `oidcToken` (`serviceAccountEmail`, `audience`) and `oauthToken` (`serviceAccountEmail`, `scope`).
 - **Full Contract Argument Generator (`restore-args`):** Generates null-terminated gcloud arguments matching the exact captured pre-deploy trigger contract (`--location`, `--project`, `--schedule`, `--time-zone`, `--uri`, `--http-method`, `--message-body`, `--headers`, OIDC/OAuth flags, `--max-retry-attempts`, `--max-retry-duration`, `--min-backoff-duration`, `--max-backoff-duration`, `--max-doublings`).
 - **Redacted Readback Comparison (`compare` & `redact`):** Compares pre-deploy snapshot and post-rollback describe readback after normalizing dynamic timestamps (`userUpdateTime`, `lastAttemptTime`, `status`). Returns 0 on exact redacted equality or 1 on configuration drift.
 
-### B. Deploy Shell Helper (`scripts/deployment/cloud_run_release_traffic.sh`):
+### B. Deploy Shell Helper (`product_ops/deployment/cloud_run_release_traffic.sh`):
 - **Idempotent Restoration (`restore_scheduler_trigger`):**
   - If snapshot indicates `exists: false`, executes `gcloud scheduler jobs delete` (silently succeeding if absent).
   - Dynamically selects `update` or `create` based on current trigger existence.
@@ -56,10 +56,10 @@ Passed 8/8 tests:
 8. `test_scheduler_trigger_compare_verifies_redacted_equality_and_detects_drift` (readback equality assertion)
 
 ### Static & Test Suite Verification:
-- `python3 -m ruff check scripts/deployment/cloud_scheduler_trigger.py tests/ops/test_cloud_run_live_deployment.py` — Passed cleanly (0 errors).
+- `python3 -m ruff check product_ops/deployment/cloud_scheduler_trigger.py tests/ops/test_cloud_run_live_deployment.py` — Passed cleanly (0 errors).
 - `python3 -m pytest tests/ops/test_cloud_run_live_deployment.py` — Passed 373/373 tests.
-- `bash -n scripts/deployment/cloud_run_release_traffic.sh` — Clean.
-- `bash -n scripts/deploy_cloud_run_waji.sh` — Clean.
+- `bash -n product_ops/deployment/cloud_run_release_traffic.sh` — Clean.
+- `bash -n product_ops/deployment/deploy_cloud_run_waji.sh` — Clean.
 
 ### Base Advance & PR Retargeting:
 - Merged latest `origin/dev` cleanly into task branch `task/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001`.
