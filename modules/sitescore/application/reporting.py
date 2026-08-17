@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from models.shared_ml.output_contracts import ModelOutputContractError
 from models.shared_ml.production_runtime import (
     ModelInferenceResult,
     ProductionModelRuntime,
@@ -20,6 +21,7 @@ from modules.sitescore.domain.scoring import (
     SiteScoreReport,
     score_sites,
     score_sites_from_model_predictions,
+    to_sitescore_model_row,
 )
 from modules.sitescore.infrastructure.repositories import (
     InMemorySiteScoreRepository,
@@ -101,9 +103,26 @@ class SiteScoreReportService:
             )
             inference = runtime.infer(
                 service="sitescore",
-                rows=[_feature_mapping(feature) for feature in feature_rows],
+                rows=[to_sitescore_model_row(feature) for feature in feature_rows],
                 expected_feature_schema_version=SITESCORE_FEATURE_VERSION,
             )
+            # The output transform is model evidence, not an optional hint. A
+            # runtime that returns no metadata mapping (or a non-mapping) must
+            # fail closed here: passing output_transform=None onwards would
+            # surface as a generic "transform missing" error and hide the fact
+            # that the registered model returned nothing to check against.
+            metadata = inference.model_metadata
+            if not isinstance(metadata, Mapping):
+                raise ModelOutputContractError(
+                    "sitescore production inference returned model_metadata of "
+                    f"type {type(metadata).__name__}; refusing to score without "
+                    "a declared output transform"
+                )
+            if "output_transform" not in metadata:
+                raise ModelOutputContractError(
+                    "sitescore production inference declared no output_transform; "
+                    "refusing to score with an unknown revenue horizon"
+                )
             reports = score_sites_from_model_predictions(
                 feature_rows,
                 [
@@ -116,6 +135,7 @@ class SiteScoreReportService:
                     )
                 ],
                 model_version=inference.binding.model_id,
+                output_transform=metadata.get("output_transform"),
                 prediction_origin_time=prediction_origin_time,
                 scored_at=scored_at,
             )

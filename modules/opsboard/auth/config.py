@@ -38,6 +38,11 @@ class AuthBoundaryConfig:
     leeway_seconds: int = 60
     live_input_declared: bool = False
     subject_role_bindings: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    principal_mapping_declared: bool = False
+    principal_mappings: Mapping[str, Mapping[str, object]] = field(
+        default_factory=dict
+    )
+
 
     @property
     def is_configured(self) -> bool:
@@ -105,6 +110,7 @@ def config_from_env(
     - ``ODP_AUTH_JWKS_URI`` (production IdP JSON Web Key Set endpoint)
     - ``ODP_AUTH_JWKS_CACHE_TTL_SECONDS``
     - ``ODP_AUTH_LEEWAY_SECONDS``
+    - ``ODP_AUTH_PRINCIPAL_MAP`` (deployment-owned JSON keyed by subject/email)
 
     Only symmetric (HS256) keys are read from the environment; asymmetric JWKS
     material is injected programmatically via :class:`AuthBoundaryConfig` so
@@ -121,6 +127,8 @@ def config_from_env(
         if not sep or not kid or not secret:
             continue
         keys[kid] = SigningKey(kid=kid, algorithm="HS256", secret=secret.encode("utf-8"))
+    principal_mapping_value = source.get("ODP_AUTH_PRINCIPAL_MAP")
+    principal_mappings = _parse_principal_mappings(principal_mapping_value)
     # Record raw live-input presence *before* parsing can discard it. A set but
     # malformed ODP_AUTH_HS256_KEYS (or an issuer/audiences typo) must keep the
     # boundary active and fail closed, never downgrade to header trust
@@ -167,6 +175,8 @@ def config_from_env(
         leeway_seconds=max(0, leeway),
         live_input_declared=live_input_declared,
         subject_role_bindings=subject_role_bindings,
+        principal_mapping_declared=principal_mapping_value is not None,
+        principal_mappings=principal_mappings,
     )
 
 
@@ -174,3 +184,25 @@ def _split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _parse_principal_mappings(
+    value: str | None,
+) -> dict[str, Mapping[str, object]]:
+    """Parse deployment-owned mappings without widening authorization on errors."""
+
+    if not value:
+        return {}
+    try:
+        payload = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {
+        identifier.strip(): attributes
+        for identifier, attributes in payload.items()
+        if isinstance(identifier, str)
+        and identifier.strip()
+        and isinstance(attributes, dict)
+    }

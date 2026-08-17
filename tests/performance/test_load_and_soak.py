@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import threading
 import time
 
 import pytest
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from apps.api.oday_api.main import create_app
 from shared.infrastructure.persistence.factory import _durable_bundle
+from tests.integration._authz import FORECASTOPS_HEADERS
 
 
 @pytest.fixture
@@ -21,6 +23,16 @@ def load_db_path(tmp_path) -> str:
     return str(tmp_path / "load_soak.sqlite3")
 
 
+# ODP-CI-PERFORMANCE-GATE-ISOLATION-001: this is a wall-clock SLO measurement,
+# not a functional test. Sharing a runner with the ~1900-test product suite made
+# the measurement report the runner's residual load instead of the system under
+# test (run 30380735899 failed at P95 7.518s and its exact-head rerun at 6.956s,
+# while the same code measures ~1.1s in an unloaded process). The `performance`
+# marker keeps this test out of the shared product invocation so the dedicated
+# clean-runner performance-gate job can enforce the unchanged 3.0s P95 budget
+# and zero-failure requirement. The budget, concurrency levels, volume, and
+# assertions below are deliberately untouched.
+@pytest.mark.performance
 def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
     """Executable load and soak tests measuring API queue and database behavior
 
@@ -32,7 +44,13 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
     bundle.engine.execute("PRAGMA synchronous=NORMAL")
     bundle.engine.execute("PRAGMA busy_timeout=30000")
     app = create_app(persistence=bundle)
-    client = TestClient(app)
+
+    thread_local = threading.local()
+
+    def get_client() -> TestClient:
+        if not hasattr(thread_local, "client"):
+            thread_local.client = TestClient(app)
+        return thread_local.client
 
     # We will measure latencies under concurrent execution
     latencies = []
@@ -48,19 +66,36 @@ def test_concurrency_and_soak_execution(load_db_path, tmp_path) -> None:
         t0 = time.perf_counter()
         correlation_id = f"corr-load-{task_id}"
         idem_key = f"idem-load-{task_id}"
+        client = get_client()
 
         try:
             # Step A: Enqueue Job (Write to DB queue)
             resp = client.post(
                 "/jobs",
-                json={"job_type": "forecast", "payload": {"store_id": f"store-{task_id}"}},
-                headers={"X-Correlation-ID": correlation_id, "Idempotency-Key": idem_key},
+                json={
+                    "job_type": "forecast",
+                    "payload": {
+                        "tenant_id": FORECASTOPS_HEADERS["x-tenant-id"],
+                        "store_id": f"store-{task_id}",
+                    },
+                },
+                headers={
+                    **FORECASTOPS_HEADERS,
+                    "X-Correlation-ID": correlation_id,
+                    "Idempotency-Key": idem_key,
+                },
             )
-            assert resp.status_code == 202
+            assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
             job_id = resp.json()["job_id"]
 
             # Step B: Read Job (Read from DB queue)
-            resp_get = client.get(f"/jobs/{job_id}", headers={"X-Correlation-ID": correlation_id})
+            resp_get = client.get(
+                f"/jobs/{job_id}",
+                headers={
+                    **FORECASTOPS_HEADERS,
+                    "X-Correlation-ID": correlation_id,
+                },
+            )
             assert resp_get.status_code == 200
             assert resp_get.json()["job_id"] == job_id
 

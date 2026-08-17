@@ -298,6 +298,11 @@ class OperatorLiveRepository:
     ) -> tuple[Any | None, str | None]:
         """Resolve a repository without ever enumerating an unscoped document set."""
 
+        if not scope.tenant_id or not scope.tenant_id.strip():
+            return None, "tenant_id is required to resolve a tenant-scoped repository"
+
+        tenant_id = scope.tenant_id.strip()
+
         provider = getattr(
             self._persistence,
             f"{attribute}_for_tenant",
@@ -305,24 +310,38 @@ class OperatorLiveRepository:
         )
         if callable(provider):
             try:
-                return provider(scope.tenant_id), None
+                repo = provider(tenant_id)
+                if repo is not None:
+                    return repo, None
             except Exception as exc:
                 return None, f"{type(exc).__name__}: {exc}"
 
         repository = getattr(self._persistence, attribute, None)
-        store = getattr(repository, "_store", None)
-        if repository is None or store is None:
-            return None, "tenant-aware repository is not configured"
-        try:
-            from shared.infrastructure.persistence.operator_domains import (
-                TenantScopedDocumentStore,
-            )
+        if repository is not None:
+            repo_tenant_id = str(getattr(repository, "tenant_id", "") or "").strip()
+            if repo_tenant_id == tenant_id:
+                return repository, None
 
-            return type(repository)(
-                TenantScopedDocumentStore(store, scope.tenant_id)
-            ), None
-        except Exception as exc:
-            return None, f"{type(exc).__name__}: {exc}"
+            store = getattr(repository, "_store", None)
+            if store is not None:
+                base_store = getattr(store, "_store", store)
+                if (
+                    hasattr(base_store, "get")
+                    and hasattr(base_store, "put")
+                    and hasattr(base_store, "list_all")
+                ):
+                    from shared.infrastructure.persistence.operator_domains import (
+                        TenantScopedDocumentStore,
+                    )
+
+                    try:
+                        scoped_store = TenantScopedDocumentStore(base_store, tenant_id)
+                        scoped_repo = type(repository)(scoped_store)
+                        return scoped_repo, None
+                    except Exception as exc:
+                        return None, f"Failed to scope {attribute} for tenant: {exc}"
+
+        return None, f"tenant-aware repository for {attribute} is not configured"
 
     def _read_sources(self, scope: OperatorReadScope) -> dict[str, Any]:
         sections: dict[str, OperatorSectionAvailability] = {}
@@ -377,6 +396,7 @@ class OperatorLiveRepository:
                             "forecast_alerts",
                             self._persistence.forecastops_repository,
                             "list_alerts_by_store",
+                            scope.tenant_id,
                             store_id,
                         )
                     )
@@ -469,21 +489,43 @@ class OperatorLiveRepository:
                 "list_decisions",
             )
 
-        # These persisted records currently have no tenant partition or tenant
-        # key. Reading them would be a cross-tenant enumeration, so their absence
-        # is explicit instead of being represented as a real empty result.
-        ingestion_runs: list[Any] = []
-        heatzones: list[Any] = []
-        sections["ingestionRuns"] = self._unavailable(
-            "ingestion_run_store.list_runs",
-            reason_code="OPERATOR_INGESTION_TENANT_SCOPE_UNAVAILABLE",
-            message="ingestion run records do not expose a tenant-safe Operator query",
+        ingestion_repository, ingestion_error = self._tenant_scoped_repository(
+            "ingestion_run_store",
+            scope,
         )
-        sections["heatZones"] = self._unavailable(
-            "heatzone_store.list_scores",
-            reason_code="OPERATOR_HEATZONE_TENANT_SCOPE_UNAVAILABLE",
-            message="HeatZone results do not expose a tenant-safe Operator query",
+        if ingestion_repository is None:
+            ingestion_runs = []
+            sections["ingestionRuns"] = self._unavailable(
+                "ingestion_run_store.list_runs",
+                reason_code="OPERATOR_TENANT_INGESTION_RUNS_UNAVAILABLE",
+                message=ingestion_error
+                or "tenant-aware ingestion run store is unavailable",
+            )
+        else:
+            ingestion_runs, sections["ingestionRuns"] = self._read_list(
+                "ingestion_runs",
+                ingestion_repository,
+                "list_runs",
+            )
+
+        heatzone_repository, heatzone_error = self._tenant_scoped_repository(
+            "heatzone_store",
+            scope,
         )
+        if heatzone_repository is None:
+            heatzones = []
+            sections["heatZones"] = self._unavailable(
+                "heatzone_store.list_scores",
+                reason_code="OPERATOR_TENANT_HEATZONES_UNAVAILABLE",
+                message=heatzone_error
+                or "tenant-aware HeatZone store is unavailable",
+            )
+        else:
+            heatzones, sections["heatZones"] = self._read_list(
+                "heat_zones",
+                heatzone_repository,
+                "list_scores",
+            )
 
         audit_events, sections["auditEvents"] = self._read_list(
             "audit_events",
@@ -578,13 +620,11 @@ class OperatorLiveRepository:
         sections: dict[str, OperatorSectionAvailability] = dict(
             sources["sections"]
         )
-        sections["riskRows"] = self._unavailable(
-            "operator-risk-projection",
-            reason_code="OPERATOR_RISK_PROJECTION_UNAVAILABLE",
-            message=(
-                "the Operator risk projection has no tenant-aware authoritative "
-                "repository contract"
-            ),
+        risk_rows, sections["riskRows"] = self._project_risk_rows(
+            stores,
+            interventions,
+            alerts,
+            sections,
         )
 
         queue = [
@@ -744,7 +784,7 @@ class OperatorLiveRepository:
                 "degradedSections": degraded_sections,
                 "dataOrigin": {
                     **self.data_origin,
-                    "kind": data_mode,
+                    "kind": "authoritative" if data_mode == "live" else data_mode,
                     "complete": data_mode == "live",
                 },
             },
@@ -823,10 +863,71 @@ class OperatorLiveRepository:
             ],
             "workQueue": queue,
             "decisions": approvals,
-            "riskRows": [],
+            "riskRows": risk_rows,
             "auditFeed": audit_feed,
             "notifications": notifications,
         }
+
+    def _project_risk_rows(
+        self,
+        stores: list[Any],
+        interventions: list[Any],
+        alerts: list[Any],
+        sections: dict[str, OperatorSectionAvailability],
+    ) -> tuple[list[dict[str, Any]], OperatorSectionAvailability]:
+        source = "operator-tenant-risk-projection"
+        if (
+            not sections.get("stores", self._unavailable("", reason_code="", message="")).available
+            or not sections.get("interventions", self._unavailable("", reason_code="", message="")).available
+            or not sections.get("forecastAlerts", self._unavailable("", reason_code="", message="")).available
+        ):
+            return [], self._unavailable(
+                source,
+                reason_code="OPERATOR_STORES_DEPENDENCY_UNAVAILABLE",
+                message="risk projection requires stores, interventions, and forecastAlerts sections to be available",
+            )
+
+        rows: list[dict[str, Any]] = []
+        for alert in alerts:
+            status = _status(_value(alert, "status")).lower()
+            if status == "closed":
+                continue
+            level = _status(_value(alert, "alert_level")).lower()
+            alert_id = str(_value(alert, "alert_id"))
+            store_id = str(_value(alert, "store_id"))
+            rows.append(
+                {
+                    "id": f"risk-{alert_id}",
+                    "storeId": store_id,
+                    "label": str(_value(alert, "alert_reason_code", "Forecast Alert")),
+                    "severity": "danger" if level in {"critical", "red"} else "warning",
+                    "summary": f"Forecast alert for store {store_id}",
+                    "roles": _roles("ops-lead", "field-lead", "pm-audit"),
+                }
+            )
+        for intervention in interventions:
+            status = _status(_value(intervention, "status")).upper()
+            if status in _INTERVENTION_TERMINAL:
+                continue
+            intervention_id = str(_value(intervention, "intervention_id"))
+            kind = _status(_value(intervention, "kind"))
+            store_id = str(_value(intervention, "store_id"))
+            rows.append(
+                {
+                    "id": f"risk-{intervention_id}",
+                    "storeId": store_id,
+                    "label": f"{kind} intervention",
+                    "severity": "warning" if status == "PENDING_APPROVAL" else "info",
+                    "summary": str(_value(intervention, "expected_outcome", "")),
+                    "roles": _roles(
+                        "ops-lead",
+                        "marketing-manager",
+                        "field-lead",
+                        "pm-audit",
+                    ),
+                }
+            )
+        return rows, self._available(source, rows)
 
     def _alert_tasks(self, alerts: list[Any]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []

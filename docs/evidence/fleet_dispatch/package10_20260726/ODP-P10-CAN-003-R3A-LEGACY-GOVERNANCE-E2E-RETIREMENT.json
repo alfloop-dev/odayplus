@@ -1,0 +1,45 @@
+{
+  "task_id": "ODP-P10-CAN-003-R3A",
+  "title": "Retire legacy Package 6 Governance E2E assertions",
+  "status": "ready-for-fleet",
+  "owner": "Claude",
+  "reviewer": "Antigravity4",
+  "finding": {
+    "legacy_spec_sha": "19c7ab8e516ea6ee6ee62075f1e02686d23428e1",
+    "package10_runtime_sha": "919f3676766fcc24c3467ed1781b4ee6559010c4",
+    "r3c_candidate_sha": "c743d34",
+    "isolated_playwright_result": {
+      "passed": 1,
+      "failed": 3,
+      "web_port": 3201,
+      "api_port": 8199,
+      "reuse_existing_server": false
+    },
+    "stale_contracts": [
+      "archived Package 6 baseline wording",
+      "Decision Log table locator",
+      "Audit Trail table locator",
+      "English Reject action",
+      "legacy reason validation copy"
+    ]
+  },
+  "writable_paths": [
+    "tests/e2e/operator-governance.spec.ts",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-003-R3A.json"
+  ],
+  "forbidden_paths": [
+    "apps/web/**",
+    "apps/api/**",
+    "legacy or retired Operator visual implementations"
+  ],
+  "acceptance": [
+    "Package 6 baseline wording is removed",
+    "current Chinese controls are exercised",
+    "Decision Log and Audit Trail article feeds are asserted",
+    "reason gate and durable decision behavior remain covered",
+    "evidence export and audit persistence remain covered",
+    "no hidden table or duplicate English compatibility UI is introduced",
+    "corrected spec passes against the accepted R3C product SHA on isolated ports",
+    "Antigravity independent review is recorded when quota is available"
+  ]
+}

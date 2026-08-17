@@ -1,0 +1,84 @@
+ERROR: ODP-PLAN-OSS-LICENSE-GATE-001: absent from active and archive state
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: owner must not equal reviewer
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: task_class None does not match packet 'implementation'
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: acceptance must contain at least five non-empty granular criteria
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: artifacts must preserve both control-pack authorities
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: verification must be a non-empty string list
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: execution_packet_id must reference the control pack
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: execution_packet_deliverables must exactly match the task execution packet
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: execution_packet_must_reject must exactly match the task execution packet
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: execution_packet_evidence must exactly match the task execution packet
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: execution_packet_handoff_gate must exactly match the task execution packet
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: deployment_contract must exactly match the task execution packet
+ERROR: ODP-PLAN-ACCEPTANCE-REAL-EXEC-001: archive: gap_ids must exactly equal the packet scope for ODP-PLAN-ACCEPTANCE-REAL-EXEC-001
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: owner must not equal reviewer
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: task_class None does not match packet 'implementation'
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: acceptance must contain at least five non-empty granular criteria
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: artifacts must preserve both control-pack authorities
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: verification must be a non-empty string list
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: execution_packet_id must reference the control pack
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: execution_packet_deliverables must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: execution_packet_must_reject must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: execution_packet_evidence must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: execution_packet_handoff_gate must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: deployment_contract must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-001: archive: gap_ids must exactly equal the packet scope for ODP-PLAN-SITESCORE-OUTCOME-001
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: owner must not equal reviewer
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: task_class None does not match packet 'implementation'
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: acceptance must contain at least five non-empty granular criteria
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: artifacts must preserve both control-pack authorities
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: verification must be a non-empty string list
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: execution_packet_id must reference the control pack
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: execution_packet_deliverables must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: execution_packet_must_reject must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: execution_packet_evidence must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: execution_packet_handoff_gate must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: deployment_contract must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-001: archive: gap_ids must exactly equal the packet scope for ODP-PLAN-AVM-OUTCOME-001
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: owner must not equal reviewer
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: task_class None does not match packet 'implementation'
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: acceptance must contain at least five non-empty granular criteria
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: artifacts must preserve both control-pack authorities
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: verification must be a non-empty string list
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: execution_packet_id must reference the control pack
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: execution_packet_deliverables must exactly match the task execution packet
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: execution_packet_must_reject must exactly match the task execution packet
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: execution_packet_evidence must exactly match the task execution packet
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: execution_packet_handoff_gate must exactly match the task execution packet
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: deployment_contract must exactly match the task execution packet
+ERROR: ODP-PLAN-NETPLAN-ACCEPTANCE-001: archive: gap_ids must exactly equal the packet scope for ODP-PLAN-NETPLAN-ACCEPTANCE-001
+ERROR: ODP-PLAN-LIVE-STAGING-PROOF-001: active: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: owner must not equal reviewer
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: task_class None does not match packet 'implementation'
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: acceptance must contain at least five non-empty granular criteria
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: artifacts must preserve both control-pack authorities
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: verification must be a non-empty string list
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: execution_packet_id must reference the control pack
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: execution_packet_deliverables must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: execution_packet_must_reject must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: execution_packet_evidence must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: execution_packet_handoff_gate must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: deployment_contract must exactly match the task execution packet
+ERROR: ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001: archive: gap_ids must exactly equal the packet scope for ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001
+ERROR: ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001: active: human gate owner must be Human/Ops
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: owner must not equal reviewer
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: human gate owner must be Human/Ops
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: task_class None does not match packet 'human_gate'
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: acceptance must contain at least five non-empty granular criteria
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: artifacts must be a non-empty string list
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: verification must be a non-empty string list
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: execution_packet_id must reference the control pack
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: execution_packet_deliverables must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: execution_packet_must_reject must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: execution_packet_evidence must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: execution_packet_handoff_gate must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: deployment_contract must exactly match the task execution packet
+ERROR: ODP-PLAN-AVM-OUTCOME-BACKFILL-001: archive: gap_ids must exactly equal the packet scope for ODP-PLAN-AVM-OUTCOME-BACKFILL-001
+ERROR: ODP-PLAN-UAT-SIGNOFF-001: active: source_docs must reference the control-pack JSON
+ERROR: ODP-PLAN-FINAL-GATE-AUDIT-001: active: source_docs must reference the control-pack JSON

@@ -51,39 +51,34 @@ test("Growth workspace renders segments, recommendations, and actions from fixtu
   // PriceOps tab renders the pricing recommendation table.
   await page.getByTestId("growth-tab-priceops").click();
   const recTable = page.getByTestId("growth-recommendation-table");
-  await expect(recTable).toContainText("晚餐套餐 +3% 加權調價");
-  await expect(recTable).toContainText("宵夜外送費 -2% 試點");
+  await expect(recTable).toContainText("rec-9001");
+  await expect(recTable).toContainText("rec-9002");
 });
 
 // ---------------------------------------------------------------------------
-// 2. Segment filter
+// 2. Segment card → Package 10 builder handoff
 // ---------------------------------------------------------------------------
 
-test("Growth workspace segment filtering works", async ({ page }) => {
+test("Growth segment card opens a scoped activity draft", async ({ page }) => {
   await page.goto("/operator?ws=growth&gtab=segments");
 
-  const filter = page.getByTestId("growth-segment-filter");
-  await filter.getByText("都會晚餐高潛力組").click();
+  const segmentTable = page.getByTestId("growth-segment-table");
+  const segmentCard = segmentTable
+    .locator("article")
+    .filter({ hasText: "都會晚餐高潛力組" });
+  await segmentCard.getByRole("link", { name: "建立活動草稿" }).click();
   await expect(page).toHaveURL(/segment=seg-metro-dinner/);
-
-  // The segment focus scopes the PriceOps recommendations across tabs.
-  await page.getByTestId("growth-tab-priceops").click();
-  const recTable = page.getByTestId("growth-recommendation-table");
-  await expect(recTable).toContainText("晚餐套餐 +3% 加權調價");
-  await expect(recTable).not.toContainText("宵夜外送費 -2% 試點");
-
-  // Clearing the focus returns to all segments.
-  await page.getByTestId("growth-tab-segments").click();
-  await filter.getByText("全部分群").click();
-  await expect(page).toHaveURL(/ws=growth/);
-  await expect(page).not.toHaveURL(/segment=/);
+  await expect(page).toHaveURL(/builder=offpeak/);
+  await expect(page.getByTestId("growth-draft-modal")).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
 // 3. Three create-entry cards each open the builder prefilled for their kind
 // ---------------------------------------------------------------------------
 
-test("Three create-entry cards are present and open the five-step builder", async ({ page }) => {
+test("Three create-entry cards are present and open the five-step builder", async ({
+  page,
+}) => {
   await page.goto("/operator?ws=growth");
 
   const cards = page.getByTestId("growth-entry-cards");
@@ -97,7 +92,9 @@ test("Three create-entry cards are present and open the five-step builder", asyn
   await expect(modal).toBeVisible();
   await expect(modal).toContainText("離峰促銷");
   await expect(page.getByTestId("growth-builder-step-1")).toBeVisible();
-  await expect(page.getByTestId("growth-builder-steps")).toContainText("送核准");
+  await expect(page.getByTestId("growth-builder-steps")).toContainText(
+    "送核准",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -157,25 +154,31 @@ test("Growth builder can be dismissed without submitting", async ({ page }) => {
 // 5. HARD_CONSTRAINT_FAILED blocks the recommendation draft button
 // ---------------------------------------------------------------------------
 
-test("HARD_CONSTRAINT_FAILED recommendation has disabled draft button", async ({ page }) => {
+test("HARD_CONSTRAINT_FAILED recommendation has disabled draft button", async ({
+  page,
+}) => {
   await page.goto("/operator?ws=growth&gtab=priceops");
 
   const recTable = page.getByTestId("growth-recommendation-table");
-  const hardConstraintRow = recTable.locator('tr:has-text("午餐主力商品 +9% 調價")');
-  await expect(hardConstraintRow.getByText("建立草稿")).toHaveAttribute("aria-disabled", "true");
-
-  const passRow = recTable.locator('tr:has-text("晚餐套餐 +3% 加權調價")');
-  await expect(passRow.getByTestId("growth-draft-rec-9001")).not.toHaveAttribute(
+  const hardConstraintRow = recTable.locator('tr:has-text("rec-9003")');
+  await expect(hardConstraintRow.getByText("建立定價草稿")).toHaveAttribute(
     "aria-disabled",
     "true",
   );
+
+  const passRow = recTable.locator('tr:has-text("rec-9001")');
+  await expect(
+    passRow.getByTestId("growth-draft-rec-9001"),
+  ).not.toHaveAttribute("aria-disabled", "true");
 });
 
 // ---------------------------------------------------------------------------
 // 6. Submit-for-approval flow on the DRAFT seed action (growth-7005)
 // ---------------------------------------------------------------------------
 
-test("Draft action exposes a submit-for-approval affordance", async ({ page }) => {
+test("Draft action exposes a submit-for-approval affordance", async ({
+  page,
+}) => {
   await page.goto("/operator?ws=growth&item=growth-7005");
 
   const detailPanel = page.getByTestId("growth-item-detail");
@@ -183,14 +186,18 @@ test("Draft action exposes a submit-for-approval affordance", async ({ page }) =
 
   const approvalPanel = page.getByTestId("growth-approval-panel");
   await expect(approvalPanel).toBeVisible();
-  await expect(approvalPanel.getByTestId("growth-submit-approval")).toBeVisible();
+  await expect(
+    approvalPanel.getByTestId("growth-submit-approval"),
+  ).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
 // 7. Ineffective / inconclusive actions blocked from direct closeout
 // ---------------------------------------------------------------------------
 
-test("Ineffective Growth Action is blocked from direct closeout", async ({ page }) => {
+test("Ineffective Growth Action is blocked from direct closeout", async ({
+  page,
+}) => {
   await page.goto("/operator?ws=growth&item=growth-7002");
 
   const detailPanel = page.getByTestId("growth-item-detail");
@@ -198,17 +205,18 @@ test("Ineffective Growth Action is blocked from direct closeout", async ({ page 
   await expect(detailPanel).toContainText("無效");
 
   const closeoutPanel = page.getByTestId("growth-closeout-panel");
-  await expect(closeoutPanel.getByTestId("growth-closeout-gate")).toHaveAttribute(
-    "data-can-close",
-    "false",
-  );
+  await expect(
+    closeoutPanel.getByTestId("growth-closeout-gate"),
+  ).toHaveAttribute("data-can-close", "false");
   await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
-  await expect(closeoutPanel.getByTestId("growth-required-action")).toContainText(
-    "需先：執行 Rollback",
-  );
+  await expect(
+    closeoutPanel.getByTestId("growth-required-action"),
+  ).toContainText("需先：執行 Rollback");
 });
 
-test("Inconclusive Growth Action is blocked and shows required action", async ({ page }) => {
+test("Inconclusive Growth Action is blocked and shows required action", async ({
+  page,
+}) => {
   await page.goto("/operator?ws=growth&item=growth-7003");
 
   const detailPanel = page.getByTestId("growth-item-detail");
@@ -216,30 +224,32 @@ test("Inconclusive Growth Action is blocked and shows required action", async ({
   await expect(detailPanel).toContainText("待判定");
 
   const closeoutPanel = page.getByTestId("growth-closeout-panel");
-  await expect(closeoutPanel.getByTestId("growth-closeout-gate")).toHaveAttribute(
-    "data-can-close",
-    "false",
-  );
+  await expect(
+    closeoutPanel.getByTestId("growth-closeout-gate"),
+  ).toHaveAttribute("data-can-close", "false");
   await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
-  await expect(closeoutPanel.getByTestId("growth-required-action")).toContainText("需先：補強證據");
+  await expect(
+    closeoutPanel.getByTestId("growth-required-action"),
+  ).toContainText("需先：補強證據");
 });
 
 // ---------------------------------------------------------------------------
 // 8. Effective action can be closed — console audit emitted
 // ---------------------------------------------------------------------------
 
-test("Effective Growth Action can be closed and emits console audit log", async ({ page }) => {
+test("Effective Growth Action can be closed and emits console audit log", async ({
+  page,
+}) => {
   await page.goto("/operator?ws=growth&item=growth-7001");
 
   const detailPanel = page.getByTestId("growth-item-detail");
   await expect(detailPanel).toContainText("都會晚餐套餐調價活動");
-  await expect(detailPanel).toContainText("有效");
+  await expect(detailPanel).toContainText("達標且證據充足");
 
   const closeoutPanel = page.getByTestId("growth-closeout-panel");
-  await expect(closeoutPanel.getByTestId("growth-closeout-gate")).toHaveAttribute(
-    "data-can-close",
-    "true",
-  );
+  await expect(
+    closeoutPanel.getByTestId("growth-closeout-gate"),
+  ).toHaveAttribute("data-can-close", "true");
   const closeButton = closeoutPanel.getByTestId("growth-close-button");
   await expect(closeButton).toBeEnabled();
 
@@ -249,7 +259,9 @@ test("Effective Growth Action can be closed and emits console audit log", async 
   });
 
   await closeButton.click();
-  await expect(closeoutPanel.getByTestId("growth-closeout-success")).toBeVisible();
+  await expect(
+    closeoutPanel.getByTestId("growth-closeout-success"),
+  ).toBeVisible();
 
   expect(consoleLogs.length).toBe(1);
   const parsed = JSON.parse(consoleLogs[0].replace("[Console Audit] ", ""));
@@ -259,16 +271,21 @@ test("Effective Growth Action can be closed and emits console audit log", async 
 });
 
 // ---------------------------------------------------------------------------
-// 9. Observing action shows PENDING — close button disabled
+// 9. Observing action stays in the lifecycle panel until its window matures
 // ---------------------------------------------------------------------------
 
-test("Observing Growth Action shows PENDING outcome and close is disabled", async ({ page }) => {
+test("Observing Growth Action cannot enter closeout before its window matures", async ({
+  page,
+}) => {
   await page.goto("/operator?ws=growth&item=growth-7004");
 
   const detailPanel = page.getByTestId("growth-item-detail");
   await expect(detailPanel).toContainText("都會晚餐加點推薦活動");
   await expect(detailPanel).toContainText("觀察中");
 
-  const closeoutPanel = page.getByTestId("growth-closeout-panel");
-  await expect(closeoutPanel.getByTestId("growth-close-button")).toBeDisabled();
+  const transitionPanel = page.getByTestId("growth-transition-panel");
+  await expect(
+    transitionPanel.getByTestId("growth-transition-action"),
+  ).toBeDisabled();
+  await expect(page.getByTestId("growth-closeout-panel")).toHaveCount(0);
 });

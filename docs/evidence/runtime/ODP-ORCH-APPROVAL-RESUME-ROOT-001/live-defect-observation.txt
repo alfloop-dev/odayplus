@@ -1,0 +1,71 @@
+# Live defect observation — ODP-ORCH-APPROVAL-RESUME-ROOT-001
+# captured (UTC): 2026-07-29T08:56:04Z
+# READ-ONLY: this transcript inspects live state and mutates nothing.
+
+## 1. The hook executable and the authoritative status root are in different checkouts
+  control root (owns the hook wiring) : /home/lupin/oday-plus
+  authoritative status root           : /home/lupin/oday-plus-supervisor-live
+  wired hook command                  : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook PermissionDenied
+  wired hook command                  : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook PermissionRequest
+  wired hook command                  : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook PostToolUse
+  wired hook command                  : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook PreToolUse
+  wired hook command                  : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook SessionEnd
+  wired hook command                  : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook SessionStart
+  wired hook command                  : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook Stop
+  hook wiring declared in             : /home/lupin/oday-plus/.claude/settings.local.json
+  (this is the only settings file on the host declaring the broker hooks)
+
+## 2. The resumed worker's own environment named the other root
+  PANTHEON_STATUS_ROOT is injected by supervisor.resume_claude_worker and
+  inherited by the hook subprocess. Sampled from a live worker process:
+    pid 1262944: PANTHEON_STATUS_ROOT=/home/lupin/oday-plus-supervisor-live
+             ORCH_RUN_ID=claude-20260729T024431Z-f328699c
+
+## 3. The same tool signature exists in BOTH queues with different verdicts
+  control root: /home/lupin/oday-plus/.orchestrator/approval-queue.json
+    bucket                       : pending
+    approval_id                  : apr-20260729T082950Z-578a3304
+    session_id                   : c2cafc00-aa5f-4340-8c49-5eb1aedd30b2
+    tool_name                    : Bash
+    tool_input_signature         : 7e0ef5d05b8a6151ee11fc1a5c11b85cffcbde5b823617c1f4f72f86e5dfc5e6
+    decision                     : None
+    resume_override_active       : False
+    resume_override_consumed_at  : None
+    created_at / resolved_at     : 2026-07-29T08:29:50Z / None
+
+  authoritative root: /home/lupin/oday-plus-supervisor-live/.orchestrator/approval-queue.json
+    bucket                       : history
+    approval_id                  : apr-20260729T083018Z-f3737b93
+    session_id                   : c2cafc00-aa5f-4340-8c49-5eb1aedd30b2
+    tool_name                    : Bash
+    tool_input_signature         : 7e0ef5d05b8a6151ee11fc1a5c11b85cffcbde5b823617c1f4f72f86e5dfc5e6
+    decision                     : allow
+    resume_override_active       : True
+    resume_override_consumed_at  : None
+    created_at / resolved_at     : 2026-07-29T08:30:18Z / 2026-07-29T08:31:07Z
+
+## 4. The resumed hook re-deferred the exact command it had just been allowed
+    hook command executed : python3 /home/lupin/oday-plus/.orchestrator/permission_broker.py hook PreToolUse
+    permissionDecision    : defer
+    session stop_reason   : tool_deferred
+    deferred tool_use id  : toolu_01581oGCCFY5iRR48zekBLho
+    source log            : /home/lupin/oday-plus-supervisor-live/.orchestrator/logs/claude-resume-20260729T083138Z-98b08b9b.log
+
+## 5. Collateral: the one-time allow rule was stranded in the authoritative root
+    allow (2):
+      Monitor
+      Bash(docker rm -f odp-wje-probe-pg >/dev/null 2>&1; docker run -d --name odp-wje-probe-pg -e POSTGRES_PASSWORD=probe -e POSTGRES_DB=odayprobe -p 55443
+    ask   (0):
+    deny  (0):
+    The supervisor inserted the temporary allow rule here when it granted the
+    approval; consumption never ran in this root, so it was never withdrawn.
+
+## 6. Deployed broker revisions at observation time
+    control root        : sha256=c4ecfe5a0f62ca21  /home/lupin/oday-plus/.orchestrator/permission_broker.py
+    authoritative root  : sha256=1ed64d46ea1c115f  /home/lupin/oday-plus-supervisor-live/.orchestrator/permission_broker.py
+
+## Conclusion
+  The queue that answered was chosen by __file__ (which copy of the code ran),
+  not by PANTHEON_STATUS_ROOT (which fleet owns the worker). The fix makes the
+  declared status root authoritative for the queue, the activity log, and the
+  permission-rule file, and fails closed to the module-local root otherwise.

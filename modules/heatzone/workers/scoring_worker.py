@@ -19,6 +19,7 @@ from modules.heatzone.domain import (
     HeatZoneScoreResult,
     score_heatzones,
     score_heatzones_from_model_predictions,
+    to_heatzone_model_row,
 )
 
 
@@ -30,6 +31,7 @@ class HeatZoneBatchScoreResult:
     completed_at: datetime
     warnings: tuple[str, ...] = ()
     model_inference: ModelInferenceResult | None = None
+    tenant_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -39,6 +41,7 @@ class HeatZoneBatchScoreResult:
             "map_features": [score.to_map_feature() for score in self.scores],
             "completed_at": self.completed_at.isoformat(),
             "warnings": list(self.warnings),
+            "tenant_id": self.tenant_id,
         }
 
 
@@ -62,6 +65,7 @@ class HeatZoneScoringWorker:
         job_id: str | None = None,
         features: Iterable[HeatZoneFeatureInput | GeoFeatureSnapshot | Mapping[str, Any]],
         prediction_origin_time: datetime | str | None = None,
+        tenant_id: str = "",
     ) -> HeatZoneBatchScoreResult:
         effective_job_id = job_id or f"heatzone-score-{uuid4()}"
         feature_rows = list(features)
@@ -73,7 +77,7 @@ class HeatZoneScoringWorker:
             )
             inference = runtime.infer(
                 service="heatzone",
-                rows=[_feature_mapping(feature) for feature in feature_rows],
+                rows=[to_heatzone_model_row(feature) for feature in feature_rows],
                 expected_feature_schema_version=HEATZONE_FEATURE_VERSION,
             )
             scores = tuple(
@@ -81,6 +85,7 @@ class HeatZoneScoringWorker:
                     feature_rows,
                     inference.point,
                     model_version=inference.binding.model_id,
+                    output_transform=inference.model_metadata.get("output_transform"),
                     prediction_origin_time=_parse_datetime(prediction_origin_time)
                     if prediction_origin_time is not None
                     else None,
@@ -96,9 +101,7 @@ class HeatZoneScoringWorker:
                 )
             )
         warnings = tuple(
-            f"{score.h3_index}: {','.join(score.warnings)}"
-            for score in scores
-            if score.warnings
+            f"{score.h3_index}: {','.join(score.warnings)}" for score in scores if score.warnings
         )
         return HeatZoneBatchScoreResult(
             job_id=effective_job_id,
@@ -107,6 +110,7 @@ class HeatZoneScoringWorker:
             completed_at=datetime.now(UTC),
             warnings=warnings,
             model_inference=inference,
+            tenant_id=tenant_id,
         )
 
 
@@ -117,6 +121,7 @@ def run_heatzone_batch_score(
     prediction_origin_time: datetime | str | None = None,
     model_runtime: ProductionModelRuntime | None = None,
     require_production_model: bool | None = None,
+    tenant_id: str = "",
 ) -> HeatZoneBatchScoreResult:
     return HeatZoneScoringWorker(
         model_runtime=model_runtime,
@@ -125,6 +130,7 @@ def run_heatzone_batch_score(
         job_id=job_id,
         features=features,
         prediction_origin_time=prediction_origin_time,
+        tenant_id=tenant_id,
     )
 
 

@@ -108,7 +108,10 @@ describe("OIDC authorization-code + PKCE", () => {
       fetchImpl: fetchMock,
     });
 
-    expect(session.accessToken).toBe("unit-token");
+    // The API bearer must be the verified id_token, never the opaque
+    // OAuth access_token: the backend JWT boundary validates signatures.
+    expect(session.accessToken).toBe(idToken);
+    expect(session.accessToken).not.toBe("unit-token");
     expect(session.subject).toBe("real-user-123");
     expect(session.expiresAt).toBe(now + 300);
     expect(fetchMock).toHaveBeenCalledTimes(2);

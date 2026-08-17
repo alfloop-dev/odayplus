@@ -1,0 +1,143 @@
+# Diagnosis: why the revision-5 driver aborted at phase 1 (abort_killmode_probe)
+# ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001 · Claude2 · 2026-07-29
+#
+# The revision-5 driver was launched at 04:31:10Z on the coordinator-lifted head
+# 05c3f59d and aborted 5 s later, before phase 2, with verdict
+# abort_killmode_probe (exit 26). Nothing live was touched: no drop-in, no
+# restart, no deferral, no approval. This file is the raw evidence behind the
+# revision-7 fix.
+#
+# Sections 1-2 are unchanged. Sections 3-5 were rewritten after coordinator
+# STOP GATE 6 (04:43:36Z / 04:45:59Z), which rejected revision 6's remedy and
+# the conclusion this file previously drew from it. The corrected claim, stated
+# once and up front:
+#
+#   Only RE-CREATING the transient unit fails. `systemctl --user start` on the
+#   SAME, already-loaded transient .service is proven to work on this host, with
+#   the leftover child still in its cgroup. No unit file is needed, and this
+#   driver writes none.
+
+--------------------------------------------------------------------------------
+1. The abort receipt (timeline/attempt-1-abort-killmode-probe/00-killmode-probe.txt)
+--------------------------------------------------------------------------------
+probe_unit: odp-killmode-probe-1350716
+probe_child_pid: 1350758
+probe_child_survived_stop: yes
+probe_unit_restarted_with_leftover: no
+probe_verdict: fail
+
+The property under test had in fact PASSED (probe_child_survived_stop: yes).
+Only the restart half failed.
+
+--------------------------------------------------------------------------------
+2. Reproduction of the restart half, with the error the driver had discarded
+--------------------------------------------------------------------------------
+The driver ran both halves through `systemd-run --unit=<same name>` with stderr
+sent to /dev/null. Re-run by hand at 04:32Z with stderr kept:
+
+  $ systemd-run --user --unit=$U --property=KillMode=process \
+      /bin/bash -c "sleep 900 & echo $! > $SF; sleep 900"
+  Running as unit: odp-km-diag-1351971.service; invocation ID: 1e4f6a2f...
+  child=1351995
+
+  $ systemctl --user stop $U
+  child alive after stop: yes
+  unit state after stop: inactive / sub=dead / load=loaded        <-- still LOADED
+
+  $ systemd-run --user --unit=$U --property=KillMode=process /bin/bash -c 'sleep 30'
+  Failed to start transient service unit: Unit odp-km-diag-1351971.service
+  was already loaded or has a fragment file.
+  rc=1
+
+So the second half could never succeed: the surviving child keeps the first
+transient unit loaded, and systemd-run refuses to CREATE a unit under a name
+that is still loaded. `systemctl --user reset-failed` (which the driver called
+first) does not help - it clears failed state, it does not unload an inactive
+unit.
+
+The failure was an artefact of re-creating one transient unit, not a property of
+KillMode=process, and it would have blocked every run of every revision.
+
+--------------------------------------------------------------------------------
+3. The minimal in-scope fix, proven independently (04:39:19Z)
+--------------------------------------------------------------------------------
+"Already loaded" is a refusal to CREATE, not a refusal to START. The unit that
+is still loaded is exactly the unit that needs to come back, and starting an
+existing unit is also what the real window does
+(`systemctl start pantheon-supervisor.service`). Proven on this host by a
+throwaway transient unit, with no unit file written anywhere:
+
+  unit odp-transient-restart-diag-1360743.service
+  before:  main=1360749  child=1360751   active / loaded
+  systemctl --user stop  (KillMode=process)
+           old_child_alive=yes           inactive / loaded
+  systemctl --user start <same .service>
+           rc=0  new_main=1360853  new_child=1360855  both alive
+           old_child still alive: yes
+  cleanup: all four pids absent; unit not-found / inactive / dead
+
+That is the whole fix: create once with systemd-run, stop, then
+`systemctl start` the same already-loaded unit.
+
+--------------------------------------------------------------------------------
+4. Correction: revision 6's remedy, and the claim it rested on, are withdrawn
+--------------------------------------------------------------------------------
+Revision 6 concluded from section 2 that a transient unit "cannot be restarted"
+and answered it by writing a PERSISTENT unit file into
+/home/lupin/.config/systemd/user, starting that twice. It did pass on this host
+(measured 04:33Z: child survives the stop, the unit starts again with the
+leftover in its cgroup, the leftover is still alive afterwards), but:
+
+  * the conclusion was wrong - see section 3; only re-creation fails; and
+  * a driver for this task has no business creating permanent user units.
+
+Both are withdrawn. Revision 7 removes SYSTEMD_USER_DIR and every unit-file
+write; the only file this driver puts under ~/.config/systemd/user is the
+drop-in it installs in phase 2 and removes on every exit path.
+
+(An even earlier attempt at the 04:33Z test was invalid and is not the basis for
+anything: a heredoc escaping slip wrote the literal string `$!` into the pid
+file instead of the child pid, so its "child alive" lines were meaningless.)
+
+--------------------------------------------------------------------------------
+5. What revision 7 changes, and the re-proof
+--------------------------------------------------------------------------------
+* phase 1 creates its transient unit exactly once with systemd-run and restarts
+  it with a bounded `systemctl --user start` on the same .service;
+* it asserts four properties, not two: the old child survives the stop; the unit
+  is inactive-but-loaded after the stop; the restart yields a NEW, non-zero,
+  different MainPID and a NEW child; and the old child is still alive after the
+  restart. Every pid is bound to the probe's own argv marker, so a recycled pid
+  cannot satisfy any assertion;
+* cleanup is ownership- and cgroup-based, kills and waits for old and new pids
+  on every exit path, and asserts no residual pid, no residual cgroup and
+  not-found / inactive / dead. That residue check is part of the verdict, so a
+  leaking probe fails closed;
+* every probe command is bounded by `timeout` and its rc and stderr are captured
+  into the phase-1 receipt. Discarded stderr is the sole reason the revision-5
+  defect survived five review passes;
+* the probe body is a function, so `--selftest` exercises the real gate without
+  opening the window.
+
+Re-proof of section 3 by the revision-7 driver itself, `--selftest` at
+2026-07-29T04:56:34Z (39/39 SELFTEST PASS; full output in
+driver-gate-selftest.txt):
+
+  ok  probe verdict                                            pass
+  ok  unit created once, by systemd-run                        0
+  ok  leftover child survives the stop                         yes
+  ok  unit is inactive but still loaded after the stop         inactive/dead/loaded
+  ok  systemctl start of the existing transient unit succeeds  0
+  ok  restart produced a new, different, non-zero MainPID      yes
+  ok  restarted unit spawned a new child                       yes
+  ok  old child is still alive after the restart               yes
+  ok  no probe unit file left in the user unit dir             0
+  ok  user unit dir entry count unchanged                      7
+  ok  probe unit load state                                    not-found
+
+Host residue after that self-test (04:56Z): no process carrying a probe marker,
+no probe unit, and ~/.config/systemd/user unchanged at its 7 pre-existing
+entries. Unlike revision 6's unit-file probe, a transient unit leaves no
+name stub behind once its processes are gone - systemd garbage-collects it,
+which is why `not-found` is now an assertable resting state rather than
+something the receipt had to excuse.

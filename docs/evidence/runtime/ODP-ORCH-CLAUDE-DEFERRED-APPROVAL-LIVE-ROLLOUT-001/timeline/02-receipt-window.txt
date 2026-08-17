@@ -1,0 +1,5 @@
+receipt_observed_at: 2026-07-29T06:08:56Z
+runner_process_exited: yes
+supervisor_active_state_while_receipt_landed: inactive
+# The supervisor was NOT running when the receipt was flushed, so the
+# receipt can only be observed for the first time by boot reconciliation.

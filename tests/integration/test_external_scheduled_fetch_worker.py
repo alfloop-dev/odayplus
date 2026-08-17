@@ -313,7 +313,7 @@ def test_worker_blocks_unselected_listing_provider_before_factory_execution(
 
 
 def test_backfill_command_outputs_durable_batch_json(capsys: pytest.CaptureFixture[str]) -> None:
-    from scripts.external_data_backfill import main
+    from product_ops.external_data_backfill import main
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
@@ -336,7 +336,7 @@ def test_backfill_command_outputs_durable_batch_json(capsys: pytest.CaptureFixtu
 def test_backfill_command_returns_failure_for_unregistered_provider(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from scripts.external_data_backfill import main
+    from product_ops.external_data_backfill import main
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
@@ -356,3 +356,74 @@ def test_backfill_command_returns_failure_for_unregistered_provider(
     output = capsys.readouterr().out
     assert '"reason_code": "provider_not_registered"' in output
     assert '"status": "FAILED"' in output
+
+
+def test_configuration_rejection_does_not_poison_the_provider_circuit() -> None:
+    """ODP-DEPLOY-WORKER-JOB-EXECUTION-001.
+
+    In Cloud Run execution oday-worker-r-79cf9b67e62c-6fhw5 the first two
+    attempts reported the real cause (``provider_not_selected``); attempts 3
+    and 4 reported ``provider circuit open until ...`` instead, because each
+    allowlist rejection had been counted as a consecutive provider failure. The
+    provider is never contacted for a configuration rejection, so it must not
+    move the circuit breaker and must never mask its own reason code.
+    """
+    factory_calls = 0
+
+    def provider_factory() -> CountingProvider:
+        nonlocal factory_calls
+        factory_calls += 1
+        return CountingProvider()
+
+    store = InMemoryExternalFetchStateStore()
+    scheduler = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={"listing.partner_feed": provider_factory},
+        resilience_policy=ExternalFetchResiliencePolicy(max_consecutive_failures=2),
+        env={
+            "ODP_EXTERNAL_PROVIDER_MODE": "live",
+            "ODP_DEPLOY_ENV": "dev",
+            "ODP_PRODUCTION_PROVIDER_IDS": "poi.commercial_api",
+        },
+    )
+    spec = ExternalFetchJobSpec(
+        provider_id="listing.partner_feed",
+        schedule_id="hourly-listing",
+    )
+
+    runs = [
+        scheduler.run_once(spec, scheduled_at=datetime(2026, 7, 29, 1, minute, tzinfo=UTC))
+        for minute in (7, 8, 9, 10)
+    ]
+
+    assert [run.alerts[0].reason_code for run in runs] == ["provider_not_selected"] * 4
+    assert store.circuit_open_until(
+        "listing.partner_feed", datetime(2026, 7, 29, 1, 11, tzinfo=UTC)
+    ) is None
+    assert factory_calls == 0
+    assert all("provider_health_unaffected=true" in run.message for run in runs)
+
+
+def test_provider_failure_still_opens_the_circuit() -> None:
+    """The resilience circuit must keep reacting to real provider ill-health."""
+    store = InMemoryExternalFetchStateStore()
+    scheduler = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={
+            "listing.partner_feed": lambda: CountingProvider(
+                exception=ListingProviderRateLimitError("429 rate limited")
+            )
+        },
+        resilience_policy=ExternalFetchResiliencePolicy(max_consecutive_failures=2),
+    )
+    spec = ExternalFetchJobSpec(
+        provider_id="listing.partner_feed",
+        schedule_id="hourly-listing",
+    )
+
+    for minute in (7, 8):
+        scheduler.run_once(spec, scheduled_at=datetime(2026, 7, 29, 1, minute, tzinfo=UTC))
+
+    assert store.circuit_open_until(
+        "listing.partner_feed", datetime(2026, 7, 29, 1, 9, tzinfo=UTC)
+    ) is not None

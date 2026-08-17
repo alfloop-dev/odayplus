@@ -1,7 +1,9 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   CANDIDATE_FIXTURES,
   HEAT_ZONE_FIXTURES,
@@ -38,6 +40,10 @@ import { ComparePanel } from "./network/ComparePanel";
 import { ReviewPanel } from "./network/ReviewPanel";
 import { NetworkShell } from "./network/NetworkShell";
 import { RebalancePanel } from "./network/RebalancePanel";
+import {
+  buildNetworkTabHref,
+  parseNetworkTabIndex,
+} from "./network/networkUrlState";
 import type { ExpansionStep } from "./network/ExpansionStepper";
 import type { NetworkScoringSnapshot } from "./network/networkScoringTypes";
 import type {
@@ -53,8 +59,49 @@ import {
   type NetworkFindAreasViewModel,
   type NetworkFindAreasZoneViewModel,
 } from "./networkFindAreasViewModel";
-import { HeatZoneMap } from "../map/HeatZoneMap";
-import type { HeatZone as MapHeatZone, Listing as MapListing, CandidateSite as MapCandidateSite } from "../expansion/data";
+import type { HeatZoneMapProps } from "./network/HeatZoneMap";
+import {
+  OPERATOR_MAP_FRESHNESS,
+  operatorCandidateToMapSite,
+  operatorHeatZoneToMapZone,
+  operatorListingToMapListing,
+} from "./network/heatZoneMapAdapters";
+import { GeocoderSearchPanel } from "./network/geocoder";
+import type { GeocodeAuditEvent } from "./network/geocoder";
+import {
+  canSearchAddress,
+  canSelectGeocodeCandidate,
+} from "./network/geocoder/geocoderPermissions";
+import type {
+  CandidateSite as MapCandidateSite,
+  HeatZone as MapHeatZone,
+  Listing as MapListing,
+} from "./network/mapTypes";
+
+// The map stack (deck.gl + maplibre-gl + h3-js) is by far the heaviest thing on
+// the operator surface. It is only ever rendered inside the Find Areas tab, so
+// it is loaded as its own chunk instead of being charged to the first load of
+// every /operator and /intake request. `ssr: false` is correct here as well:
+// HeatZoneMap builds the maplibre instance in an effect against a real DOM node,
+// so the server render only ever produced an empty container.
+const HeatZoneMap = dynamic<HeatZoneMapProps>(
+  () => import("./network/HeatZoneMap").then((mod) => mod.HeatZoneMap),
+  {
+    ssr: false,
+    loading: function HeatZoneMapLoading() {
+      return (
+        <div
+          aria-live="polite"
+          className={styles.mapLoading}
+          data-testid="heat-zone-map-loading"
+          role="status"
+        >
+          HeatZone 地圖載入中…
+        </div>
+      );
+    },
+  },
+);
 
 export type NetworkFindAreasWorkspaceCallbacks = {
   onSelectHeatZone?: (heatZone: OperatorHeatZone) => void;
@@ -74,6 +121,7 @@ export type NetworkFindAreasWorkspaceProps = {
   rebalanceStores?: RebalanceStore[];
   selectedHeatZoneId?: string;
   activeLens?: NetworkFindAreasLens;
+  initialTabId?: string;
   trackedHeatZoneIds?: string[];
   /**
    * Active operator console role. Binds the Network Review read/decide security
@@ -105,6 +153,13 @@ const networkTabs = [
   "審核 / Review",
   "低效重配 / Rebalance",
 ] as const;
+
+const EMPTY_CANDIDATES: Candidate[] = [];
+const EMPTY_HEAT_ZONES: OperatorHeatZone[] = [];
+const EMPTY_LISTINGS: Listing[] = [];
+const EMPTY_LISTING_SOURCES: ListingSource[] = [];
+const EMPTY_REBALANCE_STORES: RebalanceStore[] = [];
+const EMPTY_SITE_REVIEWS: SiteReview[] = [];
 
 type NetworkListingDetail = Listing & {
   archivedReason?: string;
@@ -147,6 +202,52 @@ type NetworkRebalanceSnapshot = {
   };
   correlationId?: string;
 };
+
+export function resolveNetworkDataUnavailableState(
+  loadStates: readonly OperatorDataAvailability[],
+): Exclude<OperatorDataAvailability, "ready" | "fixture"> | null {
+  if (loadStates.includes("error")) return "error";
+  if (loadStates.includes("seed") || loadStates.includes("fixture")) return "seed";
+  if (loadStates.includes("empty")) return "empty";
+  if (loadStates.includes("loading")) return "loading";
+  return null;
+}
+
+export function resolveNetworkTabGateState({
+  activeTab,
+  bindingLoadStates,
+  fixturesAllowed,
+  networkLoadState,
+  rebalanceLoadState,
+  reviewsLoadState,
+  scoringLoadState,
+}: {
+  activeTab: number;
+  bindingLoadStates: readonly OperatorDataAvailability[];
+  fixturesAllowed: boolean;
+  networkLoadState: OperatorDataAvailability;
+  rebalanceLoadState: OperatorDataAvailability;
+  reviewsLoadState: OperatorDataAvailability;
+  scoringLoadState: OperatorDataAvailability;
+}): Exclude<OperatorDataAvailability, "ready" | "fixture"> | null {
+  if (fixturesAllowed || activeTab === 1) return null;
+  if (activeTab === 0) {
+    return resolveNetworkDataUnavailableState([
+      ...bindingLoadStates,
+      networkLoadState,
+    ]);
+  }
+  if (activeTab >= 2 && activeTab <= 4) {
+    return resolveNetworkDataUnavailableState([scoringLoadState]);
+  }
+  if (activeTab === 5) {
+    return resolveNetworkDataUnavailableState([reviewsLoadState]);
+  }
+  if (activeTab === 6) {
+    return resolveNetworkDataUnavailableState([rebalanceLoadState]);
+  }
+  return null;
+}
 
 export function inspectNetworkListingsSnapshot(
   snapshot: NetworkListingsSnapshot | null,
@@ -400,12 +501,36 @@ function buildFallbackExpansionSteps(selectedHeatZoneId: string, hasCandidate: b
   ];
 }
 
+/**
+ * True when the canonical intake detail owns the page, on either entry point:
+ * the Operator query context (`selected=<intakeId>` plus a detail dialog) or
+ * the durable `/intake/<intakeId>` route. `fix`, `decide` and `assignmentSla`
+ * are included because `AssistedIntakeSection` keeps the full-page detail
+ * mounted underneath those confirmation dialogs, and it must sit in the same
+ * canonical position there (ADD-006 §3.1).
+ */
+export function isNetworkIntakeDetailRoute(
+  pathname: string | null | undefined,
+  searchParams: Pick<URLSearchParams, "get">,
+): boolean {
+  if (/^\/intake\/[^/]+$/.test(pathname ?? "")) return true;
+  if (!searchParams.get("selected")) return false;
+  const dialog = searchParams.get("dialog");
+  return (
+    dialog === "detail" ||
+    dialog === "fix" ||
+    dialog === "decide" ||
+    dialog === "assignmentSla"
+  );
+}
+
 export function NetworkFindAreasWorkspace({
   activeLens,
   activeRoleId = DEFAULT_OPERATOR_ROLE_ID,
   callbacks,
   candidates: candidatesInput,
   heatZones: heatZonesInput,
+  initialTabId,
   listings: listingsInput,
   listingSources: listingSourcesInput,
   rebalanceStores: rebalanceStoresInput,
@@ -415,13 +540,16 @@ export function NetworkFindAreasWorkspace({
   liveHeatZones,
   liveCandidates,
 }: NetworkFindAreasWorkspaceProps) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const fixturesAllowed = operatorFixturesAllowed();
-  const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : []);
-  const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : []);
-  const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : []);
-  const listingSources = listingSourcesInput ?? (fixturesAllowed ? LISTING_SOURCE_FIXTURES : []);
-  const rebalanceStores = rebalanceStoresInput ?? (fixturesAllowed ? REBALANCE_STORE_FIXTURES : []);
-  const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : []);
+  const candidatesProp = candidatesInput ?? (fixturesAllowed ? CANDIDATE_FIXTURES : EMPTY_CANDIDATES);
+  const heatZonesProp = heatZonesInput ?? (fixturesAllowed ? HEAT_ZONE_FIXTURES : EMPTY_HEAT_ZONES);
+  const listings = listingsInput ?? (fixturesAllowed ? LISTING_FIXTURES : EMPTY_LISTINGS);
+  const listingSources = listingSourcesInput ?? (fixturesAllowed ? LISTING_SOURCE_FIXTURES : EMPTY_LISTING_SOURCES);
+  const rebalanceStores = rebalanceStoresInput ?? (fixturesAllowed ? REBALANCE_STORE_FIXTURES : EMPTY_REBALANCE_STORES);
+  const siteReviews = siteReviewsInput ?? (fixturesAllowed ? SITE_REVIEW_FIXTURES : EMPTY_SITE_REVIEWS);
   const reviewIdentity = useMemo(() => resolveNetworkReviewIdentity(activeRoleId), [activeRoleId]);
   const [localSelectedId, setLocalSelectedId] = useState(
     selectedHeatZoneId ?? (fixturesAllowed ? "HZ-01" : ""),
@@ -430,7 +558,25 @@ export function NetworkFindAreasWorkspace({
   const [localTrackedIds, setLocalTrackedIds] = useState(
     () => new Set(trackedHeatZoneIds ?? (fixturesAllowed ? ["HZ-01"] : [])),
   );
-  const [activeTab, setActiveTab] = useState(0);
+  const intakeDetailOpen = isNetworkIntakeDetailRoute(pathname, searchParams);
+  const urlTab = searchParams.get("tab")
+    ? parseNetworkTabIndex(searchParams)
+    : parseNetworkTabIndex(`tab=${initialTabId ?? ""}`);
+  // A Network tab click has to survive the console's initial preference
+  // hydration, shell bootstrap and URL hydration. While any of those are still
+  // in flight the console keeps re-publishing the server-rendered
+  // `initialTabId`, and a tab selection that only existed in the pushed URL was
+  // silently dropped — the Listing Radar click was lost and Find Areas stayed
+  // on screen. The selection is therefore committed to workspace state at click
+  // time and stays authoritative until the URL reports a different tab, at
+  // which point the URL (deep link, back/forward) takes over again.
+  const [tabOverride, setTabOverride] = useState<{ from: number; requested: number } | null>(null);
+  const overrideApplies = tabOverride !== null && tabOverride.from === urlTab;
+  const activeTab = overrideApplies ? tabOverride.requested : urlTab;
+
+  useEffect(() => {
+    setTabOverride((current) => (current !== null && current.from !== urlTab ? null : current));
+  }, [urlTab]);
   const [networkSnapshot, setNetworkSnapshot] = useState<NetworkListingsSnapshot | null>(null);
   const [networkApiError, setNetworkApiError] = useState<string | null>(null);
   const [networkLoadState, setNetworkLoadState] = useState<OperatorDataAvailability>(
@@ -457,6 +603,17 @@ export function NetworkFindAreasWorkspace({
   );
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+
+  const changeActiveTab = useCallback((tabIndex: number) => {
+    setTabOverride({ from: urlTab, requested: tabIndex });
+    const href = buildNetworkTabHref(
+      pathname,
+      tabIndex,
+      searchParams,
+      typeof window === "undefined" ? "" : window.location.hash,
+    );
+    router.push(href, { scroll: false });
+  }, [pathname, router, searchParams, urlTab]);
 
   const snapshotHeatZones = networkSnapshot?.heatZones?.length
     ? networkSnapshot.heatZones
@@ -886,7 +1043,7 @@ export function NetworkFindAreasWorkspace({
   function sourceListings() {
     if (selectedZone) {
       callbacks?.onSourceListings?.(selectedZone.zone);
-      setActiveTab(1);
+      changeActiveTab(1);
     }
   }
 
@@ -948,7 +1105,7 @@ export function NetworkFindAreasWorkspace({
   async function convertListing(listingId: string) {
     const payload = await postNetworkListingAction(listingId, "convert", {});
     if (payload) {
-      setActiveTab(2);
+      changeActiveTab(2);
     }
   }
 
@@ -1039,31 +1196,74 @@ export function NetworkFindAreasWorkspace({
       return "seed";
     },
   );
-  const requiredLoadStates = [
-    ...bindingLoadStates,
+  const activeTabGateState = resolveNetworkTabGateState({
+    activeTab,
+    bindingLoadStates,
+    fixturesAllowed,
     networkLoadState,
-    scoringLoadState,
     rebalanceLoadState,
     reviewsLoadState,
-  ];
-  const unavailableNetworkState: Exclude<OperatorDataAvailability, "ready" | "fixture"> | null =
-    requiredLoadStates.includes("error")
-      ? "error"
-      : requiredLoadStates.includes("seed") || requiredLoadStates.includes("fixture")
-        ? "seed"
-        : requiredLoadStates.includes("empty")
-          ? "empty"
-          : requiredLoadStates.includes("loading")
-            ? "loading"
-            : null;
+    scoringLoadState,
+  });
+  const activeTabGateDetail =
+    activeTab === 0
+      ? networkApiError
+      : activeTab === 6
+        ? rebalanceApiError
+        : null;
 
-  if (!fixturesAllowed && unavailableNetworkState) {
+  const listingRadarPanel = (
+    <ListingRadarPanel
+      activeRoleId={activeRoleId}
+      busyListingId={busyListingId}
+      intakeDetailOpen={intakeDetailOpen}
+      listings={listingsEffective}
+      onArchive={archiveListing}
+      onConvert={convertListing}
+      onMerge={mergeListing}
+      rows={viewModel.listingRadar}
+      selectedHeatZoneId={effectiveSelectedId}
+      selectedZoneLabel={selectedZoneLabel}
+      sources={listingSourcesEffective}
+    />
+  );
+
+  const listingMergeDialog = mergeRequest ? (
+    <ListingMergeDialog
+      busy={mergeBusy}
+      error={mergeError}
+      onClose={() => {
+        setMergeRequest(null);
+        setMergeError(null);
+      }}
+      onSubmit={submitMergeListing}
+      request={mergeRequest}
+    />
+  ) : null;
+
+  /*
+   * Package 10 renders the intake detail as the first workspace surface under
+   * the global Operator topbar/status banner: no Network heading, KPI strip,
+   * expansion stepper, tab strip, compliance strip or Network status row may
+   * precede it. The canonical source cards and Listing Radar stay below the
+   * detail, inside the same single production graph
+   * (NetworkFindAreasWorkspace -> ListingRadarPanel -> AssistedIntakeSection),
+   * so no second intake UI, modal, drawer or fixed overlay is introduced. The
+   * unrelated Network tab data gate is bypassed here for the same reason the
+   * durable /intake/<id> route bypasses the shell bootstrap gate: the detail
+   * owns its own authoritative API binding (ADD-006 §3.1).
+   */
+  if (intakeDetailOpen) {
     return (
-      <OperatorDataUnavailableGate
-        detail={networkApiError ?? rebalanceApiError}
-        onRetry={() => window.location.reload()}
-        status={unavailableNetworkState}
-      />
+      <section
+        className={styles.workspace}
+        data-intake-detail-open="true"
+        data-screen-label="Network 展店與店網"
+        data-testid="network-find-areas-workspace"
+      >
+        {listingRadarPanel}
+        {listingMergeDialog}
+      </section>
     );
   }
 
@@ -1091,20 +1291,15 @@ export function NetworkFindAreasWorkspace({
         </div>
       </header>
 
-      <NetworkShell activeTab={activeTab} onTabChange={setActiveTab} steps={expansionSteps} tabs={networkTabs}>
-        {activeTab === 1 ? (
-          <ListingRadarPanel
-            activeRoleId={activeRoleId}
-            busyListingId={busyListingId}
-            listings={listingsEffective}
-            onArchive={archiveListing}
-            onConvert={convertListing}
-            onMerge={mergeListing}
-            rows={viewModel.listingRadar}
-            selectedHeatZoneId={effectiveSelectedId}
-            selectedZoneLabel={selectedZoneLabel}
-            sources={listingSourcesEffective}
+      <NetworkShell activeTab={activeTab} onTabChange={changeActiveTab} steps={expansionSteps} tabs={networkTabs}>
+        {activeTabGateState ? (
+          <OperatorDataUnavailableGate
+            detail={activeTabGateDetail}
+            onRetry={() => window.location.reload()}
+            status={activeTabGateState}
           />
+        ) : activeTab === 1 ? (
+          listingRadarPanel
         ) : activeTab === 2 ? (
           <CandidatePanel
             busyCandidateId={busyCandidateId}
@@ -1150,6 +1345,7 @@ export function NetworkFindAreasWorkspace({
           />
         ) : (
           <FindAreasPanel
+            activeRoleId={activeRoleId}
             fixturesAllowed={fixturesAllowed}
             viewModel={viewModel}
             selectedZone={selectedZone}
@@ -1168,23 +1364,13 @@ export function NetworkFindAreasWorkspace({
         )}
       </NetworkShell>
 
-      {mergeRequest ? (
-        <ListingMergeDialog
-          busy={mergeBusy}
-          error={mergeError}
-          onClose={() => {
-            setMergeRequest(null);
-            setMergeError(null);
-          }}
-          onSubmit={submitMergeListing}
-          request={mergeRequest}
-        />
-      ) : null}
+      {listingMergeDialog}
     </section>
   );
 }
 
 type FindAreasPanelProps = {
+  activeRoleId: OperatorRoleId;
   fixturesAllowed: boolean;
   viewModel: NetworkFindAreasViewModel;
   selectedZone: NetworkFindAreasZoneViewModel | null;
@@ -1202,6 +1388,7 @@ type FindAreasPanelProps = {
 };
 
 function FindAreasPanel({
+  activeRoleId,
   candidates,
   effectiveLens,
   fixturesAllowed,
@@ -1217,19 +1404,25 @@ function FindAreasPanel({
   selectedZone,
   viewModel,
 }: FindAreasPanelProps) {
-  const mapZones = useMemo(
+  const mapZones = useMemo<MapHeatZone[]>(
     () => heatZones.map(operatorHeatZoneToMapZone),
     [heatZones],
   );
-  const mapListings = useMemo(
+  const mapListings = useMemo<MapListing[]>(
     () => listings.map((l, i) => operatorListingToMapListing(l, heatZones, i)),
     [listings, heatZones],
   );
-  const mapCandidates = useMemo(
+  const mapCandidates = useMemo<MapCandidateSite[]>(
     () => candidates.map((c, i) => operatorCandidateToMapSite(c, heatZones, i)),
     [candidates, heatZones],
   );
   const selectedMapZoneId = selectedZone?.id ?? (heatZones[0]?.id ?? "");
+  // The accepted geocode is held here as a receipt rather than written through:
+  // the production geocoder endpoint is not yet wired (see
+  // docs/design/ODAY_PLUS_UNOWNED_CAPABILITY_SCOPE_DECISION_2026-08-03.md
+  // §5, UX-SCR-EXP-001), so this surface shows what WOULD be persisted, with
+  // its audit fields, instead of silently dropping the operator's decision.
+  const [geocodeReceipt, setGeocodeReceipt] = useState<GeocodeAuditEvent | null>(null);
   return (
     <div className={styles.tabPanel} data-screen-label="Network 找區域" data-testid="network-panel-find-areas" role="tabpanel">
       <section className={styles.lensBar} aria-label="HeatZone lenses">
@@ -1282,6 +1475,44 @@ function FindAreasPanel({
         </div>
 
         <aside className={styles.trayPanel} aria-label="Recommended find area tray">
+          {/*
+            Address search sits in the tray rather than in .mapPanel: that panel
+            is a fixed-height grid area with overflow:hidden on this screen, so
+            anything stacked above the canvas is clipped.
+          */}
+          <GeocoderSearchPanel
+            actorRoleId={activeRoleId}
+            canSearch={canSearchAddress(activeRoleId)}
+            canSelect={canSelectGeocodeCandidate(activeRoleId)}
+            onAudit={setGeocodeReceipt}
+            onSelect={() => undefined}
+          />
+          {geocodeReceipt ? (
+            <div className={styles.geocodeReceipt} data-testid="find-areas-geocode-receipt" role="status">
+              <strong>
+                {geocodeReceipt.action === "low_confidence_override"
+                  ? "已採用（人工覆核）"
+                  : geocodeReceipt.action === "candidate_selected"
+                    ? "已採用"
+                    : "已記錄為無法定位"}
+              </strong>
+              <span>{geocodeReceipt.addressRaw}</span>
+              {geocodeReceipt.selected ? (
+                <span>
+                  {geocodeReceipt.selected.latitude.toFixed(6)}, {geocodeReceipt.selected.longitude.toFixed(6)} ·
+                  精度 {geocodeReceipt.selected.precision || "未提供"} · 來源 {geocodeReceipt.selected.provider || "未提供"}
+                </span>
+              ) : (
+                <span>未取得座標；後續流程不會有推估位置。</span>
+              )}
+              {geocodeReceipt.flags.length > 0 ? <span>品質旗標 {geocodeReceipt.flags.join("、")}</span> : null}
+              {geocodeReceipt.reviewReason ? <span>覆核理由 {geocodeReceipt.reviewReason}</span> : null}
+              <span>
+                操作者 {geocodeReceipt.actorRoleId} · {geocodeReceipt.occurredAt}
+                {geocodeReceipt.correlationId ? ` · correlation_id ${geocodeReceipt.correlationId}` : ""}
+              </span>
+            </div>
+          ) : null}
           <div className={styles.panelHeader}>
             <h3>Recommended Areas</h3>
             <span>{viewModel.rankedZones.length} ranked</span>
@@ -1455,146 +1686,4 @@ function formatCurrency(value: number) {
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
-}
-
-// ─── Operator → Map type adapters ──────────────────────────────────────────
-// These bridge the operator-layer types (OperatorHeatZone, Listing, Candidate)
-// to the expansion-layer types that HeatZoneMap expects.
-// Synthetic/missing fields are derived deterministically from available data.
-
-const OPERATOR_MAP_FRESHNESS = {
-  status: "FRESH",
-  updatedAt: "",
-  modelVersion: "network-ops-local",
-  featureSnapshotTime: "",
-  sourceSnapshotId: "snap-network-ops-local",
-};
-
-/** Derive a canonical HeatZone state from OperatorHeatZone metrics. */
-function deriveHeatZoneState(zone: OperatorHeatZone): MapHeatZone["state"] {
-  if (zone.confidence < 0.7) return "SUPPRESSED_LOW_CONFIDENCE";
-  if (zone.demandGap >= 0.75) return "STILL_EXPANDABLE";
-  if (zone.demandGap >= 0.5) return "UNDER_REALIZED";
-  if (zone.competitionIndex >= 0.7) return "SATURATED";
-  return "PARTIALLY_ABSORBED";
-}
-
-/**
- * Convert an OperatorHeatZone to the MapHeatZone type expected by HeatZoneMap.
- * Fields not tracked by the operator layer are synthesised deterministically
- * so that the map renders correctly without requiring API data.
- */
-function operatorHeatZoneToMapZone(zone: OperatorHeatZone): MapHeatZone {
-  return {
-    id: zone.id,
-    district: zone.label,
-    // h3 is intentionally invalid so that zoneToFeature falls back to the
-    // centroid-delta polygon – a deterministic, no-network fallback.
-    h3: `h3-${zone.id}`,
-    centroid: zone.centroid,
-    h3Resolution: 9,
-    score: Math.round(zone.demandGap * 100),
-    confidence: zone.confidence,
-    state: deriveHeatZoneState(zone),
-    rank: zone.rank,
-    listings: 0,
-    warnings: zone.risks,
-    reasons: zone.reasons,
-    modelVersion: "network-ops-local",
-    featureVersion: "operator-proxy-v1",
-    featureSnapshotTime: "",
-    predictionOriginTime: "",
-    lastScoredAt: "",
-    sourceSnapshotIds: ["snap-network-ops-local"],
-    unmetDemandScore: zone.demandGap,
-    formatFitScore: 1 - zone.competitionIndex,
-    cannibalizationRisk: zone.cannibalizationRisk === "low" ? 0.1 : zone.cannibalizationRisk === "medium" ? 0.35 : 0.65,
-    rentFeasibility: 0.7,
-    listingAvailability: 0.5,
-    poiCount: 10,
-    competitorCount: Math.round(zone.competitionIndex * 10),
-    competitorCapacity: 20,
-    medianListingRent: 0,
-    existingStoreCount: 0,
-    dataQualityScore: zone.confidence,
-  };
-}
-
-/**
- * Convert an operator Listing to the MapListing type expected by HeatZoneMap.
- * Coordinates are inferred from the associated HeatZone centroid with a small
- * deterministic offset so listings don't stack on top of the zone marker.
- */
-function operatorListingToMapListing(
-  listing: Listing,
-  heatZones: OperatorHeatZone[],
-  index: number,
-): MapListing {
-  const zone = heatZones.find((z) => z.id === listing.heatZoneId);
-  const [lng, lat] = zone?.centroid ?? [121.48, 25.0];
-  // Small deterministic offsets so listings spread around the centroid
-  const offset = 0.003;
-  const angle = (index * 137.5 * Math.PI) / 180; // golden angle spread
-  const coordinates: [number, number] = [
-    lng + offset * Math.cos(angle),
-    lat + offset * Math.sin(angle),
-  ];
-  return {
-    id: listing.id,
-    source: listing.sourceId,
-    address: listing.address,
-    status: listing.status === "hardfail" ? "FAILED_HARD_RULE"
-      : listing.status === "duplicate" ? "DUPLICATE"
-      : listing.status === "candidate" ? "CANDIDATE"
-      : listing.status === "geocoded" || listing.status === "scored" || listing.status === "watching" ? "GEOCODED"
-      : listing.status === "parsed" ? "PARSED"
-      : "RAW",
-    issue: listing.hardRuleFailures.join("; ") || "",
-    rent: listing.rentPerMonth > 0 ? `NT$${listing.rentPerMonth.toLocaleString()}` : "NT$ *** / 月",
-    area: `${listing.areaPing} ping`,
-    geocode: `${listing.geocodeConfidence.toFixed(2)} / operator`,
-    duplicate: listing.duplicateOfId ?? "",
-    heatZoneId: listing.heatZoneId,
-    coordinates,
-    updatedAt: "",
-    action: listing.candidateId ? "候選點已建立" : "待處理",
-  };
-}
-
-/**
- * Convert an operator Candidate to the MapCandidateSite type expected by HeatZoneMap.
- */
-function operatorCandidateToMapSite(
-  candidate: Candidate,
-  heatZones: OperatorHeatZone[],
-  index: number,
-): MapCandidateSite {
-  const zone = heatZones.find((z) => z.id === candidate.heatZoneId);
-  const [lng, lat] = zone?.centroid ?? [121.48, 25.0];
-  const offset = 0.005;
-  const angle = (index * 97.3 * Math.PI) / 180;
-  const coordinates: [number, number] = [
-    lng + offset * Math.cos(angle),
-    lat + offset * Math.sin(angle),
-  ];
-  const isReady = candidate.status === "ready" || candidate.status === "pendingreview" || candidate.status === "approved";
-  return {
-    id: candidate.id,
-    address: candidate.address,
-    status: candidate.status === "approved" ? "approved"
-      : candidate.status === "rejected" ? "rejected"
-      : candidate.status === "scoring" || candidate.status === "pendingreview" ? "scored"
-      : candidate.status === "wait" || candidate.status === "ready" ? "screened"
-      : "new",
-    heatZoneId: candidate.heatZoneId,
-    coordinates,
-    heatZoneScore: candidate.score,
-    rentArea: "",
-    geocode: "",
-    feasibility: candidate.missingData.length ? candidate.missingData.join("; ") : "OK",
-    listingSource: candidate.listingId ?? "",
-    siteScore: `${candidate.score} / ${candidate.recommendation}`,
-    readiness: isReady ? "ready" : "blocked",
-    disabledReason: candidate.missingData.length ? candidate.missingData.join("; ") : undefined,
-  };
 }

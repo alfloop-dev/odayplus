@@ -22,13 +22,27 @@ import pytest
 
 from apps.scheduler.oday_scheduler.main import ODayScheduler
 from apps.worker.oday_worker.main import ODayWorker
+from modules.external_data.workers.scheduled_fetch import (
+    TenantScopedExternalFetchStateStore,
+)
 from modules.forecastops import ForecastOpsService, StoreDayObservation
+from modules.forecastops.runtime import ForecastOpsRuntimeConfigurationError
 from modules.forecastops.workers import ForecastOpsForecastWorker
 from shared.infrastructure.persistence.factory import _durable_bundle, build_persistence
 from shared.jobs.queue import JobRequest, JobStatus
 from shared.jobs.registry import JobRegistry
 
 PROVIDER_ID = "listing.partner_feed"
+TENANT_ID = "tenant-test"
+OTHER_TENANT_ID = "tenant-other"
+
+
+def _tenant_watermark(bundle, tenant_id: str = TENANT_ID):
+    """Watermark as the scheduled path writes it: namespaced per tenant."""
+    scoped = TenantScopedExternalFetchStateStore(
+        bundle.external_fetch_state_store, tenant_id
+    )
+    return scoped.last_success_watermark(PROVIDER_ID)
 
 
 @pytest.fixture
@@ -43,20 +57,23 @@ def _queued_of_type(bundle, job_type: str) -> list:
 def _seed_forecast_series(bundle, store_id: str) -> None:
     start = date(2026, 4, 1)
     ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
-        StoreDayObservation(
-            store_id=store_id,
-            business_date=start + timedelta(days=index),
-            actual_revenue=80_000 + index * 250 + (index % 7) * 900,
-            source_snapshot_ids=(f"pos-{index:03d}",),
-        )
-        for index in range(70)
+        (
+            StoreDayObservation(
+                store_id=store_id,
+                business_date=start + timedelta(days=index),
+                actual_revenue=80_000 + index * 250 + (index % 7) * 900,
+                source_snapshot_ids=(f"pos-{index:03d}",),
+            )
+            for index in range(70)
+        ),
+        tenant_id=TENANT_ID,
     )
 
 
 def test_scheduler_enqueue_then_worker_claim_execute_success() -> None:
     """Scheduler enqueues external-fetch; worker claims, runs it, marks SUCCEEDED."""
     bundle = build_persistence()  # in-memory
-    scheduler = ODayScheduler(persistence=bundle)
+    scheduler = ODayScheduler(persistence=bundle, tenant_id=TENANT_ID)
     worker = ODayWorker(persistence=bundle)
 
     scheduler.run_once()
@@ -69,8 +86,11 @@ def test_scheduler_enqueue_then_worker_claim_execute_success() -> None:
 
     executed = bundle.job_queue.get(job_id)
     assert executed.status == JobStatus.SUCCEEDED
-    # The fetch advanced the durable success watermark for the provider.
-    assert bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID) is not None
+    # The fetch advanced the success watermark for this tenant's provider,
+    # and only for that tenant.
+    assert _tenant_watermark(bundle) is not None
+    assert _tenant_watermark(bundle, OTHER_TENANT_ID) is None
+    assert bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID) is None
 
     # No more queued work -> the next claim is a no-op.
     assert worker.run_once() is False
@@ -81,7 +101,10 @@ def test_worker_forecast_job_claims_and_succeeds() -> None:
     bundle = build_persistence()
     _seed_forecast_series(bundle, "store-001")
     job, created = bundle.job_queue.enqueue(
-        JobRequest(job_type="forecast", payload={"store_id": "store-001"}),
+        JobRequest(
+            job_type="forecast",
+            payload={"tenant_id": TENANT_ID, "store_id": "store-001"},
+        ),
         correlation_id="corr-forecast",
     )
     assert created is True
@@ -91,7 +114,7 @@ def test_worker_forecast_job_claims_and_succeeds() -> None:
     assert bundle.job_queue.get(job.job_id).status == JobStatus.SUCCEEDED
 
 
-def test_production_forecast_worker_reads_deployment_engine_and_model(
+def test_production_forecast_worker_rejects_unregistered_baseline_configuration(
     db_path: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,12 +124,11 @@ def test_production_forecast_worker_reads_deployment_engine_and_model(
     monkeypatch.setenv("ODP_FORECAST_MODEL", "seasonal_naive")
     bundle = _durable_bundle(db_path)
     try:
-        worker = ForecastOpsForecastWorker(repository=bundle.forecastops_repository)
-
-        assert worker.service.production_required is True
-        assert worker.service.engine is not None
-        assert worker.service.engine.engine_name == "statsforecast"
-        assert worker.service.engine.model_name == "seasonal_naive"
+        with pytest.raises(
+            ForecastOpsRuntimeConfigurationError,
+            match="registered MLflow estimator runtime",
+        ):
+            ForecastOpsForecastWorker(repository=bundle.forecastops_repository)
     finally:
         bundle.engine.close()
 
@@ -217,7 +239,7 @@ def test_worker_retries_three_times_then_dead_letters() -> None:
 def test_scheduler_enqueue_is_idempotent_within_window() -> None:
     """Two scheduler ticks in the same window produce a single external-fetch job."""
     bundle = build_persistence()
-    scheduler = ODayScheduler(persistence=bundle)
+    scheduler = ODayScheduler(persistence=bundle, tenant_id=TENANT_ID)
 
     scheduler.run_once()
     scheduler.run_once()
@@ -247,9 +269,9 @@ def test_durable_watermark_persists_across_restart(db_path) -> None:
     """Success watermark written through the worker survives a process restart."""
     bundle = _durable_bundle(db_path)
     try:
-        ODayScheduler(persistence=bundle).run_once()
+        ODayScheduler(persistence=bundle, tenant_id=TENANT_ID).run_once()
         assert ODayWorker(persistence=bundle).run_once() is True
-        watermark = bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        watermark = _tenant_watermark(bundle)
         assert watermark is not None
     finally:
         bundle.engine.close()
@@ -257,8 +279,10 @@ def test_durable_watermark_persists_across_restart(db_path) -> None:
     # Simulate process restart: new bundle pointed at the same on-disk file.
     reopened = _durable_bundle(db_path)
     try:
-        persisted = reopened.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        persisted = _tenant_watermark(reopened)
         assert persisted is not None
         assert persisted == watermark
+        # A different tenant does not inherit the restored watermark.
+        assert _tenant_watermark(reopened, OTHER_TENANT_ID) is None
     finally:
         reopened.engine.close()

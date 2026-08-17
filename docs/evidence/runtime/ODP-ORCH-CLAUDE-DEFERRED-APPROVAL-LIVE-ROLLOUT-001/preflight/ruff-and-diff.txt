@@ -1,0 +1,37 @@
+$ uv run --frozen ruff check .orchestrator/approval_queue.py .orchestrator/supervisor.py .orchestrator/test_approval_queue.py .orchestrator/test_supervisor.py
+/bin/bash: line 11: uv: command not found
+
+$ git diff --check
+(exit=0)
+
+$ git diff --check origin/dev...HEAD
+(exit=0)
+
+$ git status --porcelain
+?? docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001/
+$ /home/lupin/oday-plus-supervisor-live/.venv/bin/ruff check .orchestrator/approval_queue.py .orchestrator/supervisor.py .orchestrator/test_approval_queue.py .orchestrator/test_supervisor.py
+All checks passed!
+
+# ruff version: ruff 0.15.20
+
+# same check against the two DEPLOYED files
+$ ruff check /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py /home/lupin/oday-plus/.orchestrator/supervisor.py
+All checks passed!
+
+# ---------------------------------------------------------------------------
+# STOP GATE 3 correction (2026-07-29, driver revision 4)
+#
+# The two `git diff --check` invocations above are RETRACTED as evidence for
+# this task's own files. At the time they ran, `git status --porcelain` showed
+# `?? docs/evidence/runtime/ODP-ORCH-CLAUDE-DEFERRED-APPROVAL-LIVE-ROLLOUT-001/`
+# - the whole evidence directory was untracked. A bare `git diff --check`
+# inspects unstaged changes to *tracked* files only, so it never looked at any
+# of them and could not have failed. `git diff --check origin/dev...HEAD` was
+# equally blind: at that point HEAD carried none of these files either.
+#
+# Once anchor 44e9e62b made them tracked, the coordinator's wider check found
+# real trailing whitespace at preflight/preflight.md:127. It has been stripped.
+# The receipt that counts is the against-merge-SHA form, re-run below.
+
+$ git diff --check 647970dae975f4008633a484cde1e63187035544
+(exit=0)

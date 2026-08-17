@@ -38,7 +38,7 @@ All deployment environments strictly require Workload Identity Federation (WIF).
 If the deployment runs and WIF variables (`GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`) are not populated, or if any required target environment variables are missing, the deployment script and the CI/CD pipeline will fail-closed immediately:
 
 1. **Pre-flight Validation**: The workflow contains a `Validate GCP Deployment Variables` step that performs sanity checks and prints clear diagnostics.
-2. **Local Script Safety**: The script `scripts/deploy_cloud_run_waji.sh` checks the same environment variables and aborts execution before building any Docker images.
+2. **Local Script Safety**: The script `product_ops/deployment/deploy_cloud_run_waji.sh` checks the same environment variables and aborts execution before building any Docker images.
 
 ---
 

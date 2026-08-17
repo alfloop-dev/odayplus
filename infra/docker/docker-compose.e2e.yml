@@ -8,6 +8,7 @@ services:
       CI: "1"
       ODP_ENV: e2e
       ODP_PRODUCT_MODE: poc
+      ODP_E2E_MODE: "true"
       ODP_PERSISTENCE: durable
       ODP_DB_PATH: /data/product-e2e.sqlite3
     ports:
@@ -68,7 +69,7 @@ services:
 
   worker:
     image: odayplus/api:e2e
-    command: ["python", "scripts/e2e/worker_heartbeat.py", "--interval", "15"]
+    command: ["python", "delivery_toolchain/e2e/worker_heartbeat.py", "--interval", "15"]
     environment:
       ODP_ENV: e2e
       ODP_PERSISTENCE: durable

@@ -58,8 +58,8 @@ CI=1 npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts
   → CI=1 is required: the score-failure fault control in
     apps/api/app/routes/listings.py is gated on CI=1 and 403s otherwise.
 uv run pytest tests/ops/test_assisted_listing_intake_release.py -q   → 36 passed
-python3 scripts/e2e/check_product_release_gate.py                    → PASS
-python3 scripts/e2e/check_product_grade_ci_gates.py --require-go --report → PASS (37 labels, GO)
+python3 delivery_toolchain/e2e/check_product_release_gate.py                    → PASS
+python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --require-go --report → PASS (37 labels, GO)
 git diff --check origin/dev...HEAD                                   → clean
 ```
 
@@ -94,8 +94,8 @@ nothing was lost):
 ```
 CI=1 npx playwright test tests/e2e/operator-assisted-listing-intake.spec.ts → 8 passed (2.2m)
 uv run pytest tests/ops/test_assisted_listing_intake_release.py -q          → 36 passed
-python3 scripts/e2e/check_product_release_gate.py                           → PASS
-python3 scripts/e2e/check_product_grade_ci_gates.py --require-go --report   → PASS (37 labels, GO)
+python3 delivery_toolchain/e2e/check_product_release_gate.py                           → PASS
+python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --require-go --report   → PASS (37 labels, GO)
 git diff --check origin/dev...HEAD                                          → clean
 ```
 

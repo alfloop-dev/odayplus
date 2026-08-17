@@ -63,6 +63,7 @@ AUTH_ATTEMPTS_METRIC = MetricDefinition(
     category=MetricCategory.ERROR,
     description="Authentication attempts by token type and outcome.",
     labels=("token_type", "outcome", "reason"),
+    owner="security-audit",
 )
 
 
@@ -210,8 +211,12 @@ class AuthenticationBoundary:
             return ANONYMOUS, reason
 
         subject = str(claims["sub"])
+        principal_mapping = self._principal_mapping(claims, subject)
         principal = principal_from_claims(
-            claims, subject=subject, claim_prefix=self._claim_prefix
+            claims,
+            subject=subject,
+            claim_prefix=self._claim_prefix,
+            principal_mapping=principal_mapping,
         )
         known_roles = {role.value: role for role in Role}
         bound_roles = frozenset(
@@ -222,6 +227,28 @@ class AuthenticationBoundary:
         if bound_roles:
             principal = replace(principal, roles=principal.roles | bound_roles)
         return principal, None
+
+    def _principal_mapping(
+        self, claims: Mapping[str, Any], subject: str
+    ) -> Mapping[str, object] | None:
+        if (
+            not self._config.principal_mapping_declared
+            and not self._config.principal_mappings
+        ):
+            return None
+        direct = self._config.principal_mappings.get(subject)
+        if direct is not None:
+            return direct
+        email = claims.get("email")
+        if (
+            claims.get("email_verified") is True
+            and isinstance(email, str)
+            and email.strip()
+        ):
+            mapped = self._config.principal_mappings.get(email.strip())
+            if mapped is not None:
+                return mapped
+        return {}
 
     def _validate_claims(
         self, claims: Mapping[str, Any], now: datetime

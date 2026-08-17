@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001",
+  "purpose": "Show that the old revision that still carries 100% of dev traffic is database-compatible with the migrated schema once it is warm.",
+  "target": "https://oday-api-7sxbjoeozq-de.a.run.app",
+  "serving_revision": "oday-api-00005-gin",
+  "collected_at": "2026-07-28T22:19:42Z",
+  "collected_by": "Claude2",
+  "probes": [
+    {
+      "path": "/platform/version",
+      "status": 200,
+      "elapsed_s": 0.062,
+      "payload": {
+        "status": "ok",
+        "service": "oday-api",
+        "api_version": "0.1.0",
+        "release_sha": "8ec12c02",
+        "time": "2026-07-28T22:19:42.684023+00:00"
+      }
+    },
+    {
+      "path": "/platform/health",
+      "status": 503,
+      "elapsed_s": 1.312,
+      "aggregate_status": "unhealthy",
+      "dependencies": {
+        "database": "healthy",
+        "job_queue": "healthy",
+        "external_providers": {
+          "status": "healthy",
+          "mode": "live"
+        }
+      }
+    }
+  ],
+  "verdict": {
+    "database_compatible_with_migrated_schema": true,
+    "note": "compatibility_smoke_checks accepts /platform/health status in {200, 503} and only requires dependencies.database == 'healthy'; the 503 aggregate is the old revision's pre-existing state and is not a database verdict."
+  }
+}

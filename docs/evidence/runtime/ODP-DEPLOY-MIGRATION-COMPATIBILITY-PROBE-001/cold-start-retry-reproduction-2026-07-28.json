@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEPLOY-MIGRATION-COMPATIBILITY-PROBE-001",
+  "purpose": "Reproduce the run-30402570022 failure mode against an idle (scaled-to-zero) oday-api revision and show that a bounded retry recovers it.",
+  "target": "https://probe8---oday-api-7sxbjoeozq-de.a.run.app",
+  "correlation_id": "corr-cloud-run-compat-dev-coldstart-repro-20260728",
+  "per_attempt_timeout_seconds": 15.0,
+  "attempts": [
+    {
+      "path": "/platform/version",
+      "timeout_s": 15.0,
+      "status": null,
+      "error": "TimeoutError: The read operation timed out",
+      "elapsed_s": 15.052,
+      "json_object": false,
+      "body_head": ""
+    },
+    {
+      "path": "/platform/version",
+      "timeout_s": 15.0,
+      "status": 200,
+      "elapsed_s": 1.992,
+      "json_object": true,
+      "release_sha": "8ec12c02"
+    },
+    {
+      "path": "/platform/health",
+      "timeout_s": 15.0,
+      "status": 503,
+      "elapsed_s": 0.89,
+      "json_object": true,
+      "database": "healthy"
+    }
+  ],
+  "total_elapsed_s": 21.934
+}

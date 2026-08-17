@@ -9,9 +9,11 @@ application tests stay compatible. State lives in ``durable_documents`` via
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 from typing import Any
 from uuid import uuid4
 
@@ -36,11 +38,15 @@ from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 from modules.learninghub.domain import (
     DatasetSnapshot,
+    DqTriageRecord,
     InferenceComparison,
     MonitoringEvaluation,
     RetrainingRequest,
 )
-from modules.learninghub.infrastructure.repositories import ReleaseDecisionRecord
+from modules.learninghub.infrastructure.repositories import (
+    LearningHubReleaseConflict,
+    ReleaseDecisionRecord,
+)
 from modules.listing.domain.models import CandidateSiteDraft, ListingDedupKey
 from modules.netplan.domain import (
     ApprovalRecord as NetPlanApprovalRecord,
@@ -98,9 +104,7 @@ def _requires_tenant_scope(engine: Any) -> bool:
 def _require_tenant_scope(engine: Any, tenant_id: str | None) -> str | None:
     normalized = str(tenant_id or "").strip()
     if _requires_tenant_scope(engine) and not normalized:
-        raise TenantScopeRequiredError(
-            "tenant_id is required for PostgreSQL business-data reads"
-        )
+        raise TenantScopeRequiredError("tenant_id is required for PostgreSQL business-data reads")
     return normalized or None
 
 
@@ -127,6 +131,10 @@ class DurableSiteScoreRepository:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
 
     def save_report(self, report: SiteScoreReport) -> SiteScoreReport:
         version = self._store.count_in_group(self._C, report.candidate_site_id) + 1
@@ -260,89 +268,136 @@ class DurableForecastOpsRepository:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @staticmethod
+    def _collection(base: str, tenant_id: str) -> str:
+        normalized = str(tenant_id or "").strip()
+        if not normalized:
+            raise ValueError("tenant_id is required for ForecastOps persistence")
+        return f"{base}:{normalized}"
+
     def save_series(self, series: ForecastSeries) -> ForecastSeries:
-        self._store.put(self._SERIES, series.store_id, series)
+        self._store.put(self._collection(self._SERIES, series.tenant_id), series.store_id, series)
         return series
 
-    def list_series(self) -> list[ForecastSeries]:
-        return self._store.list_all(self._SERIES)
+    def list_series(self, tenant_id: str) -> list[ForecastSeries]:
+        return self._store.list_all(self._collection(self._SERIES, tenant_id))
 
-    def get_series(self, store_id: str) -> ForecastSeries | None:
-        return self._store.get(self._SERIES, store_id)
+    def get_series(self, tenant_id: str, store_id: str) -> ForecastSeries | None:
+        return self._store.get(self._collection(self._SERIES, tenant_id), store_id)
 
     def save_forecast(self, forecast: ForecastOutput) -> ForecastOutput:
-        version = self._store.count_in_group(self._FORECASTS, forecast.store_id) + 1
-        versioned = forecast.with_version(
-            forecast_version=version,
-            forecast_output_id=f"forecast-output-{uuid4()}",
-        )
-        self._store.append_version(
-            self._FORECASTS,
-            versioned.forecast_output_id,
-            versioned,
-            group_key=versioned.store_id,
-        )
-        return versioned
+        collection = self._collection(self._FORECASTS, forecast.tenant_id)
+        with self._store.engine.lock:
+            existing = self._store.get(collection, forecast.forecast_output_id)
+            if existing is not None:
+                return existing
+            if str(getattr(self._store.engine, "dialect", "")).lower() == "postgresql":
+                self._store.engine.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+                    (f"{collection}:{forecast.store_id}",),
+                )
+            version = self._store.count_in_group(collection, forecast.store_id) + 1
+            versioned = forecast.with_version(
+                forecast_version=version,
+                forecast_output_id=forecast.forecast_output_id,
+            )
+            self._store.put(
+                collection,
+                versioned.forecast_output_id,
+                versioned,
+                group_key=versioned.store_id,
+                seq=version,
+            )
+            return versioned
 
-    def latest_forecasts(self) -> list[ForecastOutput]:
-        return self._store.latest_per_group(self._FORECASTS)
+    def latest_forecasts(self, tenant_id: str) -> list[ForecastOutput]:
+        return self._store.latest_per_group(self._collection(self._FORECASTS, tenant_id))
 
-    def history(self, store_id: str) -> list[ForecastOutput]:
-        return self._store.list_by_group(self._FORECASTS, store_id)
+    def history(self, tenant_id: str, store_id: str) -> list[ForecastOutput]:
+        return self._store.list_by_group(self._collection(self._FORECASTS, tenant_id), store_id)
 
     def save_alert(self, alert: Alert) -> Alert:
         self._store.put(
-            self._ALERTS,
+            self._collection(self._ALERTS, alert.tenant_id),
             alert.alert_id,
             alert,
             group_key=alert.store_id,
         )
         return alert
 
-    def list_alerts(self) -> list[Alert]:
-        return self._store.list_all(self._ALERTS)
+    def list_alerts(self, tenant_id: str) -> list[Alert]:
+        return self._store.list_all(self._collection(self._ALERTS, tenant_id))
 
-    def list_alerts_by_store(self, store_id: str) -> list[Alert]:
-        return self._store.list_by_group(self._ALERTS, store_id)
+    def list_alerts_by_store(self, tenant_id: str, store_id: str) -> list[Alert]:
+        return self._store.list_by_group(self._collection(self._ALERTS, tenant_id), store_id)
 
-    def get_alert(self, alert_id: str) -> Alert | None:
-        return self._store.get(self._ALERTS, alert_id)
+    def get_alert(self, tenant_id: str, alert_id: str) -> Alert | None:
+        return self._store.get(self._collection(self._ALERTS, tenant_id), alert_id)
 
     def save_handoff(self, handoff: InterventionHandoff) -> InterventionHandoff:
-        self._store.put(self._HANDOFFS, handoff.handoff_id, handoff)
+        self._store.put(
+            self._collection(self._HANDOFFS, handoff.tenant_id),
+            handoff.handoff_id,
+            handoff,
+        )
         return handoff
 
-    def list_handoffs(self) -> list[InterventionHandoff]:
-        return self._store.list_all(self._HANDOFFS)
+    def list_handoffs(self, tenant_id: str) -> list[InterventionHandoff]:
+        return self._store.list_all(self._collection(self._HANDOFFS, tenant_id))
 
-    def get_handoff(self, handoff_id: str) -> InterventionHandoff | None:
-        return self._store.get(self._HANDOFFS, handoff_id)
+    def get_handoff(self, tenant_id: str, handoff_id: str) -> InterventionHandoff | None:
+        return self._store.get(self._collection(self._HANDOFFS, tenant_id), handoff_id)
 
-    def save_prediction_run(self, run: PredictionRun) -> PredictionRun:
-        self._store.put(self._PREDICTION_RUNS, run.prediction_run_id, run)
+    def save_prediction_run(self, tenant_id: str, run: PredictionRun) -> PredictionRun:
+        self._store.put(
+            self._collection(self._PREDICTION_RUNS, tenant_id),
+            run.prediction_run_id,
+            run,
+        )
         return run
 
-    def get_prediction_run(self, prediction_run_id: str) -> PredictionRun | None:
-        return self._store.get(self._PREDICTION_RUNS, prediction_run_id)
+    def get_prediction_run(self, tenant_id: str, prediction_run_id: str) -> PredictionRun | None:
+        return self._store.get(
+            self._collection(self._PREDICTION_RUNS, tenant_id),
+            prediction_run_id,
+        )
 
-    def save_prediction(self, prediction: Prediction) -> Prediction:
-        self._store.append_version(
-            self._PREDICTIONS,
-            f"prediction-{uuid4()}",
+    def save_prediction(self, tenant_id: str, prediction: Prediction) -> Prediction:
+        collection = self._collection(self._PREDICTIONS, tenant_id)
+        existing = self._store.get(collection, prediction.prediction_id)
+        if existing is not None:
+            return existing
+        self._store.put(
+            collection,
+            prediction.prediction_id,
             prediction,
             group_key=prediction.prediction_run_id,
         )
         return prediction
 
-    def get_predictions(self, prediction_run_id: str) -> list[Prediction]:
-        return self._store.list_by_group(self._PREDICTIONS, prediction_run_id)
+    def get_predictions(self, tenant_id: str, prediction_run_id: str) -> list[Prediction]:
+        return self._store.list_by_group(
+            self._collection(self._PREDICTIONS, tenant_id),
+            prediction_run_id,
+        )
 
-    def save_canonical_forecast(self, forecast: CanonicalForecastOutput) -> CanonicalForecastOutput:
-        self._store.put(self._CANONICAL_FORECASTS, forecast.forecast_output_id, forecast)
+    def save_canonical_forecast(
+        self, tenant_id: str, forecast: CanonicalForecastOutput
+    ) -> CanonicalForecastOutput:
+        self._store.put(
+            self._collection(self._CANONICAL_FORECASTS, tenant_id),
+            forecast.forecast_output_id,
+            forecast,
+        )
         return forecast
 
-    def get_canonical_forecast(self, forecast_output_id: str) -> CanonicalForecastOutput | None:
-        return self._store.get(self._CANONICAL_FORECASTS, forecast_output_id)
+    def get_canonical_forecast(
+        self, tenant_id: str, forecast_output_id: str
+    ) -> CanonicalForecastOutput | None:
+        return self._store.get(
+            self._collection(self._CANONICAL_FORECASTS, tenant_id),
+            forecast_output_id,
+        )
 
 
 class DurableAdLiftRepository:
@@ -536,17 +591,23 @@ class DurableLearningHubRepository:
     """
 
     _DATASETS = "learninghub.datasets"
+    _DQ_TRIAGE = "learninghub.dq_triage"
     _VERSIONS = "learninghub.model_versions"
     _CARDS = "learninghub.model_cards"
     _VALIDATIONS = "learninghub.validation_runs"
     _ALIASES = "learninghub.aliases"
     _RELEASES = "learninghub.release_decisions"
+    _RELEASE_SAGAS = "learninghub.release_sagas"
+    _RELEASE_SAGA_IDEMPOTENCY = "learninghub.release_saga_idempotency"
+    _RELEASE_REVISIONS = "learninghub.release_revisions"
     _MONITORING = "learninghub.monitoring_evaluations"
     _RETRAINING = "learninghub.retraining_requests"
     _COMPARISONS = "learninghub.inference_comparisons"
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+        self._release_locks: dict[str, RLock] = {}
+        self._release_locks_guard = RLock()
 
     @property
     def storage_path(self) -> Path:
@@ -561,6 +622,22 @@ class DurableLearningHubRepository:
 
     def get_dataset_snapshot(self, dataset_snapshot_id: str) -> DatasetSnapshot | None:
         return self._store.get(self._DATASETS, dataset_snapshot_id)
+
+    def save_dq_triage(self, record: DqTriageRecord) -> DqTriageRecord:
+        self._store.put(
+            self._DQ_TRIAGE,
+            record.triage_id,
+            record,
+            group_key=record.dataset_snapshot_id,
+        )
+        return record
+
+    def list_dq_triages(self, dataset_snapshot_id: str | None = None) -> list[DqTriageRecord]:
+        if dataset_snapshot_id is not None:
+            records = self._store.list_by_group(self._DQ_TRIAGE, dataset_snapshot_id)
+        else:
+            records = self._store.list_all(self._DQ_TRIAGE)
+        return sorted(records, key=lambda r: r.time, reverse=True)
 
     # -- model versions ---------------------------------------------------
 
@@ -658,17 +735,149 @@ class DurableLearningHubRepository:
         self._store.put(self._RELEASES, decision.release_id, decision)
         return decision
 
+    def delete_release_decision(self, release_id: str) -> None:
+        self._store.put(self._RELEASES, release_id, None)
+
     def get_release_decision(self, release_id: str) -> object | None:
         return self._store.get(self._RELEASES, release_id)
 
     def list_release_decisions(self) -> list[object]:
-        return self._store.list_all(self._RELEASES)
+        return [
+            decision for decision in self._store.list_all(self._RELEASES) if decision is not None
+        ]
+
+    def save_release_saga(self, saga):
+        from modules.learninghub.infrastructure.repositories import (
+            LearningHubReleaseConflict,
+            assert_release_saga_fence,
+        )
+
+        engine = self._store.engine
+        pointer_id = f"{saga.model_name}:{saga.idempotency_key}"
+        with engine.lock:
+            if getattr(engine, "dialect", None) == "postgresql":
+                engine.query_one(
+                    "SELECT doc_id FROM durable_documents "
+                    "WHERE collection = ? AND doc_id = ? FOR UPDATE",
+                    (self._RELEASE_SAGAS, saga.release_id),
+                )
+            existing_release_id = self._store.get(
+                self._RELEASE_SAGA_IDEMPOTENCY,
+                pointer_id,
+            )
+            if existing_release_id is not None and existing_release_id != saga.release_id:
+                raise LearningHubReleaseConflict(
+                    f"idempotency key already belongs to release {existing_release_id}"
+                )
+            assert_release_saga_fence(self.get_release_saga(saga.release_id), saga)
+            self._store.put(
+                self._RELEASE_SAGAS,
+                saga.release_id,
+                saga,
+                group_key=saga.model_name,
+            )
+            self._store.put(
+                self._RELEASE_SAGA_IDEMPOTENCY,
+                pointer_id,
+                saga.release_id,
+                group_key=saga.model_name,
+            )
+        return saga
+
+    def get_release_saga(self, release_id):
+        return self._store.get(self._RELEASE_SAGAS, release_id)
+
+    def get_release_saga_by_idempotency(self, model_name, idempotency_key):
+        release_id = self._store.get(
+            self._RELEASE_SAGA_IDEMPOTENCY,
+            f"{model_name}:{idempotency_key}",
+        )
+        if release_id is None:
+            return None
+        return self.get_release_saga(release_id)
+
+    def list_release_sagas(self, model_name=None, *, include_terminal=True):
+        sagas = (
+            self._store.list_all(self._RELEASE_SAGAS)
+            if model_name is None
+            else self._store.list_by_group(self._RELEASE_SAGAS, model_name)
+        )
+        if include_terminal:
+            return sagas
+        return [saga for saga in sagas if not saga.terminal]
+
+    def get_release_revision(self, model_name: str) -> int:
+        value = self._store.get(self._RELEASE_REVISIONS, model_name)
+        return int(value) if value is not None else 0
+
+    @contextmanager
+    def release_guard(
+        self,
+        model_name: str,
+        *,
+        expected_revision: int,
+    ) -> Iterator[int]:
+        with self._release_locks_guard:
+            lock = self._release_locks.setdefault(model_name, RLock())
+        with lock:
+            engine = self._store.engine
+            if getattr(engine, "dialect", None) == "postgresql":
+                with engine.transaction():
+                    engine.query_one(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(?, 0)) AS locked",
+                        (f"learninghub.release:{model_name}",),
+                    )
+                    yield from self._guard_release_revision(
+                        model_name,
+                        expected_revision=expected_revision,
+                    )
+                return
+            yield from self._guard_release_revision(
+                model_name,
+                expected_revision=expected_revision,
+            )
+
+    @contextmanager
+    def release_recovery_guard(self, model_name: str) -> Iterator[None]:
+        with self._release_locks_guard:
+            lock = self._release_locks.setdefault(model_name, RLock())
+        with lock:
+            engine = self._store.engine
+            if getattr(engine, "dialect", None) == "postgresql":
+                with engine.transaction():
+                    engine.query_one(
+                        "SELECT pg_advisory_xact_lock("
+                        "hashtextextended(?, 0)) AS locked",
+                        (f"learninghub.release:{model_name}",),
+                    )
+                    yield
+                return
+            yield
+
+    def _guard_release_revision(
+        self,
+        model_name: str,
+        *,
+        expected_revision: int,
+    ) -> Iterator[int]:
+        current = self.get_release_revision(model_name)
+        if current != expected_revision:
+            raise LearningHubReleaseConflict(
+                f"release revision conflict for {model_name}: "
+                f"expected {expected_revision}, current {current}"
+            )
+        reserved = current + 1
+        self._store.put(self._RELEASE_REVISIONS, model_name, reserved)
+        try:
+            yield reserved
+        except BaseException:
+            if getattr(self._store.engine, "dialect", None) != "postgresql":
+                self._store.put(self._RELEASE_REVISIONS, model_name, current)
+            raise
 
     # -- monitoring and retraining ---------------------------------------
 
-    def save_monitoring_evaluation(
-        self, evaluation: MonitoringEvaluation
-    ) -> MonitoringEvaluation:
+    def save_monitoring_evaluation(self, evaluation: MonitoringEvaluation) -> MonitoringEvaluation:
         self._store.put(
             self._MONITORING,
             evaluation.evaluation_id,
@@ -869,6 +1078,7 @@ class DurableTenantRepository:
 
     def save_tenant(self, tenant: Tenant) -> Tenant:
         from datetime import datetime
+
         self._engine.execute(
             "INSERT INTO tenants (tenant_id, tenant_name, status, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?) "
@@ -880,14 +1090,17 @@ class DurableTenantRepository:
                 tenant.tenant_id,
                 tenant.tenant_name,
                 tenant.status,
-                tenant.created_at.isoformat() if isinstance(tenant.created_at, datetime) else str(tenant.created_at),
-                datetime.now().isoformat()
-            )
+                tenant.created_at.isoformat()
+                if isinstance(tenant.created_at, datetime)
+                else str(tenant.created_at),
+                datetime.now().isoformat(),
+            ),
         )
         return tenant
 
     def get_tenant(self, tenant_id: str) -> Tenant | None:
         from datetime import datetime
+
         row = self._engine.query_one("SELECT * FROM tenants WHERE tenant_id = ?", (tenant_id,))
         if not row:
             return None
@@ -895,18 +1108,19 @@ class DurableTenantRepository:
             tenant_id=row["tenant_id"],
             tenant_name=row["tenant_name"],
             status=row["status"],
-            created_at=datetime.fromisoformat(row["created_at"])
+            created_at=datetime.fromisoformat(row["created_at"]),
         )
 
     def list_tenants(self) -> list[Tenant]:
         from datetime import datetime
+
         rows = self._engine.query("SELECT * FROM tenants ORDER BY created_at")
         return [
             Tenant(
                 tenant_id=row["tenant_id"],
                 tenant_name=row["tenant_name"],
                 status=row["status"],
-                created_at=datetime.fromisoformat(row["created_at"])
+                created_at=datetime.fromisoformat(row["created_at"]),
             )
             for row in rows
         ]
@@ -950,8 +1164,8 @@ class DurableBrandRepository:
                 brand.brand_name,
                 brand.brand_type,
                 brand.brand_capture_group,
-                brand.status
-            )
+                brand.status,
+            ),
         )
         return brand
 
@@ -966,7 +1180,7 @@ class DurableBrandRepository:
             brand_name=row["brand_name"],
             brand_type=row["brand_type"],
             brand_capture_group=row["brand_capture_group"] or "",
-            status=row["status"]
+            status=row["status"],
         )
 
     def list_brands(self) -> list[Brand]:
@@ -979,7 +1193,7 @@ class DurableBrandRepository:
                 brand_name=row["brand_name"],
                 brand_type=row["brand_type"],
                 brand_capture_group=row["brand_capture_group"] or "",
-                status=row["status"]
+                status=row["status"],
             )
             for row in rows
         ]
@@ -1006,13 +1220,9 @@ class DurableAddressLocationRepository:
 
     def save_address(self, address: AddressLocation) -> AddressLocation:
         postgres = _requires_tenant_scope(self._engine)
-        geom_expression = (
-            "ST_SetSRID(ST_MakePoint(?, ?), 4326)" if postgres else "?"
-        )
+        geom_expression = "ST_SetSRID(ST_MakePoint(?, ?), 4326)" if postgres else "?"
         geom_params: tuple[Any, ...] = (
-            (address.longitude, address.latitude)
-            if postgres
-            else (address.raw_address,)
+            (address.longitude, address.latitude) if postgres else (address.raw_address,)
         )
         # geom_expression is selected from two fixed dialect-specific fragments.
         self._engine.execute(
@@ -1055,12 +1265,14 @@ class DurableAddressLocationRepository:
                 address.h3_res_9,
                 address.h3_res_10,
                 bool(address.manual_override_flag),
-            )
+            ),
         )
         return address
 
     def get_address(self, address_id: str) -> AddressLocation | None:
-        row = self._engine.query_one("SELECT * FROM address_locations WHERE address_id = ?", (address_id,))
+        row = self._engine.query_one(
+            "SELECT * FROM address_locations WHERE address_id = ?", (address_id,)
+        )
         if not row:
             return None
         return AddressLocation(
@@ -1078,7 +1290,7 @@ class DurableAddressLocationRepository:
             h3_res_8=row["h3_res_8"] or "",
             h3_res_9=row["h3_res_9"] or "",
             h3_res_10=row["h3_res_10"] or "",
-            manual_override_flag=bool(row["manual_override_flag"])
+            manual_override_flag=bool(row["manual_override_flag"]),
         )
 
     def list_addresses(self) -> list[AddressLocation]:
@@ -1099,7 +1311,7 @@ class DurableAddressLocationRepository:
                 h3_res_8=row["h3_res_8"] or "",
                 h3_res_9=row["h3_res_9"] or "",
                 h3_res_10=row["h3_res_10"] or "",
-                manual_override_flag=bool(row["manual_override_flag"])
+                manual_override_flag=bool(row["manual_override_flag"]),
             )
             for row in rows
         ]
@@ -1142,12 +1354,33 @@ class DurableStoreRepository:
 
     def save_store(self, store: Store) -> Store:
         from datetime import date, datetime, time
-        opened_on = store.opened_on.isoformat() if isinstance(store.opened_on, date) else store.opened_on
-        closed_on = store.closed_on.isoformat() if isinstance(store.closed_on, date) else store.closed_on
-        service_start_time = store.service_start_time.isoformat() if isinstance(store.service_start_time, time) else store.service_start_time
-        service_end_time = store.service_end_time.isoformat() if isinstance(store.service_end_time, time) else store.service_end_time
-        effective_from = store.effective_from.isoformat() if isinstance(store.effective_from, datetime) else store.effective_from
-        effective_to = store.effective_to.isoformat() if isinstance(store.effective_to, datetime) else store.effective_to
+
+        opened_on = (
+            store.opened_on.isoformat() if isinstance(store.opened_on, date) else store.opened_on
+        )
+        closed_on = (
+            store.closed_on.isoformat() if isinstance(store.closed_on, date) else store.closed_on
+        )
+        service_start_time = (
+            store.service_start_time.isoformat()
+            if isinstance(store.service_start_time, time)
+            else store.service_start_time
+        )
+        service_end_time = (
+            store.service_end_time.isoformat()
+            if isinstance(store.service_end_time, time)
+            else store.service_end_time
+        )
+        effective_from = (
+            store.effective_from.isoformat()
+            if isinstance(store.effective_from, datetime)
+            else store.effective_from
+        )
+        effective_to = (
+            store.effective_to.isoformat()
+            if isinstance(store.effective_to, datetime)
+            else store.effective_to
+        )
 
         self._engine.execute(
             "INSERT INTO stores ("
@@ -1192,12 +1425,13 @@ class DurableStoreRepository:
                 effective_from,
                 effective_to,
                 bool(store.is_current),
-            )
+            ),
         )
         return store
 
     def get_store(self, store_id: str) -> Store | None:
         from datetime import date, datetime, time
+
         row = self._engine.query_one("SELECT * FROM stores WHERE store_id = ?", (store_id,))
         if not row:
             return None
@@ -1218,7 +1452,7 @@ class DurableStoreRepository:
             service_end_time=time.fromisoformat(row["service_end_time"]),
             effective_from=datetime.fromisoformat(row["effective_from"]),
             effective_to=datetime.fromisoformat(row["effective_to"]),
-            is_current=bool(row["is_current"])
+            is_current=bool(row["is_current"]),
         )
 
     def list_stores(
@@ -1230,6 +1464,7 @@ class DurableStoreRepository:
         store_ids: tuple[str, ...] = (),
     ) -> list[Store]:
         from datetime import date, datetime, time
+
         tenant_id = _require_tenant_scope(self._engine, tenant_id)
         clauses: list[str] = []
         params: list[Any] = []
@@ -1263,7 +1498,7 @@ class DurableStoreRepository:
                 service_end_time=time.fromisoformat(row["service_end_time"]),
                 effective_from=datetime.fromisoformat(row["effective_from"]),
                 effective_to=datetime.fromisoformat(row["effective_to"]),
-                is_current=bool(row["is_current"])
+                is_current=bool(row["is_current"]),
             )
             for row in rows
         ]
@@ -1290,10 +1525,27 @@ class DurableMachineRepository:
 
     def save_machine(self, machine: Machine) -> Machine:
         from datetime import date, datetime
-        installed_on = machine.installed_on.isoformat() if isinstance(machine.installed_on, date) else machine.installed_on
-        removed_on = machine.removed_on.isoformat() if isinstance(machine.removed_on, date) else machine.removed_on
-        effective_from = machine.effective_from.isoformat() if isinstance(machine.effective_from, datetime) else machine.effective_from
-        effective_to = machine.effective_to.isoformat() if isinstance(machine.effective_to, datetime) else machine.effective_to
+
+        installed_on = (
+            machine.installed_on.isoformat()
+            if isinstance(machine.installed_on, date)
+            else machine.installed_on
+        )
+        removed_on = (
+            machine.removed_on.isoformat()
+            if isinstance(machine.removed_on, date)
+            else machine.removed_on
+        )
+        effective_from = (
+            machine.effective_from.isoformat()
+            if isinstance(machine.effective_from, datetime)
+            else machine.effective_from
+        )
+        effective_to = (
+            machine.effective_to.isoformat()
+            if isinstance(machine.effective_to, datetime)
+            else machine.effective_to
+        )
 
         self._engine.execute(
             "INSERT INTO machines ("
@@ -1330,13 +1582,14 @@ class DurableMachineRepository:
                 removed_on,
                 machine.machine_status,
                 effective_from,
-                effective_to
-            )
+                effective_to,
+            ),
         )
         return machine
 
     def get_machine(self, machine_id: str) -> Machine | None:
         from datetime import date, datetime
+
         row = self._engine.query_one("SELECT * FROM machines WHERE machine_id = ?", (machine_id,))
         if not row:
             return None
@@ -1354,11 +1607,12 @@ class DurableMachineRepository:
             removed_on=date.fromisoformat(row["removed_on"]) if row["removed_on"] else None,
             machine_status=row["machine_status"],
             effective_from=datetime.fromisoformat(row["effective_from"]),
-            effective_to=datetime.fromisoformat(row["effective_to"])
+            effective_to=datetime.fromisoformat(row["effective_to"]),
         )
 
     def list_machines(self) -> list[Machine]:
         from datetime import date, datetime
+
         rows = self._engine.query("SELECT * FROM machines")
         return [
             Machine(
@@ -1371,11 +1625,13 @@ class DurableMachineRepository:
                 machine_type=row["machine_type"] or "",
                 capacity_kg=row["capacity_kg"] or 0.0,
                 capacity_band=row["capacity_band"],
-                installed_on=date.fromisoformat(row["installed_on"]) if row["installed_on"] else None,
+                installed_on=date.fromisoformat(row["installed_on"])
+                if row["installed_on"]
+                else None,
                 removed_on=date.fromisoformat(row["removed_on"]) if row["removed_on"] else None,
                 machine_status=row["machine_status"],
                 effective_from=datetime.fromisoformat(row["effective_from"]),
-                effective_to=datetime.fromisoformat(row["effective_to"])
+                effective_to=datetime.fromisoformat(row["effective_to"]),
             )
             for row in rows
         ]
@@ -1404,9 +1660,7 @@ class InMemoryTransactionRepository:
         transactions = list(self._transactions.values())
         if store_ids:
             transactions = [
-                transaction
-                for transaction in transactions
-                if transaction.store_id in store_ids
+                transaction for transaction in transactions if transaction.store_id in store_ids
             ]
         return transactions
 
@@ -1417,10 +1671,27 @@ class DurableTransactionRepository:
 
     def save_transaction(self, transaction: Transaction) -> Transaction:
         from datetime import datetime
-        event_time = transaction.event_time.isoformat() if isinstance(transaction.event_time, datetime) else transaction.event_time
-        observation_time = transaction.observation_time.isoformat() if isinstance(transaction.observation_time, datetime) else transaction.observation_time
-        payment_time = transaction.payment_time.isoformat() if isinstance(transaction.payment_time, datetime) else transaction.payment_time
-        ingested_at = transaction.ingested_at.isoformat() if isinstance(transaction.ingested_at, datetime) else transaction.ingested_at
+
+        event_time = (
+            transaction.event_time.isoformat()
+            if isinstance(transaction.event_time, datetime)
+            else transaction.event_time
+        )
+        observation_time = (
+            transaction.observation_time.isoformat()
+            if isinstance(transaction.observation_time, datetime)
+            else transaction.observation_time
+        )
+        payment_time = (
+            transaction.payment_time.isoformat()
+            if isinstance(transaction.payment_time, datetime)
+            else transaction.payment_time
+        )
+        ingested_at = (
+            transaction.ingested_at.isoformat()
+            if isinstance(transaction.ingested_at, datetime)
+            else transaction.ingested_at
+        )
 
         self._engine.execute(
             "INSERT INTO transactions ("
@@ -1468,14 +1739,17 @@ class DurableTransactionRepository:
                 transaction.price_schedule_id,
                 transaction.promotion_id,
                 transaction.source_system,
-                ingested_at
-            )
+                ingested_at,
+            ),
         )
         return transaction
 
     def get_transaction(self, transaction_id: str) -> Transaction | None:
         from datetime import datetime
-        row = self._engine.query_one("SELECT * FROM transactions WHERE transaction_id = ?", (transaction_id,))
+
+        row = self._engine.query_one(
+            "SELECT * FROM transactions WHERE transaction_id = ?", (transaction_id,)
+        )
         if not row:
             return None
         return Transaction(
@@ -1486,7 +1760,9 @@ class DurableTransactionRepository:
             member_id=row["member_id"] or None,
             event_time=datetime.fromisoformat(row["event_time"]),
             observation_time=datetime.fromisoformat(row["observation_time"]),
-            payment_time=datetime.fromisoformat(row["payment_time"]) if row["payment_time"] else None,
+            payment_time=datetime.fromisoformat(row["payment_time"])
+            if row["payment_time"]
+            else None,
             gross_amount=row["gross_amount"],
             discount_amount=row["discount_amount"],
             net_amount=row["net_amount"],
@@ -1497,7 +1773,7 @@ class DurableTransactionRepository:
             price_schedule_id=row["price_schedule_id"] or None,
             promotion_id=row["promotion_id"] or None,
             source_system=row["source_system"],
-            ingested_at=datetime.fromisoformat(row["ingested_at"])
+            ingested_at=datetime.fromisoformat(row["ingested_at"]),
         )
 
     def list_transactions(
@@ -1507,14 +1783,14 @@ class DurableTransactionRepository:
         store_ids: tuple[str, ...] = (),
     ) -> list[Transaction]:
         from datetime import datetime
+
         tenant_id = _require_tenant_scope(self._engine, tenant_id)
         clauses: list[str] = []
         params: list[Any] = []
         table_expression = "transactions AS transaction_row"
         if tenant_id is not None:
             table_expression += (
-                " JOIN stores AS store_row"
-                " ON store_row.store_id = transaction_row.store_id"
+                " JOIN stores AS store_row ON store_row.store_id = transaction_row.store_id"
             )
             clauses.append("store_row.tenant_id = ?")
             params.append(tenant_id)
@@ -1541,7 +1817,9 @@ class DurableTransactionRepository:
                 member_id=row["member_id"] or None,
                 event_time=datetime.fromisoformat(row["event_time"]),
                 observation_time=datetime.fromisoformat(row["observation_time"]),
-                payment_time=datetime.fromisoformat(row["payment_time"]) if row["payment_time"] else None,
+                payment_time=datetime.fromisoformat(row["payment_time"])
+                if row["payment_time"]
+                else None,
                 gross_amount=row["gross_amount"],
                 discount_amount=row["discount_amount"],
                 net_amount=row["net_amount"],
@@ -1552,7 +1830,7 @@ class DurableTransactionRepository:
                 price_schedule_id=row["price_schedule_id"] or None,
                 promotion_id=row["promotion_id"] or None,
                 source_system=row["source_system"],
-                ingested_at=datetime.fromisoformat(row["ingested_at"])
+                ingested_at=datetime.fromisoformat(row["ingested_at"]),
             )
             for row in rows
         ]
@@ -1579,8 +1857,17 @@ class DurableMachineCycleRepository:
 
     def save_machine_cycle(self, machine_cycle: MachineCycle) -> MachineCycle:
         from datetime import datetime
-        cycle_start_time = machine_cycle.cycle_start_time.isoformat() if isinstance(machine_cycle.cycle_start_time, datetime) else machine_cycle.cycle_start_time
-        cycle_end_time = machine_cycle.cycle_end_time.isoformat() if isinstance(machine_cycle.cycle_end_time, datetime) else machine_cycle.cycle_end_time
+
+        cycle_start_time = (
+            machine_cycle.cycle_start_time.isoformat()
+            if isinstance(machine_cycle.cycle_start_time, datetime)
+            else machine_cycle.cycle_start_time
+        )
+        cycle_end_time = (
+            machine_cycle.cycle_end_time.isoformat()
+            if isinstance(machine_cycle.cycle_end_time, datetime)
+            else machine_cycle.cycle_end_time
+        )
 
         self._engine.execute(
             "INSERT INTO machine_cycles ("
@@ -1609,13 +1896,14 @@ class DurableMachineCycleRepository:
                 machine_cycle.cycle_type,
                 machine_cycle.duration_sec,
                 machine_cycle.cycle_status,
-                machine_cycle.error_code
-            )
+                machine_cycle.error_code,
+            ),
         )
         return machine_cycle
 
     def get_machine_cycle(self, cycle_id: str) -> MachineCycle | None:
         from datetime import datetime
+
         row = self._engine.query_one("SELECT * FROM machine_cycles WHERE cycle_id = ?", (cycle_id,))
         if not row:
             return None
@@ -1629,11 +1917,12 @@ class DurableMachineCycleRepository:
             cycle_type=row["cycle_type"],
             duration_sec=row["duration_sec"],
             cycle_status=row["cycle_status"],
-            error_code=row["error_code"] or None
+            error_code=row["error_code"] or None,
         )
 
     def list_machine_cycles(self) -> list[MachineCycle]:
         from datetime import datetime
+
         rows = self._engine.query("SELECT * FROM machine_cycles")
         return [
             MachineCycle(
@@ -1646,7 +1935,7 @@ class DurableMachineCycleRepository:
                 cycle_type=row["cycle_type"],
                 duration_sec=row["duration_sec"],
                 cycle_status=row["cycle_status"],
-                error_code=row["error_code"] or None
+                error_code=row["error_code"] or None,
             )
             for row in rows
         ]
@@ -1668,6 +1957,10 @@ class DurableHeatZoneResultStore:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
 
     def put(
         self,
@@ -1731,6 +2024,10 @@ class DurableListingRepository:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
     def has_duplicate(self, key: ListingDedupKey) -> bool:
         return (
             self._store.get(self._DEDUP, key.source_key) is not None
@@ -1746,9 +2043,7 @@ class DurableListingRepository:
         self._store.put(self._DEDUP, key.property_key, True)
 
     def save_candidate(self, candidate: CandidateSiteDraft) -> None:
-        self._store.put(
-            self._CANDIDATES, candidate.candidate_site.candidate_site_id, candidate
-        )
+        self._store.put(self._CANDIDATES, candidate.candidate_site.candidate_site_id, candidate)
 
     def list_candidates(self) -> list[CandidateSiteDraft]:
         return self._store.list_all(self._CANDIDATES)
@@ -1781,6 +2076,10 @@ class DurableDecisionStore:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
     def save_decision(self, decision: SiteScoreDecision) -> None:
         self._store.put(self._DECISIONS, decision.decision_id, decision)
 
@@ -1808,6 +2107,10 @@ class DurableRealizedSiteStore:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
 
     def put(self, site: RealizedSite) -> None:
         self._store.put(self._C, site.candidate_site_id, site)

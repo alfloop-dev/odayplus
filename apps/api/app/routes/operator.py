@@ -34,8 +34,7 @@ Backward-compat note:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
@@ -134,6 +133,7 @@ def create_operator_router(
     require_live_data: bool = False,
     persistence_mode: str = "memory",
     provider_mode: str = "fixture",
+    allow_test_reset: bool = False,
 ) -> APIRouter:
     """Assemble the modular Operator Console API router.
 
@@ -163,7 +163,13 @@ def create_operator_router(
         require_operator_permission,
         require_permission,
     )
-    from shared.auth import Action
+    from shared.auth import (
+        AccessRequest,
+        Action,
+        Environment,
+        Principal,
+        ResourceDescriptor,
+    )
 
     active_audit_log = audit_log or InMemoryAuditLog()
     authz_engine = build_engine(audit_log=active_audit_log)
@@ -171,7 +177,8 @@ def create_operator_router(
     # Shared state service — one instance per router lifetime. A live-required
     # router accepts only a state service backed by the injected live
     # repository; fixture services can never cross this composition boundary.
-    if require_live_data:
+    effective_require_live_data = require_live_data or (live_repository is not None)
+    if effective_require_live_data:
         svc = (
             state_service
             if state_service is not None and state_service.live_repository is not None
@@ -226,17 +233,70 @@ def create_operator_router(
     operator_view_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE,
         Action.VIEW,
-        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        tenant_id=None if effective_require_live_data else OPERATOR_TENANT_ID,
         engine=authz_engine,
     )
     operator_write_guard = require_operator_permission(
         OPERATOR_CONSOLE_RESOURCE,
         Action.UPDATE,
-        tenant_id=None if require_live_data else OPERATOR_TENANT_ID,
+        tenant_id=None if effective_require_live_data else OPERATOR_TENANT_ID,
         engine=authz_engine,
     )
 
-    if require_live_data:
+    def authorize_franchisee_store(
+        request: Request,
+        principal: Principal,
+        action: Action,
+        requested_store_id: str | None,
+    ) -> str:
+        """Resolve a verified store and enforce object-level franchisee ABAC."""
+
+        requested = (requested_store_id or "").strip() or None
+        scoped_stores = sorted(
+            {
+                str(store_id).strip()
+                for store_id in principal.scope.store_ids
+                if str(store_id).strip()
+            }
+        )
+        # The sentinel deliberately fails franchisee ABAC when no verified
+        # store grant exists, instead of reviving the old STORE-001 default.
+        missing_store_scope = requested is None and not scoped_stores
+        effective_store = requested or (
+            scoped_stores[0] if scoped_stores else "__missing_store_scope__"
+        )
+        access = AccessRequest(
+            principal=principal,
+            action=action,
+            resource=ResourceDescriptor(
+                type="franchisee_portal",
+                resource_id=effective_store,
+                tenant_id=principal.scope.tenant_id,
+                store_id=effective_store,
+            ),
+            environment=Environment(
+                source_ip=request.client.host if request.client else None,
+                attributes={
+                    "correlation_id": (
+                        getattr(request.state, "correlation_id", None) or "unknown"
+                    )
+                },
+            ),
+        )
+        decision = authz_engine.authorize(access)
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=decision.reason,
+            )
+        if missing_store_scope:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="storeId is required when the principal has no scoped store",
+            )
+        return effective_store
+
+    if effective_require_live_data:
         # Production exposes only read surfaces backed by the live repository.
         # Seed reset and modules whose services still own process-local state
         # are not mounted at all.
@@ -291,19 +351,6 @@ def create_operator_router(
                 },
             )
 
-        def _unavailable_field(
-            dependency: str,
-            *,
-            reason_code: str,
-        ) -> dict[str, Any]:
-            return {
-                "state": "unavailable",
-                "available": False,
-                "complete": False,
-                "dependency": dependency,
-                "reasonCode": reason_code,
-            }
-
         @router.get("/bootstrap", dependencies=[Depends(operator_view_guard)])
         @router.get("/today", dependencies=[Depends(operator_view_guard)])
         def live_envelope(
@@ -347,537 +394,87 @@ def create_operator_router(
                 ),
             )
 
-        def _task_row(item: dict[str, Any]) -> dict[str, Any]:
-            target = item.get("target") or {}
-            task_id = str(item.get("id", ""))
-            tone = str(item.get("tone", "info"))
-            return {
-                **item,
-                "taskId": task_id,
-                "assigneeId": None,
-                "assigneeName": None,
-                "assignedAt": None,
-                "assignedToMe": None,
-                "slaDueAt": None,
-                "slaState": None,
-                "assignmentAvailability": _unavailable_field(
-                    "operator_shell_task_assignments",
-                    reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
-                ),
-                "slaAvailability": _unavailable_field(
-                    "operator_shell_task_sla",
-                    reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
-                ),
-                "severity": {
-                    "danger": "critical",
-                    "warning": "warning",
-                }.get(tone, "info"),
-                "deepLink": {
-                    "workspace": target.get(
-                        "workspace",
-                        item.get("workspace", "today"),
-                    ),
-                    "entityId": target.get("entityId", task_id),
-                    "tab": target.get("tab", "overview"),
-                },
-                "sourceHref": (
-                    f"/tasks?taskId={target.get('entityId', task_id)}"
-                    f"&workspace={target.get('workspace', item.get('workspace', 'today'))}"
-                ),
-            }
+        shell_document_store = document_store
 
-        def _notification_row(item: dict[str, Any]) -> dict[str, Any]:
-            target = item.get("target") or {}
-            notification_id = str(item.get("id") or item.get("title", ""))
-            return {
-                **item,
-                "notificationId": notification_id,
-                "severity": {
-                    "danger": "critical",
-                    "warning": "warning",
-                }.get(str(item.get("tone", "info")), "info"),
-                "acknowledged": None,
-                "acknowledgedAt": None,
-                "acknowledgedBy": None,
-                "acknowledgementAvailability": _unavailable_field(
-                    "operator_shell_notification_state",
-                    reason_code="OPERATOR_SHELL_NOTIFICATION_STATE_UNAVAILABLE",
-                ),
-                "sourceHref": (
-                    f"/tasks?taskId={target.get('entityId')}"
-                    f"&workspace={target.get('workspace', 'today')}"
-                    if target.get("entityId")
-                    else "/notifications"
-                ),
-            }
-
-        @router.get(
-            "/shell/home",
-            dependencies=[Depends(operator_view_guard)],
+        from modules.opsboard.application.shell import (
+            ShellService,
+            TenantBoundOperatorStateService,
         )
-        def live_shell_home(
-            request: Request,
-            x_operator_role: str | None = Header(
-                default=None,
-                alias="X-Operator-Role",
-            ),
-            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
-            x_roles: str | None = Header(default=None, alias="X-Roles"),
-            x_correlation_id: str | None = Header(
-                default=None,
-                alias="X-Correlation-Id",
-            ),
-        ) -> dict[str, Any]:
-            envelope = _live_read(
-                "operator.shell.home",
-                svc.get_today,
-                **_context(
-                    request,
-                    x_operator_role=x_operator_role,
-                    x_subject_id=x_subject_id,
-                    x_roles=x_roles,
-                    x_correlation_id=x_correlation_id,
-                ),
-            )
-            tasks = [_task_row(item) for item in envelope["workQueue"]]
-            notifications = [_notification_row(item) for item in envelope["notifications"]]
-            role = envelope["meta"]["role"]
-            from modules.opsboard.application.shell import ENTRY_POINTS
+        from shared.infrastructure.persistence.operator_domains import (
+            TenantScopedDocumentStore,
+        )
+        from shared.infrastructure.persistence.operator_shell import (
+            DurableShellRepository,
+        )
 
-            allowed_workspaces = set(role["allowedWorkspaces"])
-            entry_points = [
-                {key: value for key, value in entry.items() if key != "requiresAdmin"}
-                for entry in ENTRY_POINTS
-                if entry["workspace"] in allowed_workspaces
-                and (not entry.get("requiresAdmin") or role["id"] == "ops-lead")
-            ]
-            sections = envelope["meta"].get("sections", {})
-            work_queue_availability = sections.get(
-                "workQueue",
-                _unavailable_field(
-                    "operator_work_queue_projection",
-                    reason_code="OPERATOR_WORK_QUEUE_AVAILABILITY_UNKNOWN",
-                ),
-            )
-            approvals_availability = sections.get(
-                "approvals",
-                _unavailable_field(
-                    "operator_approval_projection",
-                    reason_code="OPERATOR_APPROVAL_AVAILABILITY_UNKNOWN",
-                ),
-            )
-            notifications_availability = sections.get(
-                "notifications",
-                _unavailable_field(
-                    "operator_notification_projection",
-                    reason_code="OPERATOR_NOTIFICATION_AVAILABILITY_UNKNOWN",
-                ),
-            )
-            return {
-                "meta": {
-                    **envelope["meta"],
-                    "source": "operator-live-shell-home",
-                    "allowedWorkspaces": role["allowedWorkspaces"],
-                    "isAdmin": role["id"] == "ops-lead",
-                },
-                "status": {
-                    "headline": f"{role['label']}・{len(tasks)} 件待處理",
-                    "openTasks": len(tasks),
-                    "slaBreached": None,
-                    "slaAtRisk": None,
-                    "pendingApprovals": len(envelope["approvals"]),
-                    "unacknowledgedNotifications": None,
-                    "tone": "warning" if tasks else "success",
-                    "availability": {
-                        "tasks": work_queue_availability,
-                        "approvals": approvals_availability,
-                        "notifications": notifications_availability,
-                        "assignment": _unavailable_field(
-                            "operator_shell_task_assignments",
-                            reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
-                        ),
-                        "sla": _unavailable_field(
-                            "operator_shell_task_sla",
-                            reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
-                        ),
-                        "notificationAcknowledgement": _unavailable_field(
-                            "operator_shell_notification_state",
-                            reason_code=(
-                                "OPERATOR_SHELL_NOTIFICATION_STATE_UNAVAILABLE"
-                            ),
-                        ),
+        class _LiveShellServiceAdapter:
+            """Translate live read-model outages without changing shell policy."""
+
+            def __init__(self, service: ShellService) -> None:
+                self._service = service
+
+            def __getattr__(self, name: str) -> Any:
+                method = getattr(self._service, name)
+
+                def invoke(*args: Any, **kwargs: Any) -> Any:
+                    try:
+                        return method(*args, **kwargs)
+                    except OperatorLiveRepositoryError as exc:
+                        raise HTTPException(
+                            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail={
+                                "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
+                                "operation": f"operator.shell.{name}",
+                                "message": str(exc),
+                            },
+                        ) from exc
+
+                return invoke
+
+        def live_shell_service_for_request(
+            request: Request,
+            effective_store_id: str | None = None,
+        ) -> ShellService:
+            context = _live_operator_request_context(request)
+            tenant_id = str(context["tenant_id"] or "").strip()
+            if svc.live_repository is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={
+                        "code": "OPERATOR_LIVE_DATA_UNAVAILABLE",
+                        "operation": "operator.shell",
+                        "message": "Operator live repository is not configured",
                     },
-                },
-                "tasks": tasks[:5],
-                "approvals": envelope["approvals"][:5],
-                "decisions": envelope["decisions"][:5],
-                "freshness": [
-                    {
-                        "source": details.get("source", section),
-                        "label": section,
-                        "generatedAt": envelope["meta"]["generatedAt"],
-                        "records": details.get("recordCount"),
-                        "state": details.get("state", "unavailable"),
-                        "reasonCode": details.get("reasonCode"),
-                    }
-                    for section, details in sorted(sections.items())
-                ],
-                "entryPoints": entry_points,
-                "notifications": notifications[:5],
-                "kpis": envelope["kpis"],
-            }
-
-        @router.get(
-            "/shell/tasks",
-            dependencies=[Depends(operator_view_guard)],
-        )
-        def live_shell_tasks(
-            request: Request,
-            sla: str | None = Query(default=None),
-            assignee: str | None = Query(default=None),
-            task_status: str | None = Query(default=None, alias="status"),
-            task_id: str | None = Query(default=None, alias="taskId"),
-            x_operator_role: str | None = Header(
-                default=None,
-                alias="X-Operator-Role",
-            ),
-            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
-            x_roles: str | None = Header(default=None, alias="X-Roles"),
-            x_correlation_id: str | None = Header(
-                default=None,
-                alias="X-Correlation-Id",
-            ),
-        ) -> dict[str, Any]:
-            if sla is not None:
-                _shell_unavailable(
-                    "operator.shell.tasks.filter.sla",
-                    "operator_shell_task_sla",
-                    message=(
-                        "SLA filtering is unavailable until the tenant-bound "
-                        "task SLA repository is wired"
-                    ),
                 )
-            if assignee is not None:
+            if shell_document_store is None:
                 _shell_unavailable(
-                    "operator.shell.tasks.filter.assignee",
-                    "operator_shell_task_assignments",
-                    message=(
-                        "assignee filtering is unavailable until the tenant-bound "
-                        "task assignment repository is wired"
-                    ),
+                    "operator.shell.persistence",
+                    "operator_shell_document_store",
                 )
-            context = _context(
-                request,
-                x_operator_role=x_operator_role,
-                x_subject_id=x_subject_id,
-                x_roles=x_roles,
-                x_correlation_id=x_correlation_id,
-            )
-            envelope = _live_read(
-                "operator.shell.tasks",
-                svc.get_today,
-                **context,
-            )
-            tasks = [
-                _task_row(item)
-                for item in envelope["workQueue"]
-            ]
-            filtered = tasks
-            if task_status:
-                filtered = [item for item in filtered if str(item.get("status")) == task_status]
-            if task_id:
-                filtered = [item for item in filtered if item["taskId"] == task_id]
-            return {
-                "meta": {
-                    "generatedAt": datetime.now(UTC).isoformat(),
-                    "correlationId": context["correlation_id"],
-                    "source": "operator-live-shell-tasks",
-                    "dataOrigin": envelope["meta"]["dataOrigin"],
-                    "dataMode": envelope["meta"]["dataMode"],
-                    "sections": {
-                        "tasks": envelope["meta"].get("sections", {}).get(
-                            "workQueue"
-                        ),
-                        "assignment": _unavailable_field(
-                            "operator_shell_task_assignments",
-                            reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
-                        ),
-                        "sla": _unavailable_field(
-                            "operator_shell_task_sla",
-                            reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
-                        ),
-                    },
-                    "filters": {
-                        "sla": sla,
-                        "assignee": assignee,
-                        "status": task_status,
-                        "taskId": task_id,
-                    },
-                },
-                "items": filtered,
-                "count": len(filtered),
-                "total": len(tasks),
-                "facets": {
-                    "sla": {
-                        "breached": None,
-                        "at-risk": None,
-                        "on-track": None,
-                        "none": None,
-                        "availability": _unavailable_field(
-                            "operator_shell_task_sla",
-                            reason_code="OPERATOR_SHELL_SLA_UNAVAILABLE",
-                        ),
-                    },
-                    "status": {
-                        status_value: sum(
-                            1 for item in tasks if str(item.get("status")) == status_value
-                        )
-                        for status_value in {str(item.get("status")) for item in tasks}
-                    },
-                    "assignee": {
-                        "me": None,
-                        "unassigned": None,
-                        "availability": _unavailable_field(
-                            "operator_shell_task_assignments",
-                            reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
-                        ),
-                    },
-                },
-                "actions": [
-                    {
-                        "key": "task.open",
-                        "label": "開啟來源",
-                        "allowed": True,
-                        "reason": None,
-                    },
-                    {
-                        "key": "task.assign",
-                        "label": "指派",
-                        "allowed": False,
-                        "reason": "OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
-                    }
-                ],
-                "assignableRoles": None,
-                "assignability": _unavailable_field(
-                    "operator_shell_task_assignments",
-                    reason_code="OPERATOR_SHELL_ASSIGNMENT_UNAVAILABLE",
-                ),
-            }
-
-        @router.get(
-            "/shell/notifications",
-            dependencies=[Depends(operator_view_guard)],
-        )
-        def live_shell_notifications(
-            request: Request,
-            severity: str | None = Query(default=None),
-            acknowledged: bool | None = Query(default=None),
-            x_operator_role: str | None = Header(
-                default=None,
-                alias="X-Operator-Role",
-            ),
-            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
-            x_roles: str | None = Header(default=None, alias="X-Roles"),
-            x_correlation_id: str | None = Header(
-                default=None,
-                alias="X-Correlation-Id",
-            ),
-        ) -> dict[str, Any]:
-            if acknowledged is not None:
+            if not tenant_id:
                 _shell_unavailable(
-                    "operator.shell.notifications.filter.acknowledged",
-                    "operator_shell_notification_state",
-                    message=(
-                        "acknowledgement filtering is unavailable until the "
-                        "tenant-bound notification state repository is wired"
-                    ),
+                    "operator.shell.scope",
+                    "operator_shell_tenant_scope",
+                    message="verified tenant scope is required for the production shell",
                 )
-            context = _context(
-                request,
-                x_operator_role=x_operator_role,
-                x_subject_id=x_subject_id,
-                x_roles=x_roles,
-                x_correlation_id=x_correlation_id,
-            )
-            envelope = _live_read(
-                "operator.shell.notifications",
-                svc.get_today,
-                **context,
-            )
-            rows = [_notification_row(item) for item in envelope["notifications"]]
-            filtered = rows
-            if severity:
-                filtered = [item for item in filtered if item["severity"] == severity]
-            return {
-                "meta": {
-                    "generatedAt": envelope["meta"]["generatedAt"],
-                    "correlationId": context["correlation_id"],
-                    "source": "operator-live-shell-notifications",
-                    "dataOrigin": envelope["meta"]["dataOrigin"],
-                    "sections": {
-                        "notifications": envelope["meta"].get("sections", {}).get(
-                            "notifications"
-                        ),
-                        "acknowledgement": _unavailable_field(
-                            "operator_shell_notification_state",
-                            reason_code=(
-                                "OPERATOR_SHELL_NOTIFICATION_STATE_UNAVAILABLE"
-                            ),
-                        ),
-                    },
-                },
-                "items": filtered,
-                "count": len(filtered),
-                "unacknowledged": None,
-                "facets": {
-                    "severity": {
-                        level: sum(1 for item in rows if item["severity"] == level)
-                        for level in ("critical", "warning", "info")
-                    }
-                },
-                "preferences": {
-                    "value": None,
-                    "availability": _unavailable_field(
-                        "operator_shell_notification_preferences",
-                        reason_code=(
-                            "OPERATOR_SHELL_NOTIFICATION_PREFERENCES_UNAVAILABLE"
-                        ),
-                    ),
-                },
-            }
-
-        @router.get(
-            "/shell/search",
-            dependencies=[Depends(operator_view_guard)],
-        )
-        def live_shell_search(
-            request: Request,
-            q: str = Query(default=""),
-            limit: int = Query(default=20, ge=1, le=100),
-            x_operator_role: str | None = Header(
-                default=None,
-                alias="X-Operator-Role",
-            ),
-            x_subject_id: str | None = Header(default=None, alias="X-Subject-Id"),
-            x_roles: str | None = Header(default=None, alias="X-Roles"),
-            x_correlation_id: str | None = Header(
-                default=None,
-                alias="X-Correlation-Id",
-            ),
-        ) -> dict[str, Any]:
-            result = _live_read(
-                "operator.shell.search",
-                svc.search,
-                q,
-                **_context(
-                    request,
-                    x_operator_role=x_operator_role,
-                    x_subject_id=x_subject_id,
-                    x_roles=x_roles,
-                    x_correlation_id=x_correlation_id,
+            scoped_state = TenantBoundOperatorStateService(
+                svc,
+                tenant_id=tenant_id,
+                brand_ids=cast(tuple[str, ...], context["brand_ids"]),
+                region_ids=cast(tuple[str, ...], context["region_ids"]),
+                store_ids=(
+                    (effective_store_id,)
+                    if effective_store_id is not None
+                    else cast(tuple[str, ...], context["store_ids"])
                 ),
             )
-            result["items"] = result["items"][:limit]
-            result["count"] = len(result["items"])
-            result["meta"]["source"] = "operator-live-shell-search"
-            return result
-
-        @router.post(
-            "/shell/tasks/{task_id}/assignment",
-            dependencies=[Depends(operator_write_guard)],
-        )
-        def unavailable_shell_task_assignment(
-            task_id: str,
-            body: dict[str, Any],
-        ) -> None:
-            del task_id, body
-            _shell_unavailable(
-                "operator.shell.tasks.assignment",
-                "operator_shell_task_assignments",
+            shell = ShellService(
+                scoped_state,
+                repository=DurableShellRepository(
+                    TenantScopedDocumentStore(shell_document_store, tenant_id)
+                ),
             )
-
-        @router.get(
-            "/shell/notifications/preferences",
-            dependencies=[Depends(operator_view_guard)],
-        )
-        def unavailable_shell_notification_preferences() -> None:
-            _shell_unavailable(
-                "operator.shell.notifications.preferences.read",
-                "operator_shell_notification_preferences",
-            )
-
-        @router.put(
-            "/shell/notifications/preferences",
-            dependencies=[Depends(operator_write_guard)],
-        )
-        def unavailable_shell_notification_preferences_update(
-            body: dict[str, Any],
-        ) -> None:
-            del body
-            _shell_unavailable(
-                "operator.shell.notifications.preferences.update",
-                "operator_shell_notification_preferences",
-            )
-
-        @router.post(
-            "/shell/notifications/{notification_id}/acknowledgement",
-            dependencies=[Depends(operator_write_guard)],
-        )
-        def unavailable_shell_notification_acknowledgement(
-            notification_id: str,
-        ) -> None:
-            del notification_id
-            _shell_unavailable(
-                "operator.shell.notifications.acknowledgement",
-                "operator_shell_notification_state",
-            )
-
-        @router.get(
-            "/shell/admin",
-            dependencies=[Depends(operator_write_guard)],
-        )
-        def unavailable_shell_admin() -> None:
-            _shell_unavailable(
-                "operator.shell.admin.read",
-                "operator_shell_role_workspaces",
-            )
-
-        @router.put(
-            "/shell/admin/roles/{target_role_id}/workspaces",
-            dependencies=[Depends(operator_write_guard)],
-        )
-        def unavailable_shell_admin_update(
-            target_role_id: str,
-            body: dict[str, Any],
-        ) -> None:
-            del target_role_id, body
-            _shell_unavailable(
-                "operator.shell.admin.role_workspaces.update",
-                "operator_shell_role_workspaces",
-            )
-
-        @router.get(
-            "/shell/settings",
-            dependencies=[Depends(operator_view_guard)],
-        )
-        def unavailable_shell_settings() -> None:
-            _shell_unavailable(
-                "operator.shell.settings.read",
-                "operator_shell_settings",
-            )
-
-        @router.put(
-            "/shell/settings",
-            dependencies=[Depends(operator_write_guard)],
-        )
-        def unavailable_shell_settings_update(
-            body: dict[str, Any],
-        ) -> None:
-            del body
-            _shell_unavailable(
-                "operator.shell.settings.update",
-                "operator_shell_settings",
-            )
+            return cast(ShellService, _LiveShellServiceAdapter(shell))
 
         franchisee_view_guard = require_permission(
             "franchisee_portal",
@@ -889,45 +486,19 @@ def create_operator_router(
             Action.CREATE,
             engine=authz_engine,
         )
-
-        @router.get(
-            "/shell/franchisee",
-            dependencies=[Depends(franchisee_view_guard)],
-        )
-        def unavailable_shell_franchisee(
-            store_id: str | None = Query(default=None, alias="storeId"),
-        ) -> None:
-            del store_id
-            _shell_unavailable(
-                "operator.shell.franchisee.read",
-                "operator_shell_franchisee_projection",
+        router.include_router(
+            create_shell_sub_router(
+                svc,
+                require_view_permission_fn=operator_view_guard,
+                require_write_permission_fn=operator_write_guard,
+                require_admin_permission_fn=operator_write_guard,
+                require_franchisee_view_fn=franchisee_view_guard,
+                require_franchisee_write_fn=franchisee_write_guard,
+                authorize_franchisee_store_fn=authorize_franchisee_store,
+                shell_service_resolver=live_shell_service_for_request,
+                include_legacy_reads=False,
             )
-
-        @router.post(
-            "/shell/franchisee/acknowledgement",
-            dependencies=[Depends(franchisee_write_guard)],
         )
-        def unavailable_shell_franchisee_acknowledgement(
-            body: dict[str, Any],
-        ) -> None:
-            del body
-            _shell_unavailable(
-                "operator.shell.franchisee.acknowledgement",
-                "operator_shell_franchisee_acknowledgements",
-            )
-
-        @router.post(
-            "/shell/franchisee/reports",
-            dependencies=[Depends(franchisee_write_guard)],
-        )
-        def unavailable_shell_franchisee_reports(
-            body: dict[str, Any],
-        ) -> None:
-            del body
-            _shell_unavailable(
-                "operator.shell.franchisee.reports.create",
-                "operator_shell_franchisee_reports",
-            )
 
         if document_store is None:
 
@@ -964,7 +535,6 @@ def create_operator_router(
         from modules.opsboard.application.governance import GovernanceService
         from shared.infrastructure.persistence.operator_domains import (
             DurableOperatorDomainStateRepository,
-            TenantScopedDocumentStore,
         )
         from shared.workflow.sitescore import SiteScoreDecisionWorkflow
 
@@ -1054,7 +624,10 @@ def create_operator_router(
                     TenantScopedDocumentStore(document_store, tenant_id)
                 ),
                 initial_state=state,
-                seed_fixtures=False,
+                # Canonical fixture state may exist only behind the explicit
+                # test-reset gate (ODP_E2E_MODE): production keeps the durable
+                # listing aggregate fail-closed empty until real intake writes.
+                seed_fixtures=allow_test_reset,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -1086,6 +659,7 @@ def create_operator_router(
                 ),
                 model_runtime=require_model_runtime(),
                 require_canonical=True,
+                tenant_id=tenant_id,
             ),
             exporter=lambda service: service.export_state(),
             mutating_methods={
@@ -1279,7 +853,7 @@ def create_operator_router(
                 ),
                 audit_log=active_audit_log,
                 service_resolver=listing_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(
@@ -1292,7 +866,7 @@ def create_operator_router(
                     "sitescore", Action.EXECUTE, engine=authz_engine
                 ),
                 service_resolver=scoring_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(
@@ -1305,7 +879,7 @@ def create_operator_router(
                     "sitescore", Action.APPROVE, engine=authz_engine
                 ),
                 service_resolver=review_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(
@@ -1318,7 +892,7 @@ def create_operator_router(
                     "listing", Action.UPDATE, engine=authz_engine
                 ),
                 service_resolver=rebalance_resolver,
-                allow_reset=False,
+                allow_reset=allow_test_reset,
             )
         )
         router.include_router(
@@ -1347,6 +921,39 @@ def create_operator_router(
                 service_resolver=governance_resolver,
             )
         )
+        from apps.api.app.routes.operator_modules.users_roles import (
+            create_user_role_sub_router,
+        )
+        from modules.opsboard.application.user_role_management import (
+            UserRoleManagementService,
+        )
+
+        user_role_state_repository = DurableOperatorDomainStateRepository(
+            document_store,
+            "users-roles",
+        )
+        user_role_resolver = DurableTenantServiceResolver(
+            user_role_state_repository,
+            factory=lambda state, tenant_id: UserRoleManagementService(
+                audit_log=active_audit_log,
+                initial_state=state,
+                seed_fixtures=False,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={"save_user", "set_user_status"},
+        )
+        router.include_router(
+            create_user_role_sub_router(
+                UserRoleManagementService(seed_fixtures=False),
+                require_view_permission_fn=require_operator_permission(
+                    "user", Action.VIEW, engine=authz_engine
+                ),
+                require_manage_permission_fn=require_operator_permission(
+                    "user", Action.UPDATE, engine=authz_engine
+                ),
+                service_resolver=user_role_resolver,
+            )
+        )
 
         return router
 
@@ -1367,6 +974,7 @@ def create_operator_router(
             require_franchisee_write_fn=require_permission(
                 "franchisee_portal", Action.CREATE, engine=authz_engine
             ),
+            authorize_franchisee_store_fn=authorize_franchisee_store,
             shell_service=ShellService(
                 svc,
                 repository=(
@@ -1385,12 +993,19 @@ def create_operator_router(
         if document_store is not None
         else InMemoryAssistedIntakeRepository()
     )
+    operator_listing_repository = listing_repository
+    if listing_repository_for_tenant is not None:
+        operator_listing_repository = listing_repository_for_tenant(OPERATOR_TENANT_ID)
+        if operator_listing_repository is None:
+            raise RuntimeError(
+                "tenant-aware listing repository is unavailable for the local Operator scope"
+            )
 
     # Network listing intake — read/write paths for R4 Listing Radar.
     router.include_router(
         create_network_listings_sub_router(
             NetworkListingService(
-                listing_repository=listing_repository,
+                listing_repository=operator_listing_repository,
                 intake_repository=shared_intake_repo,
             ),
             require_view_permission_fn=require_operator_permission(
@@ -1541,6 +1156,56 @@ def create_operator_router(
             privacy_service,
             require_view_permission_fn=operator_view_guard,
             require_write_permission_fn=operator_write_guard,
+        )
+    )
+
+    # Users & Roles — Self-service role assignment, scope axes, and audit logging (ODP-CAP-USER-ROLE-UI-001)
+    from apps.api.app.routes.operator_modules.live_service import (
+        DurableTenantServiceResolver,
+    )
+    from apps.api.app.routes.operator_modules.users_roles import (
+        create_user_role_sub_router,
+    )
+    from modules.opsboard.application.user_role_management import (
+        UserRoleManagementService,
+    )
+    from shared.infrastructure.persistence.operator_domains import (
+        DurableOperatorDomainStateRepository,
+    )
+
+    user_role_state_repo_fallback = (
+        DurableOperatorDomainStateRepository(document_store, "users-roles")
+        if document_store is not None
+        else None
+    )
+    user_role_resolver_fallback = (
+        DurableTenantServiceResolver(
+            user_role_state_repo_fallback,
+            factory=lambda state, tenant_id: UserRoleManagementService(
+                audit_log=active_audit_log,
+                initial_state=state,
+                seed_fixtures=True,
+            ),
+            exporter=lambda service: service.export_state(),
+            mutating_methods={"save_user", "set_user_status"},
+        )
+        if user_role_state_repo_fallback is not None
+        else None
+    )
+
+    user_role_view_guard = require_operator_permission(
+        "user", Action.VIEW, tenant_id=OPERATOR_TENANT_ID, engine=authz_engine
+    )
+    user_role_manage_guard = require_operator_permission(
+        "user", Action.UPDATE, tenant_id=OPERATOR_TENANT_ID, engine=authz_engine
+    )
+    user_role_service = UserRoleManagementService(audit_log=active_audit_log)
+    router.include_router(
+        create_user_role_sub_router(
+            user_role_service,
+            require_view_permission_fn=user_role_view_guard,
+            require_manage_permission_fn=user_role_manage_guard,
+            service_resolver=user_role_resolver_fallback,
         )
     )
 

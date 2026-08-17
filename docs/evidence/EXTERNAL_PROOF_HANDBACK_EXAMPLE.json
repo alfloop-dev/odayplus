@@ -40,13 +40,13 @@
   ],
   "commands_run": [
     {
-      "command": "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
+      "command": "gh pr view \"$(jq -r .release_target.pr docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json)\" --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
       "exit_code": 0,
       "observed_at": "2026-06-30T00:04:00Z",
-      "notes": "Example command result. Real handback must cite the current PR #82 headRefOid."
+      "notes": "Example command result. Real handback must cite the current manifest-selected release PR headRefOid."
     },
     {
-      "command": "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1",
+      "command": "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/operator-network-listings.spec.ts --project=chromium --retries=1",
       "exit_code": 0,
       "observed_at": "2026-06-30T00:05:00Z",
       "notes": "Example map live-boundary command. Real handback must attach the workflow run or redacted log."
@@ -81,12 +81,12 @@
       "notes": "Example result. Real proof must show list, ranking, and detail fallback remain usable during tile outage."
     },
     {
-      "evidence": "proof report references current PR #82 headRefOid",
+      "evidence": "proof report references current release_target.pr headRefOid",
       "status": "proven",
       "artifact_ids": [
         "example-report-map-stage-001"
       ],
-      "notes": "Example result. Real proof must replace the example release_head_ref_oid with the current PR #82 headRefOid."
+      "notes": "Example result. Real proof must replace the example release_head_ref_oid with the current manifest-selected release PR headRefOid."
     }
   ],
   "completion_attestation": {

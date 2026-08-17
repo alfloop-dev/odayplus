@@ -525,6 +525,11 @@ class Intervention:
     outcome: InterventionOutcome | None = None
     effect: EffectEvaluation | None = None
     close: CloseRecord | None = None
+    assigned_to: str | None = None
+    assigned_at: datetime | None = None
+    assigned_by: str | None = None
+    assignment_role: str | None = None
+    version: int = 1
     history: tuple[InterventionTransition, ...] = ()
 
     @property
@@ -557,9 +562,11 @@ class Intervention:
             at=datetime.now(UTC),
             correlation_id=correlation_id,
         )
+        new_version = updates.pop("version", self.version + 1)
         return replace(
             self,
             status=to_status,
+            version=new_version,
             history=(*self.history, transition),
             **updates,
         )
@@ -589,6 +596,11 @@ class Intervention:
             "outcome": self.outcome.to_dict() if self.outcome else None,
             "effect": self.effect.to_dict() if self.effect else None,
             "close": self.close.to_dict() if self.close else None,
+            "assigned_to": self.assigned_to,
+            "assigned_at": self.assigned_at.isoformat() if self.assigned_at else None,
+            "assigned_by": self.assigned_by,
+            "assignment_role": self.assignment_role,
+            "version": self.version,
             "history": [transition.to_dict() for transition in self.history],
         }
 

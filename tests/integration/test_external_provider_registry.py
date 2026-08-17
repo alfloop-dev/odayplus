@@ -42,6 +42,7 @@ def test_provider_registry_covers_live_external_source_classes() -> None:
         ProviderCategory.GEOCODE,
         ProviderCategory.ADMIN_BOUNDARY,
         ProviderCategory.COMPETITOR_MANUAL,
+        ProviderCategory.STORE_OPENING_AUTHORITY,
     }
     assert {
         env for provider in providers for env in provider.required_env_vars
@@ -52,14 +53,19 @@ def test_provider_registry_covers_live_external_source_classes() -> None:
         "geocode_result_snapshot",
         "admin_boundary_snapshot",
         "competitor_store_snapshot",
+        "store_opening_authority_snapshot",
     }
     assert all(
         provider.connector_class.startswith("modules.external_data.") for provider in providers
     )
-    assert all(
-        provider.provider_class.startswith("modules.external_data.providers.")
+    assert all(provider.provider_class.startswith("modules.external_data.") for provider in providers)
+    opening_authority = next(
+        provider
         for provider in providers
+        if provider.category is ProviderCategory.STORE_OPENING_AUTHORITY
     )
+    assert opening_authority.provider_id == "store_opening_authority"
+    assert opening_authority.metadata["source_type"] == "official_registry"
     assert all(provider.license.attribution for provider in providers)
     assert all(provider.license.downstream_use_flags for provider in providers)
 

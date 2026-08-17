@@ -249,9 +249,7 @@ def _minimize_device_log(document: dict[str, Any]) -> dict[str, Any]:
     kept: dict[str, Any] = {}
     redacted: list[str] = []
     for key, value in log_data.items():
-        if key not in _DEVICE_LOG_ALLOWED_DATA_FIELDS or isinstance(
-            value, (dict, list, tuple)
-        ):
+        if key not in _DEVICE_LOG_ALLOWED_DATA_FIELDS or isinstance(value, (dict, list, tuple)):
             redacted.append(key)
             continue
         kept[key] = value
@@ -319,9 +317,7 @@ def envelope_for_document(
         source_document=safe_document,
         source_updated_at=source_updated_at,
         observed_at=observed_at.astimezone(UTC),
-        source_snapshot_id=str(
-            snapshot_id_for_content(kind.value, source_id, content_sha256)
-        ),
+        source_snapshot_id=str(snapshot_id_for_content(kind.value, source_id, content_sha256)),
         content_sha256=content_sha256,
         run_id=run_id,
     )
@@ -401,7 +397,9 @@ class MongoSource:
         resume_after: str | None,
         limit: int,
     ) -> Iterator[SourceEnvelope]:
-        if limit <= 0 or limit > self._config.max_records_per_run:
+        # The runner may request one extra row as a non-projected sentinel to
+        # prove that a partition was not truncated at the processing bound.
+        if limit <= 0 or limit > self._config.max_records_per_run + 1:
             raise ValueError("limit is outside the configured production bound")
         collection = self._database[kind.value]
         query = self._window_query(kind, window, resume_after)
@@ -433,8 +431,4 @@ class MongoSource:
         )
 
     def has_changes_since(self, kind: SourceKind, since: datetime) -> bool:
-        return bool(
-            self._database[kind.value].count_documents(
-                {"updatedAt": {"$gt": since}}
-            )
-        )
+        return bool(self._database[kind.value].count_documents({"updatedAt": {"$gt": since}}))

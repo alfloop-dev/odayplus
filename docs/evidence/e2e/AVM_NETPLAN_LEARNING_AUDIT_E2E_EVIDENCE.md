@@ -18,4 +18,4 @@ The spec uses correlation id `corr-pv007-avm-netplan-learning-audit` and validat
 
 ## Product Runner
 
-`scripts/e2e/run_product_e2e.sh` now includes the PV-007 spec in the Docker-backed product E2E suite.
+`delivery_toolchain/e2e/run_product_e2e.sh` now includes the PV-007 spec in the Docker-backed product E2E suite.

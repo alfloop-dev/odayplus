@@ -13,7 +13,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from apps.api.app.routes.listings import AssistedIntakeStore
 from apps.api.oday_api.main import create_app
-from scripts.generate_assisted_listing_intake_client import ARTIFACT
+from delivery_toolchain.openapi.generate_assisted_listing_intake_client import ARTIFACT
 
 TENANT_A = "00000000-0000-0000-0000-000000000001"
 TENANT_B = "00000000-0000-0000-0000-000000000002"

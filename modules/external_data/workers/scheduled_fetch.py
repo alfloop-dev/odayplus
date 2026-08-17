@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -40,6 +40,27 @@ _SCHEDULABLE_CATEGORIES = {
     ProviderCategory.POI,
     ProviderCategory.ADMIN_BOUNDARY,
 }
+
+#: Reason codes for deterministic *deployment configuration* rejections. The
+#: provider is refused before it is ever contacted, so the outcome is fixed for
+#: a given release + environment: retrying cannot change it, and it carries no
+#: signal about provider health.
+CONFIGURATION_REASON_CODES = frozenset(
+    {
+        "provider_allowlist_required",
+        "provider_not_selected",
+        "provider_not_registered",
+        "provider_not_schedulable",
+        "provider_factory_missing",
+        "live_mode_required",
+        "missing_endpoint",
+        "missing_credential",
+    }
+)
+
+#: The operator's explicit provider allowlist excluded this provider from this
+#: deployment. Unlike its siblings above this is a *decision*, not a fault.
+PROVIDER_NOT_SELECTED_REASON_CODE = "provider_not_selected"
 
 
 class ExternalFetchProviderConfigurationError(RuntimeError):
@@ -304,6 +325,68 @@ class DurableExternalFetchStateStore:
         return None
 
 
+class TenantScopedExternalFetchStateStore:
+    """Tenant-partitioned view over any fetch state store.
+
+    Watermarks, circuit state, and window dedupe are all keyed by
+    ``provider_id`` / ``idempotency_key``, which are identical across tenants
+    running the same schedule. Sharing one store would let tenant B inherit
+    tenant A's watermark (skipping a window it never ingested) and read back
+    tenant A's run. This wrapper namespaces both keys so each tenant sees only
+    its own state, while keeping the single durable backend the deployment
+    already provisions. Keys are un-namespaced on the way out so callers keep
+    seeing plain provider ids.
+    """
+
+    def __init__(self, inner: Any, tenant_id: str) -> None:
+        clean_tid = str(tenant_id).strip()
+        if not clean_tid:
+            raise ValueError("TenantScopedExternalFetchStateStore requires a tenant_id")
+        self._inner = inner
+        self.tenant_id = clean_tid
+        self._prefix = f"tenant:{clean_tid}:"
+
+    def _scope(self, value: str) -> str:
+        return f"{self._prefix}{value}"
+
+    def _unscope(self, value: str) -> str:
+        return value[len(self._prefix):] if value.startswith(self._prefix) else value
+
+    def _unscope_run(self, run: ExternalFetchRun) -> ExternalFetchRun:
+        return replace(
+            run,
+            provider_id=self._unscope(run.provider_id),
+            idempotency_key=self._unscope(run.idempotency_key),
+        )
+
+    def get_run(self, idempotency_key: str) -> ExternalFetchRun | None:
+        found = self._inner.get_run(self._scope(idempotency_key))
+        return self._unscope_run(found) if found is not None else None
+
+    def save_run(self, run: ExternalFetchRun) -> ExternalFetchRun:
+        scoped = replace(
+            run,
+            provider_id=self._scope(run.provider_id),
+            idempotency_key=self._scope(run.idempotency_key),
+        )
+        return self._unscope_run(self._inner.save_run(scoped))
+
+    def last_success_watermark(self, provider_id: str) -> datetime | None:
+        return self._inner.last_success_watermark(self._scope(provider_id))
+
+    def record_failure(
+        self,
+        provider_id: str,
+        *,
+        at: datetime,
+        policy: ExternalFetchResiliencePolicy,
+    ) -> tuple[int, datetime | None]:
+        return self._inner.record_failure(self._scope(provider_id), at=at, policy=policy)
+
+    def circuit_open_until(self, provider_id: str, at: datetime) -> datetime | None:
+        return self._inner.circuit_open_until(self._scope(provider_id), at)
+
+
 class ExternalFetchScheduler:
     def __init__(
         self,
@@ -403,24 +486,32 @@ class ExternalFetchScheduler:
                 message=f"latest provider observation {observed_at.isoformat()}",
             )
         except Exception as exc:
-            failures, circuit_until = self.state_store.record_failure(
-                spec.provider_id,
-                at=effective_end,
-                policy=self.resilience_policy,
-            )
             reason_code = _provider_failure_code(exc)
-            retry_after = circuit_until or (
-                effective_end + self.resilience_policy.backoff_base * max(1, failures)
-            )
+            if reason_code in CONFIGURATION_REASON_CODES:
+                # The provider was never contacted, so this says nothing about
+                # provider health. Feeding it to the circuit breaker opens the
+                # circuit after two ticks and every later run then reports
+                # "circuit_open" instead of the real reason code -- that is how
+                # the diagnosis was lost on attempts 3 and 4 of execution
+                # oday-worker-r-79cf9b67e62c-6fhw5.
+                retry_after = effective_end + self.resilience_policy.backoff_base
+                detail = f"{type(exc).__name__}: {exc}; provider_health_unaffected=true"
+            else:
+                failures, circuit_until = self.state_store.record_failure(
+                    spec.provider_id,
+                    at=effective_end,
+                    policy=self.resilience_policy,
+                )
+                retry_after = circuit_until or (
+                    effective_end + self.resilience_policy.backoff_base * max(1, failures)
+                )
+                detail = f"{type(exc).__name__}: {exc}; consecutive_failures={failures}"
             alert = _alert(
                 provider_id=spec.provider_id,
                 reason_code=reason_code,
                 occurred_at=effective_end,
                 correlation_id=corr,
-                message=(
-                    f"{type(exc).__name__}: {exc}; consecutive_failures={failures}; "
-                    f"retry_after={retry_after.isoformat()}"
-                ),
+                message=f"{detail}; retry_after={retry_after.isoformat()}",
             )
             run = self._blocked_run(
                 spec,
@@ -690,6 +781,8 @@ def _ensure_utc(value: datetime) -> datetime:
 
 
 __all__ = [
+    "CONFIGURATION_REASON_CODES",
+    "PROVIDER_NOT_SELECTED_REASON_CODE",
     "ExternalFetchJobSpec",
     "ExternalFetchAlert",
     "ExternalFetchProviderConfigurationError",
@@ -698,6 +791,7 @@ __all__ = [
     "ExternalFetchScheduler",
     "InMemoryExternalFetchStateStore",
     "DurableExternalFetchStateStore",
+    "TenantScopedExternalFetchStateStore",
     "SourceFreshnessEvidence",
     "default_external_fetch_provider_factories",
     "freshness_evidence_from_run",

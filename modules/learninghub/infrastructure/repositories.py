@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, contextmanager
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
+from enum import StrEnum
+from threading import RLock
+from typing import Any, Protocol, runtime_checkable
 
 from models.shared_ml import (
     FeatureDefinition,
@@ -16,6 +21,7 @@ from models.shared_ml import (
 from models.shared_ml.validation import ValidationRun
 from modules.learninghub.domain import (
     DatasetSnapshot,
+    DqTriageRecord,
     InferenceComparison,
     MonitoringEvaluation,
     RetrainingRequest,
@@ -24,6 +30,105 @@ from modules.learninghub.domain import (
 
 class ReleaseDecisionRecord(Protocol):
     release_id: str
+
+
+class LearningHubReleaseConflict(RuntimeError):
+    """Raised when a stale release command loses the per-model CAS boundary."""
+
+
+class LearningHubReleaseFenced(LearningHubReleaseConflict):
+    """Raised when a fenced-out worker tries to write a saga it no longer owns.
+
+    Recovery takes a saga over by bumping its fencing token. Any later write
+    from the previous owner carries the stale token and is rejected here, so a
+    resumed or slow worker can never race the recovery owner's compensation.
+    """
+
+
+class ReleaseSagaState(StrEnum):
+    INTENT_RECORDED = "INTENT_RECORDED"
+    MODEL_STATE_APPLIED = "MODEL_STATE_APPLIED"
+    ALIASES_APPLIED = "ALIASES_APPLIED"
+    AUDIT_RECORDED = "AUDIT_RECORDED"
+    RECEIPT_RECORDED = "RECEIPT_RECORDED"
+    COMPLETED = "COMPLETED"
+    COMPENSATING = "COMPENSATING"
+    COMPENSATED = "COMPENSATED"
+    COMPENSATION_FAILED = "COMPENSATION_FAILED"
+
+
+_TERMINAL_RELEASE_SAGA_STATES = frozenset(
+    {
+        ReleaseSagaState.COMPLETED,
+        ReleaseSagaState.COMPENSATED,
+        ReleaseSagaState.COMPENSATION_FAILED,
+    }
+)
+
+
+@dataclass(frozen=True)
+class ModelReleaseSaga:
+    """Durable, global-scope release intent written before MLflow mutation."""
+
+    release_id: str
+    model_name: str
+    idempotency_key: str
+    request_fingerprint: str
+    release_revision: int
+    operation: str
+    command: dict[str, Any]
+    version_snapshots: tuple[ModelVersion, ...]
+    alias_snapshots: tuple[tuple[ModelAlias, str | None], ...]
+    state: ReleaseSagaState = ReleaseSagaState.INTENT_RECORDED
+    attempt: int = 0
+    decision: object | None = None
+    audit_event_id: str | None = None
+    last_error: str | None = None
+    compensation_errors: tuple[str, ...] = ()
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    scope: str = "global"
+    lease_owner: str | None = None
+    lease_expires_at: datetime | None = None
+    fence_token: int = 0
+
+    @property
+    def terminal(self) -> bool:
+        return self.state in _TERMINAL_RELEASE_SAGA_STATES
+
+    def lease_active(self, now: datetime | None = None) -> bool:
+        """Whether a worker still holds an unexpired execution lease."""
+
+        if self.terminal or self.lease_owner is None or self.lease_expires_at is None:
+            return False
+        return self.lease_expires_at > (now or datetime.now(UTC))
+
+    def lease_held_by(self, owner: str, now: datetime | None = None) -> bool:
+        return self.lease_owner == owner and self.lease_active(now)
+
+    def evolve(self, **changes: Any) -> ModelReleaseSaga:
+        return replace(self, updated_at=datetime.now(UTC), **changes)
+
+
+def assert_release_saga_fence(
+    stored: ModelReleaseSaga | None,
+    incoming: ModelReleaseSaga,
+) -> None:
+    """Reject a saga write from a worker that was fenced out by recovery.
+
+    Every repository implementation must call this before persisting a saga so
+    that fencing is a storage-level invariant rather than a service-level
+    convention.
+    """
+
+    if stored is None:
+        return
+    if incoming.fence_token < stored.fence_token:
+        raise LearningHubReleaseFenced(
+            f"release {stored.release_id} was fenced at token {stored.fence_token}; "
+            f"write from stale owner {incoming.lease_owner!r} with token "
+            f"{incoming.fence_token} is rejected"
+        )
 
 
 @runtime_checkable
@@ -50,8 +155,31 @@ class LearningHubRepository(Protocol):
     def clear_alias(self, model_name: str, alias: ModelAlias) -> None: ...
     def get_alias(self, model_name: str, alias: ModelAlias) -> ModelVersion | None: ...
     def save_release_decision(self, decision: ReleaseDecisionRecord) -> ReleaseDecisionRecord: ...
+    def delete_release_decision(self, release_id: str) -> None: ...
     def get_release_decision(self, release_id: str) -> object | None: ...
     def list_release_decisions(self) -> list[object]: ...
+    def save_release_saga(self, saga: ModelReleaseSaga) -> ModelReleaseSaga: ...
+    def get_release_saga(self, release_id: str) -> ModelReleaseSaga | None: ...
+    def get_release_saga_by_idempotency(
+        self, model_name: str, idempotency_key: str
+    ) -> ModelReleaseSaga | None: ...
+    def list_release_sagas(
+        self,
+        model_name: str | None = None,
+        *,
+        include_terminal: bool = True,
+    ) -> list[ModelReleaseSaga]: ...
+    def get_release_revision(self, model_name: str) -> int: ...
+    def release_guard(
+        self,
+        model_name: str,
+        *,
+        expected_revision: int,
+    ) -> AbstractContextManager[int]: ...
+    def release_recovery_guard(
+        self,
+        model_name: str,
+    ) -> AbstractContextManager[None]: ...
     def save_monitoring_evaluation(
         self, evaluation: MonitoringEvaluation
     ) -> MonitoringEvaluation: ...
@@ -69,16 +197,23 @@ class LearningHubRepository(Protocol):
     def list_inference_comparisons(
         self, model_name: str | None = None
     ) -> list[InferenceComparison]: ...
+    def save_dq_triage(self, record: DqTriageRecord) -> DqTriageRecord: ...
+    def list_dq_triages(
+        self, dataset_snapshot_id: str | None = None
+    ) -> list[DqTriageRecord]: ...
 
 
 @dataclass
 class InMemoryLearningHubRepository:
     _datasets: dict[str, DatasetSnapshot] = field(default_factory=dict)
+    _dq_triages: dict[str, DqTriageRecord] = field(default_factory=dict)
     _model_versions: dict[tuple[str, str], ModelVersion] = field(default_factory=dict)
     _model_cards: dict[tuple[str, str], ModelCard] = field(default_factory=dict)
     _validation_runs: dict[str, ValidationRun] = field(default_factory=dict)
     _aliases: dict[str, dict[ModelAlias, str]] = field(default_factory=dict)
     _release_decisions: dict[str, object] = field(default_factory=dict)
+    _release_sagas: dict[str, ModelReleaseSaga] = field(default_factory=dict)
+    _release_saga_idempotency: dict[tuple[str, str], str] = field(default_factory=dict)
     _features: dict[tuple[str, str], FeatureDefinition] = field(default_factory=dict)
     _labels: dict[tuple[str, str], LabelDefinition] = field(default_factory=dict)
     _feature_sets: dict[str, FeatureSet] = field(default_factory=dict)
@@ -86,6 +221,9 @@ class InMemoryLearningHubRepository:
     _monitoring_evaluations: dict[str, MonitoringEvaluation] = field(default_factory=dict)
     _retraining_requests: dict[str, RetrainingRequest] = field(default_factory=dict)
     _inference_comparisons: dict[str, InferenceComparison] = field(default_factory=dict)
+    _release_revisions: dict[str, int] = field(default_factory=dict, repr=False)
+    _release_locks: dict[str, RLock] = field(default_factory=dict, repr=False)
+    _release_locks_guard: RLock = field(default_factory=RLock, repr=False)
 
     def save_dataset_snapshot(self, snapshot: DatasetSnapshot) -> DatasetSnapshot:
         self._datasets[snapshot.dataset_snapshot_id] = snapshot
@@ -93,6 +231,16 @@ class InMemoryLearningHubRepository:
 
     def get_dataset_snapshot(self, dataset_snapshot_id: str) -> DatasetSnapshot | None:
         return self._datasets.get(dataset_snapshot_id)
+
+    def save_dq_triage(self, record: DqTriageRecord) -> DqTriageRecord:
+        self._dq_triages[record.triage_id] = record
+        return record
+
+    def list_dq_triages(self, dataset_snapshot_id: str | None = None) -> list[DqTriageRecord]:
+        records = list(self._dq_triages.values())
+        if dataset_snapshot_id is not None:
+            records = [r for r in records if r.dataset_snapshot_id == dataset_snapshot_id]
+        return sorted(records, key=lambda r: r.time, reverse=True)
 
     def save_model_version(self, model_version: ModelVersion) -> ModelVersion:
         self._model_versions[(model_version.model_name, model_version.version)] = model_version
@@ -160,11 +308,82 @@ class InMemoryLearningHubRepository:
         self._release_decisions[decision.release_id] = decision
         return decision
 
+    def delete_release_decision(self, release_id: str) -> None:
+        self._release_decisions.pop(release_id, None)
+
     def get_release_decision(self, release_id: str) -> object | None:
         return self._release_decisions.get(release_id)
 
     def list_release_decisions(self) -> list[object]:
         return list(self._release_decisions.values())
+
+    def save_release_saga(self, saga: ModelReleaseSaga) -> ModelReleaseSaga:
+        idempotency_scope = (saga.model_name, saga.idempotency_key)
+        existing_release_id = self._release_saga_idempotency.get(idempotency_scope)
+        if existing_release_id is not None and existing_release_id != saga.release_id:
+            raise LearningHubReleaseConflict(
+                f"idempotency key already belongs to release {existing_release_id}"
+            )
+        assert_release_saga_fence(self._release_sagas.get(saga.release_id), saga)
+        self._release_sagas[saga.release_id] = saga
+        self._release_saga_idempotency[idempotency_scope] = saga.release_id
+        return saga
+
+    def get_release_saga(self, release_id: str) -> ModelReleaseSaga | None:
+        return self._release_sagas.get(release_id)
+
+    def get_release_saga_by_idempotency(
+        self, model_name: str, idempotency_key: str
+    ) -> ModelReleaseSaga | None:
+        release_id = self._release_saga_idempotency.get((model_name, idempotency_key))
+        return self._release_sagas.get(release_id) if release_id is not None else None
+
+    def list_release_sagas(
+        self,
+        model_name: str | None = None,
+        *,
+        include_terminal: bool = True,
+    ) -> list[ModelReleaseSaga]:
+        sagas = list(self._release_sagas.values())
+        if model_name is not None:
+            sagas = [saga for saga in sagas if saga.model_name == model_name]
+        if not include_terminal:
+            sagas = [saga for saga in sagas if not saga.terminal]
+        return sagas
+
+    def get_release_revision(self, model_name: str) -> int:
+        return self._release_revisions.get(model_name, 0)
+
+    @contextmanager
+    def release_guard(
+        self,
+        model_name: str,
+        *,
+        expected_revision: int,
+    ) -> Iterator[int]:
+        with self._release_locks_guard:
+            lock = self._release_locks.setdefault(model_name, RLock())
+        with lock:
+            current = self.get_release_revision(model_name)
+            if current != expected_revision:
+                raise LearningHubReleaseConflict(
+                    f"release revision conflict for {model_name}: "
+                    f"expected {expected_revision}, current {current}"
+                )
+            reserved = current + 1
+            self._release_revisions[model_name] = reserved
+            try:
+                yield reserved
+            except BaseException:
+                self._release_revisions[model_name] = current
+                raise
+
+    @contextmanager
+    def release_recovery_guard(self, model_name: str) -> Iterator[None]:
+        with self._release_locks_guard:
+            lock = self._release_locks.setdefault(model_name, RLock())
+        with lock:
+            yield
 
     def save_monitoring_evaluation(self, evaluation: MonitoringEvaluation) -> MonitoringEvaluation:
         self._monitoring_evaluations[evaluation.evaluation_id] = evaluation
@@ -256,4 +475,13 @@ class InMemoryLearningHubRepository:
         return self._label_sets.get(label_set_id)
 
 
-__all__ = ["InMemoryLearningHubRepository", "LearningHubRepository", "ReleaseDecisionRecord"]
+__all__ = [
+    "InMemoryLearningHubRepository",
+    "LearningHubReleaseConflict",
+    "LearningHubReleaseFenced",
+    "LearningHubRepository",
+    "ModelReleaseSaga",
+    "ReleaseDecisionRecord",
+    "ReleaseSagaState",
+    "assert_release_saga_fence",
+]

@@ -184,7 +184,7 @@ DEFERRABLE_FOREIGN_KEYS: tuple[str, ...] = (
 )
 
 # Cross-table tenant-equal lineage foreign keys required by patch 0004. Mirrors the
-# assertion set in scripts/validate_assisted_listing_intake_schema.sql.
+# assertion set in delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql.
 LINEAGE_FOREIGN_KEYS: tuple[str, ...] = (
     "fk_intake_resolved_listing_tenant",
     "fk_transition_snapshot_tenant",

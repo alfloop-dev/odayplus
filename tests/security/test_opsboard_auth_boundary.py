@@ -93,6 +93,58 @@ def test_valid_token_authenticates_and_maps_claims(config, key):
     assert outcome.principal.scope.heat_zone_ids == frozenset({"heat-zone-9"})
 
 
+def test_verified_email_mapping_supplies_platform_authorization(config, key):
+    mapped = AuthBoundaryConfig(
+        issuer=config.issuer,
+        audiences=config.audiences,
+        signing_keys=config.signing_keys,
+        principal_mappings={
+            "operator@example.com": {
+                "roles": ["operations_manager"],
+                "tenant_id": "tenant-live",
+            }
+        },
+    )
+    outcome = _boundary(mapped).authenticate(
+        Credentials(
+            bearer_token=encode_compact_jwt(
+                _claims(
+                    email="operator@example.com",
+                    email_verified=True,
+                    roles=["platform_admin"],
+                    tenant_id="token-tenant",
+                ),
+                key,
+            )
+        ),
+        now=NOW,
+    )
+
+    assert outcome.principal.roles == frozenset({Role.OPERATIONS_MANAGER})
+    assert outcome.principal.tenant_id == "tenant-live"
+
+
+def test_unknown_verified_principal_cannot_self_assign_authorization(config, key):
+    mapped = AuthBoundaryConfig(
+        issuer=config.issuer,
+        audiences=config.audiences,
+        signing_keys=config.signing_keys,
+        principal_mappings={"approved": {"roles": ["operations_manager"]}},
+    )
+    outcome = _boundary(mapped).authenticate(
+        Credentials(
+            bearer_token=encode_compact_jwt(
+                _claims(roles=["platform_admin"], tenant_id="token-tenant"), key
+            )
+        ),
+        now=NOW,
+    )
+
+    assert outcome.authenticated is True
+    assert outcome.principal.roles == frozenset()
+    assert outcome.principal.tenant_id is None
+
+
 def test_valid_authentication_writes_success_audit_event(config, key):
     boundary = _boundary(config)
     token = encode_compact_jwt(_claims(), key)
@@ -319,6 +371,30 @@ def test_config_from_env_reads_hs256_keys():
     assert cfg.audiences == frozenset({"oday-api", "oday-web"})
     assert cfg.resolve_key("k2").secret == b"secret-two"
     assert cfg.leeway_seconds == 30
+
+
+@pytest.mark.parametrize("value", ["{not-json", "[]", "{}"])
+def test_declared_invalid_or_empty_principal_map_remains_authoritative(value, key):
+    cfg = config_from_env(
+        {
+            "ODP_AUTH_ISSUER": ISSUER,
+            "ODP_AUTH_AUDIENCES": AUDIENCE,
+            "ODP_AUTH_HS256_KEYS": f"{key.kid}:{key.secret.decode()}",
+            "ODP_AUTH_PRINCIPAL_MAP": value,
+        }
+    )
+    outcome = _boundary(cfg).authenticate(
+        Credentials(
+            bearer_token=encode_compact_jwt(
+                _claims(roles=["platform_admin"], tenant_id="token-tenant"), key
+            )
+        ),
+        now=NOW,
+    )
+
+    assert cfg.principal_mapping_declared is True
+    assert outcome.principal.roles == frozenset()
+    assert outcome.principal.tenant_id is None
 
 
 def test_config_from_empty_env_is_fail_closed():

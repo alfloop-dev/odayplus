@@ -1,8 +1,8 @@
 "use client";
 
-import { Button, Chip, EvidenceCard, MetricCard, QueueRow, SectionPanel, StatusBadge, type Tone } from "./components";
+import type { CSSProperties } from "react";
+import { StatusBadge, type Tone } from "./components";
 import type { WorkspaceId } from "./navigation";
-import { operatorFixturesAllowed } from "./operatorDataMode";
 import styles from "./operator.module.css";
 
 export type ShellTarget = {
@@ -463,128 +463,143 @@ export function TodayWorkspace({
   onApprovalDecision: (approvalId: string, status: "approved" | "rejected" | "returned", payload: Record<string, string>) => void;
   onTargetSelect: (target: ShellTarget, label: string) => void;
 }) {
-  const fixturesAllowed = operatorFixturesAllowed();
   const today = envelope.today;
+  const greeting = today.hero.name
+    ? `早安，${today.hero.name}${today.hero.roleLabel ? ` — ${today.hero.roleLabel}` : ""}`
+    : "今日工作";
 
   return (
-    <div className={styles.todayWorkspaceApi} data-screen-label="Today 今日工作" data-testid="operator-today-workspace">
+    <div
+      className={styles.todayWorkspaceApi}
+      data-screen-label="Today 今日工作"
+      data-testid="operator-today-workspace"
+      data-visual-layout="package-10-r7"
+    >
       <header className={styles.todayHero}>
         <div>
-          <h1>
-            早安，{today.hero.name} — {today.hero.roleLabel}
-          </h1>
-          <p>{today.hero.scope}</p>
+          <h1>{greeting}</h1>
+          {today.hero.scope ? <p>資料範圍：{today.hero.scope}</p> : null}
         </div>
         <div className={styles.todayHeroMeta}>
-          <span>{today.hero.dateLabel}</span>
-          <strong data-testid="operator-envelope-source">{envelope.meta.source ?? "api"}</strong>
+          {today.hero.dateLabel ? <time>{today.hero.dateLabel}</time> : null}
+          {today.hero.roleLabel ? <strong>目前視角：{today.hero.roleLabel}</strong> : null}
+          <span className={styles.todaySourceMetadata} data-testid="operator-envelope-source">
+            {envelope.meta.source ?? "api"}
+          </span>
         </div>
       </header>
 
-      <section className={styles.metricGrid} aria-label="Today KPI cards" data-testid="operator-today-kpis">
-        {today.kpis.map((metric) => (
-          <MetricCard
-            delta={metric.delta}
-            key={metric.label}
-            label={metric.label}
-            meta={metric.meta}
-            tone={metric.tone}
-            value={metric.value}
-          />
-        ))}
+      <section
+        className={styles.todayKpiGrid}
+        aria-label="Today KPI cards"
+        data-testid="operator-today-kpis"
+        data-visual-layout="six-column-kpi"
+      >
+        {today.kpis.length ? (
+          today.kpis.map((metric) => (
+            <article className={styles.todayKpiCard} data-tone={metric.tone ?? "neutral"} key={metric.label}>
+              <span className={styles.todayKpiLabel}>
+                <i aria-hidden="true" />
+                {metric.label}
+              </span>
+              <strong>{metric.value || "—"}</strong>
+              {metric.delta || metric.meta ? (
+                <small>
+                  {metric.delta ? <b>{metric.delta}</b> : null}
+                  {metric.meta}
+                </small>
+              ) : null}
+            </article>
+          ))
+        ) : (
+          <div className={styles.todayEmptyState} data-testid="operator-today-kpis-empty">
+            目前沒有可顯示的 KPI 資料。
+          </div>
+        )}
       </section>
 
-      <div className={styles.todayGrid}>
+      <div className={styles.todayGrid} data-visual-layout="main-rail">
         <div className={styles.todayPrimary}>
-          <SectionPanel
-            actions={<Chip tone={envelope.meta.counts.critical ? "danger" : "success"}>{envelope.meta.counts.taskCenter} 項</Chip>}
-            eyebrow="Role-aware queue"
-            title="今天最需要處理"
-          >
-            <div className={styles.queueList} data-testid="operator-today-queue">
-              {today.queue.map((item) => (
-                <QueueRow
-                  description={item.description}
-                  id={item.id}
-                  key={item.id}
-                  meta={item.meta}
-                  onClick={() => onTargetSelect(item.target, item.id)}
-                  owner={item.owner}
-                  status={item.status}
-                  targetEntityId={item.target.entityId}
-                  targetTab={item.target.tab}
-                  targetWorkspace={item.target.workspace}
-                  time={item.time}
-                  title={item.title}
-                  tone={item.tone}
-                />
-              ))}
-            </div>
-          </SectionPanel>
-
-          <div className={styles.lowerGrid}>
-            <SectionPanel eyebrow="Store signal" title="Risk snapshot">
-              <div className={styles.riskList}>
-                {today.riskRows.map((row) => (
-                  <div className={styles.apiRiskRow} data-tone={row.tone} key={row.label}>
-                    <span>
-                      <strong>{row.label}</strong>
-                      <small>{row.signal}</small>
-                    </span>
-                    <b>{row.score}</b>
-                  </div>
-                ))}
+          <section className={styles.todayQueuePanel} aria-labelledby="today-queue-title">
+            <header className={styles.todayPanelHeader}>
+              <div>
+                <h2 id="today-queue-title">今天最需要處理</h2>
+                <span>依嚴重度與 SLA 排序</span>
               </div>
-            </SectionPanel>
-
-            <SectionPanel eyebrow="Evidence health" title="Operational signals">
-              {fixturesAllowed ? (
-                <div className={styles.evidenceGrid}>
-                  <EvidenceCard label="Data freshness" tone="success" value="06:00">
-                    ForecastOps, payment, review connectors refreshed.
-                  </EvidenceCard>
-                  <EvidenceCard label="Camera privacy" tone="warning" value="Locked">
-                    Purpose flow required before any media surface.
-                  </EvidenceCard>
-                  <EvidenceCard label="Model confidence" tone="info" value="0.84">
-                    {envelope.meta.counts.search} deep-linked entities indexed.
-                  </EvidenceCard>
-                </div>
+              <strong>{today.queue.length} 項</strong>
+            </header>
+            <div className={styles.queueList} data-testid="operator-today-queue">
+              {today.queue.length ? (
+                today.queue.map((item) => (
+                  <button
+                    className={styles.todayQueueRow}
+                    data-target-entity={item.target.entityId}
+                    data-target-tab={item.target.tab}
+                    data-target-workspace={item.target.workspace}
+                    key={item.id}
+                    onClick={() => onTargetSelect(item.target, item.id)}
+                    type="button"
+                  >
+                    <i aria-hidden="true" className={styles.todayToneDot} data-tone={item.tone ?? "neutral"} />
+                    <span className={styles.todayQueueMain}>
+                      <span className={styles.todayQueueTitle}>
+                        <small>{item.id}</small>
+                        <strong>{item.title}</strong>
+                      </span>
+                      <span className={styles.todayQueueContext}>
+                        {item.description ? <span>{item.description}</span> : null}
+                        {item.meta ? <span>{item.meta}</span> : null}
+                      </span>
+                    </span>
+                    <span className={styles.todayQueueState}>
+                      {item.status ? <StatusBadge tone={item.tone}>{item.status}</StatusBadge> : null}
+                      {item.time ? <time>{item.time}</time> : null}
+                    </span>
+                    <span className={styles.todayQueueOwner}>
+                      <small>Owner</small>
+                      <strong>{item.owner || "未指派"}</strong>
+                    </span>
+                    <span className={styles.todayQueueCta}>前往處理 →</span>
+                  </button>
+                ))
               ) : (
-                <p className={styles.auditLine} data-testid="operator-signals-unavailable">
-                  OPERATOR_SIGNAL_DATA_UNAVAILABLE · API 未提供 freshness、privacy 與 model confidence。
-                </p>
+                <div className={styles.todayEmptyState} data-testid="operator-today-queue-empty">
+                  今天沒有需要立即處理的項目，佇列已清空。
+                </div>
               )}
-            </SectionPanel>
-          </div>
+            </div>
+          </section>
         </div>
 
-        <aside className={styles.todayRail}>
-          <SectionPanel
-            actions={<Chip tone={envelope.meta.counts.approvals ? "warning" : "success"}>{envelope.meta.counts.approvals}</Chip>}
-            eyebrow="Approval center"
-            title="需要你決策"
-          >
+        <aside className={styles.todayRail} aria-label="Today decision and risk rail">
+          <section className={styles.todayRailPanel} data-today-rail-section="decisions">
+            <header className={styles.todayRailHeader}>
+              <h2>需要你決策</h2>
+            </header>
             <div className={styles.decisionList} data-testid="operator-decision-rail">
-              {today.decisions.map((decision) => (
-                <article
-                  className={styles.decisionCard}
-                  data-target-entity={decision.target.entityId}
-                  data-target-tab={decision.target.tab}
-                  data-target-workspace={decision.target.workspace}
-                  key={decision.id}
-                >
-                  <div className={styles.decisionTopline}>
-                    <span>{decision.id}</span>
-                    <StatusBadge tone={decision.tone}>{decision.status}</StatusBadge>
-                  </div>
-                  <h3>{decision.title}</h3>
-                  <p>{decision.meta}</p>
-                  <div className={styles.decisionActions}>
-                    <Button onClick={() => onTargetSelect(decision.target, decision.id)} size="sm" variant="secondary">
-                      {decision.cta}
-                    </Button>
-                    <Button
+              {today.decisions.length ? (
+                today.decisions.map((decision) => (
+                  <article
+                    className={styles.todayDecisionCard}
+                    data-target-entity={decision.target.entityId}
+                    data-target-tab={decision.target.tab}
+                    data-target-workspace={decision.target.workspace}
+                    key={decision.id}
+                  >
+                    <button
+                      className={styles.todayDecisionOpen}
+                      onClick={() => onTargetSelect(decision.target, decision.id)}
+                      type="button"
+                    >
+                      <span className={styles.todayDecisionTopline}>
+                        <StatusBadge tone={decision.tone}>{decision.status}</StatusBadge>
+                        <small>{decision.meta}</small>
+                      </span>
+                      <strong>{decision.title}</strong>
+                    </button>
+                    <button
+                      aria-label="核准"
+                      className={styles.todayDecisionAction}
                       onClick={() =>
                         onApprovalDecision(decision.id, "approved", {
                           actorName: today.hero.name,
@@ -592,31 +607,87 @@ export function TodayWorkspace({
                           reason: `Approved from Today rail for ${decision.id}`,
                         })
                       }
-                      size="sm"
-                      variant="primary"
+                      type="button"
                     >
-                      核准
-                    </Button>
-                  </div>
-                </article>
-              ))}
+                      {decision.cta || "進行核准"} →
+                    </button>
+                  </article>
+                ))
+              ) : (
+                <div className={styles.todayRailEmpty} data-testid="operator-decisions-empty">
+                  目前沒有等待你決策的項目。
+                </div>
+              )}
             </div>
-          </SectionPanel>
+          </section>
 
-          <SectionPanel eyebrow="Traceability" title="最近動態">
-            <div className={styles.auditList}>
-              {today.auditFeed.map((event) => (
-                <article className={styles.apiAuditRow} key={`${event.time}-${event.category}-${event.detail}`}>
-                  <div>
-                    <strong>{event.category}</strong>
+          <section className={styles.todayRailPanel} data-today-rail-section="risk">
+            <header className={styles.todayRailHeader}>
+              <h2>門市風險快照</h2>
+              <span>{today.riskRows.length} 門市</span>
+            </header>
+            {today.riskRows.length ? (
+              <>
+                <div className={styles.todayRiskPlot} aria-label="門市風險分布">
+                  {today.riskRows.map((row, index) => {
+                    const x = Math.max(12, Math.min(88, row.score));
+                    const y = 22 + (index % 4) * 19;
+                    return (
+                      <i
+                        aria-label={`${row.label} 風險分數 ${row.score}`}
+                        data-tone={row.tone ?? "neutral"}
+                        key={row.label}
+                        role="img"
+                        style={
+                          {
+                            "--today-risk-x": `${x}%`,
+                            "--today-risk-y": `${y}%`,
+                          } as CSSProperties
+                        }
+                      />
+                    );
+                  })}
+                </div>
+                <div className={styles.todayRiskList} data-testid="operator-risk-snapshot">
+                  {today.riskRows.map((row) => (
+                    <div key={row.label}>
+                      <i aria-hidden="true" data-tone={row.tone ?? "neutral"} />
+                      <strong>{row.label}</strong>
+                      <span>{row.signal}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className={styles.todayRailEmpty} data-testid="operator-risk-empty">
+                目前沒有可顯示的門市風險資料。
+              </div>
+            )}
+          </section>
+
+          <section className={styles.todayRailPanel} data-today-rail-section="audit">
+            <header className={styles.todayRailHeader}>
+              <h2>
+                最近動態 <span>AUDIT FEED</span>
+              </h2>
+            </header>
+            <div className={styles.todayAuditList} data-testid="operator-audit-feed">
+              {today.auditFeed.length ? (
+                today.auditFeed.map((event) => (
+                  <article key={`${event.time}-${event.category}-${event.detail}`}>
                     <time>{event.time}</time>
-                  </div>
-                  <p>{event.detail}</p>
-                  <span>{event.actor}</span>
-                </article>
-              ))}
+                    <p>
+                      <strong>{event.actor}</strong> {event.detail} <b>{event.category}</b>
+                    </p>
+                  </article>
+                ))
+              ) : (
+                <div className={styles.todayRailEmpty} data-testid="operator-audit-empty">
+                  目前沒有最近動態。
+                </div>
+              )}
             </div>
-          </SectionPanel>
+          </section>
         </aside>
       </div>
     </div>

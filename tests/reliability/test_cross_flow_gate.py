@@ -28,11 +28,15 @@ import pytest
 from apps.api.server import SERVICE_BOUNDARIES, bootstrap_runtime, build_server, build_worker
 from apps.worker.oday_worker.handlers import build_default_registry
 from apps.worker.oday_worker.main import ODayWorker
+from modules.external_data.workers.scheduled_fetch import TenantScopedExternalFetchStateStore
 from modules.forecastops import ForecastOpsService, StoreDayObservation
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobStatus
+from tests.integration._authz import FORECASTOPS_HEADERS
 
 PROVIDER_ID = "listing.partner_feed"
+TENANT_ID = FORECASTOPS_HEADERS["x-tenant-id"]
+SCHEDULED_TENANT_ID = "tenant-gate"
 
 
 @pytest.fixture
@@ -53,13 +57,16 @@ def _drain(worker: ODayWorker, limit: int = 25) -> int:
 def _seed_forecast_series(bundle, store_id: str) -> None:
     start = date(2026, 4, 1)
     ForecastOpsService(repository=bundle.forecastops_repository).ingest_timeseries(
-        StoreDayObservation(
-            store_id=store_id,
-            business_date=start + timedelta(days=index),
-            actual_revenue=90_000 + index * 150 + (index % 7) * 800,
-            source_snapshot_ids=(f"pos-cross-flow-{index:03d}",),
-        )
-        for index in range(70)
+        (
+            StoreDayObservation(
+                store_id=store_id,
+                business_date=start + timedelta(days=index),
+                actual_revenue=90_000 + index * 150 + (index % 7) * 800,
+                source_snapshot_ids=(f"pos-cross-flow-{index:03d}",),
+            )
+            for index in range(70)
+        ),
+        tenant_id=TENANT_ID,
     )
 
 
@@ -80,8 +87,9 @@ def test_service_boundaries_declare_runtime_units() -> None:
     assert {"core-api", "worker", "scheduler"}.issubset(units)
 
 
-def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
+def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypatch) -> None:
     """Acceptance 2-4: migrations + seed + api + worker + scheduler run together."""
+    monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", SCHEDULED_TENANT_ID)
     fastapi = pytest.importorskip("fastapi")  # noqa: F841
     from fastapi.testclient import TestClient
 
@@ -95,7 +103,10 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
 
         # Flow 1 (Integration/External): the scheduler primed an external-fetch
         # job but the worker has not run yet, so no watermark exists.
-        assert bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID) is None
+        scoped_store = TenantScopedExternalFetchStateStore(
+            bundle.external_fetch_state_store, SCHEDULED_TENANT_ID
+        )
+        assert scoped_store.last_success_watermark(PROVIDER_ID) is None
 
         # Flow 2 (Operations): enqueue a forecast job through the core-api
         # boundary. This crosses the API service boundary and writes an audit
@@ -104,8 +115,17 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         _seed_forecast_series(bundle, "store-gate-001")
         response = client.post(
             "/jobs",
-            json={"job_type": "forecast", "payload": {"store_id": "store-gate-001"}},
-            headers={"Idempotency-Key": "cross-flow-forecast-1"},
+            json={
+                "job_type": "forecast",
+                "payload": {
+                    "tenant_id": TENANT_ID,
+                    "store_id": "store-gate-001",
+                },
+            },
+            headers={
+                **FORECASTOPS_HEADERS,
+                "Idempotency-Key": "cross-flow-forecast-1",
+            },
         )
         assert response.status_code == 202, response.text
         body = response.json()
@@ -120,9 +140,9 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         assert bundle.job_queue.get(forecast_job_id).status == JobStatus.SUCCEEDED
 
         # Durable side effects: external watermark advanced; a forecast persisted.
-        watermark = bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        watermark = scoped_store.last_success_watermark(PROVIDER_ID)
         assert watermark is not None
-        assert bundle.forecastops_repository.latest_forecasts()
+        assert bundle.forecastops_repository.latest_forecasts(TENANT_ID)
 
         # Audit trail: the API job enqueue recorded an audit event under the
         # request's correlation id.
@@ -132,8 +152,17 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         # Idempotency: re-posting the same key does not create a second job.
         replay = client.post(
             "/jobs",
-            json={"job_type": "forecast", "payload": {"store_id": "store-gate-001"}},
-            headers={"Idempotency-Key": "cross-flow-forecast-1"},
+            json={
+                "job_type": "forecast",
+                "payload": {
+                    "tenant_id": TENANT_ID,
+                    "store_id": "store-gate-001",
+                },
+            },
+            headers={
+                **FORECASTOPS_HEADERS,
+                "Idempotency-Key": "cross-flow-forecast-1",
+            },
         )
         assert replay.status_code == 202
         assert replay.json()["job_id"] == forecast_job_id
@@ -144,7 +173,10 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
     # advanced watermark. Backup/recovery of durable runtime state.
     reopened = _durable_bundle(db_path)
     try:
-        persisted = reopened.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        reopened_scoped = TenantScopedExternalFetchStateStore(
+            reopened.external_fetch_state_store, SCHEDULED_TENANT_ID
+        )
+        persisted = reopened_scoped.last_success_watermark(PROVIDER_ID)
         assert persisted is not None
         assert persisted == watermark
     finally:

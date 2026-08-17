@@ -219,6 +219,8 @@ def test_feature_training_artifacts_are_reproducible_and_promotion_is_bound(db_p
             requested_by="ml-owner",
             approved_by="reviewer-a",
             correlation_id="corr-promote-v1",
+            expected_release_revision=service.repository.get_release_revision(MODEL_NAME),
+            idempotency_key="approval-full-001",
         )
     finally:
         engine.close()
@@ -278,6 +280,9 @@ def test_segment_acceptance_failure_rejects_governed_release(db_path) -> None:
                 monitoring_window="48h",
                 success_criteria=("none",),
                 fail_criteria=("segment gate failed",),
+                approved_by="reviewer-a",
+                expected_release_revision=service.repository.get_release_revision(MODEL_NAME),
+                idempotency_key="approval-full-002",
             )
     finally:
         engine.close()
@@ -319,7 +324,10 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             success_criteria=("ok",),
             fail_criteria=("regress",),
             requested_by="ml-owner",
+            approved_by="reviewer-a",
             correlation_id="corr-v1",
+            expected_release_revision=service.repository.get_release_revision(MODEL_NAME),
+            idempotency_key="approval-full-001",
         )
         service.request_release(
             model_name=MODEL_NAME,
@@ -332,7 +340,10 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             success_criteria=("same inputs within tolerance",),
             fail_criteria=("delta breach",),
             requested_by="ml-owner",
+            approved_by="reviewer-a",
             correlation_id="corr-canary",
+            expected_release_revision=service.repository.get_release_revision(MODEL_NAME),
+            idempotency_key="approval-canary-001",
         )
 
         drift_request = service.evaluate_monitoring(
@@ -402,7 +413,10 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             success_criteria=("ok",),
             fail_criteria=("regress",),
             requested_by="ml-owner",
+            approved_by="reviewer-a",
             correlation_id="corr-v2-full",
+            expected_release_revision=service2.repository.get_release_revision(MODEL_NAME),
+            idempotency_key="approval-full-011",
         )
         assert service2.repository.get_alias(MODEL_NAME, ModelAlias.PRODUCTION).version == "1.1.0"
         rollback = service2.request_rollback_from_comparison(
@@ -410,6 +424,9 @@ def test_monitoring_comparison_restart_safety_and_governed_rollback(db_path) -> 
             reason="same-input canary delta breached rollback policy",
             approval_id="approval-rollback-001",
             requested_by="on-call",
+            approved_by="reviewer-a",
+            expected_release_revision=service2.repository.get_release_revision(MODEL_NAME),
+            idempotency_key="approval-rollback-001",
         )
         assert rollback.release_type is ReleaseType.ROLLBACK
         assert rollback.rollback_target == "1.0.0"

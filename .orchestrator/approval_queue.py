@@ -31,6 +31,7 @@ from common import (
     write_activity_log,
     write_approval_evidence,
 )
+from provider_runtime import provider_uses_claude_cli
 from runtime_state import load_approval_state, load_runtime_state, save_approval_state
 
 
@@ -86,17 +87,6 @@ def _pid_is_alive(pid: Any) -> bool:
     return os.path.exists(f"/proc/{value}")
 
 
-def _provider_uses_claude_cli(config: dict[str, Any], provider_id: str | None) -> bool:
-    normalized = str(provider_id or "").strip().lower()
-    if not normalized:
-        return False
-    provider = (config.get("providers", {}) or {}).get(normalized, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode:
-        return delivery_mode == "claude_cli"
-    return normalized.startswith("claude")
-
-
 def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers: dict[str, Any]) -> str | None:
     run_id = item.get("worker_run_id")
     if not run_id:
@@ -105,7 +95,7 @@ def _orphaned_worker_note(config: dict[str, Any], item: dict[str, Any], workers:
     if worker is None:
         return "Auto-pruned orphaned approval after its worker state disappeared."
     if (
-        _provider_uses_claude_cli(config, worker.get("provider"))
+        provider_uses_claude_cli(config, worker.get("provider"))
         and worker.get("status") in {"waiting_approval", "suspended_approval"}
         and (worker.get("session_id") or worker.get("resume_token"))
     ):
@@ -202,7 +192,7 @@ def prune_stale_approvals(config: dict[str, Any]) -> list[dict[str, Any]]:
     return pruned
 
 
-def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+def _new_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
     approval_id = new_runtime_id("apr")
     raw_tool_input = item.get("tool_input")
     tool_input_signature = approval_tool_input_signature(raw_tool_input if raw_tool_input is not None else {})
@@ -247,10 +237,10 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
         "evidence_ref": evidence_ref,
         "resolution_ref": None,
     }
-    with approval_lock(config):
-        state = load_approval_state(config)
-        state.setdefault("pending", []).append(approval)
-        save_approval_state(config, state)
+    return approval
+
+
+def _write_approval_requested(config: dict[str, Any], approval: dict[str, Any]) -> None:
     write_activity_log(
         config,
         {
@@ -261,9 +251,18 @@ def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, A
             "approval_id": approval["approval_id"],
             "worker_run_id": approval.get("worker_run_id"),
             "risk_class": approval.get("risk_class"),
-            "evidence_ref": evidence_ref,
+            "evidence_ref": approval.get("evidence_ref"),
         },
     )
+
+
+def create_approval(config: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    with approval_lock(config):
+        state = load_approval_state(config)
+        approval = _new_approval(config, item)
+        state.setdefault("pending", []).append(approval)
+        save_approval_state(config, state)
+    _write_approval_requested(config, approval)
     return approval
 
 
@@ -272,6 +271,76 @@ def find_pending(state: dict[str, Any], approval_id: str) -> tuple[int, dict[str
         if item.get("approval_id") == approval_id:
             return index, item
     return -1, None
+
+
+def find_worker_deferred_approval(
+    state: dict[str, Any],
+    *,
+    worker_run_id: str,
+    tool_use_id: str | None = None,
+    tool_name: str | None = None,
+    tool_input: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Return the approval already correlated with one worker's deferred tool use.
+
+    Both pending and resolved entries are searched so a worker that already
+    resumed past a deferral never adopts the same tool use a second time.
+    `tool_use_id` is the strongest correlation key; entries recorded without one
+    fall back to the tool name plus the tool-input signature.
+    """
+    if not worker_run_id:
+        return None
+    normalized_tool_use_id = str(tool_use_id or "").strip()
+    signature = approval_tool_input_signature(tool_input if tool_input is not None else {})
+    items = [*state.get("pending", []), *state.get("history", [])]
+    for item in reversed(items):
+        if not isinstance(item, dict) or item.get("worker_run_id") != worker_run_id:
+            continue
+        item_tool_use_id = str(item.get("tool_use_id") or "").strip()
+        if normalized_tool_use_id and item_tool_use_id:
+            if item_tool_use_id == normalized_tool_use_id:
+                return item
+            continue
+        if tool_name and item.get("tool_name") != tool_name:
+            continue
+        if str(item.get("tool_input_signature") or "") != signature:
+            continue
+        return item
+    return None
+
+
+def ensure_worker_deferred_approval(
+    config: dict[str, Any],
+    item: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    """Atomically return or create one approval for a deferred worker tool.
+
+    The permission hook and supervisor can observe the same Claude deferral at
+    nearly the same time. Loading the latest queue and checking the correlation
+    key under the approval lock prevents both writers from leaving duplicate
+    approvals for one tool use.
+    """
+    worker_run_id = str(item.get("worker_run_id") or "").strip()
+    if not worker_run_id:
+        raise ValueError("worker_run_id is required for deferred approval correlation")
+    tool_input = item.get("tool_input")
+    normalized_tool_input = tool_input if isinstance(tool_input, dict) else {}
+    with approval_lock(config):
+        state = load_approval_state(config)
+        existing = find_worker_deferred_approval(
+            state,
+            worker_run_id=worker_run_id,
+            tool_use_id=str(item.get("tool_use_id") or "").strip() or None,
+            tool_name=str(item.get("tool_name") or "").strip() or None,
+            tool_input=normalized_tool_input,
+        )
+        if existing is not None:
+            return existing, False
+        approval = _new_approval(config, item)
+        state.setdefault("pending", []).append(approval)
+        save_approval_state(config, state)
+    _write_approval_requested(config, approval)
+    return approval, True
 
 
 def _apply_remember_rule(config: dict[str, Any], item: dict[str, Any], decision: str) -> None:
@@ -361,7 +430,7 @@ def resolve_approval(
             "remember": remember,
             "resume_override_active": bool(
                 decision == "allow"
-                and _provider_uses_claude_cli(config, item.get("provider"))
+                and provider_uses_claude_cli(config, item.get("provider"))
                 and not remember
             ),
             "resume_override_consumed_at": None,
@@ -410,7 +479,7 @@ def resolve_approval(
     return item
 
 
-def _approval_signature(
+def approval_signature(
     session_id: str | None,
     tool_name: str,
     tool_input: dict[str, Any] | None = None,
@@ -431,7 +500,7 @@ def find_resume_override(
     tool_input: dict[str, Any],
 ) -> dict[str, Any] | None:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = approval_signature(session_id, tool_name, tool_input)
     for item in reversed(state.get("history", [])):
         if not item.get("resume_override_active"):
             continue
@@ -439,7 +508,7 @@ def find_resume_override(
             continue
         if item.get("resume_override_consumed_at"):
             continue
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),

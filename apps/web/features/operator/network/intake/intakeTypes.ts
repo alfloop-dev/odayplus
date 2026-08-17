@@ -1,5 +1,5 @@
 // Assisted listing intake (ODP-OC-R5-011) — view contract for the five
-// Package 7 surfaces:
+// Package 10 canonical surfaces:
 //   Network URL 收件佇列 / Dialog 從網址新增物件 / Dialog 收件處理詳情 /
 //   Dialog 欄位修正 / Dialog 收件決策確認
 //
@@ -7,7 +7,7 @@
 // Not changing : the wire contract itself — stage/policy/outcome unions and
 //                their zh-TW labels are imported from @oday-plus/openapi-client
 //                (which mirrors assisted_intake.py) rather than re-typed here.
-// Composes with: AssistedIntakeQueuePanel and the four intake dialogs.
+// Composes with the canonical intake inbox/detail and action dialogs.
 
 import {
   INTAKE_IDENTITY_FIELDS,
@@ -29,7 +29,7 @@ export type IntakeTone = "good" | "watch" | "risk" | "info" | "neutral";
  */
 export type IntakeDialogKind = "add" | "detail" | "fix" | "decide";
 
-/** Design decision verbs (Package 7) mapped onto the API's decide actions. */
+/** Package 10 decision verbs mapped onto the API's decide actions. */
 export type IntakeDecisionKind = "create" | "revise" | "dup" | "steward";
 
 /**

@@ -1,0 +1,22 @@
+# cloud-run-dev-validation artifact published by Deploy Dev run 30436771086
+# head_sha 93ae1b2e75e1056c2bfeccd1d59e25e354f4f21f, run conclusion: failure
+# fetched 2026-07-29 via: gh api repos/alfloop-dev/odayplus/actions/artifacts/8718228990/zip
+
+artifact cloud-run-dev-validation id=8718228990 bytes=6743 expired=false
+
+Archive:  /tmp/odp-artifact-8718228990/artifact.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+    10332  2026-07-29 08:58   cloud-run-migration-compatibility.json
+     9854  2026-07-29 08:49   cloud-run-preflight.json
+    24107  2026-07-29 09:03   cloud-run-smoke.json
+---------                     -------
+    44293                     3 files
+
+# receipts the same run wrote but did not publish (deploy job log):
+2026-07-29T08:58:31.2911732Z Cloud Run migration Job smoke passed.
+2026-07-29T08:58:31.2912332Z report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+2026-07-29T09:01:00.0164886Z Cloud Run scheduler Job smoke passed.
+2026-07-29T09:01:00.0165520Z report=.odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+2026-07-29T09:01:27.8314804Z Cloud Run worker Job smoke passed.
+2026-07-29T09:01:27.8315857Z report=.odp_data/deployment/cloud-run-jobs/worker-validation.json

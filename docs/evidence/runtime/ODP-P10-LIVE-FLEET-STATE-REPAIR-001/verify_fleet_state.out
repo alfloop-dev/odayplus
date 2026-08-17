@@ -1,0 +1,14 @@
+active tasks: 57   archived tasks: 107
+repo root:    .
+
+[SKIP] 7. independent exact-state review passes -- owned by the reviewer, not self-assertable
+
+[PASS] 1. each summarized task has exactly one canonical resolution
+[PASS] 2. missing provider-ingestion work is restored durably
+[PASS] 3. next fields name current run SHA, blockers, dependencies, resume condition
+[PASS] 4. owner and reviewer source manifests match
+[PASS] 5. historical R3 implementation tasks are not reopened
+[PASS] 6. update_existing tasks have explicit writable and forbidden ceilings
+[PASS] 8. mutates_canonical normalized on all 11 without widening authority
+
+7/7 acceptance criteria pass

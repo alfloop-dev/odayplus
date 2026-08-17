@@ -1,4 +1,9 @@
-import { expect, request as playwrightRequest, test, type Page } from "@playwright/test";
+import {
+  expect,
+  request as playwrightRequest,
+  test,
+  type Page,
+} from "@playwright/test";
 
 import {
   acquireOperatorBackendLock,
@@ -69,6 +74,7 @@ async function setOperatorSession(
       window.sessionStorage.setItem("oday.operator.role", roleId);
       window.localStorage.setItem("oday.operator.role", roleId);
       window.sessionStorage.setItem("oday.operator.subject", subjectId);
+      window.sessionStorage.setItem("oday.operator.tenant", "tenant-a");
     },
     { roleId: role, subjectId: subject },
   );
@@ -83,7 +89,9 @@ async function openRadar(
   await setOperatorSession(page, role, subject);
   await page.reload();
   await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
+    timeout: 15_000,
+  });
 }
 
 async function submitUrl(page: Page, url: string) {
@@ -91,30 +99,42 @@ async function submitUrl(page: Page, url: string) {
   await expect(page.getByTestId("intake-add-dialog")).toBeVisible();
   await page.getByTestId("intake-url-input").fill(url);
   await page.getByTestId("intake-submit-button").click();
-  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({ timeout: 15_000 });
-  return (await page.getByTestId("intake-detail-id").textContent())?.trim() ?? "";
+  await expect(page.getByTestId("intake-detail-dialog")).toBeVisible({
+    timeout: 15_000,
+  });
+  return (
+    (await page.getByTestId("intake-detail-id").textContent())?.trim() ?? ""
+  );
 }
 
 async function decideCreate(page: Page) {
-  await page.getByTestId("intake-decide-create").click();
-  await page.getByTestId("intake-decide-reason").fill(
-    "QA 已核對來源、地址、租金與比對證據，建立獨立物件。",
-  );
+  await page.getByTestId("decide-action-create").click();
+  await page
+    .getByTestId("intake-decide-reason")
+    .fill("QA 已核對來源、地址、租金與比對證據，建立獨立物件。");
   await page.getByTestId("intake-decide-risk-ack").check();
   await page.getByTestId("intake-decide-submit").click();
-  await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({ timeout: 15_000 });
+  await expect(page.getByTestId("intake-decide-dialog")).toBeHidden({
+    timeout: 15_000,
+  });
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
 }
 
 async function requestPromotion(page: Page) {
-  await expect(page.getByTestId("promotion-request-form")).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId("promotion-request-reason").fill(
-    "商圈缺口、租金與坪效門檻已核對，提出 Candidate Site 晉升申請。",
-  );
+  await expect(page.getByTestId("promotion-request-form")).toBeVisible({
+    timeout: 15_000,
+  });
+  await page
+    .getByTestId("promotion-request-reason")
+    .fill("商圈缺口、租金與坪效門檻已核對，提出 Candidate Site 晉升申請。");
   await page.getByTestId("promotion-request-ack").check();
   const [request, response] = await Promise.all([
-    page.waitForRequest((candidate) => candidate.url().includes("/promotion-requests")),
-    page.waitForResponse((candidate) => candidate.url().includes("/promotion-requests")),
+    page.waitForRequest((candidate) =>
+      candidate.url().includes("/promotion-requests"),
+    ),
+    page.waitForResponse((candidate) =>
+      candidate.url().includes("/promotion-requests"),
+    ),
     page.getByTestId("promotion-request-submit").click(),
   ]);
   const headers = await request.allHeaders();
@@ -126,11 +146,18 @@ async function requestPromotion(page: Page) {
     response.status(),
     `promotion request failed: ${await response.text()}`,
   ).toBe(202);
-  await expect(page.getByTestId("promotion-receipt")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("promotion-receipt-status")).toContainText("PENDING_REVIEW");
+  await expect(page.getByTestId("promotion-receipt")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId("promotion-receipt-status")).toContainText(
+    "PENDING_REVIEW",
+  );
   return {
-    decisionId: (await page.getByTestId("promotion-decision-id").textContent())?.trim() ?? "",
-    etag: (await page.getByTestId("promotion-version").textContent())?.trim() ?? "",
+    decisionId:
+      (await page.getByTestId("promotion-decision-id").textContent())?.trim() ??
+      "",
+    etag:
+      (await page.getByTestId("promotion-version").textContent())?.trim() ?? "",
   };
 }
 
@@ -142,14 +169,24 @@ async function reopenIntakeAs(
 ) {
   await setOperatorSession(page, role, subject);
   await page.reload();
-  await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({ timeout: 15_000 });
+  // Package 10: while the durable URL context (selected + dialog) is active,
+  // the intake detail owns the whole workspace surface and no Network tab
+  // strip precedes it. Only when the URL carries no durable detail context may
+  // the reviewer navigate through the Listing Radar tab and the inbox row.
   const detailDialog = page.getByTestId("intake-detail-dialog");
-  const restoredFromUrl = await detailDialog
-    .waitFor({ state: "visible", timeout: 5_000 })
-    .then(() => true)
-    .catch(() => false);
-  if (!restoredFromUrl) {
+  // Mirror of isNetworkIntakeDetailRoute (NetworkFindAreasWorkspace).
+  const url = new URL(page.url());
+  const detailOwnsSurface =
+    /^\/intake\/[^/]+$/.test(url.pathname) ||
+    (Boolean(url.searchParams.get("selected")) &&
+      ["detail", "fix", "decide", "assignmentSla"].includes(
+        url.searchParams.get("dialog") ?? "",
+      ));
+  if (!detailOwnsSurface) {
+    await page.getByTestId("network-tab-1").click();
+    await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
+      timeout: 15_000,
+    });
     await page.getByTestId(`intake-inbox-row-${intakeId}`).click();
   }
   await expect(detailDialog).toBeVisible({ timeout: 15_000 });
@@ -166,14 +203,16 @@ function uniqueKey(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-test("canonical 1: exact URL duplicate is intercepted before retrieval", async ({ page }) => {
+test("canonical 1: exact URL duplicate is intercepted before retrieval", async ({
+  page,
+}) => {
   await openRadar(page);
   const firstId = await submitUrl(page, URLS.clean);
-  await page.getByRole("button", { name: "關閉" }).click();
+  await page.getByTestId("intake-return-button").click();
 
   const secondId = await submitUrl(page, URLS.clean);
   expect(secondId).toBe(firstId);
-  await page.getByRole("button", { name: "關閉" }).click();
+  await page.getByTestId("intake-return-button").click();
   await expect(page.getByTestId(`intake-inbox-row-${firstId}`)).toHaveCount(1);
 });
 
@@ -183,21 +222,35 @@ test("canonical 2: assisted-entry-only keeps URL and validates durable manual in
   await openRadar(page);
   await submitUrl(page, URLS.assistedOnly);
 
-  await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工補錄");
-  await expect(page.getByTestId("intake-policy-chip")).toHaveText("僅人工補錄");
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText(
+    "待人工補錄",
+  );
+  await expect(page.getByTestId("intake-detail-dialog")).toContainText(
+    "僅人工補錄",
+  );
   await page.getByTestId("assisted-save").click();
-  await expect(page.getByTestId("intake-assisted-error")).toContainText("地址、租金、坪數");
+  await expect(page.getByTestId("intake-assisted-error")).toContainText(
+    "地址、租金、坪數",
+  );
 
-  await page.getByTestId("assisted-address").fill("新北市板橋區府中路 26 號 1F");
+  await page
+    .getByTestId("assisted-address")
+    .fill("新北市板橋區府中路 26 號 1F");
   await page.getByTestId("assisted-rent").fill("54000");
   await page.getByTestId("assisted-area").fill("22");
   await page.getByTestId("assisted-save").click();
-  await expect(page.getByTestId("intake-assisted-error")).toContainText("了解人工補錄的風險");
+  await expect(page.getByTestId("intake-assisted-error")).toContainText(
+    "了解人工補錄的風險",
+  );
 
   await page.getByTestId("assisted-risk-ack").check();
   await page.getByTestId("assisted-save").click();
-  await expect(page.getByTestId("intake-fields-grid")).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByTestId("intake-timeline")).toContainText("人工補錄");
+  await expect(page.getByTestId("intake-parsed-lineage")).toBeVisible({
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
+    "人工補錄",
+  );
 });
 
 test("canonical 3: possible match requires explicit reason and risk acknowledgement", async ({
@@ -206,23 +259,33 @@ test("canonical 3: possible match requires explicit reason and risk acknowledgem
   await openRadar(page);
   await submitUrl(page, URLS.possible);
 
-  await expect(page.getByTestId("intake-detail-stage")).toHaveText("待人工覆核");
-  await expect(page.getByTestId("intake-detail-match")).toHaveText("疑似重複");
-  await expect(page.getByTestId("intake-no-auto-note")).toContainText("不會自動合併");
-
-  await page.getByTestId("intake-decide-create").click();
-  await page.getByTestId("intake-decide-submit").click();
-  await expect(page.getByTestId("intake-decide-error")).toContainText("必須填寫原因");
-  await page.getByTestId("intake-decide-reason").fill(
-    "現場確認樓層與來源物件 ID 均不同，判定為獨立物件。",
+  await expect(page.getByTestId("intake-detail-stage")).toHaveText(
+    "待人工覆核",
   );
+  await expect(page.getByTestId("intake-detail-match")).toHaveText("疑似重複");
+  await expect(page.getByTestId("no-auto-merge-warning")).toContainText(
+    "絕不自動合併",
+  );
+
+  await page.getByTestId("decide-action-create").click();
   await page.getByTestId("intake-decide-submit").click();
-  await expect(page.getByTestId("intake-decide-error")).toContainText("了解此決策的影響");
+  await expect(page.getByTestId("intake-decide-error")).toContainText(
+    "必須填寫原因",
+  );
+  await page
+    .getByTestId("intake-decide-reason")
+    .fill("現場確認樓層與來源物件 ID 均不同，判定為獨立物件。");
+  await page.getByTestId("intake-decide-submit").click();
+  await expect(page.getByTestId("intake-decide-error")).toContainText(
+    "了解此決策的影響",
+  );
   await page.getByTestId("intake-decide-risk-ack").check();
   await page.getByTestId("intake-decide-submit").click();
 
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("可決策");
-  await expect(page.getByTestId("intake-timeline")).toContainText("現場確認樓層");
+  await expect(page.getByTestId("intake-timeline-audit-section")).toContainText(
+    "現場確認樓層",
+  );
 });
 
 test("canonical 4: independent reviewer completes promotion with durable Candidate and SiteScore receipts", async ({
@@ -242,20 +305,38 @@ test("canonical 4: independent reviewer completes promotion with durable Candida
   await expect(page.getByTestId("promotion-score-job-pending")).toBeVisible();
 
   await reopenIntakeAs(page, intakeId, reviewer);
-  await expect(page.getByTestId("promotion-second-actor-ok")).toBeVisible({ timeout: 15_000 });
-  await page.getByTestId("promotion-review-reason").fill(
-    "獨立覆核 gate snapshot、商圈需求與來源證據，核准建立 Candidate。",
-  );
+  await expect(page.getByTestId("promotion-second-actor-ok")).toBeVisible({
+    timeout: 15_000,
+  });
+  await page
+    .getByTestId("promotion-review-reason")
+    .fill("獨立覆核 gate snapshot、商圈需求與來源證據，核准建立 Candidate。");
   await page.getByTestId("promotion-review-ack").check();
   await page.getByTestId("promotion-approve-btn").click();
 
-  await expect(page.getByTestId("promotion-receipt-status")).toContainText("COMPLETED", {
-    timeout: 15_000,
-  });
+  // Package 10 approve is two-step: a confirmation dialog shows the review
+  // summary, If-Match and Idempotency-Key before the server commit.
+  const confirmDialog = page.getByTestId("promotion-confirmation-dialog");
+  await expect(confirmDialog).toBeVisible();
+  await expect(page.getByTestId("promotion-review-summary")).toContainText(
+    reviewer,
+  );
+  await page.getByTestId("promotion-confirm-approve-btn").click();
+
+  await expect(page.getByTestId("promotion-receipt-status")).toContainText(
+    "COMPLETED",
+    {
+      timeout: 15_000,
+    },
+  );
   await expect(page.getByTestId("promotion-candidate-id")).not.toHaveText("");
   await expect(page.getByTestId("promotion-score-job-id")).not.toHaveText("");
-  await expect(page.getByTestId("sitescore-job-state")).toContainText("SUCCEEDED");
-  await expect(page.getByTestId("promotion-receipt-reviewer")).toContainText(reviewer);
+  await expect(page.getByTestId("sitescore-job-state")).toContainText(
+    "SUCCEEDED",
+  );
+  await expect(page.getByTestId("promotion-receipt-reviewer")).toContainText(
+    reviewer,
+  );
   await expect(page.getByTestId("promotion-audit-event-id")).not.toHaveText("");
   await expect(page.getByTestId("promotion-correlation-id")).not.toHaveText("");
 });
@@ -296,14 +377,23 @@ test("canonical 5 and 6: SCORE_FAILED retains Candidate and same-key replay queu
   expect(await failedReview.text()).toContain("ODP_TEST_SCORE_FAILURE");
 
   await reopenIntakeAs(page, intakeId, reviewer);
-  await expect(page.getByTestId("promotion-receipt-status")).toContainText("SCORE_FAILED", {
-    timeout: 15_000,
-  });
-  const candidateId = (await page.getByTestId("promotion-candidate-id").textContent())?.trim() ?? "";
-  const jobId = (await page.getByTestId("promotion-score-job-id").textContent())?.trim() ?? "";
+  await expect(page.getByTestId("promotion-receipt-status")).toContainText(
+    "SCORE_FAILED",
+    {
+      timeout: 15_000,
+    },
+  );
+  const candidateId =
+    (await page.getByTestId("promotion-candidate-id").textContent())?.trim() ??
+    "";
+  const jobId =
+    (await page.getByTestId("promotion-score-job-id").textContent())?.trim() ??
+    "";
   expect(candidateId).not.toBe("");
   expect(jobId).not.toBe("");
-  await expect(page.getByTestId("candidate-retained-note")).toContainText(candidateId);
+  await expect(page.getByTestId("candidate-retained-note")).toContainText(
+    candidateId,
+  );
   await expect(page.getByTestId("sitescore-job-state")).toContainText("FAILED");
 
   const jobResponse = await reviewerApi.get(`/api/v1/jobs/${jobId}/receipt`);
@@ -347,14 +437,18 @@ test("canonical 5 and 6: SCORE_FAILED retains Candidate and same-key replay queu
   await reviewerApi.dispose();
 
   await reopenIntakeAs(page, intakeId, reviewer);
-  await expect(page.getByTestId("candidate-retained-id")).toHaveText(candidateId);
+  await expect(page.getByTestId("candidate-retained-id")).toHaveText(
+    candidateId,
+  );
   await expect(page.getByTestId("sitescore-job-state")).toContainText("QUEUED");
   await expect(page.getByTestId("sitescore-job-attempt")).toContainText(
     String(firstReceipt.attempt),
   );
 });
 
-test("source policy fails closed for blocked and unknown sources", async ({ page }) => {
+test("source policy fails closed for blocked and unknown sources", async ({
+  page,
+}) => {
   await openRadar(page);
   for (const [url, policy] of [
     [URLS.blocked, "來源封鎖"],
@@ -362,9 +456,11 @@ test("source policy fails closed for blocked and unknown sources", async ({ page
   ] as const) {
     await submitUrl(page, url);
     await expect(page.getByTestId("intake-detail-stage")).toHaveText("已隔離");
-    await expect(page.getByTestId("intake-policy-chip")).toHaveText(policy);
-    await expect(page.getByTestId("intake-decide-steward")).toBeVisible();
-    await page.getByRole("button", { name: "關閉" }).click();
+    await expect(page.getByTestId("intake-detail-dialog")).toContainText(
+      policy,
+    );
+    await expect(page.getByTestId("decide-action-steward")).toBeVisible();
+    await page.getByTestId("intake-return-button").click();
   }
 });
 
@@ -374,12 +470,17 @@ test("retryable retrieval failure exposes code, correlation, recovery and preser
   await openRadar(page);
   await submitUrl(page, URLS.timeout);
   await expect(page.getByTestId("intake-detail-stage")).toHaveText("處理失敗");
-  await expect(page.getByTestId("intake-failure-panel")).toContainText(
-    "ODP-INTAKE-RETRIEVAL-TIMEOUT",
+  // Canonical Package 10 recovery surface (IntakeErrorRecovery).
+  const failure = page.getByTestId("intake-error-recovery");
+  await expect(failure).toContainText("ODP-INTAKE-RETRIEVAL-TIMEOUT");
+  await expect(page.getByTestId("error-retryable-badge")).toContainText(
+    "可自動重試",
   );
-  await expect(page.getByTestId("intake-failure-panel")).toContainText("可重試");
-  await expect(page.getByTestId("intake-correlation-id")).not.toHaveText("—");
-  await expect(page.getByTestId("intake-retry-button")).toBeVisible();
+  await expect(page.getByTestId("error-correlation-id")).not.toHaveText("—");
+  await expect(page.getByTestId("error-correlation-id")).not.toHaveText(
+    "UNAVAILABLE",
+  );
+  await expect(page.getByTestId("error-action-retry")).toBeVisible();
 });
 
 test("governance reviewer gets masked read-only intake while unrelated roles fail closed", async ({
@@ -387,12 +488,19 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
 }) => {
   await openRadar(page, "expansion-manager", "qa-role-seed-manager");
   const intakeId = await submitUrl(page, URLS.possible);
-  await page.getByRole("button", { name: "關閉" }).click();
+  await page.getByTestId("intake-return-button").click();
+  // Returning to the inbox rewrites the durable URL asynchronously; reloading
+  // before it settles restores the full-page detail view without the tab bar.
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
+    timeout: 15_000,
+  });
 
   await setOperatorSession(page, "pm-audit", "qa-governance-reviewer");
   await page.reload();
   await page.getByTestId("network-tab-1").click();
-  await expect(page.getByTestId("intake-read-only")).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByTestId("intake-read-only")).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
   // The durable intake deep link can restore the detail after a role switch.
   // Only open the row when that restoration did not already happen.
@@ -400,12 +508,18 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
     await page.getByTestId(`intake-inbox-row-${intakeId}`).click();
   }
   await expect(page.getByTestId("intake-detail-dialog")).toBeVisible();
-  await expect(page.getByTestId("intake-decide-denied")).toBeVisible();
-  await expect(page.getByTestId("intake-fix-address")).toBeDisabled();
-  await expect(page.getByTestId("intake-masked-contactPhone").first()).toContainText(
-    "FIELD_MASKED",
-  );
-  await page.getByRole("button", { name: "關閉" }).click();
+  await expect(page.getByTestId("intake-detail-actions")).toHaveCount(0);
+  await expect(page.getByTestId("fix-field-address")).toHaveCount(0);
+  // Canonical Package 10 lineage grid renders server-masked fields as
+  // "•••• [MASKED]" inside lineage-row-<key>; the masking view checkbox is
+  // off by default, so [MASKED] here proves the API masked contactPhone.
+  await expect(
+    page.getByTestId("lineage-row-contactPhone").first(),
+  ).toContainText("[MASKED]");
+  await page.getByTestId("intake-return-button").click();
+  await expect(page.getByTestId("intake-inbox-view")).toBeVisible({
+    timeout: 15_000,
+  });
 
   for (const [role, systemRole] of [
     ["ops-lead", "operations_manager"],
@@ -413,14 +527,17 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
     ["field-lead", "regional_supervisor"],
     ["marketing-manager", "marketing_manager"],
   ] as const) {
-    const denied = await page.request.get("/api/v1/operator/network-listings/intake", {
-      headers: {
-        "x-operator-role": role,
-        "x-roles": systemRole,
-        "x-subject-id": `qa-${role}`,
-        "x-tenant-id": "tenant-a",
+    const denied = await page.request.get(
+      "/api/v1/operator/network-listings/intake",
+      {
+        headers: {
+          "x-operator-role": role,
+          "x-roles": systemRole,
+          "x-subject-id": `qa-${role}`,
+          "x-tenant-id": "tenant-a",
+        },
       },
-    });
+    );
     expect(denied.status()).toBe(403);
 
     await setOperatorSession(page, role, `qa-${role}`);
@@ -430,7 +547,9 @@ test("governance reviewer gets masked read-only intake while unrelated roles fai
       await expect(networkWorkspace).toHaveAttribute("aria-disabled", "false");
       await networkWorkspace.click();
       await page.getByTestId("network-tab-1").click();
-      await expect(page.getByTestId("intake-no-access")).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId("intake-no-access")).toBeVisible({
+        timeout: 15_000,
+      });
       await expect(page.getByTestId("intake-add-button")).toHaveCount(0);
     } else {
       await expect(networkWorkspace).toHaveAttribute("aria-disabled", "true");

@@ -20,13 +20,13 @@ from common import (
     load_config,
     load_json,
     load_status,
-    new_runtime_id,
     render_template,
     resolve_path,
     snapshot_task,
     utc_now,
     write_activity_log,
 )
+from provider_runtime import provider_config
 from runtime_state import enqueue_event, load_runtime_state, save_runtime_state
 from task_archive import DEFAULT_RECENT_LIMIT, recent_terminal_summaries
 
@@ -169,8 +169,6 @@ def compute_events(previous: dict[str, Any], current: dict[str, Any], config: di
     events: list[dict[str, Any]] = []
     previous_tasks = previous.get("tasks", {})
     current_tasks = current.get("tasks", {})
-    {value.lower() for value in config.get("events", {}).get("review_statuses", ["review"])}
-
     for task_id, task in current_tasks.items():
         old_task = previous_tasks.get(task_id)
         if not old_task:
@@ -252,12 +250,61 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
             "- 完成後請交接給指定 reviewer，由 parent owner 決定是否吸收進主線。\n"
         )
     task_id = str(event.get("task_id") or "").strip()
+    reason = str(event.get("reason") or "wakeup").strip()
+    normalized_reason = reason.lower()
+    if normalized_reason == "owned_finalize_dispatch":
+        lifecycle_guardrails = (
+            "這次是 immutable finalize dispatch。不得修改 tracked files、merge/rebase dev、"
+            "建立 commit、push branch 或再次執行 task_finalize.sh。只可核對 approved_head、"
+            "PR 與 CI；PR 尚未 merge 就保持 review_approved 並退出，merge 後才由 owner 執行 done。"
+        )
+    elif normalized_reason in {"review_ready_dispatch", "status:review"}:
+        lifecycle_guardrails = (
+            "這次是 reviewer dispatch。程序退出前必須做出可稽核的 review 決定："
+            "通過則 approve，發現問題則 reopen／退回 in_progress。只新增 review note、"
+            "但讓 task 留在 review，會被 Supervisor 判定為 no-progress failure。"
+        )
+    elif normalized_reason in {
+        "owned_ready_dispatch",
+        "owned_in_progress_dispatch",
+    }:
+        lifecycle_guardrails = (
+            "這次是 owner dispatch。若工作已可送審，程序退出前必須先用 "
+            "delivery_toolchain/git/task_finalize.sh 推送 task branch、建立 PR 並原子記錄 review submission；"
+            "不得直接 handoff／re_review 製造沒有遠端 PR 證明的 review。只寫『ready/awaiting review』"
+            "但不完成正式提交，會被判定為 "
+            "no-progress failure。若只完成一段增量，至少要留下新的 task branch commit 或實質 next 狀態。"
+        )
+    else:
+        lifecycle_guardrails = ""
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
     base_branch = str(branch_workflow.get("dev_branch") or "dev")
     task_branch_prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
     task_id_kebab = re.sub(r"[^a-z0-9]+", "-", task_id.lower()).strip("-") if task_id else "none"
     branch_name = f"{task_branch_prefix}{task_id}" if task_id else f"{task_branch_prefix}(none)"
     lane = re.sub(r"[^a-z0-9]+", "-", str(target_agent or "").lower()).strip("-") or "unknown"
+    if normalized_reason == "owned_finalize_dispatch":
+        branch_work_guardrails = (
+            "這是 reviewer-approved immutable head 的 finalize lane：\n"
+            f"- 核准分支是 `{branch_name}`；只能讀取與核對，不可更新 branch。\n"
+            "- 即使 branch 落後 dev，也不可 merge、rebase、cherry-pick、commit 或 push；merge queue 會在暫存 ref 組合 base。\n"
+            "- working tree 若有 tracked diff，回報 blocker 並停止，不可把它納入已核准交付。"
+        )
+        finalize_guardrails = (
+            "依 `.orchestrator/skills/task-closeout-finalization.md` 的 immutable finalize 流程："
+            "確認 exact approved SHA 的 PR 已 merged，再用 "
+            f"`AI_NAME={display_name_for(config, agent['id'])} \"$PANTHEON_STATUS_ROOT/scripts/ai-status.sh\" done` 結案。"
+        )
+    else:
+        branch_work_guardrails = (
+            "進入 task 工作前，先確認你在正確的 branch 上：\n"
+            f"- 預期 branch 名稱：`{branch_name}`（從 `{base_branch}` 開出的 per-task branch；task id kebab: `{task_id_kebab}`）。\n"
+            f"- 如果目前 branch 不對，優先使用 `./delivery_toolchain/git/task_start.sh \"{task_id}\"`，不要手寫臨時 branch 規則。\n"
+            "- 如果 working tree 有未 commit diff 且不屬於這個 task，回報 blocker，不要 stash、不要繼續。\n"
+            "- 任何跨檔案或 routing 接點的 task-owned 改動，到可描述的中間狀態就依 worker-anchor-commit 規則做 anchor commit。\n"
+            f"- Anchor commit subject 建議：`{task_id}: anchor <scope>`；commit body 保留必要 trailers。"
+        )
+        finalize_guardrails = ""
     variables = {
         "context_files": "\n".join(f"- {path}" for path in context_files) if context_files else "- AI_COLLABORATION_GUIDE.md",
         "task_id": task_id or "(none)",
@@ -265,12 +312,15 @@ def render_wakeup_message(config: dict[str, Any], event: dict[str, Any], target_
         "lane": lane,
         "base_branch": base_branch,
         "branch_name": branch_name,
-        "branch_start_command": f"./scripts/git/task_start.sh \"{task_id}\"" if task_id else "./scripts/git/task_start.sh <TASK-ID>",
+        "branch_start_command": f"./delivery_toolchain/git/task_start.sh \"{task_id}\"" if task_id else "./delivery_toolchain/git/task_start.sh <TASK-ID>",
         "anchor_commit_subject": f"{task_id}: anchor <scope>" if task_id else "<TASK-ID>: anchor <scope>",
-        "reason": event.get("reason") or "wakeup",
+        "reason": reason,
         "target_files": "\n".join(f"- {path}" for path in target_files) if target_files else "- (none inferred)",
         "sidecar_guardrails": sidecar_guardrails.rstrip(),
         "target_agent_display_name": display_name_for(config, agent["id"]),
+        "lifecycle_guardrails": lifecycle_guardrails,
+        "branch_work_guardrails": branch_work_guardrails,
+        "finalize_guardrails": finalize_guardrails,
     }
     return render_template(template_path, variables).strip() + "\n"
 
@@ -293,8 +343,6 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
     event["context_files"] = context_files
     message = render_wakeup_message(config, event, target_agent)
     queue_payload = {
-        "event_id": new_runtime_id("evt"),
-        "created_at": utc_now(),
         "event_key": event.get("key"),
         "task_id": event.get("task_id"),
         "target_agent": agent["id"],
@@ -306,16 +354,16 @@ def queue_delivery_event(config: dict[str, Any], event: dict[str, Any]) -> bool:
         "target_files": event.get("task", {}).get("artifacts") or [],
         "metadata": {"handoff": event.get("handoff"), "task": event.get("task", {})},
     }
-    enqueue_event(config, queue_payload)
+    queue_payload = enqueue_event(config, queue_payload)
     write_activity_log(
         config,
         {
             "type": "wake_queued",
             "task_id": event.get("task_id"),
             "target_agent": display_name_for(config, agent["id"]),
-            "delivery_mode": config.get("providers", {}).get(agent.get("provider", agent["id"]), {}).get(
-                "delivery_mode", agent.get("adapter", "file_inbox")
-            ),
+            "delivery_mode": provider_config(
+                config, agent.get("provider", agent["id"])
+            ).get("delivery_mode", agent.get("adapter", "file_inbox")),
             "message": f"Wake-up queued for supervisor: {event.get('reason')}",
             "queue_event_id": queue_payload["event_id"],
         },
@@ -332,6 +380,11 @@ def trim_seen_events(state: dict[str, Any], max_entries: int) -> None:
 
 
 def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+    # The supervisor owns runtime state.  A disabled event transport must not
+    # still mirror the canonical task store into that state: the mirror is a
+    # stale second truth and used to be rewritten on every loop.
+    if not enqueue_runtime_events_enabled(config):
+        return False
     status = load_status(config)
     snapshot = build_snapshot(config, status)
     is_first_run = not state.get("initialized_at")
@@ -355,16 +408,13 @@ def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provid
 
     seen = state.setdefault("seen_event_keys", {})
     changed = False
-    if enqueue_runtime_events_enabled(config):
-        for event in events:
-            if event["key"] in seen and not replay:
-                continue
-            queued = queue_delivery_event(config, event)
-            if queued:
-                seen[event["key"]] = utc_now()
-                changed = True
-    elif events:
-        changed = True
+    for event in events:
+        if event["key"] in seen and not replay:
+            continue
+        queued = queue_delivery_event(config, event)
+        if queued:
+            seen[event["key"]] = utc_now()
+            changed = True
 
     state["initialized_at"] = state.get("initialized_at") or utc_now()
     state["last_scan_at"] = utc_now()

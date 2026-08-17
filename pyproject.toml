@@ -46,9 +46,12 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "jsonschema>=4.23",
     "jsonpath-ng>=1.8.0",
     "openapi-spec-validator>=0.9.0",
+    "pgserver>=0.1.3",
     "pytest>=8",
+    "pytest-xdist>=3.6",
     "ruff>=0.6",
 ]
 
@@ -75,6 +78,7 @@ ignore = ["E501", "E402"]
 [tool.pytest.ini_options]
 testpaths = [
     ".orchestrator",
+    "delivery_toolchain",
     "scripts",
     "tests",
     "modules",
@@ -87,4 +91,5 @@ addopts = "-q"
 pythonpath = ["."]
 markers = [
     "requires_live_env: test needs a live multi-repo / CLI / local-path environment and is excluded from CI (run with -m 'not requires_live_env')",
+    "performance: wall-clock SLO measurement that must own its runner; excluded from the shared product suite and enforced by the dedicated CI performance-gate job (run with -m performance)",
 ]

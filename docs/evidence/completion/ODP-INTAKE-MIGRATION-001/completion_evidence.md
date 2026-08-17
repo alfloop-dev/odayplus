@@ -12,7 +12,7 @@
 ## Deliverables Summary
 
 1. **Staging Backfill & Reconciliation Engine**:
-   - `scripts/migrations/assisted_listing_intake/migrate.py`: Implements `IntakeMigrator` handling:
+   - `product_ops/migrations/assisted_listing_intake/migrate.py`: Implements `IntakeMigrator` handling:
      - Scoped `migration_ref` rollback without destroying unrelated migrations, live outbox events (`CandidateSitePromoted`), or pre-existing orphan properties (resolves Blocker 2 and Blocker 3).
      - WORM append-only audit preservation during rollback per reliability contract (resolves Blocker 3c).
      - Accumulating full migrated set (both skipped and newly-inserted UUIDs) during resume pass so interrupt→resume→verify cutover path succeeds with 0 blocking findings (resolves Blocker 4).
@@ -69,7 +69,7 @@ Verify runs as a fresh migrator (no in-memory state).
 #### Step 1 — Backfill Partition 2026-01
 
 ```
-$ python3 -m scripts.migrations.assisted_listing_intake.migrate \
+$ python3 -m product_ops.migrations.assisted_listing_intake.migrate \
     --action backfill --tenant-id 00000000-0000-0000-0000-000000000001 --month 2026-01 \
     --db-dsn "$ODAY_DATABASE_URL" --input-file /tmp/legacy_jan_input.json
 {
@@ -96,7 +96,7 @@ $ python3 -m scripts.migrations.assisted_listing_intake.migrate \
 #### Step 2 — Backfill Partition 2026-02
 
 ```
-$ python3 -m scripts.migrations.assisted_listing_intake.migrate \
+$ python3 -m product_ops.migrations.assisted_listing_intake.migrate \
     --action backfill --tenant-id 00000000-0000-0000-0000-000000000001 --month 2026-02 \
     --db-dsn "$ODAY_DATABASE_URL" --input-file /tmp/legacy_feb_input.json
 {
@@ -123,7 +123,7 @@ $ python3 -m scripts.migrations.assisted_listing_intake.migrate \
 #### Step 3 — Shadow Verification (fresh migrator, reads proof from DB)
 
 ```
-$ python3 -m scripts.migrations.assisted_listing_intake.migrate \
+$ python3 -m product_ops.migrations.assisted_listing_intake.migrate \
     --action verify --tenant-id 00000000-0000-0000-0000-000000000001 \
     --db-dsn "$ODAY_DATABASE_URL"
 {
@@ -152,7 +152,7 @@ $ python3 -m scripts.migrations.assisted_listing_intake.migrate \
 #### Step 4 — Scoped Rollback
 
 ```
-$ python3 -m scripts.migrations.assisted_listing_intake.migrate \
+$ python3 -m product_ops.migrations.assisted_listing_intake.migrate \
     --action rollback --tenant-id 00000000-0000-0000-0000-000000000001 \
     --migration-ref ODP-INTAKE-MIGRATION-001 \
     --db-dsn "$ODAY_DATABASE_URL"
@@ -182,7 +182,7 @@ $ uv run pytest tests/ops/test_assisted_listing_intake_migration.py -q
 
 ### Ruff Check
 ```text
-$ uv run ruff check scripts/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py
+$ uv run ruff check product_ops/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py
 All checks passed!
 ```
 
