@@ -1,0 +1,384 @@
+/*
+ * Governed geocoder address search (ODP-CAP-GEOCODER-SEARCH-001).
+ *
+ * Tones always pair a colour with text in the markup — "需人工覆核" / "可直接採用"
+ * is spelled out on every candidate — per the design's rule that state must
+ * never be encoded by colour alone.
+ *
+ * Responsive: the panel is fluid down to a phone. Desktop lays each candidate
+ * out as address + coordinates on one row; below 760px the row stacks and the
+ * search control goes full width so the address field keeps a usable length.
+ */
+
+.panel {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  background: var(--surface-1, #ffffff);
+  border: 1px solid var(--border-color, #e3e8f0);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1f2733;
+  margin: 0;
+}
+
+.headHint {
+  font-size: 11px;
+  color: #5a6478;
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.searchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.searchControls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fieldLabel {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #3d4757;
+}
+
+.input {
+  flex: 1 1 260px;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font-size: 13px;
+  border: 1px solid #cdd5e2;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2733;
+}
+
+.input:disabled {
+  background: #f4f6fa;
+  color: #7a8398;
+}
+
+.textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border: 1px solid #cdd5e2;
+  border-radius: 8px;
+  resize: vertical;
+  font-family: inherit;
+  color: #1f2733;
+}
+
+.primaryButton {
+  background: #2e3a97;
+  color: #ffffff;
+  border: 1px solid #2e3a97;
+  border-radius: 9px;
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.primaryButton:hover:not(:disabled) {
+  background: #263080;
+}
+
+.primaryButton:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: #ffffff;
+  color: #2e3a97;
+  border: 1px solid #c3cbe0;
+  border-radius: 9px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.secondaryButton:hover {
+  background: #f2f4fb;
+}
+
+.selectButton {
+  align-self: flex-start;
+  background: #ffffff;
+  color: #2e3a97;
+  border: 1px solid #2e3a97;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.selectButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-color: #c3cbe0;
+  color: #7a8398;
+}
+
+.warnNote,
+.deniedNote {
+  font-size: 11.5px;
+  line-height: 1.6;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+
+.warnNote {
+  background: #fff8e8;
+  border: 1px solid #f0d9a4;
+  color: #7a5a12;
+}
+
+.deniedNote {
+  background: #f4f6fa;
+  border: 1px solid #dde3ee;
+  color: #4a5468;
+}
+
+.errorBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #fdf2f0;
+  border: 1px solid #edc3ba;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+
+.errorSummary {
+  font-size: 12.5px;
+  color: #8c2f18;
+}
+
+.errorNext {
+  font-size: 11.5px;
+  color: #6b3a2a;
+  line-height: 1.6;
+}
+
+.errorMeta {
+  font-size: 11px;
+  color: #7a6058;
+  word-break: break-all;
+}
+
+.errorText {
+  font-size: 11.5px;
+  color: #a3311a;
+  line-height: 1.6;
+}
+
+.resultMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11px;
+  color: #5a6478;
+  margin-bottom: 8px;
+}
+
+.emptyState {
+  font-size: 12px;
+  color: #4a5468;
+  background: #f7f9fc;
+  border: 1px dashed #cdd5e2;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.candidateList {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #dde3ee;
+  border-left: 4px solid #2f855a;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.candidateFlagged {
+  border-left-color: #c05621;
+  background: #fffaf4;
+}
+
+.candidateActive {
+  box-shadow: 0 0 0 2px rgba(46, 58, 151, 0.25);
+}
+
+.candidateMain {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.candidateAddress {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2733;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.candidateCoords {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: #3d4757;
+  white-space: nowrap;
+}
+
+.candidateFacts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11px;
+  color: #5a6478;
+}
+
+.candidateBadgeClean,
+.candidateBadgeFlagged {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 10px;
+}
+
+.candidateBadgeClean {
+  background: #e8f4ec;
+  border: 1px solid #a9d3ba;
+  color: #22603f;
+}
+
+.candidateBadgeFlagged {
+  background: #fdeee1;
+  border: 1px solid #e6b78c;
+  color: #8a4415;
+}
+
+.reasonList {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #6b4a2a;
+}
+
+.confirmBlock,
+.rejectBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid #dde3ee;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f9fafd;
+}
+
+.rejectBlock {
+  margin-top: 10px;
+}
+
+.riskSummary {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #4a5468;
+  background: #ffffff;
+  border: 1px solid #e3e8f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.checkboxRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #3d4757;
+}
+
+.confirmActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 759px) {
+  .panel {
+    padding: 11px;
+  }
+
+  .searchControls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .input,
+  .primaryButton {
+    width: 100%;
+    flex: 1 1 auto;
+  }
+
+  .candidateMain {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
+  .candidateCoords {
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  .confirmActions button {
+    width: 100%;
+  }
+}

@@ -23,7 +23,7 @@ The staging environment is configured via the following environment variables (w
 
 ## Smoke Check Validation
 
-The validation run executed `scripts/e2e/check_remote_staging_proof.py` with the following parameters:
+The validation run executed `delivery_toolchain/e2e/check_remote_staging_proof.py` with the following parameters:
 - **Expected SHA**: `aab092e1a73a1a633b3a3410df59fe3fb9f58045`
 - **Correlation ID**: `corr-odp-pv-stage-001`
 
@@ -32,7 +32,7 @@ The validation run executed `scripts/e2e/check_remote_staging_proof.py` with the
 export ODP_STAGING_DEPLOY_URL="http://127.0.0.1:8001"
 export ODP_STAGING_API_URL="http://127.0.0.1:8001"
 export ODP_STAGING_SECRET_OWNER="Platform/Ops"
-python3 scripts/e2e/check_remote_staging_proof.py \
+python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
   --expected-sha "aab092e1a73a1a633b3a3410df59fe3fb9f58045" \
   --correlation-id "corr-odp-pv-stage-001" \
   --output docs/evidence/completion/ODP-PV-STAGE-001_proof_report.json

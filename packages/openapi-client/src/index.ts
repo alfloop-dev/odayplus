@@ -16,7 +16,7 @@
  * `./generated/types` is generated from `openapi.json`, which is exported from
  * the live app. It is re-exported wholesale below and is the source of truth
  * for request DTOs, the error envelope, and the versioned path map. Never edit
- * it; run `scripts/openapi/generate_client.py`.
+ * it; run `delivery_toolchain/openapi/generate_client.py`.
  *
  * Two categories of type are still hand-written here:
  *
@@ -30,8 +30,8 @@
  * 2. **Response DTOs.** Every route is annotated `-> dict[str, Any]`, so the
  *    artifact describes all 156 success responses as `additionalProperties:
  *    true` — there is no response shape to generate from. Those types remain
- *    hand-written and are quarantined in `./handwritten`, re-exported here for
- *    compatibility. Declaring `response_model=` per route is the fix and is
+ *    hand-written and are defined directly in `src/index.ts`.
+ *    Declaring `response_model=` per route is the fix and is
  *    tracked as a follow-up; it cannot be applied mechanically, because
  *    `response_model` filters the response to the declared fields and an
  *    incomplete model would silently drop data the console renders.

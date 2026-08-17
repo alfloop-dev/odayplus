@@ -30,7 +30,7 @@
   - exit 0; 144 passed; one Starlette deprecation warning.
 - `python3 infra/terraform/validate_contract.py`
   - exit 0; 14 Terraform files checked.
-- `bash -n scripts/deploy_cloud_run_waji.sh`
+- `bash -n product_ops/deployment/deploy_cloud_run_waji.sh`
   - exit 0.
 - `git diff --check`
   - exit 0.
@@ -59,7 +59,7 @@ the task-owned auth and deployment contract.
   - exit 0; 144 passed; one Starlette deprecation warning.
 - `python3 infra/terraform/validate_contract.py`
   - exit 0; 14 Terraform files checked.
-- `bash -n scripts/deploy_cloud_run_waji.sh`
+- `bash -n product_ops/deployment/deploy_cloud_run_waji.sh`
   - exit 0.
 - `git diff --check`
   - exit 0.

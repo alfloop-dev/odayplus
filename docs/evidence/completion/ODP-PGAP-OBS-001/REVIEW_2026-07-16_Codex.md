@@ -26,7 +26,7 @@ evidence artifacts required by the task brief.
    `git diff --check origin/dev...HEAD` exits cleanly on `48200b68`.
 
 2. Resolved: runtime evidence generator is reproducible from the repo root.
-   `python3 scripts/e2e/generate_observability_evidence.py` now self-bootstraps
+   `python3 delivery_toolchain/e2e/generate_observability_evidence.py` now self-bootstraps
    the repository root onto `sys.path`, executes the browser -> API -> worker
    flow, routes the P1 alert through `AlertRouter`, and delivers via
    `ConsoleNotificationAdapter`.
@@ -43,9 +43,9 @@ evidence artifacts required by the task brief.
 
 - `python3 -m ruff check shared/observability modules/notifications apps tests/reliability` - passed
 - `uv run pytest tests/reliability tests/integration -q` - passed, warnings only
-- `python3 scripts/e2e/check_product_release_gate.py` - passed
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py` - passed
 - `git diff --check origin/dev...HEAD` - passed
-- `python3 scripts/e2e/generate_observability_evidence.py` - passed and emitted a correlated browser -> API -> worker trace plus console alert delivery
+- `python3 delivery_toolchain/e2e/generate_observability_evidence.py` - passed and emitted a correlated browser -> API -> worker trace plus console alert delivery
 - `TestClient(create_app(external_provider_validation=lambda: None)).get("/health")` - passed with HTTP 200
 
 ## Review Notes

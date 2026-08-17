@@ -4,12 +4,12 @@
   "purpose": "Template for fleets to attach redacted external runtime proof for product-grade E2E closeout.",
   "release_target": {
     "pr": 82,
-    "authority": "GitHub PR #82 headRefOid and attached checks",
+    "authority": "GitHub manifest-selected release PR headRefOid and attached checks",
     "must_not_hardcode_dev_hash": true
   },
   "global_rules": [
     "Do not include secret values, tokens, private keys, raw credentials, full connection strings, or unredacted provider payloads.",
-    "Every handback must cite the current PR #82 headRefOid fetched at execution time.",
+    "Every handback must cite the current manifest-selected release PR headRefOid fetched at execution time.",
     "Every handback must include at least one correlation_id and at least one redacted artifact reference.",
     "Every handback must state whether it is production, remote staging, or approved staging-equivalent evidence.",
     "Every handback must keep deterministic/mock-live proof separate from live external runtime proof."
@@ -130,7 +130,7 @@
         "staging map tile URL configured",
         "provider attribution and terms URL visible",
         "remote staging smoke proves map list/ranking/detail fallback remains usable during tile outage",
-        "proof report references current PR #82 headRefOid"
+        "proof report references current release_target.pr headRefOid"
       ]
     },
     {
@@ -151,7 +151,7 @@
         "staging geocoder URL configured",
         "geocoder outage fallback remains usable",
         "attribution/terms approval is visible",
-        "proof report references current PR #82 headRefOid"
+        "proof report references current release_target.pr headRefOid"
       ]
     },
     {
@@ -174,7 +174,7 @@
         "ODP_STAGING_SECRET_OWNER configured",
         "ODAY_RELEASE_SHA injected",
         "/platform/health reachable",
-        "/platform/version.release_sha equals current PR #82 headRefOid",
+        "/platform/version.release_sha equals current release_target.pr headRefOid",
         "redacted remote staging proof report artifact"
       ]
     },

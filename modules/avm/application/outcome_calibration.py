@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from typing import Any
 
 from modules.avm.domain.outcome import (
@@ -14,16 +12,12 @@ from modules.avm.domain.outcome import (
     AVMQuerySourceReceipt,
     AVMVerdict,
 )
+from shared.integrity import compute_content_sha256
 
 
 def compute_receipt_sha256(payload: dict[str, Any]) -> str:
     """Compute sha256 digest of payload excluding integrity envelope."""
-    canonical = json.dumps(
-        {k: v for k, v in payload.items() if k != "integrity"},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    return compute_content_sha256(payload)
 
 
 def generate_gate1_benchmark_receipt(

@@ -31,7 +31,7 @@ type MapBoundaryConfig = {
 
 type MapStateFixture = "normal" | "loading" | "empty" | "error" | "partial" | "no-geometry";
 
-type HeatZoneMapProps = {
+export type HeatZoneMapProps = {
   zones: HeatZone[];
   listings: Listing[];
   candidates: CandidateSite[];

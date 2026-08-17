@@ -1,0 +1,604 @@
+diff --git a/.orchestrator/supervisor.py b/.orchestrator/supervisor.py
+index 11717ccd..07bde07c 100644
+--- a/.orchestrator/supervisor.py
++++ b/.orchestrator/supervisor.py
+@@ -1360,21 +1360,87 @@ def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
+     )
+ 
+ 
+-def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_ref: str) -> tuple[bool, str]:
+-    """Fast-forward a reused worker worktree to the current base ref tip.
+-
+-    Reused worktrees may carry the worker's per-task branch from days ago,
+-    which means their copy of `scripts/ai_status.py` / supervisor / skills can
+-    be older than the supervisor root. That stale snapshot has bypassed gates
+-    such as ORCH-CLOSEOUT-MERGE-GATE (require_merged_pr). Refresh on lease so
+-    the worker always sees current control-plane code.
+-
+-    Strategy: fetch + `git merge --ff-only origin/<base>`. Never auto-resolve
+-    a real merge — if the branch genuinely diverged, leave it for the worker
+-    to handle. Dirty reused worktrees are blocked before dispatch so workers
+-    cannot inherit unrelated staged or tracked changes.
++def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
++    proc = subprocess.run(
++        ["git", *args],
++        cwd=cwd,
++        capture_output=True,
++        text=True,
++        check=False,
++    )
++    return proc.returncode, (proc.stdout or "").strip()
++
++
++def _git_commit_oid(cwd: Path, ref: str) -> str | None:
++    returncode, output = _git_output(cwd, "rev-parse", "--verify", f"{ref}^{{commit}}")
++    oid = output.splitlines()[0].strip() if output else ""
++    return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
++
++
++def _git_operation_in_progress(worktree_path: Path) -> bool:
++    # REBASE_HEAD records the commit currently being replayed, but Git may
++    # retain it after a successful rebase has finished.  The authoritative
++    # in-progress signals are rebase-merge/rebase-apply below; treating a stale
++    # REBASE_HEAD as active permanently jams an otherwise reusable worktree.
++    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD"):
++        returncode, _ = _git_output(worktree_path, "rev-parse", "--verify", "-q", marker)
++        if returncode == 0:
++            return True
++    for marker in ("rebase-merge", "rebase-apply"):
++        returncode, raw_path = _git_output(worktree_path, "rev-parse", "--git-path", marker)
++        if returncode != 0 or not raw_path:
++            return True
++        marker_path = Path(raw_path)
++        if not marker_path.is_absolute():
++            marker_path = worktree_path / marker_path
++        if marker_path.exists():
++            return True
++    return False
++
++
++def _refresh_reused_worker_worktree(
++    repo_root: Path,
++    worktree_path: Path,
++    base_ref: str,
++    expected_branch: str,
++) -> tuple[bool, str]:
++    """Lease a clean reused worktree using a fail-closed three-way policy.
++
++    A branch behind the current base may be fast-forwarded. A branch already
++    containing the base is left untouched. A genuinely diverged branch is
++    dispatchable only when its local HEAD exactly matches the freshly fetched
++    remote task HEAD; the owner then receives an explicit rebase-required
++    prompt. Every unverifiable or mutable condition blocks without resetting,
++    cleaning, rebasing, or otherwise discarding worker state.
+     """
+     base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
++    worktree_path = worktree_path.resolve()
++    repo_root = repo_root.resolve()
++
++    top_rc, top_level = _git_output(worktree_path, "rev-parse", "--show-toplevel")
++    worktree_common_rc, worktree_common = _git_output(worktree_path, "rev-parse", "--git-common-dir")
++    repo_common_rc, repo_common = _git_output(repo_root, "rev-parse", "--git-common-dir")
++    try:
++        resolved_top = Path(top_level).resolve()
++        resolved_worktree_common = (worktree_path / worktree_common).resolve()
++        resolved_repo_common = (repo_root / repo_common).resolve()
++    except (OSError, RuntimeError, ValueError):
++        return False, "wrong_worktree: unable to resolve repository identity"
++    if (
++        top_rc != 0
++        or worktree_common_rc != 0
++        or repo_common_rc != 0
++        or resolved_top != worktree_path
++        or resolved_worktree_common != resolved_repo_common
++    ):
++        return False, "wrong_worktree: path is not the expected repository worktree"
++
++    branch_rc, branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
++    if branch_rc != 0 or branch != expected_branch:
++        return False, f"wrong_branch: expected {expected_branch}, found {branch or 'detached HEAD'}"
++    if _git_operation_in_progress(worktree_path):
++        return False, "unresolved_git_operation"
++
+     fetch_proc = subprocess.run(
+         ["git", "fetch", "origin", base, "--quiet"],
+         cwd=worktree_path,
+@@ -1393,45 +1459,79 @@ def _refresh_reused_worker_worktree(repo_root: Path, worktree_path: Path, base_r
+         text=True,
+         check=False,
+     )
+-    scratch_restored = False
+-    if status_proc.returncode == 0 and status_proc.stdout.strip():
+-        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout)
+-        if classification == "real":
+-            return False, "skipped_dirty_worktree"
+-        # Only orchestrator-managed scratch is dirty: restore it and reuse the
+-        # worktree instead of jamming dispatch on regenerable bookkeeping churn.
+-        _restore_reusable_scratch(worktree_path, scratch_paths)
+-        verify_proc = subprocess.run(
+-            ["git", "status", "--porcelain", "--untracked-files=no"],
++    if status_proc.returncode != 0:
++        return False, "status_failed"
++    if status_proc.stdout.strip():
++        return False, "skipped_dirty_worktree"
++
++    local_head = _git_commit_oid(worktree_path, "HEAD")
++    base_head = _git_commit_oid(worktree_path, f"origin/{base}")
++    if not local_head or not base_head:
++        return False, "unverifiable_refs: missing local HEAD or fetched base"
++
++    remote_query = subprocess.run(
++        ["git", "ls-remote", "--exit-code", "origin", f"refs/heads/{expected_branch}"],
++        cwd=worktree_path,
++        capture_output=True,
++        text=True,
++        check=False,
++    )
++    remote_task_exists = remote_query.returncode == 0
++    if remote_query.returncode not in {0, 2}:
++        details = (remote_query.stderr or remote_query.stdout or "").strip()
++        return False, f"fetch_failed: {details}"
++    remote_task_head: str | None = None
++    if remote_task_exists:
++        fetch_task_proc = subprocess.run(
++            [
++                "git",
++                "fetch",
++                "origin",
++                "--quiet",
++                f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
++            ],
+             cwd=worktree_path,
+             capture_output=True,
+             text=True,
+             check=False,
+         )
+-        if verify_proc.returncode == 0 and verify_proc.stdout.strip():
+-            return False, "skipped_dirty_worktree"
+-        scratch_restored = True
+-
+-    merge_proc = subprocess.run(
+-        ["git", "merge", "--ff-only", f"origin/{base}"],
+-        cwd=worktree_path,
+-        capture_output=True,
+-        text=True,
+-        check=False,
++        if fetch_task_proc.returncode != 0:
++            details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
++            return False, f"fetch_failed: {details}"
++        remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
++        if not remote_task_head:
++            return False, "unverifiable_refs: missing fetched remote task HEAD"
++        if local_head != remote_task_head:
++            return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
++
++    base_contains_rc, _ = _git_output(
++        worktree_path, "merge-base", "--is-ancestor", local_head, base_head
+     )
+-    if merge_proc.returncode == 0:
+-        head_proc = subprocess.run(
+-            ["git", "rev-parse", "--short", "HEAD"],
++    if base_contains_rc not in {0, 1}:
++        return False, "unverifiable_refs: cannot compare local HEAD with fetched base"
++    if base_contains_rc == 0:
++        merge_proc = subprocess.run(
++            ["git", "merge", "--ff-only", f"origin/{base}"],
+             cwd=worktree_path,
+             capture_output=True,
+             text=True,
+             check=False,
+         )
+-        head = (head_proc.stdout or "").strip()
+-        suffix = "+scratch_restored" if scratch_restored else ""
+-        return True, (f"ff_to_{head}{suffix}" if head else f"ff_ok{suffix}")
+-    details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()[0] if (merge_proc.stderr or merge_proc.stdout) else "unknown"
+-    return False, f"non_fast_forward: {details}"
++        if merge_proc.returncode != 0:
++            details = (merge_proc.stderr or merge_proc.stdout or "").strip().splitlines()
++            return False, f"fast_forward_failed: {details[0] if details else 'unknown'}"
++        return True, f"ff_to_{base_head[:12]}"
++
++    task_contains_rc, _ = _git_output(
++        worktree_path, "merge-base", "--is-ancestor", base_head, local_head
++    )
++    if task_contains_rc not in {0, 1}:
++        return False, "unverifiable_refs: cannot compare fetched base with local HEAD"
++    if task_contains_rc == 0:
++        return True, f"base_present_at_{local_head[:12]}"
++    if not remote_task_head:
++        return False, "unverifiable_refs: diverged task branch has no fetched remote task HEAD"
++    return True, f"base_advance_rebase_required:local={local_head},base={base_head}"
+ 
+ 
+ def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
+@@ -1633,7 +1733,10 @@ def prepare_worker_workspace(
+             worktree_path = existing
+             reused = True
+             refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+-                repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
++                repo_root,
++                worktree_path,
++                str(settings.get("base_ref") or "origin/dev"),
++                branch,
+             )
+             write_activity_log(
+                 config,
+@@ -1648,36 +1751,17 @@ def prepare_worker_workspace(
+                     "refresh_status": refresh_status,
+                 },
+             )
+-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
+-                # Orphaned dirt from a prior worker that never cleaned up jams the reuse
+-                # lease and, once enough worktrees are dirty, deadlocks the whole fleet.
+-                # Back up and reset it (only when no live worker for this task holds it),
+-                # then retry the refresh so this dispatch proceeds instead of blocking
+-                # forever. This self-heals both future and pre-existing dirty worktrees.
+-                if _backup_and_reset_dirty_worktree(
+-                    config, state, worktree_path, workspace_task_id, trigger="lease_blocked"
+-                ):
+-                    refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+-                        repo_root, worktree_path, str(settings.get("base_ref") or "origin/dev")
++            if not refresh_ok:
++                if refresh_status == "skipped_dirty_worktree":
++                    reason = (
++                        "has dirty tracked or staged changes. Preserve and commit the "
++                        "task-owned work before dispatch."
+                     )
+-                    write_activity_log(
+-                        config,
+-                        {
+-                            "type": "worker_worktree_reset_released",
+-                            "task_id": request.task_id,
+-                            "target_agent": target_agent,
+-                            "queue_event_id": queue_event_id,
+-                            "workspace_branch": branch,
+-                            "workspace_path": str(worktree_path),
+-                            "refresh_ok": refresh_ok,
+-                            "refresh_status": refresh_status,
+-                        },
+-                    )
+-            if not refresh_ok and refresh_status == "skipped_dirty_worktree":
++                else:
++                    reason = f"failed the fail-closed refresh policy ({refresh_status})."
+                 message = (
+                     f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+-                    f"reused worktree {worktree_path} has dirty tracked or staged changes. "
+-                    "Clean or remove that worktree before dispatch."
++                    f"reused worktree {worktree_path} {reason}"
+                 )
+                 write_activity_log(
+                     config,
+@@ -1694,6 +1778,22 @@ def prepare_worker_workspace(
+                     },
+                 )
+                 return False, message
++            if refresh_status.startswith("base_advance_rebase_required:"):
++                base_advance_prompt = (
++                    "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
++                    f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
++                    f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
++                    "and rebase/compose the current base in this task worktree, resolve and "
++                    "verify it, then push normally. Do not reset, discard, or overwrite task "
++                    "history.\n\n"
++                )
++                request.message = base_advance_prompt + request.message
++                request.metadata.update(
++                    {
++                        "base_advance_required": True,
++                        "worktree_refresh_status": refresh_status,
++                    }
++                )
+ 
+     if not reused:
+         if _branch_checked_out_in_root(repo_root, branch):
+@@ -8835,12 +8935,6 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
+         record["lease_owner"] = worker.get("run_id")
+     if error:
+         record["error"] = error
+-    if status == "failed":
+-        try:
+-            reset_worker_worktree_after_failure(config, state, worker)
+-        except Exception:  # noqa: BLE001 - worktree recovery must never break finalize
+-            pass
+-
+ 
+ 
+ def save_event_queue(config: dict[str, Any], events: list[dict[str, Any]]) -> None:
+diff --git a/.orchestrator/templates/wakeup.txt b/.orchestrator/templates/wakeup.txt
+index edc6c0f3..ff14ea49 100644
+--- a/.orchestrator/templates/wakeup.txt
++++ b/.orchestrator/templates/wakeup.txt
+@@ -1,7 +1,7 @@
+ 你被喚醒了。
+ 
+ 你的 auto worker 身分是：{{target_agent_display_name}}。
+-執行任何 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py` 狀態命令時，必須用 `AI_NAME={{target_agent_display_name}}`，不要沿用範例裡的其他 agent 名稱。
++執行任何狀態命令時，必須用 `AI_NAME={{target_agent_display_name}} "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" ...`。`PANTHEON_STATUS_ROOT` 指向 live canonical writer；禁止從隔離 worktree 執行 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`，以免 stale branch code 覆寫 dashboard 與 task truth。
+ 
+ 請先閱讀這些 task-scoped context 檔案，並以它們作為這次工作的主要上下文：
+ {{context_files}}
+@@ -17,9 +17,9 @@
+ 
+ 找出目前分配給你、等待你回應、剛交接給你的 task，或已進入 `review_approved` 並等待你正式收尾為 `done` 的 task，然後直接繼續工作。
+ 
+-如果原因是 `owned_finalize_dispatch`，或 task 已是 `review_approved`，請先依 `.orchestrator/skills/task-closeout-finalization.md` 做 closeout：整理必要 task artifact / docs、建立 task-scoped commit、再用 `scripts/ai-status.sh done` 收尾。不要把 `done` 當成單純改狀態。
++如果原因是 `owned_finalize_dispatch`，或 task 已是 `review_approved`，請先依 `.orchestrator/skills/task-closeout-finalization.md` 做 closeout：整理必要 task artifact / docs、建立 task-scoped commit、再用 `AI_NAME={{target_agent_display_name}} "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" done` 收尾。不要把 `done` 當成單純改狀態。
+ 
+-狀態更新請優先使用 `scripts/ai-status.sh` 或 `python3 scripts/ai_status.py`。
++狀態更新只能使用 `AI_NAME={{target_agent_display_name}} "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" ...`，確保程式與資料都來自 live canonical status root。
+ 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
+ 你在 background auto worker 裡執行，請不要使用 `git add -p`、`git add -i`、`git commit --interactive`、`git rebase -i` 或其他需要人工輸入的互動式命令。
+ {{lifecycle_guardrails}}
+diff --git a/dashboard-bundle.json b/dashboard-bundle.json
+index 9c86dcad..cdd28cda 100644
+--- a/dashboard-bundle.json
++++ b/dashboard-bundle.json
+@@ -1,5 +1,5 @@
+ {
+-  "generated_at": "2026-06-27T05:29:06Z",
++  "generated_at": "2026-08-02T12:59:53Z",
+   "focus_mode": "execution",
+   "focus_mode_source": "planning_state_fallback",
+   "runtime_summary": {
+@@ -36,14 +36,19 @@
+     },
+     "lanes": {},
+     "dispatch_targets": {
+-      "Claude": 5,
+-      "Claude2": 5,
+-      "Antigravity": 5,
++      "Claude": 20,
++      "Claude2": 10,
++      "Antigravity": 70,
+       "Antigravity2": 5,
++      "Antigravity3": 5,
++      "Antigravity4": 5,
++      "Antigravity5": 5,
++      "Antigravity6": 5,
++      "Antigravity7": 5,
+       "Gemini": 5,
+       "Gemini2": 5,
+-      "Codex": 35,
+-      "Codex2": 35,
++      "Codex": 5,
++      "Codex2": 5,
+       "Copilot": 5,
+       "Human/Ops": 0
+     }
+diff --git a/docs-site/dashboard-bundle.json b/docs-site/dashboard-bundle.json
+index 9c86dcad..cdd28cda 100644
+--- a/docs-site/dashboard-bundle.json
++++ b/docs-site/dashboard-bundle.json
+@@ -1,5 +1,5 @@
+ {
+-  "generated_at": "2026-06-27T05:29:06Z",
++  "generated_at": "2026-08-02T12:59:53Z",
+   "focus_mode": "execution",
+   "focus_mode_source": "planning_state_fallback",
+   "runtime_summary": {
+@@ -36,14 +36,19 @@
+     },
+     "lanes": {},
+     "dispatch_targets": {
+-      "Claude": 5,
+-      "Claude2": 5,
+-      "Antigravity": 5,
++      "Claude": 20,
++      "Claude2": 10,
++      "Antigravity": 70,
+       "Antigravity2": 5,
++      "Antigravity3": 5,
++      "Antigravity4": 5,
++      "Antigravity5": 5,
++      "Antigravity6": 5,
++      "Antigravity7": 5,
+       "Gemini": 5,
+       "Gemini2": 5,
+-      "Codex": 35,
+-      "Codex2": 35,
++      "Codex": 5,
++      "Codex2": 5,
+       "Copilot": 5,
+       "Human/Ops": 0
+     }
+diff --git a/scripts/ai_status.py b/scripts/ai_status.py
+index fa9ef207..3b7e523c 100755
+--- a/scripts/ai_status.py
++++ b/scripts/ai_status.py
+@@ -818,11 +818,11 @@ def default_state() -> dict[str, Any]:
+     timestamp = iso_now()
+     canonical_layers = default_canonical_document_layers()
+     return {
+-        "project": "pantheon",
++        "project": "ODay Plus",
+         "sprint": "2026-04-09-canonical-adoption-platform-plan",
+         "objective": (
+             "Adopt the layered canonical document system, align architecture and planning truth, and publish the "
+-            "full Pantheon platform backlog without overwriting historical collaboration records."
++            "full ODay Plus platform backlog without overwriting historical collaboration records."
+         ),
+         "updated_at": timestamp,
+         "canonical_document_layers": canonical_layers,
+@@ -1683,7 +1683,20 @@ def task_pr_ci_status(
+             _CI_STATUS_CACHE[cache_key] = (now, val)
+             return val
+ 
+-    val = (None, "unknown")
++    remote_branch_exists = any(
++        bool(
++            run_git_command(
++                ["ls-remote", "--exit-code", "origin", f"refs/heads/{branch_name}"],
++                cwd=root,
++                required=False,
++            )
++        )
++        for branch_name in [f"task/{task_id}", f"task-{task_id}"]
++    )
++    # A pushed task branch with no matching PR is an actionable delivery gap,
++    # not an indeterminate CI result.  Keep genuine lookup/network failures
++    # fail-closed as unknown when the remote branch cannot be verified.
++    val = (None, "missing" if remote_branch_exists else "unknown")
+     _CI_STATUS_CACHE[cache_key] = (now, val)
+     return val
+ 
+@@ -2866,6 +2879,13 @@ def detect_truth_mismatches(
+         if worker.get("bucket") in {"running", "pending"} and worker.get("is_live_runtime")
+     ]
+     live_workers_by_task: dict[str, list[dict[str, Any]]] = {}
++    actively_queued_task_ids = {
++        str(event.get("task_id") or "").strip()
++        for event in queue_events
++        if str(event.get("status") or "").lower()
++        in {"queued", "pending", "started", "manual_pending", "retry_backoff"}
++        and str(event.get("task_id") or "").strip()
++    }
+     mismatches: list[dict[str, Any]] = []
+     seen: set[str] = set()
+     pending_approval_run_ids = {
+@@ -2884,6 +2904,20 @@ def detect_truth_mismatches(
+         if str(worker.get("run_id") or "").strip()
+     }
+ 
++    def timestamp_is_in_transition(value: Any, grace_seconds: int = 120) -> bool:
++        """Return true during the brief task/worker handoff convergence window."""
++        timestamp = parse_timestamp(value)
++        if timestamp is None:
++            return False
++        age_seconds = (datetime.now(UTC) - timestamp.astimezone(UTC)).total_seconds()
++        return 0 <= age_seconds <= grace_seconds
++
++    def task_is_in_transition(task: dict[str, Any]) -> bool:
++        # A task may wait behind other materialized work for several supervisor
++        # cycles before its own queue receipt is created.  Keep this bounded so
++        # a genuinely abandoned in_progress row still alerts after ten minutes.
++        return timestamp_is_in_transition(task.get("last_update"), grace_seconds=600)
++
+     def related_live_worker_covers_task(task: dict[str, Any]) -> bool:
+         expected_actor = expected_task_actor(task)
+         if not expected_actor:
+@@ -2937,6 +2971,11 @@ def detect_truth_mismatches(
+ 
+         task = task_map.get(task_id)
+         if task is None:
++            # Status writers and worker heartbeats are separate atomic files;
++            # a fresh worker can briefly lead a concurrent task-board publish.
++            # Only alert if the missing row persists past reconciliation.
++            if timestamp_is_in_transition(worker.get("last_event_at") or worker.get("started_at")):
++                continue
+             if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination", "chair_review"}:
+                 continue
+             if resolver.source(task_id) == "archive":
+@@ -2960,7 +2999,16 @@ def detect_truth_mismatches(
+         task_status = str(task.get("status") or "").lower()
+         expected_actor = expected_task_actor(task)
+         actual_actor = canonical_agent_name(worker.get("actor") or worker.get("agent_id"))
+-        if expected_actor and actual_actor and expected_actor != actual_actor:
++        assigned_actors = {
++            canonical_agent_name(task.get("owner")),
++            canonical_agent_name(task.get("reviewer")),
++        }
++        lifecycle_handoff_in_progress = (
++            task_status in {"in_progress", "review", "review_approved"}
++            and task_is_in_transition(task)
++            and actual_actor in assigned_actors
++        )
++        if expected_actor and actual_actor and expected_actor != actual_actor and not lifecycle_handoff_in_progress:
+             push(
+                 {
+                     "id": f"worker-assignment:{worker.get('run_id')}",
+@@ -3013,6 +3061,17 @@ def detect_truth_mismatches(
+             continue
+         if live_workers_by_task.get(task["id"]):
+             continue
++        # Queue materialization is an active handoff between task truth and a
++        # worker PID.  Do not report a false worker gap during that transition;
++        # a genuinely stuck `started` event is reported separately below as
++        # queue_started_without_worker.
++        if task["id"] in actively_queued_task_ids:
++            continue
++        # A worker may write `in_progress` just before Supervisor materializes
++        # its queue receipt.  Give that normal cross-process handoff one bounded
++        # convergence window; persistent gaps still surface after two minutes.
++        if task_is_in_transition(task):
++            continue
+         if related_live_worker_covers_task(task):
+             continue
+         push(
+@@ -3040,6 +3099,11 @@ def detect_truth_mismatches(
+             continue
+         if str(event.get("id") or "") in live_queue_ids:
+             continue
++        # The worker heartbeat can reach a terminal state just before the
++        # Supervisor commits the corresponding queue completion.  Avoid a
++        # dashboard-only false alarm during that bounded reconciliation gap.
++        if timestamp_is_in_transition(event.get("last_event_at")):
++            continue
+         push(
+             {
+                 "id": f"queue-without-worker:{event.get('id')}",
+diff --git a/scripts/supervisor_runtime_health.py b/scripts/supervisor_runtime_health.py
+index bd3b79e6..c265de08 100755
+--- a/scripts/supervisor_runtime_health.py
++++ b/scripts/supervisor_runtime_health.py
+@@ -62,7 +62,11 @@ def pid_is_alive(pid: int | None) -> bool:
+     return True
+ 
+ 
+-def pid_matches_supervisor(pid: int | None, repo_root: Path) -> bool:
++def pid_matches_supervisor(
++    pid: int | None,
++    repo_root: Path,
++    config_path_arg: Path | None = None,
++) -> bool:
+     if not pid_is_alive(pid):
+         return False
+     proc_dir = Path("/proc") / str(pid)
+@@ -72,8 +76,26 @@ def pid_matches_supervisor(pid: int | None, repo_root: Path) -> bool:
+     except OSError:
+         return False
+     parts = [part.decode("utf-8", errors="ignore") for part in cmdline.split(b"\x00") if part]
+-    joined = " ".join(parts)
+-    return cwd == repo_root and ".orchestrator/supervisor.py" in joined
++    has_supervisor_entrypoint = any(
++        part.endswith("/.orchestrator/supervisor.py") or part == ".orchestrator/supervisor.py"
++        for part in parts
++    )
++    configured_runtime_matches = False
++    if config_path_arg is not None:
++        expected_config = config_path_arg.expanduser().resolve()
++        for index, part in enumerate(parts):
++            raw_config: str | None = None
++            if part == "--config" and index + 1 < len(parts):
++                raw_config = parts[index + 1]
++            elif part.startswith("--config="):
++                raw_config = part.split("=", 1)[1]
++            if raw_config and Path(raw_config).expanduser().resolve() == expected_config:
++                configured_runtime_matches = True
++                break
++    # Production deliberately runs immutable code from a release directory
++    # while state lives in the mutable ODay Plus status root. Matching the
++    # exact configured runtime is therefore as authoritative as cwd equality.
++    return has_supervisor_entrypoint and (cwd == repo_root or configured_runtime_matches)
+ 
+ 
+ def lock_held(lock_path: Path) -> bool:
+@@ -122,7 +144,7 @@ def evaluate_runtime_health(
+     pid_path = state_dir / "supervisor.pid"
+     lock_path = state_dir / "supervisor.lock"
+     pid = read_pid(pid_path)
+-    process_alive = pid_matches_supervisor(pid, repo_root)
++    process_alive = pid_matches_supervisor(pid, repo_root, config_path_resolved)
+     singleton_lock_held = lock_held(lock_path)
+     supervisor_alive = process_alive or singleton_lock_held
+ 
+@@ -207,8 +229,8 @@ def evaluate_runtime_health(
+ 
+ 
+ def parse_args() -> argparse.Namespace:
+-    parser = argparse.ArgumentParser(description="Check Pantheon supervisor/watchdog runtime health.")
+-    parser.add_argument("--repo", default=".", help="Pantheon repository root. Defaults to cwd.")
++    parser = argparse.ArgumentParser(description="Check ODay Plus supervisor/watchdog runtime health.")
++    parser.add_argument("--repo", default=".", help="ODay Plus status repository root. Defaults to cwd.")
+     parser.add_argument("--config-path", default=None, help="Path to .orchestrator/config.json.")
+     parser.add_argument("--max-heartbeat-age", type=float, default=None)
+     parser.add_argument("--require-watchdog", action="store_true")

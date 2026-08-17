@@ -318,6 +318,37 @@ export type SiteReview = {
   reason?: string;
 };
 
+export type NetPlanDiagnostic = {
+  violated_constraint: string;
+  affected_stores: string[];
+  required_relaxation: string;
+  business_impact: string;
+  suggested_action: string;
+};
+
+export type NetPlanScenarioDetail = {
+  id?: string;
+  name: string;
+  roi: string;
+  roiPct?: number;
+  score?: number;
+  inv: string;
+  investmentTwd?: number;
+  payback: string;
+  risk: string;
+  time: string;
+  isSystemRecommendation?: boolean;
+  isStale?: boolean;
+  isInfeasible?: boolean;
+  diagnostics?: NetPlanDiagnostic[];
+  rationale?: string;
+  modelVersion?: string;
+  snapshotId?: string;
+  solverVersion?: string;
+  evidenceIds?: string[];
+  selected?: boolean;
+};
+
 export type RebalanceStore = {
   id: string;
   storeId: string;
@@ -380,25 +411,7 @@ export type RebalanceStore = {
     label: string;
     source: string;
   }>;
-  netPlanScenarios?: Array<{
-    id?: string;
-    name: string;
-    roi: string;
-    roiPct?: number;
-    score?: number;
-    inv: string;
-    investmentTwd?: number;
-    payback: string;
-    risk: string;
-    time: string;
-    isSystemRecommendation?: boolean;
-    rationale?: string;
-    modelVersion?: string;
-    snapshotId?: string;
-    solverVersion?: string;
-    evidenceIds?: string[];
-    selected?: boolean;
-  }>;
+  netPlanScenarios?: NetPlanScenarioDetail[];
 };
 
 export type Approval = {

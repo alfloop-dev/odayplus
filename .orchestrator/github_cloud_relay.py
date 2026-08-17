@@ -36,6 +36,13 @@ def save_relay_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     write_json(config_path(config, "github_relay_state"), state)
 
 
+def cloud_relay_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the configured relay block, defaulting to the safe-off state."""
+    phase3 = ((config.get("github_bus") or {}).get("phase3") or {})
+    relay_cfg = phase3.get("cloud_relay") or {}
+    return relay_cfg if isinstance(relay_cfg, dict) else {}
+
+
 def relay_request(url: str, token: str | None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"Content-Type": "application/json"}
@@ -48,7 +55,9 @@ def relay_request(url: str, token: str | None, payload: dict[str, Any] | None = 
 
 
 def push_status_digest(config: dict[str, Any], digest: dict[str, Any]) -> dict[str, Any] | None:
-    relay_cfg = (((config.get("github_bus") or {}).get("phase3") or {}).get("cloud_relay") or {})
+    relay_cfg = cloud_relay_config(config)
+    if not bool(relay_cfg.get("enabled", False)):
+        return None
     url = os.environ.get(relay_cfg.get("url_env", "PANTHEON_GITHUB_RELAY_URL"))
     if not url:
         return None
@@ -63,7 +72,9 @@ def push_status_digest(config: dict[str, Any], digest: dict[str, Any]) -> dict[s
 
 
 def pull_commands(config: dict[str, Any]) -> list[dict[str, Any]]:
-    relay_cfg = (((config.get("github_bus") or {}).get("phase3") or {}).get("cloud_relay") or {})
+    relay_cfg = cloud_relay_config(config)
+    if not bool(relay_cfg.get("enabled", False)):
+        return []
     url = os.environ.get(relay_cfg.get("url_env", "PANTHEON_GITHUB_RELAY_URL"))
     if not url:
         return []

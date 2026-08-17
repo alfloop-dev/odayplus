@@ -3,7 +3,7 @@
 Two things are pinned here. First, the committed registry is internally
 consistent *and* still records NO-GO: no gate may be cleared while it has no
 receipt bound to the release candidate SHA. Second, every fail-closed rule in
-``scripts/e2e/check_release_gate_registry.py`` actually rejects the mutation it
+``delivery_toolchain/e2e/check_release_gate_registry.py`` actually rejects the mutation it
 is supposed to reject -- a validator that silently accepts a missing owner, a
 stale receipt, or an evidence-free "passed" gate is worse than no validator.
 
@@ -25,8 +25,8 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_release_gate_registry.py"
-PRODUCT_GATE = ROOT / "scripts/e2e/check_product_release_gate.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_release_gate_registry.py"
+PRODUCT_GATE = ROOT / "delivery_toolchain/e2e/check_product_release_gate.py"
 REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 REGISTRY_README = ROOT / "docs/evidence/gates/README.md"
 
@@ -599,14 +599,14 @@ def test_cli_reports_integrity_errors_for_a_tampered_registry(tmp_path: Path) ->
 
 def test_registry_is_documented_and_wired_into_the_release_gate() -> None:
     readme = REGISTRY_README.read_text(encoding="utf-8")
-    release_gate = (ROOT / "scripts/e2e/check_product_release_gate.py").read_text(
+    release_gate = (ROOT / "delivery_toolchain/e2e/check_product_release_gate.py").read_text(
         encoding="utf-8"
     )
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
     for token in (
         "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
-        "scripts/e2e/check_release_gate_registry.py",
+        "delivery_toolchain/e2e/check_release_gate_registry.py",
     ):
         assert token in readme
         assert token in release_gate

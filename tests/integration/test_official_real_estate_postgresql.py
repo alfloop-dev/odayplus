@@ -19,8 +19,8 @@ from modules.external_data.providers.taiwan_real_estate import (
     OfficialRealEstateSourceError,
     parse_official_real_estate,
 )
-from scripts.models.install_views import ModelReadyViewInstaller
-from scripts.models.real_estate_outcomes import OfficialRealEstateOutcomeStore
+from product_ops.modeling.install_views import ModelReadyViewInstaller
+from product_ops.modeling.real_estate_outcomes import OfficialRealEstateOutcomeStore
 from shared.infrastructure.persistence.postgresql import PostgresEngine
 
 pytestmark = pytest.mark.requires_live_env

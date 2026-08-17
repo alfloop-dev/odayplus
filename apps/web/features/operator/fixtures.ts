@@ -601,6 +601,17 @@ export const REBALANCE_STORE_FIXTURES: RebalanceStore[] = [
         risk: "中",
         time: "即刻起 90 天",
         isSystemRecommendation: false,
+        isStale: false,
+        isInfeasible: true,
+        diagnostics: [
+          {
+            violated_constraint: "max_budget",
+            affected_stores: ["STORE-101"],
+            required_relaxation: "Relax max_budget from 450,000 to 520,000",
+            business_impact: "Budget deficit of NT$70,000 required for equipment upgrade",
+            suggested_action: "Increase regional rebalance capital expenditure limit or approve budget waiver",
+          },
+        ],
       },
       {
         name: "Move (移轉新址)",

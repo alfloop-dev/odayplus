@@ -9,9 +9,9 @@ from models.shared_ml.production_contracts import (
     PRODUCTION_MODEL_CONTRACTS,
     production_model_names,
 )
-from scripts.models.contracts import MODEL_SPECS
-from scripts.models.install_views import MODEL_READY_SQL_PATH, PREREQUISITE_COLUMNS
-from scripts.models.real_estate_outcomes import MIGRATION_PATH
+from product_ops.modeling.contracts import MODEL_SPECS
+from product_ops.modeling.install_views import MODEL_READY_SQL_PATH, PREREQUISITE_COLUMNS
+from product_ops.modeling.real_estate_outcomes import MIGRATION_PATH
 
 
 def test_official_outcome_migration_has_bounded_source_and_provenance_contracts() -> None:

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_live_production_data.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_live_production_data.py"
 NOW = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
 EXPECTED_SHA = "a" * 40
 API_URL = "https://oday-api.prod.alfloop.internal"

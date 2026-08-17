@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "authoritative_platform": {
+    "repository": "alfloop-dev/oday-data-platform",
+    "branch": "dev",
+    "merge_sha": "97ade4945cd56d938ecf5ab9196fb0cd5d87a634",
+    "contract_root": "contracts/",
+    "task_manifest": "docs/design/emgi/v0.4/tasks/manifest.json"
+  },
+  "consumer_repository": "alfloop-dev/odayplus",
+  "forbidden_added_prefixes": [
+    "modules/external_data/providers/",
+    "modules/external_data/connectors/",
+    "modules/external_data/workers/"
+  ],
+  "forbidden_added_paths": [
+    "modules/external_data/application/ingestion_service.py",
+    "modules/external_data/application/ingestion_store.py",
+    "modules/external_data/application/source_snapshots.py"
+  ],
+  "forbidden_added_name_tokens_under_external_data": [
+    "provider",
+    "connector",
+    "scheduled_fetch",
+    "source_snapshot",
+    "ingestion_store"
+  ],
+  "consumer_code_prefixes": [
+    "modules/sitescore/",
+    "modules/heatzone/",
+    "modules/netplan/",
+    "modules/opsboard/",
+    "apps/"
+  ],
+  "consumer_code_extensions": [
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs"
+  ],
+  "forbidden_direct_reference_patterns": [
+    "modules.external_data.providers",
+    "modules.external_data.connectors.provider_registry",
+    "tdx.transportdata.tw",
+    "addr.tgos.tw",
+    "api.tgos.tw",
+    "places.googleapis.com"
+  ],
+  "allowed_consumer_responsibilities": [
+    "assisted_listing",
+    "survey_workflow",
+    "generated_contract_client",
+    "market_data_read_facade",
+    "product_api_bff_ui",
+    "target_format",
+    "physical_feasibility",
+    "site_economics",
+    "heatzone_sitescore_netplan_opsboard",
+    "final_human_decision_and_audit"
+  ]
+}

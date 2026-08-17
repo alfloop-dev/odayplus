@@ -172,7 +172,7 @@ Status: implemented by `ODP-MAP-E2E-002`, `ODP-MAP-E2E-003`,
   - Evidence artifact proving the remote build version matches the candidate.
 - Required command:
   ```bash
-  python3 scripts/e2e/check_remote_staging_proof.py \
+  python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
     --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
     --correlation-id "corr-odp-pv-stage-001"
   ```
@@ -199,7 +199,7 @@ Status: implemented by `ODP-MAP-E2E-002`, `ODP-MAP-E2E-003`,
   ODP_API_BASE_URL="$ODP_STAGING_API_URL" \
   npx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000
 
-  python3 scripts/e2e/check_remote_staging_proof.py \
+  python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
     --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" \
     --correlation-id "corr-odp-pv-stage-002-version"
   ```

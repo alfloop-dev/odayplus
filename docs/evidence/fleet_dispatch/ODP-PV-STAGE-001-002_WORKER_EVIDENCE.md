@@ -22,7 +22,7 @@ Passed in `/home/lupin/odayplus-dev`:
 pwd
 test -f docs/evidence/fleet_dispatch/ODP-PV-STAGE-001.md
 test -f docs/evidence/fleet_dispatch/ODP-PV-STAGE-002.md
-test -f scripts/e2e/check_remote_staging_proof.py
+test -f delivery_toolchain/e2e/check_remote_staging_proof.py
 ```
 
 Output:
@@ -117,7 +117,7 @@ Current workflow guard:
 - `.github/workflows/deploy-staging.yml` is now a fail-closed
   Deploy/Verify Staging workflow.
 - It resolves `ODAY_RELEASE_SHA`, runs
-  `scripts/e2e/check_remote_staging_proof.py`, and uploads a redacted proof
+  `delivery_toolchain/e2e/check_remote_staging_proof.py`, and uploads a redacted proof
   report artifact.
 - It still requires external staging variables/secrets and a real staging
   target; it does not itself create the missing host/API URL/database.
@@ -130,7 +130,7 @@ Command run:
 
 ```bash
 EXPECTED_SHA="$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 scripts/e2e/check_remote_staging_proof.py \
+python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
   --expected-sha "$EXPECTED_SHA" \
   --correlation-id "corr-odp-pv-stage-001" \
   --output .odp_data/remote-staging-proof/odp-pv-stage-001-missing-env-report.json
@@ -208,7 +208,7 @@ Missing external state:
 ## Commands Run
 
 ```bash
-pwd && test -f docs/evidence/fleet_dispatch/ODP-PV-STAGE-001.md && test -f docs/evidence/fleet_dispatch/ODP-PV-STAGE-002.md && test -f scripts/e2e/check_remote_staging_proof.py
+pwd && test -f docs/evidence/fleet_dispatch/ODP-PV-STAGE-001.md && test -f docs/evidence/fleet_dispatch/ODP-PV-STAGE-002.md && test -f delivery_toolchain/e2e/check_remote_staging_proof.py
 ```
 
 ```bash
@@ -230,7 +230,7 @@ sed -n '1,220p' .github/workflows/deploy-staging.yml
 
 ```bash
 EXPECTED_SHA="$(gh pr view 82 --json headRefOid --jq .headRefOid)"
-python3 scripts/e2e/check_remote_staging_proof.py \
+python3 delivery_toolchain/e2e/check_remote_staging_proof.py \
   --expected-sha "$EXPECTED_SHA" \
   --correlation-id "corr-odp-pv-stage-001" \
   --output .odp_data/remote-staging-proof/odp-pv-stage-001-missing-env-report.json
