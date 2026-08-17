@@ -48,7 +48,7 @@ Parent task `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` is on the **critic
 
    - `model_ready.forecast_training_view` currently contains **1,303 eligible/labeled rows**. While row count exceeds the row threshold (≥ 90), the rows cover only **4 calendar days** (2026-06-19 ~ 2026-06-22).
 
-   - ForecastOps horizon window expansion (`expand_forecast_horizon_rows()` in `scripts/models/forecast_training.py`) requires gap-free consecutive daily series per store.
+   - ForecastOps horizon window expansion (`expand_forecast_horizon_rows()` in `product_ops/modeling/forecast_training.py`) requires gap-free consecutive daily series per store.
 
    - Minimum viable continuous history per store for a 4-week horizon is **56 days** (`28 days pre-history + 28 days horizon`). Current shortfall is **52 days**.
 
@@ -82,7 +82,7 @@ Parent task `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` is on the **critic
 
 | Ingestion & Data Plane | `scripts/data_plane/` | Governed data plane ingestion scripts for authoritative daily transaction sources with snapshot lineage. |
 
-| Model Training & Backfill | `scripts/models/` | ForecastOps training, horizon row expansion, and backfill verification (`forecast_training.py`). |
+| Model Training & Backfill | `product_ops/modeling/` | ForecastOps training, horizon row expansion, and backfill verification (`forecast_training.py`). |
 
 | Runtime Evidence | `docs/evidence/runtime/ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001/` | Redacted before/after evidence demonstrating temporal coverage and source counts. |
 
@@ -106,7 +106,7 @@ Parent task `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` is on the **critic
 
 | A1 | Inventory all existing authoritative transaction sources; report date/tenant/store/lineage coverage. | Source inventory is missing, partial, or fails to report date and lineage boundaries. | `PARTIAL` | Inventory execution `pmb8m` reports 1,303 rows over 2026-06-19..22 (4 calendar days). |
 
-| A2 | Backfill only real source records through governed ingestion with immutable snapshot and run lineage (`source_snapshot_id`). | Fixture, synthetic, auto-seeded, or mock rows enter production views, or `source_snapshot_id` is null. | `PASSED_POLICY` | Enforced in `scripts/models/forecast_training.py` (rejects rows without source snapshot lineage). |
+| A2 | Backfill only real source records through governed ingestion with immutable snapshot and run lineage (`source_snapshot_id`). | Fixture, synthetic, auto-seeded, or mock rows enter production views, or `source_snapshot_id` is null. | `PASSED_POLICY` | Enforced in `product_ops/modeling/forecast_training.py` (rejects rows without source snapshot lineage). |
 
 | A3 | Dataset snapshot SHA-256 and population counts reconcile with Human/Ops attestation. | Dataset hash is missing, hardcoded, or fails reconciliation against source snapshot. | `PENDING_HUMAN_OPS` | Awaiting Human/Ops dataset handback (`DATA_HANDBACK.json`). |
 
@@ -230,7 +230,7 @@ git diff --check
 
 
 
-ruff check scripts/models models tests/models
+ruff check product_ops/modeling models tests/models
 
 # Result: clean (0 errors)
 

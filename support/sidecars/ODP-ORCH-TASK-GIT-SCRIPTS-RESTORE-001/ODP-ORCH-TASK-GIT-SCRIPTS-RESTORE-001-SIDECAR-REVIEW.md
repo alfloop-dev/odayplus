@@ -29,15 +29,15 @@ and has been corrected throughout.
 
 ## Executive Summary & Background
 
-Parent task `ODP-ORCH-TASK-GIT-SCRIPTS-RESTORE-001` restores the per-task git workflow helper suite under `scripts/git/` and the associated `.githooks/commit-msg` hook.
+Parent task `ODP-ORCH-TASK-GIT-SCRIPTS-RESTORE-001` restores the per-task git workflow helper suite under `delivery_toolchain/git/` and the associated `.githooks/commit-msg` hook.
 
 ### Operational Context & Root Cause
 
 1. **Contract Inconsistency**:
-   Every background worker wakeup prompt, both closeout skills (`.orchestrator/skills/worker-anchor-commit.md`, `.orchestrator/skills/task-closeout-finalization.md`), `.orchestrator/auto_commit_archive.py`, `.orchestrator/watch_events.py`, and `scripts/orchestrator/diagnose_finalize_lane_remediation.py` explicitly instruct agents to use `scripts/git/task_start.sh`, `worker_commit.py`, and `task_finalize.sh`.
+   Every background worker wakeup prompt, both closeout skills (`.orchestrator/skills/worker-anchor-commit.md`, `.orchestrator/skills/task-closeout-finalization.md`), `.orchestrator/auto_commit_archive.py`, `.orchestrator/watch_events.py`, and `scripts/orchestrator/diagnose_finalize_lane_remediation.py` explicitly instruct agents to use `delivery_toolchain/git/task_start.sh`, `worker_commit.py`, and `task_finalize.sh`.
 
 2. **Missing Canonical Directory**:
-   `scripts/git/` did not exist on `origin/dev`. Prior history contained only transient 31-line implementations (`cbc10c8c`, `28909226`) that were subsequently removed.
+   `delivery_toolchain/git/` did not exist on `origin/dev`. Prior history contained only transient 31-line implementations (`cbc10c8c`, `28909226`) that were subsequently removed.
 
 3. **Shared-Index Vulnerability Remediation**:
    Without `worker_commit.py`, background workers risk staging files outside their task scope or inheriting dirty staging left behind by concurrent/interrupted worker execution (the 2026-05-16 sweep-in incident `e06f5cf2`).
@@ -58,14 +58,14 @@ Parent task commit `717e03e2` introduces 9 files without altering L1 canonical a
 | File | Subsystem Role | Implementation Summary |
 | --- | --- | --- |
 | `.githooks/commit-msg` | Git Hook | Executable commit-msg hook enforcing standard Pantheon commit trailers (`LLM-Agent`, `Task-ID`, `Reviewer`) and subject rules via `check_commit_trailers.py`. |
-| `scripts/git/README.md` | Documentation | Comprehensive operational guide for per-task git workflow scripts and operating rules. |
-| `scripts/git/check_commit_scope.py` | Scope Guard | Validates that staged files stay strictly within declared task scope boundaries; rejects whole-worktree wildcards (`.`, `-A`, `*`). |
-| `scripts/git/check_commit_trailers.py` | Trailer Guard | Validates commit subject formatting/length and enforces required metadata trailers (`LLM-Agent`, `Task-ID`, `Reviewer`). |
-| `scripts/git/install_hooks.sh` | Installer | Shell script enabling opt-in installation of repository git hooks. |
-| `scripts/git/task_start.sh` | Branch Launcher | Idempotently creates or resumes `task/<TASK-ID>` from `dev` tip, refusing worktrees with uncommitted dirty changes belonging to other tasks. |
-| `scripts/git/task_finalize.sh` | PR & Merge Trigger | Pushes task branch, auto-discovers PR by head branch (per `ODP-ORCH-REVIEWBUS-PR-DISCOVERY-001`), undrafts, and enables GitHub auto-merge. |
-| `scripts/git/worker_commit.py` | Worker Commit Engine | Stages into a private `GIT_INDEX_FILE` seeded from `HEAD`, verifies scope and trailers before committing, blocks protected branches (`dev`, `main`, `master`), rejects empty commits, and resets scoped index entries. |
-| `scripts/git/test_git_task_scripts.py` | Test Suite | Comprehensive unit test suite (46 tests) covering branch creation, index isolation, scope validation, trailer checks, PR discovery, and error guards. |
+| `delivery_toolchain/git/README.md` | Documentation | Comprehensive operational guide for per-task git workflow scripts and operating rules. |
+| `delivery_toolchain/git/check_commit_scope.py` | Scope Guard | Validates that staged files stay strictly within declared task scope boundaries; rejects whole-worktree wildcards (`.`, `-A`, `*`). |
+| `delivery_toolchain/git/check_commit_trailers.py` | Trailer Guard | Validates commit subject formatting/length and enforces required metadata trailers (`LLM-Agent`, `Task-ID`, `Reviewer`). |
+| `delivery_toolchain/git/install_hooks.sh` | Installer | Shell script enabling opt-in installation of repository git hooks. |
+| `delivery_toolchain/git/task_start.sh` | Branch Launcher | Idempotently creates or resumes `task/<TASK-ID>` from `dev` tip, refusing worktrees with uncommitted dirty changes belonging to other tasks. |
+| `delivery_toolchain/git/task_finalize.sh` | PR & Merge Trigger | Pushes task branch, auto-discovers PR by head branch (per `ODP-ORCH-REVIEWBUS-PR-DISCOVERY-001`), undrafts, and enables GitHub auto-merge. |
+| `delivery_toolchain/git/worker_commit.py` | Worker Commit Engine | Stages into a private `GIT_INDEX_FILE` seeded from `HEAD`, verifies scope and trailers before committing, blocks protected branches (`dev`, `main`, `master`), rejects empty commits, and resets scoped index entries. |
+| `delivery_toolchain/git/test_git_task_scripts.py` | Test Suite | Comprehensive unit test suite (46 tests) covering branch creation, index isolation, scope validation, trailer checks, PR discovery, and error guards. |
 
 ---
 
@@ -106,13 +106,13 @@ The implementation on parent commit `717e03e2` was verified using the repository
 
 ### 1. `test_git_task_scripts.py` Unit Test Suite
 ```bash
-/tmp/odp-oss-review-BpLhRf/.venv/bin/pytest scripts/git/test_git_task_scripts.py
+/tmp/odp-oss-review-BpLhRf/.venv/bin/pytest delivery_toolchain/git/test_git_task_scripts.py
 ```
 **Output**:
 ```text
 collected 46 items
 
-scripts/git/test_git_task_scripts.py .............................. [ 30%]
+delivery_toolchain/git/test_git_task_scripts.py .............................. [ 30%]
 ................................                                     [100%]
 
 ============================== 46 passed in 4.10s ==============================
@@ -120,7 +120,7 @@ scripts/git/test_git_task_scripts.py .............................. [ 30%]
 
 ### 2. Static Analysis & Lint Check
 ```bash
-/tmp/odp-oss-review-BpLhRf/.venv/bin/ruff check scripts/git
+/tmp/odp-oss-review-BpLhRf/.venv/bin/ruff check delivery_toolchain/git
 ```
 **Output**:
 ```text
@@ -137,15 +137,15 @@ git diff --check
 
 The sidecar re-ran the same evidence from a clean archive of `717e03e2` rather than
 trusting the owner's transcript. Note that the suite asserts on `.githooks/commit-msg`
-as well as `scripts/git/`, so both paths must be extracted or 2 of the 46 tests fail
+as well as `delivery_toolchain/git/`, so both paths must be extracted or 2 of the 46 tests fail
 on a missing file:
 
 ```bash
 D=$(mktemp -d)
-git archive 717e03e2f7ab9a841c757f71abac7f84c86f14fa scripts/git .githooks | tar -x -C "$D"
+git archive 717e03e2f7ab9a841c757f71abac7f84c86f14fa delivery_toolchain/git .githooks | tar -x -C "$D"
 cd "$D" && git init -q .
-pytest scripts/git/test_git_task_scripts.py -q   # -> 46 passed in 3.33s
-ruff check scripts/git                           # -> All checks passed!
+pytest delivery_toolchain/git/test_git_task_scripts.py -q   # -> 46 passed in 3.33s
+ruff check delivery_toolchain/git                           # -> All checks passed!
 ```
 
 Change surface re-confirmed against `git show --stat 717e03e2`: 9 files,
@@ -181,8 +181,8 @@ Supporting facts:
   base. `BLOCKED` here is purely the failing required check.
 - `717e03e2` is **not** an ancestor of `origin/dev` (verified with
   `git merge-base --is-ancestor`). The scripts are still absent from `dev`, which is
-  why `scripts/git/` does not exist in worker worktrees and why the skills' instructions
-  to run `scripts/git/worker_commit.py` still cannot be followed.
+  why `delivery_toolchain/git/` does not exist in worker worktrees and why the skills' instructions
+  to run `delivery_toolchain/git/worker_commit.py` still cannot be followed.
 - Parent task `next` field already records this:
   *"CI checks for task ODP-ORCH-TASK-GIT-SCRIPTS-RESTORE-001 failed; resolve failing
   checks before finalization."*
@@ -215,7 +215,7 @@ explicitly not sufficient for `done`.
 
 - **Deliverable Scope**: This review packet (`support/sidecars/ODP-ORCH-TASK-GIT-SCRIPTS-RESTORE-001/ODP-ORCH-TASK-GIT-SCRIPTS-RESTORE-001-SIDECAR-REVIEW.md`) is the sole artifact created by `ODP-ORCH-TASK-GIT-SCRIPTS-RESTORE-001-SIDECAR-REVIEW`.
 - **L1 Canonical Safety**: Confirmed no L1 canonical docs modified. This sidecar touches
-  only the file above; it did not modify `scripts/git/`, `.githooks/`, or any parent-task
+  only the file above; it did not modify `delivery_toolchain/git/`, `.githooks/`, or any parent-task
   file.
 - **Handoff Action**: Status transitioned to `review` via the canonical status utility,
   handing off to assigned sidecar reviewer `Antigravity4`.
@@ -229,6 +229,6 @@ This sidecar cannot act on these — they belong to the parent lane:
 2. Keep the parent at `review_approved` until that gate is green and the PR merges.
    `approved_head` (`717e03e2`) still matches the PR head, so the approval is intact —
    do **not** advance the base, which would invalidate the freeze.
-3. Once merged, `scripts/git/` lands on `dev` and the worker instructions in
+3. Once merged, `delivery_toolchain/git/` lands on `dev` and the worker instructions in
    `.orchestrator/skills/*` become executable for the first time. Until then, workers
-   dispatched into fresh worktrees will continue to find `scripts/git/` missing.
+   dispatched into fresh worktrees will continue to find `delivery_toolchain/git/` missing.

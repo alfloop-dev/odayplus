@@ -1,0 +1,50 @@
+name: Tooling scope review gate
+
+# Product review remains mandatory for product or mixed changes.  A pure
+# development-tooling PR still follows commit -> PR -> CI -> merge, but the
+# checked-in scope manifest is its review gate rather than a product reviewer.
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify proposed paths
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > changed-paths.txt
+          python3 delivery_toolchain/governance/classify_change_review_scope.py \
+            --paths-file changed-paths.txt > scope.json
+          cat scope.json
+          scope="$(python3 -c "import json; print(json.load(open('scope.json'))['scope'])")"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp pure tooling change
+        if: ${{ steps.scope.outputs.scope == 'development_tooling' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -F state=success \
+            -F context=task-review-gate \
+            -F description="Development-tooling scope verified by manifest" >/dev/null
+
+      - name: Require product reviewer for product or mixed change
+        if: ${{ steps.scope.outputs.scope != 'development_tooling' }}
+        run: |
+          echo "Product or mixed paths are not auto-approved; an assigned product reviewer must stamp task-review-gate."

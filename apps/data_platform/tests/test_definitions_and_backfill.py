@@ -12,7 +12,7 @@ from apps.data_platform.definitions import (
     trade_job,
 )
 from apps.data_platform.selection import SOURCE_SELECTION, read_limit_for
-from scripts.data_platform.backfill import _windows, build_parser
+from product_ops.data_platform.backfill import _windows, build_parser
 
 
 def test_dagster_repository_loads_all_typed_assets() -> None:

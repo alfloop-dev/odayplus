@@ -23,6 +23,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment]
 else:
+    from apps.api.app.routes._common import durable_store_required
     from modules.avm.application import AVMProductionExecutor, AVMService
     from modules.avm.infrastructure import InMemoryAVMRepository
 
@@ -68,6 +69,7 @@ else:
         production_executor: AVMProductionExecutor | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
+        from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
@@ -135,15 +137,7 @@ else:
                 )
             return "__local__"
 
-        def require_runtime_binding() -> None:
-            if composition_error is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "code": composition_error.code,
-                        "message": str(composition_error),
-                    },
-                )
+        require_runtime_binding = runtime_binding_guard(composition_error)
 
         router = APIRouter(
             prefix="/avm",
@@ -428,14 +422,7 @@ else:
         return router
 
 
-    def _durable_store_required(message: str) -> HTTPException:
-        return HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "DURABLE_COMMAND_STORE_REQUIRED",
-                "message": message,
-            },
-        )
+    _durable_store_required = durable_store_required
 
 
     __all__ = [

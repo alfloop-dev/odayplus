@@ -48,7 +48,7 @@ resolution-9 cells, all with source snapshots and canonical lineage.
 | Persisted label dataset | none | only when at least 200 labels pass every gate | intentionally not created |
 | HeatZone model alias activation | none | only from an accepted reproducible dataset | intentionally not activated |
 
-`scripts/models/sql/model_ready_views.sql` enforces the same boundary:
+`product_ops/modeling/sql/model_ready_views.sql` enforces the same boundary:
 `store_source` filters on `store.opened_on IS NOT NULL`, historical geography
 is selected with `place.valid_from <= txn.event_time`, and eligibility
 requires 90 prior and 28 label partition days. No fixture, mock, synthetic
@@ -92,5 +92,5 @@ maturity, and reproducible snapshot persistence.
   — authoritative inventory, zero mutations, exact opening-authority request.
 - `docs/evidence/runtime/ODP-PRODUCTION-GEOGRAPHY-BACKFILL-001/live-geography-backfill.md`
   — live PG16 PIT geography reconciliation.
-- `scripts/models/sql/model_ready_views.sql` — executable HeatZone PIT label
+- `product_ops/modeling/sql/model_ready_views.sql` — executable HeatZone PIT label
   contract.

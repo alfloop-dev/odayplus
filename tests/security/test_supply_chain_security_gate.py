@@ -49,14 +49,20 @@ def test_pip_audit_passes() -> None:
 
 def test_secrets_scan_passes() -> None:
     res = subprocess.run(
-        [str(ROOT / "scripts/security/secret_scan.py")], cwd=ROOT, capture_output=True, text=True
+        [str(ROOT / "delivery_toolchain/security/secret_scan.py")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
     assert res.returncode == 0, f"Secret scanning failed with output:\n{res.stdout}"
 
 
 def test_sast_scan_passes() -> None:
     res = subprocess.run(
-        [str(ROOT / "scripts/security/sast_scan.py")], cwd=ROOT, capture_output=True, text=True
+        [str(ROOT / "delivery_toolchain/security/sast_scan.py")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
     )
     assert res.returncode == 0, f"SAST scan failed with output:\n{res.stdout}"
 
@@ -79,17 +85,17 @@ def test_sbom_and_provenance_present_and_valid() -> None:
 
     # Fail closed check: verify committed sbom matches current lockfiles (B5)
     sys.path.insert(0, str(ROOT))
-    from scripts.security.generate_sbom import generate_sbom as current_generate_sbom
+    from delivery_toolchain.security.generate_sbom import generate_sbom as current_generate_sbom
 
     current_sbom = current_generate_sbom()
     assert current_sbom.get("components") == data.get("components"), (
         "Committed sbom.json is stale and does not match the active package-lock.json or uv.lock. "
-        "Run scripts/security/generate_sbom.py to regenerate it."
+        "Run delivery_toolchain/security/generate_sbom.py to regenerate it."
     )
 
 
 def test_sign_images_script_executable() -> None:
-    script_path = ROOT / "scripts/security/sign_images.sh"
+    script_path = ROOT / "delivery_toolchain/security/sign_images.sh"
     assert script_path.exists()
     assert (script_path.stat().st_mode & 0o111) != 0, "sign_images.sh must be executable"
 
@@ -155,7 +161,7 @@ def test_vulnerable_fixtures_rejected_negative(tmp_path: Path) -> None:
 
 def test_unsigned_images_rejected_negative() -> None:
     # Run sign_images.sh verify on a bogus image name in CI mode and expect non-zero exit code
-    script_path = ROOT / "scripts/security/sign_images.sh"
+    script_path = ROOT / "delivery_toolchain/security/sign_images.sh"
     res = subprocess.run(
         [
             "env",
@@ -184,7 +190,7 @@ def test_invalid_provenance_rejected_negative(tmp_path: Path) -> None:
 
     # Verify that comparing it to current_generate_sbom fails
     sys.path.insert(0, str(ROOT))
-    from scripts.security.generate_sbom import generate_sbom as current_generate_sbom
+    from delivery_toolchain.security.generate_sbom import generate_sbom as current_generate_sbom
 
     current_sbom = current_generate_sbom()
     assert current_sbom.get("components") != data.get("components"), (
@@ -208,7 +214,7 @@ def test_leaked_test_secrets_rejected_negative() -> None:
         )
 
         sys.path.insert(0, str(ROOT))
-        from scripts.security.secret_scan import scan_file
+        from delivery_toolchain.security.secret_scan import scan_file
 
         violations_a = scan_file(secret_file_a)
         assert len(violations_a) > 0, "Should detect AWS key leak without pragma"

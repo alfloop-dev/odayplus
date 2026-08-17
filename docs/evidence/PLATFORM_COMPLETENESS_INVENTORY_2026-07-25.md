@@ -63,5 +63,5 @@ missing code.
 
 Accumulate real labeled data (assisted-intake listings + accrued outcomes +
 provider ingestion) to each model's `minimum_rows`, then run
-`scripts/models/release.py` to register DEV→SHADOW→production aliases and
+`product_ops/modeling/release.py` to register DEV→SHADOW→production aliases and
 re-verify `/readiness`.

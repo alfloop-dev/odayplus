@@ -15,11 +15,15 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-from approval_queue import consume_resume_override, create_approval, find_resume_override
+from approval_queue import (
+    approval_signature,
+    consume_resume_override,
+    create_approval,
+    find_resume_override,
+)
 from common import (
     ROOT,
     anchor_config_paths,
-    approval_tool_input_signature,
     authoritative_status_root,
     config_path,
     load_config,
@@ -33,6 +37,8 @@ from common import (
     write_json,
 )
 from provider_permissions import CLAUDE_LOCAL_SETTINGS_PATH, _verified_claude_policy
+from provider_runtime import claude_approval_provider as _approval_provider
+from provider_runtime import provider_config
 from runtime_state import load_approval_state, load_runtime_state
 
 SAFE_BASH_PATTERNS = [
@@ -224,14 +230,6 @@ SAFE_AGENT_RUN_PATTERNS = (
     re.compile(r"\brun\s+`?wc\b"),
 )
 
-SAFE_PYTHON_ONE_LINER_MARKERS = (
-    "print(",
-    "with open(",
-)
-SAFE_PYTHON_JSON_LOAD_MARKERS = (
-    "json.load",
-    "json.loads",
-)
 UNSAFE_PYTHON_ONE_LINER_MARKERS = (
     ".write(",
     "write_text(",
@@ -1074,9 +1072,12 @@ def _finalize_git_decision(shell_command: str, config: dict[str, Any]) -> dict[s
     verb_phrase = " and ".join(verbs)
     task_id = context["task_id"]
     return {
-        "decision": "allow",
-        "reason": f"Auto-allowed safe finalize {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}.",
-        "risk_class": "repo_finalize_git",
+        "decision": "deny",
+        "reason": (
+            f"Denied {verb_phrase} for {task_id} during {FINALIZE_DISPATCH_REASON}: "
+            "the reviewer-approved branch head is immutable. Return to review before changing it."
+        ),
+        "risk_class": "immutable_review_head",
     }
 
 
@@ -1136,9 +1137,9 @@ def evaluate_tool_request(tool_name: str, tool_input: dict[str, Any] | None, con
         "tool_name": tool_name,
         "tool_input": tool_input,
         "evaluated_at": utc_now(),
-        "policy_default_mode": (
-            config.get("providers", {}).get(provider_id, {}).get("approval", {}).get("rule_default_mode", "acceptEdits")
-        ),
+        "policy_default_mode": provider_config(config, provider_id)
+        .get("approval", {})
+        .get("rule_default_mode", "acceptEdits"),
     }
 
 
@@ -1185,17 +1186,6 @@ def _evaluate_agent_request(tool_input: dict[str, Any]) -> dict[str, str] | None
             "risk_class": "safe_read",
         }
     return None
-
-
-def _approval_provider(config: dict[str, Any]) -> str:
-    provider_id = str(os.environ.get("ORCH_PROVIDER") or "claude").strip().lower() or "claude"
-    provider = (config.get("providers", {}) or {}).get(provider_id, {}) or {}
-    delivery_mode = str(provider.get("delivery_mode") or "").strip()
-    if delivery_mode and delivery_mode != "claude_cli":
-        return "claude"
-    if provider or provider_id.startswith("claude"):
-        return provider_id
-    return "claude"
 
 
 def resolve_hook_config() -> tuple[dict[str, Any], Path, str]:
@@ -1427,16 +1417,6 @@ def log_event(config: dict[str, Any], event_name: str, payload: dict[str, Any]) 
     )
 
 
-def _approval_timeout_seconds(config: dict[str, Any]) -> float:
-    provider_id = _approval_provider(config)
-    return float(
-        config.get("providers", {})
-        .get(provider_id, {})
-        .get("broker", {})
-        .get("approval_wait_seconds", 3600)
-    )
-
-
 def _approval_context(payload: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     provider_id = _approval_provider(config)
     return {
@@ -1487,19 +1467,6 @@ def _permission_request_response(
     }
 
 
-def _approval_signature(
-    session_id: str | None,
-    tool_name: str,
-    tool_input: dict[str, Any] | None = None,
-    tool_input_signature: str | None = None,
-) -> tuple[str | None, str, str]:
-    return (
-        session_id,
-        tool_name,
-        str(tool_input_signature or approval_tool_input_signature(tool_input if tool_input is not None else {})),
-    )
-
-
 def _permission_rule(tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any] | None:
     if not tool_name:
         return None
@@ -1532,11 +1499,11 @@ def _matching_approval(
     tool_input: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     state = load_approval_state(config)
-    signature = _approval_signature(session_id, tool_name, tool_input)
+    signature = approval_signature(session_id, tool_name, tool_input)
     pending_match = None
     history_match = None
     for item in state.get("pending", []):
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),
@@ -1544,7 +1511,7 @@ def _matching_approval(
         if item_signature == signature:
             pending_match = item
     for item in reversed(state.get("history", [])):
-        item_signature = _approval_signature(
+        item_signature = approval_signature(
             item.get("session_id"),
             item.get("tool_name") or "",
             tool_input_signature=item.get("tool_input_signature"),

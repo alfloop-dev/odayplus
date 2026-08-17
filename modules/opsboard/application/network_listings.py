@@ -868,7 +868,7 @@ class NetworkListingService:
                 "reviewId": "RV-1001" if candidate_id == "CS-1001" else None,
                 # Propagate the SiteScore v2 point-in-time contract from the
                 # listing. The prior_90d_cell_* aggregates originate in the
-                # model-ready views (scripts/models/sql/model_ready_views.sql);
+                # model-ready views (product_ops/modeling/sql/model_ready_views.sql);
                 # this workflow carries whatever the listing recorded and
                 # leaves the value None when it was never resolved, so scoring
                 # fails closed instead of scoring a fabricated zero.

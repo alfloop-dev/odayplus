@@ -88,11 +88,11 @@ normative_artifacts:
     role: implementation-binding package member
   - path: docs/operations/ODAY_PLUS_ASSISTED_LISTING_INTAKE_MIGRATION_ROLLOUT_RUNBOOK.md
     role: implementation-binding package member
-  - path: scripts/validate_assisted_listing_intake_design.py
+  - path: delivery_toolchain/governance/validate_assisted_listing_intake_design.py
     role: implementation-binding package member
-  - path: scripts/build_validate_assisted_listing_intake_openapi.py
+  - path: delivery_toolchain/openapi/build_validate_assisted_listing_intake.py
     role: implementation-binding package member
-  - path: scripts/validate_assisted_listing_intake_schema.sql
+  - path: delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql
     role: implementation-binding package member
   - path: .github/workflows/assisted-intake-design-validation.yml
     role: implementation-binding package member
@@ -138,7 +138,7 @@ event_apply_order:
   - docs/events/ODAY_PLUS_ASSISTED_LISTING_INTAKE_EVENT_PAYLOAD_SCHEMAS_V1.yaml
 
 formal_review_command: >-
-  python scripts/validate_assisted_listing_intake_design.py
+  python delivery_toolchain/governance/validate_assisted_listing_intake_design.py
   --reviewed-commit <current-pr-head>
   --current-pr-head <current-pr-head>
   --base-commit <current-dev-head>

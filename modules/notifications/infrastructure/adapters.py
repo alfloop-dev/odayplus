@@ -196,7 +196,9 @@ class OnCallNotificationAdapter:
 
         delivery_id = f"del-{uuid.uuid4().hex[:12]}"
         now = datetime.now(UTC)
-        raw_sha = (os.getenv("RELEASE_SHA") or os.getenv("GITHUB_SHA") or os.getenv("COMMIT_SHA") or os.getenv("ODAY_RELEASE_SHA") or "").strip().lower()
+        from shared.runtime_config import get_release_identity
+
+        raw_sha = get_release_identity().lower()
 
         # B1/B2: Mandatory provider secret and trusted deployed release SHA bindings
         provider_secret = (os.getenv("ONCALL_PROVIDER_SECRET") or "").strip()

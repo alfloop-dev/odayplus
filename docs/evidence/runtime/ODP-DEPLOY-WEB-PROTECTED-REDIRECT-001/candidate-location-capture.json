@@ -12,7 +12,7 @@
     "middleware_unchanged": "apps/web/src/middleware.ts emits new URL('/login', request.url) — a same-origin relative Location — which is correct Next.js middleware behavior. No middleware change is required or introduced."
   },
   "remediation": {
-    "deployment_validator": "Updated scripts/deployment/validate_cloud_run_live_deployment.py _is_safe_protected_redirect to resolve the raw Location via urllib.parse.urljoin against the candidate request URL before validation. Absolute and relative same-origin redirects to /login?returnTo=/operator are both accepted. Scheme downgrade, host mismatch, port mismatch, external origin, protocol-relative, userinfo, fragment, hostile returnTo, and double-encoded returnTo are all rejected. Updated smoke_checks() to capture the raw Location header in report[\"web_operator_redirect\"] and the check detail for diagnosability."
+    "deployment_validator": "Updated product_ops/deployment/validate_cloud_run_live_deployment.py _is_safe_protected_redirect to resolve the raw Location via urllib.parse.urljoin against the candidate request URL before validation. Absolute and relative same-origin redirects to /login?returnTo=/operator are both accepted. Scheme downgrade, host mismatch, port mismatch, external origin, protocol-relative, userinfo, fragment, hostile returnTo, and double-encoded returnTo are all rejected. Updated smoke_checks() to capture the raw Location header in report[\"web_operator_redirect\"] and the check detail for diagnosability."
   },
   "captured_at": "2026-07-29T12:27:38Z"
 }
