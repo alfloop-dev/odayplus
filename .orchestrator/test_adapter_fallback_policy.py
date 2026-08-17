@@ -340,5 +340,72 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         env = spawn.call_args.kwargs["env"]
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "sk-ant-oat01-test-token")
 
+    def test_claude_worker_uses_configured_model_and_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "providers": {
+                    "claude": {
+                        "allow_inbox_fallback": False,
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "model": "sonnet",
+                            "effort": "medium",
+                            "output_format": "stream-json",
+                            "include_hook_events": True,
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
+            adapter = ClaudeCLIAdapter(config=config, provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.claude_cli.configured_provider_binary", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli.claude_auth_ready", return_value=True),
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        command = spawn.call_args.args[0]
+        self.assertEqual(command[command.index("--model") + 1], "sonnet")
+        self.assertEqual(command[command.index("--effort") + 1], "medium")
+
+    def test_claude_worker_omits_model_flags_when_unset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {"status_file": str(root / "ai-status.json")},
+                "providers": {
+                    "claude": {
+                        "allow_inbox_fallback": False,
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "output_format": "stream-json",
+                            "include_hook_events": True,
+                        },
+                    }
+                },
+            }
+            request = DeliveryRequest(agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake")
+            adapter = ClaudeCLIAdapter(config=config, provider_capabilities={"providers": {"claude": {"supports_auto_approve": True}}})
+            fake_process = mock.Mock(pid=1234)
+
+            with (
+                mock.patch("adapters.claude_cli.configured_provider_binary", return_value=".orchestrator/bin/claude"),
+                mock.patch("adapters.claude_cli.claude_auth_ready", return_value=True),
+                mock.patch("adapters.base.spawn_background_process", return_value=(fake_process, root / "claude.log")) as spawn,
+            ):
+                result = adapter.deliver(request)
+
+        self.assertTrue(result.ok)
+        command = spawn.call_args.args[0]
+        self.assertNotIn("--model", command)
+        self.assertNotIn("--effort", command)
+
+
 if __name__ == "__main__":
     unittest.main()
