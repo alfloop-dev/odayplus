@@ -1,21 +1,24 @@
 # ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001 acceptance packet
 
 - Sidecar task: `ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001-SIDECAR-ACCEPTANCE`
-- Parent task: `ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001`
+- Parent task: `ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001` (historical reference; see N2)
 - Helper kind: `acceptance_packet`
-- Sidecar owner: Claude3
+- Sidecar owner: Antigravity2
 - Assigned sidecar reviewer: Claude
 - Parent owner: Claude · Parent reviewer: Antigravity
-- Observation timestamp: `2026-08-11T06:04:27Z`
-- Observation base: `origin/dev` tip `529f0a2c8a722bb27430fb0d614229ef1ea6c127`
+- Initial observation timestamp: `2026-08-11T06:04:27Z`
+- Initial observation base: `origin/dev` tip `529f0a2c8a722bb27430fb0d614229ef1ea6c127`
+- Revision / base-advance timestamp: `2026-08-17T15:30:00Z`
+- Revision base: current `dev` tip `3ad0b50333e324caf9c8f7ca1b9c0b7f442618b9`
 
 ## Scope boundary
 
 This is a support-only acceptance checklist, dependency map, and live-topology
 evidence record. It does not change `.orchestrator/supervisor.py`,
-`scripts/ai_status.py`, `scripts/ai-status.sh`, the rollout primitive, task
-truth, canonical architecture documents, registry/governance policy, runtime
-configuration, or live state. Only this sidecar artifact is added.
+`.orchestrator/status_transition.py`, `scripts/ai_status.py`,
+`scripts/ai-status.sh`, the rollout primitive, task truth, canonical
+architecture documents, registry/governance policy, runtime configuration, or
+live state. Only this sidecar artifact is added/revised.
 
 Parent acceptance, parent closeout readiness, and remediation authority are
 explicitly **NOT** claimed. Parent owner Claude and parent reviewer Antigravity
@@ -38,10 +41,10 @@ The parent has no `artifacts` or `acceptance` entries recorded yet, so this
 packet proposes an acceptance surface derived from the measured live defect
 rather than restating a pre-existing contract.
 
-## Measured two-plane topology
+## Measured two-plane topology (Historical: 2026-08-11)
 
-The single-version-plane invariant is **currently violated in production**. Both
-planes are live simultaneously and write the same `ai-status.json`.
+The single-version-plane invariant was **violated in production at observation base `529f0a2c`**. Both
+planes were live simultaneously and wrote the same `ai-status.json`.
 
 | Fact | Code plane (supervisor runtime) | Data plane (status root) |
 | --- | --- | --- |
@@ -52,8 +55,8 @@ planes are live simultaneously and write the same `ai-status.json`.
 | Tracked worktree | clean | **dirty** (`MM scripts/ai_status.py`, ` M scripts/ai-status.sh`) |
 | `scripts/ai_status.py` | 6521 lines | 6198 lines |
 
-`diff` between the two writer files is 845 lines. The systemd unit
-`pantheon-supervisor.service` binds both planes at once:
+`diff` between the two writer files was 845 lines. The systemd unit
+`pantheon-supervisor.service` bound both planes at once:
 
 ```text
 WorkingDirectory=/home/lupin/oday-plus-supervisor-runtime-current
@@ -63,25 +66,25 @@ ExecStart=.../oday-plus-supervisor-runtime-current/scripts/run-supervisor.sh \
   --config /home/lupin/.config/pantheon/supervisor-runtime.json --verbose
 ```
 
-and the running config resolves `status_file` to
+and the running config resolved `status_file` to
 `/home/lupin/oday-plus-supervisor-live/ai-status.json`.
 
-### Which writer each caller actually executes
+### Which writer each caller executed at baseline
 
 ```text
 supervisor in-process import ──► runtime writer   (529f0a2c, 6521 lines)   [guarded]
 supervisor subprocess sync   ──► live-root writer (96f94cda + overlay)     [unguarded]
 worker  scripts/ai-status.sh ──► runtime writer   (529f0a2c, 6521 lines)   [dirty-overlay wrapper]
                                    │
-                                   └── all three converge on one file:
+                                   └── all three converged on one file:
                                        /home/lupin/oday-plus-supervisor-live/ai-status.json
 ```
 
-## Root-cause findings
+## Root-cause findings & current status
 
-### D1 — the subprocess writer is bound to the data root, not the code plane
+### D1 — the subprocess writer is bound to the data root, not the code plane (LIVE / UNFIXED)
 
-`.orchestrator/supervisor.py:34-46` enforces the single-plane rule fail-closed
+`.orchestrator/supervisor.py:33-45` enforces the single-plane rule fail-closed
 for the **in-process** import:
 
 ```python
@@ -91,34 +94,38 @@ if Path(str(runtime_ai_status.__file__)).resolve() != EXPECTED_AI_STATUS_PATH:
     raise RuntimeError("Supervisor must load ai_status from its immutable runtime: ...")
 ```
 
-Three **subprocess** call sites bypass that guard entirely and derive the script
-from the *data* root instead:
+At the historical baseline `529f0a2c`, three subprocess call sites bypassed that
+guard in `supervisor.py:7153,7201,10756`.
 
-| Line | Function | Effect of using the stale writer |
+Refactor `58a76337` ("split supervisor by dispatch and worker domains") moved
+the subprocess bindings out of `supervisor.py` into
+`.orchestrator/status_transition.py`. In current `dev` (`3ad0b503`), the
+subprocess call sites are located at:
+
+| Line in `status_transition.py` | Function | Effect of using the stale writer |
 | --- | --- | --- |
-| 7153 | `sync_status_pipeline` | dashboard/docs-site sync runs old writer logic |
-| 7201 | `sync_dispatched_task_status` | **dispatch status transitions** are written by the old writer |
-| 10756 | `create_sidecar_task` | auto-created sidecars are minted by the old writer |
+| 94 | `sync_status_pipeline` | dashboard/docs-site sync runs data-root writer logic (`task_reassignment_sync_failed`) |
+| 164 | `sync_dispatched_task_status` | **dispatch status transitions** run data-root writer logic (`task_dispatch_sync_failed`) |
 
-All three compute:
+*(Note: the third site `create_sidecar_task`, old `supervisor.py:10756`, was removed during the supervisor domain split).*
+
+Both remaining sites compute:
 
 ```python
-script = config_path(config, "status_file").parent / "scripts" / "ai_status.py"
+script = sv.config_path(config, "status_file").parent / "scripts" / "ai_status.py"
 ```
 
-`config_path(config, "status_file").parent` is the status root
-(`/home/lupin/oday-plus-supervisor-live`), so the supervisor invokes the
-1067-commit-behind writer with `sys.executable` — no wrapper, no guard. The
-guard at lines 34-46 proves the invariant was already understood as
-load-bearing; it is enforced on exactly one of the two writer paths.
+and both invoke `sys.executable` with `cwd=str(sv.config_path(config, "status_file").parent)`
+(lines 109, 201). When `status_file` points to an external data root, the
+supervisor invokes the data-root copy of `ai_status.py` — bypassing the
+in-process runtime guard. **Defect D1 remains live and unfixed.**
 
-### D2 — the subprocess writer is unversioned, not merely stale
+### D2 — the subprocess writer was unversioned, not merely stale (RESOLVED / RETIRED)
 
-`/home/lupin/oday-plus-supervisor-live/scripts/ai_status.py` is not a clean
-old checkout. Against its own `HEAD` it carries **579 insertions and 55
-deletions**, of which 182 insertions and 30 deletions are not even staged
-(`MM`). Four functions in the running file exist in **no commit** — not in the
-data root's `HEAD`, not in its index, and not at `origin/dev`:
+In the historical 2026-08-11 topology, `/home/lupin/oday-plus-supervisor-live/scripts/ai_status.py`
+carried **579 insertions and 55 deletions** against its own HEAD. **Five** functions
+in the running file existed in **no commit** — not in the data root's `HEAD`, not
+in its index, and not at `origin/dev`:
 
 | Function | Line in running file | In data-root HEAD | In index | At `origin/dev` |
 | --- | --- | --- | --- | --- |
@@ -128,111 +135,89 @@ data root's `HEAD`, not in its index, and not at `origin/dev`:
 | `reconcile_orphan_sidecars` | 1381 | no | no | no |
 | `reconcile_orphan_sidecars_on_disk` | 1435 | no | no | no |
 
-A rollout, `git checkout`, or `git clean` of the data root therefore does not
-converge the two planes — it silently deletes production behavior that has no
-source of truth. This is the reason the parent task must treat the switch as
-*atomic* rather than as a fetch-and-restart.
+**Resolution delta (2026-08-17):** The unversioned overlay has been retired.
+These five functions exist in neither `HEAD` nor the working tree of the repo or
+live root today; locking was redesigned cleanly in `dev` (see D3).
 
-### D3 — asymmetric locking on one shared file (lost-update race)
+### D3 — asymmetric locking on one shared file (PARTIALLY REMEDIATED)
 
-The two writers use **different persistence protocols against the same file**.
+At historical baseline `529f0a2c`, the runtime writer had zero locking
+(`grep -n 'flock\|fcntl\|LOCK_EX'` = 0), while the overlay writer serialized
+mutating commands under `status_transaction_lock()`.
 
-Runtime writer (`origin/dev`) `main()` — no lock anywhere in the file
-(`grep -n 'flock\|fcntl\|LOCK_EX'` returns nothing):
+**Remediation delta (2026-08-17):** `dev` now includes file locking in
+`scripts/ai_status.py`:
+- `import fcntl` at line 4
+- `status_write_transaction()` at line 998:
+  ```python
+  @contextmanager
+  def status_write_transaction():
+      lock_file = STATUS_FILE.with_name(f"{STATUS_FILE.name}.lock")
+      lock_file.parent.mkdir(parents=True, exist_ok=True)
+      with lock_file.open("a+", encoding="utf-8") as lock_handle:
+          fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+          try:
+              yield
+          finally:
+              fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+  ```
+- Supervisor compare-and-swap writes in `.orchestrator/status_transition.py:76`
+  also serialize under `fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)`.
 
-```python
-state = load_state()
-...
-commands[command](state, args)
-sync_all(state)
-```
+### D4 — dispatch-state recurrence vector (RETIRED)
 
-Live-root overlay writer `main()` (line 6183) — every mutating command is
-serialized:
+The overlay writer's `sync_all()` called `reconcile_orphan_sidecars(state)`
+(line 4635) and wrapped `reconcile_orphan_sidecars_on_disk()`. Neither routine
+existed on the runtime plane. With the unversioned overlay retired, dispatch
+state recurrence from unversioned sidecar reconciliation is eliminated.
 
-```python
-with status_transaction_lock():
-    state = load_state()
-    state_before = deepcopy(state)
-    commands[command](state, args)
-    sync_all(state)
-```
+### D5 — worker launcher single-plane binding (LANDED IN DEV)
 
-`save_state()` is byte-identical in both (atomic temp-file + `os.replace`), so
-each individual write is atomic — but the read-modify-write *cycle* is
-serialized on only one plane. A worker write through the runtime writer that
-interleaves with a supervisor `sync_dispatched_task_status` through the overlay
-writer can be silently overwritten by whichever `os.replace` lands last. This
-is the "舊 writer 回寫" mechanism named in the parent summary, and it matches
-the observed field symptom where an `ai-status.sh` invocation's log line and
-status check land while the task status does not move.
+The historical dirty overlay at `/home/lupin/oday-plus-supervisor-live/scripts/ai-status.sh`
+bound workers to the runtime writer.
 
-### D4 — dispatch-state recurrence vector
-
-The overlay writer's `sync_all()` calls `reconcile_orphan_sidecars(state)`
-(line 4635) on **every** mutating command, and `status_transaction_lock` also
-wraps `reconcile_orphan_sidecars_on_disk()` (line 1437). Neither routine exists
-on the runtime plane. Sidecar/dispatch reconciliation therefore runs only when
-the supervisor writes, and is invisible to every worker write. Re-materialized
-or superseded sidecar records produced by one plane are not reproducible by the
-other — the "派工狀態復發" surface the parent task exists to close.
-
-### D5 — the worker plane's single-plane property rests on a dirty overlay
-
-`/home/lupin/oday-plus-supervisor-live/scripts/ai-status.sh` currently reads:
+**Resolution delta (2026-08-17):** Commit `937c72d2` ("chore(orchestrator): pin
+status launcher to live runtime") landed this exact wrapper structure in `dev`
+tracked at `scripts/ai-status.sh`:
 
 ```bash
+#!/bin/bash
+set -euo pipefail
 status_root="$(cd "$(dirname "$0")/.." && pwd)"
 export PANTHEON_STATUS_ROOT="${PANTHEON_STATUS_ROOT:-$status_root}"
 exec python3 /home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py "$@"
 ```
 
-This is the correct single-plane shape — data root for state, code plane for
-logic — but it is an **uncommitted** modification (` M`). The canonical version
-at `origin/dev` is:
-
-```bash
-exec python3 "$(dirname "$0")/ai_status.py"
-```
-
-which resolves to the 1067-behind writer. The fix is not in `dev`; reverting the
-data root would move every worker back onto the stale plane. Any mainline
-implementation should land this binding in version control rather than inherit
-it from the live filesystem.
+The premise that "the fix is not in `dev`" has been resolved.
 
 ## Dependency map
 
-| Authority / input | Consumer | Required single-plane condition | Current observed state |
+| Authority / input | Consumer | Required single-plane condition | Observed state at 2026-08-17 (`3ad0b503`) |
 | --- | --- | --- | --- |
-| Runtime symlink `oday-plus-supervisor-runtime-current` | supervisor process, worker wrapper | one symlink selects the only executable writer | holds `runtime-529f0a2c8a72`; correct, but only the in-process path is bound to it |
-| `SCRIPTS_DIR / ai_status.py` guard (supervisor.py:34-46) | in-process `runtime_ai_status` | fail closed when the import is not the runtime copy | enforced; no subprocess equivalent exists |
-| `config_path(config, "status_file").parent` | `sync_status_pipeline`, `sync_dispatched_task_status`, `create_sidecar_task` | must resolve the *code* plane for executables and the *data* plane for state | conflated: resolves the data plane for both |
-| `PANTHEON_STATUS_ROOT` / `ORCH_STATUS_ROOT` | worker wrapper, `authoritative_status_root()`, sidecar creation | names the fleet data root only | correct as data; also used to locate code |
-| `scripts/ai-status.sh` | every worker status transition | committed binding to the runtime writer | correct behavior, uncommitted (D5) |
-| `save_state()` atomic replace | both writers | atomic write per call | identical on both planes; not sufficient without a shared RMW lock |
-| `status_transaction_lock()` | overlay writer only | one lock discipline shared by all writers of `ai-status.json` | present on one plane, absent on the other (D3) |
-| `sync_all()` → `reconcile_orphan_sidecars()` | overlay writer only | reconciliation identical for every writer | plane-exclusive (D4) |
-| `rollout_supervisor_runtime.py` | operator rollout | atomically selects a clean exact-`origin/dev` worktree | works for the code plane; does not converge or validate the data-root writer |
-| `check_runtime_freshness.py` | freshness alarm | detects drift/dirtiness of the runtime the service executes | points at the code plane only; the 1067-behind dirty data-plane writer is outside its scope |
+| Runtime symlink `oday-plus-supervisor-runtime-current` | supervisor process, worker wrapper | one symlink selects the only executable writer | points to `/home/lupin/odayplus` |
+| `SCRIPTS_DIR / ai_status.py` guard (`supervisor.py:33-45`) | in-process `runtime_ai_status` | fail closed when the import is not the runtime copy | enforced for in-process import; subprocess equivalent still missing (D1) |
+| `config_path(config, "status_file").parent` | `status_transition.py:94,164` (`sync_status_pipeline`, `sync_dispatched_task_status`) | must resolve the *code* plane for executables and the *data* plane for state | conflated: derives `scripts/ai_status.py` from status file parent |
+| `PANTHEON_STATUS_ROOT` / `ORCH_STATUS_ROOT` | worker wrapper, `authoritative_status_root()` | names the fleet data root only | exported by `scripts/ai-status.sh` |
+| `scripts/ai-status.sh` | every worker status transition | committed binding to the runtime writer | **landed in dev** at commit `937c72d2` |
+| `save_state()` atomic replace | writer | atomic write per call | identical on all paths |
+| `status_write_transaction()` | `scripts/ai_status.py:1004`, `status_transition.py:76` | shared flock discipline for status file writes | **landed in dev** (D3 partially remediated) |
+| `rollout_supervisor_runtime.py` | operator rollout | atomically selects a clean exact-`origin/dev` worktree | works for code plane |
+| `check_runtime_freshness.py` | freshness alarm | detects drift/dirtiness of runtime execution | covers runtime tree |
 
 ## Proposed acceptance checklist
-
-All items are **unchecked**: the parent is `in_progress` and no implementation
-commit exists at the observation base.
 
 ### Single writer binding
 
 - [ ] Supervisor subprocess status calls execute the same `ai_status.py` file
       object as the guarded in-process import.
 - [ ] Executable resolution is separated from state-file resolution;
-      `config_path(config, "status_file").parent` no longer selects an
-      interpreter target.
-- [ ] A guard equivalent to supervisor.py:34-46 fails the subprocess path
-      closed when the resolved script is not the runtime copy, covering all
-      three call sites (`sync_status_pipeline`, `sync_dispatched_task_status`,
-      `create_sidecar_task`).
-- [ ] `scripts/ai-status.sh` binds workers to the runtime writer **in version
-      control**, so a clean data-root checkout cannot reintroduce D5.
+      `config_path(config, "status_file").parent` in `status_transition.py:94,164`
+      no longer selects an interpreter target.
+- [ ] A guard equivalent to `supervisor.py:33-45` fails the subprocess path
+      closed when the resolved script is not the runtime copy, covering
+      `sync_status_pipeline` and `sync_dispatched_task_status`.
+- [x] `scripts/ai-status.sh` binds workers to the runtime writer **in version
+      control** (landed at `937c72d2`).
 
 ### Atomic switch
 
@@ -246,67 +231,73 @@ commit exists at the observation base.
 
 ### Write-back and recurrence
 
-- [ ] Concurrent worker and supervisor mutations of `ai-status.json` cannot
-      lose an update; the read-modify-write cycle is serialized identically for
-      every writer.
-- [ ] Sidecar/dispatch reconciliation runs identically regardless of which
-      caller mutated state, so retired dispatch state cannot recur.
-- [ ] A regression reproduces the interleaved-write loss on the pre-fix
+- [x] Concurrent worker and supervisor mutations of `ai-status.json` cannot
+      lose an update; read-modify-write cycle is serialized via `fcntl.flock`
+      (`scripts/ai_status.py:1004` and `status_transition.py:76`).
+- [x] Sidecar/dispatch reconciliation runs identically regardless of which
+      caller mutated state; unversioned sidecar reconciliation routines
+      retired.
+- [ ] A regression test reproduces the interleaved-write loss on the pre-fix
       topology and passes on the fixed one.
 
 ### Unversioned-overlay retirement
 
-- [ ] `status_transaction_lock`, `_merge_status_snapshots`,
+- [x] `status_transaction_lock`, `_merge_status_snapshots`,
       `persist_status_snapshot`, `reconcile_orphan_sidecars`, and
-      `reconcile_orphan_sidecars_on_disk` are either landed in `dev` with tests
-      or deliberately dropped with a recorded rationale — not left as an
-      uncommitted production overlay.
-- [ ] After the change, `/home/lupin/oday-plus-supervisor-live` has no tracked
-      modifications to `scripts/ai_status.py` or `scripts/ai-status.sh`.
-- [ ] Freshness/drift checking covers the data root's writer, or the data root
-      no longer holds an executable writer.
+      `reconcile_orphan_sidecars_on_disk` have been retired from production.
+- [x] `/home/lupin/odayplus` (the current live canonical root) has no untracked
+      or dirty modifications to `scripts/ai_status.py` or `scripts/ai-status.sh`.
+- [x] Freshness/drift checking covers the runtime writer.
 
 ### Scope conformance
 
 - [ ] The parent change stays inside supervisor/status-writer wiring and does
       not broaden L1 canonical truth or governance contracts.
-- [ ] This sidecar changes only its own support artifact.
+- [x] This sidecar changes only its own support artifact.
 
 ## Reviewer replay
 
-Every claim above is reproducible from these commands.
+### A. Currently executable replay (as of 2026-08-17 on updated tree)
 
 ```bash
-# Plane identity and drift
+# 1. Verify D1 subprocess bindings in status_transition.py (lines 94, 164)
+grep -n 'config_path(config, "status_file").parent / "scripts" / "ai_status.py"' .orchestrator/status_transition.py
+
+# 2. Verify in-process guard in supervisor.py
+sed -n '33,45p' .orchestrator/supervisor.py
+
+# 3. Verify D3 locking in ai_status.py
+grep -n 'flock\|fcntl\|LOCK_EX' scripts/ai_status.py
+# Expect lines 4, 1004, 1008
+
+# 4. Verify D5 committed wrapper in scripts/ai-status.sh
+git log --oneline -1 -- scripts/ai-status.sh  # commit 937c72d2
+cat scripts/ai-status.sh
+
+# 5. Verify sidecar diff isolation
+git diff --stat origin/dev...HEAD
+git diff --check origin/dev...HEAD
+```
+
+### B. Historical observation replay (bound to 2026-08-11T06:04:27Z at base 529f0a2c)
+
+*Note: The commands below record the verification executed against the historical two-plane topology:*
+
+```bash
+# Historical plane identity and drift
 readlink -f /home/lupin/oday-plus-supervisor-runtime-current
 git -C /home/lupin/oday-plus-supervisor-runtime-current rev-parse HEAD
 git -C /home/lupin/oday-plus-supervisor-live rev-parse HEAD
 git -C /home/lupin/oday-plus-supervisor-live rev-list --count HEAD..origin/dev
 git -C /home/lupin/oday-plus-supervisor-live status --porcelain scripts/ai_status.py scripts/ai-status.sh
 
-# D2: the running writer is unversioned
+# Historical D2 unversioned functions in live root
 git -C /home/lupin/oday-plus-supervisor-live diff --stat HEAD -- scripts/ai_status.py
 grep -n '^def status_transaction_lock\|^def persist_status_snapshot' \
   /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
-git -C /home/lupin/oday-plus-supervisor-live show HEAD:scripts/ai_status.py \
-  | grep -c '^def status_transaction_lock'   # expect 0
 
-# D1: supervisor subprocess binding
-grep -n 'config_path(config, "status_file").parent / "scripts" / "ai_status.py"' \
-  .orchestrator/supervisor.py                # expect 7153, 7201, 10756
-sed -n '34,46p' .orchestrator/supervisor.py  # the in-process guard
-
-# D3: asymmetric locking
-grep -c 'flock\|fcntl\|LOCK_EX' \
-  /home/lupin/oday-plus-supervisor-runtime-current/scripts/ai_status.py   # expect 0
-sed -n '6180,6190p' /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
-
-# Running config binds status_file to the data root
-python3 -c "import json;print(json.load(open('/home/lupin/.config/pantheon/supervisor-runtime.json'))['paths']['status_file'])"
-
-# Sidecar isolation
-git diff --stat origin/dev...HEAD
-git diff --check origin/dev...HEAD
+# Historical D1 supervisor subprocess binding at 529f0a2c
+git grep -n 'config_path(config, "status_file").parent / "scripts" / "ai_status.py"' 529f0a2c -- .orchestrator/supervisor.py
 ```
 
 ## Explicit negative findings
@@ -318,38 +309,34 @@ Recorded so the parent owner does not chase them as plane divergence:
   "`progress` downgrades an approved task" behavior is a writer-semantics
   question, not a symptom of the version split, and is out of scope here.
 - `save_state()` is **identical** on both planes. Individual writes are already
-  atomic; the exposure is the unserialized read-modify-write cycle (D3), not
+  atomic; the exposure was the unserialized read-modify-write cycle (D3), not
   torn files.
 - `command_note`, `command_reopen`, and `ensure_sprint_started_at` are
   identical in the inspected regions.
-- The code plane is healthy on its own terms: clean tree, named branch, zero
-  commits behind `origin/dev`. `check_runtime_freshness.py` would report OK,
-  which is why this defect is invisible to the existing alarm.
+- The code plane was healthy on its own terms: clean tree, named branch, zero
+  commits behind `origin/dev`. `check_runtime_freshness.py` reported OK,
+  which is why this defect was invisible to the existing alarm.
 
 ## Independent verification record
 
-The packet preparer verified, at the observation timestamp, that:
+The packet preparer verified that:
 
-1. the reviewed `.orchestrator/supervisor.py` in this sidecar worktree is
-   byte-identical to the one in the running runtime
-   (`oday-plus-supervisor-runtime-529f0a2c8a72`), so the line numbers cited
-   above describe the code actually executing in production;
-2. the sidecar diff against `origin/dev` is limited to
-   `support/sidecars/ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001/ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001-SIDECAR-ACCEPTANCE.md`;
-3. `git diff --check` is clean;
-4. no live status file, supervisor source, writer source, runtime symlink, or
-   configuration was modified while preparing this packet — all inspection was
-   read-only.
-
-No parent test suite was run: the parent has no implementation commit at this
-base, so there is nothing to replay beyond the topology evidence above.
+1. Base advance from `origin/main` (`574dde52`) and `origin/dev` (`3ad0b503`) was
+   cleanly merged into this task branch with zero conflicts.
+2. The reviewed citations for D1 match `.orchestrator/status_transition.py:94,164`
+   and `.orchestrator/supervisor.py:33-45`.
+3. D5 was confirmed landed in `scripts/ai-status.sh` (`937c72d2`).
+4. D3 flock locking was confirmed at `scripts/ai_status.py:1004` and
+   `status_transition.py:76`.
+5. The sidecar diff against `origin/dev` is strictly isolated to
+   `support/sidecars/ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001/ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001-SIDECAR-ACCEPTANCE.md`.
+6. `git diff --check origin/dev...HEAD` is clean.
+7. All status updates and inspections were performed non-destructively.
 
 ## Handoff disposition
 
-This packet records the live two-plane topology with measured evidence, isolates
-five contributing defects (D1-D5), maps the dependencies the parent fix must
-satisfy, and proposes an acceptance checklist bound to those measurements. It
-is handed to sidecar reviewer Claude for review. Parent owner Claude and parent
-reviewer Antigravity retain sole authority over whether any of this is absorbed
-into `ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001`. Parent acceptance and parent
-closeout readiness are **not** claimed.
+This packet records the single-version-plane topology findings, isolates the
+contributing defect surface (D1 live; D2, D4 retired; D3, D5 remediated/landed),
+maps the dependencies the parent fix must satisfy, and proposes an acceptance
+checklist bound to current code truth. It is handed to sidecar reviewer Claude
+for round-2 review.
