@@ -77,7 +77,7 @@ Python 側**刻意用 `uv.lock` 過濾**。直接列舉系統 Python 會混入 U
 
 ---
 
-## 3. 需要決策的三個案例
+## 3. 需要決策的五個案例
 
 以下每一個都是**真實存在的案例**，不是假設。
 
@@ -104,14 +104,34 @@ review／禁止。
 
 ### 3.2 `LGPL-PSYCOPG2` — LGPL with exceptions，在 production
 
-`psycopg2-binary@2.9.12`，PostgreSQL 驅動程式。上游宣告 LGPL-3 加上允許連結的
+`psycopg2-binary@2.9.12`，經 `dlt[postgres]` 引入。上游宣告 LGPL-3 加上允許連結的
 例外條款。**該例外條款的實際文字是這件事可行與否的關鍵，應該讀過而非假定。**
-（此外 Python 側另有 `psycopg` 3.x 的 `LGPL-3.0-only` 及 `moocore` 的 `LGPL-2.1-or-later`，
-同屬 LGPL 範疇需一併納入法務審閱判定。）
 
 要決定：確認上游例外條款可接受，或要求改用其他授權的驅動程式。
 
-### 3.3 `FIRST-PARTY-UNLICENSED` — 8 個自家套件沒有授權欄位
+### 3.3 `LGPL-PSYCOPG3` — LGPL-3.0-only，在 production
+
+`psycopg@3.3.4`、`psycopg-binary@3.3.4`、`psycopg-pool@3.3.1`，為 `pyproject.toml:26`
+直接宣告的 production PostgreSQL 驅動與連線池。不同於 psycopg2 帶有明確的 linking exception，
+**psycopg 3.x 宣告為 `LGPL-3.0-only`，沒有額外的 linking exception，因此 psycopg2 的例外理由無法沿用。**
+在 Python production 執行環境中係以動態匯入／C extension 方式載入，法務需評估其動態連結與 LGPLv3 義務
+（包含 NOTICE、原始碼提供、使用者 relink / 逆向工程條款等要求）。
+
+要決定：附條件允許（未修改上游 binary、動態連結、NOTICE 揭露、source offer）／要求替換為其他授權之驅動程式（如 Apache-2.0 之 asyncpg）／禁止。
+
+**若決定禁止**：需修改資料庫存取層以替換 PostgreSQL 驅動。
+
+### 3.4 `LGPL-MOOCORE` — LGPL-2.1-or-later，在 production
+
+`moocore@0.3.2`，經 `pymoo>=0.6.1,<0.7`（`pyproject.toml:44`）引入 production 依賴樹。
+`moocore` 為 pymoo 的 C/C++ 最佳化核心 extension，授權宣告為 `LGPL-2.1-or-later`，
+在 Python runtime 中以編譯好的 extension module 動態載入。
+
+要決定：附條件允許（動態連結、未修改上游 binary、NOTICE 標示）／替換多目標最佳化套件／禁止。
+
+**若決定禁止**：需替換依賴 pymoo/moocore 的多目標最佳化演算法。
+
+### 3.5 `FIRST-PARTY-UNLICENSED` — 8 個自家套件沒有授權欄位
 
 ```
 @oday-plus/ui              @oday-plus/design-tokens
@@ -134,7 +154,7 @@ review／禁止。
 |---|---|---|---|---|
 | MPL-2.0 | `lightningcss`（+2 平台變體，經 next） | prod | 檔案層 copyleft：修改到 MPL 檔案才需公開該檔案原始碼 | **未修改任何 MPL 檔案**，僅使用未修改的上游產物 |
 | MPL-2.0 | `axe-core`、`@axe-core/playwright` | dev | 同上 | 同上 |
-| MPL-2.0 | `certifi@2023.11.17`, `tqdm@4.69.0`, `orjson@3.11.9` | prod (python) | 同上 | 同上 |
+| MPL-2.0 | `certifi@2026.6.17`, `tqdm@4.69.0`, `orjson@3.11.9` | prod (python) | 同上 | 同上 |
 | CC-BY-4.0 | `caniuse-lite@1.0.30001806`（經 browserslist） | prod | **需要標示出處**，這是資料授權不是程式碼授權 | **目前發布物中沒有任何 NOTICE 標示** |
 | Apache-2.0 | 23 個 npm 套件 + 68 個 python 套件 | 混合 | 保留 NOTICE、修改需聲明變更 | 未查核 NOTICE 是否隨發布物提供 |
 
@@ -178,7 +198,7 @@ forced-major override，也不是 AI 自簽的 waiver。
 
 ## 7. 收據要求
 
-收據規範詳見 [`docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md`](docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md)。為方便審閱，以下摘錄其第 2、3 節的核心合約規範：
+收據規範詳見 [`docs/evidence/OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md`](../OSS_LEGAL_POLICY_HUMAN_HANDOFF_2026-07-31.md)。為方便審閱，以下摘錄其第 2、3 節的核心合約規範：
 
 ### 7.1 核准 receipt 必填欄位
 

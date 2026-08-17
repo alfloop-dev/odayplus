@@ -27,7 +27,11 @@
       { "id": "PSF-2.0", "observed": 5, "note": "python distributions" },
       { "id": "MIT-0", "observed": 1, "example": "cffi" },
       { "id": "MIT-CMU", "observed": 1, "example": "pillow" },
-      { "id": "ZPL-2.1", "observed": 1, "example": "waitress" }
+      { "id": "ZPL-2.1", "observed": 1, "example": "waitress" },
+      { "id": "Zlib", "observed": 1, "example": "numpy" },
+      { "id": "TCL", "observed": 1, "example": "ujson" },
+      { "id": "CNRI-Python", "observed": 1, "example": "regex" },
+      { "id": "AFL-2.1", "observed": 1, "example": "simplejson" }
     ]
   },
 
@@ -42,8 +46,9 @@
           { "package": "lightningcss-linux-x64-musl", "version": "1.33.0", "scope": "prod" },
           { "package": "axe-core", "version": "4.12.1", "scope": "dev" },
           { "package": "@axe-core/playwright", "version": "4.12.1", "scope": "dev" },
-          { "package": "certifi", "version": "2023.11.17", "scope": "prod", "ecosystem": "python" },
-          { "package": "tqdm", "version": "4.69.0", "scope": "prod", "ecosystem": "python" }
+          { "package": "certifi", "version": "2026.6.17", "scope": "prod", "ecosystem": "python" },
+          { "package": "tqdm", "version": "4.69.0", "scope": "prod", "ecosystem": "python" },
+          { "package": "orjson", "version": "3.11.9", "scope": "prod", "ecosystem": "python", "note": "Dual-licensed under MPL-2.0 AND (Apache-2.0 OR MIT)" }
         ],
         "obligation": "File-level copyleft. If an MPL-2.0 source file is modified, that file's source must be made available under MPL-2.0. Combining with proprietary code in a larger work is permitted.",
         "current_state": "No MPL-2.0 source file is modified in this repository. Consumption is unmodified upstream artifacts only."
@@ -80,8 +85,35 @@
         "license": "LGPL with exceptions",
         "scope": "prod",
         "packages": [{ "package": "psycopg2-binary", "version": "2.9.12" }],
-        "why_it_matters": "The PostgreSQL driver. Upstream states LGPL-3 plus an exception permitting linking; the exception text is what makes this workable and should be read rather than assumed.",
+        "dependency_path": "odayplus -> dlt[postgres]>=1.20,<2 (pyproject.toml:24) -> psycopg2-binary@2.9.12",
+        "why_it_matters": "The PostgreSQL driver used by dlt. Upstream states LGPL-3 plus an exception permitting linking; the exception text is what makes this workable and should be read rather than assumed.",
         "decision_needed": "Confirm the upstream exception is acceptable, or require a differently licensed driver."
+      },
+      {
+        "id": "LGPL-PSYCOPG3",
+        "license": "LGPL-3.0-only",
+        "scope": "prod",
+        "packages": [
+          { "package": "psycopg", "version": "3.3.4" },
+          { "package": "psycopg-binary", "version": "3.3.4" },
+          { "package": "psycopg-pool", "version": "3.3.1" }
+        ],
+        "dependency_path": "odayplus -> psycopg[binary,pool]>=3.2,<4 (pyproject.toml:26)",
+        "why_it_matters": "Direct production PostgreSQL driver and connection pool. Unlike psycopg2 (which carries an explicit linking exception), psycopg 3.x is licensed under LGPL-3.0-only without linking exceptions. As an LGPL-3.0 library loaded dynamically in production Python runtime, Legal must evaluate whether dynamic linking / C extension usage conforms to the organization's LGPL-3.0 policy (including user relinking and reverse engineering considerations).",
+        "decision_needed": "Allow subject to conditions (unmodified upstream binary distribution, dynamic linking, NOTICE disclosure, source code offer) / replace with an alternatively licensed driver (such as asyncpg under Apache-2.0) / prohibit.",
+        "if_prohibited": "Database access layer must be migrated to an alternative PostgreSQL driver."
+      },
+      {
+        "id": "LGPL-MOOCORE",
+        "license": "LGPL-2.1-or-later",
+        "scope": "prod",
+        "packages": [
+          { "package": "moocore", "version": "0.3.2" }
+        ],
+        "dependency_path": "odayplus -> pymoo>=0.6.1,<0.7 (pyproject.toml:44) -> moocore@0.3.2",
+        "why_it_matters": "Compiled C/C++ core extensions for pymoo (multi-objective optimization library used in production). Licensed under LGPL-2.1-or-later and dynamically imported by pymoo as a compiled extension module.",
+        "decision_needed": "Allow subject to conditions (dynamic linking / shared library loading, unmodified upstream distribution, NOTICE retention) / replace multi-objective optimization dependency / prohibit.",
+        "if_prohibited": "Multi-objective optimization algorithms relying on pymoo/moocore must be replaced."
       },
       {
         "id": "FIRST-PARTY-UNLICENSED",
