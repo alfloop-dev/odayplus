@@ -146,7 +146,7 @@ completeness, `dev` tip `e385c5d9` recorded `success` on run `31323609465`.
 `tests/performance/assisted_listing_intake/test_capacity.py::test_approved_capacity_and_slo_are_measured`,
 at `assert report["missed_targets"] == []`, with
 `['url_submission_durable_receipt', 'url_submission_receipt_error_budget']`
-observed. Reading `scripts/load/assisted_listing_intake/runtime.py`, those
+observed. Reading `delivery_toolchain/load/assisted_listing_intake/runtime.py`, those
 targets are wall-clock percentiles: `summarize()` compares `time.perf_counter()`
 deltas against a `0.5s` p95 / `1.5s` p99 budget (line 153) across 20 concurrent
 submitters. On a shared GitHub-hosted runner that is a contention-sensitive
@@ -465,16 +465,16 @@ gh api repos/.../commits/8eabc973/check-runs  (the PR's base commit)
 gh api repos/.../commits/e385c5d9/check-runs  -> performance-gate SUCCESS
 read .github/workflows/ci.yml:174-193
   -> 3 attempts, `exit ${status}` on the first red -> all-of, not best-of
-read scripts/load/assisted_listing_intake/runtime.py:39-54,153
+read delivery_toolchain/load/assisted_listing_intake/runtime.py:39-54,153
   -> summarize() compares time.perf_counter() deltas to p95=0.5s / p99=1.5s
 
 source re-read at origin/dev (all confirmed):
   .github/workflows/deploy-dev.yml:101-102        -> || 'tenant-dev'
   .github/workflows/deploy-staging.yml:84-85      -> || 'tenant-staging'
-  scripts/e2e/check_live_e2e_gate.py:1318-1321    -> operator_tenant or ENV chain
+  delivery_toolchain/e2e/check_live_e2e_gate.py:1318-1321    -> operator_tenant or ENV chain
   apps/api/oday_api/main.py:772                   -> `if body.job_type == "forecast"` sole guard
   shared/.../operator_domains.py:_collection()    -> f"{collection}.tenant.{sha256}"
-  scripts/deploy_cloud_run_waji.sh:45-48          -> fail-closed guard present
+  product_ops/deployment/deploy_cloud_run_waji.sh:45-48          -> fail-closed guard present
   modules/external_data/.../ingestion_service.py:337-362 -> ScheduledIngestionTenantError
   apps/worker/oday_worker/handlers.py:92-120      -> NonRetryableJobError on empty tenant
 

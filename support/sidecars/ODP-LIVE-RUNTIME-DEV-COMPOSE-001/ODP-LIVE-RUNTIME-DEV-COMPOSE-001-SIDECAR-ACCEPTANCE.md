@@ -38,7 +38,7 @@ The parent task implementation is currently blocked on `ODP-PRODUCTION-MODEL-REG
 | UI Auth Proxy & Path Gates | `apps/web/src/lib/auth/` | Maintains Package 10 auth proxy UI components and retired-path route gates. |
 | ForecastOps Temporal Replay | `modules/forecastops/` | Enforces temporal replay horizon, tenant isolation, and revenue interval logic. |
 | LearningHub Release & Binding | `modules/learninghub/` | Manages model list API endpoints, production release bindings, and PostgreSQL persistence. |
-| Model Registry & Bootstrap | `scripts/models/` | Production model registry bootstrap scripts and PG16 model-ready view triggers. |
+| Model Registry & Bootstrap | `product_ops/modeling/` | Production model registry bootstrap scripts and PG16 model-ready view triggers. |
 | Shared Persistence Layer | `shared/infrastructure/persistence/` | PostgreSQL 16 persistence adapters and model-ready materialization views. |
 | Integration Test Suite | `tests/integration/` | Integration and composition tests validating multi-module runtime cohesion. |
 | Sidecar Support Packet | `support/sidecars/ODP-LIVE-RUNTIME-DEV-COMPOSE-001/ODP-LIVE-RUNTIME-DEV-COMPOSE-001-SIDECAR-ACCEPTANCE.md` | Non-canonical acceptance packet and dependency map for reviewer handoff. |

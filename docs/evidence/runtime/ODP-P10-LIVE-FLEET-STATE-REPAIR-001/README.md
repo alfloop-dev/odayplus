@@ -68,7 +68,7 @@ root before the fix and re-verified after.
 
 `ODP-PRODUCTION-MODEL-REGISTRY-001` carried no `mutates_canonical` key at all, so
 10 of 11 tasks declared it and one gave a consumer no answer. Set to `true`: the
-task's ceiling includes `models/**` and `scripts/models/**` and it moves a
+task's ceiling includes `models/**` and `product_ops/modeling/**` and it moves a
 production alias.
 
 ### D2 — six tasks pointed at source documents that do not exist

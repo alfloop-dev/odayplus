@@ -263,7 +263,7 @@ These items do not need to be reimplemented:
 - Historical source: `docs/evidence/PACKAGE_10_PAGE_BY_PAGE_RUNTIME_DIFF_2026-07-26.md`.
 - Missing evidence:
   - authenticated screenshots on the exact promoted release;
-  - all three viewports required by `scripts/e2e/check_product_grade_ci_gates.py`, `390`, `1024`, and `1440`;
+  - all three viewports required by `delivery_toolchain/e2e/check_product_grade_ci_gates.py`, `390`, `1024`, and `1440`;
   - loading, empty, success, partial, blocked, retryable, permission-limited, and durable-return states;
   - browser console/network errors and API provenance per page;
   - comparison against the archived Package 10 HTML.

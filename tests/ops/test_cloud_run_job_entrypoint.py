@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from types import SimpleNamespace
 
-from scripts.deployment import cloud_run_job_entrypoint as entrypoint
+from product_ops.deployment import cloud_run_job_entrypoint as entrypoint
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs.queue import InMemoryJobQueue, JobRequest, JobStatus
 

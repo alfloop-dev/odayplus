@@ -21,7 +21,6 @@ from common import (
     execution_context_files,
     load_config,
     load_json,
-    load_jsonl,
     load_status,
     render_template,
     run_command,
@@ -88,7 +87,6 @@ def default_bus_state() -> dict[str, Any]:
         "last_error": None,
         "processed_review_ids": [],
         "processed_comment_ids": [],
-        "processed_webhook_deliveries": [],
         "poll_cursors": {
             "pr_reviews": 0,
             "issue_comments": 0,
@@ -107,7 +105,6 @@ def load_bus_state(config: dict[str, Any]) -> dict[str, Any]:
     merged.setdefault("tasks", {})
     merged.setdefault("processed_review_ids", [])
     merged.setdefault("processed_comment_ids", [])
-    merged.setdefault("processed_webhook_deliveries", [])
     merged.setdefault("poll_cursors", {})
     merged["poll_cursors"].setdefault("pr_reviews", 0)
     merged["poll_cursors"].setdefault("issue_comments", 0)
@@ -138,7 +135,6 @@ def save_bus_state(config: dict[str, Any], state: dict[str, Any]) -> None:
     state["last_sync_at"] = utc_now()
     state["processed_review_ids"] = state.get("processed_review_ids", [])[-MAX_PROCESSED_IDS:]
     state["processed_comment_ids"] = state.get("processed_comment_ids", [])[-MAX_PROCESSED_IDS:]
-    state["processed_webhook_deliveries"] = state.get("processed_webhook_deliveries", [])[-MAX_PROCESSED_IDS:]
     write_json(config_path(config, "github_bus_state"), state)
 
 
@@ -408,12 +404,6 @@ def remote_branch_heads(remote: str = "origin") -> dict[str, str]:
     return heads
 
 
-def remote_branch_names(remote: str = "origin") -> frozenset[str]:
-    """Read remote head names once per short TTL instead of probing every task branch."""
-    heads = remote_branch_heads(remote)
-    return frozenset(heads.keys())
-
-
 def run_gh_process(
     args: list[str],
     *,
@@ -568,22 +558,12 @@ def coordination_bus_entry(bus_state: dict[str, Any], repo: str, feature_id: str
     )
 
 
-def task_signature(task: dict[str, Any], fields: list[str]) -> str:
-    payload = {field: task.get(field) for field in fields}
-    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
-
-
 def build_template_body(config: dict[str, Any], template_key: str, variables: dict[str, Any]) -> str:
     template_rel = config.get("github_bus", {}).get("templates", {}).get(template_key)
     if not template_rel:
         raise GitHubBusError(f"Missing github_bus template config for {template_key}")
     template_path = ROOT / template_rel
     return render_template(template_path, variables).strip() + "\n"
-
-
-def reviewer_handles(config: dict[str, Any], task: dict[str, Any]) -> list[str]:
-    mapping = (config.get("github_bus", {}) or {}).get("reviewers", {}) or {}
-    return list(mapping.get(task.get("reviewer"), []) or [])
 
 
 def unpublished_branch_recheck_seconds(config: dict[str, Any]) -> int:
@@ -658,19 +638,6 @@ def review_branch_for_task(config: dict[str, Any], status: dict[str, Any], task:
         return branch
 
     return None
-
-
-_EXISTING_PR_URL_PATTERN = re.compile(
-    r"already exists[^\n]*?(https://\S*?/(?:pull)/\d+)",
-    re.IGNORECASE,
-)
-
-
-def _existing_pr_url_from_error(message: str) -> str | None:
-    """Pull the PR URL out of gh's "a pull request ... already exists" error."""
-
-    match = _EXISTING_PR_URL_PATTERN.search(message or "")
-    return match.group(1).rstrip(".,)") if match else None
 
 
 def parse_number_from_url(url: str) -> int | None:
@@ -1072,7 +1039,11 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     body = build_template_body(config, "review_pr", variables)
     labels = list((config.get("github_bus", {}) or {}).get("labels", {}).get("review", []))
     pr_hash = json.dumps({"title": title, "body": body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha}, ensure_ascii=False, sort_keys=True)
-    if entry.get("last_review_hash") == pr_hash and pr_ref:
+    if (
+        entry.get("last_review_hash") == pr_hash
+        and pr_ref
+        and pr_ref.get("state") != "missing_pr"
+    ):
         return False
 
     has_diff = branch_has_diff(base, branch, expected_head_sha=head_sha)
@@ -1097,40 +1068,41 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         )
         return True
 
-    body_file = ensure_temp_body(body)
-    try:
-        if pr_ref and pr_ref.get("number"):
-            number = int(pr_ref["number"])
+    if pr_ref and pr_ref.get("number"):
+        number = int(pr_ref["number"])
+        edit_pull_request_rest(repo, number, title, body, labels)
+        pr = dict(pr_ref)
+    else:
+        found = find_existing_pr(repo, task["id"], branch)
+        if found:
+            number = int(found["number"])
             edit_pull_request_rest(repo, number, title, body, labels)
-            pr = dict(pr_ref)
+            pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
         else:
-            found = find_existing_pr(repo, task["id"], branch)
-            if found:
-                number = int(found["number"])
-                edit_pull_request_rest(repo, number, title, body, labels)
-                pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
-            else:
-                create_args = ["pr", "create", "--repo", repo, "--draft", "--title", title, "--body-file", str(body_file), "--base", base, "--head", branch]
-                if labels:
-                    create_args.extend(create_label_args(labels))
-                if (config.get("github_bus", {}) or {}).get("auto_request_reviewers", True):
-                    for handle in reviewer_handles(config, task):
-                        create_args.extend(["--reviewer", handle])
-                try:
-                    proc = run_gh(create_args)
-                    url = (proc.stdout or "").strip().splitlines()[-1]
-                except GitHubBusError as exc:
-                    # "already exists" is GitHub telling us the PR we wanted is
-                    # there. Treating it as an error means retrying forever
-                    # against a condition that can only become more true; the
-                    # message carries the URL, so adopt it instead.
-                    existing_url = _existing_pr_url_from_error(str(exc))
-                    if not existing_url:
-                        raise
-                    url = existing_url
-                pr = {"number": parse_number_from_url(url), "url": url, "title": title, "headRefName": branch}
-    finally:
-        body_file.unlink(missing_ok=True)
+            entry["review_pr"] = {
+                "number": None,
+                "url": None,
+                "title": title,
+                "branch": branch,
+                "state": "missing_pr",
+                "head_sha": head_sha,
+                "remote_ref": remote_ref,
+                "last_remote_branch_check_at": utc_now(),
+            }
+            entry["last_review_hash"] = pr_hash
+            write_activity_log(
+                config,
+                {
+                    "type": "github_review_pr_missing",
+                    "task_id": task["id"],
+                    "message": (
+                        f"Review task has published branch `{branch}` but no open PR against "
+                        f"`{base}`. Run task_finalize.sh; GitHubBus will not create a second PR path."
+                    ),
+                    "github_repo": repo,
+                },
+            )
+            return True
 
     entry["review_pr"] = {
         "number": pr.get("number"),
@@ -1164,6 +1136,7 @@ AUTO_MERGE_PR_FIELDS = (
 # checks, BEHIND its base, UNSTABLE while CI runs -- is precisely what
 # auto-merge is for, so only conflicts are treated as blocking here.
 AUTO_MERGE_BLOCKING_MERGE_STATES = frozenset({"DIRTY", "CONFLICTING"})
+ARCHIVE_HOUSEKEEPING_BRANCH_PREFIX = "task/OPS-ARCHIVE-AUTO-COMMIT-"
 
 
 def task_pr_auto_merge_enabled(config: dict[str, Any]) -> bool:
@@ -1244,8 +1217,8 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
     posts per commit, and it is `success` only on the head the reviewer
     approved. A commit pushed after approval carries no gate at all, so an
     armed PR waits rather than merging unreviewed work. Draft is undrafted
-    first because GitHub refuses auto-merge on a draft, and ReviewBus opens its
-    PRs as drafts.
+    first because GitHub refuses auto-merge on a draft and the publisher may
+    hand the bus an adopted draft PR.
 
     Two guards fail closed on stale bus state: the PR must target the task-PR
     base branch (never the repository default, so an old ReviewBus PR aimed at
@@ -1373,6 +1346,85 @@ def enable_review_pr_auto_merge(config: dict[str, Any], bus_state: dict[str, Any
         )
 
     return _record_auto_merge(config, entry, task_id, armed, log_type="github_auto_merge_enabled")
+
+
+def archive_housekeeping_prs(config: dict[str, Any], repo: str) -> list[dict[str, Any]]:
+    """Return only supervisor-generated archive PRs targeting the task base.
+
+    These PRs are not canonical board tasks, but they still need the same
+    GitHubBus-owned auto-merge mutation. Branch and base matching keep this
+    exception narrow; every other untracked PR remains untouched.
+    """
+
+    base = task_pr_base_branch(config)
+    data = gh_json(
+        [
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--base",
+            base,
+            "--limit",
+            "100",
+            "--json",
+            "number,state,isDraft,baseRefName,headRefName,url,mergeStateStatus",
+        ]
+    )
+    if not isinstance(data, list):
+        return []
+    return [
+        pr
+        for pr in data
+        if isinstance(pr, dict)
+        and str(pr.get("baseRefName") or "") == base
+        and str(pr.get("headRefName") or "").startswith(ARCHIVE_HOUSEKEEPING_BRANCH_PREFIX)
+    ]
+
+
+def sync_archive_housekeeping_auto_merge(
+    config: dict[str, Any],
+    bus_state: dict[str, Any],
+    repo: str,
+) -> bool:
+    """Arm archive housekeeping PRs through the canonical bus mutation."""
+
+    settings = config.get("github_bus", {}) or {}
+    if not task_pr_auto_merge_enabled(config) or not settings.get(
+        "archive_housekeeping_auto_merge", True
+    ):
+        return False
+
+    changed = False
+    entries = bus_state.setdefault("housekeeping_prs", {})
+    for pr in archive_housekeeping_prs(config, repo):
+        head = str(pr.get("headRefName") or "")
+        task_id = head.removeprefix("task/")
+        number = pr.get("number")
+        if not task_id or not number:
+            continue
+        entry = entries.setdefault(head, {})
+        review_pr = {
+            "number": int(number),
+            "url": pr.get("url"),
+            "branch": head,
+            "state": "open",
+        }
+        if entry.get("review_pr") != review_pr:
+            entry["review_pr"] = review_pr
+            changed = True
+
+        # Reuse the exact approved-task mutation without adding a fake task to
+        # canonical status or a second gh merge implementation.
+        state_view = {"tasks": {task_id: entry}}
+        task_view = {"id": task_id}
+        changed = (
+            enable_review_pr_auto_merge(config, state_view, repo, task_view)
+            or changed
+        )
+    return changed
 
 
 def run_ai_status(command: str, target: str, message: str, *, actor: str | None = None) -> None:
@@ -1708,8 +1760,6 @@ def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
     }
     message = render_wakeup_message(config, event, target_agent)
     payload = {
-        "event_id": f"github-{task['id']}-{_iso_now_dt().strftime('%Y%m%dT%H%M%SZ')}",
-        "created_at": utc_now(),
         "event_key": event["key"],
         "task_id": task.get("id"),
         "target_agent": agent_config_for(config, target_agent)["id"],
@@ -1721,7 +1771,7 @@ def queue_resume_for_task(config: dict[str, Any], task: dict[str, Any]) -> bool:
         "target_files": task.get("artifacts") or [],
         "metadata": {"task": {"id": task.get("id")}},
     }
-    enqueue_event(config, payload)
+    payload = enqueue_event(config, payload)
     write_activity_log(
         config,
         {
@@ -1943,92 +1993,6 @@ def poll_pr_reviews(config: dict[str, Any], bus_state: dict[str, Any], status: d
     return changed
 
 
-def consume_webhook_events(
-    config: dict[str, Any],
-    bus_state: dict[str, Any],
-    status: dict[str, Any],
-    repo: str,
-    runtime_state: dict[str, Any],
-) -> bool:
-    path = config_path(config, "github_webhook_events")
-    if not path.exists():
-        return False
-
-    seen = set(bus_state.get("processed_webhook_deliveries", []))
-    changed = False
-    for event in load_jsonl(path):
-        delivery = event.get("delivery")
-        if not delivery or delivery in seen:
-            continue
-        kind = event.get("event")
-        payload = event.get("payload") or {}
-        if kind == "issue_comment":
-            issue = payload.get("issue") or {}
-            comment = payload.get("comment") or {}
-            actor = ((comment.get("user") or {}).get("login") or "").strip()
-            command = parse_command(comment.get("body") or "")
-            if command:
-                issue_number = issue.get("number")
-                task = None
-                for task_id, entry in bus_state.get("tasks", {}).items():
-                    issue_ref = entry.get("ops_issue") or {}
-                    if issue_ref.get("number") == issue_number:
-                        task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
-                        break
-                if task and issue_number:
-                    changed = process_issue_command(config, bus_state, status, repo, int(issue_number), task, command, actor) or changed
-                elif issue_number:
-                    for entry in (bus_state.get("coordination") or {}).values():
-                        issue_ref = (entry or {}).get("issue") or {}
-                        if issue_ref.get("number") != issue_number:
-                            continue
-                        changed = process_coordination_issue_command(
-                            config,
-                            bus_state,
-                            status,
-                            str(entry.get("repo") or repo),
-                            int(issue_number),
-                            command,
-                            actor,
-                            runtime_state,
-                        ) or changed
-                        break
-        elif kind == "pull_request_review":
-            review = payload.get("review") or {}
-            pr = payload.get("pull_request") or {}
-            actor = ((review.get("user") or {}).get("login") or "").strip()
-            pr_number = pr.get("number")
-            if pr_number:
-                for task_id, entry in bus_state.get("tasks", {}).items():
-                    review_ref = entry.get("review_pr") or {}
-                    if review_ref.get("number") != pr_number:
-                        continue
-                    task = next((item for item in status.get("tasks", []) if item.get("id") == task_id), None)
-                    if not task:
-                        continue
-                    state_value = str(review.get("state") or "").upper()
-                    body = trim_text(review.get("body"), 240)
-                    if state_value == "APPROVED":
-                        run_ai_status("approve", task_id, f"GitHub PR approved via webhook PR #{pr_number} by @{actor}.", actor=str(task.get("reviewer") or "").strip() or None)
-                        changed = True
-                    elif state_value == "CHANGES_REQUESTED":
-                        detail = f"GitHub PR requested changes via webhook PR #{pr_number} by @{actor}."
-                        if body:
-                            detail += f" {body}"
-                        run_ai_status("reopen", task_id, detail, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                        changed = True
-                    elif state_value == "COMMENTED":
-                        note = f"GitHub PR comment via webhook PR #{pr_number} by @{actor}."
-                        if body:
-                            note += f" {body}"
-                        run_ai_status("note", task_id, note, actor=str(task.get("reviewer") or task.get("owner") or "").strip() or None)
-                        changed = True
-                    break
-        seen.add(delivery)
-    bus_state["processed_webhook_deliveries"] = list(seen)
-    return changed
-
-
 def push_cloud_relay_digest(config: dict[str, Any], status: dict[str, Any], runtime_state: dict[str, Any], bus_state: dict[str, Any]) -> None:
     digest = {
         "objective": status.get("objective"),
@@ -2090,7 +2054,7 @@ def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dic
             )
 
     # Arm auto-merge after the PR pass, so a task approved this cycle is armed
-    # against the PR that upsert_review_pr just created or adopted.
+    # against the PR that upsert_review_pr just adopted from the publisher.
     if task_pr_auto_merge_enabled(config):
         approved_statuses = auto_merge_statuses(config)
         for task in review_tasks:
@@ -2110,6 +2074,8 @@ def sync_outbound(config: dict[str, Any], bus_state: dict[str, Any], status: dic
                         "github_repo": repo,
                     },
                 )
+
+        changed = sync_archive_housekeeping_auto_merge(config, bus_state, repo) or changed
 
     for task_id, task in blocked_tasks.items():
         blocker = blocker_by_task.get(task_id)
@@ -2207,8 +2173,6 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
         changed = False
         changed = sync_outbound(config, bus_state, status, runtime_state, repo) or changed
         changed = sync_coordination_outbound(config, bus_state, runtime_state) or changed
-        status = load_status(config)
-        changed = consume_webhook_events(config, bus_state, status, repo, runtime_state) or changed
         status = load_status(config)
         changed = poll_pr_reviews(config, bus_state, status, repo) or changed
         status = load_status(config)

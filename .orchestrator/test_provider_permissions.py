@@ -8,11 +8,33 @@ from unittest import mock
 
 import permission_broker
 import provider_permissions
+import provider_runtime
 import pytest
 from provider_permissions import ROOT, _verified_claude_hooks
 
 
 class ProviderPermissionsTest(unittest.TestCase):
+    def test_shared_provider_binary_resolves_nested_cli(self) -> None:
+        config = {"providers": {"copilot": {"cloud": {"cli": "/opt/bin/gh"}}}}
+        with mock.patch.object(provider_runtime, "command_exists", return_value="/opt/bin/gh") as exists:
+            binary = provider_runtime.configured_provider_binary(
+                config,
+                provider_id="copilot",
+                section="cloud",
+                default="gh",
+            )
+
+        self.assertEqual(binary, "/opt/bin/gh")
+        exists.assert_called_once_with("/opt/bin/gh")
+
+    def test_shared_github_auth_token_normalizes_empty_output(self) -> None:
+        completed = mock.Mock(stdout="  token-value  ")
+        with mock.patch.object(provider_runtime, "run_command", return_value=completed) as run:
+            token = provider_runtime.github_auth_token("/opt/bin/gh")
+
+        self.assertEqual(token, "token-value")
+        run.assert_called_once_with(["/opt/bin/gh", "auth", "token"])
+
     def test_codex_config_health_rejects_invalid_service_tier(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             codex_home = Path(tmpdir)
@@ -866,6 +888,11 @@ EOF
                 side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
             ),
             mock.patch.object(
+                provider_runtime,
+                "command_exists",
+                side_effect=lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+            ),
+            mock.patch.object(
                 provider_permissions,
                 "cli_probe",
                 return_value={"ok": True, "verdict": "ran", "returncode": 0, "error": None},
@@ -964,6 +991,7 @@ EOF
                 },
             ),
             mock.patch.object(provider_permissions, "command_exists", side_effect=lambda cmd: "/usr/bin/gemini" if cmd == "gemini" else None),
+            mock.patch.object(provider_runtime, "command_exists", side_effect=lambda cmd: "/usr/bin/gemini" if cmd == "gemini" else None),
             mock.patch.object(
                 provider_permissions,
                 "cli_probe",
@@ -988,7 +1016,7 @@ EOF
 
         self.assertEqual(permission_broker.classify_command(command), "deny")
 
-    def test_finalize_commit_sequence_is_auto_allowed(self) -> None:
+    def test_finalize_commit_sequence_is_denied_for_immutable_approved_head(self) -> None:
         command = (
             "git add ai-status.json ai-activity-log.jsonl current-work.md && "
             "git commit -m \"BG-006 finalize\""
@@ -1024,11 +1052,11 @@ EOF
         ):
             evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
 
-        self.assertEqual(evaluation["decision"], "allow")
-        self.assertEqual(evaluation["risk_class"], "repo_finalize_git")
+        self.assertEqual(evaluation["decision"], "deny")
+        self.assertEqual(evaluation["risk_class"], "immutable_review_head")
         self.assertIn("BG-006", evaluation["reason"])
 
-    def test_finalize_heredoc_commit_sequence_with_stderr_merge_is_auto_allowed(self) -> None:
+    def test_finalize_heredoc_commit_sequence_with_stderr_merge_is_denied(self) -> None:
         command = """git add docs/operations/postgres-cutoff-wave3-runbook.md && git commit -m "$(cat <<'EOF'
 SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3: owner closeout finalization
 
@@ -1072,8 +1100,8 @@ EOF
         ):
             evaluation = permission_broker.evaluate_tool_request("Bash", {"command": command}, config)
 
-        self.assertEqual(evaluation["decision"], "allow")
-        self.assertEqual(evaluation["risk_class"], "repo_finalize_git")
+        self.assertEqual(evaluation["decision"], "deny")
+        self.assertEqual(evaluation["risk_class"], "immutable_review_head")
         self.assertIn("SVC-BLUEPRINT-POSTGRES-CUTOFF-WAVE3", evaluation["reason"])
 
     def test_non_finalize_commit_follows_safe_bash_classification(self) -> None:

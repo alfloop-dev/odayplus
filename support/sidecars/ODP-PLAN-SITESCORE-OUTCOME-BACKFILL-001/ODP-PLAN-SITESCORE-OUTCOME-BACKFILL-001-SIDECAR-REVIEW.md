@@ -43,7 +43,7 @@ No L1 canonical document (`TARGET_ARCHITECTURE.md`, `OPENCLAW_RUNTIME_CONTRACT.m
 
 | Scenario / Criterion | Expected Governance Behavior | Verifier Result | Status / Evidence |
 | --- | --- | --- | --- |
-| Absence of Human/Ops outcome dataset | Fail-closed in `GOVERNED_DISABLED` | Benchmark output: `Status: REJECTED_GOVERNED_DISABLED (Reason: NO_SOURCE_INVENTORY)` | Verified via `PYTHONPATH=. python3 scripts/models/sitescore_outcome_benchmark.py` |
+| Absence of Human/Ops outcome dataset | Fail-closed in `GOVERNED_DISABLED` | Benchmark output: `Status: REJECTED_GOVERNED_DISABLED (Reason: NO_SOURCE_INVENTORY)` | Verified via `PYTHONPATH=. python3 product_ops/modeling/sitescore_outcome_benchmark.py` |
 | Attempt to generate synthetic/fixture rows | Reject synthetic data; retain `GOVERNED_DISABLED` | Contract rule in `README.md` and benchmark validator | Fail-closed rule verified |
 | Store age >= 180 without 180d net revenue | Reject as M6 outcome evidence | Required field constraint: `realized_180d_net_revenue IS NOT NULL AND >= 0` | Contract schema verified in `DATA_HANDBACK.json` |
 | Store age >= 365 without 365d net revenue | Reject as M12 outcome evidence | Required field constraint: `realized_365d_net_revenue IS NOT NULL AND >= 0` | Contract schema verified in `DATA_HANDBACK.json` |
@@ -55,7 +55,7 @@ The following verification commands were executed at the current workspace HEAD:
 
 ```bash
 # 1. Run SiteScore outcome benchmark generator and fail-closed validator
-PYTHONPATH=. python3 scripts/models/sitescore_outcome_benchmark.py
+PYTHONPATH=. python3 product_ops/modeling/sitescore_outcome_benchmark.py
 # Output:
 # Generated Gate 2 Receipt: .../docs/evidence/models/sitescore_gate2_receipt.json
 # Generated Model Card: .../docs/evidence/models/sitescore_model_card.json

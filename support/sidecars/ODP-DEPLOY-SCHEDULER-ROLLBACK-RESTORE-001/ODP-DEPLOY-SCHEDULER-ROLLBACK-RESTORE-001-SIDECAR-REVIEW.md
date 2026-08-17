@@ -22,7 +22,7 @@ Parent anchor commit:
 
 - `cb043c972106fbde9696cf9b95c09fc04bb90625`
 - Subject: `ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001: anchor scheduler trigger restoration repair`
-- Changed surfaces: `scripts/deployment/cloud_scheduler_trigger.py`, `scripts/deployment/cloud_run_release_traffic.sh`, scheduler-focused additions to `tests/ops/test_cloud_run_live_deployment.py`, and six files under `docs/evidence/runtime/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/`.
+- Changed surfaces: `product_ops/deployment/cloud_scheduler_trigger.py`, `product_ops/deployment/cloud_run_release_traffic.sh`, scheduler-focused additions to `tests/ops/test_cloud_run_live_deployment.py`, and six files under `docs/evidence/runtime/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/`.
 - No change in the candidate writes scheduler pre/post restore receipts to a durable workflow artifact path. `restore_scheduler_trigger` uses a temporary readback file and deletes it; `.github/workflows/deploy-dev.yml` does not upload scheduler restore snapshots or equality results.
 
 Observed failure runs:
@@ -51,7 +51,7 @@ At both failure SHAs, the restore implementation obtains fields and then calls `
 
 ### 1. Readback failure is fail-open
 
-In `scripts/deployment/cloud_run_release_traffic.sh`, lines 154-167 at the anchor head compare snapshots only inside a compound success condition. If `gcloud scheduler jobs describe` fails, produces an empty file, or produces a snapshot that fails validation, execution skips comparison and reaches the success return.
+In `product_ops/deployment/cloud_run_release_traffic.sh`, lines 154-167 at the anchor head compare snapshots only inside a compound success condition. If `gcloud scheduler jobs describe` fails, produces an empty file, or produces a snapshot that fails validation, execution skips comparison and reaches the success return.
 
 Direct fault injection against the anchor head made the readback `describe --format=json` return 42. Observed result:
 
@@ -102,11 +102,11 @@ Executed independently in the clean parent worktree at `cb043c97`:
 .venv/bin/pytest -q tests/ops/test_cloud_run_live_deployment.py -k scheduler_trigger
 # 6 passed
 
-.venv/bin/ruff check scripts/deployment/cloud_scheduler_trigger.py tests/ops/test_cloud_run_live_deployment.py
+.venv/bin/ruff check product_ops/deployment/cloud_scheduler_trigger.py tests/ops/test_cloud_run_live_deployment.py
 # All checks passed
 
-bash -n scripts/deployment/cloud_run_release_traffic.sh
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/cloud_run_release_traffic.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 # passed
 ```
 

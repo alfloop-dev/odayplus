@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import Thread
 
 ROOT = Path(__file__).resolve().parents[2]
-CHECKER = ROOT / "scripts/e2e/check_remote_staging_proof.py"
+CHECKER = ROOT / "delivery_toolchain/e2e/check_remote_staging_proof.py"
 STAGING_WORKFLOW = ROOT / ".github/workflows/deploy-staging.yml"
 EXPECTED_SHA = "fd70b4f40d9bc178bb9e21ce1a24a8b4e4e95203"
 
@@ -127,7 +127,7 @@ def test_deploy_staging_workflow_fails_closed_through_remote_checker() -> None:
     assert "ODP_STAGING_DEPLOY_URL" in workflow
     assert "ODP_STAGING_API_URL" in workflow
     assert "ODP_STAGING_SECRET_OWNER" in workflow
-    assert "scripts/e2e/check_remote_staging_proof.py" in workflow
+    assert "delivery_toolchain/e2e/check_remote_staging_proof.py" in workflow
     assert '--expected-sha "$ODAY_RELEASE_SHA"' in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert "TODO: replace with real deploy" not in workflow

@@ -101,7 +101,7 @@ in `static-verification.json` rather than hidden by narrowing the sweep:
 | `live_backend_namespace_never_in_retirement_inventory` | 82 | `modules.opsboard.*` is a live backend Python namespace. The retirement inventory is entirely frontend (`apps/web`, `packages/ui`, `tests/e2e`) and contains no Python module, so no Python import can reach a retired file. |
 | `inert_literal_string_in_document_assertion` | 28 | `tests/e2e/test_frontend_execution_matrix_coverage.py` names 6 retired spec paths, including `tests/e2e/opsboard-shell.spec.ts`. Its assertions check that those strings appear in historical evidence **documents** (`assert e2e_spec in dispatch_text`); it never checks file existence and never imports. Confirmed by execution: `pytest tests/e2e/test_frontend_execution_matrix_coverage.py` → 23 passed. |
 | `inert_comment_or_docstring` | 7 | Comments only. `tests/e2e/operator-growth.spec.ts:33` is a comment that accompanies `expect(page.getByTestId("app-shell")).toHaveCount(0)` — it asserts the shell's *absence*. |
-| `inert_environment_variable_name` | 2 | `OPSBOARD_PORT`, a port env var name in `playwright.config.ts` and `scripts/e2e/run_product_e2e.sh`. A name, not retired code. |
+| `inert_environment_variable_name` | 2 | `OPSBOARD_PORT`, a port env var name in `playwright.config.ts` and `delivery_toolchain/e2e/run_product_e2e.sh`. A name, not retired code. |
 
 `playwright.config.ts` uses `testDir: "./tests/e2e"` auto-discovery, so a retired
 spec can only be collected if the file exists. None does.

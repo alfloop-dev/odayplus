@@ -19,7 +19,7 @@ Primary spec:
 
 Product runner inclusion:
 
-- `scripts/e2e/run_product_e2e.sh` now includes the PV-006 spec in the Docker compose product E2E suite.
+- `delivery_toolchain/e2e/run_product_e2e.sh` now includes the PV-006 spec in the Docker compose product E2E suite.
 
 Backend support added for executable PriceOps lifecycle validation:
 
@@ -41,7 +41,7 @@ npm run typecheck --workspace=@oday-plus/web
 npx playwright test tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts --project=chromium
 npx playwright test tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts tests/e2e/e2e-api-bound-ui.spec.ts tests/e2e/e2e-map.spec.ts --project=chromium
 npx playwright test tests/e2e/e2e-map.spec.ts --project=chromium
-scripts/e2e/run_product_e2e.sh
+delivery_toolchain/e2e/run_product_e2e.sh
 ```
 
 Result:

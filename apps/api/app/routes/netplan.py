@@ -87,6 +87,7 @@ else:
         approval_verifier: ManagementApprovalReceiptVerifier | None = None,
         runtime_mode: str | None = None,
     ) -> APIRouter:
+        from apps.api.app.routes._common import runtime_binding_guard
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
@@ -110,15 +111,7 @@ else:
         active_audit_log = audit_log or InMemoryAuditLog()
         authz_engine = build_engine(audit_log=active_audit_log)
 
-        def require_runtime_binding() -> None:
-            if composition_error is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "code": composition_error.code,
-                        "message": str(composition_error),
-                    },
-                )
+        require_runtime_binding = runtime_binding_guard(composition_error)
 
         router = APIRouter(
             prefix="/netplan",

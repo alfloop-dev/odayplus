@@ -19,7 +19,7 @@
       "reviewer_lane": "governance / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-001.md",
       "suggested_branch": "task/ODP-EXT-001-provider-registry-secrets",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-001",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-001",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "secret names",
@@ -62,7 +62,7 @@
       "reviewer_lane": "governance / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-002.md",
       "suggested_branch": "task/ODP-EXT-002-live-listing-feed",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-002",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-002",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "authenticated provider client",
@@ -109,7 +109,7 @@
       "reviewer_lane": "governance / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-003.md",
       "suggested_branch": "task/ODP-EXT-003-live-geocoder",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-003",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-003",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "credential handling",
@@ -155,7 +155,7 @@
       "reviewer_lane": "product validation / governance",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-004.md",
       "suggested_branch": "task/ODP-EXT-004-scheduled-fetch",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-004",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-004",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "scheduler/job definition",
@@ -170,7 +170,7 @@
         ],
         "execution_commands": [
           "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
-          "python3 scripts/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1",
+          "python3 product_ops/external_data_backfill.py --provider-id listing.partner_feed --start 2026-06-28T10:00:00Z --end 2026-06-28T12:00:00Z --interval-hours 1",
           "uv run pytest tests/e2e/test_external_source_product_e2e.py -k \"live_provider_mode_product_e2e\" -q"
         ],
         "blocking_dependencies": [
@@ -199,7 +199,7 @@
       "reviewer_lane": "product validation / governance",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-005.md",
       "suggested_branch": "task/ODP-EXT-005-quota-rate-limit",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-005",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-005",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "401/403/429/5xx/timeout handling",
@@ -242,7 +242,7 @@
       "reviewer_lane": "product validation / governance",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-006.md",
       "suggested_branch": "task/ODP-EXT-006-freshness-quality-gate",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-006",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-006",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "per-source freshness SLA",
@@ -286,7 +286,7 @@
       "reviewer_lane": "product validation / governance",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-007.md",
       "suggested_branch": "task/ODP-EXT-007-licensing-gate",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-007",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-007",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "license metadata",
@@ -329,7 +329,7 @@
       "reviewer_lane": "product validation / governance",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-EXT-008.md",
       "suggested_branch": "task/ODP-EXT-008-external-source-product-e2e",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-008",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-EXT-008",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "provider-mock service",
@@ -373,7 +373,7 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-001.md",
       "suggested_branch": "task/ODP-MAP-E2E-001-live-tile-geocoder",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-001",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-001",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "MAP_TILE_URL or equivalent",
@@ -418,7 +418,7 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-002.md",
       "suggested_branch": "task/ODP-MAP-E2E-002-layer-url-persistence",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-002",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-002",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "H3 layer state",
@@ -463,7 +463,7 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-003.md",
       "suggested_branch": "task/ODP-MAP-E2E-003-direct-map-picking",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-003",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-003",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "H3 pick handler",
@@ -507,7 +507,7 @@
       "reviewer_lane": "frontend accessibility / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-004.md",
       "suggested_branch": "task/ODP-MAP-E2E-004-deck-pixel-proof",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-004",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-004",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "H3 polygon pixel check",
@@ -550,7 +550,7 @@
       "reviewer_lane": "product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-A11Y-001.md",
       "suggested_branch": "task/ODP-MAP-A11Y-001-keyboard-map",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-A11Y-001",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-A11Y-001",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "keyboard layer controls",
@@ -593,7 +593,7 @@
       "reviewer_lane": "product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-005.md",
       "suggested_branch": "task/ODP-MAP-E2E-005-map-resilience",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-005",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-005",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "loading state",
@@ -636,7 +636,7 @@
       "reviewer_lane": "product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-MAP-E2E-006.md",
       "suggested_branch": "task/ODP-MAP-E2E-006-tooltip-evidence",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-006",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-MAP-E2E-006",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "hover tooltip",
@@ -677,7 +677,7 @@
       "reviewer_lane": "operations / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001.md",
       "suggested_branch": "task/ODP-PV-STAGE-001-remote-staging-config",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-PV-STAGE-001",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-PV-STAGE-001",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "remote staging host/url/secret configuration",
@@ -692,7 +692,7 @@
         ],
         "execution_commands": [
           "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
-          "export ODP_STAGING_DEPLOY_URL=\"https://<staging-web-host>\"\nexport ODP_STAGING_API_URL=\"https://<staging-api-host>\"\nexport ODP_STAGING_SECRET_OWNER=\"<team-or-person>\"\npython3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-001\""
+          "export ODP_STAGING_DEPLOY_URL=\"https://<staging-web-host>\"\nexport ODP_STAGING_API_URL=\"https://<staging-api-host>\"\nexport ODP_STAGING_SECRET_OWNER=\"<team-or-person>\"\npython3 delivery_toolchain/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-001\""
         ],
         "blocking_dependencies": [
           "GitHub staging environment variables/secrets are configured outside the repository",
@@ -720,7 +720,7 @@
       "reviewer_lane": "operations / product validation",
       "brief_path": "docs/evidence/fleet_dispatch/ODP-PV-STAGE-002.md",
       "suggested_branch": "task/ODP-PV-STAGE-002-remote-staging-drill",
-      "dispatch_command": "python3 scripts/e2e/check_product_grade_fleet_dispatch.py --task ODP-PV-STAGE-002",
+      "dispatch_command": "python3 delivery_toolchain/e2e/check_product_grade_fleet_dispatch.py --task ODP-PV-STAGE-002",
       "minimum_completion_signal": {
         "implementation_evidence": [
           "staging runbook log",
@@ -735,8 +735,8 @@
         "execution_commands": [
           "gh pr view 82 --json headRefOid,isDraft,state,mergeable,statusCheckRollup,url",
           "PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" \\\nODP_API_BASE_URL=\"$ODP_STAGING_API_URL\" \\\nnpx playwright test tests/e2e/product-e2e-env.spec.ts --project=chromium --timeout=90000",
-          "python3 scripts/e2e/verify_deployment_health_backup_rollback.py \\\n  --correlation-id \"corr-odp-pv-stage-002\"",
-          "python3 scripts/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-002-version\""
+          "python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py \\\n  --correlation-id \"corr-odp-pv-stage-002\"",
+          "python3 delivery_toolchain/e2e/check_remote_staging_proof.py \\\n  --expected-sha \"$(gh pr view 82 --json headRefOid --jq .headRefOid)\" \\\n  --correlation-id \"corr-odp-pv-stage-002-version\""
         ],
         "blocking_dependencies": [
           "ODP-PV-STAGE-001 has passed against the same staging target",

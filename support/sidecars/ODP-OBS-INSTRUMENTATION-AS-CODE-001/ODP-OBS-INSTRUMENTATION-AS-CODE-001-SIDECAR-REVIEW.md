@@ -16,7 +16,7 @@
 
 The parent branch adds a reproducible observability evidence generator and its generated JSON/Markdown artifacts. Relative to its merge base with current `origin/dev`, its task-owned surface is exactly three files:
 
-- `scripts/e2e/generate_obs_instrumentation_evidence.py`
+- `delivery_toolchain/e2e/generate_obs_instrumentation_evidence.py`
 - `docs/evidence/completion/ODP-OBS-INSTRUMENTATION-AS-CODE-001/evidence.json`
 - `docs/evidence/completion/ODP-OBS-INSTRUMENTATION-AS-CODE-001/evidence.md`
 
@@ -55,7 +55,7 @@ Recommended disposition: approve this sidecar packet as an accurate review aid, 
 
 ### B1 — Required CI failure: unused imports
 
-`uv run ruff check .orchestrator scripts` reports four `F401` errors in `scripts/e2e/generate_obs_instrumentation_evidence.py`:
+`uv run ruff check .orchestrator scripts` reports four `F401` errors in `delivery_toolchain/e2e/generate_obs_instrumentation_evidence.py`:
 
 - `shared.observability.logging.redact`
 - `shared.observability.metrics.MetricCategory`
@@ -109,7 +109,7 @@ The Markdown artifact embeds absolute paths from the parent's isolated worktree.
 Commands were executed against exact parent HEAD `5dba12f89a927bcc8ad8c562d6c89bc5cf6419ee` or its task-owned worktree.
 
 ```bash
-/home/lupin/oday-plus/.venv/bin/python scripts/e2e/generate_obs_instrumentation_evidence.py
+/home/lupin/oday-plus/.venv/bin/python delivery_toolchain/e2e/generate_obs_instrumentation_evidence.py
 # exit 0; evidence files materialized in a disposable detached worktree
 
 /home/lupin/oday-plus/.venv/bin/python -m pytest \

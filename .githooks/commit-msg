@@ -4,8 +4,8 @@
 # Documented in .orchestrator/skills/task-closeout-finalization.md
 # § Commit Requirements as "enforced by .githooks/commit-msg".
 #
-# Enable with:  ./scripts/git/install_hooks.sh
-# (scripts/git/task_start.sh also sets core.hooksPath as a side effect.)
+# Enable with:  ./delivery_toolchain/git/install_hooks.sh
+# (delivery_toolchain/git/task_start.sh also sets core.hooksPath as a side effect.)
 #
 # worker_commit.py validates the same rules in-process, so a worker whose
 # clone predates this hook is still covered; this catches hand-run commits.
@@ -13,7 +13,7 @@ set -euo pipefail
 
 MSG_FILE="${1:?commit-msg hook requires the message file path}"
 ROOT="$(git rev-parse --show-toplevel)"
-CHECKER="$ROOT/scripts/git/check_commit_trailers.py"
+CHECKER="$ROOT/delivery_toolchain/git/check_commit_trailers.py"
 
 if [ ! -f "$CHECKER" ]; then
   echo "commit-msg: $CHECKER is missing; skipping trailer check" >&2

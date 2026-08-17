@@ -54,14 +54,14 @@ on 2026-06-30:
 
 ```bash
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
-python3 scripts/e2e/check_product_release_gate.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py
 ```
 
 Result:
 
 - `python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py`:
   16 passed.
-- `python3 scripts/e2e/check_product_release_gate.py`:
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py`:
   `Product release gate static checks passed.`
 
 Web typecheck and the Playwright run were not re-executed during this

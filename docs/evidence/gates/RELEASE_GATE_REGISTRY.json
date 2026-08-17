@@ -3,7 +3,7 @@
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-PLAN-GATE-REGISTRY-001",
   "generated_at": "2026-08-01",
-  "description": "Authoritative machine-readable state of ODay Plus release Gate 0 through Gate 6. Validated by scripts/e2e/check_release_gate_registry.py; see docs/evidence/gates/README.md for the schema and update rules.",
+  "description": "Authoritative machine-readable state of ODay Plus release Gate 0 through Gate 6. Validated by delivery_toolchain/e2e/check_release_gate_registry.py; see docs/evidence/gates/README.md for the schema and update rules.",
   "release": {
     "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
     "candidate_ref": "origin/dev",
@@ -124,7 +124,7 @@
         },
         {
           "kind": "script",
-          "ref": "scripts/e2e/check_live_production_data.py",
+          "ref": "delivery_toolchain/e2e/check_live_production_data.py",
           "description": "Fail-closed live data-plane gate that reconciles deployed data against a commit-bound manifest."
         }
       ],
@@ -238,7 +238,7 @@
         },
         {
           "kind": "script",
-          "ref": "scripts/e2e/check_live_e2e_gate.py",
+          "ref": "delivery_toolchain/e2e/check_live_e2e_gate.py",
           "description": "Fail-closed live E2E gate that drives the deployed runtime bound to one exact release SHA."
         },
         {
@@ -282,7 +282,7 @@
         },
         {
           "kind": "script",
-          "ref": "scripts/e2e/verify_deployment_health_backup_rollback.py",
+          "ref": "delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py",
           "description": "Verifier for the deployment health, backup, and rollback evidence packet."
         },
         {

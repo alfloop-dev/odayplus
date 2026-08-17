@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import fcntl
+import json
+import os
+import tempfile
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
@@ -15,6 +18,7 @@ from common import (
     config_path,
     load_json,
     load_jsonl,
+    new_runtime_id,
     summarize_failure_reason,
     utc_now,
     write_json,
@@ -30,13 +34,13 @@ def default_state() -> dict[str, Any]:
         "recent_terminal_tasks": [],
         "pending_handoff_keys": [],
         "seen_event_keys": {},
-        # The weighted ready-dispatch cursor is durable scheduling state. If it
-        # is dropped between loops, agents near the front of the sequence can
-        # consume the per-tick budget forever and starve later reviewers.
+        # The round-robin ready-dispatch cursor is durable scheduling state. If
+        # it is dropped between loops, agents near the front of the sequence
+        # can consume the per-tick budget forever and starve later reviewers.
         "ready_dispatcher": {
-            "weighted_cursor": 0,
-            "weighted_cursor_revision": 0,
-            "weighted_cursor_updated_at": None,
+            "dispatch_cursor": 0,
+            "dispatch_cursor_revision": 0,
+            "dispatch_cursor_updated_at": None,
         },
         "queue": {
             "events": {},
@@ -52,23 +56,6 @@ def default_state() -> dict[str, Any]:
         "worker_worktree_lease_blocks": {},
         "approvals": {
             "last_reconciled_at": None,
-        },
-        "underutilization": {
-            "below_threshold_since": None,
-            "last_sidecar_wave_at": None,
-            "last_sidecar_wave_reason": None,
-            "last_ratio": None,
-        },
-        "chair_rotation": {
-            "current_index": 0,
-            "last_chair_run_at": None,
-            "last_chair_agent": None,
-            "last_chair_reason": None,
-            "last_review_path": None,
-            "last_review_summary": None,
-            "pending_review_path": None,
-            "pending_review_agent": None,
-            "sidecar_approved_until": None,
         },
         "provider_guardrails": {
             "dispatch_pauses": {},
@@ -113,7 +100,6 @@ def default_state() -> dict[str, Any]:
                 "planning": {"running": 0, "pending": 0, "queued": 0},
                 "execution": {"running": 0, "pending": 0, "queued": 0},
                 "coordination": {"running": 0, "pending": 0, "queued": 0},
-                "chair_review": {"running": 0, "pending": 0, "queued": 0},
             },
         },
     }
@@ -122,7 +108,16 @@ def default_state() -> dict[str, Any]:
 # Top-level state keys that were deliberately removed from the runtime state
 # contract. Only these are dropped by `migrate_state`; every other key on disk
 # survives, whether or not `default_state()` knows about it.
-RETIRED_STATE_KEYS: frozenset[str] = frozenset()
+RETIRED_STATE_KEYS: frozenset[str] = frozenset(
+    {
+        # Retired with the heuristic chair/sidecar scheduler.  Keeping these
+        # opaque blobs made obsolete decisions look live after every restart.
+        "chair_rotation",
+        "underutilization",
+        # A pre-runtime audit cache that is no longer read by any scheduler.
+        "dispatch_audit",
+    }
+)
 
 
 def _nonnegative_cursor_revision(value: Any) -> int:
@@ -159,16 +154,19 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(ready_dispatcher, dict):
         ready_dispatcher = {}
         state["ready_dispatcher"] = ready_dispatcher
+    legacy_cursor = ready_dispatcher.pop("weighted_cursor", 0)
+    legacy_revision = ready_dispatcher.pop("weighted_cursor_revision", 0)
+    legacy_updated_at = ready_dispatcher.pop("weighted_cursor_updated_at", None)
     try:
-        ready_dispatcher["weighted_cursor"] = max(
-            0, int(ready_dispatcher.get("weighted_cursor", 0))
+        ready_dispatcher["dispatch_cursor"] = max(
+            0, int(ready_dispatcher.get("dispatch_cursor", legacy_cursor))
         )
     except (TypeError, ValueError):
-        ready_dispatcher["weighted_cursor"] = 0
-    ready_dispatcher["weighted_cursor_revision"] = _nonnegative_cursor_revision(
-        ready_dispatcher.get("weighted_cursor_revision", 0)
+        ready_dispatcher["dispatch_cursor"] = 0
+    ready_dispatcher["dispatch_cursor_revision"] = _nonnegative_cursor_revision(
+        ready_dispatcher.get("dispatch_cursor_revision", legacy_revision)
     )
-    cursor_updated_at = ready_dispatcher.get("weighted_cursor_updated_at")
+    cursor_updated_at = ready_dispatcher.get("dispatch_cursor_updated_at", legacy_updated_at)
     if isinstance(cursor_updated_at, str) and cursor_updated_at:
         try:
             datetime.fromisoformat(cursor_updated_at.replace("Z", "+00:00"))
@@ -176,7 +174,7 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
             cursor_updated_at = None
     else:
         cursor_updated_at = None
-    ready_dispatcher["weighted_cursor_updated_at"] = cursor_updated_at
+    ready_dispatcher["dispatch_cursor_updated_at"] = cursor_updated_at
     state.setdefault("queue", {})
     state["queue"].setdefault("events", {})
     state.setdefault("workers", {})
@@ -190,21 +188,6 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     )
     state.setdefault("approvals", {})
     state["approvals"].setdefault("last_reconciled_at", None)
-    state.setdefault("underutilization", {})
-    state["underutilization"].setdefault("below_threshold_since", None)
-    state["underutilization"].setdefault("last_sidecar_wave_at", None)
-    state["underutilization"].setdefault("last_sidecar_wave_reason", None)
-    state["underutilization"].setdefault("last_ratio", None)
-    state.setdefault("chair_rotation", {})
-    state["chair_rotation"].setdefault("current_index", 0)
-    state["chair_rotation"].setdefault("last_chair_run_at", None)
-    state["chair_rotation"].setdefault("last_chair_agent", None)
-    state["chair_rotation"].setdefault("last_chair_reason", None)
-    state["chair_rotation"].setdefault("last_review_path", None)
-    state["chair_rotation"].setdefault("last_review_summary", None)
-    state["chair_rotation"].setdefault("pending_review_path", None)
-    state["chair_rotation"].setdefault("pending_review_agent", None)
-    state["chair_rotation"].setdefault("sidecar_approved_until", None)
     state.setdefault("provider_guardrails", {})
     state["provider_guardrails"].setdefault("dispatch_pauses", {})
     state["provider_guardrails"].setdefault("task_failure_streaks", {})
@@ -241,7 +224,10 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state["supervisor"].setdefault("mode_switch_requested", None)
     state["supervisor"].setdefault("last_mode_switch_at", None)
     state["supervisor"].setdefault("mode_occupancy", {})
-    for mode_name in ("planning", "execution", "coordination", "chair_review"):
+    # `mode_occupancy` is nested beneath the durable supervisor record, so it
+    # is not covered by the top-level retirement list above.
+    state["supervisor"]["mode_occupancy"].pop("chair_review", None)
+    for mode_name in ("planning", "execution", "coordination"):
         bucket = state["supervisor"]["mode_occupancy"].setdefault(mode_name, {})
         bucket.setdefault("running", 0)
         bucket.setdefault("pending", 0)
@@ -515,25 +501,22 @@ def _merge_queue_record(disk_event: dict[str, Any], mem_event: dict[str, Any]) -
 
 def merge_runtime_states(disk_state: dict[str, Any], in_mem_state: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(disk_state, dict):
-        return in_mem_state
-    merged = deepcopy(in_mem_state)
+        return migrate_state(in_mem_state)
+    disk_state = migrate_state(disk_state)
+    merged = migrate_state(in_mem_state)
 
-    # `--claim-agent` intentionally does not advance the global weighted
-    # cursor, but it can save a snapshot loaded before the singleton loop
-    # advanced it. A monotonic revision, advanced atomically with the cursor by
-    # the singleton dispatch path, determines the winner without relying on a
-    # collision-prone or attacker-controlled wall clock. Equal/legacy revisions
-    # prefer disk so an auxiliary writer can never roll scheduling fairness
-    # backward. The timestamp remains informational only.
+    # The singleton loop owns the round-robin cursor. A monotonic revision,
+    # advanced atomically with that cursor, prevents an older snapshot from
+    # rolling scheduling fairness backward. The timestamp is informational.
     disk_dispatcher = disk_state.get("ready_dispatcher")
     mem_dispatcher = merged.get("ready_dispatcher")
     if isinstance(disk_dispatcher, dict):
         disk_revision = _nonnegative_cursor_revision(
-            disk_dispatcher.get("weighted_cursor_revision", 0)
+            disk_dispatcher.get("dispatch_cursor_revision", 0)
         )
         mem_revision = (
             _nonnegative_cursor_revision(
-                mem_dispatcher.get("weighted_cursor_revision", 0)
+                mem_dispatcher.get("dispatch_cursor_revision", 0)
             )
             if isinstance(mem_dispatcher, dict)
             else 0
@@ -644,8 +627,85 @@ def load_event_queue(config: dict[str, Any]) -> list[dict[str, Any]]:
     return load_jsonl(config_path(config, "event_queue"))
 
 
-def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> None:
-    append_jsonl(config_path(config, "event_queue"), event)
+EVENT_REQUIRED_FIELDS = ("target_agent", "provider", "reason", "message")
+
+
+@contextmanager
+def event_queue_transaction_lock(queue_path: Path):
+    lock_path = queue_path.with_name(f"{queue_path.name}.lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def _normalize_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Validate and complete the only event envelope accepted by the queue."""
+    if not isinstance(event, dict):
+        raise TypeError("queue event must be an object")
+    payload = deepcopy(event)
+    for field in EVENT_REQUIRED_FIELDS:
+        value = payload.get(field)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"queue event field {field} must be a non-empty string")
+        payload[field] = value.strip()
+    payload["event_id"] = str(payload.get("event_id") or new_runtime_id("evt")).strip()
+    payload["created_at"] = str(payload.get("created_at") or utc_now()).strip()
+    for field in ("context_files", "target_files"):
+        value = payload.get(field)
+        if value is None:
+            payload[field] = []
+        elif not isinstance(value, list):
+            raise TypeError(f"queue event {field} must be a list")
+    metadata = payload.get("metadata")
+    if metadata is None:
+        payload["metadata"] = {}
+    elif not isinstance(metadata, dict):
+        raise TypeError("queue event metadata must be an object")
+    return payload
+
+
+def enqueue_event(config: dict[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+    """Normalize and append one delivery event under the queue transaction lock."""
+    payload = _normalize_event(event)
+    path = config_path(config, "event_queue")
+    with event_queue_transaction_lock(path):
+        append_jsonl(path, payload)
+    return payload
+
+
+def replace_event_queue(
+    config: dict[str, Any],
+    *,
+    original_events: list[dict[str, Any]],
+    retained_events: list[dict[str, Any]],
+) -> None:
+    """Atomically compact a queue snapshot without dropping later appends."""
+    path = config_path(config, "event_queue")
+    original_ids = {str(event.get("event_id") or "") for event in original_events}
+    retained_ids = {str(event.get("event_id") or "") for event in retained_events}
+    with event_queue_transaction_lock(path):
+        current_events = load_jsonl(path)
+        concurrent_events = [
+            event
+            for event in current_events
+            if str(event.get("event_id") or "") not in original_ids
+            and str(event.get("event_id") or "") not in retained_ids
+        ]
+        payload = [*retained_events, *concurrent_events]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        serialized = "".join(f"{json.dumps(event, ensure_ascii=False)}\n" for event in payload)
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", dir=path.parent, delete=False
+        ) as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        os.replace(temp_path, path)
 
 
 def queue_event_record(state: dict[str, Any], event_id: str) -> dict[str, Any]:

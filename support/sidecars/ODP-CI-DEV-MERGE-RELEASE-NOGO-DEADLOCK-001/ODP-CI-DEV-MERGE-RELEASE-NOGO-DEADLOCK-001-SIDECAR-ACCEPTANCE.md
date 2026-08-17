@@ -51,8 +51,8 @@ verification.
 |---|---|---|
 | Dev CI | `.github/workflows/ci.yml`, `Makefile` | Run the deterministic product E2E gate for task/dev merges while accepting an internally valid `NO-GO` registry. |
 | Production promotion | `.github/workflows/promote-dev-to-main.yml`, `Makefile` | Require authentic final `GO` and bind validation, PR head, status stamp, and auto-merge to one immutable promotion SHA. |
-| Gate validation | `scripts/e2e/check_product_release_gate.py`, `scripts/e2e/check_release_gate_registry.py` | Separate dev-merge and production modes; enforce exact/evidence-only candidate ancestry and fail closed on product drift. |
-| E2E receipt mechanics | `scripts/e2e/product_e2e_receipt.py` | Support runner-generated exact-source evidence without manufacturing production authority. |
+| Gate validation | `delivery_toolchain/e2e/check_product_release_gate.py`, `delivery_toolchain/e2e/check_release_gate_registry.py` | Separate dev-merge and production modes; enforce exact/evidence-only candidate ancestry and fail closed on product drift. |
+| E2E receipt mechanics | `delivery_toolchain/e2e/product_e2e_receipt.py` | Support runner-generated exact-source evidence without manufacturing production authority. |
 | Release truth and evidence | `docs/evidence/gates/RELEASE_GATE_REGISTRY.json`, `docs/evidence/ci/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001.md` | Preserve honest `NO-GO` truth and record the implementation boundary. |
 | Regressions | `tests/e2e/test_release_gate_registry.py`, `tests/integration/test_flow_002_expansion_persistence.py` | Prove mode separation, SHA binding, merge ancestry behavior, and the tenant-scoped Flow-002 fix. |
 
@@ -128,14 +128,14 @@ uv run pytest -q tests/e2e/test_release_gate_registry.py \
   tests/e2e/test_acceptance_coverage.py \
   tests/integration/test_flow_002_expansion_persistence.py \
   tests/security/test_branch_protection_policy.py
-uv run ruff check scripts/e2e/check_product_release_gate.py \
-  scripts/e2e/check_release_gate_registry.py \
-  scripts/e2e/product_e2e_receipt.py \
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py \
+  delivery_toolchain/e2e/check_release_gate_registry.py \
+  delivery_toolchain/e2e/product_e2e_receipt.py \
   tests/e2e/test_release_gate_registry.py \
   tests/integration/test_flow_002_expansion_persistence.py
-python3 scripts/e2e/check_release_gate_registry.py
-python3 scripts/e2e/check_product_release_gate.py --dev-merge
-python3 scripts/e2e/check_product_release_gate.py --require-go
+python3 delivery_toolchain/e2e/check_release_gate_registry.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go
 git diff --check
 ```
 
@@ -231,9 +231,9 @@ Re-run at sidecar closeout on the task worktree head
 
 | Command | Exit | Reading |
 |---|---|---|
-| `python3 scripts/e2e/check_release_gate_registry.py` | `0` | Registry is structurally valid and still reports `RELEASE STATE: NO-GO` with `0/7` gates cleared. Honest `NO-GO` truth is preserved, as row `E1` requires. |
-| `python3 scripts/e2e/check_product_release_gate.py --dev-merge` | `1` | Environment prerequisite failure only: `Playwright --list exited 1: Cannot find module '@playwright/test'`. This is the same missing-`npm ci` condition already recorded under Sidecar verification observation, not a gate regression. Re-run after `npm ci --ignore-scripts --no-audit --no-fund` before drawing any conclusion about row `B2`. |
-| `python3 scripts/e2e/check_product_release_gate.py --require-go` | `1` | Expected fail-closed, for two independent reasons: `0/7` gates cleared against release candidate `e496be62c47c45d758681b8a4d3abfae16f1c96d`, and evidence-only ancestry rejecting intervening commits that touch non-evidence paths between that candidate and the current head. |
+| `python3 delivery_toolchain/e2e/check_release_gate_registry.py` | `0` | Registry is structurally valid and still reports `RELEASE STATE: NO-GO` with `0/7` gates cleared. Honest `NO-GO` truth is preserved, as row `E1` requires. |
+| `python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge` | `1` | Environment prerequisite failure only: `Playwright --list exited 1: Cannot find module '@playwright/test'`. This is the same missing-`npm ci` condition already recorded under Sidecar verification observation, not a gate regression. Re-run after `npm ci --ignore-scripts --no-audit --no-fund` before drawing any conclusion about row `B2`. |
+| `python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go` | `1` | Expected fail-closed, for two independent reasons: `0/7` gates cleared against release candidate `e496be62c47c45d758681b8a4d3abfae16f1c96d`, and evidence-only ancestry rejecting intervening commits that touch non-evidence paths between that candidate and the current head. |
 
 The non-zero `--require-go` exit is the required negative assertion described in
 the verification ledger, not a failed verification. The ancestry rejection is

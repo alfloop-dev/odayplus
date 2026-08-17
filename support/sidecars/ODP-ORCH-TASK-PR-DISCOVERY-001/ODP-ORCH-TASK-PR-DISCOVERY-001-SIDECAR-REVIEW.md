@@ -93,9 +93,9 @@ The sidecar owner ran the following against the parent worktree at exact head
 ```bash
 python3 -m unittest discover -s .orchestrator -p 'test_github_bus.py'
 python3 -m ruff check .orchestrator/github_bus.py .orchestrator/test_github_bus.py
-python3 -c 'from pathlib import Path; from scripts.e2e.product_e2e_receipt import validate_receipt_packet; errors=validate_receipt_packet(Path.cwd()); print("errors=" + str(len(errors))); print("\n".join(errors))'
-python3 scripts/e2e/check_product_release_gate.py
-python3 scripts/e2e/check_release_gate_registry.py --json
+python3 -c 'from pathlib import Path; from delivery_toolchain.e2e.product_e2e_receipt import validate_receipt_packet; errors=validate_receipt_packet(Path.cwd()); print("errors=" + str(len(errors))); print("\n".join(errors))'
+python3 delivery_toolchain/e2e/check_product_release_gate.py
+python3 delivery_toolchain/e2e/check_release_gate_registry.py --json
 git diff --check origin/dev...origin/task/ODP-ORCH-TASK-PR-DISCOVERY-001
 ```
 

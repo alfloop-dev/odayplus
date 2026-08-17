@@ -34,7 +34,7 @@ intermediate state and any of these are true:
 ## How To Anchor
 
 1. Stay on the current task branch. In the normal Pantheon workflow this
-   is `task/<TASK-ID>` created from `dev` by `scripts/git/task_start.sh`.
+   is `task/<TASK-ID>` created from `dev` by `delivery_toolchain/git/task_start.sh`.
 2. Check the worktree:
 
    ```bash
@@ -62,7 +62,7 @@ intermediate state and any of these are true:
 4. Commit through the worker-safe wrapper with explicit scope:
 
    ```bash
-   python3 scripts/git/worker_commit.py \
+   python3 delivery_toolchain/git/worker_commit.py \
      --task-id "$TASK" \
      --message-file /tmp/$TASK-anchor-msg.txt \
      --scope <path1> <path2> ... \

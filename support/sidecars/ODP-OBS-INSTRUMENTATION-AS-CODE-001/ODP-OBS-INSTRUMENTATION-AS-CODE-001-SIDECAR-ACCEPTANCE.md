@@ -54,7 +54,7 @@ task-owned diff versus `origin/dev` is five files:
 |---|---|---|
 | `shared/observability/metrics.py` | +83 / −27 | **Runtime behavior change** (new fail-closed gates) |
 | `tests/reliability/test_runtime_observability.py` | +64 | Tests `B40`–`B42` |
-| `scripts/e2e/generate_obs_instrumentation_evidence.py` | +367 (new) | Evidence generator |
+| `delivery_toolchain/e2e/generate_obs_instrumentation_evidence.py` | +367 (new) | Evidence generator |
 | `docs/evidence/completion/.../evidence.json` | +182 (new) | Generated artifact |
 | `docs/evidence/completion/.../evidence.md` | +262 (new) | Generated artifact |
 
@@ -83,7 +83,7 @@ flowchart TD
     X --> F["ValueError escapes the request<br/>=> request failure"]
     RT["/jobs/{job_id} route<br/>url.path carries the job id"] --> L1
     REG["MetricsRegistry.register()<br/>owner must be non-empty"] --> OWN["MetricDefinition.owner<br/>default 'sre-platform'"]
-    GEN["scripts/e2e/generate_obs_...py"] --> EV["evidence.json / evidence.md"]
+    GEN["delivery_toolchain/e2e/generate_obs_...py"] --> EV["evidence.json / evidence.md"]
     REG --> GEN
     R --> GEN
 ```
@@ -332,7 +332,7 @@ git diff --stat origin/dev...origin/task/ODP-OBS-INSTRUMENTATION-AS-CODE-001
 # Disposable detached worktree at the reviewed head
 git worktree add --detach /tmp/obs-verify-4ad48c9b 4ad48c9b
 
-ruff check scripts/e2e/generate_obs_instrumentation_evidence.py \
+ruff check delivery_toolchain/e2e/generate_obs_instrumentation_evidence.py \
            shared/observability/metrics.py \
            tests/reliability/test_runtime_observability.py
 # All checks passed!  (prior finding B1 resolved)

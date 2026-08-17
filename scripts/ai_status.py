@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import gzip
 import json
 import os
@@ -10,10 +11,14 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+COMMAND_TIMEOUT_SECONDS = 8.0
 from zoneinfo import ZoneInfo
 
 try:
@@ -52,10 +57,12 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
+import common as orchestrator_common
 from multi_repo_registry import (
     repository_local_path,
     repository_slug,
     resolve_repository,
+    resolve_task_repository,
     task_artifact_repository_ids,
     task_primary_repository_id,
 )
@@ -83,12 +90,10 @@ LOG_ROTATE_KEEP_LINES = int(os.environ.get("AI_STATUS_LOG_ROTATE_KEEP_LINES", "1
 CURRENT_WORK_FILE = STATUS_ROOT / "current-work.md"
 DOCS_SITE_DIR = STATUS_ROOT / "docs-site"
 CONFIG_FILE = ROOT / ".orchestrator" / "config.json"
-# The live Supervisor reads its fleet through common.load_config(), which deep-
-# merges `.orchestrator/config.json` with the gitignored `.orchestrator/
-# config.local.json` overlay. Worker worktrees only get the tracked half, so the
-# status-root copy is consulted as well; in the live checkout both paths are the
-# same file and the merge is a no-op.
-CONFIG_LOCAL_FILE = ROOT / ".orchestrator" / "config.local.json"
+# Worker processes inherit PANTHEON_CONFIG_PATH from Supervisor. An explicitly
+# selected runtime config is self-contained and must never inherit a checkout
+# or status-root overlay. Interactive commands without that environment value
+# retain the legacy overlays during migration.
 STATUS_ROOT_CONFIG_LOCAL_FILE = STATUS_ROOT / ".orchestrator" / "config.local.json"
 PLANNING_STATE_FILE = STATUS_ROOT / ".orchestrator" / "planning-state.json"
 ORCHESTRATOR_STATE_FILE = STATUS_ROOT / ".orchestrator" / "state.json"
@@ -96,83 +101,67 @@ APPROVAL_QUEUE_FILE = STATUS_ROOT / ".orchestrator" / "approval-queue.json"
 DASHBOARD_BUNDLE_FILE = STATUS_ROOT / "dashboard-bundle.json"
 DEFAULT_PLANNING_README = "docs/02-architecture/consensus/phase1/README.md"
 DEFAULT_PLANNING_SESSION_FILE = "docs/02-architecture/consensus/phase1/planning-session.json"
-DEFAULT_PLANNING_CHECKLIST_FILE = "docs/02-architecture/consensus/phase1/pantheon-backend-completion-checklist.md"
 
 KNOWN_AGENTS = {
     "Claude": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude-execution-control",
-        "target_workload": 20,
     },
     "Claude2": {
         "capability_lane": ["execution", "control-plane", "governance-review"],
         "default_branch": "feat/claude2-execution-control",
-        "target_workload": 10,
     },
     "Antigravity": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity-research-runtime",
-        "target_workload": 70,
     },
     "Antigravity2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity2-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity3": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity3-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity4": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity4-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity5": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity5-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity6": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity6-research-runtime",
-        "target_workload": 5,
     },
     "Antigravity7": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/antigravity7-research-runtime",
-        "target_workload": 5,
     },
     "Gemini": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini-research-runtime",
-        "target_workload": 5,
     },
     "Gemini2": {
         "capability_lane": ["gcp", "ci-cd", "runtime-packaging", "worker-ops"],
         "default_branch": "feat/gemini2-research-runtime",
-        "target_workload": 5,
     },
     "Codex": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 5,
     },
     "Codex2": {
         "capability_lane": ["integration", "status-system", "schema", "acceptance"],
         "default_branch": "feat/codex-collab-system",
-        "target_workload": 5,
     },
     "Copilot": {
         "capability_lane": ["research-ingest", "external-search", "spec-review", "critique"],
         "default_branch": "feat/copilot-research-critique",
-        "target_workload": 5,
     },
     "Human/Ops": {
         "capability_lane": ["human-gate", "operations", "signoff"],
         "default_branch": "human/ops",
-        "target_workload": 0,
     },
 }
 
@@ -225,17 +214,6 @@ AGENT_ALIASES = {
 
 RETIRED_AGENT_REPLACEMENTS = {}
 
-STATUS_LABELS = {
-    "todo": "todo",
-    "in_progress": "in_progress",
-    "review": "review",
-    "review_approved": "review_approved",
-    "blocked": "blocked",
-    "done": "done",
-}
-
-DEPENDENCY_DONE_STATUSES = {"done"}
-ACTIVE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved", "blocked"}
 EXTERNAL_TASK_PREFIXES = {"OC", "RS", "LP", "OSS", "SPIKE"}
 EXTERNAL_TASK_ID_TOKENS = {
     "DATASOURCE",
@@ -610,57 +588,30 @@ def actor_reference_problem(name: str | None) -> str | None:
     return None
 
 
-def _fallback_deep_merge(base: Any, overlay: Any) -> Any:
-    """Local copy of common.deep_merge for environments without the orchestrator package."""
-    if isinstance(base, dict) and isinstance(overlay, dict):
-        merged = deepcopy(base)
-        for key, value in overlay.items():
-            merged[key] = _fallback_deep_merge(merged[key], value) if key in merged else deepcopy(value)
-        return merged
-    if isinstance(base, list) and isinstance(overlay, list):
-        return deepcopy(overlay)
-    return deepcopy(overlay)
-
-
-def _orchestrator_common() -> Any | None:
-    try:
-        import common as orchestrator_common
-    except Exception:  # pragma: no cover - lean environments without the package
-        return None
-    return orchestrator_common
-
-
 def local_config_overlay_paths() -> list[Path]:
-    """Local overlays to merge on top of CONFIG_FILE, in application order."""
-    paths: list[Path] = [CONFIG_FILE.with_name("config.local.json")]
+    """Legacy local overlays for interactive commands without an explicit config."""
+    if str(os.environ.get(orchestrator_common.CONFIG_PATH_ENV_VAR) or "").strip():
+        return []
+    config_file = active_config_file()
+    paths: list[Path] = []
+    if config_file.name == "config.json":
+        paths.append(config_file.with_name("config.local.json"))
     if STATUS_ROOT_CONFIG_LOCAL_FILE not in paths:
         paths.append(STATUS_ROOT_CONFIG_LOCAL_FILE)
     return [path for path in paths if path.exists()]
 
 
-def _read_config_json(path: Path) -> dict[str, Any]:
-    """Tolerant JSON read used only by the actor-authority path.
-
-    Deliberately independent of `load_json_file()`: actor validation runs inside
-    almost every command, so it must not be perturbed by tests or callers that
-    patch the general-purpose reader.
-    """
-    try:
-        text = path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return {}
-    if not text:
-        return {}
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+def active_config_file() -> Path:
+    """Resolve Supervisor's config after startup has published its CLI choice."""
+    configured = str(os.environ.get(orchestrator_common.CONFIG_PATH_ENV_VAR) or "").strip()
+    path = Path(os.path.expanduser(configured)) if configured else CONFIG_FILE
+    return path if path.is_absolute() else ROOT / path
 
 
 def _config_fingerprint() -> tuple[Any, ...]:
     fingerprint: list[Any] = []
-    for path in (CONFIG_FILE, CONFIG_FILE.with_name("config.local.json"), STATUS_ROOT_CONFIG_LOCAL_FILE):
+    config_file = active_config_file()
+    for path in (config_file, *local_config_overlay_paths()):
         try:
             stat = path.stat()
         except OSError:
@@ -677,10 +628,9 @@ def merged_orchestrator_config() -> dict[str, Any]:
     """The config as the live Supervisor sees it.
 
     Dispatchability is decided by `common.load_config()`, which deep-merges
-    `.orchestrator/config.json` with `.orchestrator/config.local.json`. That
-    function is used verbatim when this process points at the same config path,
-    so the two can never drift; otherwise the same deep-merge is applied to
-    whatever `CONFIG_FILE` resolves to.
+    `.orchestrator/config.json` with legacy local overlays only when no explicit
+    runtime config was selected. `PANTHEON_CONFIG_PATH` is the Supervisor's
+    authoritative, self-contained config and therefore disables every overlay.
 
     Cached against the config files' mtime/size, because actor validation is on
     the hot path of every command.
@@ -689,26 +639,10 @@ def merged_orchestrator_config() -> dict[str, Any]:
     if _MERGED_CONFIG_CACHE.get("fingerprint") == fingerprint:
         return _MERGED_CONFIG_CACHE["payload"]
 
-    common = _orchestrator_common()
-    merge = getattr(common, "deep_merge", None) or _fallback_deep_merge
-    applied: set[Path] = set()
-
-    if common is not None and CONFIG_FILE == getattr(common, "DEFAULT_CONFIG_PATH", None):
-        loaded = common.load_config()
-        payload: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
-        local_path = getattr(common, "LOCAL_CONFIG_PATH", None)
-        if local_path is not None:
-            applied.add(local_path)
-    else:
-        payload = _read_config_json(CONFIG_FILE)
-
-    for overlay_path in local_config_overlay_paths():
-        if overlay_path in applied:
-            continue
-        overlay = _read_config_json(overlay_path)
-        if overlay:
-            payload = merge(payload, overlay)
-            applied.add(overlay_path)
+    payload = orchestrator_common.load_config(
+        active_config_file(),
+        overlay_paths=tuple(local_config_overlay_paths()),
+    )
 
     _MERGED_CONFIG_CACHE["fingerprint"] = fingerprint
     _MERGED_CONFIG_CACHE["payload"] = payload
@@ -908,7 +842,6 @@ def default_state() -> dict[str, Any]:
         ],
         "handoffs": [],
         "blockers": [],
-        "workload": {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()},
     }
 
 
@@ -939,39 +872,6 @@ def load_logs() -> list[dict[str, Any]]:
     return logs
 
 
-def load_log_tail_lines(max_lines: int = 5000) -> list[str]:
-    if not LOG_FILE.exists():
-        return []
-    try:
-        with LOG_FILE.open("rb") as handle:
-            handle.seek(0, os.SEEK_END)
-            file_size = handle.tell()
-            block_size = 1 << 16
-            buffer = bytearray()
-            line_count = 0
-            position = file_size
-            while position > 0 and line_count <= max_lines:
-                read_size = min(block_size, position)
-                position -= read_size
-                handle.seek(position)
-                chunk = handle.read(read_size)
-                buffer[0:0] = chunk
-                line_count = buffer.count(b"\n")
-            tail = bytes(buffer)
-        if line_count > max_lines:
-            split_at = -1
-            extra = line_count - max_lines
-            for _ in range(extra):
-                split_at = tail.find(b"\n", split_at + 1)
-                if split_at == -1:
-                    break
-            if split_at != -1:
-                tail = tail[split_at + 1 :]
-        return tail.decode("utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
-
-
 def load_planning_state() -> dict[str, Any] | None:
     if not PLANNING_STATE_FILE.exists():
         return None
@@ -994,15 +894,8 @@ def load_json_file(path: Path, default: Any) -> Any:
         return deepcopy(default)
 
 
-def load_config() -> dict[str, Any]:
-    config_source = CONFIG_FILE
-    if not config_source.exists():
-        example = ORCHESTRATOR_DIR / "config.example.json"
-        if example.exists():
-            config_source = example
-    payload = load_json_file(config_source, {})
-    if not isinstance(payload, dict):
-        return {}
+def status_runtime_config() -> dict[str, Any]:
+    payload = deepcopy(merged_orchestrator_config())
     paths = payload.setdefault("paths", {})
     if isinstance(paths, dict):
         paths.update(
@@ -1015,25 +908,11 @@ def load_config() -> dict[str, Any]:
                 "event_queue": str(STATUS_ROOT / ".orchestrator" / "event-queue.jsonl"),
                 "approval_queue": str(APPROVAL_QUEUE_FILE),
                 "github_bus_state": str(STATUS_ROOT / ".orchestrator" / "github-bus-state.json"),
-                "github_webhook_events": str(STATUS_ROOT / ".orchestrator" / "github-webhook-events.jsonl"),
                 "github_relay_state": str(STATUS_ROOT / ".orchestrator" / "github-relay-state.json"),
                 "provider_capabilities": str(STATUS_ROOT / ".orchestrator" / "provider_capabilities.json"),
             }
         )
     return payload
-
-
-def bool_config_setting(settings: dict[str, Any], key: str, default: bool = False) -> bool:
-    value = settings.get(key, default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-    return bool(value)
 
 
 def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
@@ -1043,49 +922,14 @@ def int_config_setting(settings: dict[str, Any], key: str, default: int) -> int:
         return default
 
 
-def optional_int_config_setting(settings: dict[str, Any], key: str) -> int | None:
-    value = settings.get(key)
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def int_mapping_config_setting(settings: dict[str, Any], key: str) -> dict[str, int]:
-    raw = settings.get(key)
-    if not isinstance(raw, dict):
-        return {}
-    values: dict[str, int] = {}
-    for name, value in raw.items():
-        try:
-            values[str(name)] = int(value)
-        except (TypeError, ValueError):
-            continue
-    return values
-
-
 def build_dispatch_policy_summary(config: dict[str, Any]) -> dict[str, Any]:
     ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
-    helper_claim = ready_dispatcher.get("helper_claim") if isinstance(ready_dispatcher.get("helper_claim"), dict) else {}
-    worker_self_claim = ready_dispatcher.get("worker_self_claim") if isinstance(ready_dispatcher.get("worker_self_claim"), dict) else {}
-    claim_idle_work = bool_config_setting(helper_claim, "claim_idle_work", False)
-    helper_claim_enabled = bool_config_setting(helper_claim, "enabled", True)
-    worker_self_claim_enabled = bool_config_setting(worker_self_claim, "enabled", False)
     return {
-        "mode": "worker_self_claim" if worker_self_claim_enabled else ("idle_worker_claim" if helper_claim_enabled and claim_idle_work else "supervisor_owned_dispatch"),
-        "worker_self_claim_enabled": worker_self_claim_enabled,
-        "worker_self_claim_command": worker_self_claim.get("claim_command") or "",
-        "helper_claim_enabled": helper_claim_enabled,
-        "claim_idle_work": claim_idle_work,
-        "claim_sidecars_when_idle": bool_config_setting(helper_claim, "claim_sidecars_when_idle", False),
-        "require_owner_higher_priority_load": bool_config_setting(helper_claim, "require_owner_higher_priority_load", True),
+        "mode": "supervisor_owned_dispatch",
+        "capacity_authority": "account_pools_and_dispatch_slots",
         "owned_work_first": True,
         "max_dispatches_per_tick": int_config_setting(ready_dispatcher, "max_dispatches_per_tick", 4),
-        "max_tasks_per_agent": optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent"),
-        "max_tasks_per_agent_by_agent": int_mapping_config_setting(ready_dispatcher, "max_tasks_per_agent_by_agent"),
-        "max_concurrent_per_quota_group": int_mapping_config_setting(ready_dispatcher, "max_concurrent_per_quota_group"),
+        "reviewer_failover_enabled": bool((ready_dispatcher.get("reviewer_failover") or {}).get("enabled", True)),
         "sidecar_only_agents": ready_dispatcher.get("sidecar_only_agents") or [],
         "disabled_agents": ready_dispatcher.get("disabled_agents") or [],
     }
@@ -1121,66 +965,23 @@ def _dashboard_slot_count(config: dict[str, Any], agent_id: str) -> int:
     for slot_id, slot_agent in agents.items():
         if str((slot_agent or {}).get("dispatch_slot_for") or "").strip() == agent_id:
             slot_ids.add(str(slot_id))
+    account_pool = str(agent.get("account_pool") or "").strip()
+    if account_pool:
+        for slot_id, slot_agent in agents.items():
+            if str((slot_agent or {}).get("dispatch_slot_for_pool") or "").strip() == account_pool:
+                slot_ids.add(str(slot_id))
     return len(slot_ids)
 
 
 def dashboard_agent_capacity(config: dict[str, Any], agent_name: str | None) -> int:
-    ready_dispatcher = config.get("ready_dispatcher") if isinstance(config.get("ready_dispatcher"), dict) else {}
-    caps = ready_dispatcher.get("max_tasks_per_agent_by_agent")
     agent_id = _dashboard_agent_id(config, agent_name)
-    canonical = canonical_agent_name(agent_name)
-    lookup_keys = {
-        str(agent_name or "").strip().lower(),
-        canonical.lower(),
-        agent_id.lower(),
-        agent_id.lower().replace("_", "-"),
-        agent_id.lower().replace("-", "_"),
-    }
-    if isinstance(caps, dict):
-        for key, value in caps.items():
-            if str(key).strip().lower() not in lookup_keys:
-                continue
-            try:
-                return max(1, int(value))
-            except (TypeError, ValueError):
-                continue
-
-    default_capacity = optional_int_config_setting(ready_dispatcher, "max_tasks_per_agent")
     slot_count = _dashboard_slot_count(config, agent_id)
+    # As in the supervisor, executable slots are the capacity authority.  A
+    # legacy per-alias setting is not allowed to make one account appear as
+    # seven independent workers on the dashboard.
     if slot_count:
-        return max(default_capacity or 0, slot_count)
-    return default_capacity or 1
-
-
-def recent_helper_claims(limit: int = 8, max_scan_lines: int = 5000) -> list[dict[str, Any]]:
-    claims: list[dict[str, Any]] = []
-    for line_no, line in enumerate(reversed(load_log_tail_lines(max_lines=max_scan_lines)), start=1):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            entry = json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            print(
-                f"Warning: skipping malformed ai-activity-log.jsonl tail line -{line_no}: {exc}",
-                file=sys.stderr,
-            )
-            continue
-        if str(entry.get("type") or "") != "task_helper_claimed":
-            continue
-        claims.append(
-            {
-                "task_id": entry.get("task_id"),
-                "from_owner": entry.get("from_owner") or entry.get("from"),
-                "to_owner": entry.get("to_owner") or entry.get("to"),
-                "new_reviewer": entry.get("new_reviewer") or entry.get("reviewer"),
-                "message": entry.get("message"),
-                "ts": entry.get("ts") or entry.get("updated_at"),
-            }
-        )
-        if len(claims) >= limit:
-            break
-    return claims
+        return slot_count
+    return 1
 
 
 def save_state(state: dict[str, Any]) -> None:
@@ -1191,6 +992,20 @@ def save_state(state: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
         temp_path = Path(handle.name)
     os.replace(temp_path, STATUS_FILE)
+
+
+@contextmanager
+def status_write_transaction():
+    """Serialize canonical status commands with Supervisor compare-and-swap writes."""
+
+    lock_file = STATUS_FILE.with_name(f"{STATUS_FILE.name}.lock")
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    with lock_file.open("a+", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def ensure_sprint_started_at(state: dict[str, Any]) -> None:
@@ -1384,7 +1199,6 @@ def ensure_agent(name: str) -> dict[str, Any]:
         KNOWN_AGENTS[canonical] = {
             "capability_lane": template["capability_lane"],
             "default_branch": f"feat/{canonical.lower()}-branch" if problem is None else "",
-            "target_workload": 0 if problem is not None else 5,
         }
     return KNOWN_AGENTS[canonical]
 
@@ -1463,7 +1277,7 @@ def parse_bool_env(name: str) -> bool | None:
 
 def delivery_gate_settings() -> dict[str, bool]:
     settings = dict(DEFAULT_DELIVERY_GATES)
-    config = load_config()
+    config = status_runtime_config()
     payload = config.get("delivery_gates", {})
     if isinstance(payload, dict):
         for key in DEFAULT_DELIVERY_GATES:
@@ -1486,7 +1300,7 @@ def delivery_gate_settings() -> dict[str, bool]:
 
 def commit_convention_settings() -> dict[str, Any]:
     settings = deepcopy(DEFAULT_COMMIT_CONVENTIONS)
-    config = load_config()
+    config = status_runtime_config()
     payload = config.get("commit_conventions", {})
     if isinstance(payload, dict):
         subject_required = payload.get("subject_must_include_task_id")
@@ -1522,13 +1336,11 @@ def run_git_command(
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
-    except subprocess.TimeoutExpired as err:
+    except subprocess.TimeoutExpired as exc:
         if required:
-            raise SystemExit(
-                failure_message or "git command timed out after 30s"
-            ) from err
+            raise SystemExit(f"git command timed out after {COMMAND_TIMEOUT_SECONDS:.0f}s: {' '.join(args)}") from exc
         return ""
     if result.returncode != 0:
         if required:
@@ -1546,11 +1358,16 @@ def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
-        return result.returncode == 0
     except subprocess.TimeoutExpired:
         return False
+    except OSError:
+        # An unreadable or missing `cwd` makes subprocess raise instead of
+        # returning a code. Every caller reads False as "not proven", so a check
+        # that could not run must report that rather than crash the transition.
+        return False
+    return result.returncode == 0
 
 
 def get_gh_executable() -> str:
@@ -1572,7 +1389,7 @@ def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str
             capture_output=True,
             text=True,
             check=False,
-            timeout=30,
+            timeout=COMMAND_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
         return None
@@ -2080,7 +1897,11 @@ def split_task_owned_dirty_entries(entries: list[str], task_id: str) -> tuple[li
     return owned, ignored_seeds
 
 
-def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[str, Any]:
+def resolve_task_delivery_checkout(
+    repository_root: Path,
+    task_id: str,
+    approved_head: str | None = None,
+) -> dict[str, Any]:
     """Resolve the checkout owned by ``task_id``, or report that none survives.
 
     The gate exists so a ``done`` never reads the central writer's HEAD as if it
@@ -2096,9 +1917,19 @@ def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[
     from merged-PR provenance alone and may not fall back to any local working
     tree's HEAD or cleanliness. Two or more matches is still ambiguity and still
     fails closed here, because then there is no single task-owned truth to read.
+
+    The one exception is when ``approved_head`` names which of the claimants is
+    the delivery. A reassigned or restarted lane can leave an older checkout of
+    the same branch behind in the configured repository, and a *superseded*
+    checkout is not a competing truth -- it holds a prefix of the same history.
+    So when exactly one claimant is at the reviewer-approved head and every other
+    claimant is strictly behind it, that one is selected and the rest are recorded
+    as superseded. A claimant that is not an ancestor is a different line of work,
+    so it stays ambiguous and still fails closed.
     """
 
     branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    approved_head = str(approved_head or "").strip()
     current_branch = run_git_command(
         ["rev-parse", "--abbrev-ref", "HEAD"],
         cwd=repository_root,
@@ -2122,6 +1953,20 @@ def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[
         if entry.get("branch") in {f"refs/heads/{name}" for name in branch_names}
         and entry.get("worktree")
     ]
+    superseded: list[str] = []
+    if len(matches) > 1 and approved_head:
+        exact = [entry for entry in matches if str(entry.get("HEAD") or "").strip() == approved_head]
+        others = [entry for entry in matches if str(entry.get("HEAD") or "").strip() != approved_head]
+        if len(exact) == 1 and all(
+            str(entry.get("HEAD") or "").strip()
+            and git_command_succeeds(
+                ["merge-base", "--is-ancestor", str(entry["HEAD"]).strip(), approved_head],
+                cwd=repository_root,
+            )
+            for entry in others
+        ):
+            superseded = [str(entry["worktree"]) for entry in others]
+            matches = exact
     if len(matches) > 1:
         raise SystemExit(
             f"Cannot finalize task {task_id}: expected exactly one task-owned delivery "
@@ -2133,11 +1978,53 @@ def resolve_task_delivery_checkout(repository_root: Path, task_id: str) -> dict[
             "branch": branch_names[0],
             "present": False,
         }
-    return {
+    resolved: dict[str, Any] = {
         "checkout": Path(matches[0]["worktree"]).resolve(strict=False),
         "branch": str(matches[0]["branch"]).removeprefix("refs/heads/"),
         "present": True,
     }
+    if superseded:
+        resolved["superseded_checkouts"] = superseded
+    return resolved
+
+
+def is_stale_task_checkout(
+    repository_root: Path,
+    checkout_head: str,
+    approved_head: str,
+) -> bool:
+    """True when the task checkout merely lags the reviewer-approved head.
+
+    Finalize reads the task checkout's HEAD as the task's delivery head, and an
+    advance past the approved head already has a carry-forward path. The other
+    direction had none: a checkout sitting *behind* the approved commit was read
+    as "the wrong head" and blocked a task whose exact approved head had already
+    merged. That checkout is history, not a competing delivery -- it holds a
+    prefix of the reviewed line and nothing the reviewer did not see.
+
+    "Behind" is deliberately narrow, because it is what lets the caller trust
+    merged-PR provenance instead of the working tree:
+
+    * the approved commit must exist here, so the later reads of its subject,
+      body and author describe the reviewed commit rather than nothing, and
+    * the checkout HEAD must be an ancestor of it.
+
+    A divergent or rewritten head satisfies neither and stays a hard failure.
+    """
+
+    checkout_head = str(checkout_head or "").strip()
+    approved_head = str(approved_head or "").strip()
+    if not checkout_head or not approved_head or checkout_head == approved_head:
+        return False
+    if not git_command_succeeds(
+        ["cat-file", "-e", f"{approved_head}^{{commit}}"],
+        cwd=repository_root,
+    ):
+        return False
+    return git_command_succeeds(
+        ["merge-base", "--is-ancestor", checkout_head, approved_head],
+        cwd=repository_root,
+    )
 
 
 def task_delivery_checkout(repository_root: Path, task_id: str) -> tuple[Path, str]:
@@ -2389,7 +2276,7 @@ def is_approved_head_satisfied(
         return True
 
     try:
-        config = load_config()
+        config = status_runtime_config()
         repository_id = task_primary_repository_id(config, task) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
@@ -2506,7 +2393,7 @@ def collect_done_delivery_metadata(
     )
     commit_rules["subject_must_include_task_id"] = True
     commit_rules["required_body_fields"] = ["LLM-Agent", "Task-ID", "Reviewer"]
-    config = load_config()
+    config = status_runtime_config()
     task_id = str(task.get("id") or "").strip()
     approved_head = str(approved_head or task.get("approved_head") or "").strip()
     if not approved_head:
@@ -2539,11 +2426,15 @@ def collect_done_delivery_metadata(
             repository_id = "pantheon"
             repository_root = pantheon_root
     configured_repository_root = repository_root.resolve(strict=False)
-    resolved_checkout = resolve_task_delivery_checkout(configured_repository_root, task_id)
+    resolved_checkout = resolve_task_delivery_checkout(
+        configured_repository_root, task_id, approved_head=approved_head
+    )
     repository_root = resolved_checkout["checkout"]
     branch = resolved_checkout["branch"]
     task_checkout_present = bool(resolved_checkout["present"])
     configured_repository_slug = repository_slug(config, repository_id)
+    stale_task_checkout = False
+    stale_checkout_head = ""
     if task_checkout_present:
         checkout_head = run_git_command(
             ["rev-parse", "HEAD"],
@@ -2585,9 +2476,32 @@ def collect_done_delivery_metadata(
     }
     if not task_checkout_present:
         delivery["provenance_mode"] = "merged_pr_without_task_checkout"
+    superseded_checkouts = resolved_checkout.get("superseded_checkouts") or []
+    if superseded_checkouts:
+        delivery["superseded_task_checkouts"] = [str(path) for path in superseded_checkouts]
     if checkout_head != approved_head:
         if is_approved_head_satisfied(task, checkout_head, approved_head, repository_root=repository_root):
             delivery["post_merge_checkout_advanced"] = True
+        elif is_stale_task_checkout(repository_root, checkout_head, approved_head):
+            # The surviving checkout is an earlier state of this same branch, so it
+            # cannot speak for the delivery either way -- it is neither the reviewed
+            # commit nor a competing one. Delivery is then proven exactly as it is
+            # when no checkout survives at all: from the merged PR at the approved
+            # head, which `enforce_delivery_merged_gate` below still has to pass.
+            if not settings["require_merged_pr"]:
+                raise SystemExit(
+                    f"Cannot finalize task {task_id}: the task-owned delivery checkout is "
+                    f"behind the reviewer-approved head ({approved_head[:8]}), so delivery "
+                    "can only be proven from a merged task PR, but "
+                    "delivery_gates.require_merged_pr is disabled."
+                )
+            stale_task_checkout = True
+            stale_checkout_head = checkout_head
+            checkout_head = approved_head
+            delivery["verified_head"] = approved_head
+            delivery["provenance_mode"] = "merged_pr_with_stale_task_checkout"
+            delivery["stale_task_checkout"] = True
+            delivery["stale_checkout_head"] = stale_checkout_head
         else:
             raise SystemExit(
                 f"Cannot finalize task {task_id}: task-owned checkout HEAD ({checkout_head[:8]}) "
@@ -2684,7 +2598,7 @@ def collect_done_delivery_metadata(
             raise SystemExit(f"Cannot finalize task: {'; '.join(issues)}.")
         delivery["commit_metadata"] = metadata_fields
 
-    if task_checkout_present:
+    if task_checkout_present and not stale_task_checkout:
         porcelain = run_git_command(
             ["status", "--porcelain", "--untracked-files=all"],
             cwd=repository_root,
@@ -2707,9 +2621,27 @@ def collect_done_delivery_metadata(
         # reading the shared writer's tree would answer a question about a
         # different lane. Record that it was not evaluated rather than claiming a
         # clean result that was never observed.
+        #
+        # A stale checkout is the same shape: its edits sit on a commit the PR
+        # already merged past, so they cannot reach the delivery -- but they are
+        # observable, so they are recorded rather than dropped.
         delivery["git_clean"] = None
         delivery["git_clean_evaluated"] = False
-        delivery["git_clean_skip_reason"] = "no task-owned delivery checkout"
+        delivery["git_clean_skip_reason"] = (
+            "task-owned delivery checkout is behind the reviewer-approved head"
+            if stale_task_checkout
+            else "no task-owned delivery checkout"
+        )
+        if stale_task_checkout:
+            stale_porcelain = run_git_command(
+                ["status", "--porcelain", "--untracked-files=all"],
+                cwd=repository_root,
+                required=False,
+            )
+            stale_dirty, _ = split_task_owned_dirty_entries(
+                [line for line in stale_porcelain.splitlines() if line.strip()], task_id
+            )
+            delivery["stale_checkout_dirty_entry_count"] = len(stale_dirty)
 
     remotes_output = run_git_command(
         ["remote"],
@@ -2804,10 +2736,6 @@ def task_metadata_from_env() -> dict[str, Any]:
 
 def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
     return resolver.dependency_satisfied(dep_id)
-
-
-def dependency_status_label(resolver: TaskResolver, dep_id: str) -> str:
-    return resolver.dependency_status(dep_id)
 
 
 def ensure_review_finalize_handoff(
@@ -2905,7 +2833,15 @@ def validate_state(state: dict[str, Any]) -> None:
         if task["owner"] == task["reviewer"]:
             raise SystemExit(f"Task {task['id']} has identical owner and reviewer")
         if task["status"] == "blocked" and not task.get("waiting_for"):
-            raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
+            owner = str(task.get("owner") or "").strip()
+            if owner and owner != task["reviewer"]:
+                task["waiting_for"] = owner
+                print(
+                    f"Auto-repaired blocked task {task['id']}: waiting_for missing, defaulting to owner '{owner}'.",
+                    file=sys.stderr,
+                )
+            else:
+                raise SystemExit(f"Blocked task {task['id']} is missing waiting_for")
 
     for blocker in state.get("blockers", []):
         ensure_agent(blocker["owner"])
@@ -2917,6 +2853,10 @@ def validate_state(state: dict[str, Any]) -> None:
 
 
 def normalize_state_agents(state: dict[str, Any]) -> None:
+    # `workload` used to be a target-percentage dispatch policy. Pool slots are
+    # now the sole capacity authority; prune the obsolete snapshot whenever a
+    # status document is read so an old writer cannot make it look live again.
+    state.pop("workload", None)
     for task in state.get("tasks", []):
         task["owner"] = active_agent_name(task.get("owner"))
         task["reviewer"] = active_agent_name(task.get("reviewer"))
@@ -3040,11 +2980,6 @@ def recompute_workload(state: dict[str, Any]) -> None:
         if task["status"] in {"in_progress", "review", "blocked"}:
             bucket["active"] += 1
 
-    state["workload"] = {
-        name: KNOWN_AGENTS[name]["target_workload"]
-        for name in KNOWN_AGENTS
-        if not is_quarantined_agent(name)
-    }
     state["workload_summary"] = summary
 
 
@@ -3457,15 +3392,11 @@ def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
     metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else request_snapshot.get("metadata", {})
     if isinstance(metadata.get("planning"), dict) and metadata.get("planning"):
         return str(metadata["planning"].get("mode") or "discussion_planning")
-    if isinstance(metadata.get("chair"), dict) and metadata.get("chair"):
-        return "chair_review"
     if isinstance(metadata.get("coordination"), dict) and metadata.get("coordination"):
         return "coordination"
     reason = str(payload.get("reason") or request_snapshot.get("reason") or "").strip()
     if reason.startswith("discussion_planning_"):
         return "discussion_planning"
-    if reason.startswith("chair_review:"):
-        return "chair_review"
     if reason.startswith("coordination:"):
         return "coordination"
     return "execution"
@@ -3644,15 +3575,6 @@ def detect_truth_mismatches(
     orchestrator_state: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     task_map = {task["id"]: task for task in state.get("tasks", [])}
-    orchestrator = orchestrator_state or {}
-    provider_guardrails = orchestrator.get("provider_guardrails") if isinstance(orchestrator.get("provider_guardrails"), dict) else {}
-    (
-        provider_guardrails.get("dispatch_pauses")
-        if isinstance(provider_guardrails.get("dispatch_pauses"), dict)
-        else orchestrator.get("dispatch_pauses")
-        if isinstance(orchestrator.get("dispatch_pauses"), dict)
-        else {}
-    )
     live_workers = [
         worker
         for worker in workers
@@ -3713,8 +3635,6 @@ def detect_truth_mismatches(
         if task_id:
             live_workers_by_task.setdefault(task_id, []).append(worker)
         else:
-            if str(worker.get("dispatch_mode") or "").strip() == "chair_review":
-                continue
             push(
                 {
                     "id": f"worker-without-task:{worker.get('run_id')}",
@@ -3730,7 +3650,7 @@ def detect_truth_mismatches(
 
         task = task_map.get(task_id)
         if task is None:
-            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination", "chair_review"}:
+            if str(worker.get("dispatch_mode") or "").strip() in {"discussion_planning", "coordination"}:
                 continue
             if resolver.source(task_id) == "archive":
                 continue
@@ -4042,7 +3962,7 @@ def load_local_coordination_payload(path_value: str) -> dict[str, Any] | None:
 
 
 def coordination_repo_root(repo_id: str) -> Path | None:
-    config = load_config()
+    config = status_runtime_config()
     root = repository_local_path(config, repo_id)
     if isinstance(root, Path):
         return root
@@ -4422,7 +4342,7 @@ def build_dashboard_bundle(
     planning = planning_state or {}
     orchestrator = orchestrator_state or {}
     approvals = approval_state or {}
-    config = load_config()
+    config = status_runtime_config()
     dispatch_policy = build_dispatch_policy_summary(config)
     resolver = task_resolver(state)
     task_map = resolver.active_task_map()
@@ -4583,13 +4503,11 @@ def build_dashboard_bundle(
         "planning": {"running": 0, "pending": 0, "queued": 0},
         "execution": {"running": 0, "pending": 0, "queued": 0},
         "coordination": {"running": 0, "pending": 0, "queued": 0},
-        "chair_review": {"running": 0, "pending": 0, "queued": 0},
     }
     dispatch_mode_map = {
         "discussion_planning": "planning",
         "execution": "execution",
         "coordination": "coordination",
-        "chair_review": "chair_review",
     }
     for worker in live_workers:
         mode_name = dispatch_mode_map.get(str(worker.get("dispatch_mode") or "").strip())
@@ -4607,19 +4525,6 @@ def build_dashboard_bundle(
         computed_mode_occupancy[mode_name]["queued"] += 1
     mode_occupancy = computed_mode_occupancy
 
-    chair_rotation = orchestrator.get("chair_rotation") if isinstance(orchestrator.get("chair_rotation"), dict) else {}
-    chair_summary = {
-        "current_index": int(chair_rotation.get("current_index") or 0),
-        "last_chair_agent": chair_rotation.get("last_chair_agent"),
-        "last_chair_run_at": chair_rotation.get("last_chair_run_at"),
-        "last_chair_reason": chair_rotation.get("last_chair_reason"),
-        "last_review_path": chair_rotation.get("last_review_path"),
-        "last_review_summary": chair_rotation.get("last_review_summary") or [],
-        "pending_review_path": chair_rotation.get("pending_review_path"),
-        "pending_review_agent": chair_rotation.get("pending_review_agent"),
-        "sidecar_approved_until": chair_rotation.get("sidecar_approved_until"),
-    }
-
     lanes: dict[str, dict[str, int]] = {}
     for worker in workers:
         actor = str(worker.get("actor") or "-")
@@ -4630,8 +4535,6 @@ def build_dashboard_bundle(
         lane[bucket] = lane.get(bucket, 0) + 1
         if worker.get("status") == "failed":
             lane["failed"] += 1
-
-    dispatch_targets = {name: meta["target_workload"] for name, meta in KNOWN_AGENTS.items()}
 
     sprint_started_at_value = str(state.get("sprint_started_at") or "").strip() or None
     completed_in_sprint, superseded_in_sprint = count_terminal_since(sprint_started_at_value)
@@ -4661,7 +4564,6 @@ def build_dashboard_bundle(
             "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
             "mode_occupancy": mode_occupancy,
             "lanes": lanes,
-            "dispatch_targets": dispatch_targets,
         },
         "execution_summary": {
             "ready_now": ready_now,
@@ -4709,16 +4611,14 @@ def build_dashboard_bundle(
         },
         "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
-        "chair_summary": chair_summary,
         "dispatch_policy": dispatch_policy,
-        "recent_helper_claims": recent_helper_claims(),
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
 
 
 def write_dashboard_bundle(state: dict[str, Any]) -> None:
-    config = load_config()
+    config = status_runtime_config()
     planning_state = load_planning_state()
     try:
         orchestrator_state = load_runtime_state(config)
@@ -4782,7 +4682,7 @@ def dashboard_orchestrator_state(state: dict[str, Any], orchestrator_state: dict
 
 def sync_docs_site(state: dict[str, Any]) -> None:
     DOCS_SITE_DIR.mkdir(parents=True, exist_ok=True)
-    config = load_config()
+    config = status_runtime_config()
     try:
         runtime_state = load_runtime_state(config)
     except KeyError:
@@ -4823,6 +4723,11 @@ def sync_all(state: dict[str, Any]) -> None:
     recompute_workload(state)
     ensure_sprint_started_at(state)
     state["updated_at"] = iso_now()
+    # Every canonical write gets a unique revision. The Supervisor compares
+    # the revision it loaded with the revision on disk while holding the same
+    # lock; a slow GitHub probe can therefore never overwrite a newer CLI
+    # transition with its stale whole-document snapshot.
+    state["_status_write_revision"] = uuid.uuid4().hex
     save_state(state)
     logs = load_logs()
     write_current_work(state, logs)
@@ -5099,7 +5004,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
     if not task_id or not pr_number.isdigit():
         raise SystemExit("Review submission requires a task id and numeric PR number")
 
-    config = load_config()
+    config = status_runtime_config()
     repository_id = task_primary_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
     branch = f"task/{task_id}"
@@ -5108,7 +5013,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
     if not remote_sha:
         raise SystemExit(
             f"Cannot submit {task_id} for review: origin/{branch} is missing. "
-            "Push the task branch with scripts/git/task_finalize.sh first."
+            "Push the task branch with delivery_toolchain/git/task_finalize.sh first."
         )
 
     pr = run_gh_json_command(
@@ -5211,7 +5116,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if not isinstance(submission, dict) or not submission.get("remote_sha") or not submission.get("pr_number"):
         raise SystemExit(
             f"Cannot hand off {task_id} for review without verified remote PR evidence. "
-            "Run scripts/git/task_finalize.sh, then "
+            "Run delivery_toolchain/git/task_finalize.sh, then "
             f"AI_NAME={actor} ./scripts/ai-status.sh submit_review {task_id} <pr-number> <message>."
         )
     timestamp = iso_now()
@@ -5485,7 +5390,6 @@ def command_prune_agents(state: dict[str, Any], args: list[str]) -> None:
     for name in doomed:
         KNOWN_AGENTS.pop(name, None)
         QUARANTINED_AGENTS.discard(name)
-        state.get("workload", {}).pop(name, None)
         state.get("workload_summary", {}).pop(name, None)
 
     timestamp = iso_now()
@@ -6106,7 +6010,7 @@ def resolve_task_checkout_sha(
         return None
 
     try:
-        config = load_config()
+        config = status_runtime_config()
         repository_id = task_primary_repository_id(config, task_dict) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
@@ -6193,7 +6097,7 @@ def get_repository_slug_safe() -> str:
         return env_slug
     # 2. Try loading config
     try:
-        config = load_config()
+        config = status_runtime_config()
         slug = repository_slug(config, "pantheon")
         if slug:
             return slug
@@ -6215,13 +6119,31 @@ def get_repository_slug_safe() -> str:
     return "alfloop-dev/odayplus"
 
 
+def task_repository_slug_safe(task: dict[str, Any]) -> str:
+    """The repository a task's review gate belongs to.
+
+    A GitHub status is addressed as ``repos/<slug>/statuses/<sha>``, so a
+    fleet-wide slug posts one repository's commit against another and GitHub
+    answers 422 "No commit found for SHA" forever. The task already names its
+    repository; resolve through the same registry every other subsystem uses.
+    """
+    try:
+        config = status_runtime_config()
+        binding = resolve_task_repository(config, task)
+        if binding.slug:
+            return binding.slug
+    except Exception:
+        pass
+    return get_repository_slug_safe()
+
+
 def task_review_status_payload(task: dict[str, Any], state_status: str) -> dict[str, str] | None:
     task_id = str(task.get("id") or "")
     sha = resolve_task_sha(task_id)
     if not sha:
         return None
 
-    repo_slug = get_repository_slug_safe()
+    repo_slug = task_repository_slug_safe(task)
     context = "task-review-gate"
 
     if state_status == "review_approved":
@@ -6491,7 +6413,6 @@ ACTORLESS_MUTATING_COMMANDS = frozenset({"sync"})
 
 
 def main(argv: list[str]) -> int:
-    state = load_state()
     command = argv[1] if len(argv) > 1 else "sync"
     args = argv[2:]
 
@@ -6499,21 +6420,27 @@ def main(argv: list[str]) -> int:
     commands = MUTATING_COMMANDS
 
     if command in read_only_commands:
+        state = load_state()
         read_only_commands[command](state, args)
         return 0
 
     if command not in commands:
         raise SystemExit(f"Unknown command: {command}")
 
-    state_before = deepcopy(state)
-    commands[command](state, args)
-    sync_all(state)
-    try:
-        reconcile_status_check_outbox(state)
-        emit_status_checks_for_changed_tasks(state_before, state, command, args)
+    with status_write_transaction():
+        # Load only after acquiring the lock. Otherwise two well-formed CLI
+        # commands could serialize their writes while the second still acted
+        # on a pre-lock snapshot.
+        state = load_state()
+        state_before = deepcopy(state)
+        commands[command](state, args)
         sync_all(state)
-    except Exception as exc:
-        print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
+        try:
+            reconcile_status_check_outbox(state)
+            emit_status_checks_for_changed_tasks(state_before, state, command, args)
+            sync_all(state)
+        except Exception as exc:
+            print(f"Warning: Failed to emit status checks: {exc}", file=sys.stderr)
     return 0
 
 

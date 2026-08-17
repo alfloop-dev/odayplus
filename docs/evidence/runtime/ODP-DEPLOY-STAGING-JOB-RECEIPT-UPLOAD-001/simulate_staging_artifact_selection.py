@@ -54,7 +54,7 @@ PRE_FIX_PATHS = (
     ".odp_data/remote-staging-proof/*.json",
 )
 
-# Written by scripts/deploy_cloud_run_waji.sh on a green deploy, in either
+# Written by product_ops/deployment/deploy_cloud_run_waji.sh on a green deploy, in either
 # environment: the script is env-agnostic and reads ODP_DEPLOY_ENV only for
 # naming and gate expectations, not for which reports it emits.
 VALIDATOR_REPORTS = (
@@ -72,7 +72,7 @@ RAW_GCLOUD_DUMPS = tuple(
     for kind in ("migration", "scheduler", "worker")
     for dump in ("job", "execution", "execution-list")
 )
-# Written by scripts/e2e/check_remote_staging_proof.py in Deploy Staging only.
+# Written by delivery_toolchain/e2e/check_remote_staging_proof.py in Deploy Staging only.
 STAGING_PROOF = (f".odp_data/remote-staging-proof/staging-{RUN_ID}.json",)
 DECOYS = (
     ".odp_data/deployment/api-env.json",

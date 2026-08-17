@@ -12,6 +12,7 @@ from common import (
     normalize_agent_id,
     relpath,
 )
+from provider_runtime import provider_config
 
 from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, DeliveryResult
 
@@ -34,7 +35,7 @@ class FileInboxAdapter(BaseAdapter):
 
     def deliver(self, request: DeliveryRequest) -> DeliveryResult:
         agent = agent_config_for(self.config, request.agent_id)
-        provider = self.config.get("providers", {}).get(agent.get("provider", request.provider), {})
+        provider = provider_config(self.config, agent.get("provider", request.provider))
         inbox_settings = provider.get("file_inbox", {})
         inbox_map = inbox_settings.get("agent_paths", {}) or {}
         inbox_value = agent.get("file_inbox_path") or inbox_map.get(agent.get("id")) or inbox_settings.get("path")

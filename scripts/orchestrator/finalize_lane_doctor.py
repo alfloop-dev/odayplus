@@ -74,7 +74,6 @@ SEVERITY = (
     READY,
 )
 
-
 def _gh_json(args: list[str], cwd: Path) -> Any:
     proc = subprocess.run(
         ["gh", *args], cwd=cwd, capture_output=True, text=True, check=False

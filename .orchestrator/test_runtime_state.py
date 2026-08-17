@@ -26,6 +26,54 @@ class LoadRuntimeStateTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
+    def _queue_event(self, task_id: str) -> dict:
+        return {
+            "task_id": task_id,
+            "target_agent": "codex",
+            "provider": "codex",
+            "reason": "test",
+            "message": f"Work on {task_id}",
+        }
+
+    def test_enqueue_event_owns_envelope_defaults_and_storage(self) -> None:
+        event = self._queue_event("QUEUE-001")
+
+        payload = runtime_state.enqueue_event(self.config, event)
+
+        self.assertNotIn("event_id", event)
+        self.assertTrue(payload["event_id"].startswith("evt-"))
+        self.assertTrue(payload["created_at"])
+        self.assertEqual(payload["context_files"], [])
+        self.assertEqual(payload["target_files"], [])
+        self.assertEqual(payload["metadata"], {})
+        self.assertEqual(
+            runtime_state.load_event_queue(self.config),
+            [payload],
+        )
+
+    def test_enqueue_event_rejects_invalid_envelope_before_writing(self) -> None:
+        event = self._queue_event("QUEUE-002")
+        event.pop("target_agent")
+
+        with self.assertRaisesRegex(ValueError, "target_agent"):
+            runtime_state.enqueue_event(self.config, event)
+
+        self.assertEqual(runtime_state.load_event_queue(self.config), [])
+
+    def test_replace_event_queue_preserves_events_appended_after_snapshot(self) -> None:
+        first = runtime_state.enqueue_event(self.config, self._queue_event("QUEUE-OLD"))
+        original = runtime_state.load_event_queue(self.config)
+        second = runtime_state.enqueue_event(self.config, self._queue_event("QUEUE-NEW"))
+
+        runtime_state.replace_event_queue(
+            self.config,
+            original_events=original,
+            retained_events=[],
+        )
+
+        self.assertEqual(runtime_state.load_event_queue(self.config), [second])
+        self.assertNotEqual(first["event_id"], second["event_id"])
+
     def test_load_runtime_state_drops_suspended_worker_without_queue_event(self) -> None:
         self._write_json(
             self.root / "state.json",
@@ -97,15 +145,14 @@ class LoadRuntimeStateTests(unittest.TestCase):
             "claude-stale", runtime_state.load_runtime_state(self.config)["workers"]
         )
 
-    def test_load_runtime_state_adds_chair_rotation_defaults(self) -> None:
+    def test_load_runtime_state_drops_retired_chair_scheduler_state(self) -> None:
         self._write_json(self.root / "state.json", {"workers": {}, "queue": {"events": {}}})
         (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
 
         state = runtime_state.load_runtime_state(self.config)
 
-        self.assertEqual(state["chair_rotation"]["current_index"], 0)
-        self.assertIsNone(state["chair_rotation"]["last_chair_agent"])
-        self.assertIn("chair_review", state["supervisor"]["mode_occupancy"])
+        self.assertNotIn("chair_rotation", state)
+        self.assertNotIn("chair_review", state["supervisor"]["mode_occupancy"])
 
     def test_load_runtime_state_preserves_watchdog_safe_mode(self) -> None:
         self._write_json(
@@ -127,24 +174,24 @@ class LoadRuntimeStateTests(unittest.TestCase):
         self.assertEqual(state["watchdog"]["safe_mode_reason"], "stale_heartbeat")
         self.assertIn("last_safe_mode_observed_until", state["watchdog"])
 
-    def test_ready_dispatch_weighted_cursor_survives_save_and_reload(self) -> None:
+    def test_ready_dispatch_cursor_survives_save_and_reload(self) -> None:
         (self.root / "event-queue.jsonl").write_text("", encoding="utf-8")
         state = runtime_state.default_state()
-        state["ready_dispatcher"]["weighted_cursor"] = 73
-        state["ready_dispatcher"]["weighted_cursor_revision"] = 19
-        state["ready_dispatcher"]["weighted_cursor_updated_at"] = "2026-07-31T12:00:00Z"
+        state["ready_dispatcher"]["dispatch_cursor"] = 73
+        state["ready_dispatcher"]["dispatch_cursor_revision"] = 19
+        state["ready_dispatcher"]["dispatch_cursor_updated_at"] = "2026-07-31T12:00:00Z"
 
         runtime_state.save_runtime_state(self.config, state)
         reloaded = runtime_state.load_runtime_state(self.config)
 
-        self.assertEqual(reloaded["ready_dispatcher"]["weighted_cursor"], 73)
-        self.assertEqual(reloaded["ready_dispatcher"]["weighted_cursor_revision"], 19)
+        self.assertEqual(reloaded["ready_dispatcher"]["dispatch_cursor"], 73)
+        self.assertEqual(reloaded["ready_dispatcher"]["dispatch_cursor_revision"], 19)
         self.assertEqual(
-            reloaded["ready_dispatcher"]["weighted_cursor_updated_at"],
+            reloaded["ready_dispatcher"]["dispatch_cursor_updated_at"],
             "2026-07-31T12:00:00Z",
         )
 
-    def test_ready_dispatch_weighted_cursor_migration_fails_safe(self) -> None:
+    def test_ready_dispatch_cursor_migrates_legacy_state_and_fails_safe(self) -> None:
         malformed_values = (
             None,
             [],
@@ -155,7 +202,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
         for malformed in malformed_values:
             with self.subTest(malformed=malformed):
                 migrated = runtime_state.migrate_state({"ready_dispatcher": malformed})
-                self.assertEqual(migrated["ready_dispatcher"]["weighted_cursor"], 0)
+                self.assertEqual(migrated["ready_dispatcher"]["dispatch_cursor"], 0)
 
         for malformed_revision in (None, True, [], "invalid", -9):
             with self.subTest(malformed_revision=malformed_revision):
@@ -168,7 +215,7 @@ class LoadRuntimeStateTests(unittest.TestCase):
                     }
                 )
                 self.assertEqual(
-                    migrated["ready_dispatcher"]["weighted_cursor_revision"],
+                    migrated["ready_dispatcher"]["dispatch_cursor_revision"],
                     0,
                 )
 
@@ -182,43 +229,43 @@ class LoadRuntimeStateTests(unittest.TestCase):
             }
         )
         self.assertIsNone(
-            migrated["ready_dispatcher"]["weighted_cursor_updated_at"]
+            migrated["ready_dispatcher"]["dispatch_cursor_updated_at"]
         )
 
     def test_newer_cursor_revision_wins_with_equal_wall_clock_timestamp(self) -> None:
         disk_state = runtime_state.default_state()
         disk_state["ready_dispatcher"] = {
-            "weighted_cursor": 17,
-            "weighted_cursor_revision": 41,
-            "weighted_cursor_updated_at": "2026-07-31T12:00:00Z",
+            "dispatch_cursor": 17,
+            "dispatch_cursor_revision": 41,
+            "dispatch_cursor_updated_at": "2026-07-31T12:00:00Z",
         }
         newer_state = runtime_state.default_state()
         newer_state["ready_dispatcher"] = {
-            "weighted_cursor": 18,
-            "weighted_cursor_revision": 42,
-            "weighted_cursor_updated_at": "2026-07-31T12:00:00Z",
+            "dispatch_cursor": 18,
+            "dispatch_cursor_revision": 42,
+            "dispatch_cursor_updated_at": "2026-07-31T12:00:00Z",
         }
 
         merged = runtime_state.merge_runtime_states(disk_state, newer_state)
 
-        self.assertEqual(merged["ready_dispatcher"]["weighted_cursor"], 18)
+        self.assertEqual(merged["ready_dispatcher"]["dispatch_cursor"], 18)
         self.assertEqual(
-            merged["ready_dispatcher"]["weighted_cursor_revision"],
+            merged["ready_dispatcher"]["dispatch_cursor_revision"],
             42,
         )
 
     def test_concurrent_auxiliary_save_cannot_roll_back_weighted_cursor(self) -> None:
         disk_state = runtime_state.default_state()
         disk_state["ready_dispatcher"] = {
-            "weighted_cursor": 17,
-            "weighted_cursor_revision": 42,
-            "weighted_cursor_updated_at": "2026-07-31T11:59:00Z",
+            "dispatch_cursor": 17,
+            "dispatch_cursor_revision": 42,
+            "dispatch_cursor_updated_at": "2026-07-31T11:59:00Z",
         }
         stale_claim_state = runtime_state.default_state()
         stale_claim_state["ready_dispatcher"] = {
-            "weighted_cursor": 3,
-            "weighted_cursor_revision": 41,
-            "weighted_cursor_updated_at": "2099-12-31T23:59:59Z",
+            "dispatch_cursor": 3,
+            "dispatch_cursor_revision": 41,
+            "dispatch_cursor_updated_at": "2099-12-31T23:59:59Z",
         }
         stale_claim_state["workers"]["antigravity7-live"] = {
             "run_id": "antigravity7-live",
@@ -232,9 +279,9 @@ class LoadRuntimeStateTests(unittest.TestCase):
 
         merged = runtime_state.merge_runtime_states(disk_state, stale_claim_state)
 
-        self.assertEqual(merged["ready_dispatcher"]["weighted_cursor"], 17)
+        self.assertEqual(merged["ready_dispatcher"]["dispatch_cursor"], 17)
         self.assertEqual(
-            merged["ready_dispatcher"]["weighted_cursor_revision"],
+            merged["ready_dispatcher"]["dispatch_cursor_revision"],
             42,
         )
         self.assertIn("antigravity7-live", merged["workers"])
@@ -247,17 +294,17 @@ class LoadRuntimeStateTests(unittest.TestCase):
         )
         disk_state = runtime_state.default_state()
         disk_state["ready_dispatcher"] = {
-            "weighted_cursor": 17,
-            "weighted_cursor_revision": 42,
-            "weighted_cursor_updated_at": "2026-07-31T12:00:00Z",
+            "dispatch_cursor": 17,
+            "dispatch_cursor_revision": 42,
+            "dispatch_cursor_updated_at": "2026-07-31T12:00:00Z",
         }
         runtime_state.save_runtime_state(self.config, disk_state)
 
         stale_claim_state = runtime_state.default_state()
         stale_claim_state["ready_dispatcher"] = {
-            "weighted_cursor": 3,
-            "weighted_cursor_revision": 41,
-            "weighted_cursor_updated_at": "2099-12-31T23:59:59Z",
+            "dispatch_cursor": 3,
+            "dispatch_cursor_revision": 41,
+            "dispatch_cursor_updated_at": "2099-12-31T23:59:59Z",
         }
         stale_claim_state["workers"]["antigravity7-live"] = {
             "run_id": "antigravity7-live",
@@ -272,9 +319,9 @@ class LoadRuntimeStateTests(unittest.TestCase):
         runtime_state.save_runtime_state(self.config, stale_claim_state)
         reloaded = runtime_state.load_runtime_state(self.config)
 
-        self.assertEqual(reloaded["ready_dispatcher"]["weighted_cursor"], 17)
+        self.assertEqual(reloaded["ready_dispatcher"]["dispatch_cursor"], 17)
         self.assertEqual(
-            reloaded["ready_dispatcher"]["weighted_cursor_revision"],
+            reloaded["ready_dispatcher"]["dispatch_cursor_revision"],
             42,
         )
         self.assertIn("antigravity7-live", reloaded["workers"])
@@ -400,44 +447,44 @@ class LoadRuntimeStateTests(unittest.TestCase):
     def test_equal_cursor_revision_prefers_durable_disk_snapshot(self) -> None:
         disk_state = runtime_state.default_state()
         disk_state["ready_dispatcher"] = {
-            "weighted_cursor": 17,
-            "weighted_cursor_revision": 42,
-            "weighted_cursor_updated_at": "2026-07-31T12:00:00Z",
+            "dispatch_cursor": 17,
+            "dispatch_cursor_revision": 42,
+            "dispatch_cursor_updated_at": "2026-07-31T12:00:00Z",
         }
         auxiliary_state = runtime_state.default_state()
         auxiliary_state["ready_dispatcher"] = {
-            "weighted_cursor": 3,
-            "weighted_cursor_revision": 42,
-            "weighted_cursor_updated_at": "2099-12-31T23:59:59Z",
+            "dispatch_cursor": 3,
+            "dispatch_cursor_revision": 42,
+            "dispatch_cursor_updated_at": "2099-12-31T23:59:59Z",
         }
 
         merged = runtime_state.merge_runtime_states(disk_state, auxiliary_state)
 
-        self.assertEqual(merged["ready_dispatcher"]["weighted_cursor"], 17)
+        self.assertEqual(merged["ready_dispatcher"]["dispatch_cursor"], 17)
         self.assertEqual(
-            merged["ready_dispatcher"]["weighted_cursor_revision"],
+            merged["ready_dispatcher"]["dispatch_cursor_revision"],
             42,
         )
 
     def test_malformed_revision_and_future_timestamp_cannot_pin_cursor(self) -> None:
         disk_state = runtime_state.default_state()
         disk_state["ready_dispatcher"] = {
-            "weighted_cursor": 17,
-            "weighted_cursor_revision": "not-a-revision",
-            "weighted_cursor_updated_at": "2099-12-31T23:59:59Z",
+            "dispatch_cursor": 17,
+            "dispatch_cursor_revision": "not-a-revision",
+            "dispatch_cursor_updated_at": "2099-12-31T23:59:59Z",
         }
         valid_state = runtime_state.default_state()
         valid_state["ready_dispatcher"] = {
-            "weighted_cursor": 18,
-            "weighted_cursor_revision": 1,
-            "weighted_cursor_updated_at": "2026-07-31T12:00:00Z",
+            "dispatch_cursor": 18,
+            "dispatch_cursor_revision": 1,
+            "dispatch_cursor_updated_at": "2026-07-31T12:00:00Z",
         }
 
         merged = runtime_state.merge_runtime_states(disk_state, valid_state)
 
-        self.assertEqual(merged["ready_dispatcher"]["weighted_cursor"], 18)
+        self.assertEqual(merged["ready_dispatcher"]["dispatch_cursor"], 18)
         self.assertEqual(
-            merged["ready_dispatcher"]["weighted_cursor_revision"],
+            merged["ready_dispatcher"]["dispatch_cursor_revision"],
             1,
         )
 
