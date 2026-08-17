@@ -1,0 +1,205 @@
+# Dev Merge / Production Release Gate Separation
+
+- Task: `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`
+- Current owner: Codex2
+- Current reviewer: Antigravity3
+- Observed parent head: `8812479dee7fb12453799fd54ff0710af9f30d86` (unchanged)
+- Observed GitHub Actions run: `30722312049`
+
+## Reproduction
+
+The failed PR #552 run was queried directly with `gh run view`. Its `product-e2e-gate`
+job installed the locked Python and Node dependencies and downloaded Playwright Chromium
+successfully. It then ran `make product-release-gate` for an ordinary `pull_request` into
+`dev` and stopped before the deterministic product E2E runner because the checked-in
+execution receipt belongs to an older tested source. The exact failure was:
+
+> intervening commits touch non-evidence paths
+
+The `product` job independently failed in two places:
+
+1. `test_no_deleted_specs_referenced_and_inventory_consistent` coupled the canonical
+   test inventory check to the old exact-source execution receipt.
+2. `test_expansion_flow_persists_across_restart` omitted `x-tenant-id` after the parent
+   changes made tenant scope mandatory and correctly received `403 TENANT_SCOPE_DENIED`.
+
+The task-status note mentioned a missing Playwright module. That condition is reproducible
+only when the checker is invoked locally without first running `npm ci`; the archived PR
+job log does not show it. The workflow already installed `@playwright/test` successfully,
+so this change does not weaken or bypass dependency installation.
+
+## Delivered boundary
+
+- Task PR and `dev` CI keep the required `product-e2e-gate` status, but it now runs the
+  dev-merge mode. That mode validates the Gate 0-6 registry's integrity, accepts an honest
+  `NO-GO`, checks the canonical test inventory, and then runs the complete deterministic
+  E2E suite to emit a fresh exact-source receipt on the runner.
+- Dev-to-main promotion checks out the exact successful dev workflow head and runs the
+  production release mode before it opens or auto-merges a promotion PR.
+## TOCTOU and Candidate Ancestry Remediation
+
+- **Immutable promotion SHA**: `promote-dev-to-main.yml` binds `PROMOTION_SHA` to `${{ github.event.workflow_run.head_sha }}` and passes `EXPECTED_SHA` into `make product-release-gate`.
+- **PR-head drift failure**: `promote-dev-to-main.yml` asserts that `PR headRefOid` matches `PROMOTION_SHA`. If `dev` advances after CI validation, the workflow logs `::error::Promotion SHA drift detected!...` and aborts before status stamping or auto-merging.
+- **Candidate ancestry policy**: `delivery_toolchain/e2e/check_release_gate_registry.py` accepts `--expected-sha` and verifies that the registry's `release.candidate_sha` is either an exact match or an evidence-only ancestor (where intervening commits touch only `docs/evidence/`, `docs/release/`, `docs/runbooks/`, etc.). Intervening non-evidence (product or test code) commits fail closed.
+- **First-parent merge delta semantics**: `delivery_toolchain/e2e/check_release_gate_registry.py` uses `git log --first-parent -m` for commit traversal in `check_candidate_ancestry`. This evaluates merge commits against their first-parent (candidate) tree rather than all parents, preventing false-positive re-reporting of candidate product changes when merging evidence from stale task branches, while retaining fail-closed protection against non-evidence merge resolutions and product changes.
+- **Negative dev-advance & merge regressions**: `tests/e2e/test_release_gate_registry.py` tests `check_candidate_ancestry` against simulated non-evidence commit diffs, merge-resolution product changes (failing closed), and evidence-only merges from stale second-parent branches (`test_cli_expected_sha_ancestry_stale_second_parent_evidence_merge_passes`).
+
+## Release truth after reconciliation
+
+The registry remains `NO-GO`, with zero of seven gates cleared and zero passing receipts.
+Diagnostics no longer call these archived-done implementation tasks open:
+
+- `ODP-PLAN-SOLVER-RUNTIME-COMPAT-001`
+- `ODP-PLAN-HEATZONE-OUTCOME-001`
+- `ODP-PLAN-NETPLAN-ACCEPTANCE-001`
+- `ODP-PLAN-OSS-LICENSE-GATE-001`
+- `ODP-PLAN-DEFERRED-OSS-ADR-001`
+- `ODP-PLAN-ACCEPTANCE-REAL-EXEC-001`
+- `ODP-PLAN-CANONICAL-SHELL-LIVE-001`
+
+Their task completion does not clear a release gate. Production stays blocked on authentic
+exact-candidate Gate 0-6 receipts, ForecastOps history and production alias, active
+SiteScore/AVM work, Human/Ops and legal approval, live staging proof, UAT sign-off,
+observability/on-call readiness, and the final Stage 0-7 / Gate 0-6 audit.
+
+## Verification
+
+The final verification batch was:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py
+python3 delivery_toolchain/e2e/check_release_gate_registry.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
+git diff --check
+```
+
+An independent temporary detached worktree merged task head `76b5a43e` with immutable
+parent head `8812479d` without conflict. After an isolated `npm ci`, these original
+failure selectors and the composed dev-merge checker passed:
+
+```text
+pytest -q tests/e2e/test_acceptance_coverage.py::test_no_deleted_specs_referenced_and_inventory_consistent tests/integration/test_flow_002_expansion_persistence.py::test_expansion_flow_persists_across_restart
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
+```
+
+Required semantic regressions prove both directions:
+
+- positive: the dev-merge checker exits zero while the committed registry is valid
+  `NO-GO`;
+- negative: the production release checker exits non-zero for the same registry.
+
+No Package 10 UI files, fake receipts, gate status, Human/Ops approval, deployment state,
+or parent PR head were changed.
+
+## 2026-08-02 current-base composition
+
+Owner dispatch resumed from published task head
+`1a381de9037b712f34ab513e036b62ba7f5d4331`. The task branch was 92 commits
+behind and five commits ahead of `origin/dev`. To preserve the already-pushed
+task history and satisfy normal-push policy, current `origin/dev` head
+`475f6d5e9b36f097a1eb4ab3dbe4bd8b1b1d7c2f` was merge-composed rather than
+rebasing or force-pushing it.
+
+The only conflict was the tenant header in
+`tests/integration/test_flow_002_expansion_persistence.py`. The resolution keeps
+the latest-base test-specific value `tenant-flow-002`; this preserves the task's
+tenant-scope coverage while avoiding the older generic `tenant-a` identity. The
+resolved, base-advanced implementation head is
+`50baea9095ca7ccf62fca8c1789c0e4ecac00c56`, pushed normally to PR #562.
+
+Verification on that exact implementation head:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go  # exit 1 as required; explicit NO-GO
+git diff --check origin/dev...HEAD  # exit 0
+python3 YAML safe-load of .github/workflows/ci.yml and .github/workflows/promote-dev-to-main.yml  # exit 0
+```
+
+The production negative assertion remains a required pass condition: this task
+separates dev-merge execution from production authority; it does not change the
+registry's authentic `NO-GO`, clear any Gate 0-6 blocker, or grant release GO.
+
+## 2026-08-02 latest-base closeout composition
+
+Closeout dispatch resumed from the frozen reviewer-approved and pushed task head
+`bd4e7d461074ddf1d27fb146ac64a7fd37563b03`. Since that review, `origin/dev`
+advanced from `6963ca40ff9f5666e977603c8c418edc7ca320d5` to
+`5f3be1e04b192f5be3a59076c405be335d9bfe3b`. The branch histories had diverged,
+so the current base was merge-composed without rebasing, force-pushing, or
+discarding any task history. The merge completed without conflicts because the
+six files changed on the new base did not overlap the task-owned nine-file diff.
+The resulting composed implementation head was
+`7338962c2fe21a39266db0ac6b98a3f79c79bd7b`.
+
+Verification on that composed implementation head:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go --expected-sha 7338962c2fe21a39266db0ac6b98a3f79c79bd7b  # exit 1 as required; authentic NO-GO
+python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
+git diff --check origin/dev...HEAD  # exit 0
+```
+
+Because the required base composition changes the exact pushed HEAD, the prior
+frozen-head approval cannot be reused for `done`. This evidence reseal and the
+normally pushed composed branch require an exact-head re-review before closeout.
+
+## 2026-08-02 latest-base re-seal composition
+
+Re-seal dispatch resumed after PR #582 merge (`80ba278623b8d4ad4ce81ea749a5aee030e5c18d`).
+`origin/dev` advanced from `5f3be1e04b192f5be3a59076c405be335d9bfe3b` to
+`80ba278623b8d4ad4ce81ea749a5aee030e5c18d`. The branch histories diverged,
+so current `origin/dev` was merge-composed into `task/ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`
+without force-pushing, resetting, or discarding task history. The merge completed smoothly
+without conflicts (`2a86e08200c91a7b0f2845cd24923313c6b14072`).
+
+Verification on that composed implementation head:
+
+```text
+pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go --expected-sha <HEAD>  # exit 1 as required; authentic NO-GO
+python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
+git diff --check origin/dev...HEAD  # exit 0
+```
+
+Because base composition advanced `origin/dev`, this evidence re-seal and normal push of the composed branch are submitted for exact-head re-review by Codex2.
+
+## 2026-08-02 owner-dispatch base advance
+
+Owner dispatch resumed from clean published task head
+`4038981d7545269b08595a38450c572fa829bf2e`. After fetching remote refs,
+`origin/dev` was at `96f94cda56d509f44eb5929997b3ab7a67f1c65c`; the histories
+had diverged by 11 base commits and 12 task-side commits. To preserve all
+published task history and keep the push non-forced, current `origin/dev` was
+merge-composed into the task branch. The merge completed without conflicts at
+`756f3cb5ead6b8cc428681e5a04da9e195be4999` and was pushed normally to PR
+#562.
+
+Verification on that composed implementation head:
+
+```text
+uv run pytest -q tests/e2e/test_release_gate_registry.py tests/e2e/test_acceptance_coverage.py tests/integration/test_flow_002_expansion_persistence.py tests/security/test_branch_protection_policy.py  # exit 0
+uv run ruff check delivery_toolchain/e2e/check_product_release_gate.py delivery_toolchain/e2e/check_release_gate_registry.py delivery_toolchain/e2e/product_e2e_receipt.py tests/e2e/test_release_gate_registry.py tests/integration/test_flow_002_expansion_persistence.py  # exit 0
+python3 delivery_toolchain/e2e/check_release_gate_registry.py  # exit 0; NO-GO registry valid, 0/7 gates cleared
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge  # exit 0
+python3 delivery_toolchain/e2e/check_product_release_gate.py --require-go --expected-sha 756f3cb5ead6b8cc428681e5a04da9e195be4999  # exit 1 as required; authentic NO-GO
+python3 -c workflow YAML safe-load for ci.yml and promote-dev-to-main.yml  # exit 0
+git merge-base --is-ancestor origin/dev HEAD  # exit 0
+git diff --check origin/dev...HEAD  # exit 0 after this evidence reseal removes the pre-existing blank line at EOF
+```
+
+PR #562 reported the `orchestrator` check successful on the composed head while
+`product`, `performance-gate`, and `product-e2e-gate` were still running. The
+final evidence-only reseal commit therefore requires Antigravity3 to review the
+new exact pushed head; no earlier frozen approval is being reused.

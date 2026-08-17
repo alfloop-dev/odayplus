@@ -47,47 +47,72 @@ class Telemetry:
         latency_metric: str | None = "api_latency_ms",
         latency_labels: dict[str, str] | None = None,
         attributes: dict[str, Any] | None = None,
+        contain_telemetry_errors: bool = False,
     ) -> Iterator[Span]:
         """Run a stage: open a span, time it, then emit a structured log line.
 
         On success the span status is OK and an INFO line is written; on error
         the span is marked ERROR and an ERROR line with the exception class as
         ``error_code`` is written before the exception re-raises.
+
+        ``contain_telemetry_errors`` makes the emissions themselves non-fatal.
+        Callers on a live request path set it so a failing metrics backend or
+        log sink degrades the signal instead of the response; batch and worker
+        callers leave it off, where a telemetry write failing loudly is the
+        wanted behaviour.
         """
+
+        def emit(record: Any) -> None:
+            if not contain_telemetry_errors:
+                record()
+                return
+            try:
+                record()
+            except Exception:
+                pass
 
         scope = self.tracer.start_span(name, kind, context=context, parent=parent, attributes=attributes)
         with scope as span:
             try:
                 yield span
             except Exception as exc:
-                self.logger.error(
-                    f"{name} failed",
-                    correlation_id=context.correlation_id,
-                    actor=context.actor_id,
-                    resource=resource,
-                    action=action or name,
-                    error_code=type(exc).__name__,
-                    retryable=False,
-                    job_id=context.job_id,
-                    model_version=context.model_version,
-                    dataset_snapshot_id=context.dataset_snapshot_id,
+                # Bound before the lambda: `exc` is unbound at the end of the
+                # except clause, so the closure must not depend on it.
+                error_code = type(exc).__name__
+                emit(
+                    lambda: self.logger.error(
+                        f"{name} failed",
+                        correlation_id=context.correlation_id,
+                        actor=context.actor_id,
+                        resource=resource,
+                        action=action or name,
+                        error_code=error_code,
+                        retryable=False,
+                        job_id=context.job_id,
+                        model_version=context.model_version,
+                        dataset_snapshot_id=context.dataset_snapshot_id,
+                    )
                 )
                 raise
         if latency_metric is not None:
-            self.metrics.observe(
-                latency_metric,
-                span.duration_ms,
-                labels=latency_labels or {"service": self.service, "route": name},
+            emit(
+                lambda: self.metrics.observe(
+                    latency_metric,
+                    span.duration_ms,
+                    labels=latency_labels or {"service": self.service, "route": name},
+                )
             )
-        self.logger.log(
-            LogLevel.INFO,
-            f"{name} ok",
-            correlation_id=context.correlation_id,
-            actor=context.actor_id,
-            resource=resource,
-            action=action or name,
-            result="ok",
-            job_id=context.job_id,
-            model_version=context.model_version,
-            dataset_snapshot_id=context.dataset_snapshot_id,
+        emit(
+            lambda: self.logger.log(
+                LogLevel.INFO,
+                f"{name} ok",
+                correlation_id=context.correlation_id,
+                actor=context.actor_id,
+                resource=resource,
+                action=action or name,
+                result="ok",
+                job_id=context.job_id,
+                model_version=context.model_version,
+                dataset_snapshot_id=context.dataset_snapshot_id,
+            )
         )

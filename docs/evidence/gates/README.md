@@ -2,7 +2,7 @@
 
 `docs/evidence/gates/RELEASE_GATE_REGISTRY.json` is the authoritative,
 machine-readable state of the seven ODay Plus release gates. It is validated by
-`scripts/e2e/check_release_gate_registry.py` and is the file the final gate
+`delivery_toolchain/e2e/check_release_gate_registry.py` and is the file the final gate
 audit (`ODP-PLAN-FINAL-GATE-AUDIT-001`) reads instead of re-deriving gate state
 from prose.
 
@@ -42,18 +42,18 @@ reassigns them at the final gate audit.
 
 ```bash
 # Integrity check. Exits 0 for a well-formed registry, including a NO-GO one.
-python3 scripts/e2e/check_release_gate_registry.py
+python3 delivery_toolchain/e2e/check_release_gate_registry.py
 
 # Release check. Exits non-zero unless every gate is cleared and the recorded
 # decision is 'go'. This is the form a release promotion must call.
-python3 scripts/e2e/check_release_gate_registry.py --require-go
+python3 delivery_toolchain/e2e/check_release_gate_registry.py --require-go
 
 # Bind the check to the commit actually being released.
-python3 scripts/e2e/check_release_gate_registry.py \
+python3 delivery_toolchain/e2e/check_release_gate_registry.py \
   --expected-sha "$(gh pr view <pr> --json headRefOid --jq .headRefOid)"
 
 # Machine-readable report for downstream audits.
-python3 scripts/e2e/check_release_gate_registry.py --json
+python3 delivery_toolchain/e2e/check_release_gate_registry.py --json
 ```
 
 `make product-e2e-gate` runs the integrity check, so registry drift fails CI
@@ -161,7 +161,7 @@ proves.
    into the repository.
 2. Add the receipt to the gate with the exact release SHA it was produced
    against, then move the gate's status and clear its blockers.
-3. Run `python3 scripts/e2e/check_release_gate_registry.py` and
+3. Run `python3 delivery_toolchain/e2e/check_release_gate_registry.py` and
    `python3 -m pytest -q tests/e2e/test_release_gate_registry.py`.
 4. Only Human/Ops moves `release.decision` to `go`, and only with a recorded
    `human_signoff`.

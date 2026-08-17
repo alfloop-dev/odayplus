@@ -18,6 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 
+from apps.api.app.routes._common import reset_allowed_guard
 from apps.api.app.routes.operator_modules.live_service import resolve_service
 from modules.external_data.security import contains_sensitive_submission_material
 from modules.listing.application.intake_authorization import (
@@ -126,15 +127,10 @@ def create_network_listings_sub_router(
     def active_service(request: Request) -> Any:
         return resolve_service(request, service, service_resolver)
 
-    def require_reset_allowed() -> None:
-        if not allow_reset:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail={
-                    "code": "PRODUCTION_RESET_DENIED",
-                    "message": "network listing reset is disabled in live mode",
-                },
-            )
+    require_reset_allowed = reset_allowed_guard(
+        allow_reset=allow_reset,
+        resource_label="network listing",
+    )
 
     @router.get("", dependencies=[Depends(require_view_permission_fn)])
     @router.get("/", dependencies=[Depends(require_view_permission_fn)])

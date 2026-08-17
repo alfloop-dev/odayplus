@@ -65,17 +65,17 @@ The single failure is
 fails with `Error: required command 'uv' is not installed.` — the `uv` binary
 is absent from this worker sandbox. Confirmed pre-existing: the same test fails
 identically on the unmodified base commit (`git stash` + re-run). It passes in
-CI, where `uv` is installed. It executes `scripts/deploy_cloud_run_waji.sh`,
+CI, where `uv` is installed. It executes `product_ops/deployment/deploy_cloud_run_waji.sh`,
 which round 4 did not touch.
 
 ## Lint
 
 ```
-python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py \
+python3 -m ruff format --check product_ops/deployment/validate_cloud_run_live_deployment.py \
                               tests/ops/test_cloud_run_live_deployment.py
 python3 -m ruff check .orchestrator scripts        # ci.yml lint job
 python3 -m ruff check tests modules apps shared models solver pipelines infra
-bash -n scripts/deploy_cloud_run_waji.sh
+bash -n product_ops/deployment/deploy_cloud_run_waji.sh
 ```
 
 → all clean.
@@ -208,7 +208,7 @@ this policy exists to enforce was configurable away.
 Reproduced on `c583bd7f` before the fix:
 
 ```
-$ python3 scripts/deployment/validate_cloud_run_live_deployment.py \
+$ python3 product_ops/deployment/validate_cloud_run_live_deployment.py \
     compatibility-smoke --api-url http://127.0.0.1:1 --web-url http://127.0.0.1:1 \
     --timeout nan --output /tmp/nanprobe.json
 ...
@@ -269,7 +269,7 @@ caught `ValueError`, so that boundary was lost.
 Reproduced on `92de5735` before the fix:
 
 ```
-$ python3 scripts/deployment/validate_cloud_run_live_deployment.py \
+$ python3 product_ops/deployment/validate_cloud_run_live_deployment.py \
     compatibility-smoke --api-url 'https://[::1' --web-url 'https://[::1' \
     --output /tmp/badurl-before.json
 ...

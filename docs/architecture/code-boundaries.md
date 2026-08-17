@@ -1,0 +1,93 @@
+# Code boundaries and removal policy
+
+`config/code-boundaries.yaml` is the source of truth for separating the product,
+product operations, the internal development platform, delivery tooling, tests,
+historical evidence, and archived code. Directory placement is the primary
+boundary; manifest exceptions exist only while legacy paths are migrated.
+
+## Boundary contract
+
+| Boundary | Product runtime | Production artifact | Removal rule |
+|---|---|---|---|
+| `product_system` | yes | included | remove only through product retirement |
+| `product_operations_tooling` | no | excluded | remove after operational support windows end |
+| `development_platform_system` | no | excluded | removable when orchestration is retired or moved |
+| `development_delivery_tooling` | no | excluded | removable only when this repository is no longer maintained or released |
+| `verification` | no | excluded | removable with the code/support obligation it verifies |
+| `evidence_artifact` | no | excluded | removable after evidence retention obligations end |
+| `archived` | no | excluded | removable only under archive retention policy |
+
+The deployable product may import only product code. Product operations may
+import product contracts. Development and delivery code may consume product
+interfaces, and tests may consume any maintained scope. Dependencies in the
+opposite direction are rejected.
+
+## Artifact profiles
+
+- `production` contains only `product_system`.
+- `operations` adds separately operated deployment, migration, and data/model
+  commands.
+- `engineering` adds the development platform, delivery tooling, and tests.
+
+The checked-in inventory at `docs/audits/code-boundary-inventory.csv` lists the
+boundary, retention class, artifact profiles, and removal condition for every
+tracked Python file. Verification files also carry `verified_scope`; deleting
+development tooling therefore has an exact test-removal set instead of requiring
+all tests to be treated as one shared bucket.
+
+## Enforcement
+
+Run:
+
+```bash
+make boundary-check
+```
+
+The check fails when a Python file is unclassified, matches multiple scopes,
+enters a forbidden artifact profile, violates import direction, or makes the
+checked-in inventory stale. Regenerate the inventory only after reviewing the
+new classification:
+
+```bash
+python3 delivery_toolchain/governance/check_code_boundaries.py --write-inventory
+```
+
+Legacy locations are migrated incrementally. A compatibility wrapper may keep
+an old command/import stable, but the canonical implementation must live in its
+own boundary and product code must never depend on the wrapper.
+
+The delivery boundary intentionally has no `scripts/**/*.py` catch-all. A new
+delivery command placed under `scripts/` is unclassified and fails CI; new
+delivery code must be created under `delivery_toolchain/`.
+
+## Removal bundles
+
+| Bundle | Physical code roots | Associated verification |
+|---|---|---|
+| Development platform | `.orchestrator/`, `scripts/` | `verified_scope=development_platform_system` |
+| Delivery toolchain | `delivery_toolchain/`, `infra/terraform/` | `verified_scope=development_delivery_tooling` |
+| Product operations | `product_ops/`, product migration/runtime infra | `verified_scope=product_operations_tooling` |
+
+The boundary check fails if a bundle root contains foreign Python code or if a
+declared removable scope escapes its roots. `scripts/` is retained only because
+the deployed supervisor still exposes stable status/health entrypoints there;
+it is wholly part of the development-platform removal bundle.
+
+## Migration status
+
+| Capability | Canonical implementation | Temporary compatibility path |
+|---|---|---|
+| SBOM generation | `delivery_toolchain/security/generate_sbom.py` | none |
+| Python SAST | `delivery_toolchain/security/sast_scan.py` | none |
+| Secret and image-signature checks | `delivery_toolchain/security/` | none |
+| OpenAPI generation and drift | `delivery_toolchain/openapi/` | none |
+| Git task workflow and hooks | `delivery_toolchain/git/` | none |
+| Release, load, and chaos validation | `delivery_toolchain/{release,load,chaos}/` | none |
+| GitHub repository policy | `delivery_toolchain/github/` | none |
+| Configuration and design governance | `delivery_toolchain/governance/` | none |
+| E2E and product-release gates | `delivery_toolchain/e2e/` | none |
+| Product deployment, migration, and backfill | `product_ops/` | none |
+
+New automation must use canonical paths. Compatibility entrypoints may be
+removed after downstream callers have migrated and the announced support window
+has ended.

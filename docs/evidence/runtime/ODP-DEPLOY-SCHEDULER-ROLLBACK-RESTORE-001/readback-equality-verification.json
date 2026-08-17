@@ -1,0 +1,18 @@
+{
+  "verified_at": "2026-08-02T15:21:30Z",
+  "triggers": {
+    "oday-worker-trigger": {
+      "pre_deploy_snapshot": "docs/evidence/runtime/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/pre-deploy-worker-trigger.json",
+      "post_rollback_readback": "docs/evidence/runtime/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/post-rollback-readback-worker.json",
+      "redacted_equality": true,
+      "drift_detected": false
+    },
+    "oday-scheduler-trigger": {
+      "pre_deploy_snapshot": "docs/evidence/runtime/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/pre-deploy-scheduler-trigger.json",
+      "post_rollback_readback": "docs/evidence/runtime/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/post-rollback-readback-scheduler.json",
+      "redacted_equality": true,
+      "drift_detected": false
+    }
+  },
+  "overall_result": "PASSED_ZERO_DRIFT"
+}

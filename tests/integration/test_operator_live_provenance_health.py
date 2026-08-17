@@ -1,0 +1,453 @@
+"""Operator live provenance and governed capability health integration tests.
+
+Verifies the remediation of Deploy Dev run 30680943677 failure semantics from origin/dev 97e3ae2e:
+1. PostgreSQL-backed Operator bootstrap reports truthful provenance, dataMode, and section completeness.
+2. Platform health (/platform/health and /readiness) return 200 OK when core repository is ready,
+   distinguishing core Operator repository readiness from model capability bindings.
+3. ForecastOps fails closed with unavailable capability status when absent MLflow alias exists,
+   without synthetic auto-seed, alias fabrication, or fake ready state.
+4. Invalid or unauthorized access fails closed.
+"""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+from starlette.requests import Request
+
+from apps.api.oday_api.main import create_app
+from apps.api.oday_api.security.dependencies import (
+    OPERATOR_CONSOLE_RESOURCE,
+    require_operator_permission,
+)
+from modules.opsboard.application.operator_live_repository import OperatorLiveRepository
+from modules.opsboard.application.operator_state import OperatorStateService
+from shared.auth import Action
+from shared.domain import AddressLocation, Brand, Store, Tenant
+from shared.infrastructure.persistence.factory import _durable_bundle, build_persistence
+from shared.infrastructure.persistence.postgresql import PostgresEngine
+
+
+class MockPostgresEngine:
+    """Explicit PostgreSQL test double for integration testing without a running Cloud SQL instance.
+
+    Replaces direct mutation of SqliteEngine.is_production attributes while ensuring
+    the persistence bundle cleanly identifies as PostgreSQL 16 production engine.
+    """
+
+    def __init__(self, delegate_engine: Any) -> None:
+        self._delegate = delegate_engine
+
+    @property
+    def is_production(self) -> bool:
+        return True
+
+    def query(self, sql: str, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        if sql.strip().upper() == "SELECT 1":
+            return [{"ready": 1}]
+        return self._delegate.query(sql, *args, **kwargs)
+
+    def query_one(self, sql: str, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        if sql.strip().upper() in {"SELECT 1", "SELECT 1 AS READY"}:
+            return {"ready": 1}
+        return self._delegate.query_one(sql, *args, **kwargs)
+
+    def execute(self, sql: str, *args: Any, **kwargs: Any) -> Any:
+        return self._delegate.execute(sql, *args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+
+def _live_provider() -> Any:
+    return SimpleNamespace(
+        mode=SimpleNamespace(value="live"),
+        ok=True,
+        errors=(),
+    )
+
+
+def _live_connectivity_probe(**_kwargs: Any) -> Any:
+    return SimpleNamespace(
+        connectivity_healthy=True,
+        probes=[],
+        to_dict=lambda: {
+            "connectivity_healthy": True,
+            "probes": [],
+            "status": "healthy",
+        },
+    )
+
+
+def _production_backed_bundle(path: Path) -> Any:
+    bundle = _durable_bundle(path)
+    mock_engine = MockPostgresEngine(bundle.engine)
+    return replace(
+        bundle,
+        engine=mock_engine,
+        mode="postgresql",
+        assisted_intake_store=SimpleNamespace(),
+    )
+
+
+def test_operator_live_provenance_reports_live_data_mode_when_postgresql_ready(tmp_path: Path) -> None:
+    """Acceptance 2 (Run 30680943677 remediation): Operator bootstrap backed by PostgreSQL
+    reports non-placeholder live provenance and canonical dataMode='live'.
+    """
+    bundle = _production_backed_bundle(tmp_path / "prov-test.sqlite3")
+    bundle.tenant_repository.save_tenant(
+        Tenant(tenant_id="tenant-live-1", tenant_name="Live Tenant")
+    )
+    bundle.brand_repository.save_brand(
+        Brand(
+            brand_id="brand-live-1",
+            tenant_id="tenant-live-1",
+            brand_code="brand-live",
+            brand_name="Live Brand",
+        )
+    )
+    bundle.address_location_repository.save_address(
+        AddressLocation(
+            address_id="address-live-1",
+            raw_address="Live test address",
+        )
+    )
+    bundle.store_repository.save_store(
+        Store(
+            store_id="store-live-1",
+            tenant_id="tenant-live-1",
+            brand_id="brand-live-1",
+            store_name="Live Store",
+            store_status="open",
+            address_id="address-live-1",
+        )
+    )
+    repository = OperatorLiveRepository(bundle)
+    service = OperatorStateService(
+        require_live_data=True,
+        persistence_mode="postgresql",
+        provider_mode="live",
+        live_repository=repository,
+    )
+
+    envelope = service.get_today(
+        role_id="ops-lead",
+        tenant_id="tenant-live-1",
+    )
+
+    assert envelope["meta"]["source"] == "operator-shell-production"
+    assert envelope["meta"]["sections"]["stores"]["state"] == "available"
+    assert envelope["meta"]["sections"]["stores"]["recordCount"] == 1
+    assert envelope["meta"]["sections"]["riskRows"]["state"] == "available"
+    assert envelope["meta"]["sections"]["listings"]["state"] == "available"
+    assert envelope["meta"]["dataMode"] == "live"
+    assert envelope["meta"]["dataOrigin"]["kind"] == "authoritative"
+    assert envelope["meta"]["dataOrigin"]["complete"] is True
+    assert envelope["meta"]["unavailableSections"] == []
+
+
+def test_platform_health_and_readiness_200_ok_when_core_repository_is_ready(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """Acceptance 3 (Run 30680943677 remediation): Platform health and readiness return 200 ok when core repository is ready,
+    distinguishing core Operator repository readiness from model capability bindings.
+    """
+    from models.shared_ml import MlflowProductionModelRuntime
+    from tests.integration.test_production_api_composition import RecordingProductionRuntime
+
+    runtime = RecordingProductionRuntime()
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.setattr(
+        MlflowProductionModelRuntime,
+        "from_environment",
+        classmethod(lambda _cls, **_kwargs: runtime),
+    )
+
+    bundle = _production_backed_bundle(tmp_path / "health-test.sqlite3")
+
+    app = create_app(
+        persistence=bundle,
+        external_provider_validation=_live_provider(),
+        external_provider_connectivity_probe=_live_connectivity_probe,
+    )
+
+    with TestClient(app) as client:
+        health_res = client.get("/platform/health")
+        assert health_res.status_code == 200, health_res.text
+        health_data = health_res.json()
+        assert health_data["status"] == "ok"
+        assert health_data["data_mode"] == "live"
+        assert health_data["modes"]["data"]["mode"] == "live"
+        assert health_data["modes"]["data"]["operatorRepositoryReady"] is True
+        assert health_data["modes"]["data"]["liveReady"] is True
+        assert health_data["modes"]["data"]["blockingReasons"] == []
+
+        readiness_res = client.get("/readiness")
+        assert readiness_res.status_code == 200, readiness_res.text
+        readiness_data = readiness_res.json()
+        assert readiness_data["status"] == "ok"
+        assert readiness_data["data_mode"] == "live"
+        assert readiness_data["details"]["data"]["mode"] == "live"
+        assert readiness_data["details"]["data"]["liveReady"] is True
+
+
+def test_operator_live_provenance_and_health_integration(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    bundle = _production_backed_bundle(
+        tmp_path / "operator-postgres.sqlite3",
+    )
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    try:
+        app = create_app(
+            persistence=bundle,
+            external_provider_validation=_live_provider(),
+            external_provider_connectivity_probe=_live_connectivity_probe,
+        )
+        client = TestClient(app)
+        response = client.get("/platform/health")
+        payload = response.json()
+    finally:
+        bundle.engine.close()
+
+    assert response.status_code == 200
+    assert payload["status"] == "ok"
+    assert payload["modes"]["data"]["liveReady"] is True
+    assert payload["modes"]["data"]["blockingReasons"] == []
+
+
+def test_forecastops_absent_alias_fails_closed_without_synthetic_seed_or_fake_ready(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """Acceptance 4: ForecastOps remains required-active but unavailable until authentic 7/14/28-day history and an approved alias exist.
+    No fixture, synthetic auto-seed, fabricated alias, or fake ready state is introduced.
+    Core Operator platform health returns 200 OK while forecastops reports available=False and governedDisabled=False.
+    """
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+    bundle = _production_backed_bundle(tmp_path / "forecast-test.sqlite3")
+
+    app = create_app(
+        persistence=bundle,
+        external_provider_validation=_live_provider(),
+        external_provider_connectivity_probe=_live_connectivity_probe,
+    )
+
+    with TestClient(app) as client:
+        health_res = client.get("/platform/health")
+        assert health_res.status_code == 200, health_res.text
+        health_data = health_res.json()
+
+        assert health_data["status"] == "ok"
+        assert health_data["modes"]["data"]["liveReady"] is True
+        assert health_data["modes"]["data"]["blockingReasons"] == []
+
+        models_section = health_data["modes"]["models"]
+        forecast_cap = models_section["capabilities"]["forecastops"]
+
+        assert forecast_cap["available"] is False
+        assert forecast_cap["governedDisabled"] is False
+        assert forecast_cap["governedDisabledEvidence"] is None
+        assert forecast_cap["reasonCode"] in {
+            "PRODUCTION_BINDING_NOT_RESOLVED",
+            "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+        }
+        assert models_section["productionBindingsReady"] is False
+        assert models_section["blockingReasons"] == [
+            "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ]
+        assert models_section["autoSeeded"] is False
+
+        # Accessing model execution endpoint without authorization fails closed
+        unauth_exec = client.post("/api/v1/forecastops/forecast-jobs", json={})
+        assert unauth_exec.status_code in {401, 403, 422, 503}
+
+
+def test_unauthorized_access_fails_closed() -> None:
+    """Acceptance 2 (fail-closed clause): Invalid or unauthorized access fails closed."""
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "scheme": "https",
+            "path": "/api/v1/operator/today",
+            "raw_path": b"/api/v1/operator/today",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 1234),
+            "server": ("testserver", 443),
+        }
+    )
+    guard = require_operator_permission(
+        OPERATOR_CONSOLE_RESOURCE,
+        Action.VIEW,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        guard(request)
+    assert exc_info.value.status_code in {401, 403}
+
+
+def test_governed_disabled_capability_readiness_consistency(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """Regression test: authentic governed-disabled capabilities in PRODUCTION_MODEL_CONTRACTS provide complete evidence while liveReady and blockingReasons stay consistent."""
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+
+    bundle = _production_backed_bundle(tmp_path / "gov-disabled-test.sqlite3")
+
+    app = create_app(
+        persistence=bundle,
+        external_provider_validation=_live_provider(),
+        external_provider_connectivity_probe=_live_connectivity_probe,
+    )
+
+    with TestClient(app) as client:
+        health_res = client.get("/platform/health")
+        assert health_res.status_code == 200, health_res.text
+        health_data = health_res.json()
+
+        assert health_data["status"] == "ok"
+        assert health_data["modes"]["data"]["liveReady"] is True
+        assert health_data["modes"]["data"]["blockingReasons"] == []
+
+        capabilities = health_data["modes"]["models"]["capabilities"]
+        for service in ("avm", "sitescore", "heatzone"):
+            cap = capabilities[service]
+            assert cap["available"] is False
+            assert cap["governedDisabled"] is True
+            assert cap["governedDisabledEvidence"] is not None
+            assert cap["governedDisabledEvidence"]["reasonCode"] == cap["reasonCode"]
+
+
+@pytest.mark.requires_live_env
+def test_operator_live_provenance_real_postgresql_integration(monkeypatch: Any) -> None:
+    """Real PostgreSQL 16 runtime verification (runs when live database environment is present)."""
+    db_url = "postgresql://oday_app:super-secret@127.0.0.1:5432/oday_plus"
+    monkeypatch.setenv("ODAY_DATABASE_URL", db_url)
+    monkeypatch.setenv("ODP_PERSISTENCE", "postgresql")
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+
+    try:
+        engine = PostgresEngine(db_url, validate_schema=False)
+        engine.query("SELECT 1")
+    except Exception:
+        pytest.skip("Real PostgreSQL database not reachable on 127.0.0.1:5432")
+
+    bundle = build_persistence(mode="postgresql")
+    assert bundle.mode == "postgresql"
+    assert bundle.engine.is_production is True
+
+
+def test_durable_tenant_scoped_ingestion_runs_latest_per_provider_deduplication(
+    tmp_path: Path,
+) -> None:
+    """Regression test (Run 30680943677 P1 remediation):
+    TenantScopedDocumentStore.latest_per_group correctly partitions and returns only the newest run per provider.
+    Multiple runs for the same tenant and provider produce freshness_rows=1 instead of returning duplicate runs.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from modules.external_data.application.ingestion_store import IngestionRunRecord
+    from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+
+    db_path = tmp_path / "durable_ingestion.sqlite3"
+    bundle = build_persistence(mode="durable", db_path=str(db_path))
+    ingestion_store = bundle.ingestion_run_store_for_tenant("tenant-prov-test")
+    assert ingestion_store is not None
+
+    t1 = datetime.now(UTC) - timedelta(hours=2)
+    t2 = datetime.now(UTC)
+
+    run1 = IngestionRunRecord(
+        run_id="run-window-1",
+        provider_id="provider-alpha",
+        schedule_id="sched-1",
+        trigger="scheduled",
+        idempotency_key="key-window-1",
+        status="completed",
+        data_status="fresh",
+        window_start=t1,
+        window_end=t1,
+        started_at=t1,
+        completed_at=t1,
+        raw_snapshot_id="raw-1",
+        canonical_snapshot_id="can-1",
+        source_snapshot_id="src-1",
+        provider_observed_at=t1,
+        ingested_at=t1,
+        last_success_watermark_before=t1,
+        last_success_watermark_after=t1,
+        correlation_id="corr-1",
+        accepted_count=5,
+        quarantined_count=0,
+        total_count=5,
+        freshness=SourceFreshnessEvidence(
+            provider_id="provider-alpha",
+            source_snapshot_id="src-1",
+            data_status="fresh",
+            provider_observed_at=t1,
+            ingested_at=t1,
+            freshness_sla_seconds=86400,
+            correlation_id="corr-1",
+        ),
+    )
+
+    run2 = IngestionRunRecord(
+        run_id="run-window-2",
+        provider_id="provider-alpha",
+        schedule_id="sched-1",
+        trigger="scheduled",
+        idempotency_key="key-window-2",
+        status="completed",
+        data_status="fresh",
+        window_start=t2,
+        window_end=t2,
+        started_at=t2,
+        completed_at=t2,
+        raw_snapshot_id="raw-2",
+        canonical_snapshot_id="can-2",
+        source_snapshot_id="src-2",
+        provider_observed_at=t2,
+        ingested_at=t2,
+        last_success_watermark_before=t2,
+        last_success_watermark_after=t2,
+        correlation_id="corr-2",
+        accepted_count=10,
+        quarantined_count=0,
+        total_count=10,
+        freshness=SourceFreshnessEvidence(
+            provider_id="provider-alpha",
+            source_snapshot_id="src-2",
+            data_status="fresh",
+            provider_observed_at=t2,
+            ingested_at=t2,
+            freshness_sla_seconds=86400,
+            correlation_id="corr-2",
+        ),
+    )
+
+    ingestion_store.save(run1)
+    ingestion_store.save(run2)
+
+    latest_runs = ingestion_store.latest_per_provider()
+    assert len(latest_runs) == 1
+    assert latest_runs[0].run_id == "run-window-2"
+
+    freshness_rows = ingestion_store.freshness()
+    assert len(freshness_rows) == 1

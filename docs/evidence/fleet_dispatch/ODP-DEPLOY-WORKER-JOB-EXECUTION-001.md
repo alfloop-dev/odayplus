@@ -66,7 +66,7 @@ are still persisted, no snapshot is written, and no watermark advances.
 
 Unchanged: the worker claim/retry/dead-letter state machine, the Cloud Run job
 entrypoint receipt shape, the scheduler enqueue contract, and the provider
-allowlist/registry rules. `scripts/deploy_cloud_run_waji.sh` is untouched, so
+allowlist/registry rules. `product_ops/deployment/deploy_cloud_run_waji.sh` is untouched, so
 the migration job, migration compatibility, scheduler, fail-closed rollback,
 provider readiness, model readiness, and secret binding gates are preserved.
 No Package 10 visual, Operator UI, or design-archive surface is touched.

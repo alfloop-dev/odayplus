@@ -1,0 +1,422 @@
+path,system_scope,is_product_runtime,boundary,role,loc,functions,classes,cli_entrypoint,disposition,boundary_basis
+.orchestrator/adapters/__init__.py,development_platform_system,false,development_platform_runtime,provider_adapter,33,1,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/antigravity.py,development_platform_system,false,development_platform_runtime,provider_adapter,206,10,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/base.py,development_platform_system,false,development_platform_runtime,provider_adapter,72,5,4,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/claude_cli.py,development_platform_system,false,development_platform_runtime,provider_adapter,220,9,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/claude_code.py,development_platform_system,false,development_platform_runtime,provider_adapter,27,2,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/codex.py,development_platform_system,false,development_platform_runtime,provider_adapter,165,4,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/copilot_cloud.py,development_platform_system,false,development_platform_runtime,provider_adapter,174,5,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/copilot_local.py,development_platform_system,false,development_platform_runtime,provider_adapter,214,8,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/file_inbox.py,development_platform_system,false,development_platform_runtime,provider_adapter,80,2,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/gemini.py,development_platform_system,false,development_platform_runtime,provider_adapter,255,14,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/vscode_chat.py,development_platform_system,false,development_platform_runtime,provider_adapter,63,2,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/adapters/vscode_command.py,development_platform_system,false,development_platform_runtime,provider_adapter,33,2,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/approval_queue.py,development_platform_system,false,development_platform_runtime,approval_permission_runtime,715,31,1,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/auth_loader.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,258,11,2,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/auto_commit_archive.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,308,11,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/auto_merge_green_prs.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,161,6,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/branch_drift_alarms.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,231,9,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/claude_permission_prompt_mcp.py,development_platform_system,false,development_platform_runtime,approval_permission_runtime,261,9,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/common.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,1424,69,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/coordination_file_watcher.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,428,11,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/coordination_repo_mirror.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,340,10,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/cross_repo_issue_mapper.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,92,5,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/dispatch_policy.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,93,5,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/doctor.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,78,3,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/github_bus.py,development_platform_system,false,development_platform_runtime,github_integration,2226,83,2,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/github_cloud_relay.py,development_platform_system,false,development_platform_runtime,github_integration,90,7,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/github_command_parser.py,development_platform_system,false,development_platform_runtime,github_integration,43,1,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/github_webhook_server.py,development_platform_system,false,development_platform_runtime,github_integration,101,6,2,true,owner_usage_review,live supervisor/task/provider control plane
+.orchestrator/lovable_task_publisher.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,333,13,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/model_rotation.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,267,20,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/multi_repo_registry.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,370,22,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/permission_broker.py,development_platform_system,false,development_platform_runtime,approval_permission_runtime,1784,71,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/provider_permissions.py,development_platform_system,false,development_platform_runtime,approval_permission_runtime,1219,52,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/provider_runtime.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,84,6,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/rebase_helper.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,153,6,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/runtime_state.py,development_platform_system,false,development_platform_runtime,runtime_state_store,683,21,0,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/sidecar_cleanup.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,540,29,5,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/supervisor.py,development_platform_system,false,development_platform_runtime,scheduler_runtime,10495,275,1,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/supervisor_watchdog.py,development_platform_system,false,development_platform_runtime,scheduler_runtime,528,30,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/sync_provider_permissions.py,development_platform_system,false,development_platform_runtime,approval_permission_runtime,122,5,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/task_archive.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,330,28,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/test_adapter_fallback_policy.py,verification,false,tests,verification,459,11,1,true,retain_test,verification-only
+.orchestrator/test_approval_queue.py,verification,false,tests,verification,336,11,1,true,retain_test,verification-only
+.orchestrator/test_auth_loader.py,verification,false,tests,verification,104,5,1,true,retain_test,verification-only
+.orchestrator/test_branch_drift_alarms.py,verification,false,tests,verification,198,19,3,true,retain_test,verification-only
+.orchestrator/test_common.py,verification,false,tests,verification,349,22,7,true,retain_test,verification-only
+.orchestrator/test_coordination_file_watcher.py,verification,false,tests,verification,586,12,1,true,retain_test,verification-only
+.orchestrator/test_dispatch_policy.py,verification,false,tests,verification,132,9,0,false,retain_test,verification-only
+.orchestrator/test_github_bus.py,verification,false,tests,verification,1790,106,11,true,retain_test,verification-only
+.orchestrator/test_github_command_parser.py,verification,false,tests,verification,20,1,1,true,retain_test,verification-only
+.orchestrator/test_model_rotation.py,verification,false,tests,verification,550,35,0,false,retain_test,verification-only
+.orchestrator/test_multi_repo_registry.py,verification,false,tests,verification,57,4,1,true,retain_test,verification-only
+.orchestrator/test_permission_broker_status_root.py,verification,false,tests,verification,434,35,5,true,retain_test,verification-only
+.orchestrator/test_provider_permissions.py,verification,false,tests,verification,1173,74,2,true,retain_test,verification-only
+.orchestrator/test_rebase_helper.py,verification,false,tests,verification,101,5,0,false,retain_test,verification-only
+.orchestrator/test_runtime_state.py,verification,false,tests,verification,545,25,2,false,retain_test,verification-only
+.orchestrator/test_sidecar_cleanup.py,verification,false,tests,verification,132,6,1,true,retain_test,verification-only
+.orchestrator/test_supervisor.py,verification,false,tests,verification,11544,402,37,true,retain_test,verification-only
+.orchestrator/test_supervisor_watchdog.py,verification,false,tests,verification,217,14,1,true,retain_test,verification-only
+.orchestrator/test_task_brief_source_docs.py,verification,false,tests,verification,1285,31,1,true,retain_test,verification-only
+.orchestrator/test_watch_events.py,verification,false,tests,verification,110,2,1,true,retain_test,verification-only
+.orchestrator/watch_events.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,451,14,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/wave_guards.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,326,16,1,false,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+.orchestrator/worker_runner.py,development_platform_system,false,development_platform_runtime,orchestrator_runtime,131,6,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+apps/api/__init__.py,product_system,true,product_runtime_bff,bff_runtime,1,0,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/__init__.py,product_system,true,product_runtime_bff,bff_runtime,1,0,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/__init__.py,product_system,true,product_runtime_bff,http_route,1,0,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/_common.py,product_system,true,product_runtime_bff,http_route,109,7,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/adlift.py,product_system,true,product_runtime_bff,http_route,289,11,2,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/audit.py,product_system,true,product_runtime_bff,http_route,248,9,3,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/avm.py,product_system,true,product_runtime_bff,http_route,434,17,4,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/external_data.py,product_system,true,product_runtime_bff,http_route,204,9,1,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/forecastops.py,product_system,true,product_runtime_bff,http_route,692,24,5,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/interventions.py,product_system,true,product_runtime_bff,http_route,636,24,12,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/learninghub.py,product_system,true,product_runtime_bff,http_route,714,20,10,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/listings.py,product_system,true,product_runtime_bff,http_route,4173,128,71,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/netplan.py,product_system,true,product_runtime_bff,http_route,409,15,7,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator.py,product_system,true,product_runtime_bff,http_route,1223,20,5,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/__init__.py,product_system,true,product_runtime_bff,http_route,46,0,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/approvals.py,product_system,true,product_runtime_bff,http_route,90,3,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/evidence.py,product_system,true,product_runtime_bff,http_route,63,2,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/governance.py,product_system,true,product_runtime_bff,http_route,191,7,2,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/growth.py,product_system,true,product_runtime_bff,http_route,434,20,6,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/issues.py,product_system,true,product_runtime_bff,http_route,89,3,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/live_service.py,product_system,true,product_runtime_bff,http_route,147,8,2,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/network_listings.py,product_system,true,product_runtime_bff,http_route,821,19,7,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/network_rebalance.py,product_system,true,product_runtime_bff,http_route,256,9,2,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/network_reviews.py,product_system,true,product_runtime_bff,http_route,150,5,1,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/network_scoring.py,product_system,true,product_runtime_bff,http_route,169,6,3,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/privacy.py,product_system,true,product_runtime_bff,http_route,206,10,4,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/seed.py,product_system,true,product_runtime_bff,http_route,49,2,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/shell.py,product_system,true,product_runtime_bff,http_route,657,23,6,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/store_ops.py,product_system,true,product_runtime_bff,http_route,395,16,2,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/operator_modules/users_roles.py,product_system,true,product_runtime_bff,http_route,227,8,3,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/priceops.py,product_system,true,product_runtime_bff,http_route,921,34,10,false,retain_product_code,FastAPI request-serving product code
+apps/api/app/routes/sitescore.py,product_system,true,product_runtime_bff,http_route,506,15,3,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/__init__.py,product_system,true,product_runtime_bff,bff_runtime,1,0,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/main.py,product_system,true,product_runtime_bff,composition_root,1453,34,2,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/routes/__init__.py,product_system,true,product_runtime_bff,http_route,1,0,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/routes/feature_flags.py,product_system,true,product_runtime_bff,http_route,180,8,3,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/routes/heatzone.py,product_system,true,product_runtime_bff,http_route,191,7,1,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/runtime_mode.py,product_system,true,product_runtime_bff,bff_runtime,36,2,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/security/__init__.py,product_system,true,product_runtime_bff,product_security,32,0,0,false,retain_product_code,FastAPI request-serving product code
+apps/api/oday_api/security/dependencies.py,product_system,true,product_runtime_bff,product_security,622,24,1,false,retain_product_code,FastAPI request-serving product code
+apps/api/server.py,product_system,true,product_runtime_bff,bff_runtime,134,5,1,true,retain_product_code,FastAPI request-serving product code
+scripts/ai_status.py,development_platform_system,false,development_platform_runtime,canonical_task_state_runtime,6495,186,0,true,retain_runtime_refactor_candidate,live supervisor/task/provider control plane
+scripts/apply_branch_protection.py,development_delivery_tooling,false,build_ci_release_tooling,source_control_tool,139,5,0,true,owner_usage_review,"build, CI, release evidence or developer command"
+scripts/build_validate_assisted_listing_intake_openapi.py,development_delivery_tooling,false,build_ci_release_tooling,contract_build_tool,255,10,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/chaos/assisted_listing_intake/__init__.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,1,0,0,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/chaos/assisted_listing_intake/run.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,221,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/check_config_wiring.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,194,8,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/check_pr_merge_eligibility.py,development_delivery_tooling,false,build_ci_release_tooling,source_control_tool,370,7,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/data_platform/__init__.py,product_operations_tooling,false,product_operations,product_operation,1,0,0,false,retain_product_code,operates product deploy/data/model state outside request path
+scripts/data_platform/backfill.py,product_operations_tooling,false,product_operations,product_data_migration,145,4,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/deployment/cloud_run_job_entrypoint.py,product_operations_tooling,false,product_operations,product_deployment,340,13,1,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/deployment/cloud_run_traffic.py,product_operations_tooling,false,product_operations,product_deployment,107,5,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/deployment/cloud_scheduler_trigger.py,product_operations_tooling,false,product_operations,product_deployment,321,10,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/deployment/validate_cloud_run_live_deployment.py,product_operations_tooling,false,product_operations,product_deployment,3898,88,9,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/e2e/_release_target.py,development_delivery_tooling,false,build_ci_release_tooling,release_library,70,8,0,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/_support.py,development_delivery_tooling,false,build_ci_release_tooling,release_library,68,5,0,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_acceptance_readiness.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,211,7,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_closeout_queue.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,243,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_fleet_notifications.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,139,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_fleet_pickup_board.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,174,4,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_followup_workflow.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,125,5,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_handback_artifact.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,419,10,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_handback_bundle.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,123,6,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_handback_status_board.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,168,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_handback_template.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,159,4,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_issue_handback_scan.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,244,9,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_issue_sync.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,189,5,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_external_proof_live_blockers.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,159,4,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_live_e2e_gate.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,1849,44,9,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_live_production_data.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,1204,31,8,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_closeout_action.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,230,9,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_closeout_action_matrix.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,153,6,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_closeout_fleet_notification.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,132,6,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_closeout_pickup_board.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,171,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_closeout_queue.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,451,10,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_go_no_go.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,185,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_grade_ci_gates.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,198,4,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_grade_fleet_dispatch.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,607,16,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_grade_gate_reconciliation.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,445,8,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_product_release_gate.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,464,2,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_release_fleet_dispatch_status.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,208,8,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_release_gate_registry.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,688,16,1,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/check_remote_staging_proof.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,154,5,1,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/generate_external_proof_handback_skeleton.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,199,5,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/generate_product_e2e_receipt.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,118,1,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/product_e2e_receipt.py,development_delivery_tooling,false,build_ci_release_tooling,release_library,1314,28,1,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/record_playwright_results.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,112,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/run_python_e2e_tests.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,123,4,1,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/seed_product_e2e_data.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,277,7,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/sync_external_proof_escalation_comments.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,192,8,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/sync_external_proof_fleet_issues.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,310,16,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/sync_product_closeout_fleet_comment.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,185,8,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/update_external_proof_handback_status_board.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,215,7,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/verify_deployment_health_backup_rollback.py,development_delivery_tooling,false,build_ci_release_tooling,release_gate,374,18,1,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/e2e/worker_heartbeat.py,development_delivery_tooling,false,build_ci_release_tooling,release_operation,63,1,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/external_data_backfill.py,product_operations_tooling,false,product_operations,product_data_migration,442,5,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/generate_assisted_listing_intake_client.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,49,2,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/git/check_commit_scope.py,development_delivery_tooling,false,build_ci_release_tooling,source_control_tool,140,6,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/git/check_commit_trailers.py,development_delivery_tooling,false,build_ci_release_tooling,source_control_tool,187,6,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/git/test_git_task_scripts.py,verification,false,tests,verification,434,45,0,false,retain_test,verification-only
+scripts/git/worker_commit.py,development_delivery_tooling,false,build_ci_release_tooling,source_control_tool,231,8,1,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/load/assisted_listing_intake/__init__.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,1,0,0,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/load/assisted_listing_intake/run.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,44,1,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/load/assisted_listing_intake/runtime.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,216,5,1,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/migrations/assisted_listing_intake/migrate.py,product_operations_tooling,false,product_operations,product_data_migration,2085,17,1,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/__init__.py,product_operations_tooling,false,product_operations,product_model_operation,21,0,0,false,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/avm_benchmark.py,product_operations_tooling,false,product_operations,product_model_operation,242,2,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/contracts.py,product_operations_tooling,false,product_operations,product_model_operation,575,12,5,false,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/forecast_training.py,product_operations_tooling,false,product_operations,product_model_operation,133,5,1,false,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/heatzone_benchmark.py,product_operations_tooling,false,product_operations,product_model_operation,840,10,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/install_views.py,product_operations_tooling,false,product_operations,product_model_operation,633,14,4,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/model_ready_receipt.py,product_operations_tooling,false,product_operations,product_model_operation,97,3,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/real_estate_outcomes.py,product_operations_tooling,false,product_operations,product_model_operation,722,15,2,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/release.py,product_operations_tooling,false,product_operations,product_model_operation,1328,31,6,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/sitescore_outcome_benchmark.py,product_operations_tooling,false,product_operations,product_model_operation,280,4,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/storage.py,product_operations_tooling,false,product_operations,product_model_operation,599,31,10,false,retain_product_code,operates product deploy/data/model state outside request path
+scripts/models/store_opening_backfill.py,product_operations_tooling,false,product_operations,product_data_migration,130,2,0,true,retain_product_code,operates product deploy/data/model state outside request path
+scripts/openapi/check_drift.py,development_delivery_tooling,false,build_ci_release_tooling,contract_build_tool,170,7,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/openapi/export_openapi.py,development_delivery_tooling,false,build_ci_release_tooling,contract_build_tool,111,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/openapi/generate_client.py,development_delivery_tooling,false,build_ci_release_tooling,contract_build_tool,253,8,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/openapi/openapi_diff.py,development_delivery_tooling,false,build_ci_release_tooling,contract_build_tool,226,9,1,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/orchestrator/backfill_task_archive_snapshots.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,368,9,1,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/orchestrator/check_runtime_freshness.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,173,6,0,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/orchestrator/check_task_dependency_resolvability.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,261,8,1,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/orchestrator/diagnose_finalize_lane_remediation.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,28,0,0,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/orchestrator/finalize_lane_doctor.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,608,18,1,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/orchestrator/rollout_supervisor_runtime.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,186,10,1,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/orchestrator/test_backfill_task_archive_snapshots.py,verification,false,tests,verification,412,29,0,false,retain_test,verification-only
+scripts/orchestrator/test_check_runtime_freshness.py,verification,false,tests,verification,126,13,0,false,retain_test,verification-only
+scripts/orchestrator/test_check_task_dependency_resolvability.py,verification,false,tests,verification,168,14,0,false,retain_test,verification-only
+scripts/orchestrator/test_diagnose_finalize_lane_remediation.py,verification,false,tests,verification,188,10,0,false,retain_test,verification-only
+scripts/orchestrator/test_finalize_lane_doctor.py,verification,false,tests,verification,322,28,0,false,retain_test,verification-only
+scripts/orchestrator/test_rollout_supervisor_runtime.py,verification,false,tests,verification,96,5,0,false,retain_test,verification-only
+scripts/release/assisted_listing_intake/__init__.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,1,0,0,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/release/assisted_listing_intake/config.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,273,7,2,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/release/assisted_listing_intake/drills.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,1536,17,0,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/release/assisted_listing_intake/gates.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,344,7,0,false,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/release/assisted_listing_intake/run.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,406,6,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/security/generate_sbom.py,development_delivery_tooling,false,build_ci_release_tooling,security_ci_tool,121,3,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/security/sast_scan.py,development_delivery_tooling,false,build_ci_release_tooling,security_ci_tool,47,1,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/security/secret_scan.py,development_delivery_tooling,false,build_ci_release_tooling,security_ci_tool,89,2,0,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+scripts/supervisor_runtime_health.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,448,14,0,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/supervisor_watchdog_install.py,development_platform_system,false,development_platform_operations,orchestrator_maintenance,217,15,0,true,retain_tool_consolidation_candidate,"installs, diagnoses, validates or rolls out control plane"
+scripts/test_ai_status.py,verification,false,tests,verification,5599,236,18,true,retain_test,verification-only
+scripts/test_check_config_wiring.py,verification,false,tests,verification,131,9,2,true,retain_test,verification-only
+scripts/test_supervisor_runtime_health.py,verification,false,tests,verification,284,15,0,false,retain_test,verification-only
+scripts/test_supervisor_watchdog_install.py,verification,false,tests,verification,47,3,0,false,retain_test,verification-only
+scripts/validate_assisted_listing_intake_design.py,development_delivery_tooling,false,build_ci_release_tooling,development_tool,283,10,1,true,retain_tool_consolidation_candidate,"build, CI, release evidence or developer command"
+tests/__init__.py,verification,false,tests,verification,1,0,0,false,retain_test,verification-only
+tests/conftest.py,verification,false,tests,verification,202,14,2,false,retain_test,verification-only
+tests/contract/test_api_error_envelope.py,verification,false,tests,verification,156,10,0,false,retain_test,verification-only
+tests/contract/test_api_idempotency_and_pagination.py,verification,false,tests,verification,630,45,0,false,retain_test,verification-only
+tests/contract/test_api_versioning.py,verification,false,tests,verification,95,7,0,false,retain_test,verification-only
+tests/contract/test_assisted_listing_intake_events.py,verification,false,tests,verification,273,11,0,false,retain_test,verification-only
+tests/contract/test_assisted_listing_intake_schema.py,verification,false,tests,verification,355,19,0,false,retain_test,verification-only
+tests/contract/test_assisted_listing_intake_states.py,verification,false,tests,verification,557,15,0,false,retain_test,verification-only
+tests/contract/test_assisted_listing_openapi.py,verification,false,tests,verification,369,10,0,false,retain_test,verification-only
+tests/contract/test_assisted_listing_operations.py,verification,false,tests,verification,1820,28,1,false,retain_test,verification-only
+tests/contract/test_assisted_listing_promotion_api.py,verification,false,tests,verification,344,2,0,false,retain_test,verification-only
+tests/contract/test_assisted_listing_v1_runtime.py,verification,false,tests,verification,264,9,0,false,retain_test,verification-only
+tests/contract/test_canonical_schema.py,verification,false,tests,verification,287,12,0,false,retain_test,verification-only
+tests/contract/test_control_plane_router.py,verification,false,tests,verification,153,9,0,false,retain_test,verification-only
+tests/contract/test_deferred_oss_adr.py,verification,false,tests,verification,244,6,0,false,retain_test,verification-only
+tests/contract/test_frontend_domain_type_coverage.py,verification,false,tests,verification,82,3,0,false,retain_test,verification-only
+tests/contract/test_ingestion_contracts.py,verification,false,tests,verification,233,19,0,false,retain_test,verification-only
+tests/contract/test_netplan_human_gate_ledger.py,verification,false,tests,verification,61,3,0,false,retain_test,verification-only
+tests/contract/test_openapi_artifact_and_client.py,verification,false,tests,verification,326,26,0,false,retain_test,verification-only
+tests/contract/test_operator_api.py,verification,false,tests,verification,474,21,0,false,retain_test,verification-only
+tests/contract/test_operator_assisted_listing_api.py,verification,false,tests,verification,670,21,0,false,retain_test,verification-only
+tests/contract/test_operator_attachments.py,verification,false,tests,verification,181,9,0,false,retain_test,verification-only
+tests/contract/test_operator_governance_api.py,verification,false,tests,verification,257,14,0,false,retain_test,verification-only
+tests/contract/test_operator_growth_api.py,verification,false,tests,verification,359,15,0,false,retain_test,verification-only
+tests/contract/test_operator_network_listings_api.py,verification,false,tests,verification,220,7,0,false,retain_test,verification-only
+tests/contract/test_operator_network_rebalance_api.py,verification,false,tests,verification,167,5,0,false,retain_test,verification-only
+tests/contract/test_operator_network_review_api.py,verification,false,tests,verification,370,14,0,false,retain_test,verification-only
+tests/contract/test_operator_network_scoring_api.py,verification,false,tests,verification,162,7,0,false,retain_test,verification-only
+tests/contract/test_operator_shell_api.py,verification,false,tests,verification,599,28,0,false,retain_test,verification-only
+tests/contract/test_platform_api.py,verification,false,tests,verification,165,7,0,false,retain_test,verification-only
+tests/contract/test_pricing_simulation_contract.py,verification,false,tests,verification,164,2,0,false,retain_test,verification-only
+tests/contract/test_signal_store_client.py,verification,false,tests,verification,138,14,1,false,retain_test,verification-only
+tests/contract/test_ui_core_component_exports.py,verification,false,tests,verification,58,2,0,false,retain_test,verification-only
+tests/contract/test_xlsx_import_api.py,verification,false,tests,verification,277,8,0,false,retain_test,verification-only
+tests/data/test_external_providers.py,verification,false,tests,verification,358,12,1,false,retain_test,verification-only
+tests/data/test_geo_pipeline.py,verification,false,tests,verification,324,14,3,false,retain_test,verification-only
+tests/data/test_great_expectations_gate.py,verification,false,tests,verification,31,2,0,false,retain_test,verification-only
+tests/data/test_pit_snapshot.py,verification,false,tests,verification,186,10,0,false,retain_test,verification-only
+tests/data/test_source_to_canonical.py,verification,false,tests,verification,105,3,0,false,retain_test,verification-only
+tests/data/test_taiwan_real_estate_outcomes.py,verification,false,tests,verification,397,24,2,false,retain_test,verification-only
+tests/e2e/test_acceptance_coverage.py,verification,false,tests,verification,592,28,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_acceptance_readiness.py,verification,false,tests,verification,87,6,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_closeout_queue.py,verification,false,tests,verification,92,4,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_escalation_comments.py,verification,false,tests,verification,133,9,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_fleet_issue_syncer.py,verification,false,tests,verification,170,9,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_fleet_notifications_checker.py,verification,false,tests,verification,144,7,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_followup_workflow.py,verification,false,tests,verification,72,5,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_handback_artifact.py,verification,false,tests,verification,336,17,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_handback_bundle.py,verification,false,tests,verification,81,6,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_handback_skeleton_generator.py,verification,false,tests,verification,201,7,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_handback_status_board.py,verification,false,tests,verification,91,5,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_handback_status_board_updater.py,verification,false,tests,verification,229,12,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_handback_template.py,verification,false,tests,verification,70,3,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_issue_handback_scan.py,verification,false,tests,verification,142,7,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_issue_sync_checker.py,verification,false,tests,verification,204,8,0,false,retain_test,verification-only
+tests/e2e/test_external_proof_live_blockers_checker.py,verification,false,tests,verification,130,9,0,false,retain_test,verification-only
+tests/e2e/test_external_source_product_e2e.py,verification,false,tests,verification,856,27,4,false,retain_test,verification-only
+tests/e2e/test_frontend_execution_matrix_coverage.py,verification,false,tests,verification,1025,23,0,false,retain_test,verification-only
+tests/e2e/test_live_e2e_gate.py,verification,false,tests,verification,1976,116,4,false,retain_test,verification-only
+tests/e2e/test_live_production_data_gate.py,verification,false,tests,verification,473,24,2,false,retain_test,verification-only
+tests/e2e/test_package10_product_grade_ci_gate.py,verification,false,tests,verification,69,4,0,false,retain_test,verification-only
+tests/e2e/test_product_closeout_action_checker.py,verification,false,tests,verification,148,9,0,false,retain_test,verification-only
+tests/e2e/test_product_closeout_action_matrix.py,verification,false,tests,verification,151,5,0,false,retain_test,verification-only
+tests/e2e/test_product_closeout_fleet_comment.py,verification,false,tests,verification,163,7,0,false,retain_test,verification-only
+tests/e2e/test_product_grade_gate_reconciliation.py,verification,false,tests,verification,180,10,0,false,retain_test,verification-only
+tests/e2e/test_release_fleet_dispatch_status.py,verification,false,tests,verification,153,8,0,false,retain_test,verification-only
+tests/e2e/test_release_gate_registry.py,verification,false,tests,verification,661,84,0,false,retain_test,verification-only
+tests/e2e/test_release_target.py,verification,false,tests,verification,21,1,0,false,retain_test,verification-only
+tests/e2e/test_remote_staging_proof_checker.py,verification,false,tests,verification,133,7,1,false,retain_test,verification-only
+tests/e2e/test_seed_product_e2e_data.py,verification,false,tests,verification,126,13,2,false,retain_test,verification-only
+tests/integration/__init__.py,verification,false,tests,verification,1,0,0,false,retain_test,verification-only
+tests/integration/_authz.py,verification,false,tests,verification,62,1,0,false,retain_test,verification-only
+tests/integration/_learninghub_fixtures.py,verification,false,tests,verification,167,4,0,false,retain_test,verification-only
+tests/integration/test_adlift_incrementality.py,verification,false,tests,verification,415,15,0,false,retain_test,verification-only
+tests/integration/test_assisted_listing_evidence_export.py,verification,false,tests,verification,107,2,0,false,retain_test,verification-only
+tests/integration/test_assisted_listing_identity.py,verification,false,tests,verification,91,2,0,false,retain_test,verification-only
+tests/integration/test_assisted_listing_intake_outbox.py,verification,false,tests,verification,284,9,0,false,retain_test,verification-only
+tests/integration/test_assisted_listing_intake_persistence.py,verification,false,tests,verification,437,13,0,false,retain_test,verification-only
+tests/integration/test_assisted_listing_intake_worker.py,verification,false,tests,verification,82,2,0,false,retain_test,verification-only
+tests/integration/test_assisted_listing_postgresql_runtime.py,verification,false,tests,verification,385,10,0,false,retain_test,verification-only
+tests/integration/test_assisted_listing_promotion.py,verification,false,tests,verification,405,10,2,false,retain_test,verification-only
+tests/integration/test_assisted_listing_snapshots.py,verification,false,tests,verification,411,10,0,false,retain_test,verification-only
+tests/integration/test_audit_evidence_export.py,verification,false,tests,verification,208,3,0,false,retain_test,verification-only
+tests/integration/test_audit_evidence_persistence.py,verification,false,tests,verification,962,24,1,false,retain_test,verification-only
+tests/integration/test_auth_boundary_authz.py,verification,false,tests,verification,267,12,0,false,retain_test,verification-only
+tests/integration/test_avm_official_outcome_contract.py,verification,false,tests,verification,156,4,0,false,retain_test,verification-only
+tests/integration/test_avm_outcome_calibration.py,verification,false,tests,verification,1414,63,0,false,retain_test,verification-only
+tests/integration/test_avm_valuation.py,verification,false,tests,verification,371,5,0,false,retain_test,verification-only
+tests/integration/test_data_platform_deployment_contract.py,verification,false,tests,verification,342,21,0,false,retain_test,verification-only
+tests/integration/test_domain_api_rbac.py,verification,false,tests,verification,190,12,0,false,retain_test,verification-only
+tests/integration/test_domain_job_receipt_persistence.py,verification,false,tests,verification,640,19,0,false,retain_test,verification-only
+tests/integration/test_durable_repository_wiring.py,verification,false,tests,verification,511,13,0,false,retain_test,verification-only
+tests/integration/test_external_fetch_enqueue_tenant_binding.py,verification,false,tests,verification,319,16,0,false,retain_test,verification-only
+tests/integration/test_external_ingestion_multisource.py,verification,false,tests,verification,191,7,1,false,retain_test,verification-only
+tests/integration/test_external_ingestion_persistence.py,verification,false,tests,verification,503,18,0,false,retain_test,verification-only
+tests/integration/test_external_listing_live_ingestion.py,verification,false,tests,verification,380,14,2,false,retain_test,verification-only
+tests/integration/test_external_provider_connectivity.py,verification,false,tests,verification,264,12,2,false,retain_test,verification-only
+tests/integration/test_external_provider_registry.py,verification,false,tests,verification,262,12,0,false,retain_test,verification-only
+tests/integration/test_external_scheduled_fetch_worker.py,verification,false,tests,verification,429,18,1,false,retain_test,verification-only
+tests/integration/test_external_source_connectors.py,verification,false,tests,verification,408,22,1,false,retain_test,verification-only
+tests/integration/test_feature_label_registry.py,verification,false,tests,verification,349,6,0,false,retain_test,verification-only
+tests/integration/test_feature_registry.py,verification,false,tests,verification,616,40,0,false,retain_test,verification-only
+tests/integration/test_fin_ml_library_backed_methods.py,verification,false,tests,verification,177,11,0,false,retain_test,verification-only
+tests/integration/test_flow_002_expansion_persistence.py,verification,false,tests,verification,310,6,0,false,retain_test,verification-only
+tests/integration/test_forecastops_alerts.py,verification,false,tests,verification,397,10,0,false,retain_test,verification-only
+tests/integration/test_forecastops_postgresql_sequence.py,verification,false,tests,verification,88,3,0,false,retain_test,verification-only
+tests/integration/test_forecastops_tenant_runtime_contract.py,verification,false,tests,verification,971,41,2,false,retain_test,verification-only
+tests/integration/test_forecastops_train_runtime_contract.py,verification,false,tests,verification,294,8,1,false,retain_test,verification-only
+tests/integration/test_gap_ml_003.py,verification,false,tests,verification,156,9,0,false,retain_test,verification-only
+tests/integration/test_gap_ml_003_elasticity_binding.py,verification,false,tests,verification,162,9,0,false,retain_test,verification-only
+tests/integration/test_heatzone_flow.py,verification,false,tests,verification,218,5,0,false,retain_test,verification-only
+tests/integration/test_intervention_workflow.py,verification,false,tests,verification,971,26,0,false,retain_test,verification-only
+tests/integration/test_lean_signal_runtime.py,verification,false,tests,verification,203,21,4,false,retain_test,verification-only
+tests/integration/test_learninghub_model_list_api.py,verification,false,tests,verification,57,3,0,false,retain_test,verification-only
+tests/integration/test_learninghub_operations_acceptance.py,verification,false,tests,verification,278,7,0,false,retain_test,verification-only
+tests/integration/test_learninghub_postgresql_release.py,verification,false,tests,verification,397,8,1,false,retain_test,verification-only
+tests/integration/test_learninghub_release.py,verification,false,tests,verification,1642,42,2,false,retain_test,verification-only
+tests/integration/test_listing_pipeline.py,verification,false,tests,verification,239,6,0,false,retain_test,verification-only
+tests/integration/test_live_geocode_provider_adapter.py,verification,false,tests,verification,311,14,1,false,retain_test,verification-only
+tests/integration/test_live_listing_provider_adapter.py,verification,false,tests,verification,366,19,2,false,retain_test,verification-only
+tests/integration/test_live_snapshot_providers.py,verification,false,tests,verification,317,18,2,false,retain_test,verification-only
+tests/integration/test_model_ready_geo_views.py,verification,false,tests,verification,857,19,2,false,retain_test,verification-only
+tests/integration/test_model_ready_materialization.py,verification,false,tests,verification,189,9,0,false,retain_test,verification-only
+tests/integration/test_model_registry_artifacts.py,verification,false,tests,verification,455,11,0,false,retain_test,verification-only
+tests/integration/test_model_training_release.py,verification,false,tests,verification,1388,63,7,false,retain_test,verification-only
+tests/integration/test_netplan_solver.py,verification,false,tests,verification,1907,51,0,false,retain_test,verification-only
+tests/integration/test_official_real_estate_postgresql.py,verification,false,tests,verification,561,11,0,false,retain_test,verification-only
+tests/integration/test_operator_canonical_wiring.py,verification,false,tests,verification,1168,33,3,false,retain_test,verification-only
+tests/integration/test_operator_live_domain_modules.py,verification,false,tests,verification,1128,44,9,false,retain_test,verification-only
+tests/integration/test_operator_live_provenance_health.py,verification,false,tests,verification,453,17,1,false,retain_test,verification-only
+tests/integration/test_operator_live_repository.py,verification,false,tests,verification,1021,18,2,false,retain_test,verification-only
+tests/integration/test_operator_shell_persistence.py,verification,false,tests,verification,223,11,0,false,retain_test,verification-only
+tests/integration/test_oss_ai_execution_flow.py,verification,false,tests,verification,431,11,0,false,retain_test,verification-only
+tests/integration/test_oss_capability_api.py,verification,false,tests,verification,29,2,0,false,retain_test,verification-only
+tests/integration/test_place_geography_backfill.py,verification,false,tests,verification,822,28,5,false,retain_test,verification-only
+tests/integration/test_postgresql_persistence.py,verification,false,tests,verification,454,6,0,false,retain_test,verification-only
+tests/integration/test_priceops_api.py,verification,false,tests,verification,72,1,0,false,retain_test,verification-only
+tests/integration/test_priceops_constraints.py,verification,false,tests,verification,470,19,0,false,retain_test,verification-only
+tests/integration/test_production_api_composition.py,verification,false,tests,verification,482,20,2,false,retain_test,verification-only
+tests/integration/test_production_model_lifecycle.py,verification,false,tests,verification,454,11,0,false,retain_test,verification-only
+tests/integration/test_production_model_runtime.py,verification,false,tests,verification,445,19,1,false,retain_test,verification-only
+tests/integration/test_scheduled_ingestion_tenant_propagation.py,verification,false,tests,verification,348,19,1,false,retain_test,verification-only
+tests/integration/test_scoring_model_binding.py,verification,false,tests,verification,240,9,0,false,retain_test,verification-only
+tests/integration/test_sitescore_decision.py,verification,false,tests,verification,341,8,0,false,retain_test,verification-only
+tests/integration/test_store_opening_backfill.py,verification,false,tests,verification,773,15,0,false,retain_test,verification-only
+tests/integration/test_worker_scheduler_runtime.py,verification,false,tests,verification,288,15,0,false,retain_test,verification-only
+tests/models/test_dagster_training.py,verification,false,tests,verification,39,3,0,false,retain_test,verification-only
+tests/models/test_evidently_monitor.py,verification,false,tests,verification,32,2,0,false,retain_test,verification-only
+tests/models/test_heatzone_benchmark.py,verification,false,tests,verification,543,26,0,false,retain_test,verification-only
+tests/models/test_hyperparameter_search.py,verification,false,tests,verification,16,1,0,false,retain_test,verification-only
+tests/models/test_model_output_contracts.py,verification,false,tests,verification,36,3,0,false,retain_test,verification-only
+tests/models/test_model_ready_geo_contracts.py,verification,false,tests,verification,124,5,0,false,retain_test,verification-only
+tests/models/test_model_ready_receipt.py,verification,false,tests,verification,91,5,1,false,retain_test,verification-only
+tests/models/test_oss_capabilities.py,verification,false,tests,verification,33,3,0,false,retain_test,verification-only
+tests/models/test_sitescore_opening_outcome.py,verification,false,tests,verification,2510,64,0,false,retain_test,verification-only
+tests/models/test_sitescore_prediction_source.py,verification,false,tests,verification,1004,49,4,false,retain_test,verification-only
+tests/ops/test_assisted_listing_intake_migration.py,verification,false,tests,verification,1173,21,0,false,retain_test,verification-only
+tests/ops/test_assisted_listing_intake_release.py,verification,false,tests,verification,703,41,0,false,retain_test,verification-only
+tests/ops/test_cloud_run_job_entrypoint.py,verification,false,tests,verification,264,16,1,false,retain_test,verification-only
+tests/ops/test_cloud_run_live_deployment.py,verification,false,tests,verification,5360,192,6,false,retain_test,verification-only
+tests/ops/test_data_domain_migration.py,verification,false,tests,verification,51,2,0,false,retain_test,verification-only
+tests/ops/test_deploy_workflow_contract.py,verification,false,tests,verification,512,23,1,false,retain_test,verification-only
+tests/ops/test_migration_backfill.py,verification,false,tests,verification,173,9,0,false,retain_test,verification-only
+tests/ops/test_runtime_config_code_closeout.py,verification,false,tests,verification,171,5,0,false,retain_test,verification-only
+tests/performance/assisted_listing_intake/test_capacity.py,verification,false,tests,verification,43,2,0,false,retain_test,verification-only
+tests/performance/test_acceptance_budgets.py,verification,false,tests,verification,97,4,1,false,retain_test,verification-only
+tests/performance/test_load_and_soak.py,verification,false,tests,verification,188,4,0,false,retain_test,verification-only
+tests/reliability/assisted_listing_intake/test_recovery.py,verification,false,tests,verification,36,1,0,false,retain_test,verification-only
+tests/reliability/test_assisted_listing_intake_jobs.py,verification,false,tests,verification,419,10,0,false,retain_test,verification-only
+tests/reliability/test_concurrency_recovery.py,verification,false,tests,verification,489,10,1,false,retain_test,verification-only
+tests/reliability/test_cross_flow_gate.py,verification,false,tests,verification,183,6,0,false,retain_test,verification-only
+tests/reliability/test_health_endpoints.py,verification,false,tests,verification,170,9,1,false,retain_test,verification-only
+tests/reliability/test_live_data_fail_closed.py,verification,false,tests,verification,404,23,2,false,retain_test,verification-only
+tests/reliability/test_notifications.py,verification,false,tests,verification,607,25,1,false,retain_test,verification-only
+tests/reliability/test_runtime_observability.py,verification,false,tests,verification,6414,203,15,false,retain_test,verification-only
+tests/security/conftest.py,verification,false,tests,verification,71,1,0,false,retain_test,verification-only
+tests/security/test_api_auth_wiring.py,verification,false,tests,verification,316,20,0,false,retain_test,verification-only
+tests/security/test_assisted_listing_intake_authorization_matrix.py,verification,false,tests,verification,406,13,0,false,retain_test,verification-only
+tests/security/test_assisted_listing_intake_privacy.py,verification,false,tests,verification,455,8,0,false,retain_test,verification-only
+tests/security/test_assisted_listing_intake_rls.py,verification,false,tests,verification,196,9,0,false,retain_test,verification-only
+tests/security/test_assisted_listing_intake_security.py,verification,false,tests,verification,522,23,1,false,retain_test,verification-only
+tests/security/test_assisted_listing_snapshot_residency.py,verification,false,tests,verification,342,9,3,false,retain_test,verification-only
+tests/security/test_assisted_listing_source_modes.py,verification,false,tests,verification,128,8,0,false,retain_test,verification-only
+tests/security/test_audit_policy.py,verification,false,tests,verification,133,10,0,false,retain_test,verification-only
+tests/security/test_auto_merge_green_prs.py,verification,false,tests,verification,320,25,0,false,retain_test,verification-only
+tests/security/test_branch_protection_policy.py,verification,false,tests,verification,96,6,0,false,retain_test,verification-only
+tests/security/test_feature_flag_ui_and_enforcement.py,verification,false,tests,verification,195,6,0,false,retain_test,verification-only
+tests/security/test_feature_flags.py,verification,false,tests,verification,74,8,0,false,retain_test,verification-only
+tests/security/test_operator_security_platform.py,verification,false,tests,verification,193,10,1,false,retain_test,verification-only
+tests/security/test_operator_shell_security.py,verification,false,tests,verification,387,15,0,false,retain_test,verification-only
+tests/security/test_opsboard_auth_boundary.py,verification,false,tests,verification,443,37,0,false,retain_test,verification-only
+tests/security/test_opsboard_jwks_auth.py,verification,false,tests,verification,147,9,0,false,retain_test,verification-only
+tests/security/test_pr_merge_eligibility.py,verification,false,tests,verification,349,22,0,false,retain_test,verification-only
+tests/security/test_rbac_abac.py,verification,false,tests,verification,196,16,0,false,retain_test,verification-only
+tests/security/test_release_security_gate.py,verification,false,tests,verification,39,3,0,false,retain_test,verification-only
+tests/security/test_security_acceptance_suite.py,verification,false,tests,verification,84,3,0,false,retain_test,verification-only
+tests/security/test_supply_chain_security_gate.py,verification,false,tests,verification,248,13,0,false,retain_test,verification-only
+tests/security/test_user_role_management.py,verification,false,tests,verification,540,17,2,false,retain_test,verification-only
+tests/smoke/test_foundation_smoke.py,verification,false,tests,verification,47,3,0,false,retain_test,verification-only
+tests/solver/test_evolutionary_portfolio.py,verification,false,tests,verification,26,1,0,false,retain_test,verification-only
+tests/solver/test_runtime_compat.py,verification,false,tests,verification,250,15,0,false,retain_test,verification-only
+tests/test_scaffold.py,verification,false,tests,verification,74,2,0,false,retain_test,verification-only
+tests/unit/listing/test_identity_graph.py,verification,false,tests,verification,147,8,1,false,retain_test,verification-only
+tests/unit/listing/test_intake_state_machines.py,verification,false,tests,verification,199,15,0,false,retain_test,verification-only
+tests/unit/listing/test_xlsx_import.py,verification,false,tests,verification,612,24,0,false,retain_test,verification-only
+tests/unit/ml/test_oss_estimators.py,verification,false,tests,verification,188,7,0,false,retain_test,verification-only
+tests/unit/persistence/test_factory_live_gate.py,verification,false,tests,verification,110,7,0,false,retain_test,verification-only
+tests/unit/persistence/test_postgresql.py,verification,false,tests,verification,218,22,4,false,retain_test,verification-only
+tests/unit/test_pricing_simulation.py,verification,false,tests,verification,166,5,0,false,retain_test,verification-only

@@ -351,7 +351,7 @@ def test_forecastops_alias_remains_a_required_fail_closed_binding(
 
 
 def test_training_and_runtime_share_canonical_production_model_names() -> None:
-    from scripts.models.contracts import MODEL_SPECS
+    from product_ops.modeling.contracts import MODEL_SPECS
 
     # Runtime alias resolution only covers non-governed-disabled services...
     assert {
@@ -423,7 +423,7 @@ def test_production_routes_gate_only_the_dependency_they_use(
                 headers=operator_headers,
             )
             assert operator.status_code == 200, operator.text
-            assert operator.json()["meta"]["dataMode"] == "degraded"
+            assert operator.json()["meta"]["dataMode"] == "live"
             assert "r4-seed" not in operator.text
 
             history = client.get(

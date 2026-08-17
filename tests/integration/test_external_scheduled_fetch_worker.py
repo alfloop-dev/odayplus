@@ -313,7 +313,7 @@ def test_worker_blocks_unselected_listing_provider_before_factory_execution(
 
 
 def test_backfill_command_outputs_durable_batch_json(capsys: pytest.CaptureFixture[str]) -> None:
-    from scripts.external_data_backfill import main
+    from product_ops.external_data_backfill import main
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(
@@ -336,7 +336,7 @@ def test_backfill_command_outputs_durable_batch_json(capsys: pytest.CaptureFixtu
 def test_backfill_command_returns_failure_for_unregistered_provider(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from scripts.external_data_backfill import main
+    from product_ops.external_data_backfill import main
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(

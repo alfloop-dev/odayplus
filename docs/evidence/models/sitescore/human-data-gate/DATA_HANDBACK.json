@@ -1,0 +1,93 @@
+{
+  "kind": "sitescore-outcome-backfill-intake-packet",
+  "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
+  "gap_id": "GAP-P1-002-DATA",
+  "phase": "P1 Human Data Gate",
+  "class": "human_gate",
+  "generated_at": "2026-08-03",
+  "depends_on": ["ODP-PLAN-SITESCORE-OUTCOME-001"],
+  "paired_engineering_task": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
+  "dual_receipt_required": true,
+  "target_artifacts": [
+    "docs/evidence/models/sitescore/human-data-gate/intake_packet.md",
+    "docs/evidence/models/sitescore/human-data-gate/DATA_HANDBACK.json",
+    "docs/evidence/models/sitescore/human-data-gate/AUTHORITATIVE_READBACK_SPEC.json"
+  ],
+  "current_status": {
+    "verdict": "FAIL_CLOSED",
+    "is_governed_disabled": true,
+    "reason_code": "DATA_CONTRACT_NOT_MATURE",
+    "eligible_count": 0,
+    "activation_threshold": 200,
+    "missing_labels_delta": 200,
+    "mature_label_count": 0,
+    "m6_mature_count": 0,
+    "m12_mature_count": 0,
+    "m6_coverage_ratio": 0.0,
+    "m12_coverage_ratio": 0.0,
+    "matched_prediction_count": 0,
+    "prediction_coverage_ratio": 0.0,
+    "interval_bounds_count": 0,
+    "interval_bounds_coverage_ratio": 0.0,
+    "p80_coverage_ratio": 0.0,
+    "measured_90d_mae": null,
+    "dataset_snapshot_id": null,
+    "dataset_snapshot_hash": "UNVERIFIED",
+    "mature_population_digest": "UNAVAILABLE",
+    "evidence_owner": "UNVERIFIED",
+    "artifact_lineage_id": null,
+    "source_receipt": "docs/evidence/models/sitescore_gate2_receipt.json",
+    "model_card_hash": "16b3927153f59441b76fc8f150a0d72fa8157761b6090b025a009ede9a585302",
+    "handback_hash": "293ff10be98395684400ff9d810891d658eb450c7761f0955c89bec5bd96dd21"
+  },
+  "discovery_contract": {
+    "discovery_query_id": "sitescore_opening_outcome_discovery_query_v1",
+    "discovery_source_identity": "model_ready.candidate_site_view",
+    "eligibility_definition": "is_training_eligible IS True or eligible IS True",
+    "discovery_inventory_query": "SELECT entity_id, store_id, target_format_code, opened_on, is_training_eligible, realized_90d_net_revenue, (CURRENT_DATE - opened_on)::integer AS store_age_days FROM model_ready.candidate_site_view;"
+  },
+  "acceptance_criteria": {
+    "min_eligible_mature_outcomes": 200,
+    "requires_m6_outcomes": true,
+    "requires_m12_outcomes": true,
+    "requires_interval_bounds": true,
+    "requires_join_keys": ["entity_id", "store_id", "target_format_code", "opened_on"],
+    "requires_dataset_hash": true,
+    "requires_mature_population_digest": true,
+    "requires_named_owner": true,
+    "requires_freshness_cutoff": true,
+    "requires_lineage": true,
+    "forbidden_data_types": [
+      "synthetic",
+      "fixture",
+      "auto_seeded",
+      "duplicate",
+      "immature",
+      "ai_authored"
+    ],
+    "explicitly_forbidden_practices": [
+      "y_pred = y_true fallback",
+      "invented model governance fields"
+    ]
+  },
+  "data_source": {
+    "cloud_sql_instance": "alfaloop-data-project:asia-east1:oday-dev-sql",
+    "database_version": "POSTGRES_16",
+    "connection_secret": "oday-plus-dev-api-database-url-pg16:latest",
+    "target_view": "model_ready.candidate_site_view"
+  },
+  "ai_boundary": {
+    "permitted": [
+      "prepare templates",
+      "validate schema",
+      "verify returned receipts",
+      "hold governed-disabled while evidence is absent"
+    ],
+    "forbidden": [
+      "generate outcomes",
+      "sign off on behalf of the data owner",
+      "use y_pred = y_true fallback",
+      "invent model governance fields"
+    ]
+  }
+}

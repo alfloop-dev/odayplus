@@ -13,22 +13,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, Request
 
+from apps.api.app.routes._common import read_operator_context
 from modules.opsboard.application.operator_state import OperatorStateService
 from modules.opsboard.domain.r4_dtos import IssueTransitionRequest, IssueTransitionResponse
 
-
-def _read_context(
-    request: Request,
-    *,
-    x_operator_role: str | None,
-    x_subject_id: str | None,
-    x_roles: str | None,
-) -> dict[str, str | None]:
-    return {
-        "role_id": getattr(request.state, "operator_role_id", None) or x_operator_role,
-        "subject_id": getattr(request.state, "operator_subject_id", None) or x_subject_id,
-        "system_roles": getattr(request.state, "operator_system_roles", None) or x_roles,
-    }
+_read_context = read_operator_context
 
 
 def create_issues_sub_router(

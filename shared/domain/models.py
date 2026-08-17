@@ -238,6 +238,7 @@ class Listing:
     available_from: date | None = None
     snapshot_id: str = ""
     confidence: float = 1.0
+    tenant_id: str = ""
 
 
 @dataclass(frozen=True)

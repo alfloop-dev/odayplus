@@ -319,7 +319,7 @@ def test_force_rls_and_fail_closed_policy_on_every_tenant_table(intake_db) -> No
 
 @live
 def test_schema_validator_script_passes(intake_db) -> None:
-    # scripts/validate_assisted_listing_intake_schema.sql RAISEs on any RLS gap,
+    # delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql RAISEs on any RLS gap,
     # missing tenant-qualified FK, or missing lineage constraint; a clean run is
     # the pass signal.
     body = "\n".join(

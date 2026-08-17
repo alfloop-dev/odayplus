@@ -48,11 +48,11 @@ No runtime component, retired selector, or alternate intake detail was restored.
 - Active executable pages: `/operator`, `/intake/[intakeId]`, `/franchisee`.
 - Retired selector families, `OpsBoard`, `R0 導覽骨架`, and the five forbidden
   intake files: zero active matches/survivors.
-- `uv run ruff check scripts/e2e/check_product_grade_ci_gates.py tests/e2e/test_package10_product_grade_ci_gate.py tests/ops/test_cloud_run_live_deployment.py`
+- `uv run ruff check delivery_toolchain/e2e/check_product_grade_ci_gates.py tests/e2e/test_package10_product_grade_ci_gate.py tests/ops/test_cloud_run_live_deployment.py`
 - `uv run pytest -q tests/e2e/test_package10_product_grade_ci_gate.py tests/ops/test_cloud_run_live_deployment.py`
-- `python3 scripts/e2e/check_product_grade_ci_gates.py --report`
-- `python3 scripts/e2e/check_product_closeout_queue.py`
-- `python3 scripts/e2e/check_external_proof_closeout_queue.py`
+- `python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report`
+- `python3 delivery_toolchain/e2e/check_product_closeout_queue.py`
+- `python3 delivery_toolchain/e2e/check_external_proof_closeout_queue.py`
 - Focused Vitest: 4 files, 19 tests passed.
 - `git diff --check`
 
@@ -79,7 +79,7 @@ after all 1,729 other product tests passed:
   `e2e-network-find-areas-api-binding.spec.ts` evidence.
 
 Those assertions and the example artifact now point at the canonical surviving
-operator specs already exercised by `scripts/e2e/run_product_e2e.sh`. Runtime
+operator specs already exercised by `delivery_toolchain/e2e/run_product_e2e.sh`. Runtime
 components and routes were not changed. The failed product E2E job itself was
 an independent Docker Hub registry timeout while pulling the test services.
 
@@ -87,8 +87,8 @@ Refresh verification:
 
 - `uv run pytest -q tests/e2e/test_external_proof_handback_artifact.py tests/e2e/test_frontend_execution_matrix_coverage.py tests/e2e/test_package10_product_grade_ci_gate.py` — 40 passed.
 - `uv run ruff check tests/e2e/test_external_proof_handback_artifact.py tests/e2e/test_frontend_execution_matrix_coverage.py tests/e2e/test_package10_product_grade_ci_gate.py`
-- `python3 scripts/e2e/check_product_release_gate.py`
-- `python3 scripts/e2e/check_product_grade_ci_gates.py --report`
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py`
+- `python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report`
 - `git diff --check`
 
 ## 2026-07-27 Dev Refreshes And Canonical Intake Spec Alignment
@@ -155,8 +155,8 @@ Verification on the merge head:
 - `(cd apps/web && npx vitest run
   src/app/__tests__/productionRoutes.test.ts)` — 7 passed.
 - `uv run ruff check .orchestrator scripts` — passed.
-- `python3 scripts/e2e/check_product_release_gate.py` — passed.
-- `python3 scripts/e2e/check_product_grade_ci_gates.py --report` — Package
+- `python3 delivery_toolchain/e2e/check_product_release_gate.py` — passed.
+- `python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report` — Package
   10 ZIP, canonical HTML, all 40 screen labels, and exact label count passed.
 - `git diff --check` — passed.
 

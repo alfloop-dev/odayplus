@@ -1,0 +1,800 @@
+"""Authoritative SiteScore prediction source resolver and model registry lineage verifier."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+PREDICTION_SOURCE_RECEIPT_SCHEMA_VERSION = 1
+PREDICTION_SOURCE_RECEIPT_KIND = "sitescore-prediction-source-receipt"
+CANONICAL_PREDICTION_MODEL_NAME = "sitescore_propensity"
+CANONICAL_PREDICTION_SERVICE = "sitescore"
+CANONICAL_MODEL_VERSION = "candidate-site-view-v2"
+APPROVED_MODEL_VERSIONS = {CANONICAL_MODEL_VERSION, "candidate-site-view-v1", "candidate-site-view-v2"}
+APPROVED_PROVIDER_IDENTITIES = {
+    "model_ready.sitescore_predictions",
+    "pg16_prediction_query",
+    "authenticated_prediction_registry",
+    "sitescore_platform_authority_v1",
+}
+APPROVED_AUTHORITY_ATTESTATIONS = {
+    "authenticated_sitescore_prediction_source_v1",
+    "pg16_prediction_query",
+    "model_ready.sitescore_predictions",
+    "authenticated_prediction_registry",
+    "sitescore_platform_authority_v1",
+}
+APPROVED_HORIZON_CODES = {"90d", "M6", "M12", "180d", "365d"}
+
+
+def _is_finite_float(val: Any) -> bool:
+    """Check if value is a finite float (not None, bool, NaN, inf, or -inf)."""
+    if val is None or isinstance(val, bool):
+        return False
+    try:
+        f = float(val)
+        return math.isfinite(f)
+    except (ValueError, TypeError):
+        return False
+
+
+def _is_valid_prediction_value(val: Any) -> bool:
+    """Check if a predicted revenue value is finite and >= 0.0."""
+    if not _is_finite_float(val):
+        return False
+    return float(val) >= 0.0
+
+
+def _is_valid_sha256_hex(val: Any) -> bool:
+    """Check if value is a valid 64-character hexadecimal SHA256 string."""
+    if not isinstance(val, str) or len(val) != 64:
+        return False
+    try:
+        int(val, 16)
+        return True
+    except ValueError:
+        return False
+
+
+@dataclass(frozen=True)
+class SiteScorePredictionRecord:
+    """Canonical SiteScore prediction evidence record."""
+
+    entity_id: str
+    store_id: str
+    opened_on: str
+    target_format_code: str
+    predicted_revenue: float
+    p10: float
+    p90: float
+    p50: float | None = None
+    prediction_as_of: str | None = None
+    model_version: str | None = None
+    horizon_code: str = "90d"
+    dataset_snapshot_id: str | None = None
+    artifact_lineage_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        res: dict[str, Any] = {
+            "entity_id": self.entity_id,
+            "store_id": self.store_id,
+            "opened_on": self.opened_on,
+            "prediction_as_of": self.prediction_as_of or self.opened_on,
+            "model_version": self.model_version or CANONICAL_MODEL_VERSION,
+            "horizon_code": self.horizon_code,
+            "target_format_code": self.target_format_code,
+            "predicted_revenue": self.predicted_revenue,
+            "p10": self.p10,
+            "p90": self.p90,
+        }
+        if self.p50 is not None:
+            res["p50"] = self.p50
+        if self.dataset_snapshot_id is not None:
+            res["dataset_snapshot_id"] = self.dataset_snapshot_id
+        if self.artifact_lineage_id is not None:
+            res["artifact_lineage_id"] = self.artifact_lineage_id
+        return res
+
+
+@dataclass(frozen=True)
+class SiteScorePredictionSourceVerificationResult:
+    """Fail-closed verification result for SiteScore prediction source evidence."""
+
+    is_valid: bool
+    reason_code: str
+    matched_count: int = 0
+    unmatched_count: int = 0
+    duplicate_count: int = 0
+    malformed_interval_count: int = 0
+    m6_matched_count: int = 0
+    m12_matched_count: int = 0
+    errors: Sequence[str] = field(default_factory=tuple)
+    dataset_snapshot_id: str | None = None
+    model_version: str | None = None
+    artifact_lineage_id: str | None = None
+    prediction_receipt_hash: str | None = None
+    population_report: dict[str, Any] = field(default_factory=dict)
+
+
+def compute_prediction_source_receipt_sha256(payload: dict[str, Any]) -> str:
+    """Compute deterministic SHA256 digest of prediction source receipt body excluding integrity hash."""
+    canonical = json.dumps(
+        {k: v for k, v in payload.items() if k != "integrity"},
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def build_sitescore_prediction_source_receipt(
+    records: Sequence[dict[str, Any] | SiteScorePredictionRecord],
+    *,
+    dataset_snapshot_id: str,
+    model_version: str,
+    artifact_lineage_id: str,
+    observed_at: str | None = None,
+    provider_identity: str = "model_ready.sitescore_predictions",
+    authority_attestation: str = "authenticated_sitescore_prediction_source_v1",
+) -> dict[str, Any]:
+    """Build an immutable SiteScore prediction source receipt payload with integrity envelope."""
+    ts = observed_at or datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    if provider_identity not in APPROVED_PROVIDER_IDENTITIES:
+        raise ValueError(f"Disallowed provider_identity '{provider_identity}'")
+    if authority_attestation not in APPROVED_AUTHORITY_ATTESTATIONS:
+        raise ValueError(f"Disallowed authority_attestation '{authority_attestation}'")
+
+    canonical_records = []
+    for r in records:
+        if isinstance(r, SiteScorePredictionRecord):
+            rec_dict = r.to_dict()
+        else:
+            rec_dict = dict(r)
+        opened_on = str(rec_dict.get("opened_on") or "")
+        pred_as_of = str(rec_dict.get("prediction_as_of") or opened_on)
+        if opened_on and pred_as_of and pred_as_of != opened_on:
+            raise ValueError(f"prediction_as_of '{pred_as_of}' mismatch with opened_on '{opened_on}'")
+        rec_dict["prediction_as_of"] = pred_as_of
+        rec_dict["opened_on"] = opened_on
+        if "model_version" not in rec_dict or not rec_dict["model_version"]:
+            rec_dict["model_version"] = model_version
+        hor = str(rec_dict.get("horizon_code") or "90d")
+        if hor not in APPROVED_HORIZON_CODES:
+            raise ValueError(f"Disallowed horizon_code '{hor}'")
+        rec_dict["horizon_code"] = hor
+        rec_dict["dataset_snapshot_id"] = dataset_snapshot_id
+        rec_dict["artifact_lineage_id"] = artifact_lineage_id
+        canonical_records.append(rec_dict)
+
+    sorted_records = sorted(
+        canonical_records,
+        key=lambda x: (
+            str(x.get("entity_id") or x.get("store_id") or ""),
+            str(x.get("prediction_as_of") or x.get("opened_on") or ""),
+            str(x.get("model_version") or ""),
+            str(x.get("horizon_code") or "90d"),
+        ),
+    )
+
+    records_payload = json.dumps(sorted_records, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    records_sha256 = hashlib.sha256(records_payload.encode("utf-8")).hexdigest()
+
+    payload: dict[str, Any] = {
+        "schema_version": PREDICTION_SOURCE_RECEIPT_SCHEMA_VERSION,
+        "kind": PREDICTION_SOURCE_RECEIPT_KIND,
+        "observed_at": ts,
+        "model_name": CANONICAL_PREDICTION_MODEL_NAME,
+        "service": CANONICAL_PREDICTION_SERVICE,
+        "provider_identity": provider_identity,
+        "authority_attestation": authority_attestation,
+        "dataset_snapshot_id": dataset_snapshot_id,
+        "model_version": model_version,
+        "artifact_lineage_id": artifact_lineage_id,
+        "record_count": len(sorted_records),
+        "records_sha256": records_sha256,
+        "records": sorted_records,
+    }
+
+    content_sha = compute_prediction_source_receipt_sha256(payload)
+    payload["integrity"] = {
+        "content_sha256": content_sha,
+        "records_sha256": records_sha256,
+    }
+    return payload
+
+
+def verify_sitescore_prediction_source(
+    records: Sequence[dict[str, Any]],
+    *,
+    prediction_receipt: dict[str, Any] | None = None,
+    model_registry_evidence: Any | None = None,
+    expected_snapshot_id: str | None = None,
+    expected_model_version: str | None = None,
+    expected_lineage_id: str | None = None,
+    provenance: str = "authenticated_governed_records",
+) -> SiteScorePredictionSourceVerificationResult:
+    """Fail-closed verification of SiteScore prediction source evidence."""
+    errors: list[str] = []
+
+    if not records:
+        return SiteScorePredictionSourceVerificationResult(
+            is_valid=False,
+            reason_code="NO_PREDICTION_RECORDS",
+            errors=("No prediction records provided",),
+        )
+
+    receipt_to_verify = prediction_receipt
+    if receipt_to_verify is None:
+        if isinstance(records, dict) and "prediction_receipt" in records:
+            receipt_to_verify = records["prediction_receipt"]
+        elif records and isinstance(records[0], dict) and "_prediction_receipt" in records[0]:
+            receipt_to_verify = records[0]["_prediction_receipt"]
+
+    verified_receipt_hash: str | None = None
+    dataset_snapshot_id: str | None = expected_snapshot_id
+    model_version: str | None = expected_model_version
+    artifact_lineage_id: str | None = expected_lineage_id
+
+    matched_count = 0
+    unmatched_count = 0
+    duplicate_count = 0
+    malformed_interval_count = 0
+    m6_matched_count = 0
+    m12_matched_count = 0
+
+    DISALLOWED_SNAPSHOT_SUBSTRINGS = (
+        "caller-self-attested", "arbitrary-caller-snapshot", "fresh-caller-snapshot",
+        "unverified", "self-attested", "caller-attested", "none", "null"
+    )
+    DISALLOWED_MODEL_VERSIONS = (
+        "stale-alias-v0", "arbitrary-caller-model", "forged-approved-v42",
+        "unverified", "stale-alias", "none", "null"
+    )
+    DISALLOWED_LINEAGE_SUBSTRINGS = (
+        "not-a-hash", "arbitrary-caller-artifact", "opaque-caller-lineage",
+        "unverified", "not_a_hash", "none", "null"
+    )
+
+    DISALLOWED_AUTHORITY_SUBSTRINGS = (
+        "self-attested", "caller-self-attested", "caller", "unverified",
+        "self-hash", "none", "null", "arbitrary", "opaque"
+    )
+
+    GOVERNED_PROVENANCES = (
+        "authenticated_governed_records",
+        "pg16_query",
+        "pg16_prediction_query",
+        "authenticated_prediction_registry",
+    )
+    if provenance not in GOVERNED_PROVENANCES:
+        return SiteScorePredictionSourceVerificationResult(
+            is_valid=False,
+            reason_code="UNAUTHENTICATED_PREDICTION_PROVENANCE",
+            errors=(
+                f"Unauthenticated prediction provenance: '{provenance}'. "
+                "Self-attestation from caller records is unauthenticated.",
+            ),
+        )
+
+    if receipt_to_verify is None and model_registry_evidence is None:
+        return SiteScorePredictionSourceVerificationResult(
+            is_valid=False,
+            reason_code="MISSING_GOVERNED_LINEAGE",
+            errors=(
+                "Missing authoritative prediction receipt or model registry evidence; "
+                "self-attested caller records without verified receipt or registry readback are forbidden",
+            ),
+        )
+
+    receipt_records_lookup: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    if receipt_to_verify is not None:
+        if not isinstance(receipt_to_verify, dict):
+            return SiteScorePredictionSourceVerificationResult(
+                is_valid=False,
+                reason_code="INTEGRITY_HASH_MISMATCH",
+                errors=("Provided prediction_receipt is not a dictionary",),
+            )
+
+        if receipt_to_verify.get("schema_version") != PREDICTION_SOURCE_RECEIPT_SCHEMA_VERSION:
+            errors.append(f"Invalid prediction receipt schema_version: expected {PREDICTION_SOURCE_RECEIPT_SCHEMA_VERSION}, got {receipt_to_verify.get('schema_version')}")
+        if receipt_to_verify.get("kind") != PREDICTION_SOURCE_RECEIPT_KIND:
+            errors.append(f"Invalid prediction receipt kind: expected {PREDICTION_SOURCE_RECEIPT_KIND}, got {receipt_to_verify.get('kind')}")
+        if receipt_to_verify.get("model_name") != CANONICAL_PREDICTION_MODEL_NAME:
+            errors.append(f"Invalid prediction receipt model_name: expected {CANONICAL_PREDICTION_MODEL_NAME}, got {receipt_to_verify.get('model_name')}")
+        if receipt_to_verify.get("service") != CANONICAL_PREDICTION_SERVICE:
+            errors.append(f"Invalid prediction receipt service: expected {CANONICAL_PREDICTION_SERVICE}, got {receipt_to_verify.get('service')}")
+
+        auth_att = str(receipt_to_verify.get("authority_attestation") or "").strip()
+        prov_id = str(receipt_to_verify.get("provider_identity") or "").strip()
+        if not auth_att or auth_att not in APPROVED_AUTHORITY_ATTESTATIONS or any(sub in auth_att.lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS):
+            errors.append(f"Prediction receipt lacks valid authority attestation: '{auth_att}'")
+        if not prov_id or prov_id not in APPROVED_PROVIDER_IDENTITIES or any(sub in prov_id.lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS):
+            errors.append(f"Prediction receipt lacks valid provider identity: '{prov_id}'")
+
+        integrity = receipt_to_verify.get("integrity")
+        if not isinstance(integrity, dict) or not integrity.get("content_sha256"):
+            errors.append("Missing integrity.content_sha256 envelope in prediction receipt")
+        else:
+            calc_content_sha = compute_prediction_source_receipt_sha256(receipt_to_verify)
+            if integrity["content_sha256"] != calc_content_sha:
+                errors.append(f"Prediction receipt content_sha256 mismatch: declared {integrity['content_sha256']}, recomputed {calc_content_sha}")
+            elif not _is_valid_sha256_hex(integrity["content_sha256"]):
+                errors.append(f"Prediction receipt content_sha256 is not a valid 64-hex string: '{integrity['content_sha256']}'")
+
+        rec_list = receipt_to_verify.get("records")
+        if not isinstance(rec_list, list):
+            errors.append("Prediction receipt records field must be a list")
+        else:
+            declared_count = receipt_to_verify.get("record_count")
+            if declared_count is None or not isinstance(declared_count, int) or declared_count != len(rec_list):
+                errors.append(f"Prediction receipt record_count mismatch: declared {declared_count}, actual records length {len(rec_list)}")
+            if len(rec_list) != len(records):
+                errors.append(f"Prediction receipt record count ({len(rec_list)}) does not match evaluated records count ({len(records)})")
+
+            rec_payload = json.dumps(rec_list, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            calc_rec_sha = hashlib.sha256(rec_payload.encode("utf-8")).hexdigest()
+            declared_rec_sha = receipt_to_verify.get("records_sha256") or (integrity.get("records_sha256") if isinstance(integrity, dict) else None)
+            if declared_rec_sha != calc_rec_sha:
+                errors.append(f"Prediction receipt records_sha256 mismatch: declared {declared_rec_sha}, recomputed {calc_rec_sha}")
+
+        rec_snap = str(receipt_to_verify.get("dataset_snapshot_id") or "").strip()
+        rec_ver = str(receipt_to_verify.get("model_version") or "").strip()
+        rec_lin = str(receipt_to_verify.get("artifact_lineage_id") or "").strip()
+
+        if not rec_snap or any(sub in rec_snap.lower() for sub in DISALLOWED_SNAPSHOT_SUBSTRINGS):
+            errors.append(f"Invalid or disallowed dataset_snapshot_id in prediction receipt: '{rec_snap}'")
+        if not rec_ver or rec_ver.lower() in DISALLOWED_MODEL_VERSIONS or rec_ver not in APPROVED_MODEL_VERSIONS:
+            errors.append(f"Invalid or disallowed model_version in prediction receipt: '{rec_ver}'")
+        if not rec_lin or any(sub in rec_lin.lower() for sub in DISALLOWED_LINEAGE_SUBSTRINGS):
+            errors.append(f"Invalid or disallowed artifact_lineage_id in prediction receipt: '{rec_lin}'")
+
+        if expected_snapshot_id and rec_snap != expected_snapshot_id:
+            errors.append(f"Prediction receipt dataset_snapshot_id '{rec_snap}' mismatch with expected '{expected_snapshot_id}'")
+        target_model_ver = expected_model_version or CANONICAL_MODEL_VERSION
+        if rec_ver != target_model_ver:
+            errors.append(f"Prediction receipt model_version '{rec_ver}' mismatch with expected '{target_model_ver}'")
+        if expected_lineage_id and rec_lin != expected_lineage_id:
+            errors.append(f"Prediction receipt artifact_lineage_id '{rec_lin}' mismatch with expected '{expected_lineage_id}'")
+
+        dataset_snapshot_id = rec_snap
+        model_version = rec_ver
+        artifact_lineage_id = rec_lin
+        verified_receipt_hash = integrity.get("content_sha256") if isinstance(integrity, dict) else None
+
+        if isinstance(rec_list, list):
+            seen_receipt_keys: set[tuple[str, str, str, str]] = set()
+            for item in rec_list:
+                if isinstance(item, dict):
+                    eid = str(item.get("entity_id") or item.get("store_id") or "")
+                    item_opened_on = str(item.get("opened_on") or "")
+                    as_of = str(item.get("prediction_as_of") or item_opened_on)
+                    if item_opened_on and as_of and as_of != item_opened_on:
+                        errors.append(f"Prediction receipt record prediction_as_of '{as_of}' mismatch with opened_on '{item_opened_on}' for entity '{eid}'")
+                    ver = str(item.get("model_version") or model_version or "")
+                    hor = str(item.get("horizon_code") or "90d")
+                    if hor not in APPROVED_HORIZON_CODES:
+                        errors.append(f"Prediction receipt record contains disallowed horizon_code '{hor}' for entity '{eid}'")
+                    item_snap = str(item.get("dataset_snapshot_id") or rec_snap or "")
+                    item_lin = str(item.get("artifact_lineage_id") or rec_lin or "")
+                    if item.get("dataset_snapshot_id") and item_snap != rec_snap:
+                        errors.append(f"Prediction receipt record dataset_snapshot_id '{item_snap}' mismatch with top-level snapshot '{rec_snap}' for entity '{eid}'")
+                    if item.get("artifact_lineage_id") and item_lin != rec_lin:
+                        errors.append(f"Prediction receipt record artifact_lineage_id '{item_lin}' mismatch with top-level lineage '{rec_lin}' for entity '{eid}'")
+                    if item.get("model_version") and ver != rec_ver:
+                        errors.append(f"Prediction receipt record model_version '{ver}' mismatch with top-level version '{rec_ver}' for entity '{eid}'")
+                    rk = (eid, as_of, ver, hor)
+                    if rk in seen_receipt_keys:
+                        duplicate_count += 1
+                        errors.append(f"Duplicate prediction record key in prediction receipt for entity '{eid}' as-of '{as_of}' version '{ver}' horizon '{hor}'")
+                    seen_receipt_keys.add(rk)
+                    receipt_records_lookup[rk] = item
+                    sid = str(item.get("store_id") or "")
+                    if sid and sid != eid:
+                        receipt_records_lookup[(sid, as_of, ver, hor)] = item
+
+    elif model_registry_evidence is not None:
+        reg_model_name = getattr(model_registry_evidence, "model_name", None) or (
+            model_registry_evidence.get("model_name") if isinstance(model_registry_evidence, dict) else None
+        )
+        reg_authority = getattr(model_registry_evidence, "authority_attestation", None) or (
+            model_registry_evidence.get("authority_attestation") if isinstance(model_registry_evidence, dict) else None
+        )
+        reg_provider = getattr(model_registry_evidence, "provider_identity", None) or (
+            model_registry_evidence.get("provider_identity") if isinstance(model_registry_evidence, dict) else None
+        )
+
+        if reg_model_name != CANONICAL_PREDICTION_MODEL_NAME:
+            errors.append(
+                f"Model registry evidence model_name ({reg_model_name!r}) mismatch with canonical '{CANONICAL_PREDICTION_MODEL_NAME}'"
+            )
+
+        if not reg_authority or str(reg_authority) not in APPROVED_AUTHORITY_ATTESTATIONS or any(sub in str(reg_authority).lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS):
+            errors.append(f"Model registry evidence lacks valid authority attestation: '{reg_authority}'")
+        if not reg_provider or str(reg_provider) not in APPROVED_PROVIDER_IDENTITIES or any(sub in str(reg_provider).lower() for sub in DISALLOWED_AUTHORITY_SUBSTRINGS):
+            errors.append(f"Model registry evidence lacks valid provider identity: '{reg_provider}'")
+
+        versions = (
+            getattr(model_registry_evidence, "versions", None)
+            or (model_registry_evidence.get("versions") if isinstance(model_registry_evidence, dict) else None)
+            or []
+        )
+        matched_v = None
+        target_ver = expected_model_version or CANONICAL_MODEL_VERSION
+        for v in versions:
+            v_ver = getattr(v, "version", None) or (v.get("version") if isinstance(v, dict) else None)
+            if v_ver == target_ver:
+                matched_v = v
+                break
+
+        if matched_v is not None:
+            dataset_snapshot_id = getattr(matched_v, "dataset_snapshot_id", None) or (
+                matched_v.get("dataset_snapshot_id") if isinstance(matched_v, dict) else None
+            )
+            model_version = getattr(matched_v, "version", None) or (
+                matched_v.get("version") if isinstance(matched_v, dict) else None
+            )
+            arts = getattr(matched_v, "artifacts", None) or (
+                matched_v.get("artifacts") if isinstance(matched_v, dict) else None
+            ) or []
+            if arts and isinstance(arts, list):
+                art0 = arts[0]
+                artifact_lineage_id = (
+                    getattr(art0, "content_sha256", None)
+                    or (art0.get("content_sha256") if isinstance(art0, dict) else None)
+                    or getattr(art0, "artifact_id", None)
+                )
+            if not artifact_lineage_id:
+                artifact_lineage_id = getattr(matched_v, "git_sha", None) or (
+                    matched_v.get("git_sha") if isinstance(matched_v, dict) else None
+                )
+        else:
+            errors.append(f"Model registry evidence does not contain exact requested model version '{target_ver}'")
+
+        rec_snap = str(dataset_snapshot_id or "").strip()
+        rec_ver = str(model_version or "").strip()
+        rec_lin = str(artifact_lineage_id or "").strip()
+
+        if not rec_snap or any(sub in rec_snap.lower() for sub in DISALLOWED_SNAPSHOT_SUBSTRINGS):
+            errors.append(f"Invalid or disallowed dataset_snapshot_id in model registry evidence: '{rec_snap}'")
+        if not rec_ver or rec_ver.lower() in DISALLOWED_MODEL_VERSIONS or rec_ver not in APPROVED_MODEL_VERSIONS:
+            errors.append(f"Invalid or disallowed model_version in model registry evidence: '{rec_ver}'")
+        if not rec_lin or any(sub in rec_lin.lower() for sub in DISALLOWED_LINEAGE_SUBSTRINGS):
+            errors.append(f"Invalid or disallowed artifact_lineage_id in model registry evidence: '{rec_lin}'")
+
+        if expected_snapshot_id and rec_snap != expected_snapshot_id:
+            errors.append(f"Model registry evidence dataset_snapshot_id '{rec_snap}' mismatch with expected '{expected_snapshot_id}'")
+        if expected_model_version and rec_ver != expected_model_version:
+            errors.append(f"Model registry evidence model_version '{rec_ver}' mismatch with expected '{expected_model_version}'")
+        if expected_lineage_id and rec_lin != expected_lineage_id:
+            errors.append(f"Model registry evidence artifact_lineage_id '{rec_lin}' mismatch with expected '{expected_lineage_id}'")
+
+        raw_hash = (
+            getattr(model_registry_evidence, "prediction_receipt_hash", None)
+            or (model_registry_evidence.get("prediction_receipt_hash") if isinstance(model_registry_evidence, dict) else None)
+            or getattr(model_registry_evidence, "content_sha256", None)
+            or (model_registry_evidence.get("content_sha256") if isinstance(model_registry_evidence, dict) else None)
+        )
+        if _is_valid_sha256_hex(raw_hash):
+            verified_receipt_hash = raw_hash
+        else:
+            errors.append("Model registry evidence missing valid 64-hex prediction_receipt_hash")
+
+        reg_records = (
+            getattr(model_registry_evidence, "prediction_records", None)
+            or (model_registry_evidence.get("prediction_records") if isinstance(model_registry_evidence, dict) else None)
+            or getattr(model_registry_evidence, "records", None)
+            or (model_registry_evidence.get("records") if isinstance(model_registry_evidence, dict) else None)
+        )
+        if isinstance(reg_records, list):
+            declared_reg_count = (
+                getattr(model_registry_evidence, "record_count", None)
+                or (model_registry_evidence.get("record_count") if isinstance(model_registry_evidence, dict) else None)
+            )
+            if declared_reg_count is not None and (not isinstance(declared_reg_count, int) or declared_reg_count != len(reg_records)):
+                errors.append(f"Model registry evidence record_count mismatch: declared {declared_reg_count}, actual records length {len(reg_records)}")
+            if len(reg_records) != len(records):
+                errors.append(f"Model registry evidence record count ({len(reg_records)}) does not match evaluated records count ({len(records)})")
+
+            if rec_snap and rec_ver and rec_lin and reg_provider and reg_authority:
+                try:
+                    reg_obs_at = (
+                        getattr(model_registry_evidence, "observed_at", None)
+                        or (model_registry_evidence.get("observed_at") if isinstance(model_registry_evidence, dict) else None)
+                        or getattr(model_registry_evidence, "created_at", None)
+                        or (model_registry_evidence.get("created_at") if isinstance(model_registry_evidence, dict) else None)
+                    )
+                    synth_receipt = build_sitescore_prediction_source_receipt(
+                        reg_records,
+                        dataset_snapshot_id=rec_snap,
+                        model_version=rec_ver,
+                        artifact_lineage_id=rec_lin,
+                        provider_identity=str(reg_provider),
+                        authority_attestation=str(reg_authority),
+                        observed_at=str(reg_obs_at) if reg_obs_at else "2026-07-31T00:00:00Z",
+                    )
+                    recomputed_content_hash = synth_receipt["integrity"]["content_sha256"]
+                    recomputed_records_hash = synth_receipt["records_sha256"]
+                    if raw_hash and raw_hash not in (recomputed_content_hash, recomputed_records_hash):
+                        errors.append(f"Model registry evidence prediction_receipt_hash mismatch: declared {raw_hash}, recomputed content_sha256 {recomputed_content_hash}")
+                except Exception as ex:
+                    errors.append(f"Failed to reconcile model registry evidence prediction_records hash: {ex}")
+
+            seen_reg_keys: set[tuple[str, str, str, str]] = set()
+            for item in reg_records:
+                if isinstance(item, dict):
+                    eid = str(item.get("entity_id") or item.get("store_id") or "")
+                    item_opened_on = str(item.get("opened_on") or "")
+                    as_of = str(item.get("prediction_as_of") or item_opened_on)
+                    if item_opened_on and as_of and as_of != item_opened_on:
+                        errors.append(f"Model registry prediction record prediction_as_of '{as_of}' mismatch with opened_on '{item_opened_on}' for entity '{eid}'")
+                    ver = str(item.get("model_version") or model_version or "")
+                    hor = str(item.get("horizon_code") or "90d")
+                    if hor not in APPROVED_HORIZON_CODES:
+                        errors.append(f"Model registry prediction record contains disallowed horizon_code '{hor}' for entity '{eid}'")
+                    item_snap = str(item.get("dataset_snapshot_id") or rec_snap or "")
+                    item_lin = str(item.get("artifact_lineage_id") or rec_lin or "")
+                    if item.get("dataset_snapshot_id") and item_snap != rec_snap:
+                        errors.append(f"Model registry record dataset_snapshot_id '{item_snap}' mismatch with top-level snapshot '{rec_snap}' for entity '{eid}'")
+                    if item.get("artifact_lineage_id") and item_lin != rec_lin:
+                        errors.append(f"Model registry record artifact_lineage_id '{item_lin}' mismatch with top-level lineage '{rec_lin}' for entity '{eid}'")
+                    if item.get("model_version") and ver != rec_ver:
+                        errors.append(f"Model registry record model_version '{ver}' mismatch with top-level version '{rec_ver}' for entity '{eid}'")
+                    rk = (eid, as_of, ver, hor)
+                    if rk in seen_reg_keys:
+                        duplicate_count += 1
+                        errors.append(f"Duplicate prediction record key in model registry evidence for entity '{eid}' as-of '{as_of}' version '{ver}' horizon '{hor}'")
+                    seen_reg_keys.add(rk)
+                    receipt_records_lookup[rk] = item
+                    sid = str(item.get("store_id") or "")
+                    if sid and sid != eid:
+                        receipt_records_lookup[(sid, as_of, ver, hor)] = item
+        else:
+            errors.append("Model registry evidence missing authoritative prediction records readback")
+
+    if not _is_valid_sha256_hex(verified_receipt_hash):
+        errors.append("Missing or invalid 64-hex prediction receipt hash")
+
+    if errors:
+        reason_code = "MISSING_GOVERNED_LINEAGE"
+        if any("duplicate" in e.lower() for e in errors):
+            reason_code = "DUPLICATE_PREDICTION_SOURCE"
+        elif any("interval" in e.lower() or "p10" in e.lower() or "p90" in e.lower() for e in errors):
+            reason_code = "MALFORMED_INTERVAL_BOUNDS"
+        elif any("unmatched" in e.lower() for e in errors):
+            reason_code = "UNMATCHED_PREDICTION_SOURCE"
+        elif any("content_sha256" in e or "records_sha256" in e for e in errors):
+            reason_code = "INTEGRITY_HASH_MISMATCH"
+        elif any("unauthenticated" in e.lower() or "attestation" in e.lower() or "identity" in e.lower() or "provider identity" in e.lower() for e in errors):
+            reason_code = "UNAUTHENTICATED_PREDICTION_PROVENANCE"
+        return SiteScorePredictionSourceVerificationResult(
+            is_valid=False,
+            reason_code=reason_code,
+            matched_count=matched_count,
+            unmatched_count=unmatched_count,
+            duplicate_count=duplicate_count,
+            malformed_interval_count=malformed_interval_count,
+            errors=tuple(errors),
+        )
+
+    seen_entity_asof_version_horizon: set[tuple[str, str, str, str]] = set()
+
+    ref_date = datetime.now(UTC).date()
+
+    for idx, r in enumerate(records):
+        if not isinstance(r, dict):
+            errors.append(f"Record [{idx}] must be a dictionary")
+            continue
+
+        entity_id = str(r.get("entity_id") or r.get("store_id") or f"idx-{idx}")
+        store_id = str(r.get("store_id") or entity_id)
+        opened_on = str(r.get("opened_on") or "")
+        pred_as_of = str(r.get("prediction_as_of") or opened_on)
+        if opened_on and pred_as_of and pred_as_of != opened_on:
+            errors.append(f"prediction_as_of '{pred_as_of}' mismatch with opened_on '{opened_on}' at record [{idx}] for entity '{entity_id}'")
+
+        rec_ver = str(r.get("model_version") or model_version or "")
+        rec_hor = str(r.get("horizon_code") or "90d")
+        if rec_hor not in APPROVED_HORIZON_CODES:
+            errors.append(f"Invalid or disallowed horizon_code '{rec_hor}' at record [{idx}] for entity '{entity_id}'")
+
+        join_key = (entity_id, pred_as_of, rec_ver, rec_hor)
+        if join_key in seen_entity_asof_version_horizon:
+            duplicate_count += 1
+            errors.append(f"Duplicate prediction record for entity '{entity_id}' as-of '{pred_as_of}' version '{rec_ver}' horizon '{rec_hor}'")
+        seen_entity_asof_version_horizon.add(join_key)
+
+        if pred_as_of:
+            try:
+                dt_opened = datetime.strptime(pred_as_of[:10], "%Y-%m-%d").date()
+                if dt_opened > ref_date:
+                    errors.append(f"Future or invalid opened_on as-of date at record [{idx}]: '{pred_as_of}'")
+            except Exception:
+                errors.append(f"Invalid opened_on date format at record [{idx}]: '{pred_as_of}'")
+
+        rec_from_receipt = None
+        if receipt_records_lookup:
+            rec_from_receipt = receipt_records_lookup.get((entity_id, pred_as_of, rec_ver, rec_hor))
+            if rec_from_receipt is None and store_id != entity_id:
+                rec_from_receipt = receipt_records_lookup.get((store_id, pred_as_of, rec_ver, rec_hor))
+
+            if rec_from_receipt is None:
+                unmatched_count += 1
+                errors.append(f"Unmatched prediction for entity '{entity_id}' as-of '{pred_as_of}' in verified receipt")
+                continue
+
+        source_rec = rec_from_receipt or r
+        pred_raw = source_rec.get("predicted_revenue")
+        p10_raw = source_rec.get("p10")
+        p90_raw = source_rec.get("p90")
+        p50_raw = source_rec.get("p50")
+
+        if pred_raw is None or not _is_valid_prediction_value(pred_raw):
+            unmatched_count += 1
+            errors.append(f"Invalid or missing predicted_revenue at record [{idx}] for entity '{entity_id}'")
+            continue
+
+        matched_count += 1
+
+        if r.get("predicted_m6_revenue") is not None or rec_hor == "M6":
+            m6_matched_count += 1
+        if r.get("predicted_m12_revenue") is not None or rec_hor == "M12":
+            m12_matched_count += 1
+
+        if p10_raw is None or p90_raw is None:
+            malformed_interval_count += 1
+            errors.append(f"Missing required interval bounds p10/p90 at record [{idx}] for entity '{entity_id}'")
+        elif not _is_finite_float(p10_raw) or not _is_finite_float(p90_raw):
+            malformed_interval_count += 1
+            errors.append(f"Non-finite interval bounds p10/p90 at record [{idx}] for entity '{entity_id}'")
+        else:
+            p10 = float(p10_raw)
+            p90 = float(p90_raw)
+            if p10 < 0.0 or p90 < 0.0:
+                malformed_interval_count += 1
+                errors.append(f"Negative interval bounds p10={p10}, p90={p90} at record [{idx}] for entity '{entity_id}'")
+            elif p10 > p90:
+                malformed_interval_count += 1
+                errors.append(f"Malformed interval bound: p10 ({p10}) > p90 ({p90}) at record [{idx}] for entity '{entity_id}'")
+
+            if p50_raw is not None:
+                if not _is_finite_float(p50_raw):
+                    malformed_interval_count += 1
+                    errors.append(f"Non-finite p50 interval bound at record [{idx}] for entity '{entity_id}'")
+                else:
+                    p50 = float(p50_raw)
+                    if not (p10 <= p50 <= p90):
+                        malformed_interval_count += 1
+                        errors.append(f"Malformed interval bound: p50 ({p50}) outside [{p10}, {p90}] at record [{idx}] for entity '{entity_id}'")
+
+    outcomes_with_pred = []
+    for idx, r in enumerate(records):
+        entity_id = str(r.get("entity_id") or r.get("store_id") or f"idx-{idx}")
+        store_id = str(r.get("store_id") or entity_id)
+        opened_on = str(r.get("opened_on") or "")
+        pred_as_of = str(r.get("prediction_as_of") or opened_on)
+        rec_ver = str(r.get("model_version") or model_version or "")
+        rec_hor = str(r.get("horizon_code") or "90d")
+        source_rec = None
+        if receipt_records_lookup:
+            source_rec = receipt_records_lookup.get((entity_id, pred_as_of, rec_ver, rec_hor)) or receipt_records_lookup.get((store_id, pred_as_of, rec_ver, rec_hor))
+        if source_rec is None:
+            source_rec = r
+
+        pred_val = source_rec.get("predicted_revenue")
+        y_true_val = r.get("realized_90d_net_revenue")
+        if _is_valid_prediction_value(pred_val) and _is_finite_float(y_true_val):
+            outcomes_with_pred.append((float(pred_val), float(y_true_val)))
+
+    if outcomes_with_pred and len(outcomes_with_pred) >= 5:
+        exact_matches = sum(
+            1 for pred_v, y_true_v in outcomes_with_pred
+            if pred_v == y_true_v
+        )
+        if exact_matches == len(outcomes_with_pred):
+            errors.append(f"Illegal y_pred=y_true substitution detected: all {len(outcomes_with_pred)} predictions exactly match realized 90d net revenue")
+
+    m6_outcomes = [
+        r for r in records
+        if _is_finite_float(r.get("realized_m6_net_revenue") or r.get("realized_180d_net_revenue"))
+        and _is_finite_float(r.get("realized_90d_net_revenue"))
+    ]
+    if m6_outcomes and len(m6_outcomes) >= 5:
+        fixed_mult_matches = sum(
+            1 for r in m6_outcomes
+            if float(r.get("realized_m6_net_revenue") or r.get("realized_180d_net_revenue")) == float(r["realized_90d_net_revenue"]) * 2.0
+        )
+        if fixed_mult_matches == len(m6_outcomes):
+            errors.append(f"Illegal fixed multiplier horizon metric detected: all {len(m6_outcomes)} M6 outcomes are exactly 2.0x 90d revenue")
+
+    age_substituted = [
+        r for r in records
+        if r.get("store_age_days") is not None
+        and int(r.get("store_age_days", 0)) >= 180
+        and not _is_finite_float(r.get("realized_m6_net_revenue") or r.get("realized_180d_net_revenue") or r.get("m6_outcome") or r.get("realized_m6_revenue"))
+        and r.get("m6_covered") is True
+    ]
+    if age_substituted:
+        errors.append(f"Illegal store age substitution detected: {len(age_substituted)} records claim M6 coverage based on store_age_days without explicit realized M6 revenue")
+
+    population_report = {
+        "observed_records": len(records),
+        "matched_predictions": matched_count,
+        "unmatched_predictions": unmatched_count,
+        "duplicate_predictions": duplicate_count,
+        "malformed_intervals": malformed_interval_count,
+        "m6_matched": m6_matched_count,
+        "m12_matched": m12_matched_count,
+        "verified_receipt_hash": verified_receipt_hash,
+    }
+
+    if errors:
+        reason_code = "MISSING_GOVERNED_LINEAGE"
+        if duplicate_count > 0:
+            reason_code = "DUPLICATE_PREDICTION_SOURCE"
+        elif malformed_interval_count > 0:
+            reason_code = "MALFORMED_INTERVAL_BOUNDS"
+        elif unmatched_count > 0:
+            reason_code = "UNMATCHED_PREDICTION_SOURCE"
+        elif any("content_sha256" in e or "records_sha256" in e for e in errors):
+            reason_code = "INTEGRITY_HASH_MISMATCH"
+        elif any("substitution" in e or "multiplier" in e for e in errors):
+            reason_code = "SYNTHETIC_SUBSTITUTION_REJECTED"
+        elif any("unauthenticated" in e.lower() or "attestation" in e.lower() or "identity" in e.lower() or "provider identity" in e.lower() for e in errors):
+            reason_code = "UNAUTHENTICATED_PREDICTION_PROVENANCE"
+
+        return SiteScorePredictionSourceVerificationResult(
+            is_valid=False,
+            reason_code=reason_code,
+            matched_count=matched_count,
+            unmatched_count=unmatched_count,
+            duplicate_count=duplicate_count,
+            malformed_interval_count=malformed_interval_count,
+            m6_matched_count=m6_matched_count,
+            m12_matched_count=m12_matched_count,
+            errors=tuple(errors),
+            dataset_snapshot_id=dataset_snapshot_id,
+            model_version=model_version,
+            artifact_lineage_id=artifact_lineage_id,
+            population_report=population_report,
+        )
+
+    return SiteScorePredictionSourceVerificationResult(
+        is_valid=True,
+        reason_code="PREDICTION_SOURCE_VERIFIED",
+        matched_count=matched_count,
+        unmatched_count=unmatched_count,
+        duplicate_count=duplicate_count,
+        malformed_interval_count=malformed_interval_count,
+        m6_matched_count=m6_matched_count,
+        m12_matched_count=m12_matched_count,
+        errors=(),
+        dataset_snapshot_id=dataset_snapshot_id,
+        model_version=model_version,
+        artifact_lineage_id=artifact_lineage_id,
+        prediction_receipt_hash=verified_receipt_hash,
+        population_report=population_report,
+    )
+
+
+__all__ = [
+    "PREDICTION_SOURCE_RECEIPT_SCHEMA_VERSION",
+    "PREDICTION_SOURCE_RECEIPT_KIND",
+    "CANONICAL_PREDICTION_MODEL_NAME",
+    "CANONICAL_PREDICTION_SERVICE",
+    "CANONICAL_MODEL_VERSION",
+    "APPROVED_MODEL_VERSIONS",
+    "APPROVED_PROVIDER_IDENTITIES",
+    "APPROVED_AUTHORITY_ATTESTATIONS",
+    "APPROVED_HORIZON_CODES",
+    "SiteScorePredictionRecord",
+    "SiteScorePredictionSourceVerificationResult",
+    "build_sitescore_prediction_source_receipt",
+    "compute_prediction_source_receipt_sha256",
+    "verify_sitescore_prediction_source",
+]

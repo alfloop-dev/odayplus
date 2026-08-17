@@ -309,7 +309,7 @@ def test_backfill_live_mode_uses_durable_canonical_repositories(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from scripts.external_data_backfill import main
+    from product_ops.external_data_backfill import main
 
     database_path = tmp_path / "backfill.sqlite3"
     evidence_dir = tmp_path / "evidence"
@@ -355,7 +355,7 @@ def test_backfill_live_mode_uses_durable_canonical_repositories(
 def test_backfill_production_live_mode_rejects_sqlite(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from scripts.external_data_backfill import main
+    from product_ops.external_data_backfill import main
 
     monkeypatch.setenv("ODP_DEPLOY_ENV", "production")
     monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "live")

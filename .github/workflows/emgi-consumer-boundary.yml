@@ -1,0 +1,28 @@
+name: EMGI consumer repository boundary
+
+on:
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate EMGI producer / consumer boundary
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          node delivery_toolchain/governance/validate_emgi_consumer_boundary.mjs \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA"
+
+      - name: Test boundary validator
+        run: node --test tests/tooling/test_emgi_consumer_boundary.mjs
