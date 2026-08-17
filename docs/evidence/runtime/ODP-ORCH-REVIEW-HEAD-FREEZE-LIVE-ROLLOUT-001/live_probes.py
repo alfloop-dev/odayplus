@@ -23,13 +23,38 @@ sys.path.insert(0, str(WORKTREE / "scripts"))
 import ai_status
 import supervisor
 
+# The live status root moved after the 2026-07-31 rollout: the runtime is now
+# published through the `oday-plus-supervisor-runtime-current` symlink instead
+# of the retired `/home/lupin/oday-plus-supervisor-live` path. Resolve it from
+# the environment the Supervisor actually exports so these probes keep pointing
+# at the live root rather than a hard-coded path that no longer exists.
+LIVE_ROOT_CANDIDATES = (
+    os.environ.get("PANTHEON_STATUS_ROOT"),
+    "/home/lupin/oday-plus-supervisor-runtime-current",
+    "/home/lupin/oday-plus-supervisor-live",
+)
+
+
+def resolve_live_status_root() -> Path:
+    for candidate in LIVE_ROOT_CANDIDATES:
+        if not candidate:
+            continue
+        root = Path(candidate).resolve()
+        if (root / "ai-status.json").is_file():
+            return root
+    raise RuntimeError(
+        "no live status root found; checked: "
+        + ", ".join(str(c) for c in LIVE_ROOT_CANDIDATES if c)
+    )
+
 
 class LiveFreezeProbes(unittest.TestCase):
     def setUp(self):
         self.tmp_dir = tempfile.mkdtemp(prefix="freeze-probe-root-")
         self.status_root = Path(self.tmp_dir)
 
-        live_root = Path("/home/lupin/oday-plus-supervisor-live")
+        live_root = resolve_live_status_root()
+        print(f"live status root: {live_root}", file=sys.stderr)
         shutil.copy(live_root / "ai-status.json", self.status_root / "ai-status.json")
         (self.status_root / ".orchestrator").mkdir(parents=True, exist_ok=True)
         if (live_root / ".orchestrator" / "config.json").exists():

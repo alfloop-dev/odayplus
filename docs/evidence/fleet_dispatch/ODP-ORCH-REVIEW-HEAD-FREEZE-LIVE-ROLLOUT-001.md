@@ -7,12 +7,65 @@ Depends on ODP-ORCH-REVIEW-HEAD-FREEZE-001, merged as PR #505 (`6af7b86ba4aa34d5
 
 This task deploys the reviewed PR #505 exact-head freeze control plane into the live Supervisor. It changes no Package 10 UI, no API worker logic, and no cloud resources. Detailed runtime receipts live under `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/`.
 
-Current acceptance disposition (Codex2 reopen, 2026-08-02): **BLOCKED**. The exact PR #505 bytes remain deployed and no second restart is authorized, but two rollout acceptance criteria are not proven:
+## Acceptance disposition
 
-- **No unrelated worker termination — NOT MET.** The only restart terminated two unrelated active workers by SIGTERM. Later reconciliation and re-dispatch preserve incident truth but do not retroactively satisfy the no-termination criterion. Closeout requires an explicit operator-authorized acceptance waiver or other canonical incident disposition.
-- **Pre-write heartbeat — UNPROVEN.** The receipt captured pre-write systemd unit state and active workers, but no contemporaneous heartbeat value. The recorded `ai-status.json updated_at` is post-restart and must not be used as pre-write proof.
+### Current disposition (Claude2, 2026-08-17): **CONDITIONAL — deliverable proven live; two restart-window criteria are permanently unprovable and need an operator ruling**
 
-This remediation corrects the N3 mismatch probe and the evidence claims only. It performs no live publication and no Supervisor restart.
+Receipt: `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/live-state-2026-08-17.txt`.
+
+What changed since the 2026-08-02 reopen is the runtime itself, not the incident
+record. The retired `/home/lupin/oday-plus-supervisor-live` path no longer exists;
+the live Supervisor now runs from `/home/lupin/odayplus` (published through the
+`oday-plus-supervisor-runtime-current` symlink) on branch `dev` at
+`3ad0b50333e324caf9c8f7ca1b9c0b7f442618b9`, PID 196262, started 2026-08-17 16:07:02 UTC.
+
+- **Rollout deliverable — MET, and continuously so.** PR #505
+  (`6af7b86ba4aa34d5bf26142f64f3cb96c429b557`) is an ancestor of the live head, and
+  the B23, B24 and N3 control points are present in the live
+  `.orchestrator/supervisor.py` and `scripts/ai_status.py`. The B23/B24/N3
+  fail-closed probes were re-run on 2026-08-17 against the current live status
+  root: 3/3 PASS (`probes-transcript.txt`, Run 2). The freeze that this task was
+  asked to roll into the live Supervisor is live now and has been through every
+  subsequent reviewed dev merge.
+- **Byte-freeze preservation claim — SUPERSEDED, restated as historical.** The
+  live files are no longer the frozen PR #505 blobs; the runtime tracks `dev` and
+  advances with ordinary merges. The 2026-07-31 "no second restart" preservation
+  is a fact about that day, not a current property, and § 4 below is to be read
+  as a historical record.
+- **No unrelated worker termination — NOT MET, and not retroactively satisfiable.**
+  The 2026-07-31 restart terminated two unrelated active workers by SIGTERM. Both
+  were reconciled as `worker_failed` and re-dispatched, so no task work was lost,
+  but reconciliation does not convert a missed safe-window into a satisfied
+  criterion. This criterion cannot be re-proven by any later action of this task;
+  it can only be closed by an explicit operator-authorized acceptance waiver.
+- **Pre-write heartbeat — UNPROVEN, and not retroactively provable.** No
+  contemporaneous pre-write heartbeat value was captured, and the recorded
+  `ai-status.json updated_at` is post-restart evidence only. There is no artifact
+  that can now supply the missing pre-write value.
+
+**Open item for the operator (not granted by this task):** the two criteria above
+are closed facts about the 2026-07-31 restart window. The owner cannot waive them
+and will not manufacture a waiver. Closeout needs one of:
+
+1. an explicit operator-authorized acceptance waiver covering the SIGTERM
+   termination of the two unrelated workers and the missing pre-write heartbeat; or
+2. a re-run of the rollout in an authorized safe window, which would require a new
+   live publish and a Supervisor restart — neither of which this remediation
+   performs, and neither of which a background worker may initiate unilaterally.
+
+Until one of those happens, the acceptance packet stands as recorded: deliverable
+proven live, two restart-window criteria unmet/unproven.
+
+### Prior disposition (Codex2 reopen, 2026-08-02): BLOCKED
+
+Retained for audit. At that time the exact PR #505 bytes were still deployed and no
+second restart was authorized, and the same two rollout acceptance criteria — no
+unrelated worker termination, and pre-write heartbeat — were recorded as NOT MET
+and UNPROVEN respectively.
+
+This remediation corrects the N3 mismatch probe, re-points the live probes at the
+relocated runtime root, re-proves the freeze against it, and updates the evidence
+claims. It performs no live publication and no Supervisor restart.
 
 ---
 
@@ -84,7 +137,7 @@ Receipt: `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/dep
 
 ---
 
-## 4. Controlled Supervisor Restart & Continuity Proof
+## 4. Controlled Supervisor Restart & Continuity Proof (historical — 2026-07-31)
 
 Exactly ONE controlled restart was issued via systemd at 14:27:07Z:
 
@@ -92,7 +145,9 @@ Exactly ONE controlled restart was issued via systemd at 14:27:07Z:
 systemctl --user restart pantheon-supervisor.service
 ```
 
-Post-incident safety freeze: The deployed PR #505 bytes (`3bb01341fee9b...` / `bc1ba0c2f6...`) and live MainPID `262802` are preserved without any second restart. This preservation does not waive the unrelated-worker termination finding.
+Post-incident safety freeze (as recorded on 2026-07-31): The deployed PR #505 bytes (`3bb01341fee9b...` / `bc1ba0c2f6...`) and live MainPID `262802` were preserved without any second restart. This preservation did not waive the unrelated-worker termination finding.
+
+Superseded as of 2026-08-17: the live root moved to `/home/lupin/odayplus` and now tracks `dev`, so neither those bytes nor that PID are current. See the acceptance disposition above and `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/live-state-2026-08-17.txt`.
 
 Post-restart verification:
 
@@ -133,6 +188,8 @@ Live probes executed via `live_probes.py` against an isolated temporary status r
    - Result: **PASS**
 
 No live status files or dashboard artifacts were mutated during probe execution.
+
+Re-run 2026-08-17 against the relocated live status root (`/home/lupin/odayplus`): 3/3 PASS. `live_probes.py` now resolves the live root from `PANTHEON_STATUS_ROOT`, falling back to the `oday-plus-supervisor-runtime-current` symlink and then the retired path, instead of hard-coding `/home/lupin/oday-plus-supervisor-live` (which no longer exists).
 
 Receipt: `docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/probes-transcript.txt`.
 
