@@ -8,7 +8,7 @@
 - Parent owner: Claude · Parent reviewer: Antigravity
 - Initial observation timestamp: `2026-08-11T06:04:27Z`
 - Initial observation base: `origin/dev` tip `529f0a2c8a722bb27430fb0d614229ef1ea6c127`
-- Revision / base-advance timestamp: `2026-08-17T15:30:00Z`
+- Revision / base-advance timestamp: `2026-08-17T16:15:00Z`
 - Revision base: current `dev` tip `3ad0b50333e324caf9c8f7ca1b9c0b7f442618b9`
 
 ## Scope boundary
@@ -120,6 +120,12 @@ and both invoke `sys.executable` with `cwd=str(sv.config_path(config, "status_fi
 supervisor invokes the data-root copy of `ai_status.py` — bypassing the
 in-process runtime guard. **Defect D1 remains live and unfixed.**
 
+*(Note on latency / N5: While D1 is structurally live in code, the runtime symlink
+`oday-plus-supervisor-runtime-current` currently points to `/home/lupin/odayplus`
+(code plane == data plane), so the resolved script is currently the same file object
+admitted by the guard. The defect is latent due to topological alignment rather than
+code safety, and would activate whenever the supervisor runtime points to a separate worktree).*
+
 ### D2 — the subprocess writer was unversioned, not merely stale (RESOLVED / RETIRED)
 
 In the historical 2026-08-11 topology, `/home/lupin/oday-plus-supervisor-live/scripts/ai_status.py`
@@ -161,8 +167,9 @@ mutating commands under `status_transaction_lock()`.
           finally:
               fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
   ```
-- Supervisor compare-and-swap writes in `.orchestrator/status_transition.py:76`
-  also serialize under `fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)`.
+- Supervisor compare-and-swap writes in `.orchestrator/status_transition.py:53`
+  (transaction open at 52, `LOCK_UN` at 82) also serialize under
+  `fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)`.
 
 ### D4 — dispatch-state recurrence vector (RETIRED)
 
@@ -200,7 +207,7 @@ The premise that "the fix is not in `dev`" has been resolved.
 | `PANTHEON_STATUS_ROOT` / `ORCH_STATUS_ROOT` | worker wrapper, `authoritative_status_root()` | names the fleet data root only | exported by `scripts/ai-status.sh` |
 | `scripts/ai-status.sh` | every worker status transition | committed binding to the runtime writer | **landed in dev** at commit `937c72d2` |
 | `save_state()` atomic replace | writer | atomic write per call | identical on all paths |
-| `status_write_transaction()` | `scripts/ai_status.py:1004`, `status_transition.py:76` | shared flock discipline for status file writes | **landed in dev** (D3 partially remediated) |
+| `status_write_transaction()` | `scripts/ai_status.py:1004`, `status_transition.py:53` | shared flock discipline for status file writes | **landed in dev** (D3 partially remediated) |
 | `rollout_supervisor_runtime.py` | operator rollout | atomically selects a clean exact-`origin/dev` worktree | works for code plane |
 | `check_runtime_freshness.py` | freshness alarm | detects drift/dirtiness of runtime execution | covers runtime tree |
 
@@ -233,7 +240,7 @@ The premise that "the fix is not in `dev`" has been resolved.
 
 - [x] Concurrent worker and supervisor mutations of `ai-status.json` cannot
       lose an update; read-modify-write cycle is serialized via `fcntl.flock`
-      (`scripts/ai_status.py:1004` and `status_transition.py:76`).
+      (`scripts/ai_status.py:1004` and `status_transition.py:53`).
 - [x] Sidecar/dispatch reconciliation runs identically regardless of which
       caller mutated state; unversioned sidecar reconciliation routines
       retired.
@@ -245,8 +252,11 @@ The premise that "the fix is not in `dev`" has been resolved.
 - [x] `status_transaction_lock`, `_merge_status_snapshots`,
       `persist_status_snapshot`, `reconcile_orphan_sidecars`, and
       `reconcile_orphan_sidecars_on_disk` have been retired from production.
-- [x] `/home/lupin/odayplus` (the current live canonical root) has no untracked
+- [ ] `/home/lupin/odayplus` (the current live canonical root) has no untracked
       or dirty modifications to `scripts/ai_status.py` or `scripts/ai-status.sh`.
+      *(Observation as of 2026-08-17T16:05Z: `scripts/ai-status.sh` is clean and matches `937c72d2`,
+      but `scripts/ai_status.py` carries a 13-insertion uncommitted overlay in `resolve_task_sha`
+      for repo-root resolution; unversioned logic remains active on the live root).*
 - [x] Freshness/drift checking covers the runtime writer.
 
 ### Scope conformance
@@ -266,9 +276,11 @@ grep -n 'config_path(config, "status_file").parent / "scripts" / "ai_status.py"'
 # 2. Verify in-process guard in supervisor.py
 sed -n '33,45p' .orchestrator/supervisor.py
 
-# 3. Verify D3 locking in ai_status.py
+# 3. Verify D3 locking in ai_status.py and status_transition.py
 grep -n 'flock\|fcntl\|LOCK_EX' scripts/ai_status.py
 # Expect lines 4, 1004, 1008
+grep -n 'flock' .orchestrator/status_transition.py
+# Expect lines 53, 82
 
 # 4. Verify D5 committed wrapper in scripts/ai-status.sh
 git log --oneline -1 -- scripts/ai-status.sh  # commit 937c72d2
@@ -327,9 +339,9 @@ The packet preparer verified that:
    and `.orchestrator/supervisor.py:33-45`.
 3. D5 was confirmed landed in `scripts/ai-status.sh` (`937c72d2`).
 4. D3 flock locking was confirmed at `scripts/ai_status.py:1004` and
-   `status_transition.py:76`.
-5. The sidecar diff against `origin/dev` is strictly isolated to
-   `support/sidecars/ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001/ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001-SIDECAR-ACCEPTANCE.md`.
+   `status_transition.py:53`.
+5. The sidecar diff against `origin/dev` is isolated to the sidecar's own
+   `support/sidecars/ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001/` directory.
 6. `git diff --check origin/dev...HEAD` is clean.
 7. All status updates and inspections were performed non-destructively.
 
@@ -339,4 +351,4 @@ This packet records the single-version-plane topology findings, isolates the
 contributing defect surface (D1 live; D2, D4 retired; D3, D5 remediated/landed),
 maps the dependencies the parent fix must satisfy, and proposes an acceptance
 checklist bound to current code truth. It is handed to sidecar reviewer Claude
-for round-2 review.
+for round-3 review / approval.
