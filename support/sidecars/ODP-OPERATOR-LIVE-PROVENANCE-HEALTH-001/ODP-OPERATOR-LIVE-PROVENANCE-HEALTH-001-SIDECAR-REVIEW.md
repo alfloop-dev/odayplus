@@ -99,11 +99,71 @@ Before parent task `ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001` is resubmitted to `
 
 ---
 
-## 5. Reviewer Handoff Summary
+## 5. CI Repair Record (Base Advance, 2026-08-17)
+
+The sidecar branch was requeued by the orchestrator with `ci_repair_requeued`
+after PR #563 reported two red checks. Root cause and repair:
+
+### 5.1 Failure Root Cause — Stale Base, Not Packet Content
+
+CI run `30726497442` (head `d87bc04e`, executed 2026-08-02) failed two jobs,
+both from the **same** underlying condition:
+
+| Check | Failure | Underlying error |
+| --- | --- | --- |
+| `product` | `tests/e2e/test_acceptance_coverage.py::test_no_deleted_specs_referenced_and_inventory_consistent` (1 failed, 2494 passed) | `tested source is not an ancestor of evidence HEAD` |
+| `product-e2e-gate` | `make product-e2e-gate` → `check_product_release_gate.py --dev-merge` | `tested source is not an ancestor of evidence HEAD` |
+
+The branch base was pinned at the 2026-08-02 `dev` tip while
+`docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json` on `dev` advanced past
+it, so `verify_evidence_relationship()` in
+`delivery_toolchain/e2e/product_e2e_receipt.py` could no longer prove the
+recorded tested-source commit was an ancestor of the branch HEAD. The failure
+is base drift; it is not attributable to the `support/sidecars/` markdown
+packet, which is the branch's only diff against `dev`.
+
+The earlier attribution in this packet to a fleet-wide release validator
+deadlock (`ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`) is superseded by the
+evidence above. `dev` itself is CI-green at `3ad0b503`, and sibling sidecar
+PRs #641 / #694 with the identical single-markdown shape report
+`product` and `product-e2e-gate` SUCCESS.
+
+### 5.2 Repair Applied
+
+`origin/dev` @ `3ad0b503` was merged into the task branch (base advance, no
+history rewrite, no force-push). The merge was clean; the branch diff against
+`dev` remains exactly one file.
+
+### 5.3 Post-Repair Verification (local, base-advanced tree)
+
+```bash
+npm ci
+uv run --python 3.12 pytest -q tests/e2e/test_acceptance_coverage.py
+#  -> 28 passed  (previously the sole `product` job failure)
+
+python3 delivery_toolchain/e2e/check_release_gate_registry.py
+#  -> Release gate registry checks passed (RELEASE STATE: NO-GO, well-formed)
+
+python3 delivery_toolchain/e2e/check_product_release_gate.py --dev-merge
+#  -> dev merge gate static checks passed (exit 0)
+
+git status --short   # -> clean
+```
+
+Both previously-red gates now pass on the base-advanced tree. The
+`RELEASE STATE: NO-GO` registry output is the expected, well-formed dev-merge
+posture and is not a gate failure — `--dev-merge` accepts a valid NO-GO Gate
+0–6 registry and only `--require-go` (dev → main promotion) demands a GO
+decision.
+
+---
+
+## 6. Reviewer Handoff Summary
 
 - **Sidecar Artifact Updated**: `support/sidecars/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001-SIDECAR-REVIEW.md`
-- **Pushed Head**: `55868a918a20ecb404d0fa3dd4195152eb4d5bd1` (PR #563)
-- **CI & Release Gate Audit**: GitHub Actions CI run 30723932416 passed `orchestrator` and `performance-gate`. The `product` and `product-e2e-gate` checks failed on the `support/sidecars/` non-evidence path due to fleet-wide release validator deadlock owned by `ODP-CI-DEV-MERGE-RELEASE-NOGO-DEADLOCK-001`.
+- **PR**: #563 (`task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001-SIDECAR-REVIEW` → `dev`)
+- **Base**: advanced to `origin/dev` @ `3ad0b503` (see § 5)
+- **CI & Release Gate Audit**: see § 5.1 / § 5.3. Prior red checks traced to base drift in the product E2E evidence receipt and repaired by base advance; `orchestrator` and `performance-gate` were already green.
 - **Assessment**: The sidecar review packet synthesizes Codex8's rejection audit findings (B1–B4) on parent SHA `4423e011` and details the required remediation steps for `Antigravity2`. Zero canonical or runtime files modified.
 - **Recommended Action for `Antigravity2`**:
   1. Complete remediation of findings B1–B4 on `task/ODP-OPERATOR-LIVE-PROVENANCE-HEALTH-001`.
