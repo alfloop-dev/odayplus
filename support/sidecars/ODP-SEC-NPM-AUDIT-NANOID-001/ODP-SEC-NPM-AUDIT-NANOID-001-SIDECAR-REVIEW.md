@@ -10,7 +10,8 @@
 - **Sidecar Reviewer**: `CodexCoordinator`
 - **Phase**: Unassigned
 - **Parent head reviewed by this packet**: `e497a465` (`approved_head` / `review_gate_sha`, head of PR #693 *and* PR #692)
-- **Last Updated**: 2026-08-17T15:27Z (round 2 — outcome verification, §6)
+- **Last Updated**: 2026-08-17 (round 2b — base re-composed to `origin/dev`
+  `078ed156`; CI-failure triage recorded in §6.9)
 - **Round 1 status**: 2026-08-08T08:57Z. §1–§5 below are preserved verbatim as
   the point-in-time record. **B1 and B2 are now resolved** — PR #693 merged at
   2026-08-08T09:34:01Z and PR #692 was closed. Read §6 before acting on §3's
@@ -704,6 +705,36 @@ commits behind `origin/dev`; the base was composed by merge (not rebase), so
 of the new head rather than being rewritten. `npm audit` (§6.3) and the
 supply-chain suite (§6.4) were both run *after* the merge, so this packet's
 surviving claims are verified against the composed tree, not the stale one.
+
+**Second composition (2026-08-17, round 2b).** `origin/dev` advanced a further
+14 commits to `078ed156` while PR #694 was open. Composed again by merge, no
+conflicts. `package-lock.json` is byte-identical across `3ad0b503..078ed156`, so
+§6.3's evidence is not merely re-asserted — the artifact it measures did not
+move. `npm audit --omit=dev --audit-level=high` was nonetheless re-run on the
+newly composed tree and still reports `found 0 vulnerabilities`, `EXIT=0`.
+
+### 6.9 CI on PR #694 — the round-2 re-review failure was environmental
+
+The `orchestrator` check on PR #694 failed four times (2026-08-17 15:29Z–16:49Z),
+which requeued this task for CI repair. The failure is not in this branch's
+content — it is GitHub's action-download layer rate-limiting the runner:
+
+```
+Download action repository 'astral-sh/setup-uv@v5' (SHA:d4b2f3b6…)
+##[warning]Failed to download action … Error: Response status code does not
+indicate success: 429 (Too Many Requests).
+##[warning]Back off 25.863 seconds before retry.
+… (3 attempts) …
+##[error]Failed to download archive '…/astral-sh/setup-uv/tar.gz/…' after 3 attempts.
+```
+
+The job never reached a step that executes repository code. Every other check on
+the same head — `change-scope`, `boundary`, `classify`, `product`,
+`performance-gate`, `product-e2e-gate` — passed. The only diff this branch
+carries against `dev` is this Markdown file, which no CI job parses or executes,
+so no content change could have caused or can repair the failure. The repair is
+a re-run on the re-composed head; if `setup-uv` 429s recur across unrelated PRs,
+pinning or vendoring that action is a platform task, not a sidecar one.
 
 ### 6.8 What is left
 
