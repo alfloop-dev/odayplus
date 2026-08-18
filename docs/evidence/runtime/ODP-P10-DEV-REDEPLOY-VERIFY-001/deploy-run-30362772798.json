@@ -1,0 +1,161 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-P10-DEV-REDEPLOY-VERIFY-001",
+  "workflow": "Deploy Dev",
+  "run_id": 30362772798,
+  "run_url": "https://github.com/alfloop-dev/odayplus/actions/runs/30362772798",
+  "event": "push",
+  "head_branch": "dev",
+  "head_sha": "450c7faddda32155fadce6c36cfdeed623a385a3",
+  "created_at": "2026-07-28T13:17:11Z",
+  "updated_at": "2026-07-28T13:30:27Z",
+  "status": "completed",
+  "conclusion": "failure",
+  "failing_step": {
+    "job": "deploy",
+    "job_id": 90287054224,
+    "step_number": 13,
+    "step_name": "Build, push, deploy, and verify Cloud Run",
+    "exit_code": 2,
+    "runner_error": "ERROR: (gcloud.run.jobs.executions) Invalid choice: 'describe-latest'.",
+    "source_location": [
+      "scripts/deploy_cloud_run_waji.sh:284 (capture_job_proof)",
+      "scripts/deploy_cloud_run_waji.sh:308 (execute_job failure path)"
+    ]
+  },
+  "jobs": [
+    {
+      "name": "e2e-operational-evidence",
+      "databaseId": 90286314678,
+      "conclusion": "success",
+      "startedAt": "2026-07-28T13:17:14Z",
+      "completedAt": "2026-07-28T13:20:07Z",
+      "steps": [
+        {
+          "number": 1,
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "number": 2,
+          "name": "Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "number": 3,
+          "name": "Run E2E deployment health, backup, restore, and rollback proof",
+          "conclusion": "success"
+        },
+        {
+          "number": 6,
+          "name": "Post Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "number": 7,
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "name": "deploy",
+      "databaseId": 90287054224,
+      "conclusion": "failure",
+      "startedAt": "2026-07-28T13:20:17Z",
+      "completedAt": "2026-07-28T13:30:26Z",
+      "steps": [
+        {
+          "number": 1,
+          "name": "Set up job",
+          "conclusion": "success"
+        },
+        {
+          "number": 2,
+          "name": "Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "number": 3,
+          "name": "Install uv",
+          "conclusion": "success"
+        },
+        {
+          "number": 4,
+          "name": "Set up Python",
+          "conclusion": "success"
+        },
+        {
+          "number": 5,
+          "name": "Run Secret Scan",
+          "conclusion": "success"
+        },
+        {
+          "number": 6,
+          "name": "Run Python SAST Scan",
+          "conclusion": "success"
+        },
+        {
+          "number": 7,
+          "name": "Generate SBOM",
+          "conclusion": "success"
+        },
+        {
+          "number": 8,
+          "name": "Install locked project dependencies",
+          "conclusion": "success"
+        },
+        {
+          "number": 9,
+          "name": "Validate WIF authentication and live runtime preflight",
+          "conclusion": "success"
+        },
+        {
+          "number": 10,
+          "name": "Authenticate to Google Cloud (WIF)",
+          "conclusion": "success"
+        },
+        {
+          "number": 11,
+          "name": "Set up Cloud SDK",
+          "conclusion": "success"
+        },
+        {
+          "number": 12,
+          "name": "Install Cosign",
+          "conclusion": "success"
+        },
+        {
+          "number": 13,
+          "name": "Build, push, deploy, and verify Cloud Run",
+          "conclusion": "failure"
+        },
+        {
+          "number": 14,
+          "name": "Upload deployment validation reports",
+          "conclusion": "success"
+        },
+        {
+          "number": 26,
+          "name": "Post Authenticate to Google Cloud (WIF)",
+          "conclusion": "success"
+        },
+        {
+          "number": 27,
+          "name": "Post Install uv",
+          "conclusion": "skipped"
+        },
+        {
+          "number": 28,
+          "name": "Post Run actions/checkout@v4",
+          "conclusion": "success"
+        },
+        {
+          "number": 29,
+          "name": "Complete job",
+          "conclusion": "success"
+        }
+      ]
+    }
+  ]
+}

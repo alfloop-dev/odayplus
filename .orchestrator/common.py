@@ -686,8 +686,30 @@ def provider_launcher_missing_cli(text: str | None) -> str | None:
     return match.group("cli").lower() if match else None
 
 
-def command_exists(name: str) -> str | None:
-    return shutil.which(name)
+def command_exists(name: str | None) -> str | None:
+    """Resolve an executable to an absolute path, or None when unavailable.
+
+    Bare names are looked up on PATH. Path-like config values (for example
+    ".orchestrator/bin/agy") are tried against the current directory first, then
+    against the repo root, so resolution no longer depends on the caller's cwd.
+
+    The result is always absolute: callers spawn the resolved command with `cwd`
+    set to a workspace/worktree rather than the repo root, where a relative
+    argv[0] would resolve against the wrong tree.
+    """
+    if not name:
+        return None
+    candidate = os.path.expanduser(str(name).strip())
+    if not candidate:
+        return None
+
+    resolved = shutil.which(candidate)
+    separators = {os.sep, os.altsep} - {None}
+    if resolved is None and not os.path.isabs(candidate) and any(sep in candidate for sep in separators):
+        resolved = shutil.which(str(ROOT / candidate))
+    if resolved is None:
+        return None
+    return os.path.abspath(resolved)
 
 
 def shell_quote(parts: list[str]) -> str:

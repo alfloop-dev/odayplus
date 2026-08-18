@@ -338,6 +338,16 @@ classification:
         - ".env.e2e.example"
       rationale: Repository configuration, dependency lockfiles, and ignore rules.
 
+    - id: legal_attribution_notices
+      disposition: repository_metadata
+      include:
+        - "NOTICE-THIRD-PARTY.md"
+      rationale: >-
+        Third-party open-source attribution notice required by the LGPL
+        decision (ODP-PLAN-OSS-LEGAL-POLICY-001). Generated from the installed
+        dependency set by delivery_toolchain/security/generate_oss_notice.py;
+        never hand-edited.
+
     - id: generated_status_mirrors
       disposition: repository_metadata
       include:

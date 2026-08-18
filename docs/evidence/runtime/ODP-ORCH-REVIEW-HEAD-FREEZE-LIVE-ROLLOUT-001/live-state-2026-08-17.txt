@@ -1,0 +1,70 @@
+Live review-head freeze state re-verification — 2026-08-17
+Collected by: Claude2 (task owner) for the ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001
+review remediation. Read-only inspection: no publish, no restart, no live write.
+
+--------------------------------------------------------------------------------
+1. Live runtime root
+--------------------------------------------------------------------------------
+The path used by the 2026-07-31 rollout, /home/lupin/oday-plus-supervisor-live,
+no longer exists. The live runtime is now published through a symlink:
+
+  /home/lupin/oday-plus-supervisor-runtime-current -> /home/lupin/odayplus
+
+  $ ls -l /proc/196262/cwd
+  /proc/196262/cwd -> /home/lupin/odayplus
+
+  $ ps -o pid=,lstart=,etime= -p 196262
+   196262 Mon Aug 17 16:07:02 2026    04:06:57
+
+  live command line: python3 -u .orchestrator/supervisor.py --verbose
+
+--------------------------------------------------------------------------------
+2. Deployed bytes
+--------------------------------------------------------------------------------
+  branch : dev
+  head   : 3ad0b50333e324caf9c8f7ca1b9c0b7f442618b9
+
+  sha256 .orchestrator/supervisor.py
+    2fdf58261eb1e630b07d1814f2201e265bab5948f3b323b86355b79558d1a882
+  sha256 scripts/ai_status.py
+    290076aeca7183136d0ee75d2d3b2125e89b172a0707b58ef6ba7186dc842d19
+
+These are NOT the 2026-07-31 frozen PR #505 blobs
+(3bb01341fee9b5d1... / bc1ba0c2f60e58d6...). The one-off byte freeze published by
+this task has been superseded: the live root now tracks `dev` and advances with
+ordinary reviewed merges. The "no second restart" preservation claim recorded on
+2026-07-31 is therefore historical, not a current property of the runtime.
+
+--------------------------------------------------------------------------------
+3. Ancestry: the reviewed freeze is still what is running
+--------------------------------------------------------------------------------
+  $ git merge-base --is-ancestor 6af7b86ba4aa34d5bf26142f64f3cb96c429b557 HEAD
+  YES
+
+PR #505 (the reviewed review-head freeze) is an ancestor of the live head, so the
+freeze reached the live Supervisor and has stayed there through every subsequent
+dev merge.
+
+--------------------------------------------------------------------------------
+4. Freeze control points present in the live files
+--------------------------------------------------------------------------------
+  B23 owner-cannot-override-reviewer guard
+    /home/lupin/odayplus/scripts/ai_status.py:5478
+    "Cannot restore {task_id}: the task was reopened by the reviewer ({reviewer})."
+
+  B24 preemption guard
+    /home/lupin/odayplus/.orchestrator/supervisor.py:3785
+    def higher_priority_ready_task_exists(...)
+
+  N3 approved-head repair and status-check emission
+    /home/lupin/odayplus/scripts/ai_status.py:5521
+    def command_restore_approved_head(...)
+    /home/lupin/odayplus/scripts/ai_status.py:6374
+    def emit_status_checks_for_changed_tasks(...)
+
+--------------------------------------------------------------------------------
+5. Behavioural re-proof
+--------------------------------------------------------------------------------
+B23 / B24 / N3 fail-closed probes re-run on 2026-08-17 against the current live
+status root (copied into an isolated temporary root; live status and dashboard
+artifacts untouched): 3/3 PASS. See probes-transcript.txt, "Run 2".

@@ -29,9 +29,7 @@ OSS 治理事項。AI agent、技術 owner 與 technical reviewer 只能整理�
    - 禁止使用；
 5. Apache NOTICE、第三方聲明、source-code offer、修改揭露及再散布義務
    的處理方式。
-
-目前 policy 內把 LGPL 變體列為 allow，但在 Human/Ops 權威 receipt
-核准前，這只是一項提案，不得視為已生效的 production 法務決策。
+> **編輯備註（2026-08-08 修訂）**：本交辦單為 2026-07-31 初始交接存檔（原述及「目前 policy 內把 LGPL 變體列為 allow」係指 7 月草案）。現行 `docs/security/license_policy.json` 已修訂將 LGPL 各變體明確列為 `review_required`，交由 Legal／Security／Risk 具體裁決。但在 Human/Ops 權威 receipt 核准前，這只是一項提案，不得視為已生效的 production 法務決策。
 
 ### B. Exception policy
 

@@ -1,0 +1,65 @@
+{
+  "captured_from": "deploy job log (gcloud insufficient scopes on this host)",
+  "run_id": "30376737123",
+  "sha": "dda726155a399487474ae148b4dc1c3294ea9463",
+  "rollback_triggered": true,
+  "rollback_timestamp": "2026-07-28T16:20:53Z",
+  "oday_api": {
+    "serving_revision": "oday-api-00005-gin",
+    "traffic_100pct": "oday-api-00005-gin",
+    "release_sha_label": "none (rollback, pre-run revision)",
+    "other_revisions": [
+      {
+        "name": "oday-api-00003-lez",
+        "tag": "live-3875485e",
+        "traffic": "0%"
+      },
+      {
+        "name": "oday-api-00005-gin",
+        "tag": "candidate",
+        "traffic": "100%"
+      },
+      {
+        "name": "oday-api-00007-koz",
+        "tag": "authcand",
+        "traffic": "0%"
+      },
+      {
+        "name": "oday-api-probe8",
+        "tag": "probe8",
+        "traffic": "0%"
+      }
+    ]
+  },
+  "oday_web": {
+    "serving_revision": "oday-web-00008-ws4",
+    "traffic_100pct": "oday-web-00008-ws4",
+    "release_sha_label": "none (rollback, pre-run revision)",
+    "other_revisions": [
+      {
+        "name": "oday-web-00004-cef",
+        "tag": "live-3875485e",
+        "traffic": "0%"
+      },
+      {
+        "name": "oday-web-00006-jen",
+        "tag": "candidate",
+        "traffic": "0%"
+      },
+      {
+        "name": "oday-web-00008-ws4",
+        "tag": null,
+        "traffic": "100%"
+      }
+    ]
+  },
+  "migration_job": {
+    "name": "oday-migration-r-dda726155a39",
+    "execution": "oday-migration-r-dda726155a39-ndb4l",
+    "execution_result": "successfully completed",
+    "smoke_result": "FAIL (fail-closed)",
+    "smoke_failure": "jobs-smoke:migration:secret_bindings: database and provider secret environment bindings are configured",
+    "smoke_report": ".odp_data/deployment/cloud-run-jobs/migration-validation.json (not uploaded to artifact; artifact path is non-recursive .odp_data/deployment/*.json)"
+  },
+  "note": "No oday-api or oday-web revision carries oday-release-sha=dda726155a399487474ae148b4dc1c3294ea9463. Traffic restored to pre-run state."
+}
