@@ -1,0 +1,189 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-P10-DEV-REDEPLOY-VERIFY-001",
+  "captured_by": "Claude2",
+  "gcp_project": "alfaloop-data-project",
+  "gcp_region": "asia-east1",
+  "target_release_sha": "450c7faddda32155fadce6c36cfdeed623a385a3",
+  "observation": "Deploy Dev run 30362772798 failed before any API/Web candidate revision was created. The armed rollback restored the pre-run traffic split. No oday-api or oday-web revision carries oday-release-sha=450c7faddda32155fadce6c36cfdeed623a385a3.",
+  "oday_api": {
+    "latest_ready_revision": "oday-api-probe8",
+    "traffic": [
+      {
+        "revisionName": "oday-api-00003-lez",
+        "tag": "live-3875485e",
+        "url": "https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app"
+      },
+      {
+        "percent": 100,
+        "revisionName": "oday-api-00005-gin",
+        "tag": "candidate",
+        "url": "https://candidate---oday-api-7sxbjoeozq-de.a.run.app"
+      },
+      {
+        "revisionName": "oday-api-00007-koz",
+        "tag": "authcand",
+        "url": "https://authcand---oday-api-7sxbjoeozq-de.a.run.app"
+      },
+      {
+        "revisionName": "oday-api-probe8",
+        "tag": "probe8",
+        "url": "https://probe8---oday-api-7sxbjoeozq-de.a.run.app"
+      }
+    ],
+    "revisions": [
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-27T16:25:12.634051Z",
+          "name": "oday-api-probe8"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-27T16:23:38.629274Z",
+          "name": "oday-api-00006-7bg"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-25T15:16:52.577442Z",
+          "name": "oday-api-00007-koz"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-25T14:07:40.883245Z",
+          "name": "oday-api-00005-gin"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-24T19:10:35.738930Z",
+          "name": "oday-api-00003-lez"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-15T04:29:13.755439Z",
+          "name": "oday-api-00002-dvj"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-15T04:24:53.999899Z",
+          "name": "oday-api-00001-b6x"
+        }
+      }
+    ]
+  },
+  "oday_web": {
+    "latest_ready_revision": "oday-web-00008-ws4",
+    "traffic": [
+      {
+        "revisionName": "oday-web-00004-cef",
+        "tag": "live-3875485e",
+        "url": "https://live-3875485e---oday-web-7sxbjoeozq-de.a.run.app"
+      },
+      {
+        "revisionName": "oday-web-00006-jen",
+        "tag": "candidate",
+        "url": "https://candidate---oday-web-7sxbjoeozq-de.a.run.app"
+      },
+      {
+        "percent": 100,
+        "revisionName": "oday-web-00008-ws4"
+      }
+    ],
+    "revisions": [
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-25T15:03:55.988564Z",
+          "name": "oday-web-00008-ws4"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-25T14:51:42.298550Z",
+          "name": "oday-web-00007-2r4"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-25T14:38:05.718311Z",
+          "name": "oday-web-00006-jen"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-25T14:16:00.513460Z",
+          "name": "oday-web-00005-xip"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-24T19:15:22.681163Z",
+          "name": "oday-web-00004-cef"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-15T13:00:03.680370Z",
+          "name": "oday-web-00003-qbz"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-15T04:39:41.244910Z",
+          "name": "oday-web-00002-hnx"
+        }
+      },
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-15T04:34:21.606813Z",
+          "name": "oday-web-00001-qxx"
+        }
+      }
+    ]
+  },
+  "migration_candidate_job": {
+    "job": {
+      "metadata": {
+        "creationTimestamp": "2026-07-28T13:28:07.829498Z",
+        "labels": {
+          "cloud.googleapis.com/location": "asia-east1",
+          "oday-data-binding": "live",
+          "oday-release-sha": "450c7faddda32155fadce6c36cfdeed623a385a3",
+          "oday-runtime": "migration",
+          "run.googleapis.com/lastUpdatedTime": "2026-07-28T13:28:07.829498Z"
+        },
+        "name": "oday-migration-r-450c7faddda3"
+      },
+      "spec": {
+        "template": {
+          "spec": {
+            "template": {
+              "spec": {
+                "containers": [
+                  {
+                    "image": "asia-east1-docker.pkg.dev/alfaloop-data-project/oday-plus-dev/oday-worker:dev-450c7faddda32155fadce6c36cfdeed623a385a3"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "executions": [
+      {
+        "metadata": {
+          "creationTimestamp": "2026-07-28T13:28:10.753743Z",
+          "name": "oday-migration-r-450c7faddda3-8bwjd"
+        },
+        "status": {
+          "succeededCount": 1
+        }
+      }
+    ]
+  }
+}
