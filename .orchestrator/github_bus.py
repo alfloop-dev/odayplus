@@ -504,6 +504,13 @@ def run_gh(args: list[str], *, allow_offline: bool = True) -> subprocess.Complet
     if proc.returncode == 0:
         return proc
     combined = f"{proc.stdout or ''}\n{proc.stderr or ''}".strip()
+    if not combined:
+        # A launcher that dies before it can speak (see .orchestrator/bin/gh) leaves
+        # both streams empty, and the exit code was the one fact we always had.
+        # Dropping it produced ~2k activity-log entries whose `message` was "" --
+        # a fault that stayed invisible for hours because nothing recorded WHAT
+        # failed. `provider_permissions._cli_probe` already falls back this way.
+        combined = f"`{gh_binary} {' '.join(args)}` exited {proc.returncode} with no output"
     lowered = combined.lower()
     if allow_offline and (
         "error connecting to api.github.com" in lowered
