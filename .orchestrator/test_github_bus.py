@@ -763,6 +763,7 @@ class FindExistingReviewPrTests(unittest.TestCase):
 
         def run(args: list[str]) -> list[dict]:
             head = args[args.index("--head") + 1] if "--head" in args else None
+            base = args[args.index("--base") + 1] if "--base" in args else None
             searching = "--search" in args
             out = []
             for pr in prs:
@@ -773,6 +774,8 @@ class FindExistingReviewPrTests(unittest.TestCase):
                             continue
                     elif ref != head:
                         continue
+                if base is not None and (pr.get("baseRefName") or "") != base:
+                    continue
                 out.append(pr)
             return out
 
@@ -829,6 +832,129 @@ class FindExistingReviewPrTests(unittest.TestCase):
     def test_returns_none_when_nothing_matches(self) -> None:
         with mock.patch.object(github_bus, "gh_json", return_value=[]):
             self.assertIsNone(github_bus.find_existing_pr("repo", "ODP-X", "task/ODP-X"))
+
+    # -- base filtering ---------------------------------------------------
+    #
+    # One head branch can carry several open PRs when their bases differ, so
+    # `--head` alone is not the (head, base) key GitHub actually enforces.
+
+    PROMOTION_PR = {
+        "number": 621,
+        "title": "[ReviewBus] ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001 Resolve detached-HEAD branch resolution",
+        "url": "https://github.com/alfloop-dev/odayplus/pull/621",
+        "headRefName": "task/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001",
+        "baseRefName": "main",
+        "state": "OPEN",
+    }
+
+    def test_a_pr_aimed_at_another_base_is_not_adopted(self) -> None:
+        """The strand: PR 621 shares the task's head branch but targets `main`.
+
+        Its content had already merged into `dev` via PR 616, so the task had
+        nothing left to publish -- yet head-only discovery kept handing the bus a
+        PR aimed at the promotion branch. The review gate, auto-merge, and the
+        `done` ancestor check all reason about the task base, so the task could
+        never leave the repair loop.
+        """
+
+        task_id = "ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001"
+        with mock.patch.object(github_bus, "gh_json", side_effect=self._fake_gh([self.PROMOTION_PR])):
+            found = github_bus.find_existing_pr(
+                "alfloop-dev/odayplus", task_id, f"task/{task_id}", "dev"
+            )
+
+        self.assertIsNone(found)
+
+    def test_the_head_lookup_asks_github_for_the_task_pr_base(self) -> None:
+        with mock.patch.object(github_bus, "gh_json", return_value=[]) as gh_json:
+            github_bus.find_existing_pr("alfloop-dev/odayplus", "ODP-X", "task/ODP-X", "dev")
+
+        head_args = gh_json.call_args_list[0].args[0]
+        self.assertIn("--base", head_args)
+        self.assertEqual(head_args[head_args.index("--base") + 1], "dev")
+
+    def test_the_base_filter_is_reapplied_client_side(self) -> None:
+        """A gh build that ignores `--base` must not reintroduce the bug."""
+
+        def gh_ignoring_base(args: list[str]) -> list[dict]:
+            return [] if "--search" in args else [self.PROMOTION_PR]
+
+        with mock.patch.object(github_bus, "gh_json", side_effect=gh_ignoring_base):
+            found = github_bus.find_existing_pr(
+                "alfloop-dev/odayplus",
+                "ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001",
+                "task/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001",
+                "dev",
+            )
+
+        self.assertIsNone(found)
+
+    def test_the_title_fallback_also_rejects_a_foreign_base(self) -> None:
+        """The fallback runs precisely when the branch has no PR on the task base."""
+
+        task_id = "ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001"
+        moved = dict(self.PROMOTION_PR, headRefName="task/renamed")
+
+        with mock.patch.object(github_bus, "gh_json", side_effect=self._fake_gh([moved])):
+            self.assertIsNone(
+                github_bus.find_existing_pr("alfloop-dev/odayplus", task_id, f"task/{task_id}", "dev")
+            )
+
+        # Same PR, retargeted at the task base: now it is this task's review PR.
+        with mock.patch.object(
+            github_bus, "gh_json", side_effect=self._fake_gh([dict(moved, baseRefName="dev")])
+        ):
+            found = github_bus.find_existing_pr(
+                "alfloop-dev/odayplus", task_id, f"task/{task_id}", "dev"
+            )
+
+        self.assertEqual(found["number"], 621)
+
+    def test_an_omitted_base_keeps_the_previous_behaviour(self) -> None:
+        with mock.patch.object(github_bus, "gh_json", side_effect=self._fake_gh([self.PROMOTION_PR])) as gh_json:
+            found = github_bus.find_existing_pr(
+                "alfloop-dev/odayplus",
+                "ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001",
+                "task/ODP-ORCH-DETACHED-HEAD-BRANCH-RESOLUTION-001",
+            )
+
+        self.assertEqual(found["number"], 621)
+        self.assertNotIn("--base", gh_json.call_args_list[0].args[0])
+
+    def test_upsert_review_pr_scopes_discovery_to_the_task_pr_base(self) -> None:
+        """The wiring: the base upsert already computed must reach discovery."""
+
+        config = {
+            "github_bus": {
+                "default_branch": "master",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+            "branch_workflow": {"enabled": True, "task_pr": {"target_branch": "dev"}},
+        }
+        task = {
+            "id": "ODP-PR-BASE-001",
+            "title": "Base-scoped discovery",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+        branch = "task/ODP-PR-BASE-001"
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=None) as find,
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            github_bus.upsert_review_pr(config, {"tasks": {}}, {"tasks": []}, "o/r", task)
+
+        find.assert_called_once_with("o/r", task["id"], branch, "dev")
 
 class GitHubBusProcessTests(unittest.TestCase):
     def setUp(self) -> None:

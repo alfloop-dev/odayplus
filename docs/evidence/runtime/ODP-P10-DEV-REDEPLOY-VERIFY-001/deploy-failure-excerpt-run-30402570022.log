@@ -1,0 +1,34 @@
+=== Preflight & Container Build ===
+Verification PASSED (oday-api, oday-worker, oday-scheduler tagged dev-7d13f8e162d035ad7318d1f659dfa0f2bd85ca65).
+Recording the existing API/Web traffic before any runtime mutation...
+
+=== Migration Cloud Run Job Execution ===
+Deploying immutable migration candidate Cloud Run Job...
+Deploying container to Cloud Run job [oday-migration-r-7d13f8e162d0] in project [alfaloop-data-project] region [asia-east1]
+Creating job... Done.
+Job [oday-migration-r-7d13f8e162d0] has successfully been deployed.
+Executing migration Cloud Run Job...
+Creating execution...
+Provisioning resources... done
+Starting execution... done
+Running execution... done
+Execution [oday-migration-r-7d13f8e162d0-zg2jr] has successfully completed.
+
+=== Cloud Run Migration Job Smoke ===
+Cloud Run migration Job smoke passed.
+report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+
+=== Cloud Run Migration Compatibility Smoke Failure ===
+Cloud Run migration compatibility smoke failed (fail-closed):
+- compatibility:/platform/version:http: The read operation timed out
+- compatibility:/platform/health:database: The read operation timed out
+report=.odp_data/deployment/cloud-run-migration-compatibility.json
+
+=== Rollback ===
+Deployment failed; restoring the recorded API/Web traffic split.
+Restoring oday-api traffic to oday-api-00005-gin=100...
+Updating traffic... Done.
+URL: https://oday-api-7sxbjoeozq-de.a.run.app
+Traffic:
+  100% oday-api-00005-gin
+##[error]Process completed with exit code 1.

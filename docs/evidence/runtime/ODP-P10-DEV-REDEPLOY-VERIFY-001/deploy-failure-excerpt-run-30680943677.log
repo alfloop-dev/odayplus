@@ -1,0 +1,43 @@
+=== Preflight ===
+Running fail-closed live deployment preflight...
+Cloud Run live deployment preflight passed.
+report=.odp_data/deployment/cloud-run-preflight.json
+
+=== Migration Execution & Smoke ===
+Execution [oday-migration-r-97e3ae2e264d-bczn7] has successfully completed.
+Cloud Run migration Job smoke passed.
+report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+
+=== Migration Compatibility Smoke (Passed) ===
+Cloud Run migration compatibility smoke passed.
+report=.odp_data/deployment/cloud-run-migration-compatibility.json
+
+=== Scheduler Job Execution & Smoke (Passed) ===
+Executing scheduler Cloud Run Job...
+Execution [oday-scheduler-r-97e3ae2e264d-2nz95] has successfully completed.
+Cloud Run scheduler Job smoke passed.
+report=.odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+
+=== Worker Job Execution & Smoke (Passed) ===
+Executing worker Cloud Run Job...
+Execution [oday-worker-r-97e3ae2e264d-895lx] has successfully completed.
+Cloud Run worker Job smoke passed.
+report=.odp_data/deployment/cloud-run-jobs/worker-validation.json
+
+=== Candidate Deployment & Release-Aware Smoke Gate (Failed) ===
+Deploying oday-api candidate revision...
+Deploying oday-web candidate revision...
+Running release-aware smoke gate on candidate revisions...
+Cloud Run candidate revision smoke failed (fail-closed):
+- smoke:/platform/health:http: status=503
+- smoke:/readiness:http: status=503
+- smoke:/platform/health:live_data_mode: status=unhealthy data_mode=<missing>
+- smoke:/readiness:live_data_mode: status=unhealthy data_mode=<missing>
+- smoke:/api/v1/operator/bootstrap:provenance: data_mode=degraded data_source=operator-shell-production
+- smoke:/api/v1/operator/bootstrap:read_provenance: origin_kind=degraded persistence_mode=postgresql live_ready=True
+report=.odp_data/deployment/cloud-run-smoke.json
+
+Error: release-aware smoke check failed; rolling back candidate revisions.
+Deployment failed; restoring the recorded API/Web traffic split.
+Restoring oday-api traffic to oday-api-00005-gin=100...
+Restoring oday-web traffic to oday-web-00008-ws4=100...

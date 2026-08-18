@@ -1,0 +1,36 @@
+{
+  "api_service": {
+    "name": "oday-api",
+    "url": "https://oday-api-7sxbjoeozq-de.a.run.app",
+    "serving_revision": "oday-api-00005-gin",
+    "serving_percent": 100,
+    "release_sha_label": null
+  },
+  "web_service": {
+    "name": "oday-web",
+    "url": "https://oday-web-7sxbjoeozq-de.a.run.app",
+    "serving_revision": "oday-web-00008-ws4",
+    "serving_percent": 100,
+    "release_sha_label": null
+  },
+  "migration_job": {
+    "name": "oday-migration-r-79cf9b67e62c",
+    "status": "succeeded",
+    "release_sha_label": "79cf9b67e62ce9fbd762b6695a214965ea9fe258"
+  },
+  "scheduler_job": {
+    "name": "oday-scheduler-r-79cf9b67e62c",
+    "status": "succeeded",
+    "execution": "oday-scheduler-r-79cf9b67e62c-fr65q",
+    "release_sha_label": "79cf9b67e62ce9fbd762b6695a214965ea9fe258"
+  },
+  "worker_job": {
+    "name": "oday-worker-r-79cf9b67e62c",
+    "status": "failed",
+    "execution": "oday-worker-r-79cf9b67e62c-6fhw5",
+    "release_sha_label": "79cf9b67e62ce9fbd762b6695a214965ea9fe258"
+  },
+  "rejection_point": "worker Cloud Run Job execution",
+  "rollback_performed": true,
+  "target_release_sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258"
+}

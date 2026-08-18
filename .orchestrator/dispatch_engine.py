@@ -408,6 +408,12 @@ def reassign_unavailable_reviewers(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    finalize_statuses = {
+        str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])
+    }
+    owned_statuses = {
+        str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])
+    }
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
@@ -420,20 +426,47 @@ def reassign_unavailable_reviewers(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in reserved_tasks:
             continue
-        if str(task.get("status") or "").lower() not in review_statuses:
+        task_status = str(task.get("status") or "").lower()
+        if task_status in review_statuses:
+            claimed_role = "reviewer"
+            claimed_field = reviewer_field
+            counterpart = str(task.get(owner_field) or "").strip()
+        elif task_status in finalize_statuses or task_status in owned_statuses:
+            claimed_role = "owner"
+            claimed_field = owner_field
+            counterpart = str(task.get(reviewer_field) or "").strip()
+        else:
             continue
-        owner = str(task.get(owner_field) or "").strip()
-        reviewer = str(task.get(reviewer_field) or "").strip()
-        if not reviewer or is_human_gate_agent(reviewer):
+
+        claimed_agent = str(task.get(claimed_field) or "").strip()
+        if not claimed_agent or is_human_gate_agent(claimed_agent):
             continue
-        reviewer_block_reason = agent_auto_dispatch_block_reason(
-            config,
-            state,
-            normalize_agent_id(reviewer),
-            provider_report,
-        )
-        reviewer_same_pool = not review_is_independent(config, owner, reviewer)
-        if not reviewer_block_reason and not reviewer_same_pool:
+        if claimed_role == "owner":
+            claimed_id = normalize_agent_id(claimed_agent)
+            if agent_dispatch_paused(config, state, claimed_id):
+                claimed_block_reason = (
+                    f"dispatch is paused or disabled for {display_name_for(config, claimed_id) or claimed_agent}"
+                )
+            elif account_pool_dispatch_block_reason(config, claimed_id, runtime_state=state):
+                claimed_block_reason = account_pool_dispatch_block_reason(
+                    config, claimed_id, runtime_state=state
+                )
+            else:
+                claimed_block_reason = None
+            reviewer_same_pool = False
+        else:
+            claimed_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                normalize_agent_id(claimed_agent),
+                provider_report,
+            )
+            reviewer_same_pool = bool(
+                counterpart
+                and not is_human_gate_agent(counterpart)
+                and not review_is_independent(config, counterpart, claimed_agent)
+            )
+        if not claimed_block_reason and not reviewer_same_pool:
             continue
 
         replacement = ""
@@ -441,15 +474,20 @@ def reassign_unavailable_reviewers(
         for candidate_id in candidate_agent_ids:
             candidate = display_name_for(config, candidate_id)
             candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
+            owner_for_independence = candidate if claimed_role == "owner" else counterpart
+            reviewer_for_independence = counterpart if claimed_role == "owner" else candidate
             if (
                 not candidate
-                or candidate in {owner, reviewer}
+                or candidate in {claimed_agent, counterpart}
                 or candidate_id in reserved_agents
                 or not isinstance(candidate_config, dict)
                 or agent_is_dispatch_slot(candidate_config)
                 or is_human_gate_agent(candidate)
                 or not agent_can_take_task(config, candidate, task)
-                or not review_is_independent(config, owner, candidate)
+                or (
+                    bool(counterpart and not is_human_gate_agent(counterpart))
+                    and not review_is_independent(config, owner_for_independence, reviewer_for_independence)
+                )
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
             ):
                 continue
@@ -461,25 +499,27 @@ def reassign_unavailable_reviewers(
 
         if reviewer_same_pool:
             message = (
-                f"Reassigned review to {replacement}: {reviewer} shares account pool "
-                f"with owner {owner}, so independent review requires a different pool."
+                f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
+                f"with owner {counterpart}, so independent review requires a different pool."
             )
         else:
             message = (
-                f"Automatically reassigned review to {replacement} while reviewer {reviewer} "
-                f"is dispatch-paused: {reviewer_block_reason}"
+                f"Automatically reassigned {claimed_role} to {replacement} while {claimed_role} {claimed_agent} "
+                f"is dispatch-paused: {claimed_block_reason}"
             )
+        new_owner = replacement if claimed_role == "owner" else counterpart
+        new_reviewer = counterpart if claimed_role == "owner" else replacement
         if not persist_task_reassignment(
             config,
             task_id=task_id,
-            new_owner=owner,
-            new_reviewer=replacement,
+            new_owner=new_owner,
+            new_reviewer=new_reviewer,
             message=message,
             handoff_to=replacement,
-            handoff_from=reviewer,
+            handoff_from=claimed_agent,
         ):
             continue
-        task[reviewer_field] = replacement
+        task[claimed_field] = replacement
         task["next"] = message
         reserved_agents.add(replacement_id)
         reserved_tasks.add(task_id)
@@ -487,16 +527,20 @@ def reassign_unavailable_reviewers(
         write_activity_log(
             config,
             {
-                "type": "task_reviewer_reassigned",
+                "type": f"task_{claimed_role}_reassigned",
                 "task_id": task_id,
                 "message": message,
-                "owner": owner,
-                "from_reviewer": reviewer,
-                "to_reviewer": replacement,
+                "owner": new_owner,
+                "from_reviewer": claimed_agent if claimed_role == "reviewer" else None,
+                "to_reviewer": replacement if claimed_role == "reviewer" else None,
+                "role": claimed_role,
+                "counterpart": counterpart,
+                f"from_{claimed_role}": claimed_agent,
+                f"to_{claimed_role}": replacement,
             },
         )
         console_log(
-            f"reviewer failover: task={task_id} from={reviewer} to={replacement}",
+            f"{claimed_role} failover: task={task_id} from={claimed_agent} to={replacement}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
 

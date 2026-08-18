@@ -1,0 +1,50 @@
+{
+  "run_id": 30680943677,
+  "head_sha": "97e3ae2e264d00254b574d5e27ab771688f04768",
+  "head_branch": "dev",
+  "event": "push",
+  "status": "completed",
+  "conclusion": "failure",
+  "created_at": "2026-08-01T02:54:54Z",
+  "updated_at": "2026-08-01T03:13:46Z",
+  "url": "https://github.com/alfloop-dev/odayplus/actions/runs/30680943677",
+  "trigger": "push of merge commit 97e3ae2e264d00254b574d5e27ab771688f04768 to origin/dev",
+  "jobs": [
+    {
+      "database_id": 91317674503,
+      "name": "e2e-operational-evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-08-01T02:54:56Z",
+      "completed_at": "2026-08-01T02:57:49Z"
+    },
+    {
+      "database_id": 91317938399,
+      "name": "deploy",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-08-01T02:57:57Z",
+      "completed_at": "2026-08-01T03:13:46Z",
+      "failed_step": {
+        "number": 13,
+        "name": "Build, push, deploy, and verify Cloud Run",
+        "conclusion": "failure"
+      }
+    }
+  ],
+  "progress_summary": {
+    "gcloud_describe_latest_compat": "RESOLVED (PR #479)",
+    "jobs_smoke_migration_secret_bindings": "RESOLVED (PR #484)",
+    "migration_compatibility_smoke": "RESOLVED (PR #488)",
+    "worker_job_execution": "RESOLVED (PR #494)",
+    "migration_job_execution": "SUCCESS (oday-migration-r-97e3ae2e264d-bczn7)",
+    "migration_job_smoke": "PASS (report=.odp_data/deployment/cloud-run-jobs/migration-validation.json)",
+    "scheduler_job_execution": "SUCCESS (oday-scheduler-r-97e3ae2e264d-2nz95)",
+    "scheduler_job_smoke": "PASS (report=.odp_data/deployment/cloud-run-jobs/scheduler-validation.json)",
+    "worker_job_execution_run_30680943677": "SUCCESS (oday-worker-r-97e3ae2e264d-895lx)",
+    "worker_job_smoke": "PASS (report=.odp_data/deployment/cloud-run-jobs/worker-validation.json)",
+    "candidate_revisions_deployment": "SUCCESS (candidate-97e3ae2e264d0025---oday-api-7sxbjoeozq-de.a.run.app, candidate-97e3ae2e264d0025---oday-web-7sxbjoeozq-de.a.run.app)",
+    "candidate_smoke_check": "FAILURE (fail-closed: /platform/health and /readiness returned 503; live_data_mode missing; operator bootstrap data_mode=degraded data_source=operator-shell-production; read provenance origin_kind=degraded; forecastops PRODUCTION_MODEL_REGISTRY_UNAVAILABLE)",
+    "new_failure": "Live runtime candidate smoke fail-closed (platform health & readiness 503, operator bootstrap degraded data_mode/provenance, forecastops unverified production model bindings)"
+  }
+}
