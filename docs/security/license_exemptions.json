@@ -1,0 +1,78 @@
+{
+  "$comment": "PROPOSAL ONLY -- structure and rules, with an empty register. No exemption in this file is in force; each entry requires its own authoritative receipt. An AI agent or repository author MUST NOT add an entry here.",
+  "schema_version": "1.0.0",
+  "policy_name": "ODP-OSS-Exception-Policy-v1",
+  "policy_version": "1.0.0",
+  "status": "proposed",
+  "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+
+  "rules": {
+    "who_may_approve": {
+      "$comment": "To be decided by Human/Ops. Proposed: a named Legal/Security/Risk principal, authenticated in an external system. A role string alone is never sufficient.",
+      "decision_needed": true,
+      "proposed": "named principal holding an authorised Legal/Security/Risk role, resolvable in the authoritative source system"
+    },
+    "required_binding": {
+      "$comment": "Every exemption must bind to all of these. A missing field fails closed.",
+      "fields": ["package", "purl", "license_or_finding", "scope", "applicable_releases", "rationale"]
+    },
+    "scope_values": ["prod", "dev"],
+    "max_duration": {
+      "decision_needed": true,
+      "proposed_days": 90,
+      "$comment": "Proposed ceiling on expires_at - issued_at."
+    },
+    "review_cadence": {
+      "decision_needed": true,
+      "proposed_days": 30
+    },
+    "permanent_or_global_exemptions": {
+      "decision_needed": true,
+      "proposed": "prohibited",
+      "$comment": "A blanket exemption that names no package/finding defeats the gate."
+    },
+    "revocation": {
+      "decision_needed": true,
+      "proposed": "the issuing principal or any higher authority may revoke; revocation takes effect on the next gate run"
+    },
+    "fail_closed_on": [
+      "expired exemption",
+      "missing required field",
+      "hash, scope or release mismatch",
+      "authoritative source system unreachable or reference unresolvable",
+      "receipt integrity check failure",
+      "non-UTC or future-dated issued_at"
+    ]
+  },
+
+  "receipt_requirements": {
+    "$comment": "Mirrors the OSS handoff receipt contract so an exemption is verifiable the same way a policy approval is.",
+    "fields": [
+      "exemption_id",
+      "task_id",
+      "approved_by.principal_id",
+      "approved_by.display_name",
+      "approved_by.role",
+      "approval_reference",
+      "source_system",
+      "issued_at",
+      "expires_at",
+      "review_at",
+      "scope",
+      "applicable_releases",
+      "rationale",
+      "evidence_hashes",
+      "integrity.algorithm",
+      "integrity.content_sha256"
+    ],
+    "never_acceptable": [
+      "AI agent name as approver",
+      "role-only string such as Human/Ops or Legal with no named principal",
+      "placeholder or example names",
+      "repository-local JSON with no external authoritative readback",
+      "exemption not bound to a package, license or finding"
+    ]
+  },
+
+  "exemptions": []
+}
