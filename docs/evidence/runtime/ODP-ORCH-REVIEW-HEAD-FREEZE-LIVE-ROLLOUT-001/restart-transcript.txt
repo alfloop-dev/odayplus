@@ -1,0 +1,61 @@
+Controlled Restart Transcript for Task ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001
+Timestamp: 2026-07-31T14:27:07Z
+
+Acceptance Disposition (Codex2 review reopen, 2026-08-02):
+  - NOT MET: the no-termination/no-preemption criterion. The two unrelated
+    active workers inventoried below were terminated by SIGTERM. Subsequent
+    worker_failed reconciliation and re-dispatch do not satisfy that criterion.
+    Closeout requires an explicit operator-authorized acceptance waiver or
+    other canonical incident disposition. No second restart is authorized.
+  - UNPROVEN: contemporaneous pre-write heartbeat. This receipt captured the
+    preflight unit fields below, but it did not capture a pre-write heartbeat.
+    The ai-status.json updated_at value at the end of this receipt is
+    post-restart evidence only.
+
+Preflight Supervisor Unit State (BEFORE restart):
+  Id                     : pantheon-supervisor.service
+  LoadState              : loaded
+  ActiveState            : active
+  SubState               : running
+  MainPID                : 199392
+  ExecMainStartTimestamp : Fri 2026-07-31 13:38:29 UTC
+  NRestarts              : 0
+
+Pre-restart Active Worker Inventory (BEFORE restart, PID 199392):
+  1. Worker Run ID : codex-20260731T140822Z-049594ef
+     Task ID       : ODP-PLAN-ACCEPTANCE-REAL-EXEC-001
+     Target Agent  : Codex
+     State         : active running process
+  2. Worker Run ID : codex-20260731T142041Z-fb4e3fca
+     Task ID       : ODP-PLAN-SITESCORE-OUTCOME-001
+     Target Agent  : Codex6
+     State         : active running process
+
+Controlled Restart Command:
+  systemctl --user restart pantheon-supervisor.service
+
+Restart Process Impact (14:27:07Z):
+  - Both active worker processes were terminated by SIGTERM (exit_code=-15, signal=15) during systemd service restart.
+
+Post-Restart Supervisor Unit State (AFTER restart):
+  Id                     : pantheon-supervisor.service
+  LoadState              : loaded
+  ActiveState            : active
+  SubState               : running
+  MainPID                : 262802  (NEW live MainPID)
+  ExecMainStartTimestamp : Fri 2026-07-31 14:27:07 UTC  (FRESH start timestamp)
+  NRestarts              : 0  (Unchanged manual restart count)
+
+Post-restart Boot Reconciliation & Re-dispatch Receipts (MainPID 262802):
+  - codex-20260731T140822Z-049594ef : Reconciled as worker_failed ("Worker process missing during supervisor boot reconciliation."), subsequently re-dispatched.
+  - codex-20260731T142041Z-fb4e3fca : Reconciled as worker_failed ("Worker process missing during supervisor boot reconciliation."), subsequently re-dispatched to Antigravity3 (run ID antigravity3-20260731T145319Z-5a02b1c7).
+
+Live Process Verification:
+  cmdline : python3 /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py --verbose
+  cwd     : /home/lupin/oday-plus-supervisor-live
+
+Live Heartbeat Verification:
+  ai-status.json updated_at : 2026-07-31T14:27:13Z (post-restart heartbeat only; not preflight proof)
+
+Configuration Verification:
+  ready_dispatcher.disabled_agents : ["Claude", "Claude2", "Claude3"] (Verified active in live config.json)

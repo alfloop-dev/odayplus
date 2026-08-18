@@ -1,0 +1,64 @@
+=== Run 1 — 2026-07-31 rollout probes (live root /home/lupin/oday-plus-supervisor-live) ===
+
+test_b23_probe_restore_approved_refuses_reopened_or_moved_head (__main__.LiveFreezeProbes.test_b23_probe_restore_approved_refuses_reopened_or_moved_head)
+B23 Probe: restore_approved refuses when reviewer reopened work. ... ok
+test_b24_probe_higher_priority_ready_task_skips_missing_approved_head (__main__.LiveFreezeProbes.test_b24_probe_higher_priority_ready_task_skips_missing_approved_head)
+B24 Probe: higher_priority_ready_task_exists skips tasks without approved_head. ... ok
+test_n3_probe_restore_approved_head_check_emission (__main__.LiveFreezeProbes.test_n3_probe_restore_approved_head_check_emission)
+N3 Probe: repair/emission pass and a fresh missing-head SHA mismatch fails closed. ... Successfully emitted status check 'task-review-gate'=success to GitHub API.
+Successfully emitted status check 'task-review-gate'=failure to GitHub API.
+ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.447s
+
+OK
+
+
+=== Run 2 — 2026-08-17 re-proof after live root relocation ===
+
+Context: the retired /home/lupin/oday-plus-supervisor-live path no longer exists.
+The live status root is now published through the
+`oday-plus-supervisor-runtime-current` symlink, which resolves to
+/home/lupin/odayplus (a `dev` checkout). live_probes.py was updated to resolve
+the live root from PANTHEON_STATUS_ROOT with the symlink and the retired path as
+fallbacks, so the probes read the root the Supervisor actually runs from.
+
+Command:
+  uv run --offline -p 3.12 python \
+    docs/evidence/runtime/ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001/live_probes.py -v
+
+Note on the trailing emission lines: every GitHub call in the N3 probe runs under
+`mock.patch("subprocess.run")`. The larger emission count versus Run 1 reflects
+the live board's current backlog of outstanding status-check deliveries replayed
+through the mock; no status check was posted to GitHub by this run. The B23 probe
+fails closed before any emission path is reached.
+
+test_b23_probe_restore_approved_refuses_reopened_or_moved_head (__main__.LiveFreezeProbes.test_b23_probe_restore_approved_refuses_reopened_or_moved_head)
+B23 Probe: restore_approved refuses when reviewer reopened work. ... live status root: /home/lupin/odayplus
+ok
+test_b24_probe_higher_priority_ready_task_skips_missing_approved_head (__main__.LiveFreezeProbes.test_b24_probe_higher_priority_ready_task_skips_missing_approved_head)
+B24 Probe: higher_priority_ready_task_exists skips tasks without approved_head. ... live status root: /home/lupin/odayplus
+ok
+test_n3_probe_restore_approved_head_check_emission (__main__.LiveFreezeProbes.test_n3_probe_restore_approved_head_check_emission)
+N3 Probe: repair/emission pass and a fresh missing-head SHA mismatch fails closed. ... live status root: /home/lupin/odayplus
+ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.253s
+
+OK
+Successfully emitted status check 'task-review-gate'=failure to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=failure to GitHub API.
+Successfully emitted status check 'task-review-gate'=failure to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=failure to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=pending to GitHub API.
+Successfully emitted status check 'task-review-gate'=success to GitHub API.
+Successfully emitted status check 'task-review-gate'=failure to GitHub API.
