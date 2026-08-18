@@ -138,6 +138,12 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     if isinstance(previous, dict) and str(previous.get("head") or "") == approved_head:
         # Already actioned for this exact reviewed head; re-issuing the command
         # every tick would spam GitHub and re-queue an entry already in flight.
+        # An entry can still be ejected afterwards - when an earlier PR merges
+        # first and leaves this one conflicting - and the queue does not put it
+        # back.  Report that instead of waiting on an entry that no longer
+        # exists; only the owner can advance the base.
+        if _pr_merge_state(pr_number) == "DIRTY":
+            return "ejected", "conflicts with base after an earlier merge"
         return "waiting", str(previous.get("route") or "already routed")
 
     scope = approved_pr_change_scope(pr_number)
@@ -222,6 +228,22 @@ def advance_approved_prs_to_merge(
                 f"PR for task {task_id} is product scope and was enqueued in the dev merge queue "
                 f"({detail}); approved branch head remains immutable."
             )
+        elif route == "ejected":
+            # The queue dropped it and will not retry on its own.  Advancing the
+            # base rewrites the reviewed head, so this has to go back to the
+            # owner and be reviewed again rather than silently re-enqueued.
+            if requeue_task_for_ci_repair(
+                config,
+                status,
+                task,
+                message=(
+                    f"PR for task {task_id} was ejected from the merge queue ({detail}); "
+                    "owner must advance the base and resubmit for review."
+                ),
+                clear_approval=True,
+            ):
+                changed = True
+            continue
         else:
             continue
         changed = True

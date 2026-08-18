@@ -12468,6 +12468,24 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         self.assertEqual(route, "waiting")
         self.assertEqual(calls, [])
 
+    def test_queue_ejection_is_reported_rather_than_waited_on(self) -> None:
+        """An entry dropped for conflicting with a newly merged base is never
+        re-added by the queue, so waiting on it strands the task forever."""
+        task = {
+            "id": "T-3b",
+            "pr_number": 47,
+            "approved_head": self.HEAD,
+            "merge_route": {"head": self.HEAD, "route": "queued"},
+        }
+
+        route, detail, calls = self._route(
+            task, scope="product_or_mixed", merge_state="DIRTY"
+        )
+
+        self.assertEqual(route, "ejected")
+        self.assertIn("conflicts with base", detail)
+        self.assertEqual(calls, [])
+
     def test_unclassifiable_diff_fails_closed(self) -> None:
         task = {"id": "T-4", "pr_number": 45, "approved_head": self.HEAD}
 
