@@ -5,11 +5,13 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/adapters/claude_cli.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/adapters/codex.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/adapters/file_inbox.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+.orchestrator/antigravity_login_helper.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/approval_queue.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/auth_loader.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/auto_commit_archive.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/branch_drift_alarms.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/claude_permission_prompt_mcp.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+.orchestrator/codex_login_helper.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/common.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/coordination_file_watcher.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/coordination_repo_mirror.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
@@ -28,6 +30,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/permission_broker.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/provider_permissions.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/provider_runtime.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+.orchestrator/pty_login.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/rebase_helper.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/runtime_state.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/sidecar_cleanup.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
@@ -46,6 +49,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_dispatch_policy.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_github_bus.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_github_command_parser.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_login_helpers.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_model_rotation.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_multi_repo_registry.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_permission_broker_status_root.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -152,10 +156,8 @@ archive/retired-dev-tools/2026-08-12/chair_review_wave_health.py,archived,archiv
 archive/retired-dev-tools/2026-08-12/copilot_login_helper.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-12/emit_test_event.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-12/generate_observability_evidence.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
-archive/retired-dev-tools/2026-08-12/qwen.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-12/run_chaos.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-12/run_load.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
-archive/retired-dev-tools/2026-08-12/test_qwen_adapter.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-13/configure_account_pools.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-13/generate_obs_instrumentation_evidence.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.
 archive/retired-dev-tools/2026-08-13/migrate_task_dependency_graph.py,archived,archived,false,,,conditional,Repository archive retention policy permits permanent deletion.

@@ -1249,7 +1249,7 @@ class SidecarTaskTests(unittest.TestCase):
                 {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Gemini", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Copilot", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-                {"name": "Qwen", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Helper", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
             ],
             "tasks": [],
             "handoffs": [],
@@ -1989,7 +1989,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "title": "Incident response read surfaces",
                     "summary_zh": "補 incident read view。",
                     "phase": "Planning Materialized",
-                    "owner": "Qwen",
+                    "owner": "Helper",
                     "reviewer": "Codex",
                     "status": "review",
                     "depends_on": [],
@@ -2186,7 +2186,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             "updated_at": "2026-04-15T16:35:29Z",
             "agents": [
                 {"name": "Claude", "status": "working", "current_task_ids": ["BP5-SVC-002"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
-                {"name": "Qwen", "status": "blocked", "current_task_ids": ["BP5-LUV-001"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
+                {"name": "Helper", "status": "blocked", "current_task_ids": ["BP5-LUV-001"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
             ],
             "tasks": [
                 {
@@ -2194,12 +2194,12 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "title": "Registry review",
                     "summary_zh": "等待 reviewer 檢查。",
                     "owner": "Claude",
-                    "reviewer": "Qwen",
+                    "reviewer": "Helper",
                     "status": "review",
                     "depends_on": [],
                     "artifacts": [],
                     "acceptance": [],
-                    "next": "Ready for Qwen review.",
+                    "next": "Ready for Helper review.",
                     "last_update": "2026-04-15T16:35:29Z",
                 }
             ],
@@ -2213,8 +2213,8 @@ class PortableStateRenderingTests(unittest.TestCase):
             "supervisor": {"pid": 123, "last_heartbeat_at": "2026-04-15T16:35:46Z"},
             "provider_guardrails": {
                 "dispatch_pauses": {
-                    "qwen": {
-                        "provider": "qwen",
+                    "helper": {
+                        "provider": "helper",
                         "blocked_until": "2099-04-15T16:38:40Z",
                         "summary": "Capacity / rate limit failure",
                     }
@@ -3262,7 +3262,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "summary_zh": "定義 golden replay scenario 與 acceptance runbook。",
                     "phase": "Blueprint Gap P0",
                     "owner": "Claude",
-                    "reviewer": "Qwen",
+                    "reviewer": "Helper",
                     "status": "review_approved",
                     "depends_on": ["BG-000"],
                     "next": "Supervisor resumed BG-005 for finalize after successful dispatch.",

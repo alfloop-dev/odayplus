@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "development_tooling": {
-    "description": "Internal development platform, delivery tooling, their verification, and CI workflow definitions. These changes retain commit, PR, CI, and merge requirements but do not require a product reviewer.",
+    "description": "Internal development platform, delivery tooling, their verification, CI workflow definitions, and the review packets the delivery process itself produces. These changes retain commit, PR, CI, and merge requirements but do not require a product reviewer.",
     "include_prefixes": [
       ".orchestrator/",
       ".github/workflows/",
@@ -9,6 +9,7 @@
       "delivery_toolchain/",
       "docs/audits/",
       "infra/terraform/",
+      "support/sidecars/",
       "tests/e2e/",
       "tests/security/",
       "tests/tooling/"
