@@ -121,15 +121,20 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
 
 
 def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
-    """Put a reviewed, CI-green PR onto the merge path its scope requires.
+    """Enqueue a reviewed, CI-green PR for merge.
 
-    GitHub's merge queue only ever contains what was explicitly enqueued, so a
-    green PR that nobody enqueues waits forever.  Development tooling merges
-    directly; product and mixed changes are enqueued instead, which keeps base
-    composition inside the queue rather than in a worker that would rewrite the
-    reviewer-frozen head.  Returns ``(route, detail)`` where route is one of
-    ``merged``, ``queued``, ``waiting`` (already routed, or nothing to do) or
-    ``blocked``.
+    The merge queue only ever contains what was explicitly enqueued, so a green
+    PR that nobody enqueues waits forever. Enqueueing is the whole job: `dev`
+    carries a ruleset that requires it ("Changes must be made through the merge
+    queue"), so there is no second path to choose between and nothing here
+    decides policy. An earlier version branched on change scope and took
+    `--admin` for development tooling; the ruleset rejects that outright, and
+    every tooling PR failed once per tick until it was removed. Review scope
+    still governs whether the workflow auto-stamps `task-review-gate` - that is
+    the workflow's decision, upstream of this and not repeated here.
+
+    Returns ``(route, detail)`` where route is ``queued``, ``waiting`` (already
+    routed, or nothing to do), ``ejected`` or ``blocked``.
     """
     from github_bus import GitHubBusError, GitHubBusOffline, run_gh
 
@@ -153,29 +158,19 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
             return "ejected", "conflicts with base after an earlier merge"
         return "waiting", str(previous.get("route") or "already routed")
 
-    scope = approved_pr_change_scope(pr_number)
-    if scope is None:
-        return "blocked", "change scope could not be classified"
-
-    # `dev` requires a merge queue, so a bare `gh pr merge` enqueues the PR (or
-    # arms auto-merge while checks are still running).  `--admin` is the only
-    # way past the queue, and it bypasses the queue rather than the checks -
-    # take it for development tooling only while GitHub itself reports every
-    # requirement satisfied, so a conflicted or red PR still goes to the queue.
-    if scope == "development_tooling" and _pr_merge_state(pr_number) == "CLEAN":
-        args, route = ["pr", "merge", str(pr_number), "--admin", "--merge"], "merged"
-    else:
-        args, route = ["pr", "merge", str(pr_number)], "queued"
-
     try:
-        run_gh(args)
+        run_gh(["pr", "merge", str(pr_number)])
     except (GitHubBusError, GitHubBusOffline) as exc:
-        return "blocked", f"{scope}: {exc}"
+        return "blocked", str(exc)
 
+    # Recorded for the audit trail only. Classification must never gate the
+    # enqueue: an unreadable diff is a reason to say so, not to strand a
+    # reviewed PR that the queue would have accepted.
+    scope = approved_pr_change_scope(pr_number) or "unknown"
     task[MERGE_ROUTE_FIELD] = {
         "head": approved_head,
         "scope": scope,
-        "route": route,
+        "route": "queued",
         "pr_number": pr_number,
         "at": utc_now(),
     }
@@ -184,10 +179,10 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         {
             "type": "merge_route_applied",
             "task_id": str(task.get("id") or ""),
-            "message": f"PR #{pr_number} classified {scope}; routed via {route}.",
+            "message": f"PR #{pr_number} enqueued for merge (scope {scope}).",
         },
     )
-    return route, f"scope={scope}"
+    return "queued", f"scope={scope}"
 
 
 def advance_approved_prs_to_merge(
@@ -225,16 +220,36 @@ def advance_approved_prs_to_merge(
             continue
 
         route, detail = route_approved_pr_to_merge(config, task)
-        if route == "merged":
+        if route == "queued":
             task["next"] = (
-                f"PR for task {task_id} is development-tooling scope and was merged directly "
-                f"({detail}); finalize dispatch resumes once GitHub reports MERGED."
+                f"PR for task {task_id} was enqueued in the dev merge queue ({detail}); "
+                "approved branch head remains immutable until the queue merges it."
             )
-        elif route == "queued":
-            task["next"] = (
-                f"PR for task {task_id} is product scope and was enqueued in the dev merge queue "
-                f"({detail}); approved branch head remains immutable."
+        elif route == "blocked":
+            # Reported here rather than left silent: a PR GitHub refuses to
+            # enqueue is parked indefinitely, and the operator needs the reason.
+            msg = (
+                f"PR for task {task_id} is CI-green but could not be routed to a merge path "
+                f"({detail}); finalize dispatch is deferred until that resolves."
             )
+            if task.get("next") == msg:
+                continue
+            task["next"] = msg
+            write_activity_log(
+                config,
+                {"type": "merge_route_blocked", "task_id": task_id, "message": msg},
+            )
+        elif route == "waiting":
+            # Nothing to route - already in the queue, or no PR to enqueue.
+            # This lane still owns the explanation, because the finalize lane
+            # below deliberately no longer re-routes and so has nothing to say.
+            msg = (
+                f"PR for task {task_id} is CI-green and awaiting merge queue; "
+                "approved branch head remains immutable and finalize dispatch is deferred."
+            )
+            if task.get("next") == msg:
+                continue
+            task["next"] = msg
         elif route == "ejected":
             # The queue dropped it and will not retry on its own.  Advancing the
             # base rewrites the reviewed head, so this has to go back to the
@@ -1264,35 +1279,14 @@ def dispatch_ready_tasks(
                 # reviewer had frozen. The merge queue owns base composition;
                 # the owner finalize lane starts only after GitHub says MERGED.
                 if str(pr_status or "").strip().upper() != "MERGED":
-                    # The queue holds only what is explicitly enqueued, so a
-                    # green PR nobody routes sits here forever.  Development
-                    # tooling merges directly; product and mixed changes are
-                    # enqueued so the queue - not a worker - composes the base.
-                    route, detail = route_approved_pr_to_merge(config, task)
-                    if route == "merged":
-                        msg = (
-                            f"PR for task {task_id} is development-tooling scope and was merged "
-                            f"directly ({detail}); finalize dispatch resumes once GitHub reports MERGED."
-                        )
-                    elif route == "queued":
-                        msg = (
-                            f"PR for task {task_id} is product scope and was enqueued in the dev "
-                            f"merge queue ({detail}); approved branch head remains immutable."
-                        )
-                    elif route == "blocked":
-                        msg = (
-                            f"PR for task {task_id} is CI-green but could not be routed to a merge "
-                            f"path ({detail}); finalize dispatch is deferred."
-                        )
-                    else:
-                        msg = (
-                            f"PR for task {task_id} is CI-green and awaiting merge queue; "
-                            "approved branch head remains immutable and finalize dispatch is deferred."
-                        )
-                    if task.get("next") != msg:
-                        task["next"] = msg
-                        if not commit_canonical_task_transition(config, status):
-                            return changed
+                    # Enqueueing and explaining both belong to
+                    # `advance_approved_prs_to_merge`, which runs earlier in
+                    # this same call over a strictly wider set of tasks - it is
+                    # not gated by owner capacity or head match. Routing here
+                    # too meant a PR GitHub had just refused was retried a
+                    # second time in the same tick, under a second message.
+                    # This lane only has to keep the finalize worker away from
+                    # the head the reviewer froze.
                     continue
 
                 reason = "owned_finalize_dispatch"

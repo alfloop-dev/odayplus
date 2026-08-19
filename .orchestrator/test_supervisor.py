@@ -8923,9 +8923,23 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             pr_status="OPEN",
         )
 
-        self.assertFalse(dispatched)
+        # No finalize worker: composing the base would rewrite the frozen head.
         queue.assert_not_called()
         self.assertIn("awaiting merge queue", task["next"])
+        # The board was written, so the tick reports a change. It used to write
+        # `next` and still report none, which left the caller unaware of it.
+        self.assertTrue(dispatched)
+
+        # Steady state: the same wait must not rewrite the board every tick.
+        repeat_dispatched, _, repeat_queue = self._run_finalize_dispatch_capturing_signals(
+            config,
+            task,
+            head=approved,
+            ci="success",
+            pr_status="OPEN",
+        )
+        repeat_queue.assert_not_called()
+        self.assertFalse(repeat_dispatched)
 
     def test_supervisor_emits_operator_signal_for_silent_finalize_suppression(self) -> None:
         """B20: suppressing finalize dispatch must not be silent.
@@ -12579,7 +12593,7 @@ class ClaudeResumeModelSelectionTests(unittest.TestCase):
 
 
 class ApprovedPrMergeRoutingTests(unittest.TestCase):
-    """A reviewed, CI-green PR must be routed by its change scope.
+    """A reviewed, CI-green PR must be enqueued for merge.
 
     GitHub's merge queue only holds what is explicitly enqueued, so approved
     work used to stall indefinitely with nothing driving it to a merge.
@@ -12608,33 +12622,39 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
             route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
         return route, detail, calls
 
-    def test_development_tooling_pr_bypasses_the_queue_when_clean(self) -> None:
-        task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD}
+    def test_every_scope_takes_the_same_queue_path(self) -> None:
+        """`dev` requires the merge queue, so scope cannot select a route.
+
+        Branching here and taking `--admin` for tooling was rejected by the
+        repository ruleset on every attempt.
+        """
+        for scope in ("development_tooling", "product_or_mixed", None):
+            with self.subTest(scope=scope):
+                task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD}
+
+                route, _, calls = self._route(task, scope=scope)
+
+                self.assertEqual(route, "queued")
+                self.assertEqual(calls, [["pr", "merge", "42"]])
+
+    def test_scope_is_recorded_but_never_gates_the_enqueue(self) -> None:
+        task = {"id": "T-1b", "pr_number": 46, "approved_head": self.HEAD}
 
         route, _, calls = self._route(task, scope="development_tooling")
 
-        self.assertEqual(route, "merged")
-        self.assertEqual(calls, [["pr", "merge", "42", "--admin", "--merge"]])
-        self.assertEqual(task["merge_route"]["scope"], "development_tooling")
-
-    def test_development_tooling_pr_uses_the_queue_when_not_clean(self) -> None:
-        """`--admin` bypasses the queue, never the checks: a conflicted or red
-        tooling PR must still go through the merge queue."""
-        task = {"id": "T-1b", "pr_number": 46, "approved_head": self.HEAD}
-
-        route, _, calls = self._route(task, scope="development_tooling", merge_state="DIRTY")
-
         self.assertEqual(route, "queued")
+        self.assertEqual(task["merge_route"]["scope"], "development_tooling")
         self.assertEqual(calls, [["pr", "merge", "46"]])
 
-    def test_product_pr_is_enqueued_instead_of_merged(self) -> None:
+    def test_unclassifiable_diff_is_still_enqueued(self) -> None:
+        """An unreadable diff is a reason to say so, not to strand a reviewed
+        PR the queue would have accepted."""
         task = {"id": "T-2", "pr_number": 43, "approved_head": self.HEAD}
 
-        route, _, calls = self._route(task, scope="product_or_mixed")
+        route, _, calls = self._route(task, scope=None)
 
         self.assertEqual(route, "queued")
-        # A bare `gh pr merge` is what enqueues on a merge-queue branch; there
-        # is no `--queue` flag.
+        self.assertEqual(task["merge_route"]["scope"], "unknown")
         self.assertEqual(calls, [["pr", "merge", "43"]])
 
     def test_same_reviewed_head_is_not_routed_twice(self) -> None:
@@ -12668,14 +12688,24 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         self.assertIn("conflicts with base", detail)
         self.assertEqual(calls, [])
 
-    def test_unclassifiable_diff_fails_closed(self) -> None:
-        task = {"id": "T-4", "pr_number": 45, "approved_head": self.HEAD}
+    def test_a_refused_enqueue_is_reported_and_not_recorded(self) -> None:
+        """When GitHub refuses the enqueue - a ruleset violation, an offline
+        host - say why and leave `merge_route` unset so the next tick retries.
+        """
+        import github_bus
 
-        route, detail, calls = self._route(task, scope=None)
+        task = {"id": "T-4", "pr_number": 45, "approved_head": self.HEAD}
+        refusal = github_bus.GitHubBusError(
+            "GraphQL: Repository rule violations found (mergePullRequest)"
+        )
+
+        route, detail, calls = self._route(
+            task, scope="development_tooling", gh_side_effect=refusal
+        )
 
         self.assertEqual(route, "blocked")
-        self.assertIn("classified", detail)
-        self.assertEqual(calls, [])
+        self.assertIn("rule violations", detail)
+        self.assertEqual(calls, [["pr", "merge", "45"]])
         self.assertNotIn("merge_route", task)
 
     def test_task_without_pr_number_is_left_alone(self) -> None:
@@ -12685,6 +12715,89 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "waiting")
         self.assertEqual(calls, [])
+
+
+class ApprovedPrMergeAdvanceTests(unittest.TestCase):
+    """Routing an approved PR, and explaining the wait, belong in one place.
+
+    Both used to happen twice per tick - once here and once in the finalize
+    lane of `dispatch_ready_tasks` - so a PR GitHub had just refused was
+    retried immediately under a second, different message.
+    """
+
+    HEAD = "1111111122222222333333334444444455555555"
+    FINALIZE = {"review_approved"}
+
+    def _advance(self, task, *, route, detail=""):
+        import dispatch_engine
+
+        status = {"tasks": [task]}
+        logged: list[dict] = []
+        with unittest.mock.patch.object(
+            dispatch_engine.runtime_ai_status,
+            "task_pr_ci_status",
+            return_value=("OPEN", "success"),
+        ), unittest.mock.patch.object(
+            dispatch_engine, "route_approved_pr_to_merge", return_value=(route, detail)
+        ), unittest.mock.patch.object(
+            dispatch_engine, "commit_canonical_task_transition", return_value=True
+        ), unittest.mock.patch.object(
+            dispatch_engine,
+            "write_activity_log",
+            create=True,
+            side_effect=lambda _c, event: logged.append(event),
+        ):
+            changed = dispatch_engine.advance_approved_prs_to_merge(
+                {}, status, self.FINALIZE
+            )
+        return changed, logged
+
+    def _task(self):
+        return {
+            "id": "T-9",
+            "status": "review_approved",
+            "approved_head": self.HEAD,
+            "pr_number": 99,
+        }
+
+    def test_a_refused_enqueue_is_reported_once(self) -> None:
+        """A PR GitHub will not take is parked, so say why - but only once."""
+        task = self._task()
+
+        changed, logged = self._advance(task, route="blocked", detail="rule violations")
+
+        self.assertTrue(changed)
+        self.assertIn("could not be routed", task["next"])
+        self.assertIn("rule violations", task["next"])
+        self.assertEqual([event["type"] for event in logged], ["merge_route_blocked"])
+
+        repeat_changed, repeat_logged = self._advance(
+            task, route="blocked", detail="rule violations"
+        )
+
+        self.assertFalse(repeat_changed)
+        self.assertEqual(repeat_logged, [])
+
+    def test_waiting_explains_the_queue_wait_without_rewriting_the_board(self) -> None:
+        task = self._task()
+
+        changed, _ = self._advance(task, route="waiting", detail="already routed")
+
+        self.assertTrue(changed)
+        self.assertIn("awaiting merge queue", task["next"])
+
+        repeat_changed, _ = self._advance(task, route="waiting", detail="already routed")
+
+        self.assertFalse(repeat_changed)
+
+    def test_the_finalize_lane_no_longer_routes(self) -> None:
+        """One caller only. A second one meant two enqueue attempts per tick."""
+        import inspect
+
+        import dispatch_engine
+
+        source = inspect.getsource(dispatch_engine)
+        self.assertEqual(source.count("route_approved_pr_to_merge(config, task)"), 1)
 
 
 class FleetDispatchLivelockTests(unittest.TestCase):
