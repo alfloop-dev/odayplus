@@ -13548,5 +13548,64 @@ class OrchestratorSkillsAreScratchTests(unittest.TestCase):
                 self.assertEqual(classification, "real")
 
 
+class SupervisorTerminationLoggingTests(unittest.TestCase):
+    """A signalled supervisor must not die silently.
+
+    `atexit` does not run on SIGTERM and never on SIGKILL, so before this the
+    process had no way to record being terminated: the log's last line was an
+    ordinary tick and `supervisor.pid` was left stale for the watchdog to read.
+    Four terminations in one hour were diagnosable only by elimination.
+    """
+
+    def _install_and_capture(self):
+        installed: dict[int, object] = {}
+        with mock.patch.object(supervisor.signal, "signal", side_effect=lambda n, h: installed.__setitem__(n, h)):
+            supervisor.install_termination_logging({"paths": {}})
+        return installed
+
+    def test_installs_handlers_for_catchable_termination_signals(self) -> None:
+        installed = self._install_and_capture()
+        self.assertEqual(
+            set(installed),
+            {supervisor.signal.SIGTERM, supervisor.signal.SIGINT, supervisor.signal.SIGHUP},
+        )
+
+    def test_handler_records_the_signal_and_exits(self) -> None:
+        installed = self._install_and_capture()
+        handler = installed[supervisor.signal.SIGTERM]
+        with (
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            mock.patch.object(supervisor, "console_log"),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                handler(supervisor.signal.SIGTERM, None)
+        # SystemExit rather than os._exit: it unwinds normally so the registered
+        # atexit hook still clears supervisor.pid.
+        self.assertEqual(raised.exception.code, 128 + int(supervisor.signal.SIGTERM))
+        payload = write_activity_log.call_args.args[1]
+        self.assertEqual(payload["type"], "supervisor_terminated")
+        self.assertEqual(payload["signal"], "SIGTERM")
+        self.assertEqual(payload["pid"], os.getpid())
+
+    def test_handler_still_exits_when_both_log_sinks_fail(self) -> None:
+        """A handler that raises on its way out would destroy the diagnostic."""
+        installed = self._install_and_capture()
+        handler = installed[supervisor.signal.SIGINT]
+        with (
+            mock.patch.object(supervisor, "console_log", side_effect=OSError("no tty")),
+            mock.patch.object(supervisor, "write_activity_log", side_effect=OSError("read-only fs")),
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                handler(supervisor.signal.SIGINT, None)
+        self.assertEqual(raised.exception.code, 128 + int(supervisor.signal.SIGINT))
+
+    def test_main_installs_the_handler_before_writing_the_pid_file(self) -> None:
+        """Ordering matters: a supervisor that owns the pid file must be able to clear it."""
+        source = Path(supervisor.__file__).read_text(encoding="utf-8")
+        install_at = source.index("    install_termination_logging(config)")
+        write_at = source.index("    write_supervisor_pid(config)\n    bootstrap_supervisor_runtime_state")
+        self.assertLess(install_at, write_at)
+
+
 if __name__ == "__main__":
     unittest.main()
