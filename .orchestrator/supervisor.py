@@ -129,6 +129,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_clear_worktree_lease_block",
 "_create_worker_worktree",
 "_describe_dirt_entries",
+"_detached_head_is_merged",
 "_dirty_worktree_detail",
 "_create_worker_worktree_fallback",
 "_existing_worktree_for_branch",

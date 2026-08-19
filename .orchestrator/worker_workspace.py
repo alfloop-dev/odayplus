@@ -209,6 +209,27 @@ def _worktree_record_branch(record: dict[str, str]) -> str:
 
 
 @_entrypoint
+def _detached_head_is_merged(repo_root: Path, worktree_path: Path, base_refs: list[str]) -> bool:
+    """Return True when a branchless worktree's HEAD is already contained in a base.
+
+    This is the detached-HEAD spelling of the `branch in merged_branches` test that
+    guards worktree removal: both answer "is this content already in a base branch,
+    so that deleting the checkout loses nothing?". Fails closed -- an unreadable
+    HEAD or an unanswerable ancestry query keeps the worktree.
+    """
+    if not base_refs:
+        return False
+    head = _git_commit_oid(worktree_path, "HEAD")
+    if not head:
+        return False
+    for base_ref in base_refs:
+        rc, _ = _git_output(repo_root, "merge-base", "--is-ancestor", head, base_ref)
+        if rc == 0:
+            return True
+    return False
+
+
+@_entrypoint
 def _worktree_matches_repo_common_dir(repo_root: Path, path: Path) -> bool:
     try:
         path = path.resolve()
@@ -2316,10 +2337,12 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
     live_paths = _scan_process_paths_in_root(base_root)
 
     merged_branches: set[str] = set()
+    base_refs: list[str] = []
     for ref in settings["base_branches"]:
         for candidate in (f"origin/{ref}", ref):
             if not _git_ref_exists(repo_root, candidate):
                 continue
+            base_refs.append(candidate)
             proc = subprocess.run(
                 ["git", "branch", "--merged", candidate, "--list", "task/*"],
                 cwd=repo_root,
@@ -2333,7 +2356,11 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
                 name = line.strip().lstrip("*").strip()
                 if name:
                     merged_branches.add(name)
-    if not merged_branches:
+    # Without a single resolvable base there is nothing to prove "already merged"
+    # against, for either a branch or a detached HEAD, so nothing may be removed.
+    # A base that exists but has no merged task branch is NOT such a case: a
+    # detached recovery worktree can still be an ancestor of it.
+    if not base_refs:
         return False
 
     max_removals = max(0, settings["max_removals_per_tick"])
@@ -2354,7 +2381,16 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
         if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
             continue
         branch = _worktree_record_branch(record)
-        if not branch or branch not in merged_branches:
+        if branch:
+            if branch not in merged_branches:
+                continue
+        elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
+            # A lease-recovery worktree is created with `git worktree add --detach`
+            # (see _fresh_lease_path), so it carries no branch at all and the
+            # branch-membership test above could never admit it -- every one of
+            # them was structurally unprunable for its whole life. Ask the same
+            # question ancestry can answer instead: is this HEAD already contained
+            # in a base? Same guarantee, expressed for a worktree that has no name.
             continue
         status_proc = subprocess.run(
             ["git", "-C", str(wt_path), "status", "--porcelain"],
