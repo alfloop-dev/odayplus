@@ -1978,10 +1978,12 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
-        assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
-        assert "ODP_AUTH_JWKS_URI" in text
         if workflow.name == "deploy-dev.yml":
+            assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" in text
             assert "ODP_AUTH_SUBJECT_ROLE_BINDINGS" in text
+        else:
+            assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
+        assert "ODP_AUTH_JWKS_URI" in text
         assert "ODP_POI_PROVIDER_URL" in text
         assert "ODP_ADMIN_BOUNDARY_PROVIDER_URL" in text
         assert "ODP_WEB_OIDC_CLIENT_ID" in text
@@ -2057,7 +2059,6 @@ def test_provider_probe_timeout_band_matches_runtime_connector() -> None:
         }
     )
     assert check.ok, check.detail
->>>>>>> origin/dev
 
 
 def test_deploy_script_preflights_before_build_and_uses_secret_references() -> None:
