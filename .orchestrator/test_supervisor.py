@@ -2140,7 +2140,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(
                     supervisor,
                     "_refresh_reused_worker_worktree",
-                    return_value=(False, "skipped_dirty_worktree"),
+                    return_value=(False, "skipped_dirty_worktree: 1 dirty change (1 unstaged tracked): services/app.py"),
                 ) as refresh_worktree,
                 mock.patch.object(
                     supervisor,
@@ -2161,7 +2161,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
 
         self.assertFalse(ok)
         assert message is not None
-        self.assertIn("dirty tracked or staged changes", message)
+        self.assertIn("1 dirty change (1 unstaged tracked): services/app.py", message)
+        self.assertNotIn("dirty tracked or staged changes", message)
         self.assertNotIn("workspace_path", request.metadata)
         self.assertNotIn("worker_worktrees", state)
         refresh_worktree.assert_called_once()
@@ -2171,7 +2172,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
             ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
         )
-        self.assertEqual(write_activity_log.call_args_list[-1].args[1]["refresh_status"], "skipped_dirty_worktree")
+        self.assertEqual(write_activity_log.call_args_list[-1].args[1]["refresh_status"], "skipped_dirty_worktree: 1 dirty change (1 unstaged tracked): services/app.py")
 
     def test_prepare_worker_workspace_recovers_dirty_worktree_lease(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6169,6 +6170,323 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         kind, _ = supervisor._classify_worktree_dirt(status)
         self.assertEqual(kind, "real")
 
+    def test_skills_seeded_by_the_orchestrator_are_not_owner_dirt(self) -> None:
+        # A repository that does not version-control .orchestrator/ sees the skill files
+        # the supervisor materialized as untracked; they must not deny the lease.
+        status = (
+            "?? .orchestrator/skills/worker-anchor-commit.md\n"
+            "?? .orchestrator/skills/task-closeout-finalization.md\n"
+            "?? .orchestrator/task-briefs/dpf_gov_001.md\n"
+        )
+        kind, paths = supervisor._classify_worktree_dirt(status)
+        self.assertEqual(kind, "scratch_only")
+        self.assertEqual(len(paths), 3)
+
+    def test_materialized_context_outside_orchestrator_is_allowlisted(self) -> None:
+        status = "?? docs/source/spec.md\n"
+        self.assertEqual(supervisor._classify_worktree_dirt(status)[0], "real")
+        kind, paths = supervisor._classify_worktree_dirt(
+            status,
+            materialized_paths=["docs/source/spec.md"],
+        )
+        self.assertEqual(kind, "scratch_only")
+        self.assertEqual(paths, ["docs/source/spec.md"])
+
+    def test_materialized_directory_covers_its_children(self) -> None:
+        status = "?? docs/source/nested/spec.md\n"
+        kind, _ = supervisor._classify_worktree_dirt(
+            status,
+            materialized_paths=["docs/source"],
+        )
+        self.assertEqual(kind, "scratch_only")
+
+    def test_allowlist_does_not_excuse_tracked_edits_or_other_paths(self) -> None:
+        allowed = [".orchestrator/skills/worker-anchor-commit.md"]
+        tracked_edit = " M .orchestrator/skills/worker-anchor-commit.md\n"
+        self.assertEqual(
+            supervisor._classify_worktree_dirt(tracked_edit, materialized_paths=allowed)[0],
+            "real",
+        )
+        owner_untracked = "?? services/control-plane/new_module.py\n"
+        self.assertEqual(
+            supervisor._classify_worktree_dirt(owner_untracked, materialized_paths=allowed)[0],
+            "real",
+        )
+
+    def test_allowlist_rejects_traversal_and_absolute_entries(self) -> None:
+        status = "?? escaped.py\n"
+        kind, _ = supervisor._classify_worktree_dirt(
+            status,
+            materialized_paths=["../escaped.py", "/etc/escaped.py", "", "   "],
+        )
+        self.assertEqual(kind, "real")
+
+    def test_blocking_entries_exclude_orchestrator_seeds(self) -> None:
+        entries = supervisor._parse_porcelain_entries(
+            "?? .orchestrator/skills/worker-anchor-commit.md\n"
+            "?? owner_notes.md\n"
+        )
+        blocking = supervisor._blocking_dirt_entries(entries)
+        self.assertEqual(blocking, [("??", "owner_notes.md")])
+
+
+class DirtDescriptionTests(unittest.TestCase):
+    """A lease block must name what git actually reported, not a fixed guess."""
+
+    def test_untracked_only_is_not_described_as_tracked_or_staged(self) -> None:
+        entries = supervisor._parse_porcelain_entries(
+            "?? .orchestrator/skills/worker-anchor-commit.md\n"
+            "?? .orchestrator/task-briefs/dpf_gov_001.md\n"
+        )
+        detail = supervisor._describe_dirt_entries(entries)
+        self.assertIn("2 dirty changes", detail)
+        self.assertIn("2 untracked", detail)
+        self.assertNotIn("staged", detail)
+        self.assertIn(".orchestrator/task-briefs/dpf_gov_001.md", detail)
+
+    def test_mixed_states_are_counted_separately(self) -> None:
+        entries = supervisor._parse_porcelain_entries(
+            "M  staged.py\n"
+            " M unstaged.py\n"
+            "?? new.py\n"
+        )
+        detail = supervisor._describe_dirt_entries(entries)
+        self.assertIn("3 dirty changes", detail)
+        self.assertIn("1 staged", detail)
+        self.assertIn("1 unstaged tracked", detail)
+        self.assertIn("1 untracked", detail)
+
+    def test_long_lists_are_truncated(self) -> None:
+        entries = [("??", f"file{index}.py") for index in range(9)]
+        detail = supervisor._describe_dirt_entries(entries)
+        self.assertIn("9 dirty changes", detail)
+        self.assertIn("+4 more", detail)
+
+    def test_detail_round_trips_through_the_refresh_status_token(self) -> None:
+        status = "skipped_dirty_worktree: 1 dirty change (1 untracked): new.py"
+        self.assertEqual(supervisor._lease_status_kind(status), "skipped_dirty_worktree")
+        self.assertTrue(supervisor._is_skipped_dirty_worktree(status))
+        self.assertTrue(supervisor._is_skipped_dirty_worktree("skipped_dirty_worktree"))
+        self.assertFalse(supervisor._is_skipped_dirty_worktree("wrong_branch: x"))
+        self.assertEqual(
+            supervisor._dirty_worktree_detail(status),
+            "1 dirty change (1 untracked): new.py",
+        )
+        self.assertEqual(supervisor._dirty_worktree_detail("skipped_dirty_worktree"), "dirty changes")
+
+    def test_detailed_status_still_reaches_the_fresh_lease_recovery_set(self) -> None:
+        import worker_workspace
+
+        status = "skipped_dirty_worktree: 1 dirty change (1 untracked): new.py"
+        self.assertIn(
+            supervisor._lease_status_kind(status),
+            worker_workspace.LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE,
+        )
+
+
+class UnversionedOrchestratorWorkspaceLeaseTests(unittest.TestCase):
+    """Regression for OPS-MATERIALIZED-CONTEXT-DIRT-001.
+
+    A repository that does not version-control `.orchestrator/` receives the worker
+    context files as untracked writes from the supervisor itself. Read as owner dirt,
+    those writes denied every later lease of the very workspace the orchestrator had
+    just seeded, so the task could never be dispatched into it again.
+    """
+
+    task_id = "DPF-GOV-001"
+    branch = "task/DPF-GOV-001"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+
+        self.remote = root / "remote.git"
+        self._git(root, "init", "--bare", str(self.remote))
+
+        self.repo_root = root / "data_platform"
+        self._git(root, "clone", str(self.remote), str(self.repo_root))
+        self._git(self.repo_root, "config", "user.name", "Supervisor Test")
+        self._git(self.repo_root, "config", "user.email", "supervisor-test@example.invalid")
+        self._git(self.repo_root, "checkout", "-b", "dev")
+        # The whole point: this repository version-controls product files only. It has
+        # no .orchestrator/ directory under version control.
+        (self.repo_root / "README.md").write_text("data platform\n", encoding="utf-8")
+        self._git(self.repo_root, "add", "README.md")
+        self._git(self.repo_root, "commit", "-m", "initial")
+        self._git(self.repo_root, "push", "-u", "origin", "dev")
+        self._git(self.repo_root, "checkout", "-b", self.branch)
+        self._git(self.repo_root, "push", "-u", "origin", self.branch)
+        self._git(self.repo_root, "checkout", "dev")
+
+        (self.repo_root / "ai-status.json").write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": self.task_id,
+                            "title": "Cross repository governance",
+                            "status": "in_progress",
+                            "owner": "Claude",
+                            "reviewer": "Antigravity",
+                            "phase": "Unassigned",
+                            "branch": self.branch,
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        skills_dir = self.repo_root / ".orchestrator" / "skills"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "worker-anchor-commit.md").write_text("# anchor\n", encoding="utf-8")
+        (skills_dir / "task-closeout-finalization.md").write_text("# closeout\n", encoding="utf-8")
+
+        self.worktree = root / "workers" / supervisor._task_id_slug(self.task_id)
+        self.worktree.parent.mkdir(parents=True, exist_ok=True)
+        self._git(self.repo_root, "worktree", "add", str(self.worktree), self.branch)
+        self._git(self.worktree, "config", "user.name", "Supervisor Test")
+        self._git(self.worktree, "config", "user.email", "supervisor-test@example.invalid")
+
+        self.config = {
+            "paths": {
+                "status_file": str(self.repo_root / "ai-status.json"),
+                "activity_log": str(self.repo_root / "ai-activity-log.jsonl"),
+            },
+            "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            "worker_worktrees": {
+                "enabled": True,
+                "root": str(root / "workers"),
+                "base_ref": "origin/dev",
+                "reuse_existing": True,
+            },
+        }
+        self.context_files = [
+            ".orchestrator/skills/worker-anchor-commit.md",
+            ".orchestrator/skills/task-closeout-finalization.md",
+        ]
+
+    def _git(self, cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=True)
+
+    def _dispatch(self, state: dict[str, Any]) -> tuple[bool, str | None, Any]:
+        request = supervisor.DeliveryRequest(
+            agent_id="claude",
+            provider="claude",
+            delivery_mode="claude",
+            message="wake",
+            task_id=self.task_id,
+            reason="owned_in_progress_dispatch",
+            context_files=list(self.context_files),
+        )
+        ok, message = supervisor.prepare_worker_workspace(
+            self.config,
+            state,
+            request,
+            queue_event_id="evt-unversioned",
+            target_agent="Claude",
+        )
+        return ok, message, request
+
+    def _refresh(self) -> tuple[bool, str]:
+        return supervisor._refresh_reused_worker_worktree(
+            self.repo_root,
+            self.worktree,
+            "origin/dev",
+            self.branch,
+            materialized_paths=self.context_files,
+        )
+
+    def test_repeated_dispatch_never_accumulates_a_materialized_context_block(self) -> None:
+        state: dict[str, Any] = {}
+
+        ok, message, request = self._dispatch(state)
+        self.assertTrue(ok, message)
+        self.assertEqual(Path(request.metadata["workspace_path"]), self.worktree)
+        for rel in self.context_files:
+            self.assertTrue((self.worktree / rel).exists(), rel)
+
+        # The supervisor's own writes are untracked in this repository.
+        untracked = self._git(
+            self.worktree, "status", "--porcelain=v1", "--untracked-files=all"
+        ).stdout
+        self.assertIn(".orchestrator/skills/worker-anchor-commit.md", untracked)
+
+        # Every later dispatch must still lease the same worktree.
+        for _ in range(3):
+            ok, message, request = self._dispatch(state)
+            self.assertTrue(ok, message)
+            self.assertEqual(Path(request.metadata["workspace_path"]), self.worktree)
+
+    def test_materialized_context_alone_does_not_deny_the_lease(self) -> None:
+        state: dict[str, Any] = {}
+        ok, message, _ = self._dispatch(state)
+        self.assertTrue(ok, message)
+
+        ok, status = self._refresh()
+
+        self.assertTrue(ok, status)
+        self.assertFalse(supervisor._is_skipped_dirty_worktree(status), status)
+
+    def test_genuine_tracked_owner_dirt_still_denies_the_lease(self) -> None:
+        state: dict[str, Any] = {}
+        ok, message, _ = self._dispatch(state)
+        self.assertTrue(ok, message)
+
+        (self.worktree / "README.md").write_text("owner edit in progress\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(supervisor._is_skipped_dirty_worktree(status), status)
+        self.assertIn("1 unstaged tracked", status)
+        self.assertIn("README.md", status)
+        self.assertEqual(
+            (self.worktree / "README.md").read_text(encoding="utf-8"),
+            "owner edit in progress\n",
+        )
+
+    def test_untracked_owner_file_still_denies_the_lease_and_is_named_untracked(self) -> None:
+        state: dict[str, Any] = {}
+        ok, message, _ = self._dispatch(state)
+        self.assertTrue(ok, message)
+
+        (self.worktree / "scratch_notes.md").write_text("owner scratch\n", encoding="utf-8")
+
+        ok, status = self._refresh()
+
+        self.assertFalse(ok)
+        self.assertTrue(supervisor._is_skipped_dirty_worktree(status), status)
+        self.assertIn("1 untracked", status)
+        self.assertIn("scratch_notes.md", status)
+        self.assertNotIn("staged", status)
+
+    def test_owner_dirt_is_reported_and_preserved_by_the_dispatch_path(self) -> None:
+        state: dict[str, Any] = {}
+        ok, message, _ = self._dispatch(state)
+        self.assertTrue(ok, message)
+
+        (self.worktree / "README.md").write_text("owner edit in progress\n", encoding="utf-8")
+
+        logged: list[dict[str, Any]] = []
+        with mock.patch.object(
+            supervisor, "write_activity_log", side_effect=lambda _cfg, entry: logged.append(entry)
+        ):
+            self._dispatch(state)
+
+        refresh_entry = next(entry for entry in logged if entry["type"] == "worker_worktree_refreshed")
+        self.assertFalse(refresh_entry["refresh_ok"])
+        self.assertTrue(
+            supervisor._is_skipped_dirty_worktree(refresh_entry["refresh_status"]),
+            refresh_entry["refresh_status"],
+        )
+        self.assertIn("README.md", refresh_entry["refresh_status"])
+        self.assertNotIn("tracked or staged changes", refresh_entry["refresh_status"])
+        self.assertEqual(
+            (self.worktree / "README.md").read_text(encoding="utf-8"),
+            "owner edit in progress\n",
+        )
+
 
 class WorktreeLeaseBlockEscalationTests(unittest.TestCase):
     """A block that repeats unchanged forever has to stop reading as noise."""
@@ -6402,7 +6720,9 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         ok, status = self._refresh()
 
         self.assertFalse(ok)
-        self.assertEqual(status, "skipped_dirty_worktree")
+        self.assertTrue(status.startswith("skipped_dirty_worktree:"), status)
+        self.assertIn("1 unstaged tracked", status)
+        self.assertIn("task.txt", status)
         self.assertEqual(dirty_path.read_text(encoding="utf-8"), "uncommitted owner work\n")
         self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), before_head)
 
@@ -6418,7 +6738,9 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         ok, status = self._refresh()
 
         self.assertFalse(ok)
-        self.assertEqual(status, "skipped_dirty_worktree")
+        self.assertTrue(status.startswith("skipped_dirty_worktree:"), status)
+        self.assertIn("1 unstaged tracked", status)
+        self.assertIn(".orchestrator/config.json", status)
         self.assertEqual(scratch.read_text(encoding="utf-8"), "owner annotation\n")
 
     def _origin_task_head(self) -> str:
