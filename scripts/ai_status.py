@@ -1609,6 +1609,39 @@ def clear_ai_status_caches() -> None:
     _TASK_SHA_CACHE.clear()
 
 
+def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
+    """Where to ask GitHub about a task's PR: checkout, `--repo` args, number.
+
+    A task is not necessarily in this repository. `gh pr view <branch>` run from
+    the pantheon checkout asks *pantheon* about a branch that lives in another
+    origin, gets nothing back, and the caller reads that as "CI unresolved" --
+    permanently, because the answer never changes. DPF-GOV-001 sat in
+    `review_approved` for two days that way: its PR is #6 of
+    alfloop-dev/oday-data-platform, and #6 of this repository is an unrelated
+    promote-to-main PR. Status *emission* already resolves through the registry
+    (see :func:`task_repository_slug_safe`); the read path did not.
+    """
+    root = ROOT
+    repo_args: list[str] = []
+    pr_number: int | None = None
+    try:
+        config = status_runtime_config()
+        task = get_task(load_state(), task_id)
+        if task:
+            try:
+                pr_number = int(task.get("pr_number") or 0) or None
+            except (TypeError, ValueError):
+                pr_number = None
+            binding = resolve_task_repository(config, task)
+            if binding.root:
+                root = binding.root
+            if binding.slug:
+                repo_args = ["--repo", binding.slug]
+    except Exception:
+        return ROOT, [], None
+    return root, repo_args, pr_number
+
+
 def task_pr_ci_status(
     task_id: str,
     repository_root: Path | None = None,
@@ -1621,10 +1654,18 @@ def task_pr_ci_status(
         if now - ts < max_age_seconds:
             return val
 
-    root = repository_root or ROOT
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+    root, repo_args, pr_number = task_pr_lookup_scope(task_id)
+    if repository_root is not None:
+        root = repository_root
+    # The recorded PR number is exact; the branch names are the fallback for
+    # records that predate it.
+    selectors: list[str] = []
+    if pr_number:
+        selectors.append(str(pr_number))
+    selectors.extend([f"task/{task_id}", f"task-{task_id}"])
+    for selector in selectors:
         res = run_gh_json_command(
-            ["pr", "view", branch_name, "--json", "state,statusCheckRollup"],
+            ["pr", "view", selector, "--json", "state,statusCheckRollup", *repo_args],
             cwd=root,
         )
         if res and isinstance(res, dict):
