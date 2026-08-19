@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "packet_id": "ODP-PLAN-EXECUTION-CONTROL-PACK-001",
   "program_id": "ODP-PLAN-GAP-CLOSEOUT-2026-07-30",
   "as_of": "2026-07-31T07:10:00Z",
@@ -50,7 +50,9 @@
     "pr_merge_closeout": [
       "Open or refresh one task-scoped PR only after the complete local batch is handoff-ready.",
       "Required CI must pass on the exact PR head before merge to dev.",
-      "Only the owner closes the task after merge SHA and required artifacts are archived and read back."
+      "Only the owner closes the task after merge SHA and required artifacts are archived and read back.",
+      "After closeout, every original packet must resolve from exactly one canonical lifecycle source: active ai-status state or an official terminal archive snapshot.",
+      "A superseded packet is valid only when its non-cyclic replacement chain exists in canonical state and preserves the original execution-packet and gap scope."
     ],
     "deployment": [
       "No task may deploy production merely because its focused tests pass.",
@@ -67,6 +69,7 @@
     {
       "task_id": "ODP-PLAN-OSS-LICENSE-GATE-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-007"],
       "batch_deliverables": [
         "Generate a license-aware CycloneDX SBOM containing exact component identity, version, purl, supplier, hashes, dependency graph, runtime/dev scope, and resolved license evidence.",
@@ -99,6 +102,7 @@
     {
       "task_id": "ODP-PLAN-OBSERVABILITY-LIVE-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-008"],
       "batch_deliverables": [
         "Wire production exporters for API, worker, event/DLQ, model, solver, and business KPI signals.",
@@ -120,7 +124,7 @@
         "dashboard/alert/runbook identifiers and owners"
       ],
       "verification": [
-        "ruff check shared/observability tests/reliability scripts/deployment",
+        "ruff check shared/observability tests/reliability product_ops/deployment",
         "pytest -q tests -k \"observability or telemetry or alert or dlq\"",
         "independent pooled-coverage, negative/non-finite, wrong-release/project, route-missing, and receipt-tamper mutations",
         "git diff --check"
@@ -130,6 +134,7 @@
     {
       "task_id": "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P0-002"],
       "batch_deliverables": [
         "Keep the canonical inventory at 16 unique Playwright spec files and 107 expected tests with no stale deleted-spec reference.",
@@ -154,8 +159,8 @@
       ],
       "verification": [
         "pytest -q tests/e2e/test_acceptance_coverage.py",
-        "scripts/e2e/run_product_e2e.sh",
-        "python3 scripts/e2e/check_product_go_no_go.py",
+        "delivery_toolchain/e2e/run_product_e2e.sh",
+        "python3 delivery_toolchain/e2e/check_product_go_no_go.py",
         "mutations for stale SHA, source change after test, zero tests, exact-id mismatch, failed/skipped runner, and tampered artifact hash",
         "git diff --check"
       ],
@@ -164,6 +169,7 @@
     {
       "task_id": "ODP-PLAN-SITESCORE-OUTCOME-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-002"],
       "batch_deliverables": [
         "Build authoritative opening-outcome inventory with true M6/M12 maturity, eligibility, lineage, freshness, and dataset hash.",
@@ -185,7 +191,7 @@
       ],
       "verification": [
         "pytest -q tests/models -k \"sitescore or opening_outcome\"",
-        "ruff check scripts/models models tests/models",
+        "ruff check product_ops/modeling models tests/models",
         "mutations for invented governance fields, fake maturity, fixed-multiplier metrics, malformed intervals, count/hash drift, and forged ACTIVE verdict",
         "git diff --check"
       ],
@@ -194,6 +200,7 @@
     {
       "task_id": "ODP-PLAN-AVM-OUTCOME-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-003"],
       "batch_deliverables": [
         "Build authoritative mature transaction-outcome inventory with >=120 activation threshold, lineage, freshness, and confidential-access classification.",
@@ -223,6 +230,7 @@
     {
       "task_id": "ODP-PLAN-NETPLAN-ACCEPTANCE-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-006"],
       "batch_deliverables": [
         "Validate 100% hard constraints, selected-option feasibility, objective, alternatives, and infeasibility explanation by independently recomputing the solver result.",
@@ -252,6 +260,7 @@
     {
       "task_id": "ODP-PLAN-ENGINEERING-HARDENING-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P2-ENGINEERING"],
       "batch_deliverables": [
         "Close OpenAPI response typing/client drift, CSS/build warnings, bundle regressions, stale documentation, and scoped route/workspace decomposition without behavior drift.",
@@ -284,6 +293,7 @@
     {
       "task_id": "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P0-004"],
       "batch_deliverables": [
         "Bind authoritative history snapshot, PIT-safe eligibility, feature/label contract, training cutoff, and dataset hash.",
@@ -313,6 +323,7 @@
     {
       "task_id": "ODP-PLAN-FORECAST-BUSINESS-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-004"],
       "batch_deliverables": [
         "Compare the approved forecast model against seasonal-naive and declared baselines on authoritative holdout data.",
@@ -340,6 +351,7 @@
     {
       "task_id": "ODP-PLAN-PRICE-ADLIFT-PILOT-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-005"],
       "batch_deliverables": [
         "Verify PriceOps hard constraints with zero violations across every pilot decision.",
@@ -368,6 +380,7 @@
     {
       "task_id": "ODP-PLAN-LIVE-STAGING-PROOF-001",
       "class": "implementation",
+      "deployment_contract": "staging_live_allowed",
       "gap_ids": ["GAP-P0-006"],
       "batch_deliverables": [
         "Deploy only the exact merged dev release candidate after all declared dependencies are done and read back the deployed image/revision SHA.",
@@ -388,7 +401,7 @@
         "backup/restore/rollback and post-rollback health receipt"
       ],
       "verification": [
-        "python3 scripts/e2e/check_live_e2e_gate.py",
+        "python3 delivery_toolchain/e2e/check_live_e2e_gate.py",
         "deployment validators on the exact release",
         "authenticated non-mock live smoke and canonical E2E",
         "watch-window and rollback verification",
@@ -399,6 +412,7 @@
     {
       "task_id": "ODP-PLAN-SITESCORE-PREDICTION-SOURCE-001",
       "class": "implementation",
+      "deployment_contract": "forbidden",
       "gap_ids": ["GAP-P1-002"],
       "batch_deliverables": [
         "Join an authoritative prediction/model-registry source to opening outcomes using stable entity, as-of, model version, and horizon keys.",
@@ -427,6 +441,7 @@
     {
       "task_id": "ODP-PLAN-HEATZONE-LABEL-BACKFILL-001",
       "class": "human_gate",
+      "deployment_contract": "not_applicable",
       "gap_ids": ["GAP-P1-001-DATA"],
       "batch_deliverables": [
         "Provide at least 200 authoritative eligible mature labels through the declared source contract.",
@@ -450,6 +465,7 @@
     {
       "task_id": "ODP-PLAN-SITESCORE-OUTCOME-BACKFILL-001",
       "class": "human_gate",
+      "deployment_contract": "not_applicable",
       "gap_ids": ["GAP-P1-002-DATA"],
       "batch_deliverables": [
         "Provide at least 200 authoritative eligible opening outcomes with true M6/M12 maturity fields and stable entity/as-of keys.",
@@ -473,6 +489,7 @@
     {
       "task_id": "ODP-PLAN-AVM-OUTCOME-BACKFILL-001",
       "class": "human_gate",
+      "deployment_contract": "not_applicable",
       "gap_ids": ["GAP-P1-003-DATA"],
       "batch_deliverables": [
         "Provide at least 120 authoritative eligible mature transaction outcomes with stable prediction join keys.",
@@ -496,6 +513,7 @@
     {
       "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
       "class": "human_gate",
+      "deployment_contract": "not_applicable",
       "gap_ids": ["GAP-P1-007-LEGAL"],
       "batch_deliverables": [
         "Named Legal/Security/Risk owner decides license allow/deny/review policy, LGPL handling, exception format, scope, and expiry/review cadence.",
@@ -520,6 +538,7 @@
     {
       "task_id": "ODP-PLAN-NETPLAN-BASELINE-APPROVAL-001",
       "class": "human_gate",
+      "deployment_contract": "not_applicable",
       "gap_ids": ["GAP-P1-006-BUSINESS"],
       "batch_deliverables": [
         "Named accountable management owner approves immutable baseline actions, entity/scenario domain, policy/constraints/objective/risk penalty, and source snapshots.",
@@ -543,6 +562,7 @@
     {
       "task_id": "ODP-PLAN-UAT-SIGNOFF-001",
       "class": "human_gate",
+      "deployment_contract": "not_applicable",
       "gap_ids": ["GAP-P0-005"],
       "batch_deliverables": [
         "Run role-specific UAT for Admin, Ops, Expansion, Analyst, Finance, and Franchisee on the exact staging release.",
@@ -568,6 +588,7 @@
     {
       "task_id": "ODP-PLAN-FINAL-GATE-AUDIT-001",
       "class": "human_gate",
+      "deployment_contract": "not_applicable",
       "gap_ids": ["FINAL-GATE"],
       "batch_deliverables": [
         "Re-run all original Stage 0-7 and Gate 0-6 checks against current merged dev and deployed release.",
@@ -587,8 +608,8 @@
         "Human/Ops release decision"
       ],
       "verification": [
-        "python3 scripts/e2e/check_product_go_no_go.py",
-        "python3 scripts/e2e/check_live_e2e_gate.py",
+        "python3 delivery_toolchain/e2e/check_product_go_no_go.py",
+        "python3 delivery_toolchain/e2e/check_live_e2e_gate.py",
         "complete RTM uniqueness/coverage and exact-SHA audit",
         "independent Human/Ops readback of every required gate"
       ],

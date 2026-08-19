@@ -144,3 +144,50 @@ def test_store_ops_camera_purpose_audit_excludes_media_secrets() -> None:
     assert "signedPlaybackUrl" not in metadata
     assert "mediaSecret" not in metadata
     assert "auditNote" not in metadata
+
+
+class _FailingAuditLog(InMemoryAuditLog):
+    """An audit log whose sink is unavailable, as a WORM-backed one can be."""
+
+    def record(self, event):  # type: ignore[override]
+        raise RuntimeError("worm sink unavailable")
+
+
+def test_denial_survives_an_unavailable_audit_sink() -> None:
+    """A failing audit sink must not turn a decided denial into a 500.
+
+    _record_operator_denial runs immediately before the raise. Uncaught, its
+    error escapes the guard instead of the 403, so the caller sees a server
+    fault rather than a refusal and the reason is lost. Reproduced against the
+    live app; surfaced in CI as an intermittently failing e2e that expected 403
+    on GET /operator/network-listings/intake and received 500.
+    """
+    url = "/api/v1/operator/network-listings/intake"
+
+    baseline = _client(InMemoryAuditLog()).get(url, headers=OPS_HEADERS)
+    assert baseline.status_code == status.HTTP_403_FORBIDDEN
+
+    with_failing_sink = _client(_FailingAuditLog()).get(url, headers=OPS_HEADERS)
+
+    assert with_failing_sink.status_code == status.HTTP_403_FORBIDDEN
+    assert with_failing_sink.status_code == baseline.status_code
+
+
+def test_unauthenticated_denial_survives_an_unavailable_audit_sink() -> None:
+    """The 401 path records a denial too, and must survive the same failure."""
+    response = _client(_FailingAuditLog()).get(
+        "/api/v1/operator/bootstrap",
+        headers={"X-Correlation-Id": "corr-operator-audit-sink-down"},
+    )
+
+    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+def test_tenant_scope_denial_survives_an_unavailable_audit_sink() -> None:
+    """So must the tenant-isolation path, which denies before RBAC is reached."""
+    response = _client(_FailingAuditLog()).get(
+        "/api/v1/operator/bootstrap",
+        headers={**OPS_HEADERS, "X-Tenant-Id": "tenant-b"},
+    )
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN

@@ -14,7 +14,7 @@ This document provides product-grade completion evidence for task **ODP-OC-R5-00
 
 The newly introduced CI gate checker is executable via:
 ```bash
-python3 scripts/e2e/check_product_grade_ci_gates.py --report --require-go
+python3 delivery_toolchain/e2e/check_product_grade_ci_gates.py --report --require-go
 ```
 
 ### Verification Report Output:

@@ -30,7 +30,7 @@ from apps.data_platform.store_opening import (
 from modules.external_data.connectors.store_opening import (
     StoreOpeningAuthorityConnector,
 )
-from scripts.models.store_opening_backfill import main as cli_main
+from product_ops.modeling.store_opening_backfill import main as cli_main
 
 
 @pytest.fixture

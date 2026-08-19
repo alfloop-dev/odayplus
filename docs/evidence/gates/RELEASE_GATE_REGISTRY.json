@@ -2,8 +2,8 @@
   "schema_version": "1.0.0",
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-PLAN-GATE-REGISTRY-001",
-  "generated_at": "2026-07-30",
-  "description": "Authoritative machine-readable state of ODay Plus release Gate 0 through Gate 6. Validated by scripts/e2e/check_release_gate_registry.py; see docs/evidence/gates/README.md for the schema and update rules.",
+  "generated_at": "2026-08-01",
+  "description": "Authoritative machine-readable state of ODay Plus release Gate 0 through Gate 6. Validated by delivery_toolchain/e2e/check_release_gate_registry.py; see docs/evidence/gates/README.md for the schema and update rules.",
   "release": {
     "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
     "candidate_ref": "origin/dev",
@@ -124,7 +124,7 @@
         },
         {
           "kind": "script",
-          "ref": "scripts/e2e/check_live_production_data.py",
+          "ref": "delivery_toolchain/e2e/check_live_production_data.py",
           "description": "Fail-closed live data-plane gate that reconciles deployed data against a commit-bound manifest."
         }
       ],
@@ -168,8 +168,8 @@
       "blockers": [
         "No Model and Solver Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
         "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001 (ForecastOps formal model release evidence) is open.",
-        "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001 (OR-Tools/CVXPY/HiGHS native runtime conflict) is open.",
-        "ODP-PLAN-HEATZONE-OUTCOME-001, ODP-PLAN-SITESCORE-OUTCOME-001, ODP-PLAN-AVM-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 outcome receipts are open."
+        "ODP-PLAN-SITESCORE-OUTCOME-001 and ODP-PLAN-AVM-OUTCOME-001 remain open; ForecastOps history and an approved production alias are still unverified.",
+        "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001, ODP-PLAN-HEATZONE-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 are archived done, but task completion is not an exact-candidate Gate 3 receipt or Human/Ops model approval."
       ]
     },
     {
@@ -205,8 +205,7 @@
       "receipts": [],
       "blockers": [
         "No Security and Privacy Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
-        "ODP-PLAN-OSS-LICENSE-GATE-001 (licence-aware SBOM and OSS release gate) is open.",
-        "ODP-PLAN-DEFERRED-OSS-ADR-001 (deferred OSS adopt/defer/replace ADR) is open."
+        "ODP-PLAN-OSS-LICENSE-GATE-001 and ODP-PLAN-DEFERRED-OSS-ADR-001 are archived done, but no exact-candidate Gate 4 receipt or Human/Ops legal approval is recorded."
       ]
     },
     {
@@ -239,7 +238,7 @@
         },
         {
           "kind": "script",
-          "ref": "scripts/e2e/check_live_e2e_gate.py",
+          "ref": "delivery_toolchain/e2e/check_live_e2e_gate.py",
           "description": "Fail-closed live E2E gate that drives the deployed runtime bound to one exact release SHA."
         },
         {
@@ -251,8 +250,7 @@
       "receipts": [],
       "blockers": [
         "No E2E, Performance and UAT Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
-        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 must reconcile the acceptance registry with the real spec inventory and replace static string gates with execution receipts.",
-        "ODP-PLAN-CANONICAL-SHELL-LIVE-001 (Package 10 canonical Shell production wiring) is open.",
+        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 and ODP-PLAN-CANONICAL-SHELL-LIVE-001 are archived done, but those implementation receipts do not prove this exact release candidate in staging or UAT.",
         "ODP-PLAN-LIVE-STAGING-PROOF-001 must produce exact-SHA live staging end-to-end proof.",
         "ODP-PLAN-UAT-SIGNOFF-001 (cross-role UAT defect closeout and formal sign-off) is open."
       ]
@@ -284,7 +282,7 @@
         },
         {
           "kind": "script",
-          "ref": "scripts/e2e/verify_deployment_health_backup_rollback.py",
+          "ref": "delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py",
           "description": "Verifier for the deployment health, backup, and rollback evidence packet."
         },
         {

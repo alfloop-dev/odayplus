@@ -4,7 +4,7 @@ Single reconciled truth for the product-grade evidence and fleet-closure
 gates. Regenerate with:
 
 ```bash
-python3 scripts/e2e/check_product_grade_gate_reconciliation.py --report \
+python3 delivery_toolchain/e2e/check_product_grade_gate_reconciliation.py --report \
   --status-path "$PANTHEON_STATUS_ROOT/ai-status.json"
 ```
 

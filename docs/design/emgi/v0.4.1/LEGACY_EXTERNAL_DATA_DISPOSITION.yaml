@@ -1,0 +1,1034 @@
+# Legacy external-data disposition record for alfloop-dev/odayplus.
+#
+# Contract: odayplus.legacy-external-data-disposition.v2  (ODP-LEGACY-INVENTORY-001)
+# Enforced by: scripts/validate_external_data_boundary.py
+#              tests/architecture/test_external_data_boundary.py
+#
+# This supersedes the diff-scoped v1 policy in
+# delivery_toolchain/governance/emgi-consumer-boundary.json. v1 asked "did this
+# pull request touch a forbidden prefix?", which answers nothing about files no
+# diff happens to touch and misses provider references that live outside
+# modules/external_data/. v2 is whole-tree: every tracked file is classified,
+# every frozen surface carries its exact file inventory, and every provider
+# reference detected in scanned source must be declared here.
+#
+# The direction of travel is unchanged. EMGI producer capability belongs to
+# alfloop-dev/oday-data-platform; odayplus consumes released contracts. The
+# legacy producer code below is frozen, not deleted: it may be modified for
+# security, compatibility, instrumentation, migration or deletion, but it may
+# not grow.
+
+contract: odayplus.legacy-external-data-disposition.v2
+schema_version: 2
+task_id: ODP-LEGACY-INVENTORY-001
+supersedes:
+  - path: delivery_toolchain/governance/emgi-consumer-boundary.json
+    schema_version: 1
+    relationship: >-
+      v1 stays in place as the fast per-pull-request diff gate. v2 is the
+      exhaustive whole-tree record; where the two disagree, v2 is authoritative.
+
+authoritative_platform:
+  repository: alfloop-dev/oday-data-platform
+  catalog_version: 0.4.1
+  task_definitions: docs/design/emgi/v0.4.1/tasks/definitions/consumer-a.json
+  source_commit_sha: 75688bca257b98be119a2ae8d7e1686572ec0413
+consumer_repository: alfloop-dev/odayplus
+
+# ---------------------------------------------------------------------------
+# Disposition vocabulary
+# ---------------------------------------------------------------------------
+# `intent` is the machine-readable verdict; `description` is the reason a
+# reviewer can argue with.
+
+dispositions:
+  - id: frozen_legacy_producer
+    intent: freeze
+    description: >-
+      EMGI producer capability that already exists in odayplus. Frozen at its
+      recorded inventory. Modify for security, compatibility, instrumentation,
+      migration or deletion; never extend. New capability of this shape belongs
+      in alfloop-dev/oday-data-platform.
+
+  - id: migrating_to_platform_client
+    intent: migrate
+    description: >-
+      Consumer code that still reaches producer internals directly. Target state
+      is the generated data-platform client (ODP-XR-CLIENT-001,
+      ODP-XR-PRODUCT-CLIENT-001) behind the read facade (ODP-LEGACY-FACADE-001).
+      Allowed to exist today; not allowed to grow new provider coupling.
+
+  - id: assisted_intake_workflow
+    intent: keep_allowed
+    description: >-
+      Human-assisted listing intake. One operator submits one URL; there is no
+      crawler, no scheduler, and no server-side retrieval for sources whose
+      terms forbid it. Explicitly allowed to continue operating and evolving.
+
+  - id: product_review_workflow
+    intent: keep_allowed
+    description: >-
+      Operator Console review, promotion, and decision workflows. odayplus owns
+      product authorization and the final human decision, so these stay and may
+      evolve.
+
+  - id: product_consumer_owned
+    intent: keep
+    description: >-
+      odayplus product domain, API/BFF/UI, feasibility, site economics,
+      HeatZone, SiteScore, NetPlan, and solver code. Not external-data surface.
+
+  - id: shared_platform_support
+    intent: keep
+    description: >-
+      Cross-cutting libraries the product runtime needs — auth, audit,
+      observability, persistence plumbing, notification, workflow.
+
+  - id: delivery_and_governance
+    intent: keep
+    description: >-
+      Build, release, security, CI, and boundary-governance tooling. Enforces
+      the boundary rather than crossing it.
+
+  - id: development_platform
+    intent: out_of_product_scope
+    description: >-
+      The internal multi-agent development platform. Not product runtime and
+      not an EMGI surface; classified so it cannot hide external-data code.
+
+  - id: verification_only
+    intent: keep
+    description: >-
+      Tests and fixtures. They may reference frozen producer surfaces because
+      that is what they verify; every such reference is still declared under
+      provider_references below.
+
+  - id: documentation_and_evidence
+    intent: retain
+    description: >-
+      Design documents, runbooks, audits, and completion/runtime evidence.
+      Records of decisions and runs, not executable provider references.
+
+  - id: archived
+    intent: retire
+    description: >-
+      Retired source drops, archived tooling, and delivery zips kept only for
+      retention. Removable once the retention window closes.
+
+  - id: repository_metadata
+    intent: keep
+    description: >-
+      Repository-level configuration, lockfiles, dotfiles, and generated status
+      mirrors.
+
+# ---------------------------------------------------------------------------
+# Exhaustive classification
+# ---------------------------------------------------------------------------
+# Ordered; first matching rule wins. There is deliberately NO catch-all rule.
+# A tracked file that matches nothing is a validation failure, which is the
+# point: a genuinely new top-level surface must be given an explicit
+# disposition by a human rather than inheriting one by accident.
+#
+# Glob semantics (see scripts/validate_external_data_boundary.py):
+#   *        one path segment
+#   a/**     `a` and everything beneath it
+#   a/**/b   zero or more intermediate segments
+
+classification:
+  rules:
+    # -- frozen producer surface, most specific first ----------------------
+    - id: legacy_provider_adapters
+      disposition: frozen_legacy_producer
+      include: ["modules/external_data/providers/**"]
+      rationale: Live and replay provider adapters — the direct provider call surface.
+
+    - id: legacy_source_connectors
+      disposition: frozen_legacy_producer
+      include: ["modules/external_data/connectors/**"]
+      rationale: Source connectors, provider registry, credential metadata, connectivity probes.
+
+    - id: legacy_source_scheduler
+      disposition: frozen_legacy_producer
+      include: ["modules/external_data/workers/**"]
+      rationale: Windowed fetch scheduling, watermarks, retry backoff, provider circuit breaker.
+
+    - id: legacy_ingestion_runtime
+      disposition: frozen_legacy_producer
+      include:
+        - "modules/external_data/application/ingestion_service.py"
+        - "modules/external_data/application/ingestion_store.py"
+        - "modules/external_data/application/listing_feed_adapter.py"
+        - "modules/external_data/application/listing_feed_store.py"
+        - "modules/external_data/application/source_snapshots.py"
+      rationale: >-
+        Closed-loop ingestion, run state, raw/canonical/quarantine snapshot
+        stores, and residency reconciliation. Producer-side by definition.
+
+    - id: legacy_provider_gateway_service
+      disposition: frozen_legacy_producer
+      include: ["services/provider-gateway/**"]
+      rationale: Standalone gateway that terminates provider traffic on odayplus infrastructure.
+
+    - id: legacy_external_data_persistence
+      disposition: frozen_legacy_producer
+      include: ["shared/infrastructure/persistence/external_data.py"]
+      rationale: Durable twin of the ingestion run store; the raw-evidence write path.
+
+    - id: legacy_external_data_backfill_ops
+      disposition: frozen_legacy_producer
+      include: ["product_ops/external_data_backfill.py"]
+      rationale: Operator-run bulk external ingestion, i.e. a scheduler by another name.
+
+    - id: legacy_source_contract_schemas
+      disposition: frozen_legacy_producer
+      include: ["packages/schemas/source_contracts/external/**"]
+      rationale: >-
+        Raw external source contracts. Their successors are published by the
+        data platform and consumed through the generated client.
+
+    # -- explicitly allowed workflows --------------------------------------
+    - id: assisted_intake_domain
+      disposition: assisted_intake_workflow
+      include:
+        - "modules/external_data/application/assisted_intake.py"
+        - "modules/external_data/application/xlsx_import.py"
+        - "modules/external_data/security/**"
+      rationale: >-
+        Source-facing half of human-assisted intake plus governed XLSX intake.
+        No crawling, no scheduling, fixture replay only outside production.
+
+    - id: assisted_intake_delivery
+      disposition: assisted_intake_workflow
+      include:
+        - "apps/worker/assisted_listing_intake/**"
+        - "product_ops/migrations/assisted_listing_intake/**"
+        - "delivery_toolchain/release/assisted_listing_intake/**"
+        - "infra/assisted-listing-intake/**"
+        - "shared/infrastructure/persistence/assisted_listing_intake.py"
+      rationale: >-
+        Worker, migration, persistence, release-gate and rollout config for the
+        allowed intake workflow. The `intake.*` schema is the product's own
+        intake state, not a raw external evidence store.
+
+    - id: assisted_intake_ui
+      disposition: assisted_intake_workflow
+      include: ["apps/web/features/operator/network/intake/**"]
+      rationale: Operator submit-one-URL intake UI and its component tests.
+
+    - id: product_review_service
+      disposition: product_review_workflow
+      include: ["modules/opsboard/**"]
+      rationale: >-
+        Operator Console queue, decisions, promotion saga, governance and audit
+        trail. odayplus owns product authorization and the final human decision.
+
+    - id: product_review_ui
+      disposition: product_review_workflow
+      include:
+        - "apps/web/features/operator/**"
+        - "apps/api/app/routes/operator_modules/**"
+      rationale: Review, promotion and decision surfaces of the Operator Console.
+
+    # -- migrating consumer coupling ---------------------------------------
+    - id: external_data_module_remainder
+      disposition: migrating_to_platform_client
+      include: ["modules/external_data/**"]
+      rationale: >-
+        Package facade, external contract facade, and geo/H3 enrichment. Still
+        importable by product code today; moves behind the read facade in
+        ODP-LEGACY-FACADE-001.
+
+    - id: data_platform_consumer_shim
+      disposition: migrating_to_platform_client
+      include:
+        - "apps/data_platform/**"
+        - "product_ops/data_platform/**"
+        - "modules/integration/connectors/**"
+        - "modules/integration/workers/geocode_worker.py"
+        - "apps/api/app/routes/external_data.py"
+      rationale: >-
+        In-repo data-platform pipeline, connector base classes, geocode worker,
+        and the external-data API route. These become clients of the released
+        foundation and product packages.
+
+    # -- product, shared, delivery -----------------------------------------
+    - id: product_runtime
+      disposition: product_consumer_owned
+      include:
+        - "apps/**"
+        - "modules/**"
+        - "models/**"
+        - "solver/**"
+        - "pipelines/**"
+        - "services/**"
+        - "packages/**"
+      rationale: Deployable product applications, domain modules, models, solvers, and packages.
+
+    - id: shared_libraries
+      disposition: shared_platform_support
+      include: ["shared/**"]
+      rationale: Auth, audit, observability, persistence, notification, workflow primitives.
+
+    - id: product_operations
+      disposition: product_consumer_owned
+      include:
+        - "product_ops/**"
+        - "infra/**"
+      rationale: Deployment, migration, backfill, and infrastructure definitions for the product.
+
+    - id: delivery_toolchain
+      disposition: delivery_and_governance
+      include:
+        - "delivery_toolchain/**"
+        - ".github/**"
+        - ".githooks/**"
+        - "Makefile"
+        - "docker-compose.yml"
+        - "playwright.config.ts"
+      rationale: Build, release, security, governance policy, and CI enforcement.
+
+    - id: development_platform_runtime
+      disposition: development_platform
+      include:
+        - ".orchestrator/**"
+        - "scripts/**"
+        - "support/**"
+      rationale: >-
+        Internal multi-agent development platform, its status tooling, and task
+        sidecars. Includes this task's own validator, which enforces the
+        boundary rather than crossing it.
+
+    # -- verification -------------------------------------------------------
+    - id: verification_suites
+      disposition: verification_only
+      include: ["tests/**"]
+      rationale: >-
+        Product, contract, integration, security and architecture suites.
+        Excluded from blocked-capability scope because a test that exercises a
+        frozen surface is doing its job; its provider references are declared
+        below instead.
+
+    # -- records ------------------------------------------------------------
+    - id: documentation
+      disposition: documentation_and_evidence
+      include:
+        - "docs/**"
+        - "docs-site/**"
+      rationale: Design docs, ADRs, runbooks, audits, RTM, and completion/runtime evidence.
+
+    - id: retired_material
+      disposition: archived
+      include:
+        - "archive/**"
+        - "docs_archive/**"
+        - "*.zip"
+      rationale: Retired dev tools, archived source drops, and delivery zips held for retention.
+
+    - id: repository_configuration
+      disposition: repository_metadata
+      include:
+        - "config/**"
+        - "README.md"
+        - "pyproject.toml"
+        - "package.json"
+        - "package-lock.json"
+        - "uv.lock"
+        - ".gitignore"
+        - ".dockerignore"
+        - ".env.e2e.example"
+      rationale: Repository configuration, dependency lockfiles, and ignore rules.
+
+    - id: legal_attribution_notices
+      disposition: repository_metadata
+      include:
+        - "NOTICE-THIRD-PARTY.md"
+      rationale: >-
+        Third-party open-source attribution notice required by the LGPL
+        decision (ODP-PLAN-OSS-LEGAL-POLICY-001). Generated from the installed
+        dependency set by delivery_toolchain/security/generate_oss_notice.py;
+        never hand-edited.
+
+    - id: generated_status_mirrors
+      disposition: repository_metadata
+      include:
+        - "ai-status.json"
+        - "ai-activity-log.jsonl"
+        - "current-work.md"
+        - "dashboard-bundle.json"
+      rationale: Generated development-platform status mirrors; never hand-edited.
+
+# ---------------------------------------------------------------------------
+# Frozen surfaces
+# ---------------------------------------------------------------------------
+# `inventory` is the exact set of tracked files allowed under each surface.
+# An extra file is a new producer capability and fails. A missing file means
+# retirement happened without updating this record, and also fails — the
+# inventory is the freeze, so it has to stay exact in both directions.
+
+frozen_surfaces:
+  - id: legacy_provider_adapters
+    description: >-
+      Provider adapters are frozen; a new adapter is a new provider integration
+      and belongs to the data platform.
+    include: ["modules/external_data/providers/**"]
+    inventory:
+      - modules/external_data/providers/__init__.py
+      - modules/external_data/providers/live.py
+      - modules/external_data/providers/provider_mock.py
+      - modules/external_data/providers/taiwan_real_estate.py
+      - modules/external_data/providers/weather_demographics.py
+
+  - id: legacy_source_connectors
+    description: >-
+      Source connectors and the provider registry are frozen; new connectors and
+      new credential declarations belong to the data platform.
+    include: ["modules/external_data/connectors/**"]
+    inventory:
+      - modules/external_data/connectors/__init__.py
+      - modules/external_data/connectors/external.py
+      - modules/external_data/connectors/provider_connectivity.py
+      - modules/external_data/connectors/provider_registry.py
+      - modules/external_data/connectors/store_opening.py
+
+  - id: legacy_source_scheduler
+    description: >-
+      Source scheduling is frozen; odayplus does not own recurring external
+      fetch.
+    include: ["modules/external_data/workers/**"]
+    inventory:
+      - modules/external_data/workers/README.md
+      - modules/external_data/workers/__init__.py
+      - modules/external_data/workers/scheduled_fetch.py
+
+  - id: legacy_ingestion_runtime
+    description: >-
+      Ingestion orchestration and raw evidence stores are frozen; canonical
+      landing belongs to the data platform.
+    include:
+      - "modules/external_data/application/ingestion_service.py"
+      - "modules/external_data/application/ingestion_store.py"
+      - "modules/external_data/application/listing_feed_adapter.py"
+      - "modules/external_data/application/listing_feed_store.py"
+      - "modules/external_data/application/source_snapshots.py"
+    inventory:
+      - modules/external_data/application/ingestion_service.py
+      - modules/external_data/application/ingestion_store.py
+      - modules/external_data/application/listing_feed_adapter.py
+      - modules/external_data/application/listing_feed_store.py
+      - modules/external_data/application/source_snapshots.py
+
+  - id: legacy_provider_gateway_service
+    description: >-
+      The provider gateway is frozen; odayplus does not terminate new provider
+      traffic.
+    include: ["services/provider-gateway/**"]
+    inventory:
+      - services/provider-gateway/Dockerfile
+      - services/provider-gateway/WIRING.md
+      - services/provider-gateway/admin_boundary_data.json
+      - services/provider-gateway/app.py
+      - services/provider-gateway/requirements.txt
+
+  - id: legacy_raw_evidence_persistence
+    description: >-
+      The durable external-data run/evidence store is frozen; raw external
+      evidence is the data platform's to hold.
+    include: ["shared/infrastructure/persistence/external_data.py"]
+    inventory:
+      - shared/infrastructure/persistence/external_data.py
+
+  - id: legacy_external_data_backfill_ops
+    description: >-
+      Operator-run external backfill is frozen; bulk re-ingestion belongs to the
+      data platform.
+    include: ["product_ops/external_data_backfill.py"]
+    inventory:
+      - product_ops/external_data_backfill.py
+
+  - id: legacy_source_contract_schemas
+    description: >-
+      Raw external source contracts are frozen; new source schemas are published
+      by the data platform and consumed through the generated client.
+    include: ["packages/schemas/source_contracts/external/**"]
+    inventory:
+      - packages/schemas/source_contracts/external/admin_boundary_snapshot.json
+      - packages/schemas/source_contracts/external/competitor_store_snapshot.json
+      - packages/schemas/source_contracts/external/demographics_snapshot.json
+      - packages/schemas/source_contracts/external/geocode_result_snapshot.json
+      - packages/schemas/source_contracts/external/listing_raw_snapshot.json
+      - packages/schemas/source_contracts/external/poi_snapshot.json
+      - packages/schemas/source_contracts/external/weather_daily_snapshot.json
+
+# ---------------------------------------------------------------------------
+# Workflows that must keep working
+# ---------------------------------------------------------------------------
+# The freeze exists to stop new producer capability, not to strand the product.
+# These surfaces are exempted from the named blocked capabilities so assisted
+# intake and product review keep operating and can still be changed.
+
+allowed_surfaces:
+  - id: assisted_listing_intake
+    description: >-
+      One human submits one URL. The access-policy gate is fail-closed, fixture
+      replay is non-production only, and sources whose terms forbid server
+      retrieval are entered manually. This is a product workflow, not ingestion.
+    include:
+      - "modules/external_data/application/assisted_intake.py"
+      - "modules/external_data/application/xlsx_import.py"
+      - "modules/external_data/security/**"
+      - "apps/worker/assisted_listing_intake/**"
+      - "apps/web/features/operator/network/intake/**"
+      - "product_ops/migrations/assisted_listing_intake/**"
+      - "delivery_toolchain/release/assisted_listing_intake/**"
+      - "infra/assisted-listing-intake/**"
+      - "shared/infrastructure/persistence/assisted_listing_intake.py"
+    capability_exemptions:
+      - new_provider_connector
+      - new_raw_evidence_store
+      - direct_provider_reference
+      - direct_provider_fetch
+
+  - id: product_review_and_promotion
+    description: >-
+      Operator Console review, promotion decisions, and the audit trail.
+      odayplus owns product authorization and the final human decision.
+    include:
+      - "modules/opsboard/**"
+      - "apps/web/features/operator/**"
+      - "apps/api/app/routes/operator_modules/**"
+    capability_exemptions:
+      - new_provider_connector
+      - direct_provider_reference
+
+# ---------------------------------------------------------------------------
+# Blocked capabilities
+# ---------------------------------------------------------------------------
+# Detection is path-shape plus content signal, scoped to executable surfaces.
+# Every current occurrence is grandfathered by exact path, so the rules block
+# growth rather than flagging the frozen code they describe. A grandfathered
+# path that no longer exists is itself a failure, so the list cannot rot.
+#
+# tests/** is out of capability scope on purpose: a test that drives the frozen
+# ingestion path is doing its job. Test files are still classified above and
+# still content-scanned under provider_references below.
+
+blocked_capabilities:
+  - id: new_provider_connector
+    description: >-
+      odayplus may not grow new external provider connectors or adapters; new
+      connectors belong to alfloop-dev/oday-data-platform.
+    scope:
+      include:
+        - "modules/**"
+        - "apps/**"
+        - "services/**"
+        - "product_ops/**"
+        - "shared/**"
+        - "pipelines/**"
+        - "solver/**"
+        - "models/**"
+      exclude:
+        - "**/tests/**"
+        - "**/__tests__/**"
+        - "**/test_*.py"
+        - "**/conftest.py"
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+    path_globs:
+      - "modules/external_data/connectors/**"
+      - "modules/external_data/providers/**"
+      - "services/provider-gateway/**"
+    filename_tokens:
+      - connector
+      - provider
+    grandfathered_paths:
+      - modules/external_data/connectors/__init__.py
+      - modules/external_data/connectors/external.py
+      - modules/external_data/connectors/provider_connectivity.py
+      - modules/external_data/connectors/provider_registry.py
+      - modules/external_data/connectors/store_opening.py
+      - modules/external_data/providers/__init__.py
+      - modules/external_data/providers/live.py
+      - modules/external_data/providers/provider_mock.py
+      - modules/external_data/providers/taiwan_real_estate.py
+      - modules/external_data/providers/weather_demographics.py
+      - services/provider-gateway/Dockerfile
+      - services/provider-gateway/WIRING.md
+      - services/provider-gateway/admin_boundary_data.json
+      - services/provider-gateway/app.py
+      - services/provider-gateway/requirements.txt
+
+  - id: new_provider_credential
+    description: >-
+      odayplus may not declare, require, or wire new external provider
+      credentials; provider secrets are the data platform's to hold.
+    scope:
+      include:
+        - "modules/**"
+        - "apps/**"
+        - "services/**"
+        - "product_ops/**"
+        - "shared/**"
+        - "infra/**"
+        - "delivery_toolchain/**"
+        - ".github/**"
+      exclude:
+        - "**/tests/**"
+        - "**/__tests__/**"
+        - "**/test_*.py"
+        - "**/conftest.py"
+    content_patterns:
+      - "ODP_(?:LISTING|GEOCODE|POI|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER|COMPETITOR_MANUAL)_[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|FEED_URL|AUTH_STATUS|ATTESTATION)[A-Z0-9_]*"
+    grandfathered_paths:
+      # Declaration and startup validation of the existing provider secrets.
+      - modules/external_data/connectors/provider_registry.py
+      - modules/external_data/providers/live.py
+      - modules/external_data/providers/weather_demographics.py
+      - product_ops/external_data_backfill.py
+      # Deployment plumbing that carries those same secrets to Cloud Run.
+      - .github/workflows/deploy-dev.yml
+      - .github/workflows/deploy-staging.yml
+      - infra/terraform/main.tf
+      - infra/terraform/validate_contract.py
+      - infra/terraform/env/prod.tfvars.example
+      - infra/terraform/env/staging.tfvars.example
+      - product_ops/deployment/deploy_cloud_run_waji.sh
+      - product_ops/deployment/validate_cloud_run_live_deployment.py
+      - services/provider-gateway/WIRING.md
+
+  - id: new_source_scheduler
+    description: >-
+      odayplus may not grow recurring external-source fetch scheduling;
+      windowed, watermarked ingestion belongs to the data platform.
+    scope:
+      include:
+        - "modules/**"
+        - "apps/**"
+        - "services/**"
+        - "product_ops/**"
+        - "shared/**"
+        - "pipelines/**"
+      exclude:
+        - "**/tests/**"
+        - "**/__tests__/**"
+        - "**/test_*.py"
+        - "**/conftest.py"
+    filename_tokens:
+      - scheduled_fetch
+    content_patterns:
+      - "ExternalFetchScheduler"
+      - "ExternalFetchJobSpec"
+      - "default_external_fetch_provider_factories"
+      - "TenantScopedExternalFetchStateStore"
+    grandfathered_paths:
+      - modules/external_data/workers/__init__.py
+      - modules/external_data/workers/scheduled_fetch.py
+      - modules/external_data/application/ingestion_service.py
+      # Worker job handler that still dispatches the frozen scheduler.
+      - apps/worker/oday_worker/handlers.py
+
+  - id: new_raw_evidence_store
+    description: >-
+      odayplus may not add stores for raw external evidence — source snapshots,
+      raw feed payloads, or provider response bodies.
+    scope:
+      include:
+        - "modules/**"
+        - "apps/**"
+        - "services/**"
+        - "product_ops/**"
+        - "shared/**"
+        - "pipelines/**"
+      exclude:
+        - "**/tests/**"
+        - "**/__tests__/**"
+        - "**/test_*.py"
+        - "**/conftest.py"
+    content_patterns:
+      - "ListingFeedSnapshot"
+      - "ListingFeedIngestionStore"
+      - "FileListingFeedIngestionStore"
+      - "intake\\.source_snapshots"
+    grandfathered_paths:
+      - modules/external_data/application/listing_feed_adapter.py
+      - modules/external_data/application/listing_feed_store.py
+      - modules/external_data/application/source_snapshots.py
+      - product_ops/external_data_backfill.py
+      - apps/data_platform/store_opening.py
+
+  - id: new_canonical_market_writer
+    description: >-
+      odayplus may not write canonical market data; canonical landing and
+      lineage belong to the data platform, and odayplus reads versioned
+      products through the generated client.
+    scope:
+      include:
+        - "modules/**"
+        - "apps/**"
+        - "services/**"
+        - "product_ops/**"
+        - "shared/**"
+        - "pipelines/**"
+      exclude:
+        - "**/tests/**"
+        - "**/__tests__/**"
+        - "**/test_*.py"
+        - "**/conftest.py"
+    content_patterns:
+      - "(?i)(?:INSERT\\s+INTO|UPDATE|UPSERT\\s+INTO|MERGE\\s+INTO)\\s+(?:external_data|data_plane)\\.[a-z_]+"
+    grandfathered_paths:
+      # Writes data_plane.ingestion_runs / data_plane.canonical_lineage.
+      - apps/data_platform/store_opening.py
+      # Writes the external_data.real_estate_* canonical tables.
+      - product_ops/modeling/real_estate_outcomes.py
+
+  - id: direct_provider_reference
+    description: >-
+      Product code may not name external provider hosts or import the frozen
+      producer packages directly; it goes through the data-platform read facade.
+    scope:
+      include:
+        - "modules/**"
+        - "apps/**"
+        - "services/**"
+        - "product_ops/**"
+        - "shared/**"
+        - "pipelines/**"
+        - "solver/**"
+        - "models/**"
+        - "packages/**"
+        - "delivery_toolchain/**"
+      exclude:
+        - "**/tests/**"
+        - "**/__tests__/**"
+        - "**/test_*.py"
+        - "**/conftest.py"
+        - "**/*.test.ts"
+        - "**/*.test.tsx"
+        - "delivery_toolchain/governance/**"
+    content_patterns:
+      - "modules\\.external_data\\.providers"
+      - "modules\\.external_data\\.connectors"
+      - "modules\\.external_data\\.workers"
+      - "(?:[A-Za-z0-9-]+\\.)*591\\.com\\.tw"
+      - "(?:[A-Za-z0-9-]+\\.)*(?:sinyi|rakuya|housefun|yungching)\\.com\\.tw"
+      # maps/places only: www.googleapis.com and monitoring.googleapis.com are
+      # Google Cloud platform APIs the product legitimately calls, not data sources.
+      - "(?:maps|places)\\.googleapis\\.com"
+      - "(?:addr|api)\\.tgos\\.tw"
+      - "tdx\\.transportdata\\.tw"
+      - "(?:[A-Za-z0-9-]+\\.)*partner-data\\.com"
+      - "(?:[A-Za-z0-9-]+\\.)+gov\\.tw"
+    grandfathered_paths:
+      # Frozen producer packages naming each other.
+      - modules/external_data/__init__.py
+      - modules/external_data/application/ingestion_service.py
+      - modules/external_data/application/ingestion_store.py
+      - modules/external_data/connectors/__init__.py
+      - modules/external_data/connectors/provider_connectivity.py
+      - modules/external_data/connectors/provider_registry.py
+      - modules/external_data/providers/__init__.py
+      - modules/external_data/providers/live.py
+      - modules/external_data/workers/__init__.py
+      - modules/external_data/workers/scheduled_fetch.py
+      # Provider hosts named inside the frozen adapters and gateway.
+      - modules/external_data/providers/taiwan_real_estate.py
+      - services/provider-gateway/WIRING.md
+      - services/provider-gateway/app.py
+      # Consumer coupling that ODP-LEGACY-FACADE-001 replaces with the read facade.
+      - apps/api/app/routes/external_data.py
+      - apps/api/oday_api/main.py
+      - apps/data_platform/geography_backfill.py
+      - apps/worker/oday_worker/handlers.py
+      - modules/integration/connectors/__init__.py
+      - modules/integration/connectors/base.py
+      - product_ops/external_data_backfill.py
+      - product_ops/modeling/real_estate_outcomes.py
+      - product_ops/deployment/validate_cloud_run_live_deployment.py
+      - shared/infrastructure/persistence/external_data.py
+      - shared/infrastructure/persistence/factory.py
+      - delivery_toolchain/e2e/check_live_e2e_gate.py
+
+  - id: direct_provider_fetch
+    description: >-
+      The external-data and data-platform surfaces may not add new outbound
+      HTTP fetch; provider traffic terminates in the data platform.
+    scope:
+      include:
+        - "modules/external_data/**"
+        - "apps/data_platform/**"
+        - "services/provider-gateway/**"
+        - "modules/integration/connectors/**"
+        - "product_ops/external_data_backfill.py"
+      exclude:
+        - "**/tests/**"
+        - "**/test_*.py"
+        - "**/conftest.py"
+    content_patterns:
+      - "\\bhttpx\\."
+      - "\\brequests\\.(?:get|post|put|patch|delete|request|Session)\\b"
+      - "urllib\\.request\\.(?:urlopen|Request)"
+      - "\\bdlt\\.sources\\.helpers\\.requests\\b"
+    grandfathered_paths:
+      - modules/external_data/application/listing_feed_adapter.py
+      - modules/external_data/connectors/provider_connectivity.py
+      - modules/external_data/providers/live.py
+      - modules/external_data/providers/weather_demographics.py
+      - services/provider-gateway/app.py
+
+# ---------------------------------------------------------------------------
+# Provider references
+# ---------------------------------------------------------------------------
+# Signals run over scanned source. Every hit must be covered by a declaration
+# naming both the matched text and a path glob, so a provider reference cannot
+# appear anywhere in executable code without an owner and a verdict.
+#
+# docs/**, docs_archive/**, archive/**, support/** and .orchestrator/** are not
+# content-scanned: design documents and completion evidence *describe* provider
+# integrations, and treating a runtime log as a live reference would make the
+# inventory noise rather than signal. They remain fully classified above.
+
+provider_references:
+  scan:
+    include:
+      - "**/*.py"
+      - "**/*.ts"
+      - "**/*.tsx"
+      - "**/*.js"
+      - "**/*.jsx"
+      - "**/*.mjs"
+      - "**/*.json"
+      - "**/*.yaml"
+      - "**/*.yml"
+      - "**/*.toml"
+      - "**/*.tf"
+      - "**/*.sql"
+      - "**/*.sh"
+      - "**/*.example"
+    exclude:
+      - "docs/**"
+      - "docs_archive/**"
+      - "docs-site/**"
+      - "archive/**"
+      - "support/**"
+      - ".orchestrator/**"
+      - "package-lock.json"
+      - "uv.lock"
+      - "ai-status.json"
+      - "ai-activity-log.jsonl"
+      - "dashboard-bundle.json"
+
+  signals:
+    - id: provider_host
+      description: A named external data-source host.
+      pattern: "(?:[A-Za-z0-9-]+\\.)*(?:591|sinyi|rakuya|housefun|yungching)\\.com\\.tw|(?:maps|places)\\.googleapis\\.com|(?:addr|api)\\.tgos\\.tw|tdx\\.transportdata\\.tw|(?:[A-Za-z0-9-]+\\.)*partner-data\\.com|(?:[A-Za-z0-9-]+\\.)+gov\\.tw"
+
+    - id: provider_credential_env
+      description: An environment variable that carries or gates a provider credential.
+      pattern: "ODP_(?:LISTING|GEOCODE|POI|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER|COMPETITOR_MANUAL)_[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|FEED_URL|AUTH_STATUS|ATTESTATION)[A-Z0-9_]*"
+
+    - id: producer_module_import
+      description: A dotted reference into the frozen producer packages.
+      pattern: "modules\\.external_data\\.(?:providers|connectors|workers)"
+
+  declared:
+    # -- listing source hosts ------------------------------------------------
+    - id: assisted_intake_listing_source_hosts
+      signal: provider_host
+      disposition: assisted_intake_workflow
+      matches:
+        - 591.com.tw
+        - www.591.com.tw
+        - rent.591.com.tw
+        - rakuya.com.tw
+        - www.rakuya.com.tw
+        - www.sinyi.com.tw
+        - housefun.com.tw
+        - www.housefun.com.tw
+      paths:
+        - "modules/external_data/application/assisted_intake.py"
+        - "apps/web/features/operator/network/intake/**"
+        - "product_ops/migrations/assisted_listing_intake/**"
+        - "delivery_toolchain/release/assisted_listing_intake/**"
+      rationale: >-
+        Host identification for the allowed assisted-intake workflow. These
+        sources are recognised so the access-policy gate can decide, not
+        fetched: 591/rakuya/housefun forbid server retrieval, so their listings
+        are entered by a human. Naming the host here is the opposite of
+        crawling it.
+
+    - id: assisted_intake_listing_source_hosts_verification
+      signal: provider_host
+      disposition: verification_only
+      matches:
+        - 591.com.tw
+        - www.591.com.tw
+        - rent.591.com.tw
+        - rakuya.com.tw
+        - www.rakuya.com.tw
+        - www.sinyi.com.tw
+        - housefun.com.tw
+        - www.housefun.com.tw
+      paths: ["tests/**"]
+      rationale: >-
+        Contract, integration, security and end-to-end suites that assert the
+        intake gate classifies each source correctly, including that
+        retrieval-forbidden hosts stay manual.
+
+    # -- official and enrichment provider hosts ------------------------------
+    - id: frozen_official_real_estate_hosts
+      signal: provider_host
+      disposition: frozen_legacy_producer
+      matches:
+        - data.gov.tw
+        - data.ntpc.gov.tw
+        - plvr.land.moi.gov.tw
+      paths:
+        - "modules/external_data/providers/taiwan_real_estate.py"
+        - "infra/db/migrations/000009_official_real_estate_outcomes.sql"
+      rationale: >-
+        Taiwan open-data real-estate transaction sources, in the frozen adapter
+        and in the provenance columns of the canonical outcome table. Migrating
+        this source to the data platform retires both together.
+
+    - id: frozen_geocode_gateway_host
+      signal: provider_host
+      disposition: frozen_legacy_producer
+      matches: ["maps.googleapis.com"]
+      paths: ["services/provider-gateway/**"]
+      rationale: >-
+        Geocode provider endpoint terminated by the frozen gateway service.
+        Note that www./monitoring.googleapis.com are Google Cloud platform APIs
+        and are deliberately not treated as data-source hosts.
+
+    - id: fixture_partner_data_hosts
+      signal: provider_host
+      disposition: verification_only
+      matches:
+        - weather.partner-data.com
+        - demographics.partner-data.com
+      paths: ["tests/**"]
+      rationale: >-
+        Placeholder partner hosts used by the weather/demographics provider
+        tests. No live contract exists for either.
+
+    - id: v1_policy_prohibited_hosts
+      signal: provider_host
+      disposition: delivery_and_governance
+      matches:
+        - addr.tgos.tw
+        - api.tgos.tw
+        - tdx.transportdata.tw
+        - places.googleapis.com
+      paths: ["delivery_toolchain/governance/**"]
+      rationale: >-
+        Hosts named by the v1 diff gate as forbidden direct references. They
+        appear only as prohibitions in the policy document itself.
+
+    # -- provider credentials -------------------------------------------------
+    - id: frozen_provider_credential_declarations
+      signal: provider_credential_env
+      disposition: frozen_legacy_producer
+      matches: &provider_credential_env_vars
+        - ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS
+        - ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN
+        - ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET
+        - ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION
+        - ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET
+        - ODP_DEMOGRAPHICS_PROVIDER_API_KEY
+        - ODP_GEOCODE_PROVIDER_API_KEY
+        - ODP_GEOCODE_PROVIDER_API_KEY_SECRET
+        - ODP_GEOCODE_PROVIDER_AUTH_STATUS
+        - ODP_LISTING_PROVIDER_API_KEY
+        - ODP_LISTING_PROVIDER_API_KEY_SECRET
+        - ODP_LISTING_PROVIDER_AUTH_STATUS
+        - ODP_LISTING_PROVIDER_FEED_URL
+        - ODP_POI_PROVIDER_API_KEY
+        - ODP_POI_PROVIDER_API_KEY_SECRET
+        - ODP_POI_PROVIDER_AUTH_STATUS
+        - ODP_WEATHER_PROVIDER_API_KEY
+      paths:
+        - "modules/external_data/connectors/provider_registry.py"
+        - "modules/external_data/providers/**"
+        - "product_ops/external_data_backfill.py"
+      rationale: >-
+        The complete provider secret inventory, declared by the frozen registry
+        and read by the frozen adapters. This list is closed: a new provider
+        credential is a new provider integration.
+
+    - id: frozen_provider_credential_deployment_wiring
+      signal: provider_credential_env
+      disposition: frozen_legacy_producer
+      matches: *provider_credential_env_vars
+      paths:
+        - ".github/workflows/**"
+        - "infra/terraform/**"
+        - "product_ops/deployment/**"
+      rationale: >-
+        Secret Manager bindings, Cloud Run env wiring, and deployment
+        preflight for the same closed set. Frozen with the adapters they serve.
+
+    - id: provider_credential_verification
+      signal: provider_credential_env
+      disposition: verification_only
+      matches: *provider_credential_env_vars
+      paths: ["tests/**"]
+      rationale: >-
+        Suites asserting fail-closed startup validation, placeholder rejection,
+        and auth-status handling for the declared credentials.
+
+    - id: boundary_regression_fixture_credentials
+      signal: provider_credential_env
+      disposition: verification_only
+      matches: ["ODP_LISTING_PROVIDER_API_KEY_V2"]
+      paths: ["tests/architecture/**"]
+      rationale: >-
+        Deliberately-undeclared credential name used by
+        tests/architecture/test_external_data_boundary.py to prove the
+        new_provider_credential rule still fires. It is a fixture string, not a
+        secret that exists anywhere: the validator flagged it on its first run
+        against this task's own diff, which is the rule working.
+
+    # -- producer package imports ---------------------------------------------
+    - id: frozen_producer_internal_imports
+      signal: producer_module_import
+      disposition: frozen_legacy_producer
+      matches: &producer_packages
+        - modules.external_data.providers
+        - modules.external_data.connectors
+        - modules.external_data.workers
+      paths: ["modules/external_data/**"]
+      rationale: The frozen producer packages composing each other internally.
+
+    - id: consumer_coupling_pending_facade
+      signal: producer_module_import
+      disposition: migrating_to_platform_client
+      matches: *producer_packages
+      paths:
+        - "apps/**"
+        - "modules/integration/connectors/**"
+        - "product_ops/**"
+        - "shared/infrastructure/persistence/**"
+        - "delivery_toolchain/e2e/**"
+      rationale: >-
+        Every remaining direct import of producer internals by consumer code.
+        This is the exact work list for ODP-LEGACY-FACADE-001: each entry must
+        become a read through the generated data-platform client.
+
+    - id: boundary_policy_producer_package_names
+      signal: producer_module_import
+      disposition: delivery_and_governance
+      matches: *producer_packages
+      paths: ["delivery_toolchain/governance/**"]
+      rationale: >-
+        The v1 policy naming the producer packages as forbidden direct
+        references.
+
+    - id: producer_import_verification
+      signal: producer_module_import
+      disposition: verification_only
+      matches: *producer_packages
+      paths: ["tests/**"]
+      rationale: >-
+        Suites that drive the frozen ingestion, scheduler, connector and
+        provider paths, plus the boundary-policy tooling test.

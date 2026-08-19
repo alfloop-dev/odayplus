@@ -1,0 +1,99 @@
+{
+  "task_id": "ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+  "title": "Reprove 117 retired paths and legacy visuals on current dev and live SHA",
+  "phase": "Package10LiveClosure",
+  "order": "T41",
+  "owner": "Claude2",
+  "reviewer": "Antigravity6",
+  "result": "static_reproved_runtime_deferred",
+  "static_phase": {
+    "status": "pass",
+    "verified_head": "8eabc9735653710c1b88dcfe2996eb687b609c2b",
+    "verified_ref": "origin/dev",
+    "checks_passed": 11,
+    "checks_total": 11,
+    "verifier": "docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/verify_static_retirement.py",
+    "result_file": "docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/static-verification.json",
+    "negative_control_file": "docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/negative-control.json",
+    "independent_of_historical_head": true,
+    "historical_reference_head": "435c79e3a99839541aa3710d58049010e3ba7ab7"
+  },
+  "runtime_phase": {
+    "status": "deferred",
+    "claimed": false,
+    "blocked_on_task": "ODP-P10-DEV-REDEPLOY-VERIFY-001",
+    "blocked_on_task_status": "blocked",
+    "blocked_on_task_dependencies": [
+      "ODP-P10-LIVE-EXTDATA-DIAG-001",
+      "ODP-PRODUCTION-MODEL-REGISTRY-001"
+    ],
+    "gate_authority": {
+      "deploy_dev_run": "31316767710",
+      "deploy_dev_sha": "9c95ecc3e1f2d0885bb4078070a116e852487f69",
+      "live_e2e_gate_ok": false,
+      "live_e2e_gate_score": "43/50",
+      "blocking_dependencies": ["external-data", "mlflow"],
+      "correlation": "corr-live-e2e-9c95ecc3e1f2-1786284436"
+    },
+    "still_owed": [
+      "Final live routes for the 18 retired route surfaces are absent or redirect without serving old code",
+      "Emitted runtime chunk graphs from the release build contain no retired implementation",
+      "Evidence rebound to the exact promoted and retained public SHA"
+    ],
+    "resume_condition": "ODP-P10-DEV-REDEPLOY-VERIFY-001 promotes and retains a release; rerun verify_static_retirement.py at that public SHA as the first runtime-phase step."
+  },
+  "inventory": {
+    "unique_retired_paths": 117,
+    "source_acks": [
+      "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json",
+      "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+    ],
+    "ack_contributions": { "ODP-P10-CAN-001-R3A": 112, "ODP-P10-CAN-001-R3B": 5 },
+    "sets_disjoint": true,
+    "by_root": { "apps/web": 92, "packages/ui": 7, "tests/e2e": 18 },
+    "acks_read_only": true,
+    "acks_reopened_as_implementation_work": false
+  },
+  "checks": [
+    { "check": "retired_path_inventory_reconstructed", "result": "pass", "observation": "112 + 5 disjoint = 117 unique" },
+    { "check": "executable_pages", "result": "pass", "observation": "exactly /operator, /intake/[intakeId], /franchisee" },
+    { "check": "no_surviving_retired_path", "result": "pass", "observation": "0/117 on disk, 0/117 in git ls-files" },
+    { "check": "retired_css_selectors_absent", "result": "pass", "observation": "8 odp-* shell families: 0 definitions, 0 usages" },
+    { "check": "retained_generic_css_present", "result": "pass", "observation": ".odp-select retained; guards over-retirement" },
+    { "check": "retired_identity_copy_absent_from_frontend", "result": "pass", "observation": "0 case-insensitive matches under apps/web and packages" },
+    { "check": "retired_intake_alternatives_absent", "result": "pass", "observation": "4 alternate-detail symbols, 0 matches" },
+    { "check": "canonical_detail_graph_intact", "result": "pass", "observation": "IntakeProcessingDetail renders ListingCompareTable + MatchEvidencePanel; Package10VisualP1.test.tsx mounts it" },
+    { "check": "no_import_edge_into_retired_module", "result": "pass", "observation": "238 files scanned, 0 edges into retired files" },
+    { "check": "legacy_e2e_specs_absent", "result": "pass", "observation": "18 retired specs absent and unreferenced; exactly 16 canonical specs retained" },
+    { "check": "residual_references_are_inert", "result": "pass", "observation": "119 residuals, all classified inert; disclosure check, not a survivor gate" }
+  ],
+  "acceptance_criteria": [
+    { "criterion": "117 unique retired paths are reconstructed from committed ACKs", "status": "met" },
+    { "criterion": "current dev has zero executable survivor selector alternate detail old identity retired import or legacy spec resurrection", "status": "met" },
+    { "criterion": "final live routes are absent or redirect without serving old code", "status": "deferred_runtime_phase" },
+    { "criterion": "runtime chunk and import graphs cannot execute retired implementation", "status": "partially_met", "detail": "Static import-graph gate passes at dev; the emitted-chunk half is deferred to the runtime phase." },
+    { "criterion": "evidence binds current dev and final public SHA rather than historical head alone", "status": "partially_met", "detail": "Bound to dev 8eabc973; public SHA binding deferred until a release is promoted and retained." }
+  ],
+  "disclosed_residuals": {
+    "total": 119,
+    "by_kind": {
+      "live_backend_namespace_never_in_retirement_inventory": 82,
+      "inert_literal_string_in_document_assertion": 28,
+      "inert_comment_or_docstring": 7,
+      "inert_environment_variable_name": 2
+    },
+    "executable_resurrections": 0,
+    "corroborating_run": "pytest tests/e2e/test_frontend_execution_matrix_coverage.py -> 23 passed",
+    "assessment": "Cosmetic naming debt only. Not a release blocker, and remediation is outside this task's write scope."
+  },
+  "release_boundary": {
+    "package_10_release_status_unchanged": "no_go",
+    "asserts_release_readiness": false,
+    "rule": "Any resurrected retired path, selector, alternate intake detail, or legacy E2E spec blocks release; compatibility markup is not an accepted remediation."
+  },
+  "write_scope": {
+    "declared": ["docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/**"],
+    "product_code_changed": false,
+    "paths_outside_scope_touched": 0
+  }
+}

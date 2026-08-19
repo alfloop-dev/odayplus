@@ -1,0 +1,21 @@
+Source Verification Receipt for Task ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001
+Timestamp: 2026-07-31T14:26:49Z
+
+Merge Commit: 6af7b86ba4aa34d5bf26142f64f3cb96c429b557 (PR #505 merge commit)
+
+Materialised Source Blobs:
+1. .orchestrator/supervisor.py
+   Blob SHA: e6afed342030321aaddfb54106bfb8d0d9d5aa0f
+   Content SHA256: 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+   Size: 421,182 bytes
+
+2. scripts/ai_status.py
+   Blob SHA: d79929d22b28e2666083c8779357649425106863
+   Content SHA256: bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+   Size: 223,524 bytes
+
+Target Verification Post-Publish:
+/home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py -> sha256 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050 (MATCH)
+/home/lupin/oday-plus-supervisor-live/scripts/ai_status.py         -> sha256 bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e (MATCH)
+/home/lupin/oday-plus/.orchestrator/supervisor.py                  -> sha256 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050 (MATCH)
+/home/lupin/oday-plus/scripts/ai_status.py                           -> sha256 bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e (MATCH)

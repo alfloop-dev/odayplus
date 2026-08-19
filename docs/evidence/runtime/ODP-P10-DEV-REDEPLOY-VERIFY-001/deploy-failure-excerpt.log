@@ -1,0 +1,75 @@
+# Deploy Dev run 30362772798 - verbatim excerpts (ANSI stripped)
+# Source: gh api repos/alfloop-dev/odayplus/actions/jobs/90287054224/logs
+## 1. In-script fail-closed preflight (the ODP-DEPLOY-SCRIPT-LOCKED-PYTHON-001 boundary)
+2026-07-28T13:21:15.2460975Z Running fail-closed live deployment preflight...
+2026-07-28T13:21:17.6969893Z 2026/07/28 13:21:17 INFO mlflow.store.db.utils: Creating initial MLflow database tables...
+2026-07-28T13:21:17.7059896Z 2026/07/28 13:21:17 INFO mlflow.store.db.utils: Updating database tables
+2026-07-28T13:21:19.4339095Z Cloud Run live deployment preflight passed.
+2026-07-28T13:21:19.4339662Z report=.odp_data/deployment/cloud-run-preflight.json
+2026-07-28T13:21:19.9639112Z Deployment details:
+2026-07-28T13:21:19.9639607Z   Environment:      dev
+2026-07-28T13:21:19.9640379Z   Release SHA:      450c7faddda32155fadce6c36cfdeed623a385a3
+2026-07-28T13:21:19.9641123Z   GCP Project:      alfaloop-data-project
+2026-07-28T13:21:19.9641721Z   GCP Region:       asia-east1
+2026-07-28T13:21:19.9642255Z   Artifact Repo:    oday-plus-dev
+2026-07-28T13:21:19.9642791Z   API Service:      oday-api
+2026-07-28T13:21:19.9643287Z   Web Service:      oday-web
+2026-07-28T13:21:19.9643792Z   Migration Job:    oday-migration
+2026-07-28T13:21:19.9644584Z   Worker Job:       oday-worker
+## 2. Pre-mutation traffic snapshot and migration candidate Cloud Run Job
+2026-07-28T13:27:56.1760402Z Recording the existing API/Web traffic before any runtime mutation...
+2026-07-28T13:28:01.7028601Z WARNING: The following filter keys were not present in any resource : name
+2026-07-28T13:28:03.2870853Z WARNING: The following filter keys were not present in any resource : name
+2026-07-28T13:28:03.5076671Z Deploying immutable migration candidate Cloud Run Job...
+2026-07-28T13:28:06.7706029Z Deploying container to Cloud Run job [oday-migration-r-450c7faddda3] in project [alfaloop-data-project] region [asia-east1]
+2026-07-28T13:28:06.7707057Z Creating job...
+2026-07-28T13:28:09.1146074Z Done.
+2026-07-28T13:28:09.1741334Z Job [oday-migration-r-450c7faddda3] has successfully been deployed.
+2026-07-28T13:28:09.1741971Z 
+2026-07-28T13:28:09.1742212Z To execute this job, use:
+2026-07-28T13:28:09.1742903Z gcloud run jobs execute oday-migration-r-450c7faddda3
+2026-07-28T13:28:09.3415709Z Executing migration Cloud Run Job...
+2026-07-28T13:28:09.9340050Z Creating execution...
+2026-07-28T13:29:50.9620453Z Provisioning resources...........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................done
+2026-07-28T13:29:59.2121882Z Starting execution..........................................................................................done
+2026-07-28T13:30:11.2387881Z Running execution.......................................................................................................................................done
+2026-07-28T13:30:11.4333185Z Done.
+2026-07-28T13:30:11.4877817Z Execution [oday-migration-r-450c7faddda3-8bwjd] has successfully completed.
+2026-07-28T13:30:11.4878468Z 
+2026-07-28T13:30:11.4878884Z View details about this execution by running:
+2026-07-28T13:30:11.4880081Z gcloud run jobs executions describe oday-migration-r-450c7faddda3-8bwjd
+2026-07-28T13:30:11.4880998Z 
+2026-07-28T13:30:11.4882309Z Or visit https://console.cloud.google.com/run/jobs/executions/details/asia-east1/oday-migration-r-450c7faddda3-8bwjd?project=1067163562451
+## 3. Blocking failure: gcloud subcommand rejected by the runner SDK
+2026-07-28T13:30:13.8757081Z ERROR: (gcloud.run.jobs.executions) Invalid choice: 'describe-latest'.
+2026-07-28T13:30:14.8633654Z Maybe you meant:
+2026-07-28T13:30:14.8634498Z   gcloud run jobs
+2026-07-28T13:30:14.8635920Z 
+2026-07-28T13:30:14.8636612Z To search the help text of gcloud commands, run:
+2026-07-28T13:30:14.8637553Z   gcloud help -- SEARCH_TERMS
+## 4. Armed rollback restored the previous API/Web traffic split
+2026-07-28T13:30:15.0169795Z Deployment failed; restoring the recorded API/Web traffic split.
+2026-07-28T13:30:15.0538362Z Restoring oday-api traffic to oday-api-00005-gin=100...
+2026-07-28T13:30:15.6516785Z Updating traffic...
+2026-07-28T13:30:17.7827826Z Done.
+2026-07-28T13:30:17.8907511Z URL: https://oday-api-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:17.8908140Z Traffic:
+2026-07-28T13:30:17.8908422Z   0%   oday-api-00003-lez
+2026-07-28T13:30:17.8908918Z          live-3875485e: https://live-3875485e---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:17.8909449Z   100% oday-api-00005-gin
+2026-07-28T13:30:17.8909882Z          candidate:     https://candidate---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:17.8910366Z   0%   oday-api-00007-koz
+2026-07-28T13:30:17.8910774Z          authcand:      https://authcand---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:17.8911242Z   0%   oday-api-probe8
+2026-07-28T13:30:17.8911625Z          probe8:        https://probe8---oday-api-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:18.0571008Z Restoring oday-web traffic to oday-web-00008-ws4=100...
+2026-07-28T13:30:18.6569289Z Updating traffic...
+2026-07-28T13:30:20.0550461Z Done.
+2026-07-28T13:30:20.0829368Z URL: https://oday-web-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:20.0829943Z Traffic:
+2026-07-28T13:30:20.0830235Z   0%   oday-web-00004-cef
+2026-07-28T13:30:20.0831071Z          live-3875485e: https://live-3875485e---oday-web-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:20.0831701Z   0%   oday-web-00006-jen
+2026-07-28T13:30:20.0832225Z          candidate:     https://candidate---oday-web-7sxbjoeozq-de.a.run.app
+2026-07-28T13:30:20.0832807Z   100% oday-web-00008-ws4
+2026-07-28T13:30:20.2193253Z ##[error]Process completed with exit code 2.

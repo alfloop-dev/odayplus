@@ -1,0 +1,46 @@
+{
+  "run_id": 30412416116,
+  "head_sha": "79cf9b67e62ce9fbd762b6695a214965ea9fe258",
+  "head_branch": "dev",
+  "event": "push",
+  "status": "completed",
+  "conclusion": "failure",
+  "created_at": "2026-07-29T00:52:13Z",
+  "updated_at": "2026-07-29T01:08:22Z",
+  "url": "https://github.com/alfloop-dev/odayplus/actions/runs/30412416116",
+  "trigger": "push of PR #488 merge commit (79cf9b67e62ce9fbd762b6695a214965ea9fe258)",
+  "jobs": [
+    {
+      "database_id": 90451367772,
+      "name": "e2e-operational-evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-07-29T00:52:15Z",
+      "completed_at": "2026-07-29T00:55:18Z"
+    },
+    {
+      "database_id": 90451848495,
+      "name": "deploy",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-07-29T00:55:21Z",
+      "completed_at": "2026-07-29T01:08:22Z",
+      "failed_step": {
+        "number": 13,
+        "name": "Build, push, deploy, and verify Cloud Run",
+        "conclusion": "failure"
+      }
+    }
+  ],
+  "progress_summary": {
+    "gcloud_describe_latest_compat": "RESOLVED (PR #479)",
+    "jobs_smoke_migration_secret_bindings": "RESOLVED (PR #484)",
+    "migration_compatibility_smoke": "RESOLVED (PR #488, compatibility:/platform/version:http OK attempts=2 elapsed=20.8s, compatibility:/platform/health:database OK)",
+    "migration_job_execution": "SUCCESS (oday-migration-r-79cf9b67e62c)",
+    "migration_job_smoke": "PASS",
+    "scheduler_job_execution": "SUCCESS (oday-scheduler-r-79cf9b67e62c-fr65q completed)",
+    "scheduler_job_smoke": "PASS (report=.odp_data/deployment/cloud-run-jobs/scheduler-validation.json)",
+    "worker_job_execution": "FAILURE (oday-worker-r-79cf9b67e62c-6fhw5 failed during execution)",
+    "new_failure": "Cloud Run worker job execution failure (Error: worker Cloud Run Job failed; deployment stopped)"
+  }
+}

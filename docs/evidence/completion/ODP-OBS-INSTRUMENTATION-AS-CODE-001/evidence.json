@@ -1,0 +1,268 @@
+{
+  "task_id": "ODP-OBS-INSTRUMENTATION-AS-CODE-001",
+  "timestamp": "2026-08-10T17:04:14.242152+00:00",
+  "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659",
+  "is_test_simulated": false,
+  "overall_status": "PASSED",
+  "metrics_categories": [
+    "audit",
+    "business",
+    "data",
+    "error",
+    "job",
+    "latency",
+    "model",
+    "queue",
+    "traffic"
+  ],
+  "metrics_count": 35,
+  "recorded_metrics_series_count": 19,
+  "signal_ownership_verified": true,
+  "ownership_gate_detail": {
+    "omitted_owner_rejected": true,
+    "omitted_owner_error": "metric 'evidence_probe_unowned' must declare a non-empty owner. Fail-closed gate enforced.",
+    "blank_owner_rejected": true,
+    "distinct_owning_teams": [
+      "business-analytics",
+      "data-platform",
+      "ml-platform",
+      "security-audit",
+      "sre-messaging",
+      "sre-platform"
+    ],
+    "metrics_owned": 35
+  },
+  "ownership_matrix": {
+    "api_request_count": "sre-platform",
+    "api_error_count": "sre-platform",
+    "api_latency_ms": "sre-platform",
+    "db_query_latency_ms": "sre-platform",
+    "job_duration_seconds": "sre-platform",
+    "job_failure_count": "sre-platform",
+    "event_consumer_lag": "sre-messaging",
+    "dlq_message_count": "sre-messaging",
+    "external_connector_failure_count": "sre-platform",
+    "alert_delivery_failure_count": "sre-platform",
+    "data_freshness_hours": "data-platform",
+    "data_quality_score": "data-platform",
+    "feature_null_rate": "data-platform",
+    "prediction_count": "ml-platform",
+    "model_error_metric": "ml-platform",
+    "prediction_interval_coverage": "ml-platform",
+    "drift_score": "ml-platform",
+    "model_alias_change_count": "ml-platform",
+    "heatzone_topk_adoption_rate": "business-analytics",
+    "listing_dedup_accuracy": "business-analytics",
+    "sitescore_realization_rate": "business-analytics",
+    "forecast_alert_precision": "business-analytics",
+    "intervention_recovery_rate": "business-analytics",
+    "price_hard_constraint_violation_count": "business-analytics",
+    "adlift_incremental_gm": "business-analytics",
+    "avm_interval_coverage": "business-analytics",
+    "netplan_plan_adoption_rate": "business-analytics",
+    "model_adoption_rate": "business-analytics",
+    "audit_event_record_count": "security-audit",
+    "audit_event_write_failure_count": "security-audit",
+    "audit_event_pipeline_lag_seconds": "security-audit",
+    "audit_event_replay_count": "security-audit",
+    "audit_evidence_export_count": "security-audit",
+    "audit_completeness_gap_count": "security-audit",
+    "deployment_watch_window_status": "sre-platform"
+  },
+  "sensitive_value_redaction_verified": true,
+  "bounded_cardinality_verified": true,
+  "bounded_cardinality_detail": {
+    "undeclared_label_rejected": true,
+    "reject_policy_fails_closed": true,
+    "shed_policy_caller_survives_overflow": true,
+    "shed_policy_bound_held": true,
+    "shed_policy_overflow_report": {
+      "policy": "shed",
+      "max_series_per_metric": 2,
+      "overflow_label_value": "__overflow__",
+      "shed_emissions": {
+        "dlq_message_count": 48
+      },
+      "shed_emissions_total": 48,
+      "metrics_with_shedding": [
+        "dlq_message_count"
+      ]
+    },
+    "http_route_label_normalized": true,
+    "registered_route_templates": 469,
+    "route_label_for_200_distinct_job_ids": [
+      "/jobs/{job_id}"
+    ],
+    "api_request_count_series_budget": 2000,
+    "api_latency_ms_series_budget": 1000
+  },
+  "alert_runbook_anchors_verified": true,
+  "alert_release_identity_verified": true,
+  "release_identity_flag_detail": {
+    "flag_is_derived_not_literal": true,
+    "page_still_routed_when_downgraded": true,
+    "release_sha_reported_when_downgraded": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+  },
+  "alert_delivery_containment_verified": true,
+  "alert_delivery_containment_detail": {
+    "unbound_identity_returns_none_instead_of_raising": true,
+    "lost_page_counted_on": "alert_delivery_failure_count",
+    "lost_page_series": [
+      {
+        "type": "counter",
+        "value": 1.0,
+        "labels": {
+          "alert_id": "dlq-spike",
+          "error_class": "ValueError"
+        },
+        "category": "error"
+      }
+    ],
+    "bound_identity_still_delivers": true,
+    "delivery_failure_alert_policy": "alert-delivery-failure"
+  },
+  "alert_runbook_linkage_count": 12,
+  "alerts": [
+    {
+      "id": "api-availability-drop",
+      "name": "API availability drop",
+      "severity": "P1",
+      "metric": "api_error_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#api-anomaly",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "forecast-daily-failed",
+      "name": "Forecast daily batch failed",
+      "severity": "P2",
+      "metric": "job_failure_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#forecastops",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "data-quality-p0-fail",
+      "name": "Data quality P0 fail",
+      "severity": "P2",
+      "metric": "data_quality_score",
+      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "dlq-spike",
+      "name": "DLQ spike",
+      "severity": "P2",
+      "metric": "dlq_message_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#job-failure",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "unauthorized-spike",
+      "name": "Unauthorized spike",
+      "severity": "P2",
+      "metric": "api_error_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "audit-write-failure",
+      "name": "Audit write failure",
+      "severity": "P1",
+      "metric": "audit_event_write_failure_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "alert-delivery-failure",
+      "name": "Alert delivery failure",
+      "severity": "P1",
+      "metric": "alert_delivery_failure_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#alert-delivery-failure",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "model-drift-high",
+      "name": "Model drift high",
+      "severity": "P2",
+      "metric": "drift_score",
+      "runbook": "docs/runbooks/observability-and-runbook.md#model-release",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "price-constraint-violation",
+      "name": "Price hard-constraint violation",
+      "severity": "P1",
+      "metric": "price_hard_constraint_violation_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#priceops",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "data-room-abnormal-download",
+      "name": "Data Room abnormal download",
+      "severity": "P1",
+      "metric": "audit_evidence_export_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#audit-write-failure",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "solver-repeated-infeasible",
+      "name": "Solver repeated infeasible",
+      "severity": "P3",
+      "metric": "job_failure_count",
+      "runbook": "docs/runbooks/observability-and-runbook.md#netplan",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    },
+    {
+      "id": "external-connector-stale",
+      "name": "External connector stale",
+      "severity": "P3",
+      "metric": "data_freshness_hours",
+      "runbook": "docs/runbooks/observability-and-runbook.md#data-freshness",
+      "runbook_file_verified": true,
+      "runbook_anchor_verified": true,
+      "release_identity_bound": true,
+      "release_sha": "a7355d5f3e0f5b8f525d440af5c62f95d25c1659"
+    }
+  ],
+  "trace_spans_count": 3,
+  "dashboards_count": 6,
+  "slos_count": 3,
+  "test_suite_execution": {
+    "target": "tests/reliability/test_runtime_observability.py",
+    "passed_tests": 96,
+    "exit_code": 0,
+    "duration_seconds": 41.07
+  }
+}

@@ -49,7 +49,7 @@ from shared.infrastructure.persistence import assisted_listing_intake as intake
 intake.apply_upgrade(cursor.execute)
 ```
 
-After apply, `scripts/validate_assisted_listing_intake_schema.sql` must run clean
+After apply, `delivery_toolchain/governance/validate_assisted_listing_intake_schema.sql` must run clean
 (it RAISEs on any RLS gap, missing tenant-qualified FK, or missing lineage
 constraint). Application connections must `SET LOCAL app.tenant_id` inside every
 request transaction; a missing or empty value fails closed under the RLS policy.

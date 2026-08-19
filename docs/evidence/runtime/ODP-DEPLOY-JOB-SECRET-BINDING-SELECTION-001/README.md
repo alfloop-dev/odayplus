@@ -38,7 +38,7 @@ over the whole job description. The release selected
 ODP_PRODUCTION_PROVIDER_IDS=poi.commercial_api,geocode.primary_api,admin_boundary.official_dataset
 ```
 
-`listing.partner_feed` is not in that set, so `scripts/deploy_cloud_run_waji.sh`
+`listing.partner_feed` is not in that set, so `product_ops/deployment/deploy_cloud_run_waji.sh`
 never adds `ODP_LISTING_PROVIDER_API_KEY` to `API_SECRET_BINDINGS`, and the
 string `odp_listing_provider_api_key` never appears in the job description. The
 gate demanded a secret for a provider the release deliberately does not deploy.
@@ -255,7 +255,7 @@ container makes the question unanswerable rather than merely harder.
 **exactly one** container and reads env only from it; anything else fails
 `provider_selection` and `secret_bindings` with
 `job task template declares N containers`. This matches what
-`scripts/deploy_cloud_run_waji.sh` creates — `gcloud run jobs deploy` with one
+`product_ops/deployment/deploy_cloud_run_waji.sh` creates — `gcloud run jobs deploy` with one
 image and no `--container` sidecars — so a sidecar arriving later is a
 deliberate deployment change that must be reviewed here, not silently trusted.
 
@@ -347,7 +347,7 @@ too: gcloud emits one dialect per description, so the key's presence is the
 defect, not its contents.
 
 A uniqueness rule can only be a tightening if the real deployment cannot trip
-it, so that was checked against `scripts/deploy_cloud_run_waji.sh` rather than
+it, so that was checked against `product_ops/deployment/deploy_cloud_run_waji.sh` rather than
 assumed. Each job is deployed with `--env-vars-file="${API_ENV_FILE}"` **and**
 `--set-secrets="${API_SECRET_BINDINGS}"`, which is the one way a required env
 var could arrive twice. It cannot: the env file is written from an explicit
@@ -411,7 +411,7 @@ that the key's presence is the defect rather than its contents:
   fail together as they already do for the unreadable-selection cases.
 
 The real deployment cannot trip either rule, checked against
-`scripts/deploy_cloud_run_waji.sh` rather than assumed, and it is the same
+`product_ops/deployment/deploy_cloud_run_waji.sh` rather than assumed, and it is the same
 disjointness round 6 established: `--env-vars-file` writes an explicit non-secret
 `keys` allowlist and `--set-secrets` names each secret env exactly once, so no
 required secret env var ever receives a `value` key and the
@@ -471,7 +471,7 @@ the round-6 rule's business: the off-dialect check runs first, so those details
 and their round-6 assertions are unchanged.
 
 The real deployment cannot trip either rule, checked against
-`scripts/deploy_cloud_run_waji.sh` rather than assumed:
+`product_ops/deployment/deploy_cloud_run_waji.sh` rather than assumed:
 `gcloud run jobs deploy --set-secrets` is the only way secrets reach these jobs,
 and it emits `secretKeyRef` alone — there is no `--set-config-maps` or
 equivalent anywhere in the deploy path, and Cloud Run has no ConfigMap resource
@@ -553,7 +553,7 @@ secret must select a usable version and may not be optional`), so the round-2
 redaction assertions extend to this round unchanged.
 
 The real deployment cannot trip these rules, checked against
-`scripts/deploy_cloud_run_waji.sh` rather than assumed. Secrets reach these jobs
+`product_ops/deployment/deploy_cloud_run_waji.sh` rather than assumed. Secrets reach these jobs
 only through `--set-secrets="${API_SECRET_BINDINGS}"`, whose entries are
 `ENV=<secret-ref>` built from the `*_SECRET` deployment variables. `gcloud run
 jobs deploy --set-secrets` requires a version in each reference and emits it as
@@ -621,7 +621,7 @@ plus an `int()` cast, which accepted `007`). Secret Manager numbers versions fro
 a description this proof should not vouch for.
 
 The real deployment still cannot trip any of this, checked against
-`scripts/deploy_cloud_run_waji.sh` rather than assumed: bindings reach these jobs
+`product_ops/deployment/deploy_cloud_run_waji.sh` rather than assumed: bindings reach these jobs
 only through `--set-secrets="${API_SECRET_BINDINGS}"`, and gcloud emits the
 version it resolved — `latest` or a canonical number — with no surrounding
 whitespace and no reserved-word alias.
@@ -680,7 +680,7 @@ rather than an assumed one:
   project segment is a project number (never written with a leading zero) or a
   project ID — 6 to 30 characters, opening with a lowercase letter and never
   closing with a hyphen. Both spellings stay accepted on purpose:
-  `scripts/deploy_cloud_run_waji.sh` takes every name from an operator-supplied
+  `product_ops/deployment/deploy_cloud_run_waji.sh` takes every name from an operator-supplied
   `*_SECRET` variable (`ODAY_DATABASE_URL=${ODAY_DATABASE_URL_SECRET}`, and one
   per selected provider), so a cross-project secret is a supported deployment
   and rejecting the path form would over-tighten a schema this task must keep
@@ -755,7 +755,7 @@ whitespace (...)`.
 What is deliberately **not** normalized-away here, and what stays: the provider
 IDs *inside* the selection value are still compared after `strip()`, because
 that mirrors what the runtime does with the same string —
-`scripts/deploy_cloud_run_waji.sh` reduces each ID with
+`product_ops/deployment/deploy_cloud_run_waji.sh` reduces each ID with
 `${provider_id//[[:space:]]/}` before choosing secrets, and its env-file writer
 uses `{item.strip() for item in ...split(",")}`. Mirroring the runtime's own
 parse of a value is not the same act as normalizing the API key that value is
@@ -860,7 +860,7 @@ placed in the job description never reaches the detail text or the report.
 
 ## Unchanged by this task
 
-- `scripts/deploy_cloud_run_waji.sh`, both deploy workflows, and the job proof
+- `product_ops/deployment/deploy_cloud_run_waji.sh`, both deploy workflows, and the job proof
   capture path (`capture_latest_execution`, `resolve-latest-execution`).
 - The `jobs-smoke` CLI surface: same subcommand, same required arguments.
 - `release_sha`, `entrypoint`, `execution`, and `execution_receipt` checks.
@@ -875,8 +875,8 @@ re-run unchanged on the comment-only follow-up tree at `788185cb`:
 ```text
 python3 -m pytest tests/ops/test_cloud_run_live_deployment.py                  # 292 passed
 python3 -m pytest tests/ops                                                    # 347 passed, 20 skipped
-python3 -m ruff check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
-python3 -m ruff format --check scripts/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+python3 -m ruff check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
+python3 -m ruff format --check product_ops/deployment/validate_cloud_run_live_deployment.py tests/ops/test_cloud_run_live_deployment.py
 git diff --check
 ```
 
@@ -912,7 +912,7 @@ dialects) plus four boundary controls.
 
 Each round's regressions fail against that round's pre-fix validator, verified by
 restoring the parent commit's
-`scripts/deployment/validate_cloud_run_live_deployment.py` under the new test
+`product_ops/deployment/validate_cloud_run_live_deployment.py` under the new test
 file: `6 failed` for round 3 against `76063434`; for round 4 against `49e65382`
 the sidecar test fails with `assert 'jobs-smoke:migration:provider_selection' in
 set()`; for round 5 against `5b9c430a` both crossover tests fail with
@@ -977,7 +977,7 @@ stronger behaviour. The one passing case is the round-12 control,
 `test_job_smoke_accepts_exact_env_names_beside_unrelated_ones`, which passes
 against both validators, so the twin rule is proven narrow. For round 13 against
 `cdb28c9a` — restoring that head's
-`scripts/deployment/validate_cloud_run_live_deployment.py` under the round-13
+`product_ops/deployment/validate_cloud_run_live_deployment.py` under the round-13
 test file — the whole focused file reports `24 failed, 268 passed`, which is
 every one of this round's 28 new cases except its four controls. Twelve are the
 direct guard cases, which fail because `_usable_resource_number` does not exist
@@ -1013,7 +1013,7 @@ FAILED tests/performance/test_load_and_soak.py::test_concurrency_and_soak_execut
 
 This task cannot be its cause:
 
-- The whole diff is `scripts/deployment/validate_cloud_run_live_deployment.py`
+- The whole diff is `product_ops/deployment/validate_cloud_run_live_deployment.py`
   (a standalone CLI never imported by the API), `tests/ops/`, and this file.
 - `tests/performance/test_load_and_soak.py` imports only
   `apps.api.oday_api.main`, `shared.infrastructure.persistence.factory`, and

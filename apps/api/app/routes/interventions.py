@@ -29,6 +29,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
+    from apps.api.app.routes._common import durable_store_required
 
     class OpenCasePayload(BaseModel):
         store_id: str = Field(min_length=1)
@@ -40,6 +41,16 @@ else:
         created_by: str = Field(min_length=1)
         action_spec: dict[str, Any] = Field(default_factory=dict)
         idempotency_key: str | None = None
+
+    class AssignPayload(BaseModel):
+        assignee: str = Field(min_length=1)
+        actor: str = Field(min_length=1)
+        role: str | None = None
+        expected_version: int | None = None
+
+    class UnassignPayload(BaseModel):
+        actor: str = Field(min_length=1)
+        expected_version: int | None = None
 
     class EligibilityPayload(BaseModel):
         eligible: bool
@@ -254,17 +265,81 @@ else:
             return result
 
         @router.get("", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
-        def list_interventions(store_id: str | None = None) -> dict[str, Any]:
-            items = (
-                active_workflow.list_by_store(store_id)
-                if store_id
-                else active_workflow.list_all()
-            )
+        def list_interventions(
+            store_id: str | None = None,
+            assigned_to: str | None = None,
+            status: str | None = None,
+            kind: str | None = None,
+        ) -> dict[str, Any]:
+            try:
+                items = active_workflow.list_cases(
+                    store_id=store_id,
+                    assigned_to=assigned_to,
+                    status=status,
+                    kind=kind,
+                )
+            except (InterventionError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail=str(exc),
+                ) from exc
             return {"items": [i.to_dict() for i in items], "count": len(items)}
 
         @router.get("/{intervention_id}", dependencies=[Depends(require_permission("intervention", Action.VIEW, engine=authz_engine))])
         def get_intervention(intervention_id: str) -> dict[str, Any]:
             return _get_or_404(intervention_id).to_dict()
+
+        @router.post("/{intervention_id}/assign", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
+        def assign_case(
+            intervention_id: str,
+            body: AssignPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:assign",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.assign_case(
+                        intervention_id,
+                        assignee=body.assignee,
+                        actor=body.actor,
+                        role=body.role,
+                        expected_version=body.expected_version,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
+
+        @router.post("/{intervention_id}/unassign", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
+        def unassign_case(
+            intervention_id: str,
+            body: UnassignPayload,
+            request: Request,
+            idempotency_key: str | None = Header(
+                default=None,
+                alias="Idempotency-Key",
+            ),
+        ) -> dict[str, Any]:
+            return run_command(
+                request=request,
+                scope=f"interventions:{intervention_id}:unassign",
+                payload=body.model_dump(mode="json"),
+                idempotency_key=idempotency_key,
+                operation=lambda: _run(
+                    lambda: active_workflow.unassign_case(
+                        intervention_id,
+                        actor=body.actor,
+                        expected_version=body.expected_version,
+                        correlation_id=request.state.correlation_id,
+                    )
+                ),
+            )
 
         @router.post("/{intervention_id}/eligibility", dependencies=[Depends(require_permission("intervention", Action.CREATE, engine=authz_engine))])
         def check_eligibility(
@@ -539,21 +614,23 @@ else:
             try:
                 return action().to_dict()
             except (InterventionError, ValueError) as exc:
+                msg = str(exc)
+                if "stale update" in msg:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "code": "STALE_UPDATE_CONFLICT",
+                            "message": msg,
+                        },
+                    ) from exc
                 # InterventionError subclasses ValueError; a bad enum value (e.g.
                 # an unknown disposition/kind) also surfaces as a domain 422.
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=msg
                 ) from exc
 
         return router
 
-    def _durable_store_required(message: str) -> HTTPException:
-        return HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "DURABLE_COMMAND_STORE_REQUIRED",
-                "message": message,
-            },
-        )
+    _durable_store_required = durable_store_required
 
     __all__ = ["create_interventions_router"]

@@ -38,6 +38,7 @@ from modules.heatzone.workers import HeatZoneBatchScoreResult
 from modules.intervention.domain.lifecycle import Intervention, LabelRecord
 from modules.learninghub.domain import (
     DatasetSnapshot,
+    DqTriageRecord,
     InferenceComparison,
     MonitoringEvaluation,
     RetrainingRequest,
@@ -590,6 +591,7 @@ class DurableLearningHubRepository:
     """
 
     _DATASETS = "learninghub.datasets"
+    _DQ_TRIAGE = "learninghub.dq_triage"
     _VERSIONS = "learninghub.model_versions"
     _CARDS = "learninghub.model_cards"
     _VALIDATIONS = "learninghub.validation_runs"
@@ -620,6 +622,22 @@ class DurableLearningHubRepository:
 
     def get_dataset_snapshot(self, dataset_snapshot_id: str) -> DatasetSnapshot | None:
         return self._store.get(self._DATASETS, dataset_snapshot_id)
+
+    def save_dq_triage(self, record: DqTriageRecord) -> DqTriageRecord:
+        self._store.put(
+            self._DQ_TRIAGE,
+            record.triage_id,
+            record,
+            group_key=record.dataset_snapshot_id,
+        )
+        return record
+
+    def list_dq_triages(self, dataset_snapshot_id: str | None = None) -> list[DqTriageRecord]:
+        if dataset_snapshot_id is not None:
+            records = self._store.list_by_group(self._DQ_TRIAGE, dataset_snapshot_id)
+        else:
+            records = self._store.list_all(self._DQ_TRIAGE)
+        return sorted(records, key=lambda r: r.time, reverse=True)
 
     # -- model versions ---------------------------------------------------
 
@@ -1940,6 +1958,10 @@ class DurableHeatZoneResultStore:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
     def put(
         self,
         result: HeatZoneBatchScoreResult,
@@ -2054,6 +2076,10 @@ class DurableDecisionStore:
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
 
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
+
     def save_decision(self, decision: SiteScoreDecision) -> None:
         self._store.put(self._DECISIONS, decision.decision_id, decision)
 
@@ -2081,6 +2107,10 @@ class DurableRealizedSiteStore:
 
     def __init__(self, store: SqliteDocumentStore) -> None:
         self._store = store
+
+    @property
+    def tenant_id(self) -> str:
+        return getattr(self._store, "tenant_id", "")
 
     def put(self, site: RealizedSite) -> None:
         self._store.put(self._C, site.candidate_site_id, site)

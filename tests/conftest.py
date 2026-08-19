@@ -19,6 +19,7 @@ skips these live-environment tests):
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -28,6 +29,59 @@ import pytest
 from shared.infrastructure.persistence import assisted_listing_intake as intake_migration
 
 _ENV_DSN = "INTAKE_TEST_DATABASE_URL"
+
+
+@pytest.fixture
+def temp_env(tmp_path):
+    """Provide isolated status/config/policy files for tooling tests."""
+    status_file = tmp_path / "ai-status.json"
+    config_file = tmp_path / "config.json"
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "required_status_checks": ["orchestrator", "product", "product-e2e-gate"],
+                "enforce_admins": True,
+                "required_approving_review_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_file.write_text(
+        json.dumps(
+            {
+                "github_bus": {
+                    "reviewers": {
+                        "Codex": ["codex-bot", "codex-admin"],
+                        "Claude": ["claude-bot"],
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    status_file.write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "ODP-OC-R5-012",
+                        "status": "review_approved",
+                        "reviewer": "Codex",
+                        "owner": "Antigravity",
+                    },
+                    {
+                        "id": "ODP-OC-R5-011",
+                        "status": "review",
+                        "reviewer": "Claude",
+                        "owner": "Claude",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {"status": status_file, "config": config_file, "policy": policy_file}
 
 
 def _install_pgcrypto_stub(pgserver_module) -> None:
@@ -166,6 +220,21 @@ def reset_platform_metrics():
 
 
 @pytest.fixture(autouse=True)
+def reset_feature_flags():
+    """Reset the global feature flag registry before each test.
+
+    shared.auth.feature_flags.default_registry() returns a process-wide
+    singleton so that enabling a flag through the admin API is visible to the
+    authorization engine and the job queue. That shared truth is what the
+    feature needs in production and what leaks between tests here: one test
+    enabling a high-risk flag would otherwise leave it enabled for every test
+    that runs after it in the same worker.
+    """
+    from shared.auth.feature_flags import reset_global_registry
+    reset_global_registry()
+
+
+@pytest.fixture(autouse=True)
 def patch_synthetic_dns(request, monkeypatch):
     """Ensure any test DNS lookup for synthetic.example resolves successfully.
 
@@ -184,4 +253,3 @@ def patch_synthetic_dns(request, monkeypatch):
         return original_resolve(host)
 
     monkeypatch.setattr(assisted_listing_retrieval, "_resolve_host", mock_resolve)
-

@@ -25,6 +25,22 @@ The adapter's non-secret configuration is:
 | `LEAN_SIGNAL_SECURITY_PROTOCOL` | no | Defaults to `SASL_SSL` |
 | `LEAN_SIGNAL_DEAD_LETTER_TOPIC` | no | Permanent-rejection destination |
 
+`BrokerConfig.from_mapping` resolves these edges at startup rather than leaving
+them to the adapter:
+
+- Every value is stripped, and a whitespace-only value is treated as unset. A
+  blank required setting fails; a blank `LEAN_SIGNAL_DEAD_LETTER_TOPIC` becomes
+  `None` instead of a whitespace topic name that looks configured.
+- `LEAN_SIGNAL_SECURITY_PROTOCOL` falls back to `SASL_SSL` when absent *or*
+  empty, because deployment templates commonly render an unset optional
+  variable as an empty string. Any other value is rejected; the default is the
+  strictest of the four accepted protocols.
+- `LEAN_SIGNAL_DEAD_LETTER_TOPIC` must differ from `LEAN_SIGNAL_TOPIC`.
+  Publishing permanent rejections back into the input topic would redeliver
+  them forever, so the loop is refused at startup instead of in production.
+- Bootstrap endpoints are split on `,` with blank entries dropped; at least one
+  endpoint must survive.
+
 Production composition must fail startup when required configuration, broker
 credentials, a durable receipt store, or DLQ routing is unavailable. A message
 is committed only through `ack()` after a durable completion receipt. The

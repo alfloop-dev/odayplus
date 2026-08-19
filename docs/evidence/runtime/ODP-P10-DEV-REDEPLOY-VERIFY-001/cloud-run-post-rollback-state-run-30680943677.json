@@ -1,0 +1,41 @@
+{
+  "api_service": {
+    "name": "oday-api",
+    "url": "https://oday-api-7sxbjoeozq-de.a.run.app",
+    "serving_revision": "oday-api-00005-gin",
+    "serving_percent": 100,
+    "candidate_revision": "candidate-97e3ae2e264d0025---oday-api-7sxbjoeozq-de.a.run.app",
+    "candidate_percent": 0,
+    "release_sha_label": null
+  },
+  "web_service": {
+    "name": "oday-web",
+    "url": "https://oday-web-7sxbjoeozq-de.a.run.app",
+    "serving_revision": "oday-web-00008-ws4",
+    "serving_percent": 100,
+    "candidate_revision": "candidate-97e3ae2e264d0025---oday-web-7sxbjoeozq-de.a.run.app",
+    "candidate_percent": 0,
+    "release_sha_label": null
+  },
+  "migration_job": {
+    "name": "oday-migration-r-97e3ae2e264d",
+    "status": "succeeded",
+    "execution": "oday-migration-r-97e3ae2e264d-bczn7",
+    "release_sha_label": "97e3ae2e264d00254b574d5e27ab771688f04768"
+  },
+  "scheduler_job": {
+    "name": "oday-scheduler-r-97e3ae2e264d",
+    "status": "succeeded",
+    "execution": "oday-scheduler-r-97e3ae2e264d-2nz95",
+    "release_sha_label": "97e3ae2e264d00254b574d5e27ab771688f04768"
+  },
+  "worker_job": {
+    "name": "oday-worker-r-97e3ae2e264d",
+    "status": "succeeded",
+    "execution": "oday-worker-r-97e3ae2e264d-895lx",
+    "release_sha_label": "97e3ae2e264d00254b574d5e27ab771688f04768"
+  },
+  "rejection_point": "Cloud Run candidate revisions release-aware smoke gate (platform health/readiness HTTP 503, degraded data_mode/provenance, forecastops MLflow registry missing production alias)",
+  "rollback_performed": true,
+  "target_release_sha": "97e3ae2e264d00254b574d5e27ab771688f04768"
+}

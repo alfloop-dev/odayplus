@@ -130,9 +130,50 @@ Recovery checks:
 4. Evidence exports are visible as `audit.evidence_export.v1` events and
    `audit_evidence_export_count` samples under the same `correlation_id`.
 
+## Alert delivery failure
+
+`alert_delivery_failure_count` counts pages that were raised but never
+delivered, so every sample means an incident somewhere else went unannounced.
+Treat it as **P1**: it degrades every other alert on this page.
+
+Callers that page while handling their own failure (the DLQ poison-isolation
+branch is the reference case) route through
+`shared.observability.try_trigger_alert`, which contains the delivery error and
+counts it rather than letting it pre-empt the caller's error handling. So a
+non-zero count means the underlying work *was* handled correctly — only the
+notification was lost.
+
+Handling: read the `error_class` label to separate the causes — a
+`ValueError` naming `release identity` means the deployed `RELEASE_SHA` is
+unbound or does not match `release_identity.exact_sha_binding` in
+`infra/monitoring/alerts.json`; one naming routing means a severity has no
+receiver; anything else is the notification transport. Fix the binding or the
+route, then search the same window for the alerts that were suppressed and
+triage them by hand, since they will not be re-sent.
+
+Recovery checks:
+
+1. `alert_delivery_failure_count` is no longer increasing.
+2. A test page for each affected severity reaches its receiver and carries the
+   deployed `release_sha`.
+3. Every incident whose page was lost during the outage has been triaged.
+
+## Release-SHA Dashboard Traceability & Watch-Window Receipt
+
+All production deployments tag platform metrics with the exact deployment `release_sha`.
+Cloud Monitoring dashboards in `infra/monitoring/dashboards.json` support exact `release_sha` filtering for live observability and watch-window verification.
+
+### Watch-Window Receipt Procedure
+
+1. **Watch-Window Activation**: Following deployment of SHA `release_sha`, monitor the 15-minute post-deploy watch window via `platform-health` dashboard.
+2. **Traceability Verification**: Ensure `deployment_watch_window_status` metric reports `WATCH_PASSED` for the deployed `release_sha`.
+3. **Telemetry Receipt**: Confirm `api_error_count`, `job_failure_count`, and `dlq_message_count` filtered by `release_sha` remain zero or within SLO thresholds throughout the watch window.
+4. **Audit Evidence**: Store the watch-window receipt containing `release_sha`, `watch_window_minutes`, `status`, and `timestamp` in execution evidence logs before release finalization.
+
 ## Acceptance
 
 - Covers API, frontend, job, data, model, solver and audit paths.
 - High-risk operations have an explicit mitigation.
 - Audit failure and PriceOps hard-constraint failure are treated as high severity.
 - Every alert in `infra/monitoring/alerts.json` resolves to a section here.
+- Dashboard traceability and watch-window receipt are verified against exact `release_sha`.

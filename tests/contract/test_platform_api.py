@@ -7,7 +7,11 @@ from shared.auth import Role
 
 # External-data freshness is an integration-domain read guarded by RBAC
 # (ODP-GAP-API-001); DATA_OWNER holds the integration view grant.
-_EXTERNAL_DATA_HEADERS = {"x-subject-id": "test-operator", "x-roles": Role.DATA_OWNER.value}
+_EXTERNAL_DATA_HEADERS = {
+    "x-subject-id": "test-operator",
+    "x-roles": Role.DATA_OWNER.value,
+    "x-tenant-id": "tenant-test",
+}
 
 
 def test_health_routes_publish_correlation_id() -> None:
