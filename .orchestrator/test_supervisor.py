@@ -1767,9 +1767,18 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertTrue(ok, message)
         self.assertIsNone(message)
         self.assertEqual(request.metadata["workspace_path"], str(expected_path))
-        self.assertEqual(request.metadata["status_root"], str(data_platform_root.resolve()))
+        # The worktree goes to the task's repository; the status root does not.
+        # This assertion previously pinned status_root to the data-platform
+        # checkout, which has no ai-status.json and no scripts/ai-status.sh --
+        # DPF tasks are recorded on the pantheon board. The wake prompt tells
+        # workers to run `$PANTHEON_STATUS_ROOT/scripts/ai-status.sh`, so
+        # pointing it at the code repository made every cross-repository worker
+        # unable to report status.
+        fleet_root = Path(config["paths"]["status_file"]).parents[0]
+        self.assertEqual(request.metadata["status_root"], str(fleet_root))
+        self.assertNotEqual(request.metadata["status_root"], str(data_platform_root.resolve()))
         lease = state["worker_worktrees"]["leases"]["DPF-KRN-MEAS-001"]
-        self.assertEqual(lease["status_root"], str(data_platform_root.resolve()))
+        self.assertEqual(lease["status_root"], str(fleet_root))
         self.assertEqual(lease["repo_root_source"], "repository:oday_data_platform")
         create_worktree.assert_called_once_with(
             data_platform_root.resolve(), expected_path, "task/DPF-KRN-MEAS-001", "origin/dev"
@@ -13546,6 +13555,103 @@ class OrchestratorSkillsAreScratchTests(unittest.TestCase):
             with self.subTest(status=status):
                 classification, _paths = supervisor._classify_worktree_dirt(status)
                 self.assertEqual(classification, "real")
+
+
+class CrossRepositoryWorkerStartupTests(unittest.TestCase):
+    """A worker whose workspace is in a sibling repository must still start.
+
+    Observed 2026-08-19T07:35:38Z finalizing DPF-GOV-001 from the
+    oday-data-platform worktree: `FileNotFoundError: [Errno 2] No such file or
+    directory: '.orchestrator/bin/claude'`. Both halves of that failure are
+    path resolution that only worked while every workspace happened to be the
+    pantheon checkout.
+    """
+
+    RELATIVE_CLI = ".orchestrator/bin/claude"
+    RESOLVED_CLI = "/home/lupin/odayplus/.orchestrator/bin/claude"
+
+    def test_the_launcher_is_spawned_by_absolute_path(self) -> None:
+        """`runtime.cli` is a relative config value and the worker is spawned
+        with cwd set to its workspace, so argv[0] must be the resolved form."""
+        from adapters.base import DeliveryRequest as AdapterRequest
+        from adapters.claude_cli import ClaudeCLIAdapter
+
+        config = {"providers": {"claude": {"runtime": {"cli": self.RELATIVE_CLI}}}}
+        request = AdapterRequest(
+            agent_id="claude", provider="claude", delivery_mode="claude_cli", message="wake"
+        )
+        adapter = ClaudeCLIAdapter(config=config, provider_capabilities={})
+        captured: dict = {}
+
+        def fake_spawn(_request, **kwargs):
+            captured.update(kwargs)
+            return mock.Mock(ok=True)
+
+        with (
+            mock.patch("adapters.claude_cli.configured_provider_binary", return_value=self.RESOLVED_CLI),
+            mock.patch("adapters.claude_cli.claude_auth_ready", return_value=True),
+            mock.patch.object(ClaudeCLIAdapter, "spawn_cli_delivery", side_effect=fake_spawn),
+        ):
+            adapter.deliver(request)
+
+        argv0 = captured["command"][0]
+        self.assertEqual(argv0, self.RESOLVED_CLI)
+        self.assertTrue(Path(argv0).is_absolute(), argv0)
+        self.assertNotEqual(argv0, self.RELATIVE_CLI)
+
+    def test_status_root_is_the_fleet_root_not_the_task_repository(self) -> None:
+        """The wake prompt tells workers to run
+        `$PANTHEON_STATUS_ROOT/scripts/ai-status.sh`; a sibling repository has
+        no `scripts/`, so the status root must stay with ai-status.json."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fleet_root = Path(tmpdir) / "pantheon"
+            fleet_root.mkdir()
+            other_repo = Path(tmpdir) / "oday-data-platform"
+            other_repo.mkdir()
+            config = {
+                "paths": {"status_file": str(fleet_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="claude",
+                provider="claude",
+                delivery_mode="claude_cli",
+                message="wake",
+                task_id="DPF-GOV-001",
+                reason="owned_finalize_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "worker_task_repo_root", return_value=(other_repo, "repository:oday_data_platform")),
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
+                mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)),
+                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-cross-repo",
+                    target_agent="Claude",
+                )
+
+        self.assertTrue(ok, message)
+        # The workspace is leased per repository under the worktree root...
+        self.assertIn("oday-data-platform", request.metadata["workspace_path"])
+        # ...but the status root follows ai-status.json, not the code.
+        self.assertEqual(request.metadata["status_root"], str(fleet_root))
+        self.assertNotEqual(request.metadata["status_root"], str(other_repo))
+        lease = state["worker_worktrees"]["leases"]["DPF-GOV-001"]
+        self.assertEqual(lease["status_root"], str(fleet_root))
+        self.assertEqual(write_activity_log.call_args_list[-1].args[1]["status_root"], str(fleet_root))
 
 
 if __name__ == "__main__":
