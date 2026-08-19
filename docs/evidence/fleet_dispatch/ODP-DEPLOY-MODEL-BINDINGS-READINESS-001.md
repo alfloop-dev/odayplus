@@ -28,11 +28,11 @@ The 8 failing candidate smoke checks and their root cause classification / task 
    - **Ownership / Delegation**: Owned by `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` and `ODP-PRODUCTION-MODEL-REGISTRY-001`.
 
 5. **`smoke:/platform/health:job_queue` (missing or non-worker/in-memory job queue)**:
-   - **Root cause**: `apps/api/oday_api/main.py` previously returned `queue_details = "healthy"`. `validate_cloud_run_live_deployment.py:1548` required the job queue status string to explicitly contain `"worker"`, `"cloud"`, or `"durable"`, and not contain forbidden markers.
+   - **Root cause**: `apps/api/oday_api/main.py` previously returned `queue_details = "healthy"`. `product_ops/deployment/validate_cloud_run_live_deployment.py:1873-1879` required the job queue status string to explicitly contain `"worker"`, `"cloud"`, or `"durable"`, and not contain forbidden markers.
    - **Ownership & Fix**: Owned and fixed by `ODP-DEPLOY-MODEL-BINDINGS-READINESS-001`. `apps/api/oday_api/main.py` updated to emit `queue_details = "healthy (durable postgresql job queue)"` when `bundle.is_durable` is True. Added regression test `test_real_app_platform_health_job_queue_contract` in `tests/ops/test_cloud_run_live_deployment.py`.
 
 6. **`smoke:/api/v1/operator/bootstrap:provenance` (data_mode=degraded data_source=operator-shell-production)**:
-   - **Root cause**: Bootstrap returned HTTP 200, but reported `data_mode=degraded`. This originates from `_meta.dataMode` in `modules/opsboard/application/operator_state.py` because Operator read-model sections (forecastops / model capability status) are unavailable/degraded when model bindings are unverified. Validator (`validate_cloud_run_live_deployment.py:1588`) requires `bootstrap_mode == "live"`, causing `degraded` to fail.
+   - **Root cause**: Bootstrap returned HTTP 200, but reported `data_mode=degraded`. This originates from `_meta.dataMode` in `modules/opsboard/application/operator_state.py` because Operator read-model sections (forecastops / model capability status) are unavailable/degraded when model bindings are unverified. Validator (`product_ops/deployment/validate_cloud_run_live_deployment.py:2057-2069`) requires `bootstrap_mode == "live"`, causing `degraded` to fail.
    - **Ownership / Delegation**: Consequential to model readiness / model registry completion. Owned by `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` & `ODP-PRODUCTION-MODEL-REGISTRY-001` / `ODP-OPERATOR-LIVE-PREFLIGHT-001`. Once model bindings are published to MLflow, operator state `dataMode` elevates to `live`.
 
 7. **`smoke:/api/v1/operator/bootstrap:read_provenance` (origin_kind=degraded persistence_mode=postgresql live_ready=True)**:
@@ -45,11 +45,11 @@ The 8 failing candidate smoke checks and their root cause classification / task 
 
 ### Candidate Traffic Rollback Evidence (Run 30436771086)
 
-- **Rollback Execution**: When candidate smoke validation failed with 8 non-passing checks, `scripts/deploy_cloud_run_waji.sh` executed the traffic rollback step:
-  ```bash
-  python3 scripts/deployment/cloud_run_traffic.py rollback --service oday-api ...
-  ```
-- **Traffic Shift Receipt**: 100% of live traffic was safely preserved on the prior stable revision (`oday-api-00042-xyz`). Candidate revision (`oday-api-93ae1b2e75e1056c`) was allocated 0% traffic.
+- **Rollback Execution**: When candidate smoke validation failed with 8 non-passing checks, `product_ops/deployment/deploy_cloud_run_waji.sh` executed `handle_deployment_exit()`, triggering `rollback_release_traffic()` in `product_ops/deployment/cloud_run_release_traffic.sh:65-75`.
+- **Traffic Restoration Mechanism**: For each service, `restore_service_traffic()` (`product_ops/deployment/cloud_run_release_traffic.sh:51-63`) computes target revision split arguments using `python3 product_ops/deployment/cloud_run_traffic.py restore-arg --description="${snapshot}"` and restores live traffic via `gcloud run services update-traffic "${service}" --to-revisions="${traffic}" --quiet`.
+- **Traffic Shift Receipts**:
+  - `oday-api`: 100% of live traffic was safely preserved on the stable revision (`oday-api-00005-gin=100`). Candidate revision (`oday-api-release-93ae1b2e75e1`) was allocated 0% traffic.
+  - `oday-web`: 100% of live traffic was safely preserved on the stable revision (`oday-web-00008-ws4=100`). Candidate revision (`oday-web-release-93ae1b2e75e1`) was allocated 0% traffic.
 
 ## 2. Minimum Fail-Closed Remediation
 

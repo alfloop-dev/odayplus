@@ -21,7 +21,7 @@ This directory preserves the runtime evidence, candidate smoke receipts, and rea
 
 2. **Job Queue Disambiguation**:
    - `apps/api/oday_api/main.py` updated `queue_details` from `"healthy"` to `"healthy (durable postgresql job queue)"` when `bundle.is_durable` is True.
-   - Smoke validator `validate_cloud_run_live_deployment.py` confirms durable PostgreSQL queue without misclassifying it as missing or in-memory. Regression test added to `tests/ops/test_cloud_run_live_deployment.py`.
+   - Smoke validator `product_ops/deployment/validate_cloud_run_live_deployment.py:1873-1879` confirms durable PostgreSQL queue without misclassifying it as missing or in-memory. Regression test added to `tests/ops/test_cloud_run_live_deployment.py`.
 
 3. **Operator Bootstrap Provenance (data_mode=degraded)**:
    - `smoke:/api/v1/operator/bootstrap:provenance` and `smoke:/api/v1/operator/bootstrap:read_provenance` report `data_mode=degraded` due to `_meta.dataMode` in `modules/opsboard/application/operator_state.py` when model readiness is unverified.
@@ -31,4 +31,6 @@ This directory preserves the runtime evidence, candidate smoke receipts, and rea
    - `smoke:web:/operator` status 307 delegated to `ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001`.
 
 5. **Traffic Rollback Evidence**:
-   - Deploy Dev run 30436771086 candidate smoke failure triggered automatic traffic rollback in `scripts/deploy_cloud_run_waji.sh`. Live traffic remained 100% on the stable revision and candidate revision received 0% traffic.
+   - Deploy Dev run 30436771086 candidate smoke failure triggered automatic traffic rollback via `handle_deployment_exit()` in `product_ops/deployment/deploy_cloud_run_waji.sh:143-176`.
+   - Rollback is executed by `rollback_release_traffic()` invoking `restore_service_traffic()` in `product_ops/deployment/cloud_run_release_traffic.sh:51-73`, evaluating traffic arguments with `python3 product_ops/deployment/cloud_run_traffic.py restore-arg --description="${snapshot}"` and executing `gcloud run services update-traffic`.
+   - Live traffic was restored to 100% on stable revisions (`oday-api-00005-gin=100` and `oday-web-00008-ws4=100`), while candidate revisions (`oday-api-release-93ae1b2e75e1` and `oday-web-release-93ae1b2e75e1`) received 0% traffic.

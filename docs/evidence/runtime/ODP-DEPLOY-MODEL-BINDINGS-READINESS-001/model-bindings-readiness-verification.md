@@ -17,15 +17,18 @@ The candidate smoke receipt `candidate-cloud-run-smoke-run-30436771086.json` rec
 | `smoke:/readiness:http` | `503` | `PRODUCTION_MODEL_BINDINGS_UNVERIFIED` | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` & `ODP-PRODUCTION-MODEL-REGISTRY-001` |
 | `smoke:/platform/health:live_data_mode` | `unhealthy` | Consequential to 503 response envelope | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` & `ODP-PRODUCTION-MODEL-REGISTRY-001` |
 | `smoke:/readiness:live_data_mode` | `unhealthy` | Consequential to 503 response envelope | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` & `ODP-PRODUCTION-MODEL-REGISTRY-001` |
-| `smoke:/platform/health:job_queue` | `failed` | Emitted bare "healthy"; required "durable" marker | Owned & Fixed by `ODP-DEPLOY-MODEL-BINDINGS-READINESS-001` |
+| `smoke:/platform/health:job_queue` | `failed` | Emitted bare "healthy"; required "durable" marker (`product_ops/deployment/validate_cloud_run_live_deployment.py:1873-1879`) | Owned & Fixed by `ODP-DEPLOY-MODEL-BINDINGS-READINESS-001` |
 | `smoke:/api/v1/operator/bootstrap:provenance` | `degraded` | `_meta.dataMode` degraded when model bindings unverified | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` & `ODP-PRODUCTION-MODEL-REGISTRY-001` / `ODP-OPERATOR-LIVE-PREFLIGHT-001` |
 | `smoke:/api/v1/operator/bootstrap:read_provenance` | `degraded` | `origin_kind=degraded` when model bindings unverified | `ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001` & `ODP-PRODUCTION-MODEL-REGISTRY-001` / `ODP-OPERATOR-LIVE-PREFLIGHT-001` |
 | `smoke:web:/operator` | `307` | Protected redirect validation contract | Delegated to `ODP-DEPLOY-WEB-PROTECTED-REDIRECT-001` |
 
 ### 2. Traffic Rollback Evidence (Run 30436771086)
 
-- **Rollback Execution**: Deploy Dev run 30436771086 candidate smoke failed, triggering automatic rollback in `scripts/deploy_cloud_run_waji.sh`.
-- **Outcome**: 100% of live production traffic was retained on the previous stable revision. Candidate revision received 0% traffic.
+- **Rollback Execution**: Deploy Dev run 30436771086 candidate smoke failed, triggering exit trap `handle_deployment_exit()` in `product_ops/deployment/deploy_cloud_run_waji.sh:143-176`.
+- **Traffic Restoration Mechanism**: `rollback_release_traffic()` called `restore_service_traffic()` in `product_ops/deployment/cloud_run_release_traffic.sh:51-73`, using `python3 product_ops/deployment/cloud_run_traffic.py restore-arg --description="${snapshot}"` to restore traffic via `gcloud run services update-traffic`.
+- **Outcome & Receipts**:
+  - `oday-api`: 100% of live production traffic was retained on stable revision `oday-api-00005-gin=100`; candidate revision `oday-api-release-93ae1b2e75e1` received 0% traffic.
+  - `oday-web`: 100% of live production traffic was retained on stable revision `oday-web-00008-ws4=100`; candidate revision `oday-web-release-93ae1b2e75e1` received 0% traffic.
 
 ### 3. Root Cause & Fail-Closed Behavior
 
