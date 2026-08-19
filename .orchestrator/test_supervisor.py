@@ -8873,6 +8873,68 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         ):
             self.assertTrue(supervisor._detached_head_is_merged(repo, wt, ["origin/dev"]))
 
+    def _claim_case(self, worker: dict, *, clean: bool = True):
+        base = Path("/tmp/wt").resolve()
+        record_path = str(base / "task-x")
+        records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
+        status_proc = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="" if clean else " M f.py\n", stderr=""
+        )
+        remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        runs = {
+            ("git", "branch", "--merged"): merged_proc,
+            ("git", "-C", record_path, "status", "--porcelain"): status_proc,
+            ("git", "-C", "/repo", "worktree", "remove", record_path): remove_ok,
+        }
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state = {"workers": {"r-1": {**worker, "workspace_path": record_path}}}
+        ctx = [
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ]
+        return config, state, ctx
+
+    def test_finished_worker_does_not_hold_its_worktree(self) -> None:
+        """A record that can never run again must not reserve a checkout.
+
+        Every worker record used to claim its workspace regardless of status, so a
+        `completed` or `failed` worker kept its worktree until `max_worker_history`
+        evicted the record. Observed live: 200 records (142 completed, 45 failed,
+        12 superseded) holding every reclaimable worktree, with the pruner running
+        on schedule and removing nothing.
+        """
+        for status in ("completed", "failed", "superseded", "reassigned", "retried"):
+            with self.subTest(status=status):
+                config, state, ctx = self._claim_case({"status": status})
+                with contextlib.ExitStack() as stack:
+                    for c in ctx:
+                        stack.enter_context(c)
+                    self.assertTrue(supervisor.prune_orphan_worktrees(config, state))
+
+    def test_active_worker_still_holds_its_worktree(self) -> None:
+        for status in sorted(runtime_state.ACTIVE_WORKER_STATUSES):
+            with self.subTest(status=status):
+                config, state, ctx = self._claim_case({"status": status})
+                with contextlib.ExitStack() as stack:
+                    for c in ctx:
+                        stack.enter_context(c)
+                    self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
+
+    def test_dropping_the_claim_does_not_bypass_the_dirty_guard(self) -> None:
+        config, state, ctx = self._claim_case({"status": "completed"}, clean=False)
+        with contextlib.ExitStack() as stack:
+            for c in ctx:
+                stack.enter_context(c)
+            self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
+
     def test_skips_worktree_claimed_by_active_worker(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
@@ -8882,7 +8944,9 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             ("git", "branch", "--merged"): merged_proc,
         }
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
-        state = {"workers": {"r-1": {"workspace_path": record_path}}}
+        # Status matters now: without one this fixture could not tell "any worker
+        # claims" from "an active worker claims", which is how the gap survived.
+        state = {"workers": {"r-1": {"status": "running", "workspace_path": record_path}}}
         with (
             mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),

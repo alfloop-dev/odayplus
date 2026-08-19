@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from runtime_state import ACTIVE_WORKER_STATUSES
+
 
 def _supervisor_module():
     import supervisor
@@ -2332,8 +2334,25 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
         return False
     repo_root = config_path(config, "status_file").parents[0]
 
+    # Only a worker that can still USE its workspace holds a claim on it.
+    #
+    # This used to claim for every record in state["workers"] regardless of
+    # status, so a `completed` or `failed` worker kept its worktree reserved for
+    # as long as its record survived -- which is until `max_worker_history`
+    # (200) evicts it. Observed on a live host: 200 worker records, 142
+    # completed / 45 failed / 12 superseded, and every single reclaimable
+    # worktree held by one of them. The pruner ran on schedule and removed
+    # nothing.
+    #
+    # `test_skips_worktree_claimed_by_active_worker` already names the intended
+    # rule; its fixture just never set a status, so it could not tell the two
+    # readings apart. Dropping a finished worker's claim is safe because the
+    # guards that follow are the ones carrying the real risk: an unmerged branch
+    # or detached HEAD, a dirty tree, and a live process are all still refused.
     claimed_paths: set[Path] = set()
     for worker in state.get("workers", {}).values():
+        if str(worker.get("status") or "").strip().lower() not in ACTIVE_WORKER_STATUSES:
+            continue
         wp = worker.get("workspace_path")
         if not wp:
             continue
