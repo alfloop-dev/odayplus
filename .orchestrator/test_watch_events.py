@@ -97,7 +97,7 @@ class WatcherBookkeepingTests(unittest.TestCase):
             mock.patch.object(watch_events, "queue_delivery_event", side_effect=AssertionError("watcher should not queue runtime events")),
             mock.patch.object(watch_events, "save_runtime_state"),
         ):
-            changed = watch_events.run_scan(config, state, replay=False, provider_capabilities={})
+            changed = watch_events.run_scan(config, state, replay=False)
 
         self.assertFalse(changed)
         self.assertEqual(state["tasks"]["P3-001"]["status"], "in_progress")
