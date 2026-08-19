@@ -1510,6 +1510,12 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
 _REUSABLE_DIRTY_PREFIXES = (
     ".orchestrator/task-briefs/",
     ".orchestrator/reviews/",
+    # Orchestrator-owned reference material. `worker_tree_guard.blocking_globs`
+    # already forbids a worker from modifying `.orchestrator/skills/**`, so an
+    # untracked copy of it is never deliverable work. A repository that does not
+    # track these files gets one per worker that follows its brief, and treating
+    # them as real dirt blocked the lease permanently: DPF-GOV-001 was refused on
+    # a worktree already sitting at its exact reviewer-approved head.
     ".orchestrator/skills/",
 )
 _REUSABLE_CONTEXT_FILES = (
