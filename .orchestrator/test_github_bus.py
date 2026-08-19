@@ -2007,5 +2007,52 @@ class ApprovedTaskAutoMergeTests(unittest.TestCase):
         request.assert_called_once()
 
 
+class GhBinaryResolutionTests(unittest.TestCase):
+    """The real CLI wins; `.orchestrator/bin/gh` is only a last resort.
+
+    That file is a broker shim, not the real CLI
+    (delivery_toolchain/git/README.md). task_finalize.sh,
+    check_pr_merge_eligibility.py, apply_branch_protection.py and ai_status.py all
+    discard a `gh` that resolves into `.orchestrator/bin/`; the bus was the one
+    consumer that actively preferred it, which is how a shim that could not resolve
+    its own target took the GitHub bus down while every other caller kept working.
+    """
+
+    def _vendored(self, root: Path) -> Path:
+        vendored = root / ".orchestrator" / "bin" / "gh"
+        vendored.parent.mkdir(parents=True, exist_ok=True)
+        vendored.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+        vendored.chmod(0o755)
+        return vendored
+
+    def test_system_gh_wins_even_when_the_shim_is_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._vendored(root)
+            with (
+                mock.patch.object(github_bus, "ROOT", root),
+                mock.patch.object(github_bus, "command_exists", return_value="/usr/bin/gh"),
+            ):
+                self.assertEqual(github_bus.resolve_gh_binary(), "/usr/bin/gh")
+
+    def test_shim_is_used_only_when_no_real_cli_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            vendored = self._vendored(root)
+            with (
+                mock.patch.object(github_bus, "ROOT", root),
+                mock.patch.object(github_bus, "command_exists", return_value=None),
+            ):
+                self.assertEqual(github_bus.resolve_gh_binary(), str(vendored))
+
+    def test_returns_none_when_nothing_is_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(github_bus, "ROOT", Path(tmpdir)),
+                mock.patch.object(github_bus, "command_exists", return_value=None),
+            ):
+                self.assertIsNone(github_bus.resolve_gh_binary())
+
+
 if __name__ == "__main__":
     unittest.main()
