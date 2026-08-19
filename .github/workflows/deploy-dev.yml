@@ -218,9 +218,19 @@ jobs:
               raise SystemExit("minted token audience mismatch")
           if subject != os.environ["ODP_OPERATOR_SMOKE_SUBJECT"]:
               raise SystemExit("minted token subject does not match configured smoke subject")
-          role = os.environ["ODP_OPERATOR_SMOKE_ROLE"].replace("-", "_")
-          if role not in bindings.get(subject, []):
-              raise SystemExit("minted token subject has no configured smoke role binding")
+          configured_roles = [
+              r.strip().replace("-", "_")
+              for r in os.environ["ODP_OPERATOR_SMOKE_ROLE"].split(",")
+              if r.strip()
+          ]
+          if not configured_roles:
+              raise SystemExit("no operator smoke roles configured")
+          subject_bindings = set(bindings.get(subject, []))
+          missing_roles = [r for r in configured_roles if r not in subject_bindings]
+          if missing_roles:
+              raise SystemExit(
+                  f"minted token subject missing configured smoke role binding(s): {', '.join(missing_roles)}"
+              )
           PY
           echo "ODP_OPERATOR_SMOKE_BEARER_TOKEN=${token}" >> "${GITHUB_ENV}"
 

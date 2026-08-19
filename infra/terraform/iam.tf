@@ -117,6 +117,20 @@ resource "google_service_account_iam_member" "github_deployer_wif" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/alfloop-dev/odayplus"
 }
 
+resource "google_service_account" "smoke_operator" {
+  account_id   = "oday-dev-smoke-operator"
+  display_name = "ODay Dev Smoke Operator Service Account"
+  description  = "Short-lived operator identity for post-deploy smoke and live E2E verification."
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_service_account_iam_member" "github_deployer_token_creator_smoke_operator" {
+  service_account_id = google_service_account.smoke_operator.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
 resource "google_project_iam_member" "github_deployer_run_admin" {
   project = var.project_id
   role    = "roles/run.admin"

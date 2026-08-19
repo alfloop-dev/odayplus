@@ -43,7 +43,6 @@ class AuthBoundaryConfig:
         default_factory=dict
     )
 
-
     @property
     def is_configured(self) -> bool:
         """True only when the live IdP inputs required to verify a token exist."""

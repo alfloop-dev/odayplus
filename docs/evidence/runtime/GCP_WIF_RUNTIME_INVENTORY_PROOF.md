@@ -104,15 +104,68 @@ GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
     workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
     service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
-- name: Live runtime preflight validation
+- name: Mint short-lived operator smoke identity token
   env:
-    ODP_OPERATOR_SMOKE_BEARER_TOKEN: ${{ secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN }}
+    ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
+    ODP_AUTH_SUBJECT_ROLE_BINDINGS: ${{ vars.ODP_AUTH_SUBJECT_ROLE_BINDINGS }}
+    ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
+    ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT: ${{ vars.ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT }}
+    ODP_OPERATOR_SMOKE_SUBJECT: ${{ vars.ODP_OPERATOR_SMOKE_SUBJECT }}
+  shell: bash
+  run: |
+    set -euo pipefail
+    access_token="$(gcloud auth print-access-token)"
+    request_body="$(python3 -c \
+      'import json, os; print(json.dumps({"audience": os.environ["ODP_AUTH_AUDIENCES"], "includeEmail": True}))')"
+    response="$(curl --fail-with-body --silent --show-error \
+      --request POST \
+      --header "Authorization: Bearer ${access_token}" \
+      --header "Content-Type: application/json" \
+      --data "${request_body}" \
+      "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}:generateIdToken")"
+    token="$(RESPONSE="${response}" python3 -c \
+      'import json, os; print(json.loads(os.environ["RESPONSE"])["token"])')"
+    echo "::add-mask::${token}"
+    TOKEN="${token}" python3 - <<'PY'
+    import base64, json, os
+    payload = os.environ["TOKEN"].split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload))
+    bindings = json.loads(os.environ["ODP_AUTH_SUBJECT_ROLE_BINDINGS"])
+    subject = str(claims.get("sub", ""))
+    if claims.get("aud") != os.environ["ODP_AUTH_AUDIENCES"]:
+        raise SystemExit("minted token audience mismatch")
+    if subject != os.environ["ODP_OPERATOR_SMOKE_SUBJECT"]:
+        raise SystemExit("minted token subject does not match configured smoke subject")
+    configured_roles = [
+        r.strip().replace("-", "_")
+        for r in os.environ["ODP_OPERATOR_SMOKE_ROLE"].split(",")
+        if r.strip()
+    ]
+    if not configured_roles:
+        raise SystemExit("no operator smoke roles configured")
+    subject_bindings = set(bindings.get(subject, []))
+    missing_roles = [r for r in configured_roles if r not in subject_bindings]
+    if missing_roles:
+        raise SystemExit(
+            f"minted token subject missing configured smoke role binding(s): {', '.join(missing_roles)}"
+        )
+    PY
+    echo "ODP_OPERATOR_SMOKE_BEARER_TOKEN=${token}" >> "${GITHUB_ENV}"
+
+- name: Live runtime preflight validation
   run: |
     python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
       --environment dev \
       --release-sha "${ODAY_RELEASE_SHA}" \
       --output .odp_data/deployment/cloud-run-preflight.json
 ```
+
+#### Mint Step Verification & Masking Flow
+1. **Dynamic Minting**: The workflow mints an ephemeral OIDC identity token for `ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT` via Cloud IAM Credentials API (`:generateIdToken`), impersonating `github-deployer` authenticated via WIF.
+2. **Runner Secret Masking**: The minted token is registered with `::add-mask::` to prevent leakage in workflow logs.
+3. **Fail-Closed Claims & Composite Roles Validation**: Audience, numeric OIDC subject (`ODP_OPERATOR_SMOKE_SUBJECT`), and composite smoke roles (`ODP_OPERATOR_SMOKE_ROLE` against `ODP_AUTH_SUBJECT_ROLE_BINDINGS`) are verified before export.
+4. **Environment Export**: The token is written to `GITHUB_ENV` as `ODP_OPERATOR_SMOKE_BEARER_TOKEN` for downstream deployment validation steps without relying on static repository secrets.
 
 ---
 
@@ -223,6 +276,7 @@ ERROR: (gcloud.iam.workload-identity-pools.list) PERMISSION_DENIED: Request had 
 | `roles/secretmanager.secretAccessor` | Secret (`google_secret_manager_secret_iam_member`) | `projects/alfaloop-data-project/secrets/*` (`infra/terraform/iam.tf:25-62`) | Fetch secret payloads during build and execution without broad secret admin access |
 | `roles/storage.objectUser` | GCS Bucket (`google_storage_bucket_iam_member`) | `buckets/oday-dev-artifacts-alfaloop-data-project`, `buckets/oday-dev-source-snapshots-alfaloop-data-project` (`infra/terraform/iam.tf:64-74`) | Upload and manage artifacts and source snapshots in Cloud Storage |
 | `roles/iam.workloadIdentityUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:114`) | Grant WIF pool subject `principalSet://iam.googleapis.com/.../attribute.repository/alfloop-dev/odayplus` token exchange authority |
+| `roles/iam.serviceAccountTokenCreator` | Service Account (`google_service_account_iam_member`) | `serviceAccount:oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:127-131`) | Allow `github-deployer` to mint short-lived OIDC ID tokens on `oday-dev-smoke-operator` via `:generateIdToken` for smoke validation and post-promotion live E2E gates |
 
 ---
 
@@ -272,6 +326,20 @@ resource "google_service_account_iam_member" "github_deployer_wif" {
   role               = "roles/iam.workloadIdentityUser"
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/alfloop-dev/odayplus"
 }
+
+resource "google_service_account" "smoke_operator" {
+  account_id   = "oday-dev-smoke-operator"
+  display_name = "ODay Dev Smoke Operator Service Account"
+  description  = "Short-lived operator identity for post-deploy smoke and live E2E verification."
+
+  depends_on = [google_project_service.required]
+}
+
+resource "google_service_account_iam_member" "github_deployer_token_creator_smoke_operator" {
+  service_account_id = google_service_account.smoke_operator.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.github_deployer.email}"
+}
 ```
 
 ### 4.2 Cloud SQL PostgreSQL (`infra/terraform/database.tf`)
@@ -305,6 +373,7 @@ resource "google_service_account_iam_member" "github_deployer_wif" {
 ### 4.5 Service Accounts (`infra/terraform/main.tf`, `infra/terraform/iam.tf`, `infra/terraform/audit/main.tf`)
 
 - **GitHub Deployer**: `github-deployer@alfaloop-data-project.iam.gserviceaccount.com`
+- **Smoke Operator**: `oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com`
 - **API Runtime**: `oday-dev-runtime@alfaloop-data-project.iam.gserviceaccount.com`
 - **Web BFF**: `oday-dev-web@alfaloop-data-project.iam.gserviceaccount.com`
 - **Async Worker**: `oday-dev-worker@alfaloop-data-project.iam.gserviceaccount.com`
@@ -380,7 +449,7 @@ git diff --check origin/dev
 
 - [x] **GitHub dev environment WIF variables configured & enforced**: `GCP_PROJECT_ID`, `GCP_REGION`, `GCP_AR_REPO`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, and `GCP_SERVICE_ACCOUNT` are set & verified live in `dev` via `gh` CLI/REST API, and strictly enforced in `.github/workflows/deploy-dev.yml`. *Note: GitHub environment variables being present/enforced is NOT a working WIF runtime while STS token exchange fails.*
 - [x] **End-to-End Live WIF Token Exchange & Cloud Auth**: GitHub Actions Run `30274418972`, Job `90004795162`, passed the non-mutating WIF gate at exact head `89619f49`: OIDC token exchange, deployer impersonation, active-account match, and project read visibility all succeeded. Runs `30208352187` and `30209380683` remain recorded as historical failures against the retired target.
-- [x] **GCP deploy identity least-privilege roles declared & contract-verified**: Reconciled with GCP IAM resource-level binding semantics (project, AR repo, service account, SQL, secret, GCS bucket) including `roles/run.admin` and `roles/cloudscheduler.admin` for `deploy_cloud_run_waji.sh` operations, validated by `infra/terraform/validate_contract.py`.
+- [x] **GCP deploy identity least-privilege roles declared & contract-verified**: Reconciled with GCP IAM resource-level binding semantics (project, AR repo, service account, SQL, secret, GCS bucket) including `roles/run.admin`, `roles/cloudscheduler.admin`, and `roles/iam.serviceAccountTokenCreator` on `oday-dev-smoke-operator` for `generateIdToken` operations, validated by `infra/terraform/validate_contract.py`.
 - [x] **Required Cloud Run/SQL/GCS/MLflow/provider resources are inventoried**: Fully inventoried matching Terraform HCL definitions.
 - [x] **No long-lived GCP_SA_KEY is introduced**: WIF is strictly enforced, `GCP_SA_KEY` fallback removed from `.github/workflows/deploy-dev.yml`.
 - [x] **Exact commands and redacted evidence are committed**: Captured in `docs/evidence/runtime/GCP_WIF_RUNTIME_INVENTORY_PROOF.md`.
