@@ -7,7 +7,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import DeliveryRequest
-from common import parse_iso_timestamp
+from common import (
+    claude_model_selection_args,
+    parse_iso_timestamp,
+    spawn_background_process,
+)
+from provider_runtime import configured_provider_binary
 import status_transition
 
 
@@ -22,6 +27,7 @@ def _sync_supervisor_scope() -> None:
     excluded = {
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
+        "claude_model_selection_args", "configured_provider_binary", "spawn_background_process",
     }
     module_exports = {
         "__all__",
@@ -2397,6 +2403,7 @@ def resume_claude_worker(
         command.append("--verbose")
     if runtime.get("include_hook_events", True):
         command.append("--include-hook-events")
+    command.extend(claude_model_selection_args(runtime))
     allowed_tools = (
         _claude_resume_allowed_tools(approval)
         if runtime.get("resume_use_allowed_tools_from_approval", True)

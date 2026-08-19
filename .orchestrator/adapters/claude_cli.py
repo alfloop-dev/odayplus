@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from common import (
     claude_auth_ready,
+    claude_model_selection_args,
     config_path,
     delivery_workspace_root,
     shell_quote,
@@ -118,6 +119,7 @@ class ClaudeCLIAdapter(FileInboxAdapter):
             command.append("--verbose")
         if runtime.get("include_hook_events", True):
             command.append("--include-hook-events")
+        command.extend(claude_model_selection_args(runtime))
 
         provider_info = (
             (self.provider_capabilities or {}).get("providers", {}).get(provider_id)

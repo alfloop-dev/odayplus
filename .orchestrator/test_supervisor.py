@@ -34,6 +34,7 @@ os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 import ai_status
 import runtime_state
 import supervisor
+import worker_failure_policy
 
 
 def tearDownModule() -> None:
@@ -12511,6 +12512,70 @@ class AgentLoadBalancingTests(unittest.TestCase):
         )
 
         self.assertEqual(chosen, "Antigravity3")
+
+
+class ClaudeResumeModelSelectionTests(unittest.TestCase):
+    """A resumed worker used to fall back to the interactive model setting.
+
+    `resume_claude_worker` builds its own command line, separate from the
+    adapter's. Without `--model`/`--effort` the resumed process reads
+    ~/.claude/settings.json instead, so a worker that started on the
+    configured model could silently finish on a different one — and the
+    prompt cache, which is model-scoped, would be thrown away mid-run.
+    """
+
+    def _resume(self, runtime_extra: dict[str, Any]) -> list[str]:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = {
+                "paths": {
+                    "state_file": str(root / "state.json"),
+                    "status_file": str(root / "ai-status.json"),
+                },
+                "providers": {
+                    "claude": {
+                        "runtime": {
+                            "cli": ".orchestrator/bin/claude",
+                            "output_format": "stream-json",
+                            "include_hook_events": True,
+                            **runtime_extra,
+                        }
+                    }
+                },
+            }
+            worker = {"run_id": "run-1", "session_id": "sess-1", "agent_id": "claude"}
+            fake_process = mock.Mock(pid=4321)
+
+            with (
+                mock.patch.object(
+                    worker_failure_policy,
+                    "configured_provider_binary",
+                    return_value=".orchestrator/bin/claude",
+                ),
+                mock.patch.object(
+                    worker_failure_policy,
+                    "spawn_background_process",
+                    return_value=(fake_process, root / "claude.log"),
+                ) as spawn,
+            ):
+                result = worker_failure_policy.resume_claude_worker(config, worker, {})
+
+        self.assertIsNotNone(result)
+        self.assertTrue(spawn.called)
+        self.assertEqual(spawn.call_count, 1)
+        return list(result["command"])
+
+    def test_resume_carries_configured_model_and_effort(self) -> None:
+        command = self._resume({"model": "sonnet", "effort": "medium"})
+
+        self.assertEqual(command[command.index("--model") + 1], "sonnet")
+        self.assertEqual(command[command.index("--effort") + 1], "medium")
+
+    def test_resume_omits_flags_when_unset(self) -> None:
+        command = self._resume({})
+
+        self.assertNotIn("--model", command)
+        self.assertNotIn("--effort", command)
 
 
 class ApprovedPrMergeRoutingTests(unittest.TestCase):
