@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-copilot_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/copilot-linux-x64-*/package/copilot 2>/dev/null | sort -V | tail -n1)"
-if [[ -z "${copilot_bin}" ]]; then
+# Resolve the newest vendored Copilot CLI.
+#
+# See .orchestrator/bin/gh for why this must not be written as
+# `copilot_bin="$(ls -d ... 2>/dev/null | sort -V | tail -n1)"`: under
+# `set -euo pipefail` that form aborts the script at the assignment on a
+# non-matching glob, so the message below never prints and the wrapper exits
+# silently -- defeating the orchestrator's provider_unavailable detection.
+shopt -s nullglob
+candidates=("$HOME"/.local/share/pantheon-orchestrator-tools/copilot-linux-x64-*/package/copilot)
+shopt -u nullglob
+
+copilot_bin=""
+if (( ${#candidates[@]} )); then
+  copilot_bin="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -n1)"
+fi
+
+if [[ -z "${copilot_bin}" || ! -x "${copilot_bin}" ]]; then
   echo "Copilot CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
   exit 1
 fi
