@@ -13018,9 +13018,9 @@ class OrchestratorSkillsAreScratchTests(unittest.TestCase):
 
     def test_seeded_skill_files_classify_as_scratch(self) -> None:
         status = (
-            "?? .orchestrator/skills/task-closeout-finalization.md\0"
-            "?? .orchestrator/skills/worker-anchor-commit.md\0"
-        ).encode()
+            b"?? .orchestrator/skills/task-closeout-finalization.md\0"
+            b"?? .orchestrator/skills/worker-anchor-commit.md\0"
+        )
 
         classification, paths = supervisor._classify_worktree_dirt(status)
 
@@ -13029,10 +13029,10 @@ class OrchestratorSkillsAreScratchTests(unittest.TestCase):
 
     def test_they_mix_with_the_other_scratch_prefixes(self) -> None:
         status = (
-            "?? .orchestrator/skills/worker-anchor-commit.md\0"
-            "?? .orchestrator/task-briefs/T-1.md\0"
-            "?? ai-status.json\0"
-        ).encode()
+            b"?? .orchestrator/skills/worker-anchor-commit.md\0"
+            b"?? .orchestrator/task-briefs/T-1.md\0"
+            b"?? ai-status.json\0"
+        )
 
         classification, _paths = supervisor._classify_worktree_dirt(status)
 
