@@ -13024,5 +13024,48 @@ class WorkerTaskBranchFromRecordTests(unittest.TestCase):
             self.assertEqual(supervisor.canonical_task_record({}, "T-9", snapshot), snapshot)
 
 
+class OrchestratorSkillsAreScratchTests(unittest.TestCase):
+    """Orchestrator-owned reference material must not block a lease.
+
+    `worker_tree_guard.blocking_globs` already forbids a worker from modifying
+    `.orchestrator/skills/**`, so an untracked copy of it is never deliverable
+    work. A repository that does not track those files gets one per worker that
+    follows its brief; counting them as real dirt refused DPF-GOV-001 a lease on
+    a worktree already at its exact reviewer-approved head.
+    """
+
+    def test_seeded_skill_files_classify_as_scratch(self) -> None:
+        status = (
+            b"?? .orchestrator/skills/task-closeout-finalization.md\0"
+            b"?? .orchestrator/skills/worker-anchor-commit.md\0"
+        )
+
+        classification, paths = supervisor._classify_worktree_dirt(status)
+
+        self.assertEqual(classification, "scratch_only")
+        self.assertEqual(len(paths), 2)
+
+    def test_they_mix_with_the_other_scratch_prefixes(self) -> None:
+        status = (
+            b"?? .orchestrator/skills/worker-anchor-commit.md\0"
+            b"?? .orchestrator/task-briefs/T-1.md\0"
+            b"?? ai-status.json\0"
+        )
+
+        classification, _paths = supervisor._classify_worktree_dirt(status)
+
+        self.assertEqual(classification, "scratch_only")
+
+    def test_real_work_is_still_real(self) -> None:
+        for status in (
+            b"?? src/feature.py\0",
+            b" M .orchestrator/skills/worker-anchor-commit.md\0",
+            b"?? .orchestrator/skills/worker-anchor-commit.md\0?? src/feature.py\0",
+        ):
+            with self.subTest(status=status):
+                classification, _paths = supervisor._classify_worktree_dirt(status)
+                self.assertEqual(classification, "real")
+
+
 if __name__ == "__main__":
     unittest.main()
