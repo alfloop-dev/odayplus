@@ -2085,12 +2085,20 @@ def prepare_worker_workspace(
             )
             return False, message
 
+    # The workspace is the task's own repository; the status root is not. It
+    # names the fleet that owns ai-status.json, the approval queue and the
+    # permission rules -- always the pantheon checkout. Setting it to the task's
+    # repository was invisible while every task lived here, because the two
+    # coincided. For a cross-repository task they diverge, and the wake prompt
+    # then tells the worker to run `$PANTHEON_STATUS_ROOT/scripts/ai-status.sh`
+    # inside a repository that has no `scripts/` at all.
+    fleet_root = config_path(config, "status_file").parents[0]
     request.metadata.update(
         {
             "workspace_mode": "isolated_worktree",
             "workspace_path": str(worktree_path),
             "workspace_branch": branch,
-            "status_root": str(repo_root),
+            "status_root": str(fleet_root),
         }
     )
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
@@ -2100,7 +2108,7 @@ def prepare_worker_workspace(
         "workspace_task_id": workspace_task_id,
         "branch": branch,
         "path": str(worktree_path),
-        "status_root": str(repo_root),
+        "status_root": str(fleet_root),
         "repo_root_source": repo_root_source,
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
@@ -2119,7 +2127,7 @@ def prepare_worker_workspace(
             "queue_event_id": queue_event_id,
             "workspace_branch": branch,
             "workspace_path": str(worktree_path),
-            "status_root": str(repo_root),
+            "status_root": str(fleet_root),
         },
     )
     return True, None
