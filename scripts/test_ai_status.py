@@ -5688,5 +5688,42 @@ class ReviewGateHeadDriftTests(unittest.TestCase):
         self.assertFalse(ai_status.review_gate_head_drifted({"review_gate_sha": "a" * 40}))
 
 
+class TextNamesTaskIdTests(unittest.TestCase):
+    """The finalize traceability gate must match a task id, not a prefix of one.
+
+    Sidecar ids are their parent's id plus a suffix, so a containment test lets
+    a sidecar's commit satisfy the parent's gate.
+    """
+
+    PARENT = "ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001"
+    SIDECAR = "ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001-SIDECAR-REVIEW"
+
+    def test_subject_naming_the_task_matches(self) -> None:
+        self.assertTrue(
+            ai_status.text_names_task_id(f"{self.PARENT}: validate finalize metadata", self.PARENT)
+        )
+        self.assertTrue(
+            ai_status.text_names_task_id(f"[ReviewBus] {self.PARENT} wire writer", self.PARENT)
+        )
+        self.assertTrue(ai_status.text_names_task_id("(P1-001) tidy", "P1-001"))
+
+    def test_sidecar_commit_does_not_satisfy_its_parent(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id(f"{self.SIDECAR}: add packet", self.PARENT))
+        self.assertFalse(
+            ai_status.text_names_task_id(f"[ReviewBus] {self.SIDECAR} prepare", self.PARENT)
+        )
+
+    def test_sidecar_still_satisfies_itself(self) -> None:
+        self.assertTrue(ai_status.text_names_task_id(f"{self.SIDECAR}: add packet", self.SIDECAR))
+
+    def test_numeric_suffix_is_not_a_match(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id("P1-0011: something", "P1-001"))
+
+    def test_unrelated_or_empty_text_does_not_match(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id("fix(x): unrelated", self.PARENT))
+        self.assertFalse(ai_status.text_names_task_id("", self.PARENT))
+        self.assertFalse(ai_status.text_names_task_id(f"{self.PARENT}: x", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
