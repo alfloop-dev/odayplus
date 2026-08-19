@@ -190,6 +190,20 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     return route, f"scope={scope}"
 
 
+def merge_route_blocked_message(task_id: str, detail: str) -> str:
+    """The one sentence both routing passes use for an unroutable green PR.
+
+    The pre-pass and the per-agent dispatch loop both route the same task in
+    the same tick.  If they worded this differently they would overwrite each
+    other's `next` every tick, and the "only report a changed reason" guard
+    would fire on every pass instead of once.
+    """
+    return (
+        f"PR for task {task_id} is CI-green but could not be routed to a merge "
+        f"path ({detail}); finalize dispatch is deferred."
+    )
+
+
 def advance_approved_prs_to_merge(
     config: dict[str, Any],
     status: dict[str, Any],
@@ -249,6 +263,24 @@ def advance_approved_prs_to_merge(
                 ),
                 clear_approval=True,
             ):
+                changed = True
+            continue
+        elif route == "blocked":
+            # Nothing downstream retries an unroutable PR, so staying quiet
+            # parks the task in review_approved with no stated reason and no
+            # way to find it short of running the classifier by hand.  Say it
+            # once, and again only when the reason itself changes.
+            msg = merge_route_blocked_message(task_id, detail)
+            if task.get("next") != msg:
+                task["next"] = msg
+                write_activity_log(
+                    config,
+                    {
+                        "type": "merge_route_blocked",
+                        "task_id": task_id,
+                        "message": msg,
+                    },
+                )
                 changed = True
             continue
         else:
@@ -1280,10 +1312,7 @@ def dispatch_ready_tasks(
                             f"merge queue ({detail}); approved branch head remains immutable."
                         )
                     elif route == "blocked":
-                        msg = (
-                            f"PR for task {task_id} is CI-green but could not be routed to a merge "
-                            f"path ({detail}); finalize dispatch is deferred."
-                        )
+                        msg = merge_route_blocked_message(task_id, detail)
                     else:
                         msg = (
                             f"PR for task {task_id} is CI-green and awaiting merge queue; "

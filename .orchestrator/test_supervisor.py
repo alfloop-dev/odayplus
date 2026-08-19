@@ -12687,6 +12687,106 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class UnroutableApprovedPrIsReportedTests(unittest.TestCase):
+    """A PR we cannot route must say so on the board.
+
+    Nothing downstream retries it, so staying quiet parks the task in
+    review_approved with no stated reason and no way to find the cause short
+    of running the scope classifier by hand.
+    """
+
+    HEAD = "1111111122222222333333334444444455555555"
+
+    def _advance(self, task, *, route, detail="unreadable diff"):
+        import dispatch_engine
+
+        status = {"tasks": [task]}
+        logged: list[dict] = []
+        with unittest.mock.patch.object(
+            dispatch_engine, "route_approved_pr_to_merge", return_value=(route, detail)
+        ), unittest.mock.patch.object(
+            dispatch_engine, "runtime_ai_status", create=True
+        ) as runtime, unittest.mock.patch.object(
+            dispatch_engine,
+            "write_activity_log",
+            create=True,
+            side_effect=lambda _config, event: logged.append(event),
+        ), unittest.mock.patch.object(
+            dispatch_engine,
+            "commit_canonical_task_transition",
+            create=True,
+            return_value=True,
+        ):
+            runtime.task_pr_ci_status.return_value = ("OPEN", "success")
+            changed = dispatch_engine.advance_approved_prs_to_merge(
+                {}, status, {"review_approved"}
+            )
+        return changed, logged
+
+    def _task(self) -> dict:
+        return {
+            "id": "T-BLOCKED",
+            "status": "review_approved",
+            "pr_number": 51,
+            "approved_head": self.HEAD,
+        }
+
+    def test_unroutable_pr_states_the_reason_on_the_task(self) -> None:
+        task = self._task()
+
+        changed, logged = self._advance(task, route="blocked")
+
+        self.assertTrue(changed)
+        self.assertIn("could not be routed", task["next"])
+        self.assertIn("unreadable diff", task["next"])
+        self.assertEqual([event["type"] for event in logged], ["merge_route_blocked"])
+        self.assertEqual(logged[0]["task_id"], "T-BLOCKED")
+
+    def test_unchanged_reason_is_not_reported_every_tick(self) -> None:
+        task = self._task()
+
+        self._advance(task, route="blocked")
+        changed, logged = self._advance(task, route="blocked")
+
+        self.assertFalse(changed)
+        self.assertEqual(logged, [])
+
+    def test_a_new_reason_is_reported_again(self) -> None:
+        task = self._task()
+
+        self._advance(task, route="blocked")
+        changed, logged = self._advance(task, route="blocked", detail="gh is offline")
+
+        self.assertTrue(changed)
+        self.assertIn("gh is offline", task["next"])
+        self.assertEqual([event["type"] for event in logged], ["merge_route_blocked"])
+
+    def test_routine_waiting_stays_quiet(self) -> None:
+        for detail in ("already routed", "no PR number recorded"):
+            with self.subTest(detail=detail):
+                task = self._task()
+
+                changed, logged = self._advance(task, route="waiting", detail=detail)
+
+                self.assertFalse(changed)
+                self.assertEqual(logged, [])
+                self.assertNotIn("next", task)
+
+    def test_both_routing_passes_word_the_block_identically(self) -> None:
+        """The pre-pass and the per-agent dispatch loop route the same task in
+        the same tick.  Divergent wording would make each pass overwrite the
+        other's `next` every tick, so the reason must have exactly one
+        definition that both of them call."""
+        import pathlib
+
+        import dispatch_engine
+
+        source = pathlib.Path(dispatch_engine.__file__).read_text(encoding="utf-8")
+
+        self.assertEqual(source.count("could not be routed"), 1)
+        self.assertEqual(source.count("merge_route_blocked_message(task_id, detail)"), 2)
+
+
 class FleetDispatchLivelockTests(unittest.TestCase):
     """The three faults that left the fleet idle for ten hours on 2026-08-17.
 
