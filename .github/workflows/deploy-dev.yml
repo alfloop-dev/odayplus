@@ -197,7 +197,7 @@ jobs:
           set -euo pipefail
           access_token="$(gcloud auth print-access-token)"
           request_body="$(python3 -c \
-            'import json, os; print(json.dumps({"audience": os.environ["ODP_AUTH_AUDIENCES"], "includeEmail": True}))')"
+            'import json, os; aud = [a.strip() for a in os.environ["ODP_AUTH_AUDIENCES"].split(",") if a.strip()][0]; print(json.dumps({"audience": aud, "includeEmail": True}))')"
           response="$(curl --fail-with-body --silent --show-error \
             --request POST \
             --header "Authorization: Bearer ${access_token}" \
@@ -214,7 +214,12 @@ jobs:
           claims = json.loads(base64.urlsafe_b64decode(payload))
           bindings = json.loads(os.environ["ODP_AUTH_SUBJECT_ROLE_BINDINGS"])
           subject = str(claims.get("sub", ""))
-          if claims.get("aud") != os.environ["ODP_AUTH_AUDIENCES"]:
+          expected_audience = [
+              a.strip()
+              for a in os.environ["ODP_AUTH_AUDIENCES"].split(",")
+              if a.strip()
+          ][0]
+          if claims.get("aud") != expected_audience:
               raise SystemExit("minted token audience mismatch")
           if subject != os.environ["ODP_OPERATOR_SMOKE_SUBJECT"]:
               raise SystemExit("minted token subject does not match configured smoke subject")

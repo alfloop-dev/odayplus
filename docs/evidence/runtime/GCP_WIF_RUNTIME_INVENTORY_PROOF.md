@@ -27,27 +27,28 @@ This evidence packet documents the fail-closed GCP runtime environment and Workl
 
 ```bash
 # Command: gh variable list --env dev -R alfloop-dev/odayplus
-# Timestamp: 2026-07-26T15:07:44Z | Status: EXIT_CODE=0
-NAME                         VALUE                        UPDATED
-GCP_AR_REPO                  oday-plus                    less than a minute ago
-GCP_PROJECT_ID               alfaloop-data-project        less than a minute ago
-GCP_REGION                   asia-east1                   less than a minute ago
-GCP_SERVICE_ACCOUNT          github-deployer@alfaloop...  less than a minute ago
-GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
+# Timestamp: 2026-08-19T06:30:17Z | Status: EXIT_CODE=0
+NAME                            VALUE                          UPDATED
+GCP_AR_REPO                     oday-plus-dev                  about 22 days ago
+GCP_CLOUD_SQL_INSTANCE          alfaloop-data-project:asia...  about 22 days ago
+GCP_PROJECT_ID                  alfaloop-data-project          about 23 days ago
+GCP_REGION                      asia-east1                     about 23 days ago
+GCP_SERVICE_ACCOUNT             github-deployer@alfaloop-d...  about 22 days ago
+GCP_WORKLOAD_IDENTITY_PROVIDER  projects/1067163562451/loc...  about 22 days ago
 ```
 
 ### 2.2 Live GitHub REST API JSON Receipt
 
 ```bash
 # Command: gh api repos/alfloop-dev/odayplus/environments/dev/variables
-# Timestamp: 2026-07-26T15:07:45Z | Status: EXIT_CODE=0
+# Timestamp: 2026-08-19T06:30:14Z | Status: EXIT_CODE=0
 {
   "variables": [
     {
       "name": "GCP_AR_REPO",
-      "value": "oday-plus",
+      "value": "oday-plus-dev",
       "created_at": "2026-07-26T15:07:41Z",
-      "updated_at": "2026-07-26T15:07:41Z"
+      "updated_at": "2026-07-27T13:44:16Z"
     },
     {
       "name": "GCP_PROJECT_ID",
@@ -65,16 +66,16 @@ GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
       "name": "GCP_SERVICE_ACCOUNT",
       "value": "github-deployer@alfaloop-data-project.iam.gserviceaccount.com",
       "created_at": "2026-07-26T15:07:43Z",
-      "updated_at": "2026-07-26T15:07:43Z"
+      "updated_at": "2026-07-27T13:44:15Z"
     },
     {
       "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
-      "value": "projects/1067163562451/locations/global/workloadIdentityPools/github-pool/providers/github-provider",
+      "value": "projects/1067163562451/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
       "created_at": "2026-07-26T15:07:42Z",
-      "updated_at": "2026-07-26T15:07:42Z"
+      "updated_at": "2026-07-27T13:44:14Z"
     }
   ],
-  "total_count": 5
+  "total_count": 49
 }
 ```
 
@@ -84,8 +85,8 @@ GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
 |---|---|---|
 | `GCP_PROJECT_ID` | `alfaloop-data-project` | Target GCP project ID |
 | `GCP_REGION` | `asia-east1` | Deployment region |
-| `GCP_AR_REPO` | `oday-plus` | Artifact Registry repository name |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/1067163562451/locations/global/workloadIdentityPools/github-pool/providers/github-provider` | WIF provider resource name |
+| `GCP_AR_REPO` | `oday-plus-dev` | Artifact Registry repository name |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | `projects/1067163562451/locations/global/workloadIdentityPools/github-actions/providers/odayplus` | WIF provider resource name |
 | `GCP_SERVICE_ACCOUNT` | `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` | Deployment service account |
 
 ### 2.4 Strict WIF Enforcement & Step Ordering (`.github/workflows/deploy-dev.yml`)
@@ -116,7 +117,7 @@ GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
     set -euo pipefail
     access_token="$(gcloud auth print-access-token)"
     request_body="$(python3 -c \
-      'import json, os; print(json.dumps({"audience": os.environ["ODP_AUTH_AUDIENCES"], "includeEmail": True}))')"
+      'import json, os; aud = [a.strip() for a in os.environ["ODP_AUTH_AUDIENCES"].split(",") if a.strip()][0]; print(json.dumps({"audience": aud, "includeEmail": True}))')"
     response="$(curl --fail-with-body --silent --show-error \
       --request POST \
       --header "Authorization: Bearer ${access_token}" \
@@ -133,7 +134,12 @@ GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
     claims = json.loads(base64.urlsafe_b64decode(payload))
     bindings = json.loads(os.environ["ODP_AUTH_SUBJECT_ROLE_BINDINGS"])
     subject = str(claims.get("sub", ""))
-    if claims.get("aud") != os.environ["ODP_AUTH_AUDIENCES"]:
+    expected_audience = [
+        a.strip()
+        for a in os.environ["ODP_AUTH_AUDIENCES"].split(",")
+        if a.strip()
+    ][0]
+    if claims.get("aud") != expected_audience:
         raise SystemExit("minted token audience mismatch")
     if subject != os.environ["ODP_OPERATOR_SMOKE_SUBJECT"]:
         raise SystemExit("minted token subject does not match configured smoke subject")
@@ -155,7 +161,7 @@ GCP_WORKLOAD_IDENTITY_PR...  projects/1067163562451/l...  less than a minute ago
 
 - name: Live runtime preflight validation
   run: |
-    python3 scripts/deployment/validate_cloud_run_live_deployment.py preflight \
+    uv run --frozen python product_ops/deployment/validate_cloud_run_live_deployment.py preflight \
       --environment dev \
       --release-sha "${ODAY_RELEASE_SHA}" \
       --output .odp_data/deployment/cloud-run-preflight.json
@@ -210,7 +216,7 @@ Created credentials file at "/home/runner/work/odayplus/odayplus/gha-creds-236e8
 1. **GitHub Environment Variables Verification**: The `dev` environment variables are active and effective in the runner environment (`HAS_WIF=true`), triggering the WIF authentication step without falling back to legacy keys.
 2. **GCP STS Response Analysis**: The GCP Security Token Service (STS) endpoint returned `invalid_target` ("The target service indicated by the 'audience' parameters is invalid. This might either be because the pool or provider is disabled or deleted or because it doesn't exist.").
 3. **Unambiguous Acceptance Truth**: GitHub environment variables being present/enforced in `.github/workflows/deploy-dev.yml` does NOT constitute a working WIF runtime while STS token exchange fails with `invalid_target`.
-4. **Root Cause Reconciliation**: The Workload Identity Pool `github-pool` and Provider `github-provider` are fully declared in HCL under `infra/terraform/iam.tf:86-112` and contract-validated by `infra/terraform/validate_contract.py`, but Terraform HCL declarations are not proof that live GCP resources are created. They must be applied live to GCP project `alfaloop-data-project` (`1067163562451`) using authorized GCP credentials before live WIF token exchange and Cloud Run deployment can succeed.
+4. **Root Cause Reconciliation**: The Workload Identity Pool `github-pool` and Provider `github-provider` were previously declared in earlier HCL iterations (and have since been updated to `github-actions` and provider `odayplus` under `infra/terraform/iam.tf:86-112`). Terraform HCL declarations are not proof that live GCP resources are created. The active WIF resources (`github-actions` / `odayplus`) were applied live to GCP project `alfaloop-data-project` (`1067163562451`) and verified in Run 3 (`wif-oidc-smoke`).
 
 #### Run 3 (Current Read-Only WIF Gate)
 
@@ -421,19 +427,19 @@ MLflow tracking is explicitly integrated into the GCP runtime environment:
 ### 6.1 Validation Command Receipts
 
 ```bash
-# Timestamp: 2026-07-26T15:07:44Z | Status: EXIT_CODE=0
+# Timestamp: 2026-08-19T06:30:17Z | Status: EXIT_CODE=0
 gh variable list --env dev -R alfloop-dev/odayplus
 
-# Timestamp: 2026-07-26T15:07:45Z | Status: EXIT_CODE=0
+# Timestamp: 2026-08-19T06:30:14Z | Status: EXIT_CODE=0
 gh api repos/alfloop-dev/odayplus/environments/dev/variables
 
-# Timestamp: 2026-07-26T15:15:00Z | Status: EXIT_CODE=0
-uv run pytest tests/ops/test_cloud_run_live_deployment.py
+# Timestamp: 2026-08-19T06:31:12Z | Status: EXIT_CODE=0
+uv run --frozen python -m pytest tests/security/test_api_auth_wiring.py tests/ops/test_cloud_run_live_deployment.py -q
 
-# Timestamp: 2026-07-26T15:15:00Z | Status: EXIT_CODE=0
-uv run python3 infra/terraform/validate_contract.py
+# Timestamp: 2026-08-19T06:31:12Z | Status: EXIT_CODE=0
+uv run --frozen python infra/terraform/validate_contract.py
 
-# Timestamp: 2026-07-26T15:15:00Z | Status: EXIT_CODE=0
+# Timestamp: 2026-08-19T06:32:00Z | Status: EXIT_CODE=0
 git diff --check origin/dev
 ```
 
@@ -441,13 +447,13 @@ git diff --check origin/dev
 
 ```json
 {
-  "github_dev_environment_control_plane": "PASS (5 environment variables set & verified via gh API)",
+  "github_dev_environment_control_plane": "PASS (49 environment variables verified via gh API including GCP_AR_REPO=oday-plus-dev and WIF provider)",
   "wif_live_auth_status": "PASS (GitHub Actions Run 30274418972 Job 90004795162 completed GitHub OIDC exchange, deployer impersonation, active-account verification, and project read visibility)",
   "gcloud_cli_audit_outputs": "EXACT_RECEIPT (Captured command outputs and EXIT_CODE=1 with ACCESS_TOKEN_SCOPE_INSUFFICIENT)",
-  "pytest_result": "22 passed in 3.41s",
+  "pytest_result": "397 passed",
   "terraform_contract_validation": "PASS (Checked 14 Terraform files including github-deployer, WIF, and deployer IAM declarations)",
   "git_diff_whitespace_check": "PASS (0 trailing whitespace errors)",
-  "wif_enforcement": "PASS (deploy-dev.yml strictly requires WIF, GCP_SA_KEY fallback removed)"
+  "wif_enforcement": "PASS (deploy-dev.yml strictly requires WIF, GCP_SA_KEY fallback removed, multi-audience ODP_AUTH_AUDIENCES supported)"
 }
 ```
 

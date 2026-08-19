@@ -5399,3 +5399,11 @@ def test_deploy_dev_workflow_documents_smoke_principal_least_privilege_composite
     assert "operations_manager" in text
     assert "model_owner" in text
     assert "data_owner" in text
+
+
+def test_deploy_dev_workflow_smoke_minting_handles_multi_audience() -> None:
+    """ODP-RUNTIME-GCP-001: deploy-dev.yml smoke token minting handles multi-audience ODP_AUTH_AUDIENCES."""
+    text = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert 'aud = [a.strip() for a in os.environ["ODP_AUTH_AUDIENCES"].split(",") if a.strip()][0]' in text
+    assert 'expected_audience = [\n              a.strip()\n              for a in os.environ["ODP_AUTH_AUDIENCES"].split(",")\n              if a.strip()\n          ][0]' in text
+    assert 'if claims.get("aud") != expected_audience:' in text
