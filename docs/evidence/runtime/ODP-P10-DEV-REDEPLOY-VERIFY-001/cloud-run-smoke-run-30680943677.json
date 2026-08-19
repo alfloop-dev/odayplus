@@ -1,0 +1,649 @@
+{
+  "api_url": "https://candidate-97e3ae2e264d0025---oday-api-7sxbjoeozq-de.a.run.app",
+  "checks": [
+    {
+      "detail": "status=200",
+      "name": "smoke:/platform/version:http",
+      "ok": true
+    },
+    {
+      "detail": "status=503",
+      "name": "smoke:/platform/health:http",
+      "ok": false
+    },
+    {
+      "detail": "status=503",
+      "name": "smoke:/readiness:http",
+      "ok": false
+    },
+    {
+      "detail": "expected=97e3ae2e264d00254b574d5e27ab771688f04768 actual=97e3ae2e264d00254b574d5e27ab771688f04768",
+      "name": "smoke:/platform/version:release_sha",
+      "ok": true
+    },
+    {
+      "detail": "status=unhealthy data_mode=<missing>",
+      "name": "smoke:/platform/health:live_data_mode",
+      "ok": false
+    },
+    {
+      "detail": "non-memory database reported",
+      "name": "smoke:/platform/health:database",
+      "ok": true
+    },
+    {
+      "detail": "status=unhealthy data_mode=<missing>",
+      "name": "smoke:/readiness:live_data_mode",
+      "ok": false
+    },
+    {
+      "detail": "non-memory database reported",
+      "name": "smoke:/readiness:database",
+      "ok": true
+    },
+    {
+      "detail": "configuration and live connectivity healthy",
+      "name": "smoke:/platform/health:external_providers:connectivity",
+      "ok": true
+    },
+    {
+      "detail": "all required providers have probe evidence",
+      "name": "smoke:/platform/health:external_providers:completeness",
+      "ok": true
+    },
+    {
+      "detail": "provider probe report is fresh",
+      "name": "smoke:/platform/health:external_providers:freshness",
+      "ok": true
+    },
+    {
+      "detail": "authenticated response and schema probe passed",
+      "name": "smoke:/platform/health:external_providers:admin_boundary.official_dataset",
+      "ok": true
+    },
+    {
+      "detail": "authenticated response and schema probe passed",
+      "name": "smoke:/platform/health:external_providers:geocode.primary_api",
+      "ok": true
+    },
+    {
+      "detail": "authenticated response and schema probe passed",
+      "name": "smoke:/platform/health:external_providers:poi.commercial_api",
+      "ok": true
+    },
+    {
+      "detail": "live operator repository probe passed with authoritative read provenance",
+      "name": "smoke:/readiness:operator_live_repository",
+      "ok": true
+    },
+    {
+      "detail": "external worker queue healthy",
+      "name": "smoke:/platform/health:job_queue",
+      "ok": true
+    },
+    {
+      "detail": "status=200",
+      "name": "smoke:/api/v1/operator/bootstrap:http",
+      "ok": true
+    },
+    {
+      "detail": "data_mode=degraded data_source=operator-shell-production",
+      "name": "smoke:/api/v1/operator/bootstrap:provenance",
+      "ok": false
+    },
+    {
+      "detail": "origin_kind=degraded persistence_mode=postgresql live_ready=True",
+      "name": "smoke:/api/v1/operator/bootstrap:read_provenance",
+      "ok": false
+    },
+    {
+      "detail": "status=307 protected_redirect=true location=/login?returnTo=%2Foperator",
+      "name": "smoke:web:/operator",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-cloud-run-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+  "expected_sha": "97e3ae2e264d00254b574d5e27ab771688f04768",
+  "generated_at": "2026-08-01T03:13:37Z",
+  "health": {
+    "correlation_id": "corr-cloud-run-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+    "dependencies": {
+      "database": "healthy",
+      "external_providers": {
+        "checked_at": "2026-08-01T03:13:34.421293+00:00",
+        "configuration_errors": [],
+        "configuration_valid": true,
+        "connectivity_healthy": true,
+        "correlation_id": "corr-cloud-run-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+        "expires_at": "2026-08-01T03:14:33.746468+00:00",
+        "mode": "live",
+        "probes": [
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:13:33.763768+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:14:33.763768+00:00",
+            "http_status": 200,
+            "latency_ms": 108,
+            "provider_id": "admin_boundary.official_dataset",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          },
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:13:33.746468+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:14:33.746468+00:00",
+            "http_status": 200,
+            "latency_ms": 90,
+            "provider_id": "geocode.primary_api",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          },
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:13:34.421293+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:14:34.421293+00:00",
+            "http_status": 200,
+            "latency_ms": 764,
+            "provider_id": "poi.commercial_api",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          }
+        ],
+        "required_provider_ids": [
+          "admin_boundary.official_dataset",
+          "geocode.primary_api",
+          "poi.commercial_api"
+        ],
+        "status": "healthy"
+      },
+      "job_queue": "healthy (durable postgresql job queue)"
+    },
+    "modes": {
+      "data": {
+        "blockingReasons": [
+          "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ],
+        "liveReady": false,
+        "mode": "unavailable",
+        "operatorRepositoryProbe": {
+          "checkedAt": "2026-08-01T03:13:34.429577+00:00",
+          "errors": [],
+          "persistenceMode": "postgresql",
+          "ready": true,
+          "repository": "OperatorLiveRepository"
+        },
+        "operatorRepositoryReady": true,
+        "origin": {
+          "completeness": "request-scoped",
+          "kind": "authoritative",
+          "persistenceMode": "postgresql",
+          "repository": "OperatorLiveRepository",
+          "sourceId": "operator-live-repository"
+        }
+      },
+      "deploymentMode": "dev",
+      "models": {
+        "autoSeeded": false,
+        "capabilities": {
+          "avm": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 120 eligible labeled PG16 rows in model_ready.valuation_view (mature realized transaction outcomes) and independent label-authority approval",
+              "activationThreshold": 120,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "avm-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.valuation_view@valuation-view-v1"
+            },
+            "modelName": "dealroom_avm",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "avm",
+            "trainable": true,
+            "trainingSpecKey": "avm"
+          },
+          "forecastops": {
+            "available": false,
+            "error": "forecast_revenue_interval: configured MLflow registry has no production alias",
+            "governedDisabled": false,
+            "governedDisabledEvidence": null,
+            "modelName": "forecast_revenue_interval",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "forecastops",
+            "trainable": true,
+            "trainingSpecKey": "forecastops"
+          },
+          "heatzone": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.heatzone_training_view (approved immutable opened_on authority) and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "heatzone-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.heatzone_training_view@heatzone-training-view-v2"
+            },
+            "modelName": "heatzone_priority",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "heatzone",
+            "trainable": true,
+            "trainingSpecKey": "heatzone"
+          },
+          "sitescore": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.candidate_site_view and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "sitescore-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.candidate_site_view@candidate-site-view-v2"
+            },
+            "modelName": "sitescore_propensity",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "sitescore",
+            "trainable": true,
+            "trainingSpecKey": "sitescore"
+          }
+        },
+        "error": "forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias",
+        "mode": "mlflow-production-unverified",
+        "productionBindingsReady": false,
+        "requiredServices": [
+          "avm",
+          "forecastops",
+          "heatzone",
+          "sitescore"
+        ]
+      },
+      "persistence": {
+        "configuredMode": "postgresql",
+        "durable": true,
+        "production_persistence_supported": true,
+        "reachable": true,
+        "runtimeMode": "postgresql"
+      },
+      "provider": {
+        "configurationValid": true,
+        "connectivityHealthy": true,
+        "healthy": true,
+        "live": true,
+        "mode": "live",
+        "probeEvidence": {
+          "checked_at": "2026-08-01T03:13:34.421293+00:00",
+          "configuration_errors": [],
+          "configuration_valid": true,
+          "connectivity_healthy": true,
+          "correlation_id": "corr-cloud-run-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+          "expires_at": "2026-08-01T03:14:33.746468+00:00",
+          "mode": "live",
+          "probes": [
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:13:33.763768+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:14:33.763768+00:00",
+              "http_status": 200,
+              "latency_ms": 108,
+              "provider_id": "admin_boundary.official_dataset",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            },
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:13:33.746468+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:14:33.746468+00:00",
+              "http_status": 200,
+              "latency_ms": 90,
+              "provider_id": "geocode.primary_api",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            },
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:13:34.421293+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:14:34.421293+00:00",
+              "http_status": 200,
+              "latency_ms": 764,
+              "provider_id": "poi.commercial_api",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            }
+          ],
+          "required_provider_ids": [
+            "admin_boundary.official_dataset",
+            "geocode.primary_api",
+            "poi.commercial_api"
+          ],
+          "status": "healthy"
+        }
+      },
+      "requireLiveData": true
+    },
+    "service": "oday-api",
+    "status": "unhealthy",
+    "time": "2026-08-01T03:13:34.429639+00:00",
+    "version": "0.1.0"
+  },
+  "ok": false,
+  "operator_bootstrap": {
+    "data_mode": "degraded",
+    "data_source": "operator-shell-production",
+    "origin_kind": "degraded",
+    "status": 200
+  },
+  "readiness": {
+    "details": {
+      "data": {
+        "blockingReasons": [
+          "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ],
+        "liveReady": false,
+        "mode": "unavailable",
+        "operatorRepositoryProbe": {
+          "checkedAt": "2026-08-01T03:13:34.641506+00:00",
+          "errors": [],
+          "persistenceMode": "postgresql",
+          "ready": true,
+          "repository": "OperatorLiveRepository"
+        },
+        "operatorRepositoryReady": true,
+        "origin": {
+          "completeness": "request-scoped",
+          "kind": "authoritative",
+          "persistenceMode": "postgresql",
+          "repository": "OperatorLiveRepository",
+          "sourceId": "operator-live-repository"
+        }
+      },
+      "database": "healthy",
+      "deploymentMode": "dev",
+      "external_providers": {
+        "checked_at": "2026-08-01T03:13:34.421293+00:00",
+        "configuration_errors": [],
+        "configuration_valid": true,
+        "connectivity_healthy": true,
+        "correlation_id": "corr-cloud-run-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+        "expires_at": "2026-08-01T03:14:33.746468+00:00",
+        "mode": "live",
+        "probes": [
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:13:33.763768+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:14:33.763768+00:00",
+            "http_status": 200,
+            "latency_ms": 108,
+            "provider_id": "admin_boundary.official_dataset",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          },
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:13:33.746468+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:14:33.746468+00:00",
+            "http_status": 200,
+            "latency_ms": 90,
+            "provider_id": "geocode.primary_api",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          },
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:13:34.421293+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:14:34.421293+00:00",
+            "http_status": 200,
+            "latency_ms": 764,
+            "provider_id": "poi.commercial_api",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          }
+        ],
+        "required_provider_ids": [
+          "admin_boundary.official_dataset",
+          "geocode.primary_api",
+          "poi.commercial_api"
+        ],
+        "status": "healthy"
+      },
+      "models": {
+        "autoSeeded": false,
+        "capabilities": {
+          "avm": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 120 eligible labeled PG16 rows in model_ready.valuation_view (mature realized transaction outcomes) and independent label-authority approval",
+              "activationThreshold": 120,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "avm-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.valuation_view@valuation-view-v1"
+            },
+            "modelName": "dealroom_avm",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "avm",
+            "trainable": true,
+            "trainingSpecKey": "avm"
+          },
+          "forecastops": {
+            "available": false,
+            "error": "forecast_revenue_interval: configured MLflow registry has no production alias",
+            "governedDisabled": false,
+            "governedDisabledEvidence": null,
+            "modelName": "forecast_revenue_interval",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "forecastops",
+            "trainable": true,
+            "trainingSpecKey": "forecastops"
+          },
+          "heatzone": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.heatzone_training_view (approved immutable opened_on authority) and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "heatzone-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.heatzone_training_view@heatzone-training-view-v2"
+            },
+            "modelName": "heatzone_priority",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "heatzone",
+            "trainable": true,
+            "trainingSpecKey": "heatzone"
+          },
+          "sitescore": {
+            "available": false,
+            "error": null,
+            "governedDisabled": true,
+            "governedDisabledEvidence": {
+              "activationGate": "Requires >= 200 eligible labeled PG16 rows in model_ready.candidate_site_view and independent label-authority approval",
+              "activationThreshold": 200,
+              "autoSeeded": false,
+              "eligibleCount": 0,
+              "inventoryVersion": "pg16-production-model-inventory-2026-07-25-v1",
+              "observedAt": "2026-07-25T15:20:00Z",
+              "observedCount": 0,
+              "owner": "sitescore-platform-team",
+              "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+              "sourceContract": "model_ready.candidate_site_view@candidate-site-view-v2"
+            },
+            "modelName": "sitescore_propensity",
+            "outcomeContractRequired": true,
+            "reasonCode": "DATA_CONTRACT_NOT_MATURE",
+            "requiredForPlatformReadiness": true,
+            "service": "sitescore",
+            "trainable": true,
+            "trainingSpecKey": "sitescore"
+          }
+        },
+        "error": "forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias",
+        "mode": "mlflow-production-unverified",
+        "productionBindingsReady": false,
+        "requiredServices": [
+          "avm",
+          "forecastops",
+          "heatzone",
+          "sitescore"
+        ]
+      },
+      "persistence": {
+        "configuredMode": "postgresql",
+        "durable": true,
+        "production_persistence_supported": true,
+        "reachable": true,
+        "runtimeMode": "postgresql"
+      },
+      "provider": {
+        "configurationValid": true,
+        "connectivityHealthy": true,
+        "healthy": true,
+        "live": true,
+        "mode": "live",
+        "probeEvidence": {
+          "checked_at": "2026-08-01T03:13:34.421293+00:00",
+          "configuration_errors": [],
+          "configuration_valid": true,
+          "connectivity_healthy": true,
+          "correlation_id": "corr-cloud-run-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+          "expires_at": "2026-08-01T03:14:33.746468+00:00",
+          "mode": "live",
+          "probes": [
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:13:33.763768+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:14:33.763768+00:00",
+              "http_status": 200,
+              "latency_ms": 108,
+              "provider_id": "admin_boundary.official_dataset",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            },
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:13:33.746468+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:14:33.746468+00:00",
+              "http_status": 200,
+              "latency_ms": 90,
+              "provider_id": "geocode.primary_api",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            },
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:13:34.421293+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:14:34.421293+00:00",
+              "http_status": 200,
+              "latency_ms": 764,
+              "provider_id": "poi.commercial_api",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            }
+          ],
+          "required_provider_ids": [
+            "admin_boundary.official_dataset",
+            "geocode.primary_api",
+            "poi.commercial_api"
+          ],
+          "status": "healthy"
+        }
+      },
+      "requireLiveData": true
+    },
+    "service": "oday-api",
+    "status": "unhealthy"
+  },
+  "schema_version": 1,
+  "secret_values_redacted": true,
+  "version": {
+    "api_version": "0.1.0",
+    "correlation_id": "corr-cloud-run-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+    "release_sha": "97e3ae2e264d00254b574d5e27ab771688f04768",
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-08-01T03:13:33.434696+00:00"
+  },
+  "web_operator_redirect": {
+    "location_redacted": "/login?returnTo=%2Foperator",
+    "protected_redirect": true,
+    "status": 307
+  },
+  "web_url": "https://candidate-97e3ae2e264d0025---oday-web-7sxbjoeozq-de.a.run.app"
+}

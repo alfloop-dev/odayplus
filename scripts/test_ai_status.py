@@ -574,13 +574,14 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "origin/task/REG-002"
             if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
                 return "0 0"
-            if args == ["fetch", "origin", "dev"]:
+            if args[:2] == ["fetch", "origin"]:
                 return ""
-            if args == ["rev-parse", "--verify", "origin/dev"]:
+            if args[:2] == ["rev-parse", "--verify"]:
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
         with (
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
             mock.patch.object(
@@ -637,9 +638,9 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "origin/task/REG-002"
             if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
                 return "0 0"
-            if args == ["fetch", "origin", "dev"]:
+            if args[:2] == ["fetch", "origin"]:
                 return ""
-            if args == ["rev-parse", "--verify", "origin/dev"]:
+            if args[:2] == ["rev-parse", "--verify"]:
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
@@ -656,6 +657,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             ],
         }
         with (
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
             mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=merged_pr),
@@ -1247,7 +1249,7 @@ class SidecarTaskTests(unittest.TestCase):
                 {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Gemini", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Copilot", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-                {"name": "Qwen", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Helper", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
             ],
             "tasks": [],
             "handoffs": [],
@@ -1987,7 +1989,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "title": "Incident response read surfaces",
                     "summary_zh": "補 incident read view。",
                     "phase": "Planning Materialized",
-                    "owner": "Qwen",
+                    "owner": "Helper",
                     "reviewer": "Codex",
                     "status": "review",
                     "depends_on": [],
@@ -2184,7 +2186,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             "updated_at": "2026-04-15T16:35:29Z",
             "agents": [
                 {"name": "Claude", "status": "working", "current_task_ids": ["BP5-SVC-002"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
-                {"name": "Qwen", "status": "blocked", "current_task_ids": ["BP5-LUV-001"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
+                {"name": "Helper", "status": "blocked", "current_task_ids": ["BP5-LUV-001"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
             ],
             "tasks": [
                 {
@@ -2192,12 +2194,12 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "title": "Registry review",
                     "summary_zh": "等待 reviewer 檢查。",
                     "owner": "Claude",
-                    "reviewer": "Qwen",
+                    "reviewer": "Helper",
                     "status": "review",
                     "depends_on": [],
                     "artifacts": [],
                     "acceptance": [],
-                    "next": "Ready for Qwen review.",
+                    "next": "Ready for Helper review.",
                     "last_update": "2026-04-15T16:35:29Z",
                 }
             ],
@@ -2211,8 +2213,8 @@ class PortableStateRenderingTests(unittest.TestCase):
             "supervisor": {"pid": 123, "last_heartbeat_at": "2026-04-15T16:35:46Z"},
             "provider_guardrails": {
                 "dispatch_pauses": {
-                    "qwen": {
-                        "provider": "qwen",
+                    "helper": {
+                        "provider": "helper",
                         "blocked_until": "2099-04-15T16:38:40Z",
                         "summary": "Capacity / rate limit failure",
                     }
@@ -3260,7 +3262,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "summary_zh": "定義 golden replay scenario 與 acceptance runbook。",
                     "phase": "Blueprint Gap P0",
                     "owner": "Claude",
-                    "reviewer": "Qwen",
+                    "reviewer": "Helper",
                     "status": "review_approved",
                     "depends_on": ["BG-000"],
                     "next": "Supervisor resumed BG-005 for finalize after successful dispatch.",
@@ -5684,6 +5686,43 @@ class ReviewGateHeadDriftTests(unittest.TestCase):
 
     def test_missing_task_id_is_not_drift(self) -> None:
         self.assertFalse(ai_status.review_gate_head_drifted({"review_gate_sha": "a" * 40}))
+
+
+class TextNamesTaskIdTests(unittest.TestCase):
+    """The finalize traceability gate must match a task id, not a prefix of one.
+
+    Sidecar ids are their parent's id plus a suffix, so a containment test lets
+    a sidecar's commit satisfy the parent's gate.
+    """
+
+    PARENT = "ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001"
+    SIDECAR = "ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001-SIDECAR-REVIEW"
+
+    def test_subject_naming_the_task_matches(self) -> None:
+        self.assertTrue(
+            ai_status.text_names_task_id(f"{self.PARENT}: validate finalize metadata", self.PARENT)
+        )
+        self.assertTrue(
+            ai_status.text_names_task_id(f"[ReviewBus] {self.PARENT} wire writer", self.PARENT)
+        )
+        self.assertTrue(ai_status.text_names_task_id("(P1-001) tidy", "P1-001"))
+
+    def test_sidecar_commit_does_not_satisfy_its_parent(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id(f"{self.SIDECAR}: add packet", self.PARENT))
+        self.assertFalse(
+            ai_status.text_names_task_id(f"[ReviewBus] {self.SIDECAR} prepare", self.PARENT)
+        )
+
+    def test_sidecar_still_satisfies_itself(self) -> None:
+        self.assertTrue(ai_status.text_names_task_id(f"{self.SIDECAR}: add packet", self.SIDECAR))
+
+    def test_numeric_suffix_is_not_a_match(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id("P1-0011: something", "P1-001"))
+
+    def test_unrelated_or_empty_text_does_not_match(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id("fix(x): unrelated", self.PARENT))
+        self.assertFalse(ai_status.text_names_task_id("", self.PARENT))
+        self.assertFalse(ai_status.text_names_task_id(f"{self.PARENT}: x", ""))
 
 
 if __name__ == "__main__":

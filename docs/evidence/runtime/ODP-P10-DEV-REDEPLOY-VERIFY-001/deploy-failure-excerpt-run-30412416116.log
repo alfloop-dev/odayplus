@@ -1,0 +1,37 @@
+=== Preflight ===
+Running fail-closed live deployment preflight...
+Cloud Run live deployment preflight passed.
+report=.odp_data/deployment/cloud-run-preflight.json
+
+=== Migration Execution & Smoke ===
+Execution [oday-migration-r-79cf9b67e62c-8m2kp] has successfully completed.
+Cloud Run migration Job smoke passed.
+report=.odp_data/deployment/cloud-run-jobs/migration-validation.json
+
+=== Migration Compatibility Smoke (Passed) ===
+Cloud Run migration compatibility smoke passed.
+report=.odp_data/deployment/cloud-run-migration-compatibility.json
+
+=== Scheduler Job Execution & Smoke (Passed) ===
+Executing scheduler Cloud Run Job...
+Execution [oday-scheduler-r-79cf9b67e62c-fr65q] has successfully completed.
+Cloud Run scheduler Job smoke passed.
+report=.odp_data/deployment/cloud-run-jobs/scheduler-validation.json
+
+=== Worker Job Execution (Failed) ===
+Executing worker Cloud Run Job...
+Creating execution...
+Provisioning resources.................done
+Starting execution..................................................................done
+Running execution...............................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................failed
+Executing job failed
+ERROR: (gcloud.run.jobs.execute) The execution failed.
+View details about this execution by running:
+gcloud run jobs executions describe oday-worker-r-79cf9b67e62c-6fhw5
+
+Or visit https://console.cloud.google.com/run/jobs/executions/details/asia-east1/oday-worker-r-79cf9b67e62c-6fhw5?project=1067163562451
+
+Error: worker Cloud Run Job failed; deployment stopped.
+Deployment failed; restoring the recorded API/Web traffic split.
+Restoring oday-api traffic to oday-api-00005-gin=100...
+Restoring oday-web traffic to oday-web-00008-ws4=100...

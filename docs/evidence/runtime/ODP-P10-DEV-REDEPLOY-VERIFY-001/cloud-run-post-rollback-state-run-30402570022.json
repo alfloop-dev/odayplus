@@ -1,0 +1,25 @@
+{
+  "run_id": 30402570022,
+  "head_sha": "7d13f8e162d035ad7318d1f659dfa0f2bd85ca65",
+  "rollback_executed": true,
+  "services": {
+    "oday-api": {
+      "serving_revision": "oday-api-00005-gin",
+      "percent": 100,
+      "release_sha_label": null,
+      "matches_deploy_sha": false
+    },
+    "oday-web": {
+      "serving_revision": "oday-web-00008-ws4",
+      "percent": 100,
+      "release_sha_label": null,
+      "matches_deploy_sha": false
+    }
+  },
+  "migration_job": {
+    "name": "oday-migration-r-7d13f8e162d0",
+    "execution": "oday-migration-r-7d13f8e162d0-zg2jr",
+    "status": "succeeded",
+    "release_sha_label": "7d13f8e162d035ad7318d1f659dfa0f2bd85ca65"
+  }
+}

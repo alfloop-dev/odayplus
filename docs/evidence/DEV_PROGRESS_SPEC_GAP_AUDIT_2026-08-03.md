@@ -32,7 +32,7 @@
 
 ## 2. 盤點範圍與權威來源
 
-本報告比對以下四層：
+本報告比對以下七層來源：
 
 | 層級 | 權威來源 | 用途 |
 |---|---|---|
@@ -206,13 +206,13 @@
 
 ### 5.1 成功部分
 
-最新 `Deploy Dev` 已成功完成：
+最新 `Deploy Dev` workflow（run `30820067751`，整體 conclusion 為 failure）在失敗前已成功完成下列步驟：
 
 - checkout、locked dependencies、secret scan、Python SAST、SBOM。
 - WIF authentication 與 live runtime preflight。
 - Cloud SDK、Cosign、image build/push 與 candidate Cloud Run deploy。
-- failure 後 API/Web traffic split restoration。
-- failure 後 Cloud Scheduler trigger restoration。
+- live gate failure 後的 API/Web traffic split restoration。
+- live gate failure 後的 Cloud Scheduler trigger restoration。
 
 ### 5.2 阻斷部分
 
