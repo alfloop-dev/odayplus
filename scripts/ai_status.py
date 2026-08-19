@@ -845,18 +845,31 @@ def default_state() -> dict[str, Any]:
     }
 
 
+STATE_SCALAR_DEFAULT_KEYS = ("project", "sprint", "objective", "updated_at")
+STATE_COLLECTION_DEFAULT_KEYS = ("tasks", "agents", "handoffs", "blockers")
+
+
+def backfill_missing_state_keys(state: dict[str, Any]) -> None:
+    """Fill top-level keys a hand-edited or partially imported status file may lack.
+
+    Scalars come from ``default_state`` so the values live in one place.
+    Collections default to empty instead of the seed content, which would
+    otherwise inject template tasks and agents into a real status file.
+    """
+    missing_scalars = [key for key in STATE_SCALAR_DEFAULT_KEYS if key not in state]
+    if missing_scalars:
+        defaults = default_state()
+        for key in missing_scalars:
+            state[key] = defaults[key]
+    for key in STATE_COLLECTION_DEFAULT_KEYS:
+        state.setdefault(key, [])
+
+
 def load_state() -> dict[str, Any]:
     if not STATUS_FILE.exists() or STATUS_FILE.read_text(encoding="utf-8").strip() == "":
         return default_state()
     state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
-    # A hand-edited or partially written status file can be missing top-level
-    # keys that the rest of the module indexes directly. Seed only the framing
-    # keys from `default_state()` so they stay in sync with it; `tasks` is
-    # deliberately excluded, since seeding it would inject the bootstrap task
-    # list into a real status file that merely omitted the key.
-    defaults = default_state()
-    for key in ("project", "sprint", "objective", "agents", "handoffs", "blockers"):
-        state.setdefault(key, defaults.get(key, []))
+    backfill_missing_state_keys(state)
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
