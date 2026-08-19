@@ -12,24 +12,18 @@ The deployment pipeline is configured via GitHub Variables and Secrets, falling 
 |---|---|---|---|
 | `GCP_PROJECT_ID` | Repository / Environment | The GCP Project ID where resources are deployed. | `alfaloop-data-project` |
 | `GCP_REGION` | Repository / Environment | The GCP target region. | `asia-east1` |
-| `GCP_AR_REPO` | Repository / Environment | The name of the GCP Artifact Registry repository. | `oday-plus` |
+| `GCP_AR_REPO` | Repository / Environment | The name of the GCP Artifact Registry repository. | `oday-plus-dev` |
 
-### 2. Authentication Configuration (Choose WIF or Service Account Key)
+### 2. Authentication Configuration (WIF only)
 
-For security, **Workload Identity Federation (WIF)** is highly recommended. The workflow supports fallback to a traditional **Service Account JSON Key** if WIF is not configured.
+All deployment environments strictly require **Workload Identity Federation (WIF)**. Long-lived service account keys (`GCP_SA_KEY`) are prohibited by security policy, and no `GCP_SA_KEY` fallback path exists in `.github/workflows/deploy-dev.yml` or `product_ops/deployment/deploy_cloud_run_waji.sh`.
 
-#### Option A: Workload Identity Federation (Recommended)
 Configure the following **GitHub Variables**:
 
 | Variable Name | Description | Example Value |
 |---|---|---|
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | The full resource name of the Workload Identity Provider. | `projects/1234567890/locations/global/workloadIdentityPools/github-pool/providers/github-provider` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | The full resource name of the Workload Identity Provider. | `projects/1234567890/locations/global/workloadIdentityPools/github-actions/providers/odayplus` |
 | `GCP_SERVICE_ACCOUNT` | The service account email to impersonate. | `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` |
-
-#### Option B: Service Account Key (Fallback)
-## Authentication Requirements (WIF Only)
-
-All deployment environments strictly require Workload Identity Federation (WIF). Long-lived service account keys (`GCP_SA_KEY`) are prohibited by security policy.
 
 ---
 
