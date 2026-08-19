@@ -12911,5 +12911,143 @@ class WorkerTaskBranchFromRecordTests(unittest.TestCase):
             self.assertEqual(supervisor.canonical_task_record({}, "T-9", snapshot), snapshot)
 
 
+class MergeQueueMandatoryFallbackTests(unittest.TestCase):
+    """A repository may require the merge queue for every change.
+
+    `--admin` bypasses the queue, and a ruleset that allows no bypass rejects it
+    outright. Reporting that as `blocked` parked a green PR permanently on a
+    route the repository never allowed. OPS-MERGE-ROUTE-VISIBILITY-001 surfaced
+    it: "Repository rule violations found Changes must be made through the merge
+    queue (mergePullRequest)".
+    """
+
+    HEAD = "1111111122222222333333334444444455555555"
+    RULE_ERROR = (
+        "GraphQL: Repository rule violations found Changes must be made through "
+        "the merge queue (mergePullRequest)"
+    )
+
+    def test_the_rule_violation_is_recognised(self) -> None:
+        import dispatch_engine
+
+        self.assertTrue(dispatch_engine.merge_queue_is_mandatory(self.RULE_ERROR))
+        self.assertTrue(dispatch_engine.merge_queue_is_mandatory(RuntimeError(self.RULE_ERROR)))
+
+    def test_unrelated_failures_are_not_mistaken_for_it(self) -> None:
+        import dispatch_engine
+
+        for other in ("", "GraphQL: Pull request is not mergeable", "network unreachable",
+                      "merge queue entry was removed"):
+            with self.subTest(error=other):
+                self.assertFalse(dispatch_engine.merge_queue_is_mandatory(other))
+
+    def _route(self, *, scope, merge_state, side_effects):
+        import dispatch_engine
+        from github_bus import GitHubBusError
+
+        calls: list[list[str]] = []
+        pending = list(side_effects)
+
+        def fake_run_gh(args, **kwargs):
+            calls.append(list(args))
+            outcome = pending.pop(0) if pending else None
+            if isinstance(outcome, str):
+                raise GitHubBusError(outcome)
+            return unittest.mock.Mock(stdout="{}")
+
+        task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD}
+        with unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value=scope), \
+                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value=merge_state), \
+                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
+                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
+                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
+            route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
+        return route, detail, calls, task
+
+    def test_a_refused_admin_merge_falls_back_to_the_queue(self) -> None:
+        route, _detail, calls, task = self._route(
+            scope="development_tooling", merge_state="CLEAN", side_effects=[self.RULE_ERROR],
+        )
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(
+            calls,
+            [["pr", "merge", "42", "--admin", "--merge"], ["pr", "merge", "42"]],
+        )
+        self.assertEqual(task["merge_route"]["route"], "queued")
+
+    def test_an_unrelated_admin_failure_still_blocks(self) -> None:
+        route, detail, calls, task = self._route(
+            scope="development_tooling", merge_state="CLEAN", side_effects=["GraphQL: not mergeable"],
+        )
+
+        self.assertEqual(route, "blocked")
+        self.assertIn("not mergeable", detail)
+        self.assertEqual(calls, [["pr", "merge", "42", "--admin", "--merge"]])
+        self.assertNotIn("merge_route", task)
+
+    def test_a_queue_that_also_refuses_reports_the_queue_error(self) -> None:
+        route, detail, calls, _task = self._route(
+            scope="development_tooling",
+            merge_state="CLEAN",
+            side_effects=[self.RULE_ERROR, "GraphQL: queue is disabled"],
+        )
+
+        self.assertEqual(route, "blocked")
+        self.assertIn("queue is disabled", detail)
+        self.assertEqual(len(calls), 2)
+
+    def test_product_scope_is_untouched_by_the_fallback(self) -> None:
+        route, _detail, calls, _task = self._route(
+            scope="product_or_mixed", merge_state="CLEAN", side_effects=[None],
+        )
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "42"]])
+
+
+class OrchestratorSkillsAreScratchTests(unittest.TestCase):
+    """Orchestrator-owned reference material must not block a lease.
+
+    `worker_tree_guard.blocking_globs` already forbids a worker from modifying
+    `.orchestrator/skills/**`, so an untracked copy of it is never deliverable
+    work. A repository that does not track those files gets one per worker that
+    follows its brief; counting them as real dirt refused DPF-GOV-001 a lease on
+    a worktree already at its exact reviewer-approved head.
+    """
+
+    def test_seeded_skill_files_classify_as_scratch(self) -> None:
+        status = (
+            "?? .orchestrator/skills/task-closeout-finalization.md\0"
+            "?? .orchestrator/skills/worker-anchor-commit.md\0"
+        ).encode()
+
+        classification, paths = supervisor._classify_worktree_dirt(status)
+
+        self.assertEqual(classification, "scratch_only")
+        self.assertEqual(len(paths), 2)
+
+    def test_they_mix_with_the_other_scratch_prefixes(self) -> None:
+        status = (
+            "?? .orchestrator/skills/worker-anchor-commit.md\0"
+            "?? .orchestrator/task-briefs/T-1.md\0"
+            "?? ai-status.json\0"
+        ).encode()
+
+        classification, _paths = supervisor._classify_worktree_dirt(status)
+
+        self.assertEqual(classification, "scratch_only")
+
+    def test_real_work_is_still_real(self) -> None:
+        for status in (
+            b"?? src/feature.py\0",
+            b" M .orchestrator/skills/worker-anchor-commit.md\0",
+            b"?? .orchestrator/skills/worker-anchor-commit.md\0?? src/feature.py\0",
+        ):
+            with self.subTest(status=status):
+                classification, _paths = supervisor._classify_worktree_dirt(status)
+                self.assertEqual(classification, "real")
+
+
 if __name__ == "__main__":
     unittest.main()
