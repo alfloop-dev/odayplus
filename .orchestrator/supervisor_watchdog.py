@@ -21,22 +21,12 @@ from common import (
     config_path,
     load_config,
     load_json,
+    pid_is_supervisor_process,
     utc_now,
     write_activity_log,
     write_json,
 )
-from runtime_state import save_runtime_state
-
-ACTIVE_WORKER_STATUSES = {
-    "running",
-    "started",
-    "waiting_approval",
-    "suspended_approval",
-    "manual_pending",
-    "retry_backoff",
-    "stalled",
-    "fallback",
-}
+from runtime_state import ACTIVE_WORKER_STATUSES, save_runtime_state
 
 
 def parse_utc_timestamp(value: str | None) -> datetime | None:
@@ -143,22 +133,9 @@ def read_pid_file(path: Path) -> int | None:
         return None
 
 
-def pid_is_alive(pid: int | None) -> bool:
-    if pid is None or pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    try:
-        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
-    except ChildProcessError:
-        return True
-    except OSError:
-        return True
-    return waited_pid == 0
+def supervisor_pid_is_live(config: dict[str, Any], pid: int | None) -> bool:
+    """Return True only when `pid` is this repo's supervisor, not just some process."""
+    return pid_is_supervisor_process(pid, config_path(config, "state_file").parents[1])
 
 
 def active_worker_count(runtime_state: dict[str, Any]) -> int:
@@ -415,11 +392,15 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
     # hint that is absent during clean-restart seams. Folding lock_held into `alive`
     # stops the watchdog from restarting a live supervisor just because its pid file
     # was momentarily unlinked.
-    alive = lock_held or pid_is_alive(pid)
+    #
+    # The pid half must verify process IDENTITY, not just existence: supervisor.pid
+    # outlives a SIGKILL and pids get recycled, so a bare liveness check on a stale
+    # pid file reports a long-dead supervisor as healthy and the watchdog never
+    # restarts it -- exactly the failure it exists to catch.
+    alive = lock_held or supervisor_pid_is_live(config, pid)
     health = evaluate_supervisor_health(runtime_state, pid, alive, now, settings)
     resource = resource_snapshot(config, runtime_state, settings)
     pressure_reasons = resource_pressure_reasons(resource, settings, state_error)
-    restart_attempt_counts(attempts, now, settings)
     decision = "observe_only"
     reason = str(health.get("reason") or "healthy")
     new_pid: int | None = None

@@ -904,7 +904,6 @@ def dispatch_discussion_planning(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
-    seen = state.setdefault("seen_event_keys", {})
     changed = False
 
     for agent_name, readout in (planning_state.get("readouts", {}) or {}).items():
@@ -926,7 +925,6 @@ def dispatch_discussion_planning(
         if event_key in pending_event_keys:
             continue
         queued_event_key = queue_discussion_planning_event(config, planning_state, agent_name=agent_name, reason=reason)
-        seen[queued_event_key] = utc_now()
         pending_event_keys.add(queued_event_key)
         changed = True
 
@@ -974,7 +972,6 @@ def dispatch_ready_tasks(
     agent_loads = agent_dispatch_loads(config, state, active_statuses)
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
-    seen = state.setdefault("seen_event_keys", {})
 
     changed = metadata_repaired or review_states_repaired
     normalized = False
@@ -1333,7 +1330,6 @@ def dispatch_ready_tasks(
         for _, _, _, task, reason in candidates[:available_agent_slots]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
-                seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
                 pending_task_ids.add(str(task.get(task_id_field) or ""))

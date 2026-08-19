@@ -249,7 +249,67 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     return state
 
 
-ACTIVE_QUEUE_STATUSES = {"running", "waiting_approval", "suspended_approval", "retry_backoff", "manual_pending", "stalled", "started", "fallback"}
+# ---------------------------------------------------------------------------
+# Worker/queue status taxonomy.
+#
+# This is the single definition for every module that has to reason about what a
+# worker status *means*.  Do not re-spell these sets as literals at a call site:
+# the sets used to be copied by hand into a dozen places and drifted apart, which
+# is how `retried` ended up in no set at all (see HANDED_OFF_WORKER_STATUSES).
+# ---------------------------------------------------------------------------
+
+# The worker still owns its queue event and may yet produce work.
+ACTIVE_WORKER_STATUSES = {
+    "running",
+    "started",
+    "manual_pending",
+    "waiting_approval",
+    "suspended_approval",
+    "retry_backoff",
+    "stalled",
+    "fallback",
+}
+
+# The worker reached a durable end state and must never be re-examined.
+#
+# `retried` belongs here: the record only marks that this run handed its queue
+# event to `superseded_by_run_id`, so the parent itself will never do anything
+# again.  Leaving it out of every set made the record immortal in
+# `prune_worker_records` and let `poll_workers` push the already-settled parent
+# through the failure pipeline a second time.
+TERMINAL_WORKER_STATUSES = {
+    "completed",
+    "failed",
+    "superseded",
+    "reassigned",
+    "cancelled",
+    "done",
+    "retried",
+}
+
+# The worker delegated its queue event to a successor run: `retried` points at
+# `superseded_by_run_id`, `fallback` at `fallback_run_id`.  The successor owns
+# the outcome, so the parent must never be re-classified from its own (still
+# failing) log -- that double-counts the task failure streak, re-pauses the
+# provider, and can reassign the task out from under the successor while it is
+# still running.  `fallback` is deliberately NOT terminal: the queue event is
+# still in flight through the fallback child.
+HANDED_OFF_WORKER_STATUSES = {"retried", "fallback"}
+
+TERMINAL_QUEUE_STATUSES = {"completed", "failed", "done", "cancelled"}
+QUEUE_STATUS_RANK = {
+    "queued": 0,
+    "pending": 0,
+    "retry_backoff": 1,
+    "started": 2,
+    "manual_pending": 2,
+    "waiting_approval": 2,
+    "suspended_approval": 2,
+    "completed": 3,
+    "failed": 3,
+    "done": 3,
+    "cancelled": 3,
+}
 
 
 def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, Any]]) -> None:
@@ -267,7 +327,7 @@ def _rebuild_queue_records(state: dict[str, Any], queued_events: list[dict[str, 
         if not related:
             continue
         latest = sorted(related, key=lambda item: item.get("last_event_at") or "", reverse=True)[0]
-        if any(worker.get("status") in ACTIVE_QUEUE_STATUSES for worker in related):
+        if any(worker.get("status") in ACTIVE_WORKER_STATUSES for worker in related):
             record["status"] = "manual_pending" if any(worker.get("status") in {"manual_pending", "waiting_approval"} for worker in related) else "started"
             continue
         if any(worker.get("status") == "failed" for worker in related):
@@ -344,7 +404,7 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
         task_id = str(worker.get("task_id") or "")
         event_id = worker.get("queue_event_id")
         task_status = str(tasks_by_id.get(task_id) or "")
-        if status in {"running", "started", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "fallback", "stalled"}:
+        if status in ACTIVE_WORKER_STATUSES:
             keep[run_id] = worker
             continue
         if event_id and event_id in queue_events and queue_events[event_id].get("status") not in {"completed", "failed", "done"}:
@@ -354,10 +414,23 @@ def prune_worker_records(state: dict[str, Any], tasks_by_id: dict[str, str] | No
             keep[run_id] = worker
             continue
         # Drop terminal workers once the queue event is settled, or the task itself is already terminal.
-        if status in {"failed", "completed", "superseded", "reassigned"}:
+        if status in TERMINAL_WORKER_STATUSES:
             continue
         keep[run_id] = worker
     state["workers"] = keep
+
+    # The model-rotation de-duplication map is keyed by worker run id and used to
+    # be append-only, so every quota failure the orchestrator ever saw stayed in
+    # state.json for good.  A run id is only meaningful while its worker record
+    # exists -- once the worker is gone nothing can look the entry up again.
+    guardrails = state.get("provider_guardrails")
+    if isinstance(guardrails, dict):
+        processed = guardrails.get("processed_model_rotation_failures")
+        if isinstance(processed, dict) and processed:
+            guardrails["processed_model_rotation_failures"] = {
+                run_id: entry for run_id, entry in processed.items() if run_id in keep
+            }
+
 
 def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
     state = migrate_state(load_json(config_path(config, "state_file"), default=default_state()))
@@ -371,40 +444,6 @@ def load_runtime_state(config: dict[str, Any]) -> dict[str, Any]:
 
     prune_worker_records(state)
     return state
-
-
-TERMINAL_WORKER_STATUSES = {
-    "completed",
-    "failed",
-    "superseded",
-    "reassigned",
-    "cancelled",
-    "done",
-}
-ACTIVE_WORKER_STATUSES = {
-    "running",
-    "started",
-    "manual_pending",
-    "waiting_approval",
-    "suspended_approval",
-    "retry_backoff",
-    "stalled",
-    "fallback",
-}
-TERMINAL_QUEUE_STATUSES = {"completed", "failed", "done", "cancelled"}
-QUEUE_STATUS_RANK = {
-    "queued": 0,
-    "pending": 0,
-    "retry_backoff": 1,
-    "started": 2,
-    "manual_pending": 2,
-    "waiting_approval": 2,
-    "suspended_approval": 2,
-    "completed": 3,
-    "failed": 3,
-    "done": 3,
-    "cancelled": 3,
-}
 
 
 def compact_worker_history(state: dict[str, Any], max_entries: int) -> None:
