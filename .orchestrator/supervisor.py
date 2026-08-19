@@ -127,6 +127,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_clear_remote_head_snapshot_cache",
 "_clear_worktree_lease_block",
 "_create_worker_worktree",
+"_detached_head_is_merged",
 "_create_worker_worktree_fallback",
 "_existing_worktree_for_branch",
 "_fetch_authoritative_task_head",

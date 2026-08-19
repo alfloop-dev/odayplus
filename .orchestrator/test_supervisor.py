@@ -8377,6 +8377,86 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
 
+    def _detached_case(self, *, ancestor: bool, clean: bool = True):
+        """A lease-recovery worktree: created with `--detach`, so it has no branch."""
+        base = Path("/tmp/wt").resolve()
+        record_path = str(base / "task-x.lease_20260819T000000Z_deadbeef")
+        records = [{"worktree": record_path, "branch": ""}]
+        # No task branch is merged: the branch path could never admit anything here.
+        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        status_proc = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="" if clean else " M foo.py\n", stderr=""
+        )
+        remove_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        runs = {
+            ("git", "branch", "--merged"): merged_proc,
+            ("git", "-C", record_path, "status", "--porcelain"): status_proc,
+            ("git", "-C", "/repo", "worktree", "remove", record_path): remove_ok,
+        }
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        state: dict = {}
+        ctx = [
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(supervisor, "_detached_head_is_merged", return_value=ancestor),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ]
+        return config, state, ctx
+
+    def test_removes_detached_lease_worktree_already_in_base(self) -> None:
+        """Lease worktrees are `--detach`, so the branch test could never admit them.
+
+        Every recovery worktree the orchestrator has ever created was structurally
+        unprunable: `_worktree_record_branch` returns "" for a detached HEAD and the
+        guard rejected it before any other check ran. Ancestry answers the same
+        question -- is this content already in a base? -- for a worktree with no name.
+        """
+        config, state, ctx = self._detached_case(ancestor=True)
+        with contextlib.ExitStack() as stack:
+            for c in ctx:
+                stack.enter_context(c)
+            self.assertTrue(supervisor.prune_orphan_worktrees(config, state))
+
+    def test_keeps_detached_worktree_not_yet_in_base(self) -> None:
+        """The safety property is unchanged: unmerged work is never deleted."""
+        config, state, ctx = self._detached_case(ancestor=False)
+        with contextlib.ExitStack() as stack:
+            for c in ctx:
+                stack.enter_context(c)
+            self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
+
+    def test_keeps_dirty_detached_worktree_even_when_merged(self) -> None:
+        """Ancestry does not override the dirty-tree guard."""
+        config, state, ctx = self._detached_case(ancestor=True, clean=False)
+        with contextlib.ExitStack() as stack:
+            for c in ctx:
+                stack.enter_context(c)
+            self.assertFalse(supervisor.prune_orphan_worktrees(config, state))
+
+    def test_detached_head_is_merged_fails_closed(self) -> None:
+        """An unreadable HEAD or unanswerable ancestry keeps the worktree."""
+        repo = Path("/repo")
+        wt = Path("/tmp/wt/task-x.lease_1")
+        self.assertFalse(supervisor._detached_head_is_merged(repo, wt, []))
+        with mock.patch.object(supervisor, "_git_commit_oid", return_value=None):
+            self.assertFalse(supervisor._detached_head_is_merged(repo, wt, ["origin/dev"]))
+        with (
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="abc123"),
+            mock.patch.object(supervisor, "_git_output", return_value=(128, "")),
+        ):
+            self.assertFalse(supervisor._detached_head_is_merged(repo, wt, ["origin/dev"]))
+        with (
+            mock.patch.object(supervisor, "_git_commit_oid", return_value="abc123"),
+            mock.patch.object(supervisor, "_git_output", return_value=(0, "")),
+        ):
+            self.assertTrue(supervisor._detached_head_is_merged(repo, wt, ["origin/dev"]))
+
     def test_skips_worktree_claimed_by_active_worker(self) -> None:
         base = Path("/tmp/wt").resolve()
         record_path = str(base / "task-x")
