@@ -12,6 +12,7 @@ Source baseline: `ODP-OPS-04_RUNBOOK`, `ODP-OPS-05_INCIDENT_BACKUP_AND_RECOVERY_
 | [incident-management.md](incident-management.md) | Declaring, running, and closing an incident; postmortems. |
 | [backup-and-restore.md](backup-and-restore.md) | Backup scope and restoring Cloud SQL / BigQuery / Storage / model artifacts. |
 | [disaster-recovery-drill.md](disaster-recovery-drill.md) | Running a DR drill and measuring RPO/RTO. |
+| [dev-merge-queue.md](dev-merge-queue.md) | Enabling, tuning, inspecting, or rolling back the merge queue on `dev`. |
 
 Related machine-readable config lives in `infra/monitoring/` (dashboards,
 alerts, SLO/RPO/RTO) and the runtime primitives in `shared/observability/`.
