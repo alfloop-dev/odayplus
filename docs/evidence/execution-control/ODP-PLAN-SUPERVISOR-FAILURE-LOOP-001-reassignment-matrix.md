@@ -13,9 +13,14 @@ modules. The reassignment policy now lives in
 broader fallback maps, the dynamic candidate expansion
 (`get_agent_reassignment_candidates`), and the human-gate / sidecar /
 non-dispatchable guards this task had drafted. Those drafts were therefore
-resolved to `dev` during the base advance. What this task contributes on top of
-`dev` is the regression coverage below plus the one fail-closed gap that
-coverage exposed.
+resolved to `dev` during the base advance. `dev` also already carries a
+`SupervisorFailureLoopCoverageTests` class covering the fallback matrix, dynamic
+derivation, the human-gate guards, paused-agent skipping, and the HTTP 422
+status-check outbox path, so this branch's same-named duplicate was dropped
+rather than merged -- it shadowed `dev`'s class and silently disabled it.
+
+What this task contributes on top of `dev` is the one fail-closed gap that audit
+exposed, and the regression test for it.
 
 ---
 
@@ -108,27 +113,33 @@ Regression test: `SupervisorFailureLoopCoverageTests.test_owner_reassignment_pre
 
 Run from the repository root on the base-advanced branch.
 
-### Failure-loop coverage tests
+### Failure-loop coverage class
 
 ```
 python -m pytest .orchestrator/test_supervisor.py -k SupervisorFailureLoopCoverage -q
 ```
 
-Result: **5 passed**
+Result: **18 passed**, including the added
+`test_owner_reassignment_preserves_human_gate_reviewer`.
 
-- `test_every_enabled_auto_dispatch_agent_has_fallback_coverage`
-- `test_unmapped_agent_falls_back_to_dynamic_known_agents`
-- `test_reassign_skips_human_gate_and_non_dispatchable_tasks`
-- `test_owner_reassignment_preserves_human_gate_reviewer`
-- `test_status_check_emission_422_warning_and_outbox_safety`
-
-### Full supervisor suite
+### Full CI orchestrator command
 
 ```
-python -m pytest .orchestrator/test_supervisor.py -q
+ruff check .orchestrator delivery_toolchain scripts
+python delivery_toolchain/governance/check_code_boundaries.py
+python delivery_toolchain/governance/check_orchestrator_config.py
+python delivery_toolchain/governance/check_config_wiring.py
+python -m pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts -q
 ```
 
-Result: **all tests passed (0 failures, 0 errors)**
+Result: ruff clean (this is the gate the previous head failed on, with `F811`
+for the duplicate class); boundary, config-validation, and config-wiring checks
+clean; all tests pass except the four in
+`scripts/test_ai_status.py::MergedConfigActorAuthorityTests`, which assert
+against the live local config overlay and the canonical repository root. All
+four fail identically on a clean detached `origin/dev` checkout on this host, so
+none of them are regressions from this branch; they pass in CI, where the
+runner has no local overlay.
 
 ---
 
