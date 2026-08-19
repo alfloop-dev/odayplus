@@ -12770,5 +12770,81 @@ class FleetDispatchLivelockTests(unittest.TestCase):
         )
 
 
+class WorkerTaskBranchFromRecordTests(unittest.TestCase):
+    """A worker must check out the branch the task record names.
+
+    Deriving `task/<id>` unconditionally invented a branch for every task
+    reimported from an existing GitHub PR. The refresh policy then reported the
+    invented name as missing from a remote that never had it, which no retry can
+    clear. SINGLE-RUNTIME-RELEASE-0D1603CF sat in that deadlock: its work is on
+    `single-runtime-release-0d1603cf` (PR #822) while the leased worktree held an
+    empty `task/SINGLE-RUNTIME-RELEASE-0D1603CF`.
+    """
+
+    CONFIG = {"branch_workflow": {"task_branch_prefix": "task/"}}
+
+    def test_the_recorded_branch_wins_over_the_derived_name(self) -> None:
+        self.assertEqual(
+            supervisor.worker_task_branch(
+                self.CONFIG,
+                "SINGLE-RUNTIME-RELEASE-0D1603CF",
+                {"branch": "single-runtime-release-0d1603cf"},
+            ),
+            "single-runtime-release-0d1603cf",
+        )
+
+    def test_a_record_naming_no_branch_still_derives(self) -> None:
+        for task in ({}, {"branch": ""}, {"branch": "   "}, None):
+            with self.subTest(task=task):
+                self.assertEqual(
+                    supervisor.worker_task_branch(self.CONFIG, "ODP-CONC-001", task),
+                    "task/ODP-CONC-001",
+                )
+
+    def test_the_derived_name_is_unchanged_without_a_task_argument(self) -> None:
+        self.assertEqual(
+            supervisor.worker_task_branch(self.CONFIG, "ODP-CONC-001"), "task/ODP-CONC-001"
+        )
+
+    def test_a_malformed_recorded_branch_is_refused_not_passed_to_git(self) -> None:
+        for bad in ("has space", "tilde~1", "caret^", "colon:x", "star*", "q?", "br[x", "back\\slash",
+                    "-leading", "/leading", "trailing/", "x.lock", "dot..dot", "at@{0}"):
+            with self.subTest(branch=bad):
+                self.assertFalse(supervisor.branch_name_is_usable(bad))
+                self.assertEqual(
+                    supervisor.worker_task_branch(self.CONFIG, "T-1", {"branch": bad}),
+                    "task/T-1",
+                )
+
+    def test_ordinary_branch_names_are_usable(self) -> None:
+        for good in ("dev", "task/ODP-CONC-001", "single-runtime-release-0d1603cf", "feature/a_b.c"):
+            with self.subTest(branch=good):
+                self.assertTrue(supervisor.branch_name_is_usable(good))
+
+    def test_the_canonical_record_beats_the_dispatch_snapshot(self) -> None:
+        """The dispatch event carries a progress snapshot with no `branch` and no
+        `repository`, so reading either from it silently degraded to a derived
+        name and the default repository."""
+        canonical = {"id": "T-9", "branch": "imported-branch", "repository": "owner/other"}
+        snapshot = {"id": "T-9", "status": "in_progress", "owner": "Claude"}
+
+        with mock.patch.object(supervisor, "load_status", return_value={}), \
+                mock.patch.object(supervisor, "task_index_from_status", return_value={"T-9": canonical}):
+            self.assertEqual(supervisor.canonical_task_record({}, "T-9", snapshot), canonical)
+
+    def test_an_unreadable_status_file_falls_back_to_the_snapshot(self) -> None:
+        snapshot = {"id": "T-9", "status": "in_progress"}
+
+        with mock.patch.object(supervisor, "load_status", side_effect=OSError("gone")):
+            self.assertEqual(supervisor.canonical_task_record({}, "T-9", snapshot), snapshot)
+
+    def test_an_unknown_task_falls_back_to_the_snapshot(self) -> None:
+        snapshot = {"id": "T-9"}
+
+        with mock.patch.object(supervisor, "load_status", return_value={}), \
+                mock.patch.object(supervisor, "task_index_from_status", return_value={}):
+            self.assertEqual(supervisor.canonical_task_record({}, "T-9", snapshot), snapshot)
+
+
 if __name__ == "__main__":
     unittest.main()

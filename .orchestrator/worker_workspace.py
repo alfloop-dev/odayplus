@@ -3,6 +3,7 @@ from __future__ import annotations
 """Workspace lifecycle helpers extracted from legacy supervisor."""
 # ruff: noqa: F821
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -72,7 +73,51 @@ def _task_id_slug(task_id: str | None) -> str:
     return slug or "unknown-task"
 
 @_entrypoint
-def worker_task_branch(config: dict[str, Any], task_id: str | None) -> str:
+def canonical_task_record(
+    config: dict[str, Any],
+    task_id: str | None,
+    fallback: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """The task as the status file states it, not as a dispatch event echoed it."""
+    try:
+        record = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
+    except Exception:
+        record = None
+    return record if isinstance(record, dict) else fallback
+
+
+# Conservative subset of git's own ref-name rules. A task record is data, and a
+# malformed branch name in it must not reach `git worktree add`.
+_INVALID_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
+
+
+@_entrypoint
+def branch_name_is_usable(name: str) -> bool:
+    if not name or name.startswith("-") or name.startswith("/") or name.endswith("/"):
+        return False
+    if name.endswith(".lock") or ".." in name or "@{" in name:
+        return False
+    return _INVALID_BRANCH_CHARS.search(name) is None
+
+
+@_entrypoint
+def worker_task_branch(config: dict[str, Any], task_id: str | None, task: dict[str, Any] | None = None) -> str:
+    """The branch a worker must check out for a task.
+
+    The task record's own `branch` wins. Deriving `task/<id>` unconditionally
+    invented a name for every task whose branch does not follow that
+    convention -- which is every task reimported from an existing GitHub PR.
+    The fail-closed refresh policy then reported the invented branch as missing
+    from a remote that never had it, and no retry could clear that.
+    SINGLE-RUNTIME-RELEASE-0D1603CF sat there: its work is on
+    `single-runtime-release-0d1603cf` (PR #822), while the leased worktree held
+    an empty `task/SINGLE-RUNTIME-RELEASE-0D1603CF` carrying no task commit at
+    all. Derivation stays as the fallback for records that name no branch.
+    """
+    if isinstance(task, dict):
+        recorded = str(task.get("branch") or "").strip()
+        if recorded and branch_name_is_usable(recorded):
+            return recorded
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
     prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
     normalized_task_id = str(task_id or "").strip()
@@ -1529,11 +1574,17 @@ def prepare_worker_workspace(
     if request.metadata.get("workspace_path"):
         return True, None
 
+    # The dispatch event carries a progress snapshot, not the task record: it
+    # has no `branch` and no `repository`, so resolving either from it silently
+    # fell back to a derived name and the default repository. Read the canonical
+    # record instead, and keep the snapshot only as the fallback.
     task_metadata = request.metadata.get("task")
-    repo_root, repo_root_source = worker_task_repo_root(
+    task_record = canonical_task_record(
         config,
+        workspace_task_id,
         task_metadata if isinstance(task_metadata, dict) else None,
     )
+    repo_root, repo_root_source = worker_task_repo_root(config, task_record)
     if repo_root is None:
         message = (
             f"Cannot lease isolated worker worktree for {workspace_task_id}: "
@@ -1554,7 +1605,7 @@ def prepare_worker_workspace(
         )
         return False, message
 
-    branch = worker_task_branch(config, workspace_task_id)
+    branch = worker_task_branch(config, workspace_task_id, task_record)
     worktree_path = worker_task_worktree_path(config, workspace_task_id, settings, repo_root)
     reused = False
 

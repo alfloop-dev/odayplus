@@ -160,6 +160,8 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "materialize_worker_context_files",
 "prepare_worker_workspace",
 "prune_orphan_worktrees",
+"branch_name_is_usable",
+"canonical_task_record",
 "worker_task_branch",
 "worker_task_repo_root",
 "worker_task_worktree_path",
