@@ -4081,6 +4081,56 @@ def run_supervisor_cycle(
         return False
 
 
+def install_termination_logging(config: dict[str, Any]) -> None:
+    """Make the supervisor announce its own death.
+
+    Without this the process has no way to record being terminated. `atexit` does
+    NOT run on SIGTERM -- Python's default disposition kills the process outright --
+    and never on SIGKILL, so a signalled supervisor simply stops mid-loop and the
+    log's last line is an ordinary tick. Four terminations inside one hour were
+    diagnosable only by elimination (not OOM, no traceback, no clean-exit message,
+    no `supervisor_replaced` event) because nothing recorded what ended them.
+
+    Raising SystemExit unwinds the main thread normally, which also lets the
+    registered atexit hook clear `supervisor.pid` instead of leaving a stale one
+    for the watchdog to read as a live supervisor.
+
+    SIGKILL cannot be caught; that case stays silent by construction.
+    """
+
+    def _handle(signum: int, _frame: Any) -> None:
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:  # pragma: no cover - platform-specific signal numbers
+            name = str(signum)
+        message = f"Supervisor received {name}; shutting down."
+        # Both sinks are best-effort: a handler that raises on its way out would
+        # replace the diagnostic it exists to record.
+        try:
+            console_log(f"{message} pid={os.getpid()}", quiet=SUPERVISOR_LOG_QUIET)
+        except Exception:
+            pass
+        try:
+            write_activity_log(
+                config,
+                {
+                    "type": "supervisor_terminated",
+                    "message": message,
+                    "signal": name,
+                    "pid": os.getpid(),
+                },
+            )
+        except Exception:
+            pass
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(signum, _handle)
+        except (OSError, ValueError):  # pragma: no cover - not installable everywhere
+            continue
+
+
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
@@ -4108,6 +4158,7 @@ def main() -> int:
         return 0
     terminate_other_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
+    install_termination_logging(config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
     poll_interval, poll_source = resolve_poll_interval(
