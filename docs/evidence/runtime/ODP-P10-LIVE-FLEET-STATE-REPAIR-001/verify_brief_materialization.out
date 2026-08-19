@@ -1,0 +1,16 @@
+supervisor root: /home/lupin/oday-plus-supervisor-runtime-current
+status root:     /home/lupin/oday-plus-supervisor-live
+
+[PASS] T00 ODP-P10-LIVE-FLEET-STATE-REPAIR-001: 9 context files
+[PASS] T10 ODP-P10-LIVE-EXTDATA-DIAG-001: 8 context files
+[PASS] T11 ODP-P10-LIVE-EXTDATA-REMEDIATE-001: 7 context files
+[PASS] T20 ODP-FORECAST-AUTHORITATIVE-HISTORY-BACKFILL-001: 5 context files
+[PASS] T21 ODP-PRODUCTION-MODEL-REGISTRY-001: 5 context files
+[PASS] T30 ODP-P10-DEV-REDEPLOY-VERIFY-001: 8 context files
+[PASS] T40 ODP-P10-LIVE-VISUAL-PARITY-001: 9 context files
+[PASS] T41 ODP-P10-LIVE-LEGACY-RETIREMENT-001: 9 context files
+[PASS] T42 ODP-PLAN-LIVE-STAGING-PROOF-001: 9 context files
+[PASS] T50 ODP-PLAN-UAT-SIGNOFF-001: 9 context files
+[PASS] T60 ODP-PLAN-FINAL-GATE-AUDIT-001: 9 context files
+
+11/11 tasks materialize without fail-closed

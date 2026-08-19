@@ -1,0 +1,28 @@
+Rollback & Backup Receipt for Task ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001
+Timestamp: 2026-07-31T14:26:49Z
+
+Backup Directory: /tmp/odp-freeze-live-rollout-backups-20260731/
+
+Pre-Deployment Backups Created:
+1. /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live..orchestrator_supervisor.py.bak
+   SHA256: 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+   Mode: 664
+
+2. /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live.scripts_ai_status.py.bak
+   SHA256: bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+   Mode: 775
+
+3. /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus..orchestrator_supervisor.py.bak
+   SHA256: 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+   Mode: 664
+
+4. /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus.scripts_ai_status.py.bak
+   SHA256: bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+   Mode: 775
+
+Exact Rollback Commands:
+  install -m 664 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live..orchestrator_supervisor.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py
+  install -m 775 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live.scripts_ai_status.py.bak /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+  install -m 664 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus..orchestrator_supervisor.py.bak /home/lupin/oday-plus/.orchestrator/supervisor.py
+  install -m 775 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus.scripts_ai_status.py.bak /home/lupin/oday-plus/scripts/ai_status.py
+  systemctl --user restart pantheon-supervisor.service

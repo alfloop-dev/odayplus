@@ -28,6 +28,7 @@ import pytest
 from apps.api.server import SERVICE_BOUNDARIES, bootstrap_runtime, build_server, build_worker
 from apps.worker.oday_worker.handlers import build_default_registry
 from apps.worker.oday_worker.main import ODayWorker
+from modules.external_data.workers.scheduled_fetch import TenantScopedExternalFetchStateStore
 from modules.forecastops import ForecastOpsService, StoreDayObservation
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobStatus
@@ -35,6 +36,7 @@ from tests.integration._authz import FORECASTOPS_HEADERS
 
 PROVIDER_ID = "listing.partner_feed"
 TENANT_ID = FORECASTOPS_HEADERS["x-tenant-id"]
+SCHEDULED_TENANT_ID = "tenant-gate"
 
 
 @pytest.fixture
@@ -85,8 +87,9 @@ def test_service_boundaries_declare_runtime_units() -> None:
     assert {"core-api", "worker", "scheduler"}.issubset(units)
 
 
-def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
+def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypatch) -> None:
     """Acceptance 2-4: migrations + seed + api + worker + scheduler run together."""
+    monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", SCHEDULED_TENANT_ID)
     fastapi = pytest.importorskip("fastapi")  # noqa: F841
     from fastapi.testclient import TestClient
 
@@ -100,7 +103,10 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
 
         # Flow 1 (Integration/External): the scheduler primed an external-fetch
         # job but the worker has not run yet, so no watermark exists.
-        assert bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID) is None
+        scoped_store = TenantScopedExternalFetchStateStore(
+            bundle.external_fetch_state_store, SCHEDULED_TENANT_ID
+        )
+        assert scoped_store.last_success_watermark(PROVIDER_ID) is None
 
         # Flow 2 (Operations): enqueue a forecast job through the core-api
         # boundary. This crosses the API service boundary and writes an audit
@@ -134,7 +140,7 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
         assert bundle.job_queue.get(forecast_job_id).status == JobStatus.SUCCEEDED
 
         # Durable side effects: external watermark advanced; a forecast persisted.
-        watermark = bundle.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        watermark = scoped_store.last_success_watermark(PROVIDER_ID)
         assert watermark is not None
         assert bundle.forecastops_repository.latest_forecasts(TENANT_ID)
 
@@ -167,7 +173,10 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path) -> None:
     # advanced watermark. Backup/recovery of durable runtime state.
     reopened = _durable_bundle(db_path)
     try:
-        persisted = reopened.external_fetch_state_store.last_success_watermark(PROVIDER_ID)
+        reopened_scoped = TenantScopedExternalFetchStateStore(
+            reopened.external_fetch_state_store, SCHEDULED_TENANT_ID
+        )
+        persisted = reopened_scoped.last_success_watermark(PROVIDER_ID)
         assert persisted is not None
         assert persisted == watermark
     finally:

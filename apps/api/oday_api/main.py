@@ -52,15 +52,6 @@ def health_payload() -> dict[str, str]:
     return {"status": "ok", "service": "oday-api"}
 
 
-def health_detail_payload(*, correlation_id: str) -> dict[str, str]:
-    return {
-        **health_payload(),
-        "version": API_VERSION,
-        "time": datetime.now(UTC).isoformat(),
-        "correlation_id": correlation_id,
-    }
-
-
 def release_sha_from_environment() -> str:
     """Resolve the exact runtime release identity.
 
@@ -68,14 +59,10 @@ def release_sha_from_environment() -> str:
     and existing Cloud Run revision use ``ODP_RELEASE_COMMIT_SHA``, so runtime
     probes accept it as the first compatibility fallback.
     """
+    from shared.runtime_config import get_release_identity
 
-    return (
-        os.environ.get("ODAY_RELEASE_SHA")
-        or os.environ.get("ODP_RELEASE_COMMIT_SHA")
-        or os.environ.get("GITHUB_SHA")
-        or os.environ.get("COMMIT_SHA")
-        or "local"
-    )
+    return get_release_identity("local")
+
 
 
 def release_version_payload(*, correlation_id: str) -> dict[str, str]:
@@ -126,6 +113,7 @@ else:
         avm_repository: Any = None,
         forecastops_repository: Any = None,
         netplan_repository: Any = None,
+        netplan_approval_verifier: Any = None,
         learninghub_repository: Any = None,
         artifact_store: Any = None,
         priceops_repository: Any = None,
@@ -136,6 +124,7 @@ else:
         intervention_workflow: Any = None,
         intervention_repository: Any = None,
         intervention_label_registry: Any = None,
+        operator_live_repository: Any = None,
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
@@ -146,7 +135,13 @@ else:
         # PostgreSQL runtime. Explicit arguments still win so tests can inject
         # hand-built doubles. See ODP-PV-009.
         from shared.infrastructure.persistence import build_persistence
-        from shared.observability import SpanKind, SpanStatus, Telemetry, TraceContext
+        from shared.observability import (
+            RouteTemplateResolver,
+            SpanKind,
+            SpanStatus,
+            Telemetry,
+            TraceContext,
+        )
 
         telemetry = telemetry or Telemetry("oday-api")
         provider_validation = external_provider_validation or validate_external_providers_or_raise()
@@ -162,8 +157,7 @@ else:
         production_persistence_supported = persistence_mode in {"postgres", "postgresql"} and bool(
             bundle.is_production
         )
-        operator_live_repository: Any | None = None
-        if require_live_data and production_persistence_supported:
+        if operator_live_repository is None and require_live_data and production_persistence_supported:
             from modules.opsboard.application.operator_live_repository import (
                 OperatorLiveRepository,
             )
@@ -211,8 +205,18 @@ else:
 
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
+        heatzone_store_for_tenant = (
+            bundle.heatzone_store_for_tenant if bundle.is_durable else None
+        )
+        ingestion_run_store_for_tenant = (
+            bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
+        )
+        sitescore_decision_store_for_tenant = (
+            bundle.sitescore_decision_store_for_tenant if bundle.is_durable else None
+        )
         ingestion_service = external_ingestion_service or ExternalIngestionService(
             store=bundle.ingestion_run_store,
+            ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
             state_store=bundle.external_fetch_state_store,
             audit_log=audit_log,
         )
@@ -388,7 +392,11 @@ else:
                 and persistence_reachable
                 and provider_live_ready
                 and operator_repository_ready
-                and production_model_bindings_ready
+            )
+            model_blocking_reasons = (
+                ["PRODUCTION_MODEL_BINDINGS_UNVERIFIED"]
+                if require_live_data and not production_model_bindings_ready
+                else []
             )
             blocking_reasons: list[str] = []
             if require_live_data:
@@ -407,8 +415,6 @@ else:
                     blocking_reasons.append("PROVIDER_CONNECTIVITY_UNHEALTHY")
                 if not operator_repository_ready:
                     blocking_reasons.append("OPERATOR_LIVE_REPOSITORY_UNAVAILABLE")
-                if not production_model_bindings_ready:
-                    blocking_reasons.append("PRODUCTION_MODEL_BINDINGS_UNVERIFIED")
             return {
                 "requireLiveData": require_live_data,
                 "deploymentMode": active_deployment_mode,
@@ -438,6 +444,7 @@ else:
                     "capabilities": production_model_capabilities,
                     "error": production_model_error,
                     "autoSeeded": (not require_live_data and production_model_bindings_ready),
+                    "blockingReasons": model_blocking_reasons,
                 },
                 "data": {
                     "mode": (
@@ -463,6 +470,54 @@ else:
                 },
             }
 
+        class TelemetryMiddleware:
+            """Production HTTP telemetry middleware recording api_request_count, api_error_count, and api_latency_ms."""
+            pass
+
+        # Built on first request: routers are still being mounted at the time
+        # this middleware is declared, so the route table is not complete yet.
+        route_resolver_cell: dict[str, RouteTemplateResolver] = {}
+
+        def route_label(path: str) -> str:
+            """Bounded ``route`` label: the registered template, never the raw path.
+
+            ODP-SD-11 §5.1 budgets ``route`` cardinality against the route table.
+            Emitting ``request.url.path`` instead makes every ``/jobs/<uuid>``
+            its own series and exhausts the budget inside one load wave.
+            """
+            resolver = route_resolver_cell.get("resolver")
+            if resolver is None:
+                resolver = RouteTemplateResolver(api.routes)
+                route_resolver_cell["resolver"] = resolver
+            return resolver.resolve(path)
+
+        def emit_telemetry(correlation_id: str, *records: Any) -> None:
+            """Run metric emissions so telemetry can never fail a live request.
+
+            Instrumentation is a side channel: a registry-level rejection (bad
+            label, cardinality guard, type mismatch) must degrade the metric,
+            not the response the caller is waiting on. Each emission is guarded
+            independently so one bad signal does not suppress the others.
+            """
+            for record in records:
+                try:
+                    record()
+                except Exception as exc:
+                    try:
+                        telemetry.logger.warning(
+                            "telemetry_emission_failed",
+                            correlation_id=correlation_id,
+                            actor="system",
+                            resource="telemetry",
+                            action="emit",
+                            error_code=type(exc).__name__,
+                        )
+                    except Exception:
+                        # The failure report must not become the failure. An
+                        # injected telemetry double may carry no logger, and a
+                        # custom sink can raise on its own.
+                        pass
+
         @api.middleware("http")
         async def attach_correlation_id(request: Request, call_next: Any) -> Response:
             context = CorrelationContext.from_header(request.headers.get(CORRELATION_ID_HEADER))
@@ -474,13 +529,20 @@ else:
                 request_id=context.correlation_id,
             )
 
+            start_t = time.monotonic()
+            route = route_label(request.url.path)
+
             with telemetry.operation(
-                name=f"HTTP {request.method} {request.url.path}",
+                name=f"HTTP {request.method} {route}",
                 kind=SpanKind.API,
                 context=trace_ctx,
                 resource="HTTP",
                 action=request.method,
-                latency_labels={"service": "oday-api", "route": request.url.path},
+                # Latency is emitted explicitly below, inside emit_telemetry, so
+                # it is both contained and counted exactly once per request.
+                latency_metric=None,
+                # Live request path: a failing sink must not become a 500.
+                contain_telemetry_errors=True,
             ) as span:
                 if require_live_data and request.url.path not in {
                     "/health",
@@ -488,6 +550,12 @@ else:
                     "/openapi.json",
                     "/platform/health",
                     "/platform/version",
+                    "/platform/observability",
+                    "/api/v1/platform/observability",
+                    "/platform/metrics/export",
+                    "/api/v1/platform/metrics/export",
+                    "/platform/dashboards/provisioned",
+                    "/api/v1/platform/dashboards/provisioned",
                     "/readiness",
                     "/docs",
                     "/docs/oauth2-redirect",
@@ -524,9 +592,33 @@ else:
                         response.headers[CORRELATION_ID_HEADER] = context.correlation_id
                         span.status = SpanStatus.ERROR
                         span.error_code = "HTTP_503"
+                        status_str = "503"
+                        count_labels = {"service": "oday-api", "route": route, "status": status_str}
+                        latency_labels = {"service": "oday-api", "route": route}
+                        rejected_ms = (time.monotonic() - start_t) * 1000.0
+                        emit_telemetry(
+                            context.correlation_id,
+                            lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
+                            lambda: telemetry.metrics.increment("api_error_count", labels=count_labels),
+                            lambda: telemetry.metrics.observe("api_latency_ms", rejected_ms, labels=latency_labels),
+                        )
                         return response
                 response = await call_next(request)
-                if response.status_code >= 400:
+                status_str = str(response.status_code)
+                duration_ms = (time.monotonic() - start_t) * 1000.0
+                count_labels = {"service": "oday-api", "route": route, "status": status_str}
+                latency_labels = {"service": "oday-api", "route": route}
+                is_error = response.status_code >= 400
+                emissions = [
+                    lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
+                    lambda: telemetry.metrics.observe("api_latency_ms", duration_ms, labels=latency_labels),
+                ]
+                if is_error:
+                    emissions.append(
+                        lambda: telemetry.metrics.increment("api_error_count", labels=count_labels)
+                    )
+                emit_telemetry(context.correlation_id, *emissions)
+                if is_error:
                     span.status = SpanStatus.ERROR
                     span.error_code = f"HTTP_{response.status_code}"
                 response.headers[CORRELATION_ID_HEADER] = context.correlation_id
@@ -566,8 +658,18 @@ else:
 
             if not overall_ok:
                 response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-                return {"status": "unhealthy", "service": "oday-api", "details": details}
-            return {"status": "ok", "service": "oday-api", "details": details}
+                return {
+                    "status": "unhealthy",
+                    "service": "oday-api",
+                    "data_mode": modes["data"]["mode"],
+                    "details": details,
+                }
+            return {
+                "status": "ok",
+                "service": "oday-api",
+                "data_mode": modes["data"]["mode"],
+                "details": details,
+            }
 
         @api.get("/health", tags=["platform"])
         @api.get("/platform/health", tags=["platform"])
@@ -579,11 +681,12 @@ else:
             )
 
             queue_ok = True
-            queue_details = (
-                "healthy (durable postgresql job queue)"
-                if bundle.is_durable
-                else "healthy (in-memory job queue)"
-            )
+            if bundle.mode == "postgresql":
+                queue_details = "healthy (durable postgresql job queue)"
+            elif bundle.mode == "durable":
+                queue_details = "healthy (durable sqlite job queue)"
+            else:
+                queue_details = "healthy (in-memory job queue)"
             try:
                 if bundle.is_durable:
                     bundle.engine.query("SELECT COUNT(*) FROM durable_jobs")
@@ -617,6 +720,7 @@ else:
                 "version": API_VERSION,
                 "time": datetime.now(UTC).isoformat(),
                 "correlation_id": request.state.correlation_id,
+                "data_mode": modes["data"]["mode"],
                 "dependencies": {
                     "database": db_details,
                     "job_queue": queue_details,
@@ -628,6 +732,55 @@ else:
         @api.get("/platform/version", tags=["platform"])
         def platform_version(request: Request) -> dict[str, str]:
             return release_version_payload(correlation_id=request.state.correlation_id)
+
+        platform_observability_router = APIRouter()
+
+        @platform_observability_router.get("/platform/observability", tags=["platform"])
+        @platform_observability_router.get("/platform/metrics/export", tags=["platform"])
+        def platform_metrics_export(request: Request) -> dict[str, Any]:
+            from shared.observability import ProductionMetricsExporter, default_registry
+
+            sha = release_sha_from_environment()
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production metrics export requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                exporter = ProductionMetricsExporter(release_sha=sha, registry=default_registry())
+                return exporter.export_metrics()
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production metrics export failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
+
+        @platform_observability_router.get("/platform/dashboards/provisioned", tags=["platform"])
+        def platform_dashboards_provisioned(request: Request) -> dict[str, Any]:
+            from shared.observability import render_dashboard_provisioning
+
+            sha = release_sha_from_environment()
+            if require_live_data and (not sha or sha.strip() == "local"):
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "Production dashboard provisioning requires an exact full 40-character release SHA in environment. Fail-closed gate enforced.",
+                    code="invalid_release_sha",
+                )
+            try:
+                return render_dashboard_provisioning(release_sha=sha)
+            except ValueError as exc:
+                raise ApiError(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    f"Production dashboard provisioning failed-closed: {exc}",
+                    code="invalid_release_sha",
+                ) from exc
+
+        mount_versioned(api, platform_observability_router)
+
+
+
 
         # Jobs and audit-event reads are product operations, so they are
         # versioned like every domain router rather than declared inline on the
@@ -670,6 +823,54 @@ else:
                 )
             return active_tenant_id
 
+        def external_fetch_job_tenant(request: Request) -> str:
+            """Resolve the tenant that owns an ``external-fetch`` enqueue.
+
+            Canonical ingestion is persisted into a *renamed*, tenant-scoped
+            collection, so whatever tenant rides on the job payload decides
+            which partition the worker writes to. Trusting the caller for that
+            value let any ``integration:create`` principal direct canonical
+            ingestion into a partition it cannot read back, and the live E2E
+            gate was the first caller to trip over it: its probes enqueued
+            under the deployment's placeholder tenant, the worker persisted
+            there and reported success, and the gate's readback -- scoped to
+            the smoke principal's own tenant -- reported ``runs=0`` seconds
+            later (ODP-P10-LIVE-EXTDATA-DIAG-001 §3). The authenticated
+            principal is now the only source of the ingestion tenant, which is
+            the same rule ``forecast`` already follows.
+            """
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+            from shared.auth import Action, rbac_allows
+
+            principal = principal_from_headers(request.headers)
+            if not principal.authenticated:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "code": "AUTHENTICATION_REQUIRED",
+                        "message": "External fetch jobs require an authenticated principal",
+                    },
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            if not rbac_allows(principal, "integration", Action.CREATE):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "EXTERNAL_FETCH_CREATE_FORBIDDEN",
+                        "message": "Principal cannot enqueue external-data ingestion jobs",
+                    },
+                )
+            active_tenant_id = str(principal.tenant_id or "").strip()
+            if not active_tenant_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "TENANT_SCOPE_REQUIRED",
+                        "message": "External fetch jobs require an authenticated tenant scope",
+                    },
+                )
+            return active_tenant_id
+
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
             body: JobCreatePayload,
@@ -678,6 +879,7 @@ else:
         ) -> dict[str, Any]:
             payload = body.payload
             idempotency_tenant_id: str | None = None
+            idempotency_scope = ""
             if body.job_type == "forecast":
                 active_tenant_id = forecast_job_tenant(request, action="execute")
                 supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
@@ -693,12 +895,30 @@ else:
                     )
                 payload = {**payload, "tenant_id": active_tenant_id}
                 idempotency_tenant_id = active_tenant_id
+                idempotency_scope = "forecast:v1"
+            elif body.job_type == "external-fetch":
+                active_tenant_id = external_fetch_job_tenant(request)
+                supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
+                if supplied_tenant_id and supplied_tenant_id != active_tenant_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail={
+                            "code": "TENANT_SCOPE_MISMATCH",
+                            "message": (
+                                "External fetch job tenant does not match the "
+                                "authenticated tenant scope"
+                            ),
+                        },
+                    )
+                payload = {**payload, "tenant_id": active_tenant_id}
+                idempotency_tenant_id = active_tenant_id
+                idempotency_scope = "external-fetch:v1"
 
             effective_idempotency_key = body.idempotency_key or idempotency_key
             queue_idempotency_key = effective_idempotency_key
             if effective_idempotency_key and idempotency_tenant_id is not None:
                 queue_idempotency_key = (
-                    f"forecast:v1:{idempotency_tenant_id}:{effective_idempotency_key}"
+                    f"{idempotency_scope}:{idempotency_tenant_id}:{effective_idempotency_key}"
                 )
             job, created = job_queue.enqueue(
                 JobRequest(
@@ -869,7 +1089,7 @@ else:
                 )
             except ProductionModelRuntimeError as exc:
                 for service, capability in production_model_capabilities.items():
-                    if capability["trainable"]:
+                    if capability["trainable"] and service not in _governed_disabled:
                         capability["reasonCode"] = exc.code
                         capability["error"] = str(exc)
                         if service in required_model_services:
@@ -941,17 +1161,11 @@ else:
                 "; ".join(production_composition_errors) if production_composition_errors else None
             )
             # productionBindingsReady is True when:
-            # - ForecastOps is active (available=True, the only MLflow alias required)
-            # - Every other required service is either active or governed-disabled
-            # - The MLflow runtime and LearningHub registry are both live
-            # A governed-disabled service contributes to readiness because it has
-            # explicit evidence and fails closed; it does NOT require a production alias.
             forecastops_active = (
                 production_model_capabilities.get("forecastops", {}).get("available") is True
             )
             all_required_resolved = all(
-                production_model_capabilities[service]["available"]
-                or service in _governed_disabled
+                production_model_capabilities[service]["available"] or service in _governed_disabled
                 for service in required_model_services
             )
             production_model_bindings_ready = (
@@ -978,6 +1192,7 @@ else:
             api,
             create_heatzone_router(
                 store=heatzone_store,
+                heatzone_store_for_tenant=heatzone_store_for_tenant,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("heatzone"),
                 model_runtime=model_runtime,
@@ -991,6 +1206,7 @@ else:
             api,
             create_external_data_router(
                 ingestion_service=ingestion_service,
+                ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
                 audit_log=audit_log,
                 require_provider=require_live_external_provider,
             ),
@@ -1042,6 +1258,7 @@ else:
                 repository=netplan_repo,
                 audit_log=audit_log,
                 production_executor=netplan_production_executor,
+                approval_verifier=netplan_approval_verifier,
                 runtime_mode=domain_runtime_mode,
             ),
         )
@@ -1071,6 +1288,7 @@ else:
             create_sitescore_router(
                 repository=site_repository,
                 workflow=decision_workflow,
+                sitescore_decision_repository_for_tenant=sitescore_decision_store_for_tenant,
                 realization_hook=realization_hook,
                 audit_log=audit_log,
                 model_binding=scoring_bindings.get("sitescore"),
@@ -1180,9 +1398,15 @@ else:
                 require_live_data=require_live_data,
                 persistence_mode=persistence_mode,
                 provider_mode=provider_mode,
-                allow_test_reset=os.environ.get("ODP_E2E_MODE", "").strip().lower()
-                == "true",
+                allow_test_reset=os.environ.get("ODP_E2E_MODE", "").strip().lower() == "true",
             ),
+        )
+
+        from apps.api.oday_api.routes.feature_flags import create_feature_flags_router
+
+        mount_versioned(
+            api,
+            create_feature_flags_router(audit_log=audit_log),
         )
 
         api.state.audit_log = audit_log

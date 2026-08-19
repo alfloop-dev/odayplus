@@ -10,7 +10,7 @@ repository.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -22,9 +22,12 @@ from models.shared_ml.production_runtime import (
 )
 from modules.priceops.domain.pricing import (
     DEFAULT_NEGATIVE_IMPACT_THRESHOLD,
+    PRICEOPS_POLICY_VERSION,
     PRICEOPS_SOLVER_VERSION,
     ApprovalRecord,
+    DecisionWritebackRecord,
     InterventionTreatmentHandoff,
+    InvalidScenarioError,
     InvalidTransitionError,
     ItemOptimization,
     ItemPlanComparison,
@@ -32,6 +35,7 @@ from modules.priceops.domain.pricing import (
     LabelRegistryEntry,
     ObservationWindow,
     PlanOptimization,
+    PlanScenarioSimulation,
     PlanSimulation,
     PlanStatus,
     PriceTreatment,
@@ -41,11 +45,13 @@ from modules.priceops.domain.pricing import (
     PricingPlanComparison,
     PricingPlanItem,
     RollbackPlan,
+    UnavailableSimulationResultError,
     build_observation_window,
     build_rollback_plan,
     count_hard_violations,
     evaluate_effect,
     optimize_item,
+    simulate_candidate_scenario,
     simulate_item,
 )
 from modules.priceops.infrastructure.oss_optimizer import (
@@ -269,6 +275,95 @@ class PriceOpsService:
         self.repository.save_approval(record)
         self._advance(plan, target, actor=actor_id, reason=reason, occurred_at=now)
         return record
+
+    def simulate_scenario(
+        self,
+        plan_id: str,
+        candidate_prices: Mapping[str, float],
+        *,
+        actor: str = "system",
+        reason: str = "candidate scenario simulation",
+        scenario_id: str | None = None,
+        generated_at: datetime | None = None,
+    ) -> PlanScenarioSimulation:
+        plan = self._require_plan(plan_id)
+        now = generated_at or datetime.now(UTC)
+        scenario_sim = simulate_candidate_scenario(
+            plan,
+            candidate_prices,
+            scenario_id=scenario_id,
+            generated_at=now,
+        )
+        self.repository.save_scenario_simulation(scenario_sim)
+        return scenario_sim
+
+    def writeback_decision(
+        self,
+        plan_id: str,
+        *,
+        actor: str,
+        decision: str,
+        reason: str,
+        selected_scenario_id: str | None = None,
+        occurred_at: datetime | None = None,
+        idempotency_key: str | None = None,
+    ) -> DecisionWritebackRecord:
+        plan = self._require_plan(plan_id)
+        normalized_decision = (
+            _normalize_approval_decision(decision)
+            if decision.lower() in {"approved", "rejected"}
+            else decision.lower()
+        )
+        now = occurred_at or datetime.now(UTC)
+
+        # Check idempotency
+        existing_decisions = self.repository.list_decision_writebacks(plan_id)
+        if idempotency_key:
+            for existing in existing_decisions:
+                if existing.idempotency_key == idempotency_key:
+                    return existing
+
+        # Fail closed if simulation/optimization is unavailable or infeasible for approval / scenario selection
+        if normalized_decision in {"approved", "scenario_selected"}:
+            optimization = self.repository.get_optimization(plan_id)
+            if optimization is None or not optimization.is_feasible:
+                blockers = self._approval_blockers(plan_id)
+                if optimization is None:
+                    blockers.append("plan has no optimization comparison")
+                raise UnavailableSimulationResultError(
+                    f"plan {plan_id} cannot perform decision writeback: {'; '.join(blockers)}"
+                )
+
+        solver_version = (
+            PRICEOPS_OSS_SOLVER_VERSION if self.production_required else PRICEOPS_SOLVER_VERSION
+        )
+
+        record = DecisionWritebackRecord(
+            decision_id=f"pricing-decision-{uuid4()}",
+            plan_id=plan.plan_id,
+            actor=actor,
+            decision=normalized_decision,
+            reason=reason,
+            selected_scenario_id=selected_scenario_id,
+            policy_version=PRICEOPS_POLICY_VERSION,
+            solver_version=solver_version,
+            written_back_at=now,
+            idempotency_key=idempotency_key,
+        )
+
+        self.repository.save_decision_writeback(record)
+        target = (
+            PlanStatus.APPROVED_FOR_PILOT
+            if normalized_decision == "approved"
+            else PlanStatus.STOP
+            if normalized_decision == "rejected"
+            else plan.status
+        )
+        if plan.can_transition_to(target):
+            self._advance(plan, target, actor=actor, reason=reason, occurred_at=now)
+
+        return record
+
 
     # -- comparison / status snapshot ------------------------------------
     def get_plan_comparison(self, plan_id: str) -> PricingPlanComparison:
@@ -618,6 +713,7 @@ __all__ = [
     "ApprovalBlockedError",
     "ActivationResult",
     "EvaluationResult",
+    "InvalidScenarioError",
     "MissingRollbackPlanError",
     "PlanNotFoundError",
     "PriceOpsService",

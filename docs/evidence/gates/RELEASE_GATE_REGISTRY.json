@@ -1,0 +1,313 @@
+{
+  "schema_version": "1.0.0",
+  "registry_id": "ODP-RELEASE-GATE-REGISTRY",
+  "task_id": "ODP-PLAN-GATE-REGISTRY-001",
+  "generated_at": "2026-08-01",
+  "description": "Authoritative machine-readable state of ODay Plus release Gate 0 through Gate 6. Validated by delivery_toolchain/e2e/check_release_gate_registry.py; see docs/evidence/gates/README.md for the schema and update rules.",
+  "release": {
+    "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+    "candidate_ref": "origin/dev",
+    "decision": "no-go",
+    "decision_owner": "Human/Ops",
+    "decision_date": "2026-07-30",
+    "decision_note": "NO-GO. No gate carries a passing receipt bound to the release candidate SHA. The P0 closeout program ODP-PLAN-GAP-CLOSEOUT-2026-07-30 is still open and ODP-PLAN-FINAL-GATE-AUDIT-001 has not run. Deterministic product-E2E readiness recorded in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is not release readiness."
+  },
+  "gates": [
+    {
+      "id": "gate-0",
+      "index": 0,
+      "name": "Code Gate",
+      "scope": "All code releases: formatting, lint, static/type checks, unit and component tests, and build artifacts traceable to the exact release commit SHA.",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "blocked",
+      "status_date": "2026-07-30",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "required_checks": [
+        "lint and format checks pass on the release candidate commit",
+        "static/type checks pass where configured",
+        "unit tests pass for changed backend and domain logic",
+        "component tests pass for changed frontend surfaces",
+        "build artifacts are immutable and traceable to the release candidate SHA"
+      ],
+      "evidence": [
+        {
+          "kind": "command",
+          "ref": "make ci",
+          "description": "Aggregate bootstrap/lint/security/test/smoke/node-check target that backs the Code Gate."
+        },
+        {
+          "kind": "ci-check",
+          "ref": "github:CI/ci",
+          "description": "GitHub Actions CI job that must be green on the exact release candidate commit."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/release/RELEASE_GATE_CHECKLIST.md",
+          "description": "Human-facing Code Gate checklist rows this gate summarises."
+        }
+      ],
+      "receipts": [],
+      "blockers": [
+        "No Code Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d; a green CI run on an earlier commit is not a receipt for this candidate.",
+        "ODP-PLAN-ENGINEERING-HARDENING-001 (OpenAPI, frontend dependency, and documentation hardening) is open."
+      ]
+    },
+    {
+      "id": "gate-1",
+      "index": 1,
+      "name": "Contract Gate",
+      "scope": "API, event, data-contract, and model interface changes: OpenAPI/AsyncAPI diffs, schema compatibility, and migration/rollback plans for breaking changes.",
+      "owner": "Claude",
+      "reviewer": "Codex2",
+      "status": "blocked",
+      "status_date": "2026-07-30",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "required_checks": [
+        "OpenAPI diff reviewed for breaking changes",
+        "event schema compatibility checked",
+        "data contract compatibility checked",
+        "model input/output compatibility checked",
+        "breaking changes carry migration, compatibility window, and rollback plan"
+      ],
+      "evidence": [
+        {
+          "kind": "test",
+          "ref": "tests/contract",
+          "description": "Contract test suite covering API, event, and shared frontend domain contracts."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/api",
+          "description": "API contract documentation set the OpenAPI diff is reviewed against."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/WEB_API_BINDING_MATRIX.md",
+          "description": "Web-to-API binding matrix used to spot unbound or drifted surfaces."
+        }
+      ],
+      "receipts": [],
+      "blockers": [
+        "No Contract Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
+        "ODP-PLAN-ENGINEERING-HARDENING-001 must close the OpenAPI and frontend dependency hardening gap before contract compatibility can be attested."
+      ]
+    },
+    {
+      "id": "gate-2",
+      "index": 2,
+      "name": "Data Gate",
+      "scope": "Data ingestion, canonical mapping, dbt/transformation, and feature/view changes: quality, freshness, lineage, point-in-time correctness, backfill, and quarantine paths.",
+      "owner": "Codex2",
+      "reviewer": "Claude",
+      "status": "blocked",
+      "status_date": "2026-07-30",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "required_checks": [
+        "source contract and sample data reviewed",
+        "canonical mapping tests pass",
+        "data quality tests pass",
+        "freshness and lineage evidence captured",
+        "point-in-time correctness checked for model-ready data",
+        "backfill, retry, and quarantine paths tested where applicable"
+      ],
+      "evidence": [
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/DURABLE_PERSISTENCE_WIRING.md",
+          "description": "Durable persistence wiring evidence for the transactional and analytical data path."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/data",
+          "description": "Data contract and canonical model documentation set."
+        },
+        {
+          "kind": "script",
+          "ref": "delivery_toolchain/e2e/check_live_production_data.py",
+          "description": "Fail-closed live data-plane gate that reconciles deployed data against a commit-bound manifest."
+        }
+      ],
+      "receipts": [],
+      "blockers": [
+        "No Data Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
+        "check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate."
+      ]
+    },
+    {
+      "id": "gate-3",
+      "index": 3,
+      "name": "Model and Solver Gate",
+      "scope": "Model or decision-model promotion and optimization releases: dataset snapshots, baseline/segment/calibration metrics, model cards, hard-constraint feasibility, infeasibility diagnostics, and rollback paths.",
+      "owner": "Codex2",
+      "reviewer": "Antigravity2",
+      "status": "blocked",
+      "status_date": "2026-07-30",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "required_checks": [
+        "dataset snapshot is reproducible and hash-identified",
+        "baseline comparison and segment metrics reviewed",
+        "calibration or coverage checked where applicable",
+        "model card or decision card completed",
+        "human approval and rollback path recorded",
+        "solver hard constraints, feasibility, infeasibility diagnostics, and runtime report captured"
+      ],
+      "evidence": [
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/PRODUCTION_MODEL_RISK_ACCEPTANCE_2026-07-25.md",
+          "description": "Recorded production model risk acceptance that this gate must supersede with real release evidence."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/ODP_FIN_ML_002_CLOSEOUT.md",
+          "description": "ML closeout packet referenced for model lifecycle evidence conventions."
+        }
+      ],
+      "receipts": [],
+      "blockers": [
+        "No Model and Solver Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
+        "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001 (ForecastOps formal model release evidence) is open.",
+        "ODP-PLAN-SITESCORE-OUTCOME-001 and ODP-PLAN-AVM-OUTCOME-001 remain open; ForecastOps history and an approved production alias are still unverified.",
+        "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001, ODP-PLAN-HEATZONE-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 are archived done, but task completion is not an exact-candidate Gate 3 receipt or Human/Ops model approval."
+      ]
+    },
+    {
+      "id": "gate-4",
+      "index": 4,
+      "name": "Security and Privacy Gate",
+      "scope": "All production or sensitive releases: secret scanning, dependency and SAST findings, RBAC/ABAC enforcement, sensitive export and audit controls, IAM/infrastructure review, and OSS licence compliance.",
+      "owner": "Claude",
+      "reviewer": "Antigravity2",
+      "status": "blocked",
+      "status_date": "2026-07-30",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "required_checks": [
+        "secret scan passes",
+        "dependency and SAST scans pass with no unresolved critical/high findings",
+        "RBAC/ABAC tests pass for affected roles",
+        "sensitive export and audit controls checked",
+        "IAM and infrastructure changes reviewed",
+        "licence-aware SBOM produced and OSS licence gate passes"
+      ],
+      "evidence": [
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/DOMAIN_API_SERVICE_RBAC.md",
+          "description": "Domain API and service RBAC evidence for role-scoped enforcement."
+        },
+        {
+          "kind": "command",
+          "ref": "make security",
+          "description": "Dependency and static security scan target invoked by make ci."
+        }
+      ],
+      "receipts": [],
+      "blockers": [
+        "No Security and Privacy Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
+        "ODP-PLAN-OSS-LICENSE-GATE-001 and ODP-PLAN-DEFERRED-OSS-ADR-001 are archived done, but no exact-candidate Gate 4 receipt or Human/Ops legal approval is recorded."
+      ]
+    },
+    {
+      "id": "gate-5",
+      "index": 5,
+      "name": "E2E, Performance and UAT Gate",
+      "scope": "Domain and integration releases and user-visible release candidates: business-critical flow evidence, API P95 / batch window / render runtime budgets, and role-based UAT sign-off with zero open P0/P1 defects.",
+      "owner": "Codex2",
+      "reviewer": "Human/Ops",
+      "status": "blocked",
+      "status_date": "2026-07-30",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "required_checks": [
+        "every canonical E2E spec in the acceptance registry exists and produced an execution receipt",
+        "live end-to-end gate passes against the deployed release candidate",
+        "API P95, batch window, and render/runtime budgets measured and within target",
+        "UAT scope, data, and accounts prepared for affected roles",
+        "P0/P1 UAT defects are zero and high-risk workflows are signed off"
+      ],
+      "evidence": [
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/PRODUCT_E2E_READINESS_REPORT.md",
+          "description": "Deterministic product E2E readiness report mapping P0 scenarios to executable tests."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/ODP_LIVE_E2E_GATE.md",
+          "description": "Live end-to-end acceptance gate definition for a deployed release."
+        },
+        {
+          "kind": "script",
+          "ref": "delivery_toolchain/e2e/check_live_e2e_gate.py",
+          "description": "Fail-closed live E2E gate that drives the deployed runtime bound to one exact release SHA."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/uat",
+          "description": "UAT plan and formal acceptance documentation set."
+        }
+      ],
+      "receipts": [],
+      "blockers": [
+        "No E2E, Performance and UAT Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
+        "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 and ODP-PLAN-CANONICAL-SHELL-LIVE-001 are archived done, but those implementation receipts do not prove this exact release candidate in staging or UAT.",
+        "ODP-PLAN-LIVE-STAGING-PROOF-001 must produce exact-SHA live staging end-to-end proof.",
+        "ODP-PLAN-UAT-SIGNOFF-001 (cross-role UAT defect closeout and formal sign-off) is open."
+      ]
+    },
+    {
+      "id": "gate-6",
+      "index": 6,
+      "name": "Ops, Release and Audit Gate",
+      "scope": "Production release and high-risk or subsidy-committing decisions: release note, deployment and rollback plans, monitoring watch window and on-call route, backup/DR review, decision-log export, and a reproducible evidence manifest.",
+      "owner": "Claude",
+      "reviewer": "Human/Ops",
+      "status": "blocked",
+      "status_date": "2026-07-30",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "required_checks": [
+        "release note and deployment plan completed",
+        "rollback plan completed, reviewed, and proven",
+        "monitoring watch window and on-call route assigned and live",
+        "runbook updated for changed operational behaviour",
+        "backup/DR impact reviewed",
+        "evidence IDs mapped to RTM rows and evidence manifest reproducible from its hash",
+        "decision logs record actor, role, policy version, reason, override, and timestamp"
+      ],
+      "evidence": [
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md",
+          "description": "Deployment health, backup, and rollback evidence packet."
+        },
+        {
+          "kind": "script",
+          "ref": "delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py",
+          "description": "Verifier for the deployment health, backup, and rollback evidence packet."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/AUDIT_EVIDENCE_RETENTION_PROOF.md",
+          "description": "Audit evidence retention proof for the decision-log and evidence-manifest checks."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/SUBSIDY_EVIDENCE_MATRIX.md",
+          "description": "Subsidy audit evidence matrix for high-risk commitment decisions."
+        },
+        {
+          "kind": "doc",
+          "ref": "docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md",
+          "description": "Product release go/no-go packet whose human checklist rows remain pending."
+        }
+      ],
+      "receipts": [],
+      "blockers": [
+        "No Ops, Release and Audit Gate receipt is bound to release candidate e496be62c47c45d758681b8a4d3abfae16f1c96d.",
+        "ODP-PLAN-OBSERVABILITY-LIVE-001 (production observability and on-call route) is open.",
+        "Every Human/Ops row in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is still pending-human.",
+        "ODP-PLAN-FINAL-GATE-AUDIT-001 has not re-run the Stage 0-7 / Gate 0-6 RTM audit."
+      ]
+    }
+  ]
+}

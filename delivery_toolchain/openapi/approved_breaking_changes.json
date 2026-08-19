@@ -1,0 +1,35 @@
+{
+  "$comment": [
+    "Approved breaking API changes (ODP-PGAP-API-001).",
+    "",
+    "delivery_toolchain/openapi/check_drift.py fails CI on any breaking change to",
+    "packages/openapi-client/openapi.json whose signature is not listed here.",
+    "",
+    "Add an entry only when the break is intentional AND existing callers have a",
+    "migration. Each entry must name the task that approved it and what a caller",
+    "must do; 'signature' is copied verbatim from the check_drift.py failure.",
+    "",
+    "An entry is a permanent record, not a mute button: once the affected",
+    "release has shipped and no caller remains on the old contract, delete it."
+  ],
+  "approved": [
+    {
+      "signature": "request.required:POST /api/v1/learninghub/releases:approved_by",
+      "task_id": "ODP-LEARNINGHUB-PROD-FIX-001",
+      "reason": "A release must name a distinct approver whose approval is recorded on the model card; the former default could silently fabricate review authority.",
+      "migration": "Callers must obtain a recorded model-card approval and send that approver identity in approved_by."
+    },
+    {
+      "signature": "request.type:POST /api/v1/learninghub/releases:requested_by",
+      "task_id": "ODP-LEARNINGHUB-PROD-FIX-001",
+      "reason": "Release actor identity is derived from the authenticated principal instead of trusting an arbitrary request-body default.",
+      "migration": "Callers should omit requested_by and authenticate normally; during migration, a supplied value must exactly match the authenticated principal."
+    },
+    {
+      "signature": "request.type:POST /api/v1/learninghub/releases/{release_id}/monitor:evaluated_by",
+      "task_id": "ODP-LEARNINGHUB-PROD-FIX-001",
+      "reason": "Monitor actor identity is derived from the authenticated principal instead of trusting an arbitrary request-body default.",
+      "migration": "Callers should omit evaluated_by and authenticate normally; during migration, a supplied value must exactly match the authenticated principal."
+    }
+  ]
+}

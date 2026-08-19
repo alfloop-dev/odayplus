@@ -67,7 +67,7 @@ established by the auth boundary, rejecting a mismatched body value
 (`MODEL_RELEASE_SELF_REVIEW`, 403). `LearningHubService._assert_release_authority`
 requires an approver that is recorded on the model card in a
 `model-review-board` / `model-risk-owner` role and differs from the requester —
-the same rule `scripts/models/contracts.require_approval_document` already
+the same rule `product_ops/modeling/contracts.require_approval_document` already
 applied to the CLI path. The release worker refuses a queued payload that omits
 either actor instead of defaulting one.
 

@@ -225,11 +225,27 @@ export function RebalancePanel({
                       <span className={styles.scenarioTitleRow}>
                         <strong>{scenario.name}</strong>
                         {scenario.isSystemRecommendation ? <span className={styles.recBadge}>系統建議</span> : null}
+                        {scenario.isStale ? <span className={styles.staleBadge} data-testid={`scenario-stale-${scenarioId}`}>過期 / Stale</span> : null}
+                        {scenario.isInfeasible ? <span className={styles.infeasibleBadge} data-testid={`scenario-infeasible-${scenarioId}`}>不可行</span> : null}
                         <span className={styles.roiValue}>{scenario.roi}</span>
                       </span>
                       <span className={styles.scenarioDetails}>
                         投資 {scenario.inv} · 回本 {scenario.payback} · 風險 {scenario.risk} · 時程 {scenario.time}
                       </span>
+                      {scenario.diagnostics && scenario.diagnostics.length > 0 ? (
+                        <div className={styles.infeasibilityDiagnostics} data-testid={`scenario-diagnostics-${scenarioId}`}>
+                          <strong>不可行性診斷 (Infeasibility Diagnostics)</strong>
+                          {scenario.diagnostics.map((diag, idx) => (
+                            <div key={idx} className={styles.diagnosticItem} data-testid={`diagnostic-item-${idx}`}>
+                              <div><span>違反約束 (violated_constraint):</span> <code data-field="violated_constraint">{diag.violated_constraint}</code></div>
+                              <div><span>受影響門市 (affected_stores):</span> <span data-field="affected_stores">{diag.affected_stores.join(", ")}</span></div>
+                              <div><span>需放寬條件 (required_relaxation):</span> <span data-field="required_relaxation">{diag.required_relaxation}</span></div>
+                              <div><span>商業影響 (business_impact):</span> <span data-field="business_impact">{diag.business_impact}</span></div>
+                              <div><span>建議行動 (suggested_action):</span> <span data-field="suggested_action">{diag.suggested_action}</span></div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       <span className={styles.rebalanceMetadata}>
                         <span>{scenario.modelVersion}</span>
                         <span>{scenario.snapshotId}</span>

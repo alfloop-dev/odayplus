@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.chaos.assisted_listing_intake.run import run_drills
+from delivery_toolchain.chaos.assisted_listing_intake.run import run_drills
 
 
 def test_fault_matrix_and_recovery_targets_are_measured(tmp_path: Path) -> None:

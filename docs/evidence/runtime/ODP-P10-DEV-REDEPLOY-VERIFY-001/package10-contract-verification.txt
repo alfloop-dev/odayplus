@@ -1,0 +1,26 @@
+# Package 10 source-of-truth re-verification at origin/dev
+# Task: ODP-P10-DEV-REDEPLOY-VERIFY-001   Agent: Claude2
+# origin/dev = 450c7faddda32155fadce6c36cfdeed623a385a3
+
+## Command: python3 scripts/e2e/check_product_grade_ci_gates.py --report
+=== Oday Plus Product-Grade CI Gate Validation ===
+[PASS] Package 10 ZIP SHA verified: d1583a00496f928b0765c1756c9671fedf615f12c84c00494d454c983645d7f8
+[PASS] Interactive HTML SHA verified: cc4e6ae97462bc99b1c2353c792cb3bec40d51a6c5efcfde165e5f47105e661d
+Found 40 unique data-screen-labels in interactive HTML.
+[PASS] All 40 Package 10 screen labels exist in React source.
+[PASS] Total Package 10 data-screen-label count is exactly 40.
+
+## Command: retired-path survivor diff against git ls-tree -r --name-only origin/dev
+docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json: 112 deleted_paths
+docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json: 5 deleted_paths
+unique retired visual paths: 117
+survivors at origin/dev: 0
+executable app pages: 3
+  apps/web/src/app/franchisee/page.tsx
+  apps/web/src/app/intake/[intakeId]/page.tsx
+  apps/web/src/app/operator/page.tsx
+
+## Scope note
+These two gates verify the Package 10 contract in the *source tree* at origin/dev.
+They do NOT verify runtime parity: the deploy of this SHA never reached a serving
+revision, so acceptance items 2-4 remain unproven. See README.md.

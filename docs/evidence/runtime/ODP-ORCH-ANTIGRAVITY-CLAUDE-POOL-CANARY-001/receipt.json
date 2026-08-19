@@ -1,0 +1,53 @@
+{
+  "task_id": "ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001",
+  "title": "Prove Antigravity Claude pool live routing after Gemini exhaustion",
+  "receipt_captured_at": "2026-07-29T12:10:00Z",
+  "run_id": "antigravity5-20260729T120426Z-50b845f3",
+  "provider": "antigravity5",
+  "agent_id": "antigravity5",
+  "logical_agent_id": "antigravity5",
+  "status": "running",
+  "started_at": "2026-07-29T12:04:26Z",
+  "lease_expires_at": "2026-07-29T12:39:51Z",
+  "task_branch": "task/ODP-ORCH-ANTIGRAVITY-CLAUDE-POOL-CANARY-001",
+  "workspace_path": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-antigravity-claude-pool-canary-001",
+  "antigravity_model_pool": "claude",
+  "antigravity_model": "Claude Sonnet 4.6 (Thinking)",
+  "command_sanitised": [
+    ".orchestrator/bin/agy",
+    "--model",
+    "Claude Sonnet 4.6 (Thinking)",
+    "--print-timeout",
+    "30m",
+    "--dangerously-skip-permissions",
+    "--add-dir",
+    "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-orch-antigravity-claude-pool-canary-001",
+    "--prompt",
+    "<wakeup-payload-elided>"
+  ],
+  "model_arg_count": 1,
+  "log_path": ".orchestrator/logs/20260729T120426592550Z-antigravity5-antigravity5-7dfd42.log",
+  "runner_status_path": ".orchestrator/worker-runtime/status/antigravity5-20260729T120426Z-50b845f3.json",
+  "heartbeat_path": ".orchestrator/worker-runtime/heartbeats/antigravity5-20260729T120426Z-50b845f3.json",
+  "gemini_exhaustion": {
+    "scope": "profile:4e1f30508623fa9a",
+    "profile_home": "/home/lupin/.gemini-ag5",
+    "gemini_until": "2026-07-29T19:05:49Z",
+    "last_reason": "User-provided Antigravity quota panel: Gemini weekly limit exhausted; resets in about 7h04m",
+    "updated_at": "2026-07-29T12:01:49Z",
+    "trigger_provider": "antigravity5"
+  },
+  "cooldown_state_source": "/home/lupin/oday-plus-supervisor-live/.orchestrator/runtime/antigravity_model_cooldown.json",
+  "runtime_state_source": "/home/lupin/oday-plus-supervisor-live/.orchestrator/state.json",
+  "worker_status_source": "/home/lupin/oday-plus-supervisor-live/.orchestrator/worker-runtime/status/antigravity5-20260729T120426Z-50b845f3.json",
+  "acceptance": {
+    "pool_is_claude": true,
+    "model_is_claude_sonnet_46_thinking": true,
+    "model_arg_exactly_once": true,
+    "no_secrets_in_receipt": true,
+    "no_gemini_calls_made": true,
+    "no_product_code_modified": true
+  },
+  "owner": "Antigravity5",
+  "reviewer": "Claude2"
+}

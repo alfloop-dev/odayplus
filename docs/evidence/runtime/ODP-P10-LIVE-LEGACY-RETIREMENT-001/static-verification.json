@@ -1,0 +1,1259 @@
+{
+  "verification_id": "ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+  "phase": "static_verification",
+  "verified_head": "8eabc9735653710c1b88dcfe2996eb687b609c2b",
+  "verified_branch": "task/ODP-P10-LIVE-LEGACY-RETIREMENT-001",
+  "repo_root": "/tmp/pantheon-worker-worktrees/oday-plus-supervisor-live/odp-p10-live-legacy-retirement-001",
+  "source_acks": [
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json",
+    "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+  ],
+  "historical_reference_head": "435c79e3a99839541aa3710d58049010e3ba7ab7",
+  "result": "pass",
+  "checks": [
+    {
+      "check": "retired_path_inventory_reconstructed",
+      "result": "pass",
+      "expected_unique_paths": 117,
+      "actual_unique_paths": 117,
+      "source_acks": [
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3A.json",
+        "docs/evidence/fleet_dispatch/package10_20260726/acks/ODP-P10-CAN-001-R3B.json"
+      ]
+    },
+    {
+      "check": "executable_pages",
+      "result": "pass",
+      "expected": [
+        "apps/web/src/app/franchisee/page.tsx",
+        "apps/web/src/app/intake/[intakeId]/page.tsx",
+        "apps/web/src/app/operator/page.tsx"
+      ],
+      "actual": [
+        "apps/web/src/app/franchisee/page.tsx",
+        "apps/web/src/app/intake/[intakeId]/page.tsx",
+        "apps/web/src/app/operator/page.tsx"
+      ]
+    },
+    {
+      "check": "no_surviving_retired_path",
+      "result": "pass",
+      "checked_paths": 117,
+      "surviving_on_disk": [],
+      "surviving_in_git_tree": []
+    },
+    {
+      "check": "retired_css_selectors_absent",
+      "result": "pass",
+      "families": [
+        "odp-shell",
+        "odp-skip-link",
+        "odp-header",
+        "odp-env-badge",
+        "odp-iconbtn",
+        "odp-sidebar",
+        "odp-navlink",
+        "odp-main"
+      ],
+      "selector_definition_matches": [],
+      "any_usage_matches": [],
+      "scanned_roots": [
+        "apps/web",
+        "packages",
+        "tests/e2e",
+        "playwright.config.ts"
+      ],
+      "note": "Both an anchored selector-definition sweep and a broader class-name usage sweep are run; the anchored form tolerates leading whitespace so nested media-query blocks cannot hide a survivor."
+    },
+    {
+      "check": "retained_generic_css_present",
+      "result": "pass",
+      "selector": ".odp-select",
+      "file": "packages/ui/src/styles/shell.css",
+      "matches": 2
+    },
+    {
+      "check": "retired_identity_copy_absent_from_frontend",
+      "result": "pass",
+      "terms": [
+        "OpsBoard",
+        "R0 導覽骨架"
+      ],
+      "case_insensitive": true,
+      "matches": {},
+      "scanned_roots": [
+        "apps/web",
+        "packages"
+      ]
+    },
+    {
+      "check": "retired_intake_alternatives_absent",
+      "result": "pass",
+      "symbols": [
+        "AssistedIntakeQueuePanel",
+        "IdentityDecisionPanel",
+        "IntakeAssignmentSlaDialog",
+        "IntakeDetailDialog"
+      ],
+      "matches": {},
+      "scanned_roots": [
+        "apps/web",
+        "packages",
+        "tests/e2e",
+        "playwright.config.ts"
+      ]
+    },
+    {
+      "check": "canonical_detail_graph_intact",
+      "result": "pass",
+      "component": "apps/web/features/operator/network/intake/IntakeProcessingDetail.tsx",
+      "direct_children": [
+        "ListingCompareTable",
+        "MatchEvidencePanel"
+      ],
+      "children_present": true,
+      "production_test": "apps/web/features/operator/network/intake/__tests__/Package10VisualP1.test.tsx",
+      "test_mounts_canonical_detail": true
+    },
+    {
+      "check": "no_import_edge_into_retired_module",
+      "result": "pass",
+      "scanned_files": 238,
+      "scanned_roots": [
+        "apps/web",
+        "packages",
+        "tests/e2e",
+        "playwright.config.ts"
+      ],
+      "edges_into_retired_paths": []
+    },
+    {
+      "check": "legacy_e2e_specs_absent",
+      "result": "pass",
+      "retired_spec_count": 18,
+      "surviving_specs": [],
+      "referenced_by_playwright_config": [],
+      "expected_retained_spec_count": 16,
+      "retained_spec_count": 16,
+      "retained_specs": [
+        "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
+        "tests/e2e/e2e-operator-console.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
+        "tests/e2e/operator-assisted-listing-intake.spec.ts",
+        "tests/e2e/operator-governance.spec.ts",
+        "tests/e2e/operator-growth.spec.ts",
+        "tests/e2e/operator-network-assisted-intake.spec.ts",
+        "tests/e2e/operator-network-listings.spec.ts",
+        "tests/e2e/operator-network-rebalance.spec.ts",
+        "tests/e2e/operator-network-review.spec.ts",
+        "tests/e2e/operator-network-scoring.spec.ts",
+        "tests/e2e/operator-shell-today.spec.ts",
+        "tests/e2e/operator-store-ops.spec.ts",
+        "tests/e2e/product-e2e-env.spec.ts",
+        "tests/e2e/shell-resource-binding.spec.ts"
+      ],
+      "note": "playwright.config.ts uses testDir auto-discovery, so a retired spec can only be collected if the file exists. The 16 retained canonical specs match the count declared by ODP-P10-CAN-001-R3A."
+    },
+    {
+      "check": "residual_references_are_inert",
+      "result": "pass",
+      "scanned_roots": [
+        "apps",
+        "packages",
+        "tests",
+        "scripts",
+        "playwright.config.ts"
+      ],
+      "python_paths_in_retirement_inventory": [],
+      "residual_count": 119,
+      "residuals_by_kind": {
+        "inert_comment_or_docstring": 7,
+        "inert_environment_variable_name": 2,
+        "inert_literal_string_in_document_assertion": 28,
+        "live_backend_namespace_never_in_retirement_inventory": 82
+      },
+      "unclassified_residuals": [],
+      "residuals": [
+        {
+          "location": [
+            "apps/api/app/routes/audit.py",
+            "10"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/audit.py:10:from modules.opsboard.audit.domain.evidence import EvidenceExportRequest"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/audit.py",
+            "8"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/audit.py:8:from modules.opsboard.audit import AuditEvidenceExportError, AuditEvidenceExportService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/audit.py",
+            "9"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/audit.py:9:from modules.opsboard.audit.application.evidence_export import decision_card_from_mapping"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "1094"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:1094:    from modules.opsboard.application.governance import GovernanceService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "223"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:223:    from modules.opsboard.application.network_listings import NetworkListingService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "224"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:224:    from modules.opsboard.application.network_rebalance import NetworkRebalanceService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "225"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:225:    from modules.opsboard.application.network_reviews import NetworkReviewService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "226"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:226:    from modules.opsboard.application.network_scoring import NetworkScoringService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "227"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:227:    from modules.opsboard.application.shell import ShellService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "32"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:32:  from modules.opsboard.domain.r4_dtos."
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "399"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:399:        from modules.opsboard.application.shell import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "42"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:42:from modules.opsboard.application.growth import GrowthService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "43"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:43:from modules.opsboard.application.operator_live_repository import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "47"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:47:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "535"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:535:        from modules.opsboard.application.governance import GovernanceService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator.py",
+            "954"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator.py:954:    from modules.opsboard.application.network_listings import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/approvals.py",
+            "16"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/approvals.py:16:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/approvals.py",
+            "17"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/approvals.py:17:from modules.opsboard.domain.r4_dtos import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/evidence.py",
+            "16"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/evidence.py:16:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/evidence.py",
+            "17"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/evidence.py:17:from modules.opsboard.domain.r4_dtos import EvidencePurposeRequest, EvidencePurposeResponse"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/governance.py",
+            "30"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/governance.py:30:from modules.opsboard.application.governance import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/growth.py",
+            "27"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/growth.py:27:from modules.opsboard.application.growth import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/issues.py",
+            "16"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/issues.py:16:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/issues.py",
+            "17"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/issues.py:17:from modules.opsboard.domain.r4_dtos import IssueTransitionRequest, IssueTransitionResponse"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/network_listings.py",
+            "28"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/network_listings.py:28:from modules.opsboard.application.network_listings import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/network_rebalance.py",
+            "24"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/network_rebalance.py:24:from modules.opsboard.application.network_rebalance import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/network_reviews.py",
+            "32"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/network_reviews.py:32:from modules.opsboard.application.network_reviews import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/network_scoring.py",
+            "25"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/network_scoring.py:25:from modules.opsboard.application.network_scoring import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/seed.py",
+            "19"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/seed.py:19:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/seed.py",
+            "9"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/seed.py:9:(or modules/opsboard/infrastructure/seed_data.py as fallback)."
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/shell.py",
+            "34"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/shell.py:34:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/shell.py",
+            "35"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/shell.py:35:from modules.opsboard.application.shell import ("
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/store_ops.py",
+            "16"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/store_ops.py:16:from modules.opsboard.domain.r4_dtos import AttachmentUploadRequest"
+        },
+        {
+          "location": [
+            "apps/api/app/routes/operator_modules/store_ops.py",
+            "9"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/app/routes/operator_modules/store_ops.py:9:from modules.opsboard.application.store_ops import ("
+        },
+        {
+          "location": [
+            "apps/api/oday_api/main.py",
+            "1199"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/main.py:1199:        from modules.opsboard.application.network_listings import InMemoryAssistedIntakeRepository"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/main.py",
+            "164"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/main.py:164:            from modules.opsboard.application.operator_live_repository import ("
+        },
+        {
+          "location": [
+            "apps/api/oday_api/main.py",
+            "3"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "apps/api/oday_api/main.py:3:Exposes integration, opsboard, data, and ML domain endpoints wired to durable"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "112"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:112:    :attr:`~modules.opsboard.auth.config.AuthBoundaryConfig.is_configured`, so"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "124"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:124:        from modules.opsboard.auth import AuthenticationBoundary"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "125"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:125:        from modules.opsboard.auth.config import config_from_env"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "149"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:149:    by :class:`modules.opsboard.auth.AuthenticationBoundary` (ODP-SD-09 §3,"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "160"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:160:        from modules.opsboard.auth import Credentials"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "233"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:233:    The stable :class:`~modules.opsboard.auth.errors.AuthFailureReason` value is"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "237"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:237:    from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "26"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:26::class:`modules.opsboard.auth.AuthenticationError` (401) on denial."
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "37"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:37:    from modules.opsboard.auth import AuthenticationBoundary"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "38"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:38:    from modules.opsboard.auth.errors import AuthFailureReason"
+        },
+        {
+          "location": [
+            "apps/api/oday_api/security/dependencies.py",
+            "8"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/api/oday_api/security/dependencies.py:8:  (``ODP_AUTH_*``), it delegates to :class:`modules.opsboard.auth."
+        },
+        {
+          "location": [
+            "apps/api/server.py",
+            "13"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "apps/api/server.py:13:  opsboard-web  Frontend   Next.js UI — not built here (calls ``core-api``)."
+        },
+        {
+          "location": [
+            "apps/api/server.py",
+            "63"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "apps/api/server.py:63:    ServiceBoundary(\"opsboard-web\", \"Frontend\", \"UI; calls core-api, no direct DB access\"),"
+        },
+        {
+          "location": [
+            "apps/worker/assisted_listing_intake/worker.py",
+            "10"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "apps/worker/assisted_listing_intake/worker.py:10:from modules.opsboard.application.network_listings import ("
+        },
+        {
+          "location": [
+            "playwright.config.ts",
+            "12"
+          ],
+          "kind": "inert_environment_variable_name",
+          "line": "playwright.config.ts:12:const WEB_PORT = Number(process.env.OPSBOARD_PORT ?? 3100);"
+        },
+        {
+          "location": [
+            "playwright.config.ts",
+            "4"
+          ],
+          "kind": "inert_comment_or_docstring",
+          "line": "playwright.config.ts:4: * Playwright config for the OpsBoard shell and the API-bound UI suite."
+        },
+        {
+          "location": [
+            "product_ops/deployment/validate_cloud_run_live_deployment.py",
+            "1107"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "product_ops/deployment/validate_cloud_run_live_deployment.py:1107:            root, \"modules.opsboard.application.operator_state\""
+        },
+        {
+          "location": [
+            "product_ops/deployment/validate_cloud_run_live_deployment.py",
+            "1110"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "product_ops/deployment/validate_cloud_run_live_deployment.py:1110:            root, \"modules.opsboard.application.operator_live_repository\""
+        },
+        {
+          "location": [
+            "delivery_toolchain/e2e/product_e2e_receipt.py",
+            "284"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "delivery_toolchain/e2e/product_e2e_receipt.py:284:    \"e2e-exp.spec.ts\","
+        },
+        {
+          "location": [
+            "delivery_toolchain/e2e/product_e2e_receipt.py",
+            "285"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "delivery_toolchain/e2e/product_e2e_receipt.py:285:    \"e2e-ops.spec.ts\","
+        },
+        {
+          "location": [
+            "delivery_toolchain/e2e/product_e2e_receipt.py",
+            "286"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "delivery_toolchain/e2e/product_e2e_receipt.py:286:    \"e2e-intervention-price-ad.spec.ts\","
+        },
+        {
+          "location": [
+            "delivery_toolchain/e2e/product_e2e_receipt.py",
+            "287"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "delivery_toolchain/e2e/product_e2e_receipt.py:287:    \"e2e-avm-netplan.spec.ts\","
+        },
+        {
+          "location": [
+            "delivery_toolchain/e2e/product_e2e_receipt.py",
+            "288"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "delivery_toolchain/e2e/product_e2e_receipt.py:288:    \"e2e-learning-audit.spec.ts\","
+        },
+        {
+          "location": [
+            "delivery_toolchain/e2e/run_product_e2e.sh",
+            "114"
+          ],
+          "kind": "inert_environment_variable_name",
+          "line": "delivery_toolchain/e2e/run_product_e2e.sh:114:OPSBOARD_PORT=\"$WEB_PORT\" \\"
+        },
+        {
+          "location": [
+            "tests/contract/test_assisted_listing_v1_runtime.py",
+            "11"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/contract/test_assisted_listing_v1_runtime.py:11:from modules.opsboard.auth import SigningKey, encode_compact_jwt"
+        },
+        {
+          "location": [
+            "tests/contract/test_operator_assisted_listing_api.py",
+            "8"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/contract/test_operator_assisted_listing_api.py:8:from modules.opsboard.application.network_listings import ("
+        },
+        {
+          "location": [
+            "tests/e2e/operator-growth.spec.ts",
+            "33"
+          ],
+          "kind": "inert_comment_or_docstring",
+          "line": "tests/e2e/operator-growth.spec.ts:33:  // The Operator Console is full-bleed (package-6): no OpsBoard app-shell chrome."
+        },
+        {
+          "location": [
+            "tests/e2e/shell-resource-binding.spec.ts",
+            "20"
+          ],
+          "kind": "inert_comment_or_docstring",
+          "line": "tests/e2e/shell-resource-binding.spec.ts:20: * shell-product.spec.ts (a genuine 403 and a genuine 404)."
+        },
+        {
+          "location": [
+            "tests/e2e/test_external_proof_fleet_notifications_checker.py",
+            "34"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_external_proof_fleet_notifications_checker.py:34:                    'PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1',"
+        },
+        {
+          "location": [
+            "tests/e2e/test_external_proof_fleet_notifications_checker.py",
+            "59"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_external_proof_fleet_notifications_checker.py:59:- `PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1`"
+        },
+        {
+          "location": [
+            "tests/e2e/test_external_proof_issue_sync_checker.py",
+            "114"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_external_proof_issue_sync_checker.py:114:                    'PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1',"
+        },
+        {
+          "location": [
+            "tests/e2e/test_external_proof_issue_sync_checker.py",
+            "117"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_external_proof_issue_sync_checker.py:117:                    \"- `tests/e2e/e2e-map-live-boundary.spec.ts`\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_external_proof_issue_sync_checker.py",
+            "48"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_external_proof_issue_sync_checker.py:48:                    'PLAYWRIGHT_BASE_URL=\"$ODP_STAGING_DEPLOY_URL\" npx playwright test tests/e2e/e2e-map-live-boundary.spec.ts --project=chromium --retries=1',"
+        },
+        {
+          "location": [
+            "tests/e2e/test_external_proof_issue_sync_checker.py",
+            "56"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_external_proof_issue_sync_checker.py:56:                    \"tests/e2e/e2e-map-live-boundary.spec.ts\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "142"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:142:    \"ODP-FE-R0-001\": ((\"FE-R0-001\", \"FE-R0-002\"), (\"tests/e2e/e2e-api-bound-ui.spec.ts\",)),"
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "145"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:145:        (\"tests/e2e/e2e-map.spec.ts\", \"tests/e2e/e2e-expansion-product.spec.ts\"),"
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "149"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:149:        (\"tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts\",),"
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "153"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:153:        (\"tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts\",),"
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "157"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:157:        (\"tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts\",),"
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "161"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:161:        (\"tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts\",),"
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "197"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:197:        \"ODP-FE-R0-001\": \"tests/e2e/opsboard-shell.spec.ts\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "198"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:198:        \"ODP-FE-EXP-001\": \"tests/e2e/e2e-expansion-product.spec.ts\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "199"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:199:        \"ODP-FE-OPS-001\": \"tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "200"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:200:        \"ODP-FE-PRICE-001\": \"tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "201"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:201:        \"ODP-FE-ASSET-001\": \"tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "202"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:202:        \"ODP-FE-LEARN-001\": \"tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts\","
+        },
+        {
+          "location": [
+            "tests/e2e/test_frontend_execution_matrix_coverage.py",
+            "79"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/e2e/test_frontend_execution_matrix_coverage.py:79:        \"keywords\": (\"OpsBoard App Shell\", \"Task Center\"),"
+        },
+        {
+          "location": [
+            "tests/e2e/test_live_e2e_gate.py",
+            "1317"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/e2e/test_live_e2e_gate.py:1317:    from modules.opsboard.application.operator_live_repository import ("
+        },
+        {
+          "location": [
+            "tests/e2e/test_live_e2e_gate.py",
+            "1333"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/e2e/test_live_e2e_gate.py:1333:        ROOT / \"modules/opsboard/application/operator_state.py\""
+        },
+        {
+          "location": [
+            "tests/integration/test_assisted_listing_intake_persistence.py",
+            "7"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_assisted_listing_intake_persistence.py:7:from modules.opsboard.application.network_listings import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_audit_evidence_export.py",
+            "8"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_audit_evidence_export.py:8:from modules.opsboard.audit import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_audit_evidence_persistence.py",
+            "27"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_audit_evidence_persistence.py:27:from modules.opsboard.audit import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_auth_boundary_authz.py",
+            "16"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_auth_boundary_authz.py:16:from modules.opsboard.auth import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_auth_boundary_authz.py",
+            "1"
+          ],
+          "kind": "inert_comment_or_docstring",
+          "line": "tests/integration/test_auth_boundary_authz.py:1:\"\"\"End-to-end: OpsBoard auth boundary -> shared RBAC/ABAC engine."
+        },
+        {
+          "location": [
+            "tests/integration/test_domain_api_rbac.py",
+            "174"
+          ],
+          "kind": "inert_comment_or_docstring",
+          "line": "tests/integration/test_domain_api_rbac.py:174:    # integration / opsboard / data / ML domains this service exposes. The"
+        },
+        {
+          "location": [
+            "tests/integration/test_domain_api_rbac.py",
+            "9"
+          ],
+          "kind": "inert_literal_string_in_document_assertion",
+          "line": "tests/integration/test_domain_api_rbac.py:9:- the generated OpenAPI contract exposes the integration/opsboard/data/ML"
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_canonical_wiring.py",
+            "28"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_canonical_wiring.py:28:from modules.opsboard.application.network_listings import NetworkListingService"
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_canonical_wiring.py",
+            "29"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_canonical_wiring.py:29:from modules.opsboard.application.network_scoring import NetworkScoringService"
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_canonical_wiring.py",
+            "30"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_canonical_wiring.py:30:from modules.opsboard.application.operator_live_repository import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_canonical_wiring.py",
+            "429"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_canonical_wiring.py:429:        \"modules.opsboard.application.network_rebalance._seed_scenarios\","
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_live_domain_modules.py",
+            "14"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_live_domain_modules.py:14:from modules.opsboard.application.operator_live_repository import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_live_domain_modules.py",
+            "18"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_live_domain_modules.py:18:from modules.opsboard.application.store_ops import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_live_provenance_health.py",
+            "29"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_live_provenance_health.py:29:from modules.opsboard.application.operator_live_repository import OperatorLiveRepository"
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_live_provenance_health.py",
+            "30"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_live_provenance_health.py:30:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_live_repository.py",
+            "22"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_live_repository.py:22:from modules.opsboard.application.operator_live_repository import ("
+        },
+        {
+          "location": [
+            "tests/integration/test_operator_live_repository.py",
+            "26"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_operator_live_repository.py:26:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "tests/integration/test_postgresql_persistence.py",
+            "11"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_postgresql_persistence.py:11:from modules.opsboard.application.operator_live_repository import OperatorLiveRepository"
+        },
+        {
+          "location": [
+            "tests/integration/test_postgresql_persistence.py",
+            "12"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/integration/test_postgresql_persistence.py:12:from modules.opsboard.application.operator_state import OperatorStateService"
+        },
+        {
+          "location": [
+            "tests/reliability/test_live_data_fail_closed.py",
+            "15"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/reliability/test_live_data_fail_closed.py:15:from modules.opsboard.application import operator_state"
+        },
+        {
+          "location": [
+            "tests/reliability/test_live_data_fail_closed.py",
+            "16"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/reliability/test_live_data_fail_closed.py:16:from modules.opsboard.application.operator_live_repository import OperatorLiveRepository"
+        },
+        {
+          "location": [
+            "tests/security/test_api_auth_wiring.py",
+            "1"
+          ],
+          "kind": "inert_comment_or_docstring",
+          "line": "tests/security/test_api_auth_wiring.py:1:\"\"\"API auth path wired to the OpsBoard auth boundary (ODP-FIN-AUTH-001)."
+        },
+        {
+          "location": [
+            "tests/security/test_api_auth_wiring.py",
+            "28"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_api_auth_wiring.py:28:from modules.opsboard.auth import ("
+        },
+        {
+          "location": [
+            "tests/security/test_api_auth_wiring.py",
+            "34"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_api_auth_wiring.py:34:from modules.opsboard.auth.errors import AuthenticationError, AuthFailureReason"
+        },
+        {
+          "location": [
+            "tests/security/test_api_auth_wiring.py",
+            "6"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_api_auth_wiring.py:6::class:`modules.opsboard.auth.AuthenticationBoundary` (ODP-GAP-AUTH-001) when"
+        },
+        {
+          "location": [
+            "tests/security/test_assisted_listing_intake_authorization_matrix.py",
+            "30"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_assisted_listing_intake_authorization_matrix.py:30:    from modules.opsboard.application.network_listings import NetworkListingService"
+        },
+        {
+          "location": [
+            "tests/security/test_operator_shell_security.py",
+            "299"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_operator_shell_security.py:299:    from modules.opsboard.auth import SigningKey, encode_compact_jwt"
+        },
+        {
+          "location": [
+            "tests/security/test_opsboard_auth_boundary.py",
+            "17"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_opsboard_auth_boundary.py:17:from modules.opsboard.auth import ("
+        },
+        {
+          "location": [
+            "tests/security/test_opsboard_auth_boundary.py",
+            "1"
+          ],
+          "kind": "inert_comment_or_docstring",
+          "line": "tests/security/test_opsboard_auth_boundary.py:1:\"\"\"Security tests for the OpsBoard authentication boundary (ODP-GAP-AUTH-001)."
+        },
+        {
+          "location": [
+            "tests/security/test_opsboard_auth_boundary.py",
+            "29"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_opsboard_auth_boundary.py:29:from modules.opsboard.auth.boundary import AUTHENTICATION_EVENT_TYPE"
+        },
+        {
+          "location": [
+            "tests/security/test_opsboard_jwks_auth.py",
+            "10"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_opsboard_jwks_auth.py:10:from modules.opsboard.auth import ("
+        },
+        {
+          "location": [
+            "tests/security/test_opsboard_jwks_auth.py",
+            "134"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/security/test_opsboard_jwks_auth.py:134:    from modules.opsboard.auth import config_from_env"
+        },
+        {
+          "location": [
+            "tests/test_scaffold.py",
+            "31"
+          ],
+          "kind": "live_backend_namespace_never_in_retirement_inventory",
+          "line": "tests/test_scaffold.py:31:        \"modules/opsboard\","
+        }
+      ],
+      "note": "Retired spec paths appear in tests/e2e/test_frontend_execution_matrix_coverage.py only as string literals asserted against historical evidence documents; the test asserts document text, never file existence or import, so no retired implementation is executed."
+    }
+  ],
+  "retired_path_inventory_count": 117,
+  "retired_path_inventory_by_root": {
+    "apps/web": 92,
+    "packages/ui": 7,
+    "tests/e2e": 18
+  },
+  "retired_path_inventory": [
+    "apps/web/features/adlift/AdLiftWorkspace.tsx",
+    "apps/web/features/adlift/data.ts",
+    "apps/web/features/audit/AuditWorkspace.tsx",
+    "apps/web/features/audit/audit.module.css",
+    "apps/web/features/audit/data.ts",
+    "apps/web/features/avm/AvmWorkspace.tsx",
+    "apps/web/features/avm/avm.module.css",
+    "apps/web/features/avm/data.ts",
+    "apps/web/features/expansion/AccessibleDrawer.tsx",
+    "apps/web/features/expansion/ExpansionWorkspace.tsx",
+    "apps/web/features/expansion/__tests__/ProductionAssistedIntake.test.tsx",
+    "apps/web/features/expansion/data.ts",
+    "apps/web/features/expansion/expansion.module.css",
+    "apps/web/features/intervention/InterventionWorkspace.tsx",
+    "apps/web/features/intervention/data.ts",
+    "apps/web/features/intervention/intervention.module.css",
+    "apps/web/features/learninghub/LearningHubWorkspace.tsx",
+    "apps/web/features/learninghub/data.ts",
+    "apps/web/features/learninghub/learninghub.module.css",
+    "apps/web/features/map/HeatZoneMap.tsx",
+    "apps/web/features/map/map.module.css",
+    "apps/web/features/netplan/NetPlanWorkspace.tsx",
+    "apps/web/features/netplan/data.ts",
+    "apps/web/features/netplan/netplan.module.css",
+    "apps/web/features/operations/OperationsWorkspace.tsx",
+    "apps/web/features/operations/ProductionDataState.tsx",
+    "apps/web/features/operations/__tests__/ProductionDataRemoval.test.tsx",
+    "apps/web/features/operations/data.ts",
+    "apps/web/features/operations/operations.module.css",
+    "apps/web/features/operations/productionDataState.module.css",
+    "apps/web/features/operator/network/intake/AssistedIntakeQueuePanel.tsx",
+    "apps/web/features/operator/network/intake/IdentityDecisionPanel.tsx",
+    "apps/web/features/operator/network/intake/IntakeAssignmentSlaDialog.tsx",
+    "apps/web/features/operator/network/intake/IntakeDetailDialog.tsx",
+    "apps/web/features/operator/network/intake/__tests__/IdentityDecisionPanel.test.tsx",
+    "apps/web/features/operator/networkFindAreasLoader.ts",
+    "apps/web/features/priceops/PriceOpsWorkspace.tsx",
+    "apps/web/features/priceops/data.ts",
+    "apps/web/features/shell/AcknowledgeButton.tsx",
+    "apps/web/features/shell/AdminWorkspace.tsx",
+    "apps/web/features/shell/AssignTaskForm.tsx",
+    "apps/web/features/shell/HomeWorkspace.tsx",
+    "apps/web/features/shell/NotificationsWorkspace.tsx",
+    "apps/web/features/shell/OfflineBanner.tsx",
+    "apps/web/features/shell/PreferencesForm.tsx",
+    "apps/web/features/shell/RoleWorkspacesForm.tsx",
+    "apps/web/features/shell/SearchKeyboardNav.tsx",
+    "apps/web/features/shell/SearchWorkspace.tsx",
+    "apps/web/features/shell/SettingsForm.tsx",
+    "apps/web/features/shell/SettingsWorkspace.tsx",
+    "apps/web/features/shell/TaskCenterWorkspace.tsx",
+    "apps/web/src/app/OpsBoardFrame.tsx",
+    "apps/web/src/app/adlift/page.tsx",
+    "apps/web/src/app/admin/audit/page.tsx",
+    "apps/web/src/app/admin/page.tsx",
+    "apps/web/src/app/audit/page.tsx",
+    "apps/web/src/app/avm/page.tsx",
+    "apps/web/src/app/expansion/page.tsx",
+    "apps/web/src/app/interventions/page.tsx",
+    "apps/web/src/app/learning/page.tsx",
+    "apps/web/src/app/map/page.tsx",
+    "apps/web/src/app/netplan/page.tsx",
+    "apps/web/src/app/notifications/page.tsx",
+    "apps/web/src/app/operations/page.tsx",
+    "apps/web/src/app/page.tsx",
+    "apps/web/src/app/pricing/page.tsx",
+    "apps/web/src/app/search/page.tsx",
+    "apps/web/src/app/settings/page.tsx",
+    "apps/web/src/app/tasks/page.tsx",
+    "apps/web/src/app/w/ai/models/[modelName]/[version]/page.tsx",
+    "apps/web/src/app/w/ai/models/[modelName]/page.tsx",
+    "apps/web/src/app/w/ai/models/page.tsx",
+    "apps/web/src/app/w/ai/releases/[releaseId]/page.tsx",
+    "apps/web/src/app/w/ai/releases/page.tsx",
+    "apps/web/src/app/w/audit/decisions/[decisionId]/page.tsx",
+    "apps/web/src/app/w/audit/decisions/page.tsx",
+    "apps/web/src/app/w/audit/evidence/page.tsx",
+    "apps/web/src/app/w/dealroom/cases/[caseId]/page.tsx",
+    "apps/web/src/app/w/dealroom/cases/page.tsx",
+    "apps/web/src/app/w/expansion/candidates/page.tsx",
+    "apps/web/src/app/w/expansion/heatzone/page.tsx",
+    "apps/web/src/app/w/expansion/listings/error.tsx",
+    "apps/web/src/app/w/expansion/listings/loading.tsx",
+    "apps/web/src/app/w/expansion/listings/page.tsx",
+    "apps/web/src/app/w/expansion/page.tsx",
+    "apps/web/src/app/w/expansion/sitescore/[reportId]/page.tsx",
+    "apps/web/src/app/w/expansion/sitescore/page.tsx",
+    "apps/web/src/app/w/network/scenarios/[scenarioId]/page.tsx",
+    "apps/web/src/app/w/network/scenarios/page.tsx",
+    "apps/web/src/app/w/operations/alerts/page.tsx",
+    "apps/web/src/app/w/operations/forecast/[storeId]/page.tsx",
+    "apps/web/src/app/w/operations/forecast/page.tsx",
+    "packages/ui/src/components/AppShell.tsx",
+    "packages/ui/src/components/GlobalHeader.tsx",
+    "packages/ui/src/components/ModulePlaceholder.tsx",
+    "packages/ui/src/components/ShellContext.tsx",
+    "packages/ui/src/components/Sidebar.tsx",
+    "packages/ui/src/nav/filterNav.ts",
+    "packages/ui/src/nav/routes.ts",
+    "tests/e2e/e2e-api-bound-ui.spec.ts",
+    "tests/e2e/e2e-avm-netplan-learning-audit-product.spec.ts",
+    "tests/e2e/e2e-avm-netplan.spec.ts",
+    "tests/e2e/e2e-exp.spec.ts",
+    "tests/e2e/e2e-expansion-product.spec.ts",
+    "tests/e2e/e2e-intervention-price-ad.spec.ts",
+    "tests/e2e/e2e-learning-audit.spec.ts",
+    "tests/e2e/e2e-map-a11y.spec.ts",
+    "tests/e2e/e2e-map-live-boundary.spec.ts",
+    "tests/e2e/e2e-map-resilience.spec.ts",
+    "tests/e2e/e2e-map-tooltip-evidence.spec.ts",
+    "tests/e2e/e2e-map.spec.ts",
+    "tests/e2e/e2e-ops-intervention-price-ad-product.spec.ts",
+    "tests/e2e/e2e-ops.spec.ts",
+    "tests/e2e/e2e-pgap-ux-001.spec.ts",
+    "tests/e2e/opsboard-shell.spec.ts",
+    "tests/e2e/shell-product-mobile.spec.ts",
+    "tests/e2e/shell-product.spec.ts"
+  ]
+}

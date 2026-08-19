@@ -1,3 +1,5 @@
+import pytest
+
 from solver.netplan.model import NetworkAction
 from solver.netplan.robust import (
     RobustNetPlanConstraints,
@@ -109,6 +111,7 @@ def test_missing_cvxpy_fails_closed(monkeypatch) -> None:
         options_by_entity=_options(),
         scenarios=_scenarios(),
         constraints=RobustNetPlanConstraints(max_budget=50),
+        isolate_process=False,
     )
 
     assert result.solver_status == "SOLVER_UNAVAILABLE"
@@ -129,8 +132,121 @@ def test_missing_mixed_integer_backend_fails_closed(monkeypatch) -> None:
         options_by_entity=_options(),
         scenarios=_scenarios(),
         constraints=RobustNetPlanConstraints(max_budget=50),
+        isolate_process=False,
     )
 
     assert result.solver_status == "SOLVER_UNAVAILABLE"
     assert result.selected_actions == ()
     assert result.diagnostics[0].code == "MIP_SOLVER_UNAVAILABLE"
+
+
+def test_cvxpy_infeasible_max_average_risk_has_dedicated_diagnostics() -> None:
+    result = solve_robust_network_plan(
+        options_by_entity=_options(),
+        scenarios=_scenarios(),
+        constraints=RobustNetPlanConstraints(
+            max_budget=50,
+            max_average_risk=0.01,
+        ),
+    )
+
+    assert result.solver_status == "INFEASIBLE"
+    assert result.selected_actions == ()
+    codes = [d.code for d in result.diagnostics]
+    assert "AVERAGE_RISK_INFEASIBLE" in codes
+
+
+@pytest.mark.parametrize(
+    ("option", "constraints", "expected_code", "expected_constraint"),
+    (
+        (
+            ScenarioActionOption(
+                "budget-precision",
+                "store-precision",
+                NetworkAction.KEEP,
+                {"BASE": 10},
+                10.00004,
+                0.1,
+            ),
+            RobustNetPlanConstraints(max_budget=10),
+            "BUDGET_INFEASIBLE",
+            "max_budget",
+        ),
+        (
+            ScenarioActionOption(
+                "value-precision",
+                "store-precision",
+                NetworkAction.KEEP,
+                {"BASE": 9.99996},
+                0,
+                0.1,
+            ),
+            RobustNetPlanConstraints(
+                max_budget=10,
+                min_value_by_scenario={"BASE": 10},
+            ),
+            "SCENARIO_FLOOR_INFEASIBLE",
+            "min_value_by_scenario.BASE",
+        ),
+        (
+            ScenarioActionOption(
+                "risk-precision",
+                "store-precision",
+                NetworkAction.KEEP,
+                {"BASE": 10},
+                0,
+                0.10004,
+            ),
+            RobustNetPlanConstraints(max_budget=10, max_average_risk=0.1),
+            "AVERAGE_RISK_INFEASIBLE",
+            "max_average_risk",
+        ),
+    ),
+)
+def test_cvxpy_sub_four_decimal_violation_has_dedicated_diagnostics(
+    option: ScenarioActionOption,
+    constraints: RobustNetPlanConstraints,
+    expected_code: str,
+    expected_constraint: str,
+) -> None:
+    result = solve_robust_network_plan(
+        options_by_entity={option.entity_id: (option,)},
+        scenarios=(Scenario("BASE", 1),),
+        constraints=constraints,
+        isolate_process=False,
+    )
+
+    assert result.solver_status == "INFEASIBLE"
+    assert result.selected_actions == ()
+    assert [(item.code, item.constraint) for item in result.diagnostics] == [
+        (expected_code, expected_constraint)
+    ]
+
+
+def test_cvxpy_infeasible_max_action_counts_has_dedicated_diagnostics() -> None:
+    # Build options where store-a only has KEEP action
+    only_keep_options = {
+        "store-a": (
+            ScenarioActionOption(
+                "safe",
+                "store-a",
+                NetworkAction.KEEP,
+                {"DOWNSIDE": 80, "BASE": 80, "UPSIDE": 80},
+                0,
+                0.05,
+            ),
+        )
+    }
+    result = solve_robust_network_plan(
+        options_by_entity=only_keep_options,
+        scenarios=_scenarios(),
+        constraints=RobustNetPlanConstraints(
+            max_budget=50,
+            max_action_counts={NetworkAction.KEEP: 0},
+        ),
+    )
+
+    assert result.solver_status == "INFEASIBLE"
+    assert result.selected_actions == ()
+    codes = [d.code for d in result.diagnostics]
+    assert "ACTION_COUNT_MAX_INFEASIBLE" in codes

@@ -1,9 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1)"
-if [[ -z "${gh_bin}" ]]; then
-  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
+# Resolve the newest vendored gh.
+#
+# Do NOT collapse this into `gh_bin="$(ls -d ... 2>/dev/null | sort -V | tail -n1)"`.
+# Under `set -euo pipefail` a non-matching glob makes `ls` exit non-zero, pipefail
+# propagates that through the pipeline, and `set -e` aborts the script AT THE
+# ASSIGNMENT -- so the "binary not found" message below never runs and this wrapper
+# dies with exit 2 and completely empty stdout/stderr. The orchestrator matches that
+# message (common.PROVIDER_LAUNCHER_MISSING_PATTERN) to classify the failure as
+# `provider_unavailable` and pause the lane; without it the failure reads as a
+# generic `terminal` error and the supervisor keeps dispatching into a dead lane.
+shopt -s nullglob
+candidates=("$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh)
+shopt -u nullglob
+
+gh_bin=""
+if (( ${#candidates[@]} )); then
+  gh_bin="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -n1)"
+fi
+
+# Fallback: use a system install when the vendored toolchain is absent, matching
+# the codex/claude launchers in this directory.
+if [[ -z "${gh_bin}" || ! -x "${gh_bin}" ]]; then
+  alt="$(command -v gh 2>/dev/null || true)"
+  if [[ -n "${alt}" && "${alt}" != "$0" ]]; then
+    gh_bin="${alt}"
+  fi
+fi
+
+if [[ -z "${gh_bin}" || ! -x "${gh_bin}" ]]; then
+  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools or on PATH." >&2
   exit 1
 fi
 

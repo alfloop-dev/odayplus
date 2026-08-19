@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 from modules.external_data.geo import GeoPipeline
-from modules.listing import InMemoryListingRepository, ListingPipeline
+from modules.listing import ListingPipeline
 from shared.audit import InMemoryAuditLog
 
 _CURSOR_SIGNING_KEY_ENV = "ODP_INTAKE_CURSOR_SIGNING_KEY"
@@ -358,6 +358,37 @@ else:
         rejected_count: int
         rows: list[BatchRowReceipt]
         correlation_id: UuidString
+
+    class XlsxPreviewRequest(BaseModel):
+        file_base64: str
+        custom_mapping: dict[str, str] | None = None
+        scope: ScopeContext | None = None
+
+    class XlsxPreviewResponse(BaseModel):
+        batch_id: str
+        total_rows: int
+        valid_count: int
+        rejected_count: int
+        schema_mapping: dict[str, str]
+        has_formula_or_external_link_warnings: bool
+        warnings: list[str]
+        valid_rows: list[dict[str, Any]]
+        row_errors: list[dict[str, Any]]
+        preview_rows: list[dict[str, Any]]
+
+    class XlsxCommitRequest(BaseModel):
+        batch_id: str | None = None
+        rows: list[dict[str, Any]]
+        scope: ScopeContext
+
+    class XlsxCommitReceipt(BaseModel):
+        batch_id: str
+        committed_at: str
+        accepted_count: int
+        rejected_count: int
+        intake_ids: list[str]
+        correlation_id: str
+        replayed: bool = False
 
     class IntakeSummary(BaseModel):
         intake_id: UuidString
@@ -1709,6 +1740,227 @@ else:
             val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "submitIntakeBatch", make)
             response.status_code = code
             return BatchIntakeReceipt(**val)
+
+        # Field classifications for rows imported from a spreadsheet. Values are
+        # carried into the intake's FieldValue collection so a committed row is
+        # readable through GET /intakes/{id} under the usual masking policy.
+        XLSX_FIELD_CLASSIFICATIONS: dict[str, str] = {
+            "address_raw": "INTERNAL",
+            "normalized_address": "INTERNAL",
+            "rent_amount": "INTERNAL",
+            "area_ping": "INTERNAL",
+            "floor": "INTERNAL",
+            "normalized_floor": "INTERNAL",
+            "title": "INTERNAL",
+            "listing_type": "INTERNAL",
+        }
+
+        def xlsx_intake_fields(row: dict[str, Any]) -> list[dict[str, Any]]:
+            fields: list[dict[str, Any]] = []
+            for field_path, classification in XLSX_FIELD_CLASSIFICATIONS.items():
+                value = row.get(field_path)
+                if value in (None, ""):
+                    continue
+                fields.append({
+                    "field_path": field_path,
+                    "classification": classification,
+                    "masked": False,
+                    "parsed": value,
+                    "normalized": value,
+                    "effective": value,
+                })
+            return fields
+
+        def require_xlsx_scope(scope_dict: dict[str, Any], tenant_id: str) -> None:
+            # The preview cache and the commit idempotency cache are keyed by this
+            # scope, so it must be the authenticated tenant and not a client claim.
+            if scope_dict.get("tenant_id") != tenant_id:
+                raise HTTPException(403, "TENANT_SCOPE_DENIED")
+
+        @router.post(
+            "/intake-batches/xlsx/preview",
+            operation_id="previewXlsxBatch",
+            response_model=XlsxPreviewResponse,
+            responses=api_error_responses(400, 403, 422),
+        )
+        def preview_xlsx_batch(
+            body: XlsxPreviewRequest,
+            request: Request,
+            tenant_id: str = Depends(require_actor),
+        ) -> XlsxPreviewResponse:
+            from modules.external_data.application.xlsx_import import (
+                XlsxImportError,
+                preview_xlsx_import,
+            )
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            scope_dict = body.scope.model_dump() if body.scope else {"tenant_id": tenant_id}
+            require_xlsx_scope(scope_dict, tenant_id)
+            authorize_intake_action(
+                principal,
+                "submit_csv",
+                resource={"scope": scope_dict},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+            try:
+                raw_bytes = base64.b64decode(body.file_base64)
+            except Exception as exc:
+                raise HTTPException(400, f"Invalid base64 encoding: {exc}") from exc
+
+            try:
+                res = preview_xlsx_import(raw_bytes, body.custom_mapping, scope_dict)
+                return XlsxPreviewResponse(**res.to_dict())
+            except XlsxImportError as exc:
+                raise HTTPException(400, f"[{exc.code}] {exc.message}") from exc
+
+        @router.post(
+            "/intake-batches/xlsx/commit",
+            operation_id="commitXlsxBatch",
+            status_code=202,
+            response_model=XlsxCommitReceipt,
+            responses=api_error_responses(400, 403, 409, 422, idempotency_conflict=True),
+        )
+        def commit_xlsx_batch(
+            body: XlsxCommitRequest,
+            request: Request,
+            response: Response,
+            tenant_id: str = Depends(require_actor),
+            key: IdempotencyKeyValue = Header(
+                ..., alias="Idempotency-Key", min_length=16, max_length=128,
+                pattern=r"^[A-Za-z0-9._:-]+$",
+            ),
+        ) -> XlsxCommitReceipt:
+            from modules.external_data.application.xlsx_import import commit_xlsx_import
+            validate_idempotency_key(key)
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            scope_dict = body.scope.model_dump()
+            require_xlsx_scope(scope_dict, tenant_id)
+            authorize_intake_action(
+                principal,
+                "submit_csv",
+                resource={"scope": scope_dict},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            actor_id = principal.subject_id
+
+            def make() -> tuple[dict[str, Any], int]:
+                ts = now()
+
+                def persist_validated_row(row: dict[str, Any]) -> str:
+                    """Write one validated row into intake state and return its id.
+
+                    The receipt reports these ids, so every id a client receives
+                    resolves through GET /intakes/{intake_id}.
+                    """
+                    intake_id = str(uuid4())
+                    row_correlation_id = str(uuid4())
+                    policy_state = row.get("policy_state")
+                    if policy_state not in {state.value for state in SourcePolicyState}:
+                        policy_state = "APPROVED_RETRIEVAL"
+
+                    value = {
+                        "intake_id": intake_id,
+                        "state": "SUBMITTED",
+                        # Spreadsheet import is governed as a CSV-class bulk
+                        # submission; it authorizes under the same `submit_csv`
+                        # action as the existing batch path.
+                        "intake_method": "CSV",
+                        "scope": scope_dict,
+                        "submitted_at": ts,
+                        "updated_at": ts,
+                        "version": 1,
+                        "correlation_id": row_correlation_id,
+                        "submitted_by": actor_id,
+                        "original_url": row.get("original_url"),
+                        "canonical_url": row.get("original_url"),
+                        "policy_state": policy_state,
+                        "processing_history": [
+                            {
+                                "transition_id": str(uuid4()),
+                                "from_state": None,
+                                "to_state": "SUBMITTED",
+                                "occurred_at": ts,
+                                "actor": actor_id,
+                                "version_after": 1,
+                            }
+                        ],
+                        "fields": xlsx_intake_fields(row),
+                        "audit": [],
+                    }
+                    active.intakes[intake_id] = value
+                    return intake_id
+
+                receipt = commit_xlsx_import(
+                    rows=body.rows,
+                    batch_id=body.batch_id,
+                    scope=scope_dict,
+                    idempotency_key=key,
+                    actor_id=actor_id,
+                    audit_log=active_audit_log,
+                    correlation_id=correlation_id,
+                    intake_writer=persist_validated_row,
+                )
+                return receipt.to_dict(), 202
+
+            val, code, was_replayed = replay(key, body.model_dump(), tenant_id, actor_id, "commitXlsxBatch", make)
+            response.status_code = code
+            response.headers["Idempotency-Replayed"] = str(was_replayed).lower()
+            return XlsxCommitReceipt(**val)
+
+        @router.get(
+            "/intake-batches/xlsx/errors/{batch_id}/export",
+            operation_id="exportXlsxBatchErrors",
+            responses=api_error_responses(400, 404),
+        )
+        def export_xlsx_batch_errors(
+            batch_id: str,
+            request: Request,
+            export_format: str = Query("csv", alias="format"),
+            tenant_id: str = Depends(require_actor),
+        ) -> Response:
+            from modules.external_data.application.xlsx_import import (
+                export_xlsx_import_errors,
+                get_preview_result,
+            )
+            principal = get_principal(request)
+            operator_role_id = get_operator_role_id(request)
+            correlation_id = request.headers.get("x-correlation-id") or request.headers.get("X-Correlation-Id")
+
+            authorize_intake_action(
+                principal,
+                "view",
+                resource={"scope": {"tenant_id": tenant_id}},
+                operator_role_id=operator_role_id,
+                audit_log=active_audit_log,
+                correlation_id=correlation_id,
+            )
+
+            if export_format not in ("xlsx", "csv", "json"):
+                raise HTTPException(400, f"Unsupported export format: {export_format}")
+
+            # Unknown and other-tenant batches are equally "not found": an empty
+            # 200 would read to an operator as "your import had no errors".
+            preview_res = get_preview_result(batch_id, tenant_id)
+            if preview_res is None:
+                raise HTTPException(404, "xlsx import batch not found")
+            row_errors = preview_res.row_errors
+
+            bytes_content, mime_type = export_xlsx_import_errors(row_errors, export_format=export_format)  # type: ignore[arg-type]
+            filename = f"{batch_id}-errors.{export_format}"
+            headers = {
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+            return Response(content=bytes_content, media_type=mime_type, headers=headers)
 
         @router.get(
             "/intakes/{intake_id}",
@@ -3849,10 +4101,66 @@ else:
 
 
     def _repository(request: Request, bound_repository: Any = None):
+        principal = getattr(request.state, "operator_principal", None)
+        if principal is None:
+            from apps.api.oday_api.security.dependencies import principal_from_headers
+
+            try:
+                principal = principal_from_headers(request.headers)
+            except Exception:
+                principal = None
+
+        if principal is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="TENANT_SCOPE_DENIED: Missing verified principal",
+            )
+
+        principal_tenant = getattr(getattr(principal, "scope", None), "tenant_id", None) or getattr(
+            principal, "tenant_id", None
+        )
+        if not principal_tenant or not str(principal_tenant).strip():
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="TENANT_SCOPE_DENIED: Missing verified tenant scope",
+            )
+        clean_tenant = str(principal_tenant).strip()
+
+        header_tenant = (
+            request.headers.get("x-tenant-id")
+            or request.headers.get("tenant_id")
+            or ""
+        ).strip()
+        if header_tenant and header_tenant != clean_tenant:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="TENANT_SCOPE_DENIED: Tenant header does not match verified principal scope",
+            )
+
+        bundle = getattr(request.app.state, "persistence_bundle", None) or getattr(
+            request.app.state, "persistence", None
+        )
+        if bundle is not None and hasattr(bundle, "listing_repository_for_tenant"):
+            scoped = bundle.listing_repository_for_tenant(clean_tenant)
+            if scoped is not None:
+                return scoped
+
+        target_repo = bound_repository or getattr(request.app.state, "listing_repository", None)
+        if target_repo is not None and hasattr(target_repo, "_store"):
+            base_store = getattr(target_repo._store, "_store", target_repo._store)
+            if hasattr(base_store, "get") and hasattr(base_store, "put"):
+                from shared.infrastructure.persistence.operator_domains import (
+                    TenantScopedDocumentStore,
+                )
+                return type(target_repo)(TenantScopedDocumentStore(base_store, clean_tenant))
+
         if bound_repository is not None:
             return bound_repository
+
         repository = getattr(request.app.state, "listing_repository", None)
         if repository is None:
+            from modules.listing import InMemoryListingRepository
+
             repository = InMemoryListingRepository()
             request.app.state.listing_repository = repository
         return repository

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPT_PATH = ROOT / "scripts/e2e/check_product_grade_ci_gates.py"
+SCRIPT_PATH = ROOT / "delivery_toolchain/e2e/check_product_grade_ci_gates.py"
 SPEC = importlib.util.spec_from_file_location("product_grade_ci_gates", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 GATE = importlib.util.module_from_spec(SPEC)

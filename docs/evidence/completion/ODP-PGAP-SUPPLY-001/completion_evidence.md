@@ -64,6 +64,6 @@ Negative tests specifically assert fail-closed rejection for:
 
 All E2E release gate static checks pass:
 ```bash
-$ python3 scripts/e2e/check_product_release_gate.py
+$ python3 delivery_toolchain/e2e/check_product_release_gate.py
 Product release gate static checks passed.
 ```

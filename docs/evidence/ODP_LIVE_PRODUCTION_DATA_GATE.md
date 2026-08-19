@@ -1,6 +1,6 @@
 # ODay Plus Live Production Data Gate
 
-`scripts/e2e/check_live_production_data.py` is the release-time proof that the
+`delivery_toolchain/e2e/check_live_production_data.py` is the release-time proof that the
 deployed ODay Plus API is not serving fixture, mock, synthetic, seeded, SQLite,
 or in-memory data.
 
@@ -108,7 +108,7 @@ export ODP_LIVE_DATA_EVIDENCE="/secure/path/live-data-evidence.json"
 export ODP_LIVE_EXPECTED_SHA="<deployed commit SHA>"
 export ODP_LIVE_BEARER_TOKEN="<optional proof API token>"
 
-python3 scripts/e2e/check_live_production_data.py \
+python3 delivery_toolchain/e2e/check_live_production_data.py \
   --output .odp_data/live-production-data-gate/report.json
 ```
 

@@ -56,7 +56,7 @@ $ python3 -m ruff check tests/integration/test_worker_scheduler_runtime.py \
 # All checks passed!
 ```
 
-The E2E worker script (`scripts/e2e/worker_heartbeat.py`) now runs threads for
+The E2E worker script (`delivery_toolchain/e2e/worker_heartbeat.py`) now runs threads for
 both `ODayWorker` and `ODayScheduler` simultaneously while maintaining the E2E
 lifecycle heartbeats.
 

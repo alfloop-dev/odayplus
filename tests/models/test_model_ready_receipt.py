@@ -10,8 +10,8 @@ from models.shared_ml.model_ready_receipt import (
     compute_receipt_sha256,
     load_model_ready_receipt,
 )
-from scripts.models.model_ready_receipt import build_receipt, write_receipt
-from scripts.models.storage import ModelReadyInventory
+from product_ops.modeling.model_ready_receipt import build_receipt, write_receipt
+from product_ops.modeling.storage import ModelReadyInventory
 
 
 class _InventorySource:

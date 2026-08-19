@@ -30,7 +30,7 @@ Before executing any migration in staging or production:
 1. **Verify Database State & Tests**:
    ```bash
    uv run pytest tests/ops/test_assisted_listing_intake_migration.py -v
-   uv run ruff check scripts/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py
+   uv run ruff check product_ops/migrations/assisted_listing_intake tests/ops/test_assisted_listing_intake_migration.py
    ```
 
 2. **Verify Auto Worker & Environment**:
@@ -50,7 +50,7 @@ Database connection must be specified via `--db-dsn "$ODAY_DATABASE_URL"`, `--sq
 Run a dry run to validate mapping rules and check for potential reconciliation findings without committing changes to the database:
 
 ```bash
-python3 -m scripts.migrations.assisted_listing_intake.migrate \
+python3 -m product_ops.migrations.assisted_listing_intake.migrate \
   --action backfill \
   --tenant-id "00000000-0000-0000-0000-000000000001" \
   --db-dsn "$ODAY_DATABASE_URL" \
@@ -64,7 +64,7 @@ Backfill specific tenants, sources, or monthly partitions:
 
 ```bash
 # Backfill Tenant A for July 2026 with resume enabled
-python3 -m scripts.migrations.assisted_listing_intake.migrate \
+python3 -m product_ops.migrations.assisted_listing_intake.migrate \
   --action backfill \
   --tenant-id "00000000-0000-0000-0000-000000000001" \
   --source-id "SRC-591" \
@@ -85,7 +85,7 @@ Every backfill execution automatically computes durable proof metrics, persists 
 Run shadow comparison to prove data count parity against persisted proof metrics and check for blocking findings prior to cutover:
 
 ```bash
-python3 -m scripts.migrations.assisted_listing_intake.migrate \
+python3 -m product_ops.migrations.assisted_listing_intake.migrate \
   --action verify \
   --tenant-id "00000000-0000-0000-0000-000000000001" \
   --db-dsn "$ODAY_DATABASE_URL"
@@ -130,7 +130,7 @@ Execute rollback if any of the following occur during staging or cutover validat
 To roll back all data written by a migration without dropping relational schemas or destroying unrelated tables:
 
 ```bash
-python3 -m scripts.migrations.assisted_listing_intake.migrate \
+python3 -m product_ops.migrations.assisted_listing_intake.migrate \
   --action rollback \
   --tenant-id "00000000-0000-0000-0000-000000000001" \
   --migration-ref "ODP-INTAKE-MIGRATION-001" \
@@ -153,7 +153,7 @@ If blocking findings occur during backfill:
    - Provide missing source evidence/revisions for legacy candidates.
    - Re-run backfill CLI with `--resume` enabled:
      ```bash
-     python3 -m scripts.migrations.assisted_listing_intake.migrate \
+     python3 -m product_ops.migrations.assisted_listing_intake.migrate \
        --action backfill \
        --tenant-id "00000000-0000-0000-0000-000000000001" \
        --db-dsn "$ODAY_DATABASE_URL" \
