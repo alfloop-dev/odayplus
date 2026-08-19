@@ -83,17 +83,17 @@ resource "google_service_account" "github_deployer" {
   depends_on = [google_project_service.required]
 }
 
-resource "google_iam_workload_identity_pool" "github_pool" {
-  workload_identity_pool_id = "github-pool"
+resource "google_iam_workload_identity_pool" "github_actions" {
+  workload_identity_pool_id = "github-actions"
   display_name              = "GitHub Actions Pool"
   description               = "Workload Identity Pool for GitHub Actions CI/CD workflows."
 
   depends_on = [google_project_service.required]
 }
 
-resource "google_iam_workload_identity_pool_provider" "github_provider" {
-  workload_identity_pool_id          = google_iam_workload_identity_pool.github_pool.workload_identity_pool_id
-  workload_identity_pool_provider_id = "github-provider"
+resource "google_iam_workload_identity_pool_provider" "odayplus" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_actions.workload_identity_pool_id
+  workload_identity_pool_provider_id = "odayplus"
   display_name                        = "GitHub Actions Provider"
   description                         = "OIDC identity provider for GitHub Actions."
 
@@ -114,7 +114,7 @@ resource "google_iam_workload_identity_pool_provider" "github_provider" {
 resource "google_service_account_iam_member" "github_deployer_wif" {
   service_account_id = google_service_account.github_deployer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/alfloop-dev/odayplus"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions.name}/attribute.repository/alfloop-dev/odayplus"
 }
 
 resource "google_service_account" "smoke_operator" {
@@ -152,7 +152,7 @@ resource "google_project_iam_member" "github_deployer_cloudsql_client" {
 resource "google_artifact_registry_repository_iam_member" "github_deployer_ar_writer" {
   project    = var.project_id
   location   = var.region
-  repository = "oday-plus"
+  repository = var.artifact_registry_repository
   role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:${google_service_account.github_deployer.email}"
 }

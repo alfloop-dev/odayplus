@@ -268,15 +268,15 @@ ERROR: (gcloud.iam.workload-identity-pools.list) PERMISSION_DENIED: Request had 
 
 | IAM Role | GCP IAM Scope Level | Target Resource / HCL Reference | Purpose & Access Boundary |
 |---|---|---|---|
-| `roles/run.admin` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:120-124`) | Deploy Cloud Run services (`oday-dev-api`, `oday-dev-web`), jobs (`oday-dev-migration`, `worker`, `scheduler`), and mutate Cloud Run Job IAM policy (`gcloud run jobs add-iam-policy-binding` for invoker role) in `deploy_cloud_run_waji.sh` |
-| `roles/cloudscheduler.admin` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:126-130`) | Create, describe, update, and manage Cloud Scheduler jobs (`gcloud scheduler jobs create/update http`) in `deploy_cloud_run_waji.sh` |
-| `roles/artifactregistry.writer` | Repository-Scoped (`google_artifact_registry_repository_iam_member`) | `projects/alfaloop-data-project/locations/asia-east1/repositories/oday-plus` (`infra/terraform/iam.tf:138-144`) | Repository-scoped least-privilege container image push to `oday-plus` AR repository |
-| `roles/cloudsql.client` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:132-136`) | Connect to Cloud SQL PostgreSQL `oday-dev-sql` for database schema migration |
-| `roles/iam.serviceAccountUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:oday-dev-runtime@...`, `oday-dev-web@...`, `oday-dev-worker@...` (`infra/terraform/iam.tf:146-161`) | Impersonate runtime service accounts during Cloud Run service revision updates, job execution, and set `ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT` on Cloud Scheduler HTTP target triggers |
+| `roles/run.admin` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:134-138`) | Deploy Cloud Run services (`oday-dev-api`, `oday-dev-web`), jobs (`oday-dev-migration`, `worker`, `scheduler`), and mutate Cloud Run Job IAM policy (`gcloud run jobs add-iam-policy-binding` for invoker role) in `deploy_cloud_run_waji.sh` |
+| `roles/cloudscheduler.admin` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:140-144`) | Create, describe, update, and manage Cloud Scheduler jobs (`gcloud scheduler jobs create/update http`) in `deploy_cloud_run_waji.sh` |
+| `roles/artifactregistry.writer` | Repository-Scoped (`google_artifact_registry_repository_iam_member`) | `projects/alfaloop-data-project/locations/asia-east1/repositories/oday-plus-dev` (`infra/terraform/iam.tf:152-158`, configured via `var.artifact_registry_repository` defaulting to `oday-plus-dev`) | Repository-scoped least-privilege container image push to `oday-plus-dev` AR repository |
+| `roles/cloudsql.client` | Project (`google_project_iam_member`) | `projects/alfaloop-data-project` (`infra/terraform/iam.tf:146-150`) | Connect to Cloud SQL PostgreSQL `oday-dev-sql` for database schema migration |
+| `roles/iam.serviceAccountUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:oday-dev-runtime@...`, `oday-dev-web@...`, `oday-dev-worker@...` (`infra/terraform/iam.tf:160-176`) | Impersonate runtime service accounts during Cloud Run service revision updates, job execution, and set `ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT` on Cloud Scheduler HTTP target triggers |
 | `roles/secretmanager.secretAccessor` | Secret (`google_secret_manager_secret_iam_member`) | `projects/alfaloop-data-project/secrets/*` (`infra/terraform/iam.tf:25-62`) | Fetch secret payloads during build and execution without broad secret admin access |
 | `roles/storage.objectUser` | GCS Bucket (`google_storage_bucket_iam_member`) | `buckets/oday-dev-artifacts-alfaloop-data-project`, `buckets/oday-dev-source-snapshots-alfaloop-data-project` (`infra/terraform/iam.tf:64-74`) | Upload and manage artifacts and source snapshots in Cloud Storage |
-| `roles/iam.workloadIdentityUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:114`) | Grant WIF pool subject `principalSet://iam.googleapis.com/.../attribute.repository/alfloop-dev/odayplus` token exchange authority |
-| `roles/iam.serviceAccountTokenCreator` | Service Account (`google_service_account_iam_member`) | `serviceAccount:oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:127-131`) | Allow `github-deployer` to mint short-lived OIDC ID tokens on `oday-dev-smoke-operator` via `:generateIdToken` for smoke validation and post-promotion live E2E gates |
+| `roles/iam.workloadIdentityUser` | Service Account (`google_service_account_iam_member`) | `serviceAccount:github-deployer@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:114-118`) | Grant WIF pool subject `principalSet://iam.googleapis.com/.../workloadIdentityPools/github-actions/attribute.repository/alfloop-dev/odayplus` token exchange authority |
+| `roles/iam.serviceAccountTokenCreator` | Service Account (`google_service_account_iam_member`) | `serviceAccount:oday-dev-smoke-operator@alfaloop-data-project.iam.gserviceaccount.com` (`infra/terraform/iam.tf:128-132`) | Allow `github-deployer` to mint short-lived OIDC ID tokens on `oday-dev-smoke-operator` via `:generateIdToken` for smoke validation and post-promotion live E2E gates |
 
 ---
 
@@ -293,17 +293,17 @@ resource "google_service_account" "github_deployer" {
   depends_on = [google_project_service.required]
 }
 
-resource "google_iam_workload_identity_pool" "github_pool" {
-  workload_identity_pool_id = "github-pool"
+resource "google_iam_workload_identity_pool" "github_actions" {
+  workload_identity_pool_id = "github-actions"
   display_name              = "GitHub Actions Pool"
   description               = "Workload Identity Pool for GitHub Actions CI/CD workflows."
 
   depends_on = [google_project_service.required]
 }
 
-resource "google_iam_workload_identity_pool_provider" "github_provider" {
-  workload_identity_pool_id          = google_iam_workload_identity_pool.github_pool.workload_identity_pool_id
-  workload_identity_pool_provider_id = "github-provider"
+resource "google_iam_workload_identity_pool_provider" "odayplus" {
+  workload_identity_pool_id          = google_iam_workload_identity_pool.github_actions.workload_identity_pool_id
+  workload_identity_pool_provider_id = "odayplus"
   display_name                        = "GitHub Actions Provider"
   description                         = "OIDC identity provider for GitHub Actions."
 
@@ -324,7 +324,7 @@ resource "google_iam_workload_identity_pool_provider" "github_provider" {
 resource "google_service_account_iam_member" "github_deployer_wif" {
   service_account_id = google_service_account.github_deployer.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_pool.name}/attribute.repository/alfloop-dev/odayplus"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github_actions.name}/attribute.repository/alfloop-dev/odayplus"
 }
 
 resource "google_service_account" "smoke_operator" {
@@ -339,6 +339,14 @@ resource "google_service_account_iam_member" "github_deployer_token_creator_smok
   service_account_id = google_service_account.smoke_operator.name
   role               = "roles/iam.serviceAccountTokenCreator"
   member             = "serviceAccount:${google_service_account.github_deployer.email}"
+}
+
+resource "google_artifact_registry_repository_iam_member" "github_deployer_ar_writer" {
+  project    = var.project_id
+  location   = var.region
+  repository = var.artifact_registry_repository
+  role       = "roles/artifactregistry.writer"
+  member     = "serviceAccount:${google_service_account.github_deployer.email}"
 }
 ```
 
