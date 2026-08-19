@@ -902,7 +902,7 @@ EOF
             report = provider_permissions.provider_capabilities(config)
 
         self.assertIn("claude2", report["providers"])
-        self.assertNotIn("qwen", report["providers"])
+        self.assertNotIn("helper", report["providers"])
         self.assertTrue(report["providers"]["claude2"]["auth_ready"])
         self.assertTrue(report["providers"]["claude2"]["supports_auto_approve"])
         self.assertEqual(report["providers"]["claude2"]["paths"]["home"], os.path.expanduser("~/.claude2"))
@@ -1002,7 +1002,7 @@ EOF
             report = provider_permissions.provider_capabilities(config)
 
         self.assertIn("gemini2", report["providers"])
-        self.assertNotIn("qwen", report["providers"])
+        self.assertNotIn("helper", report["providers"])
         self.assertTrue(report["providers"]["gemini2"]["auth_ready"])
         self.assertTrue(report["providers"]["gemini2"]["supports_auto_approve"])
         self.assertEqual(report["providers"]["gemini2"]["paths"]["binary"], "/usr/bin/gemini")

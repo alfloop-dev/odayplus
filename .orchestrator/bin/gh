@@ -1,9 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1)"
+# `set -e` aborts on the assignment itself when the glob matches nothing, so the
+# lookup must not be allowed to fail the script: an unprovisioned host used to
+# exit non-zero with no stderr at all, which surfaced as GitHubBus failures
+# carrying an empty message and no way to diagnose them.
+gh_bin="$(ls -d "$HOME"/.local/share/pantheon-orchestrator-tools/gh-*/bin/gh 2>/dev/null | sort -V | tail -n1 || true)"
+
+# Fallback: use a system install when the vendored toolchain is absent, matching
+# the codex/claude launchers in this directory.
 if [[ -z "${gh_bin}" ]]; then
-  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools." >&2
+  alt="$(command -v gh 2>/dev/null || true)"
+  if [[ -n "${alt}" && "${alt}" != "$0" ]]; then
+    gh_bin="${alt}"
+  fi
+fi
+
+if [[ -z "${gh_bin}" ]]; then
+  echo "GitHub CLI binary not found under ~/.local/share/pantheon-orchestrator-tools or on PATH." >&2
   exit 1
 fi
 

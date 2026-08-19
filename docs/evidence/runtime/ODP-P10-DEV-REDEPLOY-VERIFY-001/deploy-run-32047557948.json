@@ -1,0 +1,44 @@
+{
+  "run_id": 32047557948,
+  "head_sha": "078ed1563736fe36a43c7df8dec98dbd615d5d36",
+  "head_branch": "dev",
+  "event": "push",
+  "status": "completed",
+  "conclusion": "failure",
+  "created_at": "2026-08-17T16:51:08Z",
+  "updated_at": "2026-08-17T16:54:48Z",
+  "url": "https://github.com/alfloop-dev/odayplus/actions/runs/32047557948",
+  "trigger": "push of merge commit 078ed1563736fe36a43c7df8dec98dbd615d5d36 to origin/dev",
+  "jobs": [
+    {
+      "database_id": 95439524673,
+      "name": "e2e-operational-evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-08-17T16:51:11Z",
+      "completed_at": "2026-08-17T16:54:12Z"
+    },
+    {
+      "database_id": 95439620561,
+      "name": "deploy",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-08-17T16:54:20Z",
+      "completed_at": "2026-08-17T16:54:48Z",
+      "failed_step": {
+        "number": 10,
+        "name": "Authenticate to Google Cloud (WIF)",
+        "conclusion": "failure"
+      }
+    }
+  ],
+  "progress_summary": {
+    "gcloud_describe_latest_compat": "RESOLVED (PR #479)",
+    "jobs_smoke_migration_secret_bindings": "RESOLVED (PR #484)",
+    "migration_compatibility_smoke": "RESOLVED (PR #488)",
+    "worker_job_execution": "RESOLVED (PR #494)",
+    "preflight": "PASS (75 checks, 0 failures; report=.odp_data/deployment/cloud-run-preflight.json)",
+    "wif_auth": "FAILURE (google-github-actions/auth failed: Permission denied: Consumer 'projects/1067163562451' has been suspended)",
+    "new_failure": "WIF authentication failure due to suspended Google Cloud consumer project (projects/1067163562451)"
+  }
+}
