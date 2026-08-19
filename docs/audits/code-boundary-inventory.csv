@@ -18,8 +18,6 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/cross_repo_issue_mapper.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/dispatch.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/dispatch_engine.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
-.orchestrator/dispatch_engine.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
-.orchestrator/dispatch_engine.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/dispatch_policy.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/doctor.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/github_bus.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
