@@ -120,6 +120,14 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
         return None
 
 
+def merge_queue_is_mandatory(error: Exception | str) -> bool:
+    """Whether GitHub refused a direct merge because the queue is required."""
+    text = str(error or "").lower()
+    return "merge queue" in text and (
+        "must be made through" in text or "rule violation" in text
+    )
+
+
 def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
     """Put a reviewed, CI-green PR onto the merge path its scope requires.
 
@@ -170,7 +178,18 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     try:
         run_gh(args)
     except (GitHubBusError, GitHubBusOffline) as exc:
-        return "blocked", f"{scope}: {exc}"
+        # A repository may require the merge queue for every change, ruleset
+        # bypass included. `--admin` then fails outright, and reporting that as
+        # `blocked` parked a green PR permanently on a route this repository
+        # never allowed. The queue is always a legal destination, so take it.
+        if route == "merged" and merge_queue_is_mandatory(exc):
+            try:
+                run_gh(["pr", "merge", str(pr_number)])
+            except (GitHubBusError, GitHubBusOffline) as queue_exc:
+                return "blocked", f"{scope}: {queue_exc}"
+            route = "queued"
+        else:
+            return "blocked", f"{scope}: {exc}"
 
     task[MERGE_ROUTE_FIELD] = {
         "head": approved_head,
