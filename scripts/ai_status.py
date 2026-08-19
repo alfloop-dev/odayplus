@@ -2358,6 +2358,27 @@ def is_approved_head_satisfied(
         return False
 
 
+_TASK_ID_ADJACENT_CHARS = "A-Za-z0-9_-"
+
+
+def text_names_task_id(text: str | None, task_id: str | None) -> bool:
+    """Whether ``text`` names exactly ``task_id`` and not a longer id.
+
+    Task ids share prefixes by construction: a sidecar is its parent's id plus a
+    suffix, so ``ODP-X-001`` is a substring of ``ODP-X-001-SIDECAR-REVIEW``. A
+    plain containment test therefore lets a sidecar's commit satisfy the
+    parent's traceability gate. Require the id to stand alone instead.
+    """
+    if not text or not task_id:
+        return False
+    pattern = (
+        rf"(?<![{_TASK_ID_ADJACENT_CHARS}])"
+        rf"{re.escape(str(task_id))}"
+        rf"(?![{_TASK_ID_ADJACENT_CHARS}])"
+    )
+    return re.search(pattern, str(text), re.IGNORECASE) is not None
+
+
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
     metadata: dict[str, str] = {}
     for raw_line in body.splitlines():
@@ -2541,7 +2562,11 @@ def collect_done_delivery_metadata(
             "email": author_email,
         }
 
-        if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
+        if (
+            commit_rules["subject_must_include_task_id"]
+            and task_id
+            and not text_names_task_id(subject, task_id)
+        ):
             matched_history = False
             try:
                 log_output = run_git_command(
@@ -2551,7 +2576,7 @@ def collect_done_delivery_metadata(
                 )
                 if log_output:
                     for entry in log_output.split("\x1e"):
-                        if task_id.upper() in entry.strip().upper():
+                        if text_names_task_id(entry.strip(), task_id):
                             matched_history = True
                             break
             except Exception:
