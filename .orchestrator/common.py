@@ -30,6 +30,8 @@ TASK_BRIEFS_DIR = ORCHESTRATOR_DIR / "task-briefs"
 EVIDENCE_DIR = ORCHESTRATOR_DIR / "evidence"
 CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.md"
 WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
+SUPERVISOR_SCRIPT_NAME = "supervisor.py"
+SUPERVISOR_SCRIPT_REL = f".orchestrator/{SUPERVISOR_SCRIPT_NAME}"
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 CONFIG_SCHEMA_PATH = ORCHESTRATOR_DIR / "config.schema.json"
@@ -686,12 +688,119 @@ def provider_launcher_missing_cli(text: str | None) -> str | None:
     return match.group("cli").lower() if match else None
 
 
-def command_exists(name: str) -> str | None:
-    return shutil.which(name)
+def command_exists(name: str | None) -> str | None:
+    """Resolve an executable to an absolute path, or None when unavailable.
+
+    Bare names are looked up on PATH. Path-like config values (for example
+    ".orchestrator/bin/agy") are tried against the current directory first, then
+    against the repo root, so resolution no longer depends on the caller's cwd.
+
+    The result is always absolute: callers spawn the resolved command with `cwd`
+    set to a workspace/worktree rather than the repo root, where a relative
+    argv[0] would resolve against the wrong tree.
+    """
+    if not name:
+        return None
+    candidate = os.path.expanduser(str(name).strip())
+    if not candidate:
+        return None
+
+    resolved = shutil.which(candidate)
+    separators = {os.sep, os.altsep} - {None}
+    if resolved is None and not os.path.isabs(candidate) and any(sep in candidate for sep in separators):
+        resolved = shutil.which(str(ROOT / candidate))
+    if resolved is None:
+        return None
+    return os.path.abspath(resolved)
 
 
 def shell_quote(parts: list[str]) -> str:
     return " ".join(subprocess.list2cmdline([part]) if os.name == "nt" else __import__("shlex").quote(part) for part in parts)
+
+
+def parse_iso_timestamp(ts: Any) -> datetime | None:
+    """Parse an orchestrator ISO-8601 timestamp, tolerating junk.
+
+    Every module used to carry its own copy of this four-line helper under a
+    different private name, and they had drifted: the strict variants only caught
+    ``ValueError``, so a non-string value raised ``AttributeError`` out of
+    ``.replace`` instead of reading as "no timestamp".
+    """
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def pid_is_alive(pid: Any) -> bool:
+    """Return True when ``pid`` names a process that can still do work.
+
+    This is the single liveness check for the whole orchestrator.  It used to be
+    re-implemented per module with quietly different answers; the cheap variants
+    (``os.path.exists("/proc/<pid>")`` or a bare ``kill(0)``) report a **zombie**
+    as alive, because an exited-but-unreaped child keeps both its ``/proc`` entry
+    and its signal target.  That made finished workers look like running ones --
+    e.g. approval pruning skipped their orphaned approvals forever.
+    """
+    if not pid:
+        return False
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+        if waited_pid == pid:
+            return False
+    except OSError:
+        # ChildProcessError for anything that is not our child; nothing to reap.
+        pass
+    proc_stat = Path(f"/proc/{pid}/stat")
+    if proc_stat.exists():
+        try:
+            parts = proc_stat.read_text(encoding="utf-8", errors="ignore").split()
+        except OSError:
+            parts = []
+        # Field 3 is the process state; "Z" is an exited, not-yet-reaped child.
+        if len(parts) >= 3 and parts[2] == "Z":
+            return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # Alive, just owned by another user.
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def pid_is_supervisor_process(pid: Any, repo_root: Path) -> bool:
+    """Return True when ``pid`` is really *this repo's* supervisor.
+
+    ``pid_is_alive`` alone is not enough for anything that decides whether the
+    supervisor needs restarting.  ``supervisor.pid`` survives a SIGKILL (the
+    atexit unlink never runs), and the kernel recycles pids -- so a stale pid
+    file pointing at an unrelated process reads as a healthy supervisor forever.
+    Verify the process identity, not just its existence.
+    """
+    if not pid_is_alive(pid):
+        return False
+    proc_dir = Path("/proc") / str(int(pid))
+    try:
+        cmdline = proc_dir.joinpath("cmdline").read_bytes()
+        cwd = proc_dir.joinpath("cwd").resolve()
+    except OSError:
+        return False
+    parts = [part.decode("utf-8", errors="ignore") for part in cmdline.split(b"\x00") if part]
+    if cwd != repo_root.resolve():
+        return False
+    return any(part == SUPERVISOR_SCRIPT_REL or part.endswith(f"/{SUPERVISOR_SCRIPT_NAME}") for part in parts)
 
 
 def normalize_agent_id(value: str | None) -> str:

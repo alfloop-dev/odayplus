@@ -1609,6 +1609,39 @@ def clear_ai_status_caches() -> None:
     _TASK_SHA_CACHE.clear()
 
 
+def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
+    """Where to ask GitHub about a task's PR: checkout, `--repo` args, number.
+
+    A task is not necessarily in this repository. `gh pr view <branch>` run from
+    the pantheon checkout asks *pantheon* about a branch that lives in another
+    origin, gets nothing back, and the caller reads that as "CI unresolved" --
+    permanently, because the answer never changes. DPF-GOV-001 sat in
+    `review_approved` for two days that way: its PR is #6 of
+    alfloop-dev/oday-data-platform, and #6 of this repository is an unrelated
+    promote-to-main PR. Status *emission* already resolves through the registry
+    (see :func:`task_repository_slug_safe`); the read path did not.
+    """
+    root = ROOT
+    repo_args: list[str] = []
+    pr_number: int | None = None
+    try:
+        config = status_runtime_config()
+        task = get_task(load_state(), task_id)
+        if task:
+            try:
+                pr_number = int(task.get("pr_number") or 0) or None
+            except (TypeError, ValueError):
+                pr_number = None
+            binding = resolve_task_repository(config, task)
+            if binding.root:
+                root = binding.root
+            if binding.slug:
+                repo_args = ["--repo", binding.slug]
+    except Exception:
+        return ROOT, [], None
+    return root, repo_args, pr_number
+
+
 def task_pr_ci_status(
     task_id: str,
     repository_root: Path | None = None,
@@ -1621,10 +1654,18 @@ def task_pr_ci_status(
         if now - ts < max_age_seconds:
             return val
 
-    root = repository_root or ROOT
-    for branch_name in [f"task/{task_id}", f"task-{task_id}"]:
+    root, repo_args, pr_number = task_pr_lookup_scope(task_id)
+    if repository_root is not None:
+        root = repository_root
+    # The recorded PR number is exact; the branch names are the fallback for
+    # records that predate it.
+    selectors: list[str] = []
+    if pr_number:
+        selectors.append(str(pr_number))
+    selectors.extend([f"task/{task_id}", f"task-{task_id}"])
+    for selector in selectors:
         res = run_gh_json_command(
-            ["pr", "view", branch_name, "--json", "state,statusCheckRollup"],
+            ["pr", "view", selector, "--json", "state,statusCheckRollup", *repo_args],
             cwd=root,
         )
         if res and isinstance(res, dict):
@@ -2358,6 +2399,27 @@ def is_approved_head_satisfied(
         return False
 
 
+_TASK_ID_ADJACENT_CHARS = "A-Za-z0-9_-"
+
+
+def text_names_task_id(text: str | None, task_id: str | None) -> bool:
+    """Whether ``text`` names exactly ``task_id`` and not a longer id.
+
+    Task ids share prefixes by construction: a sidecar is its parent's id plus a
+    suffix, so ``ODP-X-001`` is a substring of ``ODP-X-001-SIDECAR-REVIEW``. A
+    plain containment test therefore lets a sidecar's commit satisfy the
+    parent's traceability gate. Require the id to stand alone instead.
+    """
+    if not text or not task_id:
+        return False
+    pattern = (
+        rf"(?<![{_TASK_ID_ADJACENT_CHARS}])"
+        rf"{re.escape(str(task_id))}"
+        rf"(?![{_TASK_ID_ADJACENT_CHARS}])"
+    )
+    return re.search(pattern, str(text), re.IGNORECASE) is not None
+
+
 def parse_commit_metadata_lines(body: str) -> dict[str, str]:
     metadata: dict[str, str] = {}
     for raw_line in body.splitlines():
@@ -2541,10 +2603,29 @@ def collect_done_delivery_metadata(
             "email": author_email,
         }
 
-        if commit_rules["subject_must_include_task_id"] and task_id and task_id not in subject:
-            raise SystemExit(
-                f"Cannot finalize task: approved commit subject must include task id {task_id}."
-            )
+        if (
+            commit_rules["subject_must_include_task_id"]
+            and task_id
+            and not text_names_task_id(subject, task_id)
+        ):
+            matched_history = False
+            try:
+                log_output = run_git_command(
+                    ["log", "--first-parent", "-n", "30", "--format=%s%x1e", approved_head],
+                    cwd=repository_root,
+                    required=False,
+                )
+                if log_output:
+                    for entry in log_output.split("\x1e"):
+                        if text_names_task_id(entry.strip(), task_id):
+                            matched_history = True
+                            break
+            except Exception:
+                pass
+            if not matched_history:
+                raise SystemExit(
+                    f"Cannot finalize task: approved commit subject must include task id {task_id}."
+                )
 
         metadata_fields = parse_commit_metadata_lines(body)
         required_fields = commit_rules.get("required_body_fields", [])
@@ -5072,6 +5153,9 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task["review_submission"] = submission
+    task["branch"] = submission["branch"]
+    task["pr_number"] = submission["pr_number"]
+    task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
@@ -5942,6 +6026,18 @@ def resolve_task_sha(
             if now - ts < max_age_seconds:
                 return cached_sha
 
+    repo_root = ROOT
+    try:
+        config = status_runtime_config()
+        state = load_state()
+        task = get_task(state, task_id)
+        if task:
+            binding = resolve_task_repository(config, task)
+            if binding.resolved and binding.root:
+                repo_root = binding.root
+    except Exception:
+        repo_root = ROOT
+
     branch_names = [f"task/{task_id}", f"task-{task_id}"]
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
@@ -5950,7 +6046,7 @@ def resolve_task_sha(
         capture_output=True,
         text=True,
         check=False,
-        cwd=ROOT,
+        cwd=repo_root,
     )
     matches: list[str] = []
     if result.returncode == 0:

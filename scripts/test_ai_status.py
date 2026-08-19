@@ -574,13 +574,14 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "origin/task/REG-002"
             if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
                 return "0 0"
-            if args == ["fetch", "origin", "dev"]:
+            if args[:2] == ["fetch", "origin"]:
                 return ""
-            if args == ["rev-parse", "--verify", "origin/dev"]:
+            if args[:2] == ["rev-parse", "--verify"]:
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
         with (
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=False),
             mock.patch.object(
@@ -637,9 +638,9 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
                 return "origin/task/REG-002"
             if args == ["rev-list", "--left-right", "--count", "origin/task/REG-002...HEAD"]:
                 return "0 0"
-            if args == ["fetch", "origin", "dev"]:
+            if args[:2] == ["fetch", "origin"]:
                 return ""
-            if args == ["rev-parse", "--verify", "origin/dev"]:
+            if args[:2] == ["rev-parse", "--verify"]:
                 return "devsha"
             raise AssertionError(f"unexpected git command: {args}")
 
@@ -656,6 +657,7 @@ class DeliveryMetadataValidationTests(unittest.TestCase):
             ],
         }
         with (
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "run_git_command", side_effect=fake_run_git_command),
             mock.patch.object(ai_status, "git_command_succeeds", return_value=True),
             mock.patch.object(ai_status, "pull_request_status_for_branch", return_value=merged_pr),
@@ -1247,7 +1249,7 @@ class SidecarTaskTests(unittest.TestCase):
                 {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Gemini", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
                 {"name": "Copilot", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
-                {"name": "Qwen", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Helper", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
             ],
             "tasks": [],
             "handoffs": [],
@@ -1987,7 +1989,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "title": "Incident response read surfaces",
                     "summary_zh": "補 incident read view。",
                     "phase": "Planning Materialized",
-                    "owner": "Qwen",
+                    "owner": "Helper",
                     "reviewer": "Codex",
                     "status": "review",
                     "depends_on": [],
@@ -2184,7 +2186,7 @@ class PortableStateRenderingTests(unittest.TestCase):
             "updated_at": "2026-04-15T16:35:29Z",
             "agents": [
                 {"name": "Claude", "status": "working", "current_task_ids": ["BP5-SVC-002"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
-                {"name": "Qwen", "status": "blocked", "current_task_ids": ["BP5-LUV-001"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
+                {"name": "Helper", "status": "blocked", "current_task_ids": ["BP5-LUV-001"], "branch": "", "next": "", "last_update": "2026-04-15T16:35:29Z"},
             ],
             "tasks": [
                 {
@@ -2192,12 +2194,12 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "title": "Registry review",
                     "summary_zh": "等待 reviewer 檢查。",
                     "owner": "Claude",
-                    "reviewer": "Qwen",
+                    "reviewer": "Helper",
                     "status": "review",
                     "depends_on": [],
                     "artifacts": [],
                     "acceptance": [],
-                    "next": "Ready for Qwen review.",
+                    "next": "Ready for Helper review.",
                     "last_update": "2026-04-15T16:35:29Z",
                 }
             ],
@@ -2211,8 +2213,8 @@ class PortableStateRenderingTests(unittest.TestCase):
             "supervisor": {"pid": 123, "last_heartbeat_at": "2026-04-15T16:35:46Z"},
             "provider_guardrails": {
                 "dispatch_pauses": {
-                    "qwen": {
-                        "provider": "qwen",
+                    "helper": {
+                        "provider": "helper",
                         "blocked_until": "2099-04-15T16:38:40Z",
                         "summary": "Capacity / rate limit failure",
                     }
@@ -3260,7 +3262,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "summary_zh": "定義 golden replay scenario 與 acceptance runbook。",
                     "phase": "Blueprint Gap P0",
                     "owner": "Claude",
-                    "reviewer": "Qwen",
+                    "reviewer": "Helper",
                     "status": "review_approved",
                     "depends_on": ["BG-000"],
                     "next": "Supervisor resumed BG-005 for finalize after successful dispatch.",
@@ -5684,6 +5686,138 @@ class ReviewGateHeadDriftTests(unittest.TestCase):
 
     def test_missing_task_id_is_not_drift(self) -> None:
         self.assertFalse(ai_status.review_gate_head_drifted({"review_gate_sha": "a" * 40}))
+
+
+class TextNamesTaskIdTests(unittest.TestCase):
+    """The finalize traceability gate must match a task id, not a prefix of one.
+
+    Sidecar ids are their parent's id plus a suffix, so a containment test lets
+    a sidecar's commit satisfy the parent's gate.
+    """
+
+    PARENT = "ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001"
+    SIDECAR = "ODP-ORCH-STATUS-WRITER-SINGLE-PLANE-001-SIDECAR-REVIEW"
+
+    def test_subject_naming_the_task_matches(self) -> None:
+        self.assertTrue(
+            ai_status.text_names_task_id(f"{self.PARENT}: validate finalize metadata", self.PARENT)
+        )
+        self.assertTrue(
+            ai_status.text_names_task_id(f"[ReviewBus] {self.PARENT} wire writer", self.PARENT)
+        )
+        self.assertTrue(ai_status.text_names_task_id("(P1-001) tidy", "P1-001"))
+
+    def test_sidecar_commit_does_not_satisfy_its_parent(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id(f"{self.SIDECAR}: add packet", self.PARENT))
+        self.assertFalse(
+            ai_status.text_names_task_id(f"[ReviewBus] {self.SIDECAR} prepare", self.PARENT)
+        )
+
+    def test_sidecar_still_satisfies_itself(self) -> None:
+        self.assertTrue(ai_status.text_names_task_id(f"{self.SIDECAR}: add packet", self.SIDECAR))
+
+    def test_numeric_suffix_is_not_a_match(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id("P1-0011: something", "P1-001"))
+
+    def test_unrelated_or_empty_text_does_not_match(self) -> None:
+        self.assertFalse(ai_status.text_names_task_id("fix(x): unrelated", self.PARENT))
+        self.assertFalse(ai_status.text_names_task_id("", self.PARENT))
+        self.assertFalse(ai_status.text_names_task_id(f"{self.PARENT}: x", ""))
+
+
+class TaskPrLookupScopeTests(unittest.TestCase):
+    """A task's PR must be looked up in the task's own repository.
+
+    `gh pr view <branch>` run from the pantheon checkout asks pantheon about a
+    branch in another origin and gets nothing, which the caller reads as "CI
+    unresolved" forever. DPF-GOV-001 sat in review_approved for two days that
+    way: its PR is #6 of alfloop-dev/oday-data-platform, while #6 of this
+    repository is an unrelated promote-to-main PR.
+    """
+
+    FOREIGN_TASK = {
+        "id": "DPF-GOV-001",
+        "repository": "alfloop-dev/oday-data-platform",
+        "pr_number": 6,
+    }
+
+    class _Binding:
+        def __init__(self, slug, root):
+            self.slug = slug
+            self.root = root
+
+    def _scope(self, task, binding):
+        with mock.patch.object(ai_status, "status_runtime_config", return_value={}), \
+                mock.patch.object(ai_status, "load_state", return_value={"tasks": [task]}), \
+                mock.patch.object(ai_status, "resolve_task_repository", return_value=binding):
+            return ai_status.task_pr_lookup_scope(str(task["id"]))
+
+    def test_a_foreign_task_is_scoped_to_its_own_repository(self) -> None:
+        root, repo_args, pr_number = self._scope(
+            self.FOREIGN_TASK,
+            self._Binding("alfloop-dev/oday-data-platform", Path("/checkouts/data-platform")),
+        )
+
+        self.assertEqual(root, Path("/checkouts/data-platform"))
+        self.assertEqual(repo_args, ["--repo", "alfloop-dev/oday-data-platform"])
+        self.assertEqual(pr_number, 6)
+
+    def test_a_local_task_keeps_the_default_scope(self) -> None:
+        task = {"id": "P1-001-REVIEW-001", "pr_number": 461}
+
+        root, repo_args, pr_number = self._scope(task, self._Binding(None, None))
+
+        self.assertEqual(root, ai_status.ROOT)
+        self.assertEqual(repo_args, [])
+        self.assertEqual(pr_number, 461)
+
+    def test_an_unusable_pr_number_is_dropped_not_raised(self) -> None:
+        task = {"id": "T-1", "pr_number": "not-a-number"}
+
+        _root, _repo_args, pr_number = self._scope(task, self._Binding(None, None))
+
+        self.assertIsNone(pr_number)
+
+    def test_resolution_failure_falls_back_to_this_repository(self) -> None:
+        """A checkout without an orchestrator config must degrade, not crash."""
+        with mock.patch.object(ai_status, "status_runtime_config", side_effect=RuntimeError("no config")):
+            self.assertEqual(ai_status.task_pr_lookup_scope("T-1"), (ai_status.ROOT, [], None))
+
+    def test_ci_status_asks_the_task_repository_by_pr_number_first(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(args, *, cwd=None):
+            calls.append(list(args))
+            return {"state": "MERGED", "statusCheckRollup": [{"conclusion": "SUCCESS"}]}
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status,
+            "task_pr_lookup_scope",
+            return_value=(Path("/checkouts/data-platform"), ["--repo", "alfloop-dev/oday-data-platform"], 6),
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            pr_state, ci_status = ai_status.task_pr_ci_status("DPF-GOV-001", max_age_seconds=0)
+
+        self.assertEqual((pr_state, ci_status), ("MERGED", "success"))
+        self.assertEqual(
+            calls,
+            [["pr", "view", "6", "--json", "state,statusCheckRollup", "--repo", "alfloop-dev/oday-data-platform"]],
+        )
+
+    def test_ci_status_falls_back_to_branch_names_without_a_pr_number(self) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(args, *, cwd=None):
+            calls.append(list(args))
+            return None
+
+        ai_status._CI_STATUS_CACHE.clear()
+        with mock.patch.object(
+            ai_status, "task_pr_lookup_scope", return_value=(ai_status.ROOT, [], None)
+        ), mock.patch.object(ai_status, "run_gh_json_command", side_effect=fake_run):
+            self.assertEqual(ai_status.task_pr_ci_status("T-2", max_age_seconds=0), (None, "unknown"))
+
+        self.assertEqual([call[2] for call in calls], ["task/T-2", "task-T-2"])
 
 
 if __name__ == "__main__":

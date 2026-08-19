@@ -1,0 +1,179 @@
+# Deployment transcript — atomic publish of exact PR #505 merged files
+# host date : 2026-07-31T14:26:57Z
+# driver    : deploy.py (same-dir sibling + verify + os.replace)
+# merge     : 6af7b86ba4aa34d5bf26142f64f3cb96c429b557
+# backups   : /tmp/odp-freeze-live-rollout-backups-20260731
+
+## source materialised from merge commit blob
+  .orchestrator/supervisor.py   : blob e6afed3420... sha256 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050 (421182 bytes)
+  scripts/ai_status.py          : blob d79929d22b... sha256 bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e (223524 bytes)
+
+## supervisor state BEFORE
+  Id                    : pantheon-supervisor.service
+  LoadState             : loaded
+  ActiveState           : active
+  SubState              : running
+  MainPID               : 199392
+  ExecMainStartTimestamp: Fri 2026-07-31 13:38:29 UTC
+  NRestarts             : 0
+  process cmdline       : python3 /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py --verbose
+  process cwd           : /home/lupin/oday-plus-supervisor-live
+
+## preflight gate
+    PASS  unit loaded and active/running
+    PASS  MainPID is a live process whose cmdline is the Supervisor
+    PASS  pinned to MainPID=199392, ExecMainStartTimestamp=Fri 2026-07-31 13:38:29 UTC, NRestarts=0
+
+=== Root: /home/lupin/oday-plus-supervisor-live ===
+  git branch          : dev
+  git HEAD            : e496be62c47c45d758681b8a4d3abfae16f1c96d
+  dirty files before  : 29
+
+--- Target: /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py ---
+  BEFORE sha256    : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  BEFORE bytes     : 421182
+  BEFORE mode      : 664
+  BEFORE inode     : 870095
+  BEFORE device    : 2049
+  BEFORE mtime     : 2026-07-31T14:26:49Z
+  backup              : /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live..orchestrator_supervisor.py.bak
+  backup sha256       : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  rollback            : install -m 664 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live..orchestrator_supervisor.py.bak /home/lupin/oday-plus-supervisor-live/.orchestrator/supervisor.py
+  staged sibling      : /home/lupin/oday-plus-supervisor-live/.orchestrator/.supervisor.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp
+  sibling sha256      : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  sibling bytes/mode  : 421182 / 664
+  verification before publishing:
+    PASS  same directory as target
+    PASS  same filesystem (rename is atomic)
+    PASS  sha256 == merged blob
+    PASS  byte length == merged blob
+    PASS  mode == target's existing mode
+    PASS  byte-for-byte compare vs blob
+  published           : os.replace(.supervisor.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp -> supervisor.py) [atomic rename]
+  AFTER  sha256    : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  AFTER  bytes     : 421182
+  AFTER  mode      : 664
+  AFTER  inode     : 870094
+  AFTER  device    : 2049
+  AFTER  mtime     : 2026-07-31T14:26:57Z
+  post-publish assertions:
+    PASS  target sha256 == merged blob
+    PASS  target bytes == merged blob
+    PASS  mode preserved
+    PASS  inode CHANGED (proves rename, not in-place write)
+    PASS  no temporary sibling left behind
+
+--- Target: /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py ---
+  BEFORE sha256    : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  BEFORE bytes     : 223524
+  BEFORE mode      : 775
+  BEFORE inode     : 795646
+  BEFORE device    : 2049
+  BEFORE mtime     : 2026-07-31T14:26:49Z
+  backup              : /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live.scripts_ai_status.py.bak
+  backup sha256       : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  rollback            : install -m 775 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus-supervisor-live.scripts_ai_status.py.bak /home/lupin/oday-plus-supervisor-live/scripts/ai_status.py
+  staged sibling      : /home/lupin/oday-plus-supervisor-live/scripts/.ai_status.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp
+  sibling sha256      : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  sibling bytes/mode  : 223524 / 775
+  verification before publishing:
+    PASS  same directory as target
+    PASS  same filesystem (rename is atomic)
+    PASS  sha256 == merged blob
+    PASS  byte length == merged blob
+    PASS  mode == target's existing mode
+    PASS  byte-for-byte compare vs blob
+  published           : os.replace(.ai_status.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp -> ai_status.py) [atomic rename]
+  AFTER  sha256    : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  AFTER  bytes     : 223524
+  AFTER  mode      : 775
+  AFTER  inode     : 870095
+  AFTER  device    : 2049
+  AFTER  mtime     : 2026-07-31T14:26:57Z
+  post-publish assertions:
+    PASS  target sha256 == merged blob
+    PASS  target bytes == merged blob
+    PASS  mode preserved
+    PASS  inode CHANGED (proves rename, not in-place write)
+    PASS  no temporary sibling left behind
+
+  dirty files after   : 29
+  unrelated dirty files unchanged : True
+
+=== Root: /home/lupin/oday-plus ===
+  git branch          : main
+  git HEAD            : e6e12324617d91b4965defaed125ba755dd36932
+  dirty files before  : 13
+
+--- Target: /home/lupin/oday-plus/.orchestrator/supervisor.py ---
+  BEFORE sha256    : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  BEFORE bytes     : 421182
+  BEFORE mode      : 664
+  BEFORE inode     : 797568
+  BEFORE device    : 2049
+  BEFORE mtime     : 2026-07-31T14:26:49Z
+  backup              : /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus..orchestrator_supervisor.py.bak
+  backup sha256       : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  rollback            : install -m 664 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus..orchestrator_supervisor.py.bak /home/lupin/oday-plus/.orchestrator/supervisor.py
+  staged sibling      : /home/lupin/oday-plus/.orchestrator/.supervisor.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp
+  sibling sha256      : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  sibling bytes/mode  : 421182 / 664
+  verification before publishing:
+    PASS  same directory as target
+    PASS  same filesystem (rename is atomic)
+    PASS  sha256 == merged blob
+    PASS  byte length == merged blob
+    PASS  mode == target's existing mode
+    PASS  byte-for-byte compare vs blob
+  published           : os.replace(.supervisor.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp -> supervisor.py) [atomic rename]
+  AFTER  sha256    : 3bb01341fee9b5d10f78591003d74aab299826a68c9b5fa9c1529175c90e6050
+  AFTER  bytes     : 421182
+  AFTER  mode      : 664
+  AFTER  inode     : 795646
+  AFTER  device    : 2049
+  AFTER  mtime     : 2026-07-31T14:26:57Z
+  post-publish assertions:
+    PASS  target sha256 == merged blob
+    PASS  target bytes == merged blob
+    PASS  mode preserved
+    PASS  inode CHANGED (proves rename, not in-place write)
+    PASS  no temporary sibling left behind
+
+--- Target: /home/lupin/oday-plus/scripts/ai_status.py ---
+  BEFORE sha256    : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  BEFORE bytes     : 223524
+  BEFORE mode      : 775
+  BEFORE inode     : 792928
+  BEFORE device    : 2049
+  BEFORE mtime     : 2026-07-31T14:26:49Z
+  backup              : /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus.scripts_ai_status.py.bak
+  backup sha256       : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  rollback            : install -m 775 /tmp/odp-freeze-live-rollout-backups-20260731/oday-plus.scripts_ai_status.py.bak /home/lupin/oday-plus/scripts/ai_status.py
+  staged sibling      : /home/lupin/oday-plus/scripts/.ai_status.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp
+  sibling sha256      : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  sibling bytes/mode  : 223524 / 775
+  verification before publishing:
+    PASS  same directory as target
+    PASS  same filesystem (rename is atomic)
+    PASS  sha256 == merged blob
+    PASS  byte length == merged blob
+    PASS  mode == target's existing mode
+    PASS  byte-for-byte compare vs blob
+  published           : os.replace(.ai_status.py.ODP-ORCH-REVIEW-HEAD-FREEZE-LIVE-ROLLOUT-001.262432.tmp -> ai_status.py) [atomic rename]
+  AFTER  sha256    : bc1ba0c2f60e58d6038480e686c69abc064f08fd36c38c1b4b7ec33dc832856e
+  AFTER  bytes     : 223524
+  AFTER  mode      : 775
+  AFTER  inode     : 797568
+  AFTER  device    : 2049
+  AFTER  mtime     : 2026-07-31T14:26:57Z
+  post-publish assertions:
+    PASS  target sha256 == merged blob
+    PASS  target bytes == merged blob
+    PASS  mode preserved
+    PASS  inode CHANGED (proves rename, not in-place write)
+    PASS  no temporary sibling left behind
+
+  dirty files after   : 13
+  unrelated dirty files unchanged : True
+
+RESULT: PASS — all PR #505 files published atomically to all roots

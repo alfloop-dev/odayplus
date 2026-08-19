@@ -14,11 +14,9 @@ if str(THIS_DIR) not in sys.path:
 
 from common import (
     agent_config_for,
-    config_path,
     display_name_for,
     execution_context_files,
     load_config,
-    load_json,
     load_status,
     render_template,
     resolve_path,
@@ -379,7 +377,7 @@ def trim_seen_events(state: dict[str, Any], max_entries: int) -> None:
     state["seen_event_keys"] = dict(ordered[-max_entries:])
 
 
-def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool, provider_capabilities: dict[str, Any]) -> bool:
+def run_scan(config: dict[str, Any], state: dict[str, Any], replay: bool) -> bool:
     # The supervisor owns runtime state.  A disabled event transport must not
     # still mirror the canonical task store into that state: the mirror is a
     # stale second truth and used to be rewritten on every loop.
@@ -430,17 +428,16 @@ def main() -> int:
     args = parse_args()
     config = load_config(args.config)
     state = load_runtime_state(config)
-    provider_capabilities = load_json(config_path(config, "provider_capabilities"), default={})
 
     poll_interval = args.poll_interval or float(config.get("watcher", {}).get("poll_interval_seconds", 2.0))
-    run_scan(config, state, replay=args.replay, provider_capabilities=provider_capabilities)
+    run_scan(config, state, replay=args.replay)
     if args.once:
         return 0
 
     while True:
         time.sleep(poll_interval)
         state = load_runtime_state(config)
-        run_scan(config, state, replay=False, provider_capabilities=provider_capabilities)
+        run_scan(config, state, replay=False)
 
 
 if __name__ == "__main__":

@@ -149,8 +149,12 @@ def generate_restore_args(payload: dict[str, Any], location: str, project: str) 
 
     headers = http_target.get("headers")
     if isinstance(headers, Mapping) and headers:
-        for k, v in headers.items():
-            args.append(f"--headers={k}={v}")
+        # gcloud parses --headers/--update-headers as a single dict flag, so a
+        # repeated flag keeps only the last pair.  Emitting one comma-separated
+        # map preserves every header; without it Content-Type is dropped and
+        # falls back to the message-body default (application/octet-stream),
+        # which the post-restore readback then reports as drift.
+        args.append("--headers=" + ",".join(f"{k}={v}" for k, v in sorted(headers.items())))
     elif method == "POST":
         args.append("--headers=Content-Type=application/json")
 

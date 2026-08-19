@@ -829,6 +829,27 @@ def _preserve_and_reset_clean_diverged_worktree(
     )
     return True, f"clean_divergence_recovered:{preserved_ref}"
 
+def _fresh_lease_path(worktree_path: Path, stamp: str) -> Path:
+    """Name the replacement worktree from the ORIGINAL task name.
+
+    Deriving it from the current name instead meant recovering a path that was
+    itself a recovery lease appended a second suffix, so repeated recoveries
+    built `name.lease_A.lease_B.lease_C...` - observed 60 characters deep on a
+    single task - until the directory name outgrew what the filesystem accepts.
+    """
+    base_name = worktree_path.name.split(".lease_", 1)[0]
+    return worktree_path.parent / f"{base_name}.lease_{stamp}"
+
+
+# Fail-closed refresh statuses that a fresh lease can recover from without any
+# operator decision: the reusable worktree is left untouched and the worker
+# starts again from the published task head.
+LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE = frozenset({
+    "skipped_dirty_worktree",
+    "unresolved_git_operation",
+})
+
+
 @_entrypoint
 def _refresh_reused_worker_worktree(
     repo_root: Path,
@@ -1563,28 +1584,41 @@ def prepare_worker_workspace(
                 },
             )
             if not refresh_ok:
-                if refresh_status == "skipped_dirty_worktree":
+                if refresh_status in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
                     task_sha, task_sha_source = _fetch_authoritative_task_head(
                         repo_root,
                         worktree_path,
                         branch,
                         network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
                     )
-                    recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
-                        config,
-                        state,
-                        worktree_path,
-                        workspace_task_id,
-                        expected_branch=branch,
-                        run_id=None,
-                        trigger="lease_recovery",
-                    )
+                    if refresh_status == "unresolved_git_operation":
+                        # An interrupted merge/rebase is not preserved by the
+                        # quarantine helper - it refuses a worktree with an
+                        # operation in progress, because a half-applied index
+                        # cannot be inventoried as a diff. It does not need to
+                        # be: nothing here modifies the jammed worktree, so the
+                        # conflict state stays on disk exactly as it is, and the
+                        # fresh lease starts from the published task head. Left
+                        # unrecovered this was a permanent stall, not a delay -
+                        # leasing is what would run the worker that could finish
+                        # the merge, and leasing is what the policy refuses.
+                        recovered = bool(task_sha)
+                    else:
+                        recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
+                            config,
+                            state,
+                            worktree_path,
+                            workspace_task_id,
+                            expected_branch=branch,
+                            run_id=None,
+                            trigger="lease_recovery",
+                        )
                     if not task_sha:
                         refresh_status = task_sha_source
                     if recovered:
                         original_worktree_path = worktree_path
                         q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
-                        fresh_path = worktree_path.parent / f"{worktree_path.name}.lease_{q_stamp}"
+                        fresh_path = _fresh_lease_path(worktree_path, q_stamp)
                         if task_sha:
                             fresh_path.parent.mkdir(parents=True, exist_ok=True)
                             create_proc = subprocess.run(
@@ -1677,7 +1711,7 @@ def prepare_worker_workspace(
                                 "refresh_status": refresh_status,
                             },
                         )
-                if not refresh_ok and refresh_status != "skipped_dirty_worktree":
+                if not refresh_ok and refresh_status not in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
                     # The clean-but-unpublished deadlock. Publishing is only
                     # attempted for fast-forwards on a clean worktree; anything
                     # genuinely diverged falls through to the escalation below.

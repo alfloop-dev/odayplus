@@ -3,12 +3,15 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 
+import common
 import supervisor_watchdog
 
 
@@ -66,7 +69,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.write_state({"supervisor": {"pid": 123, "last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
 
         with (
-            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor_watchdog, "supervisor_pid_is_live", return_value=True),
             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
         ):
             result = supervisor_watchdog.run_watchdog(self.config, restart=True)
@@ -81,7 +84,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         pressure["disk_free_gb"] = 0.5
 
         with (
-            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "supervisor_pid_is_live", return_value=False),
             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=pressure),
         ):
             result = supervisor_watchdog.run_watchdog(self.config, restart=True)
@@ -97,7 +100,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         log_path = self.root / "restart.log"
 
         with (
-            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "supervisor_pid_is_live", return_value=False),
             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
             mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(999, log_path)),
         ):
@@ -130,7 +133,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         )
 
         with (
-            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "supervisor_pid_is_live", return_value=False),
             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
         ):
             result = supervisor_watchdog.run_watchdog(self.config, restart=True)
@@ -169,7 +172,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
 
         with (
-            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "supervisor_pid_is_live", return_value=False),
             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
             mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(999, self.root / "r.log")),
         ):
@@ -186,7 +189,7 @@ class SupervisorWatchdogTests(unittest.TestCase):
         self.write_state({"supervisor": {"last_heartbeat_at": supervisor_watchdog.isoformat_utc(now), "lifecycle": "running"}})
 
         with (
-            mock.patch.object(supervisor_watchdog, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor_watchdog, "supervisor_pid_is_live", return_value=False),
             mock.patch.object(supervisor_watchdog, "resource_snapshot", return_value=self.ok_resource()),
             mock.patch.object(supervisor_watchdog, "start_supervisor", return_value=(999, self.root / "r.log")),
         ):
@@ -215,3 +218,40 @@ class SupervisorWatchdogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SupervisorPidIdentityTests(unittest.TestCase):
+    """A recycled pid must not read as a live supervisor."""
+
+    def test_unrelated_live_process_is_not_the_supervisor(self) -> None:
+        # os.getpid() is alive but is the test runner, not `.orchestrator/supervisor.py`.
+        # The old check only asked "does this pid exist?", so a stale supervisor.pid
+        # whose number had been recycled kept the watchdog in observe_only forever.
+        self.assertFalse(common.pid_is_supervisor_process(os.getpid(), common.ROOT))
+
+    def test_dead_and_malformed_pids_are_not_live(self) -> None:
+        for value in (None, 0, -1, "", "abc"):
+            self.assertFalse(common.pid_is_supervisor_process(value, common.ROOT))
+
+    def test_zombie_child_is_not_alive(self) -> None:
+        pid = os.fork()
+        if pid == 0:  # pragma: no cover - child exits immediately
+            os._exit(0)
+        # Do not reap: the child is now a zombie. It keeps /proc/<pid> and still
+        # answers kill(0), which is exactly what the cheap liveness checks got wrong.
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            try:
+                state = Path(f"/proc/{pid}/stat").read_text().split()[2]
+            except (OSError, IndexError):
+                break
+            if state == "Z":
+                break
+            time.sleep(0.01)
+        try:
+            self.assertFalse(common.pid_is_alive(pid))
+        finally:
+            try:
+                os.waitpid(pid, 0)
+            except ChildProcessError:
+                pass

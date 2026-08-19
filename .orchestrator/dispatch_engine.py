@@ -46,6 +46,220 @@ def _entrypoint(func):
     return _sync_scope_guard
 
 
+MERGE_ROUTE_FIELD = "merge_route"
+
+
+def _pr_changed_paths(pr_number: int) -> list[str] | None:
+    """Return the repository paths a PR touches, or None if GitHub cannot say."""
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    try:
+        proc = run_gh(["pr", "view", str(pr_number), "--json", "files"])
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    files = payload.get("files")
+    if not isinstance(files, list):
+        return None
+    paths = [str(item.get("path") or "") for item in files if isinstance(item, dict)]
+    # An empty list is an answer, not a failure: GitHub is saying this PR
+    # changes no file. Collapsing it into None made a zero-diff PR - one whose
+    # content already reached the base by another route - indistinguishable
+    # from an unreadable diff, so it was classified "unknown" and parked
+    # forever instead of being routed.
+    return [path for path in paths if path]
+
+
+def _pr_merge_state(pr_number: int) -> str | None:
+    """Return GitHub's own mergeStateStatus, or None when it cannot be read."""
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    try:
+        proc = run_gh(["pr", "view", str(pr_number), "--json", "mergeStateStatus"])
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    return str(payload.get("mergeStateStatus") or "").strip().upper() or None
+
+
+def approved_pr_change_scope(pr_number: int) -> str | None:
+    """Classify a PR as ``development_tooling`` or ``product_or_mixed``.
+
+    The classifier is fail-closed: anything outside the checked-in tooling
+    manifest counts as product, so an unreadable diff yields None and the
+    caller must not take the direct-merge path. A PR that changes no file at
+    all is readable, not unknown, and classifies as product - which routes it
+    through the merge queue rather than an admin bypass.
+    """
+    import sys
+    from pathlib import Path
+
+    paths = _pr_changed_paths(pr_number)
+    if paths is None:
+        return None
+    governance = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "governance"
+    if str(governance) not in sys.path:
+        sys.path.insert(0, str(governance))
+    try:
+        from classify_change_review_scope import classify_paths, load_manifest
+    except ImportError:
+        return None
+    try:
+        return str(classify_paths(paths, load_manifest()).get("scope") or "") or None
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
+    """Put a reviewed, CI-green PR onto the merge path its scope requires.
+
+    GitHub's merge queue only ever contains what was explicitly enqueued, so a
+    green PR that nobody enqueues waits forever.  Development tooling merges
+    directly; product and mixed changes are enqueued instead, which keeps base
+    composition inside the queue rather than in a worker that would rewrite the
+    reviewer-frozen head.  Returns ``(route, detail)`` where route is one of
+    ``merged``, ``queued``, ``waiting`` (already routed, or nothing to do) or
+    ``blocked``.
+    """
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    try:
+        pr_number = int(task.get("pr_number") or 0)
+    except (TypeError, ValueError):
+        pr_number = 0
+    if pr_number <= 0:
+        return "waiting", "no PR number recorded"
+
+    approved_head = str(task.get("approved_head") or "").strip()
+    previous = task.get(MERGE_ROUTE_FIELD)
+    if isinstance(previous, dict) and str(previous.get("head") or "") == approved_head:
+        # Already actioned for this exact reviewed head; re-issuing the command
+        # every tick would spam GitHub and re-queue an entry already in flight.
+        # An entry can still be ejected afterwards - when an earlier PR merges
+        # first and leaves this one conflicting - and the queue does not put it
+        # back.  Report that instead of waiting on an entry that no longer
+        # exists; only the owner can advance the base.
+        if _pr_merge_state(pr_number) == "DIRTY":
+            return "ejected", "conflicts with base after an earlier merge"
+        return "waiting", str(previous.get("route") or "already routed")
+
+    scope = approved_pr_change_scope(pr_number)
+    if scope is None:
+        return "blocked", "change scope could not be classified"
+
+    # `dev` requires a merge queue, so a bare `gh pr merge` enqueues the PR (or
+    # arms auto-merge while checks are still running).  `--admin` is the only
+    # way past the queue, and it bypasses the queue rather than the checks -
+    # take it for development tooling only while GitHub itself reports every
+    # requirement satisfied, so a conflicted or red PR still goes to the queue.
+    if scope == "development_tooling" and _pr_merge_state(pr_number) == "CLEAN":
+        args, route = ["pr", "merge", str(pr_number), "--admin", "--merge"], "merged"
+    else:
+        args, route = ["pr", "merge", str(pr_number)], "queued"
+
+    try:
+        run_gh(args)
+    except (GitHubBusError, GitHubBusOffline) as exc:
+        return "blocked", f"{scope}: {exc}"
+
+    task[MERGE_ROUTE_FIELD] = {
+        "head": approved_head,
+        "scope": scope,
+        "route": route,
+        "pr_number": pr_number,
+        "at": utc_now(),
+    }
+    write_activity_log(
+        config,
+        {
+            "type": "merge_route_applied",
+            "task_id": str(task.get("id") or ""),
+            "message": f"PR #{pr_number} classified {scope}; routed via {route}.",
+        },
+    )
+    return route, f"scope={scope}"
+
+
+def advance_approved_prs_to_merge(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    finalize_statuses: set[str],
+) -> bool:
+    """Route every reviewed, CI-green PR onto the merge path its scope requires.
+
+    This deliberately runs outside the per-agent dispatch loop.  That loop skips
+    any owner already at worker capacity, and owners reach the cap precisely
+    because approved-but-unmerged work accumulates against them, so routing from
+    inside it deadlocks: the PRs cannot be merged because the owner is full, and
+    the owner stays full because the PRs are never merged.  Routing issues a
+    `gh` call rather than starting a worker, so it needs no slot.
+    """
+    schema = config.get("schema", {})
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+
+    changed = False
+    for task in status.get(tasks_path, []) or []:
+        task_id = str(task.get(task_id_field) or "")
+        if not task_id:
+            continue
+        if str(task.get("status") or "").lower() not in finalize_statuses:
+            continue
+        if not str(task.get("approved_head") or "").strip():
+            continue
+        try:
+            pr_status, ci_status = runtime_ai_status.task_pr_ci_status(task_id)
+        except Exception:
+            continue
+        if ci_status != "success" or str(pr_status or "").strip().upper() == "MERGED":
+            continue
+
+        route, detail = route_approved_pr_to_merge(config, task)
+        if route == "merged":
+            task["next"] = (
+                f"PR for task {task_id} is development-tooling scope and was merged directly "
+                f"({detail}); finalize dispatch resumes once GitHub reports MERGED."
+            )
+        elif route == "queued":
+            task["next"] = (
+                f"PR for task {task_id} is product scope and was enqueued in the dev merge queue "
+                f"({detail}); approved branch head remains immutable."
+            )
+        elif route == "ejected":
+            # The queue dropped it and will not retry on its own.  Advancing the
+            # base rewrites the reviewed head, so this has to go back to the
+            # owner and be reviewed again rather than silently re-enqueued.
+            if requeue_task_for_ci_repair(
+                config,
+                status,
+                task,
+                message=(
+                    f"PR for task {task_id} was ejected from the merge queue ({detail}); "
+                    "owner must advance the base and resubmit for review."
+                ),
+                clear_approval=True,
+            ):
+                changed = True
+            continue
+        else:
+            continue
+        changed = True
+
+    if changed:
+        commit_canonical_task_transition(config, status)
+    return changed
+
+
 @_entrypoint
 
 def task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -223,6 +437,12 @@ def reassign_unavailable_reviewers(
     owner_field = schema.get("assignee_field", "owner")
     reviewer_field = schema.get("reviewer_field", "reviewer")
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
+    finalize_statuses = {
+        str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])
+    }
+    owned_statuses = {
+        str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])
+    }
     active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
@@ -235,20 +455,47 @@ def reassign_unavailable_reviewers(
         task_id = str(task.get(task_id_field) or "")
         if not task_id or task_id in reserved_tasks:
             continue
-        if str(task.get("status") or "").lower() not in review_statuses:
+        task_status = str(task.get("status") or "").lower()
+        if task_status in review_statuses:
+            claimed_role = "reviewer"
+            claimed_field = reviewer_field
+            counterpart = str(task.get(owner_field) or "").strip()
+        elif task_status in finalize_statuses or task_status in owned_statuses:
+            claimed_role = "owner"
+            claimed_field = owner_field
+            counterpart = str(task.get(reviewer_field) or "").strip()
+        else:
             continue
-        owner = str(task.get(owner_field) or "").strip()
-        reviewer = str(task.get(reviewer_field) or "").strip()
-        if not reviewer or is_human_gate_agent(reviewer):
+
+        claimed_agent = str(task.get(claimed_field) or "").strip()
+        if not claimed_agent or is_human_gate_agent(claimed_agent):
             continue
-        reviewer_block_reason = agent_auto_dispatch_block_reason(
-            config,
-            state,
-            normalize_agent_id(reviewer),
-            provider_report,
-        )
-        reviewer_same_pool = not review_is_independent(config, owner, reviewer)
-        if not reviewer_block_reason and not reviewer_same_pool:
+        if claimed_role == "owner":
+            claimed_id = normalize_agent_id(claimed_agent)
+            if agent_dispatch_paused(config, state, claimed_id):
+                claimed_block_reason = (
+                    f"dispatch is paused or disabled for {display_name_for(config, claimed_id) or claimed_agent}"
+                )
+            elif account_pool_dispatch_block_reason(config, claimed_id, runtime_state=state):
+                claimed_block_reason = account_pool_dispatch_block_reason(
+                    config, claimed_id, runtime_state=state
+                )
+            else:
+                claimed_block_reason = None
+            reviewer_same_pool = False
+        else:
+            claimed_block_reason = agent_auto_dispatch_block_reason(
+                config,
+                state,
+                normalize_agent_id(claimed_agent),
+                provider_report,
+            )
+            reviewer_same_pool = bool(
+                counterpart
+                and not is_human_gate_agent(counterpart)
+                and not review_is_independent(config, counterpart, claimed_agent)
+            )
+        if not claimed_block_reason and not reviewer_same_pool:
             continue
 
         replacement = ""
@@ -256,15 +503,20 @@ def reassign_unavailable_reviewers(
         for candidate_id in candidate_agent_ids:
             candidate = display_name_for(config, candidate_id)
             candidate_config = (config.get("agents", {}) or {}).get(candidate_id)
+            owner_for_independence = candidate if claimed_role == "owner" else counterpart
+            reviewer_for_independence = counterpart if claimed_role == "owner" else candidate
             if (
                 not candidate
-                or candidate in {owner, reviewer}
+                or candidate in {claimed_agent, counterpart}
                 or candidate_id in reserved_agents
                 or not isinstance(candidate_config, dict)
                 or agent_is_dispatch_slot(candidate_config)
                 or is_human_gate_agent(candidate)
                 or not agent_can_take_task(config, candidate, task)
-                or not review_is_independent(config, owner, candidate)
+                or (
+                    bool(counterpart and not is_human_gate_agent(counterpart))
+                    and not review_is_independent(config, owner_for_independence, reviewer_for_independence)
+                )
                 or agent_auto_dispatch_block_reason(config, state, candidate_id, provider_report)
             ):
                 continue
@@ -276,25 +528,27 @@ def reassign_unavailable_reviewers(
 
         if reviewer_same_pool:
             message = (
-                f"Reassigned review to {replacement}: {reviewer} shares account pool "
-                f"with owner {owner}, so independent review requires a different pool."
+                f"Reassigned review to {replacement}: {claimed_agent} shares account pool "
+                f"with owner {counterpart}, so independent review requires a different pool."
             )
         else:
             message = (
-                f"Automatically reassigned review to {replacement} while reviewer {reviewer} "
-                f"is dispatch-paused: {reviewer_block_reason}"
+                f"Automatically reassigned {claimed_role} to {replacement} while {claimed_role} {claimed_agent} "
+                f"is dispatch-paused: {claimed_block_reason}"
             )
+        new_owner = replacement if claimed_role == "owner" else counterpart
+        new_reviewer = counterpart if claimed_role == "owner" else replacement
         if not persist_task_reassignment(
             config,
             task_id=task_id,
-            new_owner=owner,
-            new_reviewer=replacement,
+            new_owner=new_owner,
+            new_reviewer=new_reviewer,
             message=message,
             handoff_to=replacement,
-            handoff_from=reviewer,
+            handoff_from=claimed_agent,
         ):
             continue
-        task[reviewer_field] = replacement
+        task[claimed_field] = replacement
         task["next"] = message
         reserved_agents.add(replacement_id)
         reserved_tasks.add(task_id)
@@ -302,16 +556,20 @@ def reassign_unavailable_reviewers(
         write_activity_log(
             config,
             {
-                "type": "task_reviewer_reassigned",
+                "type": f"task_{claimed_role}_reassigned",
                 "task_id": task_id,
                 "message": message,
-                "owner": owner,
-                "from_reviewer": reviewer,
-                "to_reviewer": replacement,
+                "owner": new_owner,
+                "from_reviewer": claimed_agent if claimed_role == "reviewer" else None,
+                "to_reviewer": replacement if claimed_role == "reviewer" else None,
+                "role": claimed_role,
+                "counterpart": counterpart,
+                f"from_{claimed_role}": claimed_agent,
+                f"to_{claimed_role}": replacement,
             },
         )
         console_log(
-            f"reviewer failover: task={task_id} from={reviewer} to={replacement}",
+            f"{claimed_role} failover: task={task_id} from={claimed_agent} to={replacement}",
             quiet=SUPERVISOR_LOG_QUIET,
         )
 
@@ -555,25 +813,51 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
         ensure_ascii=True,
     )
 
-@_entrypoint
+LEASE_BLOCK_RETRY_AFTER_SECONDS = 1800.0
 
+
+def lease_block_retry_after_seconds(config: dict[str, Any]) -> float:
+    try:
+        value = float(worker_runtime_settings(config).get("lease_block_retry_after_seconds", LEASE_BLOCK_RETRY_AFTER_SECONDS))
+    except (TypeError, ValueError):
+        return LEASE_BLOCK_RETRY_AFTER_SECONDS
+    return value if value > 0 else LEASE_BLOCK_RETRY_AFTER_SECONDS
+
+
+@_entrypoint
 def worktree_block_still_matches_dispatch(
     state: dict[str, Any],
     task: dict[str, Any],
     reason: str,
     task_map: dict[str, dict[str, Any]],
+    *,
+    retry_after_seconds: float = LEASE_BLOCK_RETRY_AFTER_SECONDS,
 ) -> bool:
     """Do not recreate an identical wake after a fail-closed worktree block.
 
     Any ownership, lifecycle, dependency or branch-state update changes the
     dispatch signature and makes the task eligible again.  This preserves
     automatic recovery without burning a provider slot every supervisor tick.
+
+    The signature alone is not enough to guarantee that recovery. A task parked
+    in `in_progress` under a stable owner never changes signature, so the block
+    suppressed the only thing that could have cleared it - the lease attempt -
+    and the task waited forever. On 2026-08-17 six worktrees jammed this way and
+    the fleet ran nothing at all for ten hours. Expire the suppression instead:
+    retry once the window elapses, so a repaired or repairable worktree comes
+    back on its own while a genuinely stuck one still costs one attempt per
+    window rather than one per tick.
     """
     task_id = str(task.get("id") or "")
     entry = (state.get("worker_worktree_lease_blocks") or {}).get(normalize_agent_id(task_id) or task_id)
     if not isinstance(entry, dict):
         return False
-    return str(entry.get("dispatch_signature") or "") == ready_dispatch_signature(task, reason, task_map)
+    if str(entry.get("dispatch_signature") or "") != ready_dispatch_signature(task, reason, task_map):
+        return False
+    blocked_at = parse_runtime_timestamp(str(entry.get("last_at") or "") or None)
+    if blocked_at is None:
+        return True
+    return (datetime.now(UTC) - blocked_at).total_seconds() < retry_after_seconds
 
 @_entrypoint
 
@@ -620,7 +904,6 @@ def dispatch_discussion_planning(
     active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
-    seen = state.setdefault("seen_event_keys", {})
     changed = False
 
     for agent_name, readout in (planning_state.get("readouts", {}) or {}).items():
@@ -642,7 +925,6 @@ def dispatch_discussion_planning(
         if event_key in pending_event_keys:
             continue
         queued_event_key = queue_discussion_planning_event(config, planning_state, agent_name=agent_name, reason=reason)
-        seen[queued_event_key] = utc_now()
         pending_event_keys.add(queued_event_key)
         changed = True
 
@@ -690,7 +972,6 @@ def dispatch_ready_tasks(
     agent_loads = agent_dispatch_loads(config, state, active_statuses)
     active_quota_counts = active_quota_group_counts(config, state, active_statuses)
     pending_quota_counts = queued_quota_group_counts(config, state)
-    seen = state.setdefault("seen_event_keys", {})
 
     changed = metadata_repaired or review_states_repaired
     normalized = False
@@ -718,6 +999,12 @@ def dispatch_ready_tasks(
         status,
         provider_report=provider_report,
     ):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
+    if advance_approved_prs_to_merge(config, status, finalize_statuses):
         changed = True
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
@@ -977,10 +1264,31 @@ def dispatch_ready_tasks(
                 # reviewer had frozen. The merge queue owns base composition;
                 # the owner finalize lane starts only after GitHub says MERGED.
                 if str(pr_status or "").strip().upper() != "MERGED":
-                    msg = (
-                        f"PR for task {task_id} is CI-green and awaiting merge queue; "
-                        "approved branch head remains immutable and finalize dispatch is deferred."
-                    )
+                    # The queue holds only what is explicitly enqueued, so a
+                    # green PR nobody routes sits here forever.  Development
+                    # tooling merges directly; product and mixed changes are
+                    # enqueued so the queue - not a worker - composes the base.
+                    route, detail = route_approved_pr_to_merge(config, task)
+                    if route == "merged":
+                        msg = (
+                            f"PR for task {task_id} is development-tooling scope and was merged "
+                            f"directly ({detail}); finalize dispatch resumes once GitHub reports MERGED."
+                        )
+                    elif route == "queued":
+                        msg = (
+                            f"PR for task {task_id} is product scope and was enqueued in the dev "
+                            f"merge queue ({detail}); approved branch head remains immutable."
+                        )
+                    elif route == "blocked":
+                        msg = (
+                            f"PR for task {task_id} is CI-green but could not be routed to a merge "
+                            f"path ({detail}); finalize dispatch is deferred."
+                        )
+                    else:
+                        msg = (
+                            f"PR for task {task_id} is CI-green and awaiting merge queue; "
+                            "approved branch head remains immutable and finalize dispatch is deferred."
+                        )
                     if task.get("next") != msg:
                         task["next"] = msg
                         if not commit_canonical_task_transition(config, status):
@@ -1000,7 +1308,13 @@ def dispatch_ready_tasks(
                 continue
             if reason is None or priority is None:
                 continue
-            if worktree_block_still_matches_dispatch(state, task, reason, task_map):
+            if worktree_block_still_matches_dispatch(
+                state,
+                task,
+                reason,
+                task_map,
+                retry_after_seconds=lease_block_retry_after_seconds(config),
+            ):
                 continue
 
             if is_sidecar_task:
@@ -1016,7 +1330,6 @@ def dispatch_ready_tasks(
         for _, _, _, task, reason in candidates[:available_agent_slots]:
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
-                seen[event["key"]] = utc_now()
                 pending_event_keys.add(event["key"])
                 pending_agents.add(agent_id)
                 pending_task_ids.add(str(task.get(task_id_field) or ""))

@@ -591,3 +591,117 @@ class TopLevelStateKeyPersistenceTests(unittest.TestCase):
             )["worker_worktree_lease_blocks"],
             {"odp-orch-example-001": {"count": 2}},
         )
+
+
+class HandedOffWorkerStatusTests(unittest.TestCase):
+    """A retry/fallback parent has delegated its queue event to a successor run."""
+
+    def _worker(self, status: str) -> dict[str, object]:
+        return {
+            "run_id": f"run-{status}",
+            "status": status,
+            "task_id": "ODP-ORCH-EXAMPLE-001",
+            "queue_event_id": "evt-1",
+        }
+
+    def test_retried_parent_is_garbage_collected(self) -> None:
+        # `retried` used to match neither the keep-set nor the drop-set, so the
+        # record fell through to the trailing `keep[run_id] = worker` and stayed
+        # in state.json forever.
+        state = {
+            "workers": {"run-retried": self._worker("retried")},
+            "queue": {"events": {"evt-1": {"status": "completed"}}},
+        }
+        runtime_state.prune_worker_records(state, {"ODP-ORCH-EXAMPLE-001": "done"})
+        self.assertEqual(state["workers"], {})
+
+    def test_fallback_parent_is_kept_while_its_child_runs(self) -> None:
+        state = {
+            "workers": {"run-fallback": self._worker("fallback")},
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+        }
+        runtime_state.prune_worker_records(state, {"ODP-ORCH-EXAMPLE-001": "in_progress"})
+        self.assertIn("run-fallback", state["workers"])
+
+    def test_handed_off_statuses_are_not_double_counted_as_active(self) -> None:
+        self.assertEqual(runtime_state.HANDED_OFF_WORKER_STATUSES, {"retried", "fallback"})
+        self.assertIn("retried", runtime_state.TERMINAL_WORKER_STATUSES)
+        # `fallback` must stay out of the terminal set: the queue event is still
+        # in flight through the fallback child, and `_rebuild_queue_records`
+        # relies on it being an active status.
+        self.assertNotIn("fallback", runtime_state.TERMINAL_WORKER_STATUSES)
+        self.assertIn("fallback", runtime_state.ACTIVE_WORKER_STATUSES)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class RotationDedupeGarbageCollectionTests(unittest.TestCase):
+    """The rotation de-dupe map is anchored to live worker records."""
+
+    def test_entries_for_dropped_workers_are_removed(self) -> None:
+        state = {
+            "workers": {
+                "run-live": {"run_id": "run-live", "status": "running", "task_id": "T-1"},
+                "run-gone": {"run_id": "run-gone", "status": "failed", "task_id": "T-2"},
+            },
+            "queue": {"events": {}},
+            "provider_guardrails": {
+                "processed_model_rotation_failures": {
+                    "run-live": {"provider": "antigravity"},
+                    "run-gone": {"provider": "antigravity"},
+                    "run-ancient": {"provider": "antigravity"},
+                }
+            },
+        }
+        runtime_state.prune_worker_records(state, {"T-1": "in_progress", "T-2": "done"})
+        self.assertEqual(
+            set(state["provider_guardrails"]["processed_model_rotation_failures"]),
+            {"run-live"},
+        )
+
+    def test_missing_bucket_is_left_alone(self) -> None:
+        state = {"workers": {}, "queue": {"events": {}}, "provider_guardrails": {}}
+        runtime_state.prune_worker_records(state, {})
+        self.assertNotIn("processed_model_rotation_failures", state["provider_guardrails"])
+
+
+class WorkerStatusTaxonomyTests(unittest.TestCase):
+    """Every worker status must be classified by exactly one axis.
+
+    `retried` was introduced without being added to any set, so it matched
+    neither "still working" nor "finished" and silently fell through every
+    branch that asked. This test fails the next time that happens.
+    """
+
+    # Every value ever assigned to worker["status"], plus the ones set when the
+    # record is first created.
+    KNOWN_WORKER_STATUSES = {
+        "running",
+        "started",
+        "manual_pending",
+        "waiting_approval",
+        "suspended_approval",
+        "retry_backoff",
+        "stalled",
+        "fallback",
+        "completed",
+        "failed",
+        "superseded",
+        "reassigned",
+        "retried",
+    }
+
+    def test_every_status_is_active_or_terminal(self) -> None:
+        classified = runtime_state.ACTIVE_WORKER_STATUSES | runtime_state.TERMINAL_WORKER_STATUSES
+        self.assertEqual(self.KNOWN_WORKER_STATUSES - classified, set())
+
+    def test_active_and_terminal_do_not_overlap(self) -> None:
+        self.assertEqual(
+            runtime_state.ACTIVE_WORKER_STATUSES & runtime_state.TERMINAL_WORKER_STATUSES,
+            set(),
+        )
+
+    def test_handed_off_statuses_are_a_subset_of_the_vocabulary(self) -> None:
+        self.assertTrue(runtime_state.HANDED_OFF_WORKER_STATUSES <= self.KNOWN_WORKER_STATUSES)

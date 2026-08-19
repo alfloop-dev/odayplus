@@ -69,6 +69,8 @@ from common import (
     load_status,
     new_runtime_id,
     normalize_agent_id,
+    parse_iso_timestamp,
+    pid_is_alive,
     provider_launcher_missing_cli,
     relpath,
     resolve_path,
@@ -129,6 +131,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_existing_worktree_for_branch",
 "_fetch_authoritative_task_head",
 "_file_or_dir_hash",
+"_fresh_lease_path",
 "_generated_collaboration_guide",
 "_generated_worker_task_brief",
 "_get_remote_heads_snapshot",
@@ -342,6 +345,7 @@ from provider_runtime import (
 )
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
+    ACTIVE_WORKER_STATUSES,
     compact_worker_history,
     enqueue_event,
     load_approval_state,
@@ -661,13 +665,7 @@ def console_log(message: str, *, quiet: bool = False) -> None:
     print(f"[{timestamp}] {message}", flush=True)
 
 
-def parse_runtime_timestamp(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+parse_runtime_timestamp = parse_iso_timestamp
 
 
 def heartbeat_lag_seconds(previous_heartbeat: str | None, current_heartbeat: str | None) -> float | None:
@@ -1802,30 +1800,6 @@ def process_queue(
     )
 
 
-def pid_is_alive(pid: int | None) -> bool:
-    if not pid:
-        return False
-    try:
-        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
-        if waited_pid == pid:
-            return False
-    except ChildProcessError:
-        pass
-    proc_stat = Path(f"/proc/{pid}/stat")
-    if proc_stat.exists():
-        try:
-            parts = proc_stat.read_text(encoding="utf-8", errors="ignore").split()
-        except OSError:
-            parts = []
-        if len(parts) >= 3 and parts[2] == "Z":
-            return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
 # Worker wakeup template always embeds `auto worker 身分是：<DisplayName>` in argv;
 # scan /proc to recover the truth when state["workers"] bookkeeping drifts.
 WORKER_AGENT_CMDLINE_MARKER = re.compile(r"auto worker 身分是：([A-Za-z][A-Za-z0-9_]*)")
@@ -2205,8 +2179,16 @@ def update_from_log(config: dict[str, Any], worker: dict[str, Any]) -> None:
             worker.setdefault("resume_token", worker["session_id"])
         if payload.get("type") == "result":
             if payload.get("stop_reason") == "tool_deferred":
-                worker["status"] = "waiting_approval"
-                worker["deferred_tool_use"] = payload.get("deferred_tool_use")
+                # The whole log is re-read on every poll, so an OLD deferral line
+                # is seen again on each pass.  Only a worker that is still in an
+                # active state may be moved into waiting_approval by it: a parent
+                # that has since been retried, handed off, or settled would
+                # otherwise be dragged back out of its own terminal disposition
+                # -- a `retry_backoff` record flipped this way stops matching
+                # `retry_due_workers` and its retry never fires again.
+                if str(worker.get("status") or "") in ACTIVE_WORKER_STATUSES:
+                    worker["status"] = "waiting_approval"
+                    worker["deferred_tool_use"] = payload.get("deferred_tool_use")
             if payload.get("pr_url") and not worker.get("pr_url"):
                 worker["pr_url"] = normalize_pr_url(config, payload.get("pr_url"))
             if payload.get("session_url") and not worker.get("session_url"):
@@ -3816,8 +3798,18 @@ def worktree_block_still_matches_dispatch(
     task: dict[str, Any],
     reason: str,
     task_map: dict[str, dict[str, Any]],
+    *,
+    retry_after_seconds: float | None = None,
 ) -> bool:
-    return dispatch_ops.worktree_block_still_matches_dispatch(state, task, reason, task_map)
+    if retry_after_seconds is None:
+        return dispatch_ops.worktree_block_still_matches_dispatch(state, task, reason, task_map)
+    return dispatch_ops.worktree_block_still_matches_dispatch(
+        state,
+        task,
+        reason,
+        task_map,
+        retry_after_seconds=retry_after_seconds,
+    )
 
 
 def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, task_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -3936,7 +3928,7 @@ def run_once(
         # state without producing work.  Do not scan unless it can enqueue an
         # event that the queue will actually consume.
         if watch and enqueue_runtime_events_enabled(config):
-            changed = run_scan(config, state, replay=replay, provider_capabilities=provider_report) or changed
+            changed = run_scan(config, state, replay=replay) or changed
             state = load_runtime_state(config)
             if boot_and_provider_ms is not None:
                 state.setdefault("supervisor", {}).setdefault("last_stage_timings_ms", {})["boot_and_provider"] = boot_and_provider_ms

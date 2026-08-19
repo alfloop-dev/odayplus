@@ -1,0 +1,294 @@
+{
+  "api_url": "https://oday-api-7sxbjoeozq-de.a.run.app",
+  "checks": [
+    {
+      "detail": "status=200 attempts=2 elapsed=15.3s",
+      "name": "compatibility:/platform/version:http",
+      "ok": true
+    },
+    {
+      "detail": "old revision remains compatible with the migrated production database",
+      "name": "compatibility:/platform/health:database",
+      "ok": true
+    }
+  ],
+  "correlation_id": "corr-cloud-run-compat-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+  "generated_at": "2026-08-01T03:08:23Z",
+  "health": {
+    "correlation_id": "corr-cloud-run-compat-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+    "dependencies": {
+      "database": "healthy",
+      "external_providers": {
+        "checked_at": "2026-08-01T03:08:23.780044+00:00",
+        "configuration_errors": [],
+        "configuration_valid": true,
+        "connectivity_healthy": false,
+        "correlation_id": "corr-cloud-run-compat-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+        "expires_at": "2026-08-01T03:09:23.131248+00:00",
+        "mode": "live",
+        "probes": [
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:08:23.168731+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:09:23.168731+00:00",
+            "http_status": 200,
+            "latency_ms": 2419,
+            "provider_id": "admin_boundary.official_dataset",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          },
+          {
+            "authentication_accepted": true,
+            "checked_at": "2026-08-01T03:08:23.131248+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": true,
+            "expires_at": "2026-08-01T03:09:23.131248+00:00",
+            "http_status": 200,
+            "latency_ms": 2380,
+            "provider_id": "geocode.primary_api",
+            "reason_code": "ok",
+            "response_valid": true,
+            "schema_valid": true
+          },
+          {
+            "authentication_accepted": false,
+            "checked_at": "2026-08-01T03:08:23.780044+00:00",
+            "configuration_valid": true,
+            "connectivity_healthy": false,
+            "expires_at": "2026-08-01T03:09:23.780044+00:00",
+            "http_status": null,
+            "latency_ms": 3028,
+            "provider_id": "poi.commercial_api",
+            "reason_code": "timeout",
+            "response_valid": false,
+            "schema_valid": false
+          }
+        ],
+        "required_provider_ids": [
+          "admin_boundary.official_dataset",
+          "geocode.primary_api",
+          "poi.commercial_api"
+        ],
+        "status": "unhealthy"
+      },
+      "job_queue": "healthy"
+    },
+    "modes": {
+      "data": {
+        "blockingReasons": [
+          "PROVIDER_NOT_LIVE",
+          "PROVIDER_CONNECTIVITY_UNHEALTHY",
+          "PRODUCTION_MODEL_BINDINGS_UNVERIFIED"
+        ],
+        "liveReady": false,
+        "mode": "unavailable",
+        "operatorRepositoryProbe": {
+          "checkedAt": "2026-08-01T03:08:23.789759+00:00",
+          "errors": [],
+          "persistenceMode": "postgresql",
+          "ready": true,
+          "repository": "OperatorLiveRepository"
+        },
+        "operatorRepositoryReady": true,
+        "origin": {
+          "completeness": "request-scoped",
+          "kind": "authoritative",
+          "persistenceMode": "postgresql",
+          "repository": "OperatorLiveRepository",
+          "sourceId": "operator-live-repository"
+        }
+      },
+      "deploymentMode": "production",
+      "models": {
+        "autoSeeded": false,
+        "capabilities": {
+          "avm": {
+            "available": false,
+            "error": "dealroom_avm: configured MLflow registry has no production alias",
+            "modelName": "dealroom_avm",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "avm",
+            "trainable": true,
+            "trainingSpecKey": "avm"
+          },
+          "forecastops": {
+            "available": false,
+            "error": "forecast_revenue_interval: configured MLflow registry has no production alias",
+            "modelName": "forecast_revenue_interval",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "forecastops",
+            "trainable": true,
+            "trainingSpecKey": "forecastops"
+          },
+          "heatzone": {
+            "available": false,
+            "error": "heatzone_priority: configured MLflow registry has no production alias",
+            "modelName": "heatzone_priority",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "heatzone",
+            "trainable": true,
+            "trainingSpecKey": "heatzone"
+          },
+          "sitescore": {
+            "available": false,
+            "error": "sitescore_propensity: configured MLflow registry has no production alias",
+            "modelName": "sitescore_propensity",
+            "outcomeContractRequired": true,
+            "reasonCode": "PRODUCTION_MODEL_REGISTRY_UNAVAILABLE",
+            "requiredForPlatformReadiness": true,
+            "service": "sitescore",
+            "trainable": true,
+            "trainingSpecKey": "sitescore"
+          }
+        },
+        "error": "avm: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: dealroom_avm: configured MLflow registry has no production alias; forecastops: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: forecast_revenue_interval: configured MLflow registry has no production alias; heatzone: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: heatzone_priority: configured MLflow registry has no production alias; sitescore: PRODUCTION_MODEL_REGISTRY_UNAVAILABLE: sitescore_propensity: configured MLflow registry has no production alias",
+        "mode": "mlflow-production-unverified",
+        "productionBindingsReady": false,
+        "requiredServices": [
+          "avm",
+          "forecastops",
+          "heatzone",
+          "sitescore"
+        ]
+      },
+      "persistence": {
+        "configuredMode": "postgresql",
+        "durable": true,
+        "production_persistence_supported": true,
+        "reachable": true,
+        "runtimeMode": "postgresql"
+      },
+      "provider": {
+        "configurationValid": true,
+        "connectivityHealthy": false,
+        "healthy": false,
+        "live": false,
+        "mode": "live",
+        "probeEvidence": {
+          "checked_at": "2026-08-01T03:08:23.780044+00:00",
+          "configuration_errors": [],
+          "configuration_valid": true,
+          "connectivity_healthy": false,
+          "correlation_id": "corr-cloud-run-compat-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+          "expires_at": "2026-08-01T03:09:23.131248+00:00",
+          "mode": "live",
+          "probes": [
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:08:23.168731+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:09:23.168731+00:00",
+              "http_status": 200,
+              "latency_ms": 2419,
+              "provider_id": "admin_boundary.official_dataset",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            },
+            {
+              "authentication_accepted": true,
+              "checked_at": "2026-08-01T03:08:23.131248+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": true,
+              "expires_at": "2026-08-01T03:09:23.131248+00:00",
+              "http_status": 200,
+              "latency_ms": 2380,
+              "provider_id": "geocode.primary_api",
+              "reason_code": "ok",
+              "response_valid": true,
+              "schema_valid": true
+            },
+            {
+              "authentication_accepted": false,
+              "checked_at": "2026-08-01T03:08:23.780044+00:00",
+              "configuration_valid": true,
+              "connectivity_healthy": false,
+              "expires_at": "2026-08-01T03:09:23.780044+00:00",
+              "http_status": null,
+              "latency_ms": 3028,
+              "provider_id": "poi.commercial_api",
+              "reason_code": "timeout",
+              "response_valid": false,
+              "schema_valid": false
+            }
+          ],
+          "required_provider_ids": [
+            "admin_boundary.official_dataset",
+            "geocode.primary_api",
+            "poi.commercial_api"
+          ],
+          "status": "unhealthy"
+        }
+      },
+      "requireLiveData": true
+    },
+    "service": "oday-api",
+    "status": "unhealthy",
+    "time": "2026-08-01T03:08:23.789811+00:00",
+    "version": "0.1.0"
+  },
+  "health_probe": {
+    "attempt_count": 1,
+    "attempts": [
+      {
+        "elapsed_seconds": 3.239,
+        "error": "",
+        "provenance": "json_object",
+        "status": 503,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 3.239,
+    "outcome": "answered"
+  },
+  "ok": true,
+  "probe_retry_policy": {
+    "attempts": 4,
+    "backoff_seconds": 2.0,
+    "max_backoff_seconds": 8.0,
+    "per_attempt_timeout_seconds": 15.0,
+    "total_deadline_seconds": 120.0
+  },
+  "schema_version": 1,
+  "secret_values_redacted": true,
+  "version": {
+    "api_version": "0.1.0",
+    "correlation_id": "corr-cloud-run-compat-dev-97e3ae2e264d00254b574d5e27ab771688f04768",
+    "release_sha": "8ec12c02",
+    "service": "oday-api",
+    "status": "ok",
+    "time": "2026-08-01T03:08:20.541228+00:00"
+  },
+  "version_probe": {
+    "attempt_count": 2,
+    "attempts": [
+      {
+        "elapsed_seconds": 15.048,
+        "error": "The read operation timed out",
+        "provenance": "no_response",
+        "status": null,
+        "transient": true
+      },
+      {
+        "elapsed_seconds": 0.212,
+        "error": "",
+        "provenance": "json_object",
+        "status": 200,
+        "transient": false
+      }
+    ],
+    "elapsed_seconds": 15.26,
+    "outcome": "answered"
+  },
+  "web_url": "https://oday-web-7sxbjoeozq-de.a.run.app"
+}

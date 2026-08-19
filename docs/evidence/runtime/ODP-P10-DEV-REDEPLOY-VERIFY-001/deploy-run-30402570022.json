@@ -1,0 +1,43 @@
+{
+  "run_id": 30402570022,
+  "head_sha": "7d13f8e162d035ad7318d1f659dfa0f2bd85ca65",
+  "head_branch": "dev",
+  "event": "push",
+  "status": "completed",
+  "conclusion": "failure",
+  "created_at": "2026-07-28T21:55:00Z",
+  "updated_at": "2026-07-28T22:09:21Z",
+  "url": "https://github.com/alfloop-dev/odayplus/actions/runs/30402570022",
+  "trigger": "push of PR #484 merge commit (7d13f8e162d035ad7318d1f659dfa0f2bd85ca65)",
+  "jobs": [
+    {
+      "database_id": 90420613833,
+      "name": "e2e-operational-evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-07-28T21:55:09Z",
+      "completed_at": "2026-07-28T21:58:20Z"
+    },
+    {
+      "database_id": 90421297158,
+      "name": "deploy",
+      "status": "completed",
+      "conclusion": "failure",
+      "started_at": "2026-07-28T21:58:23Z",
+      "completed_at": "2026-07-28T22:09:21Z",
+      "failed_step": {
+        "number": 13,
+        "name": "Build, push, deploy, and verify Cloud Run",
+        "conclusion": "failure"
+      }
+    }
+  ],
+  "progress_summary": {
+    "gcloud_describe_latest_compat": "RESOLVED (PR #479)",
+    "jobs_smoke_migration_secret_bindings": "RESOLVED (PR #484)",
+    "migration_job_execution": "SUCCESS (oday-migration-r-7d13f8e162d0-zg2jr completed)",
+    "migration_job_smoke": "PASS (report uploaded to cloud-run-dev-validation artifact)",
+    "artifact_upload_path": "RESOLVED (PR #484 made validation upload capture migration-compatibility report)",
+    "new_failure": "Cloud Run migration compatibility smoke timeout (compatibility:/platform/version:http and compatibility:/platform/health:database timed out probing live api_url)"
+  }
+}

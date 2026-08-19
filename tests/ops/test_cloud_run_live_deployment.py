@@ -2303,7 +2303,10 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
                 "httpTarget": {
                     "uri": "https://run.googleapis.com/v2/projects/p/locations/r/jobs/worker-job:run",
                     "httpMethod": "POST",
-                    "headers": {"Content-Type": "application/json"},
+                    "headers": {
+                        "Content-Type": "application/json",
+                        "User-Agent": "Google-Cloud-Scheduler",
+                    },
                     "body": "e30=",
                     "oidcToken": {
                         "serviceAccountEmail": "scheduler-sa@example.test",
@@ -2361,7 +2364,12 @@ def test_scheduler_trigger_restore_supports_oidc_token(tmp_path: Path) -> None:
     assert "--max-retry-attempts=3" in call
     assert "--min-backoff=10s" in call
     assert "--max-backoff=600s" in call
-    assert "--update-headers=Content-Type=application/json" in call
+    # gcloud keeps only the last occurrence of the header dict flag, so every
+    # restored header must arrive as one comma-separated map.
+    assert (
+        "--update-headers=Content-Type=application/json,User-Agent=Google-Cloud-Scheduler"
+        in call
+    )
     assert "--headers=Content-Type=application/json" not in call
 
 
