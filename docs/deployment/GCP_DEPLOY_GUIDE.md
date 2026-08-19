@@ -12,32 +12,24 @@ The deployment pipeline is configured via GitHub Variables and Secrets, falling 
 |---|---|---|---|
 | `GCP_PROJECT_ID` | Repository / Environment | The GCP Project ID where resources are deployed. | `alfaloop-data-project` |
 | `GCP_REGION` | Repository / Environment | The GCP target region. | `asia-east1` |
-| `GCP_AR_REPO` | Repository / Environment | The name of the GCP Artifact Registry repository. | `oday-plus` |
+| `GCP_AR_REPO` | Repository / Environment | The name of the GCP Artifact Registry repository. | `oday-plus-dev` |
 
-### 2. Authentication Configuration (Choose WIF or Service Account Key)
+### 2. Authentication Configuration (WIF only)
 
-For security, **Workload Identity Federation (WIF)** is highly recommended. The workflow supports fallback to a traditional **Service Account JSON Key** if WIF is not configured.
+All deployment environments strictly require **Workload Identity Federation (WIF)**. Long-lived service account keys (`GCP_SA_KEY`) are prohibited by security policy, and no `GCP_SA_KEY` fallback path exists in `.github/workflows/deploy-dev.yml` or `product_ops/deployment/deploy_cloud_run_waji.sh`.
 
-#### Option A: Workload Identity Federation (Recommended)
 Configure the following **GitHub Variables**:
 
 | Variable Name | Description | Example Value |
 |---|---|---|
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | The full resource name of the Workload Identity Provider. | `projects/1234567890/locations/global/workloadIdentityPools/github-pool/providers/github-provider` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | The full resource name of the Workload Identity Provider. | `projects/1234567890/locations/global/workloadIdentityPools/github-actions/providers/odayplus` |
 | `GCP_SERVICE_ACCOUNT` | The service account email to impersonate. | `github-deployer@alfaloop-data-project.iam.gserviceaccount.com` |
-
-#### Option B: Service Account Key (Fallback)
-Configure the following **GitHub Secret**:
-
-| Secret Name | Description | Value |
-|---|---|---|
-| `GCP_SA_KEY` | The GCP Service Account JSON key. | `{ "type": "service_account", ... }` |
 
 ---
 
 ## Fail-Closed Mechanics
 
-If the deployment runs and neither Option A (both `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT` variables are populated) nor Option B (`GCP_SA_KEY` secret is populated) is satisfied, or if any of the target environment variables are missing, the deployment script and the CI/CD pipeline will fail-closed immediately:
+If the deployment runs and WIF variables (`GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`) are not populated, or if any required target environment variables are missing, the deployment script and the CI/CD pipeline will fail-closed immediately:
 
 1. **Pre-flight Validation**: The workflow contains a `Validate GCP Deployment Variables` step that performs sanity checks and prints clear diagnostics.
 2. **Local Script Safety**: The script `product_ops/deployment/deploy_cloud_run_waji.sh` checks the same environment variables and aborts execution before building any Docker images.

@@ -114,6 +114,26 @@ def test_valid_bearer_token_yields_authenticated_principal():
     assert principal.scope.tenant_id == "tenant-a"
 
 
+def test_verified_subject_role_binding_grants_only_allowlisted_subject():
+    boundary = AuthenticationBoundary(
+        _config(
+            subject_role_bindings={
+                "smoke-service-account-id": frozenset(
+                    {Role.OPERATIONS_MANAGER.value}
+                )
+            }
+        )
+    )
+    bound = deps.principal_from_headers(
+        _bearer(_token(sub="smoke-service-account-id")), boundary=boundary
+    )
+    unbound = deps.principal_from_headers(
+        _bearer(_token(sub="different-service-account-id")), boundary=boundary
+    )
+    assert bound.has_role(Role.OPERATIONS_MANAGER)
+    assert not unbound.roles
+
+
 def test_expired_token_is_401():
     token = _token(roles=[Role.OPERATIONS_MANAGER.value], exp_delta=timedelta(hours=-1))
     with pytest.raises(_UNAUTH_EXC) as exc_info:

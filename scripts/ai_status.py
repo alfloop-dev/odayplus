@@ -845,10 +845,31 @@ def default_state() -> dict[str, Any]:
     }
 
 
+STATE_SCALAR_DEFAULT_KEYS = ("project", "sprint", "objective", "updated_at")
+STATE_COLLECTION_DEFAULT_KEYS = ("tasks", "agents", "handoffs", "blockers")
+
+
+def backfill_missing_state_keys(state: dict[str, Any]) -> None:
+    """Fill top-level keys a hand-edited or partially imported status file may lack.
+
+    Scalars come from ``default_state`` so the values live in one place.
+    Collections default to empty instead of the seed content, which would
+    otherwise inject template tasks and agents into a real status file.
+    """
+    missing_scalars = [key for key in STATE_SCALAR_DEFAULT_KEYS if key not in state]
+    if missing_scalars:
+        defaults = default_state()
+        for key in missing_scalars:
+            state[key] = defaults[key]
+    for key in STATE_COLLECTION_DEFAULT_KEYS:
+        state.setdefault(key, [])
+
+
 def load_state() -> dict[str, Any]:
     if not STATUS_FILE.exists() or STATUS_FILE.read_text(encoding="utf-8").strip() == "":
         return default_state()
     state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+    backfill_missing_state_keys(state)
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
@@ -1609,6 +1630,24 @@ def clear_ai_status_caches() -> None:
     _TASK_SHA_CACHE.clear()
 
 
+_UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
+
+
+def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
+    """The task's branch as recorded, falling back to the derived name.
+
+    Building `task/<id>` unconditionally invented a branch for every task
+    reimported from an existing GitHub PR, whose branch does not follow that
+    convention. Looking a task up by an invented ref finds nothing, and the
+    caller reads that as missing work rather than as a wrong question.
+    """
+    recorded = str((task or {}).get("branch") or "").strip()
+    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
+        return recorded
+    resolved_id = str(task_id or (task or {}).get("id") or "").strip()
+    return f"task/{resolved_id}"
+
+
 def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
     """Where to ask GitHub about a task's PR: checkout, `--repo` args, number.
 
@@ -2321,7 +2360,7 @@ def is_approved_head_satisfied(
         repository_id = task_primary_repository_id(config, task) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
-        branch = f"task/{task_id}"
+        branch = task_branch_name(task, task_id)
 
         slug = repository_slug(config, repository_id) or git_remote_repository_slug(repo_root, "origin") or get_repository_slug_safe()
         if not slug:
@@ -2464,6 +2503,13 @@ def collect_done_delivery_metadata(
         )
     repository_id = task_primary_repository_id(config, task)
     if repository_id is None:
+        declared = str(task.get("repository") or "").strip()
+        if declared:
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: it declares repository `{declared}`, which is not "
+                "in the repository registry. Register it or correct the task's `repository` field; "
+                "finalization will not search a repository the task never named."
+            )
         repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
         raise SystemExit(
             "Cannot finalize task: task artifacts span multiple non-Pantheon repositories; "
@@ -3147,11 +3193,11 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
             lines.append(
                 "| `{id}` | {phase} | {title} | {owner} | {status} | {depends} | {summary} |".format(
-                    id=cell(task["id"]),
-                    phase=cell(task["phase"]),
+                    id=cell(task.get("id", "-")),
+                    phase=cell(task.get("phase", "-")),
                     title=cell(display_task_title(task)),
-                    owner=cell(task["owner"]),
-                    status=cell(task["status"]),
+                    owner=cell(task.get("owner", "-")),
+                    status=cell(task.get("status", "-")),
                     depends=cell(depends),
                     summary=cell(task.get("summary_zh") or "-"),
                 )
@@ -3170,8 +3216,8 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     primary_tasks = [task for task in active_tasks if task_delivery_layer(task) == "primary"]
     external_tasks = [task for task in active_tasks if task_delivery_layer(task) == "external"]
     current_sprint_lines = [
-        f"- Sprint: `{state['sprint']}`",
-        "- Canonical files: " + ", ".join(f"`{item}`" for item in state["canonical_files"]),
+        f"- Sprint: `{state.get('sprint') or '-'}`",
+        "- Canonical files: " + ", ".join(f"`{item}`" for item in state.get("canonical_files", [])),
         "- Canonical tiers: " + (", ".join(tier_labels) if tier_labels else "-"),
     ]
     planning_reference = planning_reference_files(planning_state)
@@ -3189,11 +3235,11 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         "Do not treat this file as the machine-readable source of truth.",
         f"Absolute times below use {DISPLAY_TIMEZONE_LABEL}.",
         "",
-        f"Last updated: {format_display_timestamp(state['updated_at'])}",
+        f"Last updated: {format_display_timestamp(state.get('updated_at'))}",
         "",
         "## Objective",
         "",
-        localize_embedded_timestamps(state["objective"]),
+        localize_embedded_timestamps(state.get("objective") or "-"),
         "",
         "## Current Sprint",
         "",
@@ -3282,13 +3328,13 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         depends = ", ".join(f"`{item}`" for item in task.get("depends_on", [])) or "-"
         lines.append(
             "| `{id}` | {phase} | {title} | {summary} | {owner} | {reviewer} | {status} | {depends} | {last_update} | {next} |".format(
-                id=cell(task["id"]),
-                phase=cell(task["phase"]),
+                id=cell(task.get("id", "-")),
+                phase=cell(task.get("phase", "-")),
                 title=cell(display_task_title(task)),
                 summary=cell(task.get("summary_zh") or "-"),
-                owner=cell(task["owner"]),
-                reviewer=cell(task["reviewer"]),
-                status=cell(task["status"]),
+                owner=cell(task.get("owner", "-")),
+                reviewer=cell(task.get("reviewer", "-")),
+                status=cell(task.get("status", "-")),
                 depends=cell(depends),
                 last_update=cell(format_display_timestamp(task.get("last_update"))),
                 next=cell(localize_embedded_timestamps(task.get("next") or "-")),
@@ -5088,7 +5134,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
     config = status_runtime_config()
     repository_id = task_primary_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
-    branch = f"task/{task_id}"
+    branch = task_branch_name(task, task_id)
     base_branch = delivery_merge_target_branch(config, repository_id)
     remote_sha = resolve_task_sha(task_id, force_refresh=True)
     if not remote_sha:
@@ -6027,18 +6073,26 @@ def resolve_task_sha(
                 return cached_sha
 
     repo_root = ROOT
+    recorded_branch = ""
     try:
         config = status_runtime_config()
         state = load_state()
         task = get_task(state, task_id)
         if task:
+            recorded_branch = task_branch_name(task, task_id)
             binding = resolve_task_repository(config, task)
             if binding.resolved and binding.root:
                 repo_root = binding.root
     except Exception:
         repo_root = ROOT
+        recorded_branch = ""
 
+    # The record's own branch leads: a task reimported from an existing PR does
+    # not follow either naming convention, and asking origin only about the
+    # conventional names finds nothing and reads as "the branch is gone".
     branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    if recorded_branch and recorded_branch not in branch_names:
+        branch_names.insert(0, recorded_branch)
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
     result = subprocess.run(

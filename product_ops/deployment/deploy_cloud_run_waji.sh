@@ -129,7 +129,6 @@ ROLLBACK_ARMED=false
 SCHEDULER_ROLLBACK_ARMED=false
 DEPLOYMENT_COMMITTED=false
 cleanup() {
-  unset ODP_OPERATOR_SMOKE_BEARER_TOKEN
   rm -f \
     "${API_ENV_FILE}" \
     "${WEB_ENV_FILE}" \
@@ -201,6 +200,7 @@ keys = [
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
+    "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
     "ODP_SCHEDULED_INGESTION_TENANT_ID",
     "ODP_TENANT_ID",
 ]
@@ -594,22 +594,24 @@ gcloud run services describe "${WEB_SERVICE}" \
 WEB_REVISION="$(tagged_revision "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 WEB_URL="$(tagged_revision_url "${WEB_CANDIDATE_DESCRIPTION}" "${WEB_REVISION_TAG}")"
 
-smoke_audience="${ODP_AUTH_AUDIENCES%%,*}"
-if [[ -z "${smoke_audience//[[:space:]]/}" ]]; then
-  echo "Error: ODP_AUTH_AUDIENCES must provide a smoke token audience." >&2
-  exit 1
-fi
-ODP_OPERATOR_SMOKE_BEARER_TOKEN="$(gcloud auth print-identity-token \
-  --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
-  --audiences="${smoke_audience}" \
-  --include-email)"
-if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN}" ]]; then
-  echo "Error: failed to mint short-lived smoke identity token." >&2
-  exit 1
-fi
-export ODP_OPERATOR_SMOKE_BEARER_TOKEN
-if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
-  echo "::add-mask::${ODP_OPERATOR_SMOKE_BEARER_TOKEN}"
+if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN:-}" ]]; then
+  smoke_audience="${ODP_AUTH_AUDIENCES%%,*}"
+  if [[ -z "${smoke_audience//[[:space:]]/}" ]]; then
+    echo "Error: ODP_AUTH_AUDIENCES must provide a smoke token audience." >&2
+    exit 1
+  fi
+  ODP_OPERATOR_SMOKE_BEARER_TOKEN="$(gcloud auth print-identity-token \
+    --impersonate-service-account="${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}" \
+    --audiences="${smoke_audience}" \
+    --include-email)"
+  if [[ -z "${ODP_OPERATOR_SMOKE_BEARER_TOKEN}" ]]; then
+    echo "Error: failed to mint short-lived smoke identity token." >&2
+    exit 1
+  fi
+  export ODP_OPERATOR_SMOKE_BEARER_TOKEN
+  if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+    echo "::add-mask::${ODP_OPERATOR_SMOKE_BEARER_TOKEN}"
+  fi
 fi
 
 echo "Running release-aware smoke checks against tagged candidate revisions..."

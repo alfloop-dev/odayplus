@@ -15,6 +15,45 @@ permissions:
   id-token: write
 
 jobs:
+  wif-oidc-smoke:
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+    steps:
+      - name: Validate WIF smoke configuration
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+        run: |
+          missing=0
+          for name in GCP_PROJECT GCP_WORKLOAD_IDENTITY_PROVIDER GCP_SERVICE_ACCOUNT; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} is required for the WIF OIDC smoke gate"
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Authenticate to Google Cloud for read-only smoke
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK for read-only smoke
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify federated identity and project visibility
+        run: |
+          gcloud auth list \
+            --filter=status:ACTIVE \
+            --format='value(account)' \
+            | grep -Fx "${{ vars.GCP_SERVICE_ACCOUNT }}"
+          gcloud projects describe "${GCP_PROJECT}" \
+            --format='value(projectId)' \
+            | grep -Fx "${GCP_PROJECT}"
+
   e2e-operational-evidence:
     runs-on: ubuntu-latest
     steps:
@@ -23,7 +62,7 @@ jobs:
         run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
 
   deploy:
-    needs: e2e-operational-evidence
+    needs: [wif-oidc-smoke, e2e-operational-evidence]
     runs-on: ubuntu-latest
     environment:
       name: dev
@@ -62,6 +101,7 @@ jobs:
       ODP_AUTH_ISSUER: ${{ vars.ODP_AUTH_ISSUER }}
       ODP_AUTH_AUDIENCES: ${{ vars.ODP_AUTH_AUDIENCES }}
       ODP_AUTH_JWKS_URI: ${{ vars.ODP_AUTH_JWKS_URI }}
+      ODP_AUTH_SUBJECT_ROLE_BINDINGS: ${{ vars.ODP_AUTH_SUBJECT_ROLE_BINDINGS }}
       # ODP-OPERATOR-SMOKE-RBAC-LIVE-001: ODP_AUTH_PRINCIPAL_MAP_SECRET must map
       # ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT (numeric subject & SA email) to the least-privilege
       # composite read roles ["operations_manager", "model_owner", "data_owner"] required
@@ -71,6 +111,7 @@ jobs:
       ODP_WEB_OIDC_ISSUER: ${{ vars.ODP_WEB_OIDC_ISSUER }}
       ODP_WEB_OIDC_CLIENT_ID: ${{ vars.ODP_WEB_OIDC_CLIENT_ID }}
       ODP_OPERATOR_SMOKE_ROLE: ${{ vars.ODP_OPERATOR_SMOKE_ROLE }}
+      ODP_OPERATOR_SMOKE_SUBJECT: ${{ vars.ODP_OPERATOR_SMOKE_SUBJECT }}
       # ODP-LIVE-E2E-001: the post-promotion live E2E gate runs inside
       # deploy_cloud_run_waji.sh before the release is committed, so a failure
       # rolls traffic back. `dev` deploys a production-*mode* runtime
@@ -149,6 +190,54 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Mint short-lived operator smoke identity token
+        shell: bash
+        run: |
+          set -euo pipefail
+          access_token="$(gcloud auth print-access-token)"
+          request_body="$(python3 -c \
+            'import json, os; aud = [a.strip() for a in os.environ["ODP_AUTH_AUDIENCES"].split(",") if a.strip()][0]; print(json.dumps({"audience": aud, "includeEmail": True}))')"
+          response="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer ${access_token}" \
+            --header "Content-Type: application/json" \
+            --data "${request_body}" \
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT}:generateIdToken")"
+          token="$(RESPONSE="${response}" python3 -c \
+            'import json, os; print(json.loads(os.environ["RESPONSE"])["token"])')"
+          echo "::add-mask::${token}"
+          TOKEN="${token}" python3 - <<'PY'
+          import base64, json, os
+          payload = os.environ["TOKEN"].split(".")[1]
+          payload += "=" * (-len(payload) % 4)
+          claims = json.loads(base64.urlsafe_b64decode(payload))
+          bindings = json.loads(os.environ["ODP_AUTH_SUBJECT_ROLE_BINDINGS"])
+          subject = str(claims.get("sub", ""))
+          expected_audience = [
+              a.strip()
+              for a in os.environ["ODP_AUTH_AUDIENCES"].split(",")
+              if a.strip()
+          ][0]
+          if claims.get("aud") != expected_audience:
+              raise SystemExit("minted token audience mismatch")
+          if subject != os.environ["ODP_OPERATOR_SMOKE_SUBJECT"]:
+              raise SystemExit("minted token subject does not match configured smoke subject")
+          configured_roles = [
+              r.strip().replace("-", "_")
+              for r in os.environ["ODP_OPERATOR_SMOKE_ROLE"].split(",")
+              if r.strip()
+          ]
+          if not configured_roles:
+              raise SystemExit("no operator smoke roles configured")
+          subject_bindings = set(bindings.get(subject, []))
+          missing_roles = [r for r in configured_roles if r not in subject_bindings]
+          if missing_roles:
+              raise SystemExit(
+                  f"minted token subject missing configured smoke role binding(s): {', '.join(missing_roles)}"
+              )
+          PY
+          echo "ODP_OPERATOR_SMOKE_BEARER_TOKEN=${token}" >> "${GITHUB_ENV}"
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3

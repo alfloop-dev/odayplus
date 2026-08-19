@@ -3,6 +3,7 @@ from __future__ import annotations
 """Workspace lifecycle helpers extracted from legacy supervisor."""
 # ruff: noqa: F821
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -72,7 +73,51 @@ def _task_id_slug(task_id: str | None) -> str:
     return slug or "unknown-task"
 
 @_entrypoint
-def worker_task_branch(config: dict[str, Any], task_id: str | None) -> str:
+def canonical_task_record(
+    config: dict[str, Any],
+    task_id: str | None,
+    fallback: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """The task as the status file states it, not as a dispatch event echoed it."""
+    try:
+        record = task_index_from_status(config, load_status(config)).get(str(task_id or ""))
+    except Exception:
+        record = None
+    return record if isinstance(record, dict) else fallback
+
+
+# Conservative subset of git's own ref-name rules. A task record is data, and a
+# malformed branch name in it must not reach `git worktree add`.
+_INVALID_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
+
+
+@_entrypoint
+def branch_name_is_usable(name: str) -> bool:
+    if not name or name.startswith("-") or name.startswith("/") or name.endswith("/"):
+        return False
+    if name.endswith(".lock") or ".." in name or "@{" in name:
+        return False
+    return _INVALID_BRANCH_CHARS.search(name) is None
+
+
+@_entrypoint
+def worker_task_branch(config: dict[str, Any], task_id: str | None, task: dict[str, Any] | None = None) -> str:
+    """The branch a worker must check out for a task.
+
+    The task record's own `branch` wins. Deriving `task/<id>` unconditionally
+    invented a name for every task whose branch does not follow that
+    convention -- which is every task reimported from an existing GitHub PR.
+    The fail-closed refresh policy then reported the invented branch as missing
+    from a remote that never had it, and no retry could clear that.
+    SINGLE-RUNTIME-RELEASE-0D1603CF sat there: its work is on
+    `single-runtime-release-0d1603cf` (PR #822), while the leased worktree held
+    an empty `task/SINGLE-RUNTIME-RELEASE-0D1603CF` carrying no task commit at
+    all. Derivation stays as the fallback for records that name no branch.
+    """
+    if isinstance(task, dict):
+        recorded = str(task.get("branch") or "").strip()
+        if recorded and branch_name_is_usable(recorded):
+            return recorded
     branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
     prefix = str(branch_workflow.get("task_branch_prefix") or "task/")
     normalized_task_id = str(task_id or "").strip()
@@ -161,6 +206,27 @@ def _worktree_record_branch(record: dict[str, str]) -> str:
     if branch.startswith("refs/heads/"):
         return branch[len("refs/heads/") :]
     return branch
+
+
+@_entrypoint
+def _detached_head_is_merged(repo_root: Path, worktree_path: Path, base_refs: list[str]) -> bool:
+    """Return True when a branchless worktree's HEAD is already contained in a base.
+
+    This is the detached-HEAD spelling of the `branch in merged_branches` test that
+    guards worktree removal: both answer "is this content already in a base branch,
+    so that deleting the checkout loses nothing?". Fails closed -- an unreadable
+    HEAD or an unanswerable ancestry query keeps the worktree.
+    """
+    if not base_refs:
+        return False
+    head = _git_commit_oid(worktree_path, "HEAD")
+    if not head:
+        return False
+    for base_ref in base_refs:
+        rc, _ = _git_output(repo_root, "merge-base", "--is-ancestor", head, base_ref)
+        if rc == 0:
+            return True
+    return False
 
 
 @_entrypoint
@@ -330,23 +396,15 @@ def _create_worker_worktree_fallback(repo_root: Path, path: Path, branch: str, b
     return True
 
 @_entrypoint
-def _classify_worktree_dirt(
-    porcelain_status: str | bytes,
-    worktree_path: Path | None = None,
-) -> tuple[str, list[str]]:
-    """Classify reused-worktree dirtiness from `git status --porcelain` output.
+def _parse_porcelain_entries(porcelain_status: str | bytes) -> list[tuple[str, str]]:
+    """Parse `git status --porcelain=v1` output (text, or NUL-separated bytes).
 
-    Returns (classification, paths):
-      'clean'        - no changes; paths is []
-      'scratch_only' - every change is an untracked or ignored ephemeral seed
-                       (see _REUSABLE_DIRTY_PREFIXES / _REUSABLE_CONTEXT_FILES); paths lists them
-      'real'         - at least one change is tracked/staged or outside scratch -> must block reuse
+    Returns (status_code, path) pairs with rename/copy sources dropped so the
+    reported path is always the destination inside the worktree.
     """
     entries: list[tuple[str, str]] = []
     if isinstance(porcelain_status, bytes):
         raw_entries = [e for e in porcelain_status.split(b"\0") if e]
-        if not raw_entries:
-            return "clean", []
         i = 0
         while i < len(raw_entries):
             item = raw_entries[i]
@@ -359,31 +417,137 @@ def _classify_worktree_dirt(
             rel_p = os.fsdecode(path_bytes).strip()
             if rel_p:
                 entries.append((code, rel_p))
-    else:
-        lines = [ln for ln in porcelain_status.splitlines() if ln.strip()]
-        if not lines:
-            return "clean", []
-        for ln in lines:
-            code = ln[:2]
-            body = ln[3:] if len(ln) > 3 else ln.strip()
-            path = body.split(" -> ")[-1].strip().strip('"')
-            if path:
-                entries.append((code, path))
+        return entries
 
+    for ln in porcelain_status.splitlines():
+        if not ln.strip():
+            continue
+        code = ln[:2]
+        body = ln[3:] if len(ln) > 3 else ln.strip()
+        path = body.split(" -> ")[-1].strip().strip('"')
+        if path:
+            entries.append((code, path))
+    return entries
+
+
+@_entrypoint
+def _normalize_materialized_paths(paths) -> frozenset[str]:
+    """Normalize orchestrator-materialized context paths for dirt-allowlist matching."""
+    normalized: set[str] = set()
+    for raw in paths or ():
+        value = str(raw or "").replace("\\", "/").strip().strip("/")
+        if not value or value.startswith("/") or ".." in value.split("/"):
+            continue
+        normalized.add(value)
+    return frozenset(normalized)
+
+
+@_entrypoint
+def _is_reusable_dirt_entry(
+    code: str,
+    path: str,
+    worktree_path: Path | None,
+    allowlist: frozenset[str],
+) -> bool:
+    """True when a status entry is orchestrator-owned scratch rather than owner dirt."""
+    if code.strip() not in ("??", "!!"):
+        return False
+    norm = path.replace("\\", "/").strip()
+    trimmed = norm.strip("/")
+    reusable = (
+        norm.startswith(_REUSABLE_DIRTY_PREFIXES)
+        or norm in _REUSABLE_CONTEXT_FILES
+        or trimmed in allowlist
+        or any(trimmed.startswith(f"{entry}/") for entry in allowlist)
+    )
+    if not reusable:
+        return False
+    if worktree_path and not _is_safe_context_destination(worktree_path, path):
+        return False
+    return True
+
+
+@_entrypoint
+def _blocking_dirt_entries(
+    entries: list[tuple[str, str]],
+    worktree_path: Path | None = None,
+    materialized_paths=None,
+) -> list[tuple[str, str]]:
+    """The subset of status entries that actually deny the lease."""
+    allowlist = _normalize_materialized_paths(materialized_paths)
+    return [
+        (code, path)
+        for code, path in entries
+        if not _is_reusable_dirt_entry(code, path, worktree_path, allowlist)
+    ]
+
+
+@_entrypoint
+def _describe_dirt_entries(entries: list[tuple[str, str]], limit: int = 5) -> str:
+    """Describe what `git status` actually reported, so a block message is not a guess."""
+    staged = 0
+    unstaged = 0
+    untracked = 0
+    names: list[str] = []
+    for code, path in entries:
+        padded = (code + "  ")[:2]
+        if padded.strip() == "??":
+            untracked += 1
+        elif padded.strip() == "!!":
+            continue
+        elif padded[0] not in (" ", "?", "!"):
+            staged += 1
+        else:
+            unstaged += 1
+        names.append(path)
+
+    total = len(names)
+    if not total:
+        return "no reportable changes"
+    parts = []
+    if staged:
+        parts.append(f"{staged} staged")
+    if unstaged:
+        parts.append(f"{unstaged} unstaged tracked")
+    if untracked:
+        parts.append(f"{untracked} untracked")
+    shown = ", ".join(sorted(names)[:limit])
+    if total > limit:
+        shown += f", +{total - limit} more"
+    noun = "change" if total == 1 else "changes"
+    return f"{total} dirty {noun} ({', '.join(parts)}): {shown}"
+
+
+@_entrypoint
+def _classify_worktree_dirt(
+    porcelain_status: str | bytes,
+    worktree_path: Path | None = None,
+    materialized_paths=None,
+) -> tuple[str, list[str]]:
+    """Classify reused-worktree dirtiness from `git status --porcelain` output.
+
+    Returns (classification, paths):
+      'clean'        - no changes; paths is []
+      'scratch_only' - every change is an untracked or ignored ephemeral seed
+                       (see _REUSABLE_DIRTY_PREFIXES / _REUSABLE_CONTEXT_FILES), or a file
+                       the orchestrator itself materialized into this workspace
+                       (materialized_paths); paths lists them
+      'real'         - at least one change is tracked/staged or outside scratch -> must block reuse
+
+    materialized_paths exists because the supervisor seeds the worker's context files
+    into the workspace itself. A repository that version-controls those paths never sees
+    them here, but a repository that does not (any cross-repository workspace) sees them
+    as untracked, and without this allowlist the orchestrator's own writes deny every
+    later lease of the workspace it just seeded.
+    """
+    entries = _parse_porcelain_entries(porcelain_status)
     if not entries:
         return "clean", []
 
-    def _is_reusable(p: str) -> bool:
-        norm = p.replace("\\", "/").strip()
-        return norm.startswith(_REUSABLE_DIRTY_PREFIXES) or norm in _REUSABLE_CONTEXT_FILES
-
+    allowlist = _normalize_materialized_paths(materialized_paths)
     scratch_paths: list[str] = []
     for code, path in entries:
-        if code.strip() not in ("??", "!!"):
-            return "real", []
-        if not _is_reusable(path):
-            return "real", []
-        if worktree_path and not _is_safe_context_destination(worktree_path, path):
+        if not _is_reusable_dirt_entry(code, path, worktree_path, allowlist):
             return "real", []
         scratch_paths.append(path)
 
@@ -849,6 +1013,34 @@ LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE = frozenset({
     "unresolved_git_operation",
 })
 
+# Refresh status token for a reused worktree denied by real dirt. The refresh returns
+# "<token>: <what git actually reported>" so an operator reads the offending paths
+# instead of a fixed guess; callers must therefore compare on the token, not the
+# whole string.
+_SKIPPED_DIRTY_WORKTREE = "skipped_dirty_worktree"
+
+
+@_entrypoint
+def _lease_status_kind(refresh_status: str | None) -> str:
+    """The stable token of a refresh status, dropping any ': <detail>' suffix."""
+    return str(refresh_status or "").split(":", 1)[0].strip()
+
+
+@_entrypoint
+def _is_skipped_dirty_worktree(refresh_status: str | None) -> bool:
+    return _lease_status_kind(refresh_status) == _SKIPPED_DIRTY_WORKTREE
+
+
+@_entrypoint
+def _dirty_worktree_detail(refresh_status: str | None) -> str:
+    status = str(refresh_status or "")
+    prefix = f"{_SKIPPED_DIRTY_WORKTREE}:"
+    if status.startswith(prefix):
+        detail = status[len(prefix) :].strip()
+        if detail:
+            return detail
+    return "dirty changes"
+
 
 @_entrypoint
 def _refresh_reused_worker_worktree(
@@ -858,6 +1050,7 @@ def _refresh_reused_worker_worktree(
     expected_branch: str,
     *,
     network_timeout_seconds: float | None = None,
+    materialized_paths=None,
 ) -> tuple[bool, str]:
     """Lease a clean reused worktree using a fail-closed three-way policy.
 
@@ -930,11 +1123,22 @@ def _refresh_reused_worker_worktree(
     if status_proc.returncode != 0:
         return False, "status_failed"
     if status_proc.stdout:
-        classification, scratch_paths = _classify_worktree_dirt(status_proc.stdout, worktree_path=worktree_path)
+        classification, scratch_paths = _classify_worktree_dirt(
+            status_proc.stdout,
+            worktree_path=worktree_path,
+            materialized_paths=materialized_paths,
+        )
         if classification == "scratch_only":
             _restore_reusable_scratch(worktree_path, scratch_paths)
         else:
-            return False, "skipped_dirty_worktree"
+            all_entries = _parse_porcelain_entries(status_proc.stdout)
+            blocking = _blocking_dirt_entries(
+                all_entries,
+                worktree_path=worktree_path,
+                materialized_paths=materialized_paths,
+            )
+            detail = _describe_dirt_entries(blocking or all_entries)
+            return False, f"{_SKIPPED_DIRTY_WORKTREE}: {detail}"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
     if has_remote_origin:
@@ -1510,6 +1714,30 @@ def materialize_worker_context_files(
     return materialized
 
 @_entrypoint
+def _orchestrator_materialized_paths(
+    state: dict[str, Any],
+    request,
+    workspace_task_id: str,
+) -> list[str]:
+    """Paths the orchestrator seeds into the worker workspace itself.
+
+    These are the context files a worker is told to read, written by the supervisor
+    rather than by the worker. A repository that version-controls them (Pantheon's own)
+    never sees them as dirt; a repository that does not (any cross-repository workspace)
+    sees them as untracked, so without this allowlist the orchestrator's own writes deny
+    the next lease and the task can never be dispatched into that workspace again.
+    """
+    paths: list[str] = [str(value) for value in (getattr(request, "context_files", None) or [])]
+    leases = (state.get("worker_worktrees") or {}).get("leases", {}) or {}
+    lease = leases.get(workspace_task_id)
+    if isinstance(lease, dict):
+        previous = lease.get("materialized_context_files")
+        if isinstance(previous, list):
+            paths.extend(str(value) for value in previous)
+    return paths
+
+
+@_entrypoint
 def prepare_worker_workspace(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -1529,11 +1757,17 @@ def prepare_worker_workspace(
     if request.metadata.get("workspace_path"):
         return True, None
 
+    # The dispatch event carries a progress snapshot, not the task record: it
+    # has no `branch` and no `repository`, so resolving either from it silently
+    # fell back to a derived name and the default repository. Read the canonical
+    # record instead, and keep the snapshot only as the fallback.
     task_metadata = request.metadata.get("task")
-    repo_root, repo_root_source = worker_task_repo_root(
+    task_record = canonical_task_record(
         config,
+        workspace_task_id,
         task_metadata if isinstance(task_metadata, dict) else None,
     )
+    repo_root, repo_root_source = worker_task_repo_root(config, task_record)
     if repo_root is None:
         message = (
             f"Cannot lease isolated worker worktree for {workspace_task_id}: "
@@ -1554,9 +1788,10 @@ def prepare_worker_workspace(
         )
         return False, message
 
-    branch = worker_task_branch(config, workspace_task_id)
+    branch = worker_task_branch(config, workspace_task_id, task_record)
     worktree_path = worker_task_worktree_path(config, workspace_task_id, settings, repo_root)
     reused = False
+    materialized_paths = _orchestrator_materialized_paths(state, request, workspace_task_id)
 
     if settings.get("reuse_existing", True):
         existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
@@ -1569,6 +1804,7 @@ def prepare_worker_workspace(
                 str(settings.get("base_ref") or "origin/dev"),
                 branch,
                 network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+                materialized_paths=materialized_paths,
             )
             write_activity_log(
                 config,
@@ -1584,7 +1820,7 @@ def prepare_worker_workspace(
                 },
             )
             if not refresh_ok:
-                if refresh_status in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
+                if _lease_status_kind(refresh_status) in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
                     task_sha, task_sha_source = _fetch_authoritative_task_head(
                         repo_root,
                         worktree_path,
@@ -1682,6 +1918,7 @@ def prepare_worker_workspace(
                             str(settings.get("base_ref") or "origin/dev"),
                             branch,
                             network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+                            materialized_paths=materialized_paths,
                         )
                         write_activity_log(
                             config,
@@ -1711,7 +1948,7 @@ def prepare_worker_workspace(
                                 "refresh_status": refresh_status,
                             },
                         )
-                if not refresh_ok and refresh_status not in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
+                if not refresh_ok and _lease_status_kind(refresh_status) not in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
                     # The clean-but-unpublished deadlock. Publishing is only
                     # attempted for fast-forwards on a clean worktree; anything
                     # genuinely diverged falls through to the escalation below.
@@ -1723,6 +1960,7 @@ def prepare_worker_workspace(
                             str(settings.get("base_ref") or "origin/dev"),
                             branch,
                             network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+                            materialized_paths=materialized_paths,
                         )
                         write_activity_log(
                             config,
@@ -1745,10 +1983,10 @@ def prepare_worker_workspace(
                         )
 
                 if not refresh_ok:
-                    if refresh_status == "skipped_dirty_worktree":
+                    if _is_skipped_dirty_worktree(refresh_status):
                         reason = (
-                            "has dirty tracked or staged changes. Preserve and commit the "
-                            "task-owned work before dispatch."
+                            f"has {_dirty_worktree_detail(refresh_status)}. Preserve and commit "
+                            "the task-owned work before dispatch."
                         )
                     else:
                         reason = f"failed the fail-closed refresh policy ({refresh_status})."
@@ -1847,12 +2085,20 @@ def prepare_worker_workspace(
             )
             return False, message
 
+    # The workspace is the task's own repository; the status root is not. It
+    # names the fleet that owns ai-status.json, the approval queue and the
+    # permission rules -- always the pantheon checkout. Setting it to the task's
+    # repository was invisible while every task lived here, because the two
+    # coincided. For a cross-repository task they diverge, and the wake prompt
+    # then tells the worker to run `$PANTHEON_STATUS_ROOT/scripts/ai-status.sh`
+    # inside a repository that has no `scripts/` at all.
+    fleet_root = config_path(config, "status_file").parents[0]
     request.metadata.update(
         {
             "workspace_mode": "isolated_worktree",
             "workspace_path": str(worktree_path),
             "workspace_branch": branch,
-            "status_root": str(repo_root),
+            "status_root": str(fleet_root),
         }
     )
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
@@ -1862,7 +2108,7 @@ def prepare_worker_workspace(
         "workspace_task_id": workspace_task_id,
         "branch": branch,
         "path": str(worktree_path),
-        "status_root": str(repo_root),
+        "status_root": str(fleet_root),
         "repo_root_source": repo_root_source,
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
@@ -1881,7 +2127,7 @@ def prepare_worker_workspace(
             "queue_event_id": queue_event_id,
             "workspace_branch": branch,
             "workspace_path": str(worktree_path),
-            "status_root": str(repo_root),
+            "status_root": str(fleet_root),
         },
     )
     return True, None
@@ -2099,10 +2345,12 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
     live_paths = _scan_process_paths_in_root(base_root)
 
     merged_branches: set[str] = set()
+    base_refs: list[str] = []
     for ref in settings["base_branches"]:
         for candidate in (f"origin/{ref}", ref):
             if not _git_ref_exists(repo_root, candidate):
                 continue
+            base_refs.append(candidate)
             proc = subprocess.run(
                 ["git", "branch", "--merged", candidate, "--list", "task/*"],
                 cwd=repo_root,
@@ -2116,7 +2364,11 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
                 name = line.strip().lstrip("*").strip()
                 if name:
                     merged_branches.add(name)
-    if not merged_branches:
+    # Without a single resolvable base there is nothing to prove "already merged"
+    # against, for either a branch or a detached HEAD, so nothing may be removed.
+    # A base that exists but has no merged task branch is NOT such a case: a
+    # detached recovery worktree can still be an ancestor of it.
+    if not base_refs:
         return False
 
     max_removals = max(0, settings["max_removals_per_tick"])
@@ -2137,7 +2389,16 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
         if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
             continue
         branch = _worktree_record_branch(record)
-        if not branch or branch not in merged_branches:
+        if branch:
+            if branch not in merged_branches:
+                continue
+        elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
+            # A lease-recovery worktree is created with `git worktree add --detach`
+            # (see _fresh_lease_path), so it carries no branch at all and the
+            # branch-membership test above could never admit it -- every one of
+            # them was structurally unprunable for its whole life. Ask the same
+            # question ancestry can answer instead: is this HEAD already contained
+            # in a base? Same guarantee, expressed for a worktree that has no name.
             continue
         status_proc = subprocess.run(
             ["git", "-C", str(wt_path), "status", "--porcelain"],

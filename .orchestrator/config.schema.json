@@ -625,6 +625,16 @@
               "cli": {
                 "type": "string"
               },
+              "effort": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
               "enable_auto_mode_if_supported": {
                 "type": "boolean"
               },
@@ -649,6 +659,9 @@
                 }
               },
               "mcp_config": {
+                "type": "string"
+              },
+              "model": {
                 "type": "string"
               },
               "output_format": {

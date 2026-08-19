@@ -62,10 +62,30 @@ class GitHubBusOffline(GitHubBusError):
 
 
 def resolve_gh_binary() -> str | None:
+    """Resolve the `gh` this process should run: the real CLI first.
+
+    `.orchestrator/bin/gh` is a broker shim, not the real CLI
+    (delivery_toolchain/git/README.md), and every other consumer honours that:
+    task_finalize.sh, check_pr_merge_eligibility.py, apply_branch_protection.py
+    and ai_status.py all discard a `gh` that resolves into `.orchestrator/bin/`.
+
+    The priority here used to be inverted -- the shim was preferred whenever it
+    existed and was executable, with no check that it could actually run. That
+    made the bus the one consumer in the system routed through the shim, so a
+    shim that could not resolve its own target took the whole GitHub bus down
+    while every other caller kept working against /usr/bin/gh.
+
+    The shim stays as a last resort (see
+    test_run_gh_uses_vendored_wrapper_when_system_gh_missing): on a host with no
+    real CLI it is better to run it and get its diagnostic than to give up here.
+    """
+    system_gh = command_exists("gh")
+    if system_gh:
+        return system_gh
     vendored = ROOT / ".orchestrator" / "bin" / "gh"
     if vendored.exists() and os.access(vendored, os.X_OK):
         return str(vendored)
-    return command_exists("gh")
+    return None
 
 
 def _iso_now_dt() -> datetime:

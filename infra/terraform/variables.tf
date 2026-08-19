@@ -265,6 +265,12 @@ variable "cloud_sql_maintenance_hour" {
   }
 }
 
+variable "artifact_registry_repository" {
+  type        = string
+  description = "Artifact Registry repository name."
+  default     = "oday-plus-dev"
+}
+
 variable "artifact_retention_days" {
   type        = number
   description = "Minimum artifact bucket object retention in days."

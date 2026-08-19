@@ -7,7 +7,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from adapters.base import DeliveryRequest
-from common import parse_iso_timestamp
+from common import (
+    claude_model_selection_args,
+    parse_iso_timestamp,
+    spawn_background_process,
+)
+from provider_runtime import configured_provider_binary
 import status_transition
 
 
@@ -22,6 +27,7 @@ def _sync_supervisor_scope() -> None:
     excluded = {
         "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__",
         "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard", "status_transition",
+        "claude_model_selection_args", "configured_provider_binary", "spawn_background_process",
     }
     module_exports = {
         "__all__",
@@ -1825,37 +1831,46 @@ def maybe_reassign_task_after_worker_failure(
         )
         if not new_owner or is_human_gate_agent(new_owner):
             return None
-        # Only the owner failed. A reviewer that is still viable keeps the task:
-        # load balancing is for picking a replacement, not a reason to churn a
-        # healthy review assignment and lose the reviewer's accumulated context.
-        new_reviewer = (
-            first_viable_agent(
-                config,
-                [reviewer],
-                exclude={new_owner},
-                state=state,
-                task=task,
-                balance_load=False,
-                exclude_pools={agent_account_pool_id(config, new_owner)},
-                role="reviewer",
+        # A Human/Ops reviewer is a gate, not a lane. The owner side can still
+        # recover onto another agent, but the human review assignment has to
+        # survive that move: `first_viable_agent` skips human-gate names, so
+        # running the normal replacement search here would report the human
+        # reviewer as unviable and silently swap the gate for an automated
+        # agent. Carry the reviewer through untouched instead.
+        if is_human_gate_agent(reviewer):
+            new_reviewer = reviewer
+        else:
+            # Only the owner failed. A reviewer that is still viable keeps the task:
+            # load balancing is for picking a replacement, not a reason to churn a
+            # healthy review assignment and lose the reviewer's accumulated context.
+            new_reviewer = (
+                first_viable_agent(
+                    config,
+                    [reviewer],
+                    exclude={new_owner},
+                    state=state,
+                    task=task,
+                    balance_load=False,
+                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                    role="reviewer",
+                )
+                if reviewer
+                else None
             )
-            if reviewer
-            else None
-        )
-        if not new_reviewer:
-            reviewer_candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
-            reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
-            new_reviewer = first_viable_agent(
-                config,
-                reviewer_candidates,
-                exclude={new_owner},
-                state=state,
-                task=task,
-                role="reviewer",
-                exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)},
-            )
-        if not new_reviewer or is_human_gate_agent(new_reviewer):
-            return None
+            if not new_reviewer:
+                reviewer_candidates = get_agent_reassignment_candidates(config, failing_agent, role="reviewer", task=task)
+                reviewer_candidates.extend(get_agent_reassignment_candidates(config, failing_agent, role="owner", task=task))
+                new_reviewer = first_viable_agent(
+                    config,
+                    reviewer_candidates,
+                    exclude={new_owner},
+                    state=state,
+                    task=task,
+                    role="reviewer",
+                    exclude_pools=quota_exclusions | {agent_account_pool_id(config, new_owner)},
+                )
+            if not new_reviewer or is_human_gate_agent(new_reviewer):
+                return None
         requeue_for_fresh_dispatch = task_status in owned_statuses and task_status not in finalize_statuses
         message = (
             f"Auto-reassigned ownership from {owner} to {new_owner} after repeated {failing_agent} {failure_label}: {failure_summary}"
@@ -2388,6 +2403,7 @@ def resume_claude_worker(
         command.append("--verbose")
     if runtime.get("include_hook_events", True):
         command.append("--include-hook-events")
+    command.extend(claude_model_selection_args(runtime))
     allowed_tools = (
         _claude_resume_allowed_tools(approval)
         if runtime.get("resume_use_allowed_tools_from_approval", True)
