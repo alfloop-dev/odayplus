@@ -10250,6 +10250,51 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         self.assertIsNone(reassigned_to)
         persist.assert_not_called()
 
+    def test_owner_reassignment_preserves_human_gate_reviewer(self) -> None:
+        """A Human/Ops reviewer survives owner reassignment instead of being swapped for an agent.
+
+        `first_viable_agent` deliberately skips human-gate names, so the reviewer
+        replacement search reports the existing human reviewer as unviable and
+        would otherwise hand the review gate to whichever automated lane is
+        least loaded, silently dropping the human approval requirement.
+        """
+        worker = {
+            "task_id": "T-HUMAN-REVIEWER",
+            "agent_id": "antigravity4",
+            "retry_count": 2,
+            "run_id": "antigravity4-run-1",
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "T-HUMAN-REVIEWER",
+                    "status": "in_progress",
+                    "owner": "Antigravity4",
+                    "reviewer": "Human/Ops",
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            new_owner = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config,
+                {},
+                worker,
+                "Terminal provider failure",
+                terminal=True,
+            )
+
+        self.assertIsNotNone(new_owner, "the failing automated owner lane should still recover")
+        self.assertNotEqual(new_owner, "Antigravity4")
+        self.assertFalse(supervisor.is_human_gate_agent(new_owner))
+        persist.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["new_owner"], new_owner)
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Human/Ops")
+
     def test_fail_closed_never_reassigns_to_human_ops(self) -> None:
         config_with_human = dict(self.config)
         config_with_human["worker_reassignment"] = {
