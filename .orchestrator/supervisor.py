@@ -374,6 +374,11 @@ from watch_events import (
     trim_seen_events,
 )
 
+# Set once the boot reconciliation pass has run in THIS process. Deliberately a
+# process global rather than runtime state: every new supervisor process needs its
+# own boot pass, so this must reset on restart and must not persist to state.json.
+_BOOT_RECONCILED = False
+
 SIDECAR_READY_PRIORITY_OFFSET = 10
 STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
 # Max time the antigravity model-rotation will treat a pool as exhausted before
@@ -3927,7 +3932,23 @@ def run_once(
     changed = False
     try:
         stage_started = time.monotonic()
-        changed = reconcile_runtime_on_boot(config, state) or changed
+        # Boot reconciliation, as the name says, settles what the PREVIOUS
+        # supervisor process left behind. Running it on every loop made it a
+        # second, permanent worker-settlement path that always ran BEFORE
+        # poll_workers -- and it deliberately has no retry/fallback branch, so it
+        # hard-failed every dead `running`/`stalled` worker before poll_workers
+        # could offer one. That silently disabled the whole `worker_retry` config
+        # (max_attempts, backoff_schedule_seconds, fallback_mode) for the most
+        # common failure there is.
+        #
+        # The two paths are intentionally NOT identical -- see
+        # test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure
+        # versus its poll-path sibling, which pin different outcomes on purpose --
+        # so this is a scheduling fix, not a de-duplication.
+        global _BOOT_RECONCILED
+        if not _BOOT_RECONCILED:
+            changed = reconcile_runtime_on_boot(config, state) or changed
+            _BOOT_RECONCILED = True
         if changed:
             save_runtime_state(config, state)
         continue_or_skip_empty(THIS_DIR.parent)

@@ -4328,6 +4328,85 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
         dispatch_ready_tasks.assert_not_called()
 
 
+    def test_boot_reconciliation_runs_once_per_process(self) -> None:
+        """`reconcile_runtime_on_boot` settles what the PREVIOUS process left behind.
+
+        It used to run on every loop, always before `poll_workers`, and it has no
+        retry/fallback branch on purpose -- so it hard-failed every dead
+        `running`/`stalled` worker before `poll_workers` could schedule a retry,
+        silently disabling the entire `worker_retry` config. The two settlement
+        paths are deliberately different (see
+        test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure
+        and its poll-path sibling), so the fix is scheduling, not de-duplication.
+        """
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {},
+            "watcher": {},
+            "ready_dispatcher": {},
+            "providers": {},
+            "agents": {},
+        }
+        state = {"queue": {"events": {}}, "workers": {}, "approvals": {}}
+
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(mock.patch.object(supervisor, "_BOOT_RECONCILED", False))
+            reconcile = stack.enter_context(
+                mock.patch.object(supervisor, "reconcile_runtime_on_boot", return_value=False)
+            )
+            for name in (
+                "continue_or_skip_empty",
+                "expire_provider_dispatch_pauses",
+                "prune_stale_approvals",
+                "load_provider_report",
+                "sync_coordination_files",
+                "poll_workers",
+                "reconcile_queue_records",
+                "prune_event_queue",
+                "refresh_chair_review_state",
+                "auto_materialize_discussion_planning",
+                "dispatch_ready_tasks",
+                "dispatch_chair_review",
+                "dispatch_underutilization_sidecars",
+                "process_queue",
+                "sync_github_bus",
+                "check_branch_drift",
+                "trim_worker_history",
+                "trim_seen_events",
+                "prune_orphan_worktrees",
+                "maybe_auto_commit_archive",
+                "refresh_dashboard_runtime_artifacts",
+                "log_runtime_summary",
+                "save_runtime_state",
+                "write_activity_log",
+                "stamp_supervisor_runtime_state",
+                "compact_worker_history",
+            ):
+                if hasattr(supervisor, name):
+                    stack.enter_context(mock.patch.object(supervisor, name, return_value=False))
+            stack.enter_context(mock.patch.object(supervisor, "load_runtime_state", return_value=state))
+            for name, value in (
+                ("load_discussion_planning_state", None),
+                ("watchdog_safe_mode_active", False),
+                ("discussion_planning_is_active", False),
+                ("chair_review_failure_loop_details", []),
+                ("write_supervisor_pid", None),
+            ):
+                if hasattr(supervisor, name):
+                    stack.enter_context(mock.patch.object(supervisor, name, return_value=value))
+
+            supervisor.run_once(config, watch=False, replay=False)
+            supervisor.run_once(config, watch=False, replay=False)
+            supervisor.run_once(config, watch=False, replay=False)
+
+        # Boot pass on the first loop of this process, never again.
+        reconcile.assert_called_once()
+
     def test_run_once_watchdog_safe_mode_suppresses_new_dispatch(self) -> None:
         config = {
             "schema": {
