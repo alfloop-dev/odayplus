@@ -67,7 +67,12 @@ def _pr_changed_paths(pr_number: int) -> list[str] | None:
     if not isinstance(files, list):
         return None
     paths = [str(item.get("path") or "") for item in files if isinstance(item, dict)]
-    return [path for path in paths if path] or None
+    # An empty list is an answer, not a failure: GitHub is saying this PR
+    # changes no file. Collapsing it into None made a zero-diff PR - one whose
+    # content already reached the base by another route - indistinguishable
+    # from an unreadable diff, so it was classified "unknown" and parked
+    # forever instead of being routed.
+    return [path for path in paths if path]
 
 
 def _pr_merge_state(pr_number: int) -> str | None:
@@ -92,13 +97,15 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
 
     The classifier is fail-closed: anything outside the checked-in tooling
     manifest counts as product, so an unreadable diff yields None and the
-    caller must not take the direct-merge path.
+    caller must not take the direct-merge path. A PR that changes no file at
+    all is readable, not unknown, and classifies as product - which routes it
+    through the merge queue rather than an admin bypass.
     """
     import sys
     from pathlib import Path
 
     paths = _pr_changed_paths(pr_number)
-    if not paths:
+    if paths is None:
         return None
     governance = Path(__file__).resolve().parents[1] / "delivery_toolchain" / "governance"
     if str(governance) not in sys.path:
@@ -806,25 +813,51 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
         ensure_ascii=True,
     )
 
-@_entrypoint
+LEASE_BLOCK_RETRY_AFTER_SECONDS = 1800.0
 
+
+def lease_block_retry_after_seconds(config: dict[str, Any]) -> float:
+    try:
+        value = float(worker_runtime_settings(config).get("lease_block_retry_after_seconds", LEASE_BLOCK_RETRY_AFTER_SECONDS))
+    except (TypeError, ValueError):
+        return LEASE_BLOCK_RETRY_AFTER_SECONDS
+    return value if value > 0 else LEASE_BLOCK_RETRY_AFTER_SECONDS
+
+
+@_entrypoint
 def worktree_block_still_matches_dispatch(
     state: dict[str, Any],
     task: dict[str, Any],
     reason: str,
     task_map: dict[str, dict[str, Any]],
+    *,
+    retry_after_seconds: float = LEASE_BLOCK_RETRY_AFTER_SECONDS,
 ) -> bool:
     """Do not recreate an identical wake after a fail-closed worktree block.
 
     Any ownership, lifecycle, dependency or branch-state update changes the
     dispatch signature and makes the task eligible again.  This preserves
     automatic recovery without burning a provider slot every supervisor tick.
+
+    The signature alone is not enough to guarantee that recovery. A task parked
+    in `in_progress` under a stable owner never changes signature, so the block
+    suppressed the only thing that could have cleared it - the lease attempt -
+    and the task waited forever. On 2026-08-17 six worktrees jammed this way and
+    the fleet ran nothing at all for ten hours. Expire the suppression instead:
+    retry once the window elapses, so a repaired or repairable worktree comes
+    back on its own while a genuinely stuck one still costs one attempt per
+    window rather than one per tick.
     """
     task_id = str(task.get("id") or "")
     entry = (state.get("worker_worktree_lease_blocks") or {}).get(normalize_agent_id(task_id) or task_id)
     if not isinstance(entry, dict):
         return False
-    return str(entry.get("dispatch_signature") or "") == ready_dispatch_signature(task, reason, task_map)
+    if str(entry.get("dispatch_signature") or "") != ready_dispatch_signature(task, reason, task_map):
+        return False
+    blocked_at = parse_runtime_timestamp(str(entry.get("last_at") or "") or None)
+    if blocked_at is None:
+        return True
+    return (datetime.now(UTC) - blocked_at).total_seconds() < retry_after_seconds
 
 @_entrypoint
 
@@ -1275,7 +1308,13 @@ def dispatch_ready_tasks(
                 continue
             if reason is None or priority is None:
                 continue
-            if worktree_block_still_matches_dispatch(state, task, reason, task_map):
+            if worktree_block_still_matches_dispatch(
+                state,
+                task,
+                reason,
+                task_map,
+                retry_after_seconds=lease_block_retry_after_seconds(config),
+            ):
                 continue
 
             if is_sidecar_task:
