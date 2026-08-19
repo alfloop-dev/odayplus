@@ -1734,7 +1734,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
     def test_prepare_worker_workspace_routes_external_repository_task_to_its_checkout(self) -> None:
         # A data-platform task must never materialize its worktree (and therefore
         # its task branch) inside the supervisor repo: the branch would be pushed
-        # to the wrong origin and every later ref check would fail closed.
+        # to the wrong origin and every later ref check would fail closed. Those
+        # assertions are load-bearing and unchanged.
+        #
+        # The `status_root` assertions below were changed, and separately: the
+        # code repository and the board are two different things, and only the
+        # worktree follows the code. Do not read the whole test as stale because
+        # that line moved.
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
             data_platform_root = Path(tmpdir) / "oday-data-platform-supervisor"
