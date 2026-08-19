@@ -849,12 +849,14 @@ def load_state() -> dict[str, Any]:
     if not STATUS_FILE.exists() or STATUS_FILE.read_text(encoding="utf-8").strip() == "":
         return default_state()
     state = json.loads(STATUS_FILE.read_text(encoding="utf-8"))
-    state.setdefault("agents", [])
-    state.setdefault("handoffs", [])
-    state.setdefault("blockers", [])
-    state.setdefault("sprint", "2026-04-09-canonical-adoption-platform-plan")
-    state.setdefault("project", "pantheon")
-    state.setdefault("objective", "Pantheon execution")
+    # A hand-edited or partially written status file can be missing top-level
+    # keys that the rest of the module indexes directly. Seed only the framing
+    # keys from `default_state()` so they stay in sync with it; `tasks` is
+    # deliberately excluded, since seeding it would inject the bootstrap task
+    # list into a real status file that merely omitted the key.
+    defaults = default_state()
+    for key in ("project", "sprint", "objective", "agents", "handoffs", "blockers"):
+        state.setdefault(key, defaults.get(key, []))
     sync_canonical_document_metadata(state)
     normalize_state_agents(state)
     return state
@@ -3176,7 +3178,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
     primary_tasks = [task for task in active_tasks if task_delivery_layer(task) == "primary"]
     external_tasks = [task for task in active_tasks if task_delivery_layer(task) == "external"]
     current_sprint_lines = [
-        f"- Sprint: `{state.get('sprint', 'ODP-P0-Execution')}`",
+        f"- Sprint: `{state.get('sprint') or '-'}`",
         "- Canonical files: " + ", ".join(f"`{item}`" for item in state.get("canonical_files", [])),
         "- Canonical tiers: " + (", ".join(tier_labels) if tier_labels else "-"),
     ]
@@ -3199,7 +3201,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
         "",
         "## Objective",
         "",
-        localize_embedded_timestamps(state.get("objective", "Pantheon Platform Control")),
+        localize_embedded_timestamps(state.get("objective") or "-"),
         "",
         "## Current Sprint",
         "",

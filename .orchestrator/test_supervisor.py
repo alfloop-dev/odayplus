@@ -12816,21 +12816,45 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
         self.assertNotIn(reassigned_to, {"Antigravity99", "Claude"})
 
     def test_reassign_skips_human_gate_and_non_dispatchable_tasks(self) -> None:
-        """Fail-closed: Human/Ops gates, sidecars, and non-dispatchable tasks must NEVER be auto-reassigned."""
+        """Fail-closed: human gates, Human/Ops owners, and non-dispatchable tasks are never auto-reassigned."""
         test_tasks = [
             {"id": "GATE-001", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Claude", "task_class": "human_gate"},
             {"id": "GATE-002", "status": "in_progress", "owner": "Human/Ops", "reviewer": "Claude"},
-            {"id": "GATE-003", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Human/Ops"},
             {"id": "GATE-004", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Claude", "non_dispatchable": True},
         ]
         for task in test_tasks:
             worker = {"task_id": task["id"], "agent_id": "antigravity4", "retry_count": 2, "run_id": "run-1"}
             status = {"tasks": [task]}
-            with mock.patch.object(supervisor, "load_status", return_value=status):
+            with mock.patch.object(supervisor, "load_status", return_value=status), \
+                 mock.patch.object(supervisor, "persist_task_reassignment", return_value=True), \
+                 mock.patch.object(supervisor, "write_activity_log"):
                 reassigned_to = supervisor.maybe_reassign_task_after_worker_failure(
                     self.config, worker, "terminal error", terminal=True
                 )
             self.assertIsNone(reassigned_to, f"Task {task['id']} should not be reassigned")
+
+    def test_owner_reassignment_preserves_human_gate_reviewer(self) -> None:
+        """A Human/Ops reviewer survives owner reassignment instead of being swapped for an agent.
+
+        `first_viable_agent` deliberately skips human-gate names, so the reviewer
+        replacement search reports the human reviewer as unviable and would
+        otherwise hand the review gate to whichever automated lane is least
+        loaded, silently removing the human approval requirement.
+        """
+        task = {"id": "GATE-003", "status": "in_progress", "owner": "Antigravity4", "reviewer": "Human/Ops"}
+        worker = {"task_id": task["id"], "agent_id": "antigravity4", "retry_count": 2, "run_id": "run-1"}
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}), \
+             mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist, \
+             mock.patch.object(supervisor, "write_activity_log"):
+            new_owner = supervisor.maybe_reassign_task_after_worker_failure(
+                self.config, worker, "terminal error", terminal=True
+            )
+
+        self.assertIsNotNone(new_owner, "the failing automated owner lane should still recover")
+        self.assertNotEqual(new_owner, "Antigravity4")
+        self.assertFalse(supervisor.is_human_gate_agent(new_owner))
+        self.assertEqual(persist.call_args.kwargs["new_owner"], new_owner)
+        self.assertEqual(persist.call_args.kwargs["new_reviewer"], "Human/Ops")
 
     def test_status_check_emission_422_warning_and_outbox_safety(self) -> None:
         """Status check emission handling for HTTP 422 suppresses exception and logs warning."""
