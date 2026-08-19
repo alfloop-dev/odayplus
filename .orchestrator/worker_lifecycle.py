@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from common import parse_iso_timestamp
+from runtime_state import HANDED_OFF_WORKER_STATUSES, TERMINAL_WORKER_STATUSES
+
 
 def _supervisor_module():
     import supervisor
@@ -32,13 +35,7 @@ def _entrypoint(func):
     return _sync_scope_guard
 
 
-def _parse_iso_utc(ts: str | None) -> datetime | None:
-    if not ts:
-        return None
-    try:
-        return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-    except Exception:
-        return None
+_parse_iso_utc = parse_iso_timestamp
 
 
 def _isoformat_utc(dt: datetime) -> str:
@@ -472,12 +469,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         # These records already have a durable terminal disposition. Re-reading
         # their old marker/log after a later re-review or reviewer reopen must
         # never count the same run again or reassign the current lifecycle.
-        if str(worker.get("status") or "").lower() in {
-            "completed",
-            "failed",
-            "superseded",
-            "reassigned",
-        }:
+        if str(worker.get("status") or "").lower() in TERMINAL_WORKER_STATUSES:
             continue
         previous_last_event_at = worker.get("last_event_at")
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
@@ -720,6 +712,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 },
             )
             changed = True
+            continue
+        # The stale-assignment reaping above is the only thing a handed-off parent
+        # still participates in.  Past this point the loop classifies failures from
+        # the worker's own log, which for a `fallback` parent still shows the very
+        # failure that triggered the fallback -- replaying it would re-streak the
+        # task and can reassign it away from the successor that is running now.
+        if str(worker.get("status") or "").lower() in HANDED_OFF_WORKER_STATUSES:
             continue
         pending = pending_by_run.get(worker["run_id"], [])
         resolved = resolved_by_run.get(worker["run_id"], [])

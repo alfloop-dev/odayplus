@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-P10-DEV-REDEPLOY-VERIFY-001",
+  "source": "gcloud logging read resource.type=cloud_run_job resource.labels.job_name=oday-migration-r-450c7faddda3 --project alfaloop-data-project",
+  "note": "Structured migration receipt emitted by the release-SHA migration Cloud Run Job of Deploy Dev run 30362772798.",
+  "receipts": [
+    {
+      "log_timestamp": "2026-07-28T13:30:06.810481Z",
+      "payload": {
+        "assisted_intake_manifest_sha256": "17f18f6ce0a6a72ff4001c2f3506a9f85f0a5ad1c693962ffcd897761ca86eb8",
+        "assisted_intake_schema_status": "verified",
+        "assisted_intake_steps": [
+          "001_baseline.sql",
+          "002_consistency.sql",
+          "003_promotion_state.sql",
+          "004_tenant_rls_lineage.sql"
+        ],
+        "checksum_status": "verified",
+        "cloud_run_execution": "oday-migration-r-450c7faddda3-8bwjd",
+        "cloud_run_task_index": "0",
+        "environment": "dev",
+        "manifest_sha256": "026617b4cd71fb5749eba77946eec8c1088135afc7d319ea931f1b7c2579e955",
+        "receipt_kind": "migration",
+        "recorded_at": "2026-07-28T13:30:06Z",
+        "release_sha": "450c7faddda32155fadce6c36cfdeed623a385a3",
+        "returncode": 0,
+        "runtime_schema_verified": true,
+        "schema_version": 1,
+        "status": "succeeded",
+        "target_revision": "head"
+      }
+    }
+  ]
+}

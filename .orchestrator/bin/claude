@@ -18,8 +18,27 @@ resolve_user_home() {
 }
 
 user_home="$(resolve_user_home)"
-cli="$(ls -d "${user_home}"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude 2>/dev/null | sort -V | tail -n1)"
-if [[ -z "${cli}" ]]; then
+
+# Resolve the newest installed Claude Code extension binary.
+#
+# See .orchestrator/bin/gh for why this must not be written as
+# `cli="$(ls -d ... 2>/dev/null | sort -V | tail -n1)"`. This wrapper is the live
+# worker launcher for the Claude lane (config.json providers.claude.cli), so the
+# silent-exit form is the worst instance of that bug: the day the extension path
+# stops matching, every Claude worker would die with exit 2 and no output, the
+# orchestrator would read it as a generic `terminal` failure instead of
+# `provider_unavailable`, and it would keep dispatching into the dead lane
+# instead of pausing it.
+shopt -s nullglob
+candidates=("${user_home}"/.vscode-server/extensions/anthropic.claude-code-*/resources/native-binary/claude)
+shopt -u nullglob
+
+cli=""
+if (( ${#candidates[@]} )); then
+  cli="$(printf '%s\n' "${candidates[@]}" | sort -V | tail -n1)"
+fi
+
+if [[ -z "${cli}" || ! -x "${cli}" ]]; then
   echo "Claude CLI binary not found under ~/.vscode-server/extensions." >&2
   exit 1
 fi
