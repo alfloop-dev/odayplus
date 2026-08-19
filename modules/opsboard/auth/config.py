@@ -37,6 +37,7 @@ class AuthBoundaryConfig:
     jwks_cache_ttl_seconds: int = 300
     leeway_seconds: int = 60
     live_input_declared: bool = False
+    subject_role_bindings: Mapping[str, frozenset[str]] = field(default_factory=dict)
     principal_mapping_declared: bool = False
     principal_mappings: Mapping[str, Mapping[str, object]] = field(
         default_factory=dict
@@ -151,6 +152,19 @@ def config_from_env(
         jwks_ttl = int(jwks_ttl_raw) if jwks_ttl_raw else 300
     except ValueError:
         jwks_ttl = 300
+    subject_role_bindings: dict[str, frozenset[str]] = {}
+    raw_bindings = (source.get("ODP_AUTH_SUBJECT_ROLE_BINDINGS") or "").strip()
+    if raw_bindings:
+        try:
+            parsed_bindings = json.loads(raw_bindings)
+            if isinstance(parsed_bindings, dict):
+                for subject, roles in parsed_bindings.items():
+                    if isinstance(subject, str) and isinstance(roles, list):
+                        subject_role_bindings[subject] = frozenset(
+                            role for role in roles if isinstance(role, str) and role
+                        )
+        except json.JSONDecodeError:
+            pass
     return AuthBoundaryConfig(
         issuer=issuer,
         audiences=audiences,
@@ -159,6 +173,7 @@ def config_from_env(
         jwks_cache_ttl_seconds=max(30, jwks_ttl),
         leeway_seconds=max(0, leeway),
         live_input_declared=live_input_declared,
+        subject_role_bindings=subject_role_bindings,
         principal_mapping_declared=principal_mapping_value is not None,
         principal_mappings=principal_mappings,
     )

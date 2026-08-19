@@ -113,6 +113,12 @@ REQUIRED_TOKENS = {
         'roles/cloudsql.client',
         'roles/secretmanager.secretAccessor',
         'roles/storage.objectUser',
+        'resource "google_service_account" "github_deployer"',
+        'resource "google_service_account" "smoke_operator"',
+        'resource "google_iam_workload_identity_pool" "github_actions"',
+        'resource "google_iam_workload_identity_pool_provider" "odayplus"',
+        'roles/iam.workloadIdentityUser',
+        'roles/iam.serviceAccountTokenCreator',
     },
     "cloud_run.tf": {
         'image = var.api_image',
