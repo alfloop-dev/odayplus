@@ -2232,6 +2232,78 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         )
 
 
+    def test_prepare_worker_workspace_recovers_worktree_jammed_by_interrupted_merge(self) -> None:
+        """An interrupted merge used to jam a worktree permanently.
+
+        The quarantine helper refuses a worktree with a git operation in
+        progress, so `unresolved_git_operation` had no recovery path at all -
+        and leasing is what would have run the worker that could finish the
+        merge. On 2026-08-17 four worktrees jammed exactly this way. Recover by
+        leasing a fresh worktree at the published task head and leaving the
+        jammed one untouched on disk.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root = Path(tmpdir) / "pantheon"
+            repo_root.mkdir()
+            worktree_path = Path(tmpdir) / "workers" / "pantheon" / "ops-worktree-merge-001"
+            config = {
+                **self.config,
+                "paths": {"status_file": str(repo_root / "ai-status.json")},
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(Path(tmpdir) / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict = {}
+            request = supervisor.DeliveryRequest(
+                agent_id="codex",
+                provider="codex",
+                delivery_mode="codex",
+                message="wake",
+                task_id="OPS-WORKTREE-MERGE-001",
+                reason="owned_in_progress_dispatch",
+            )
+
+            with (
+                mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                mock.patch.object(
+                    supervisor,
+                    "_refresh_reused_worker_worktree",
+                    return_value=(False, "unresolved_git_operation"),
+                ) as refresh_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_fetch_authoritative_task_head",
+                    return_value=("a" * 40, "remote_exact_task_ref"),
+                ),
+                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree") as quarantine,
+                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
+                mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+            ):
+                ok, message = supervisor.prepare_worker_workspace(
+                    config,
+                    state,
+                    request,
+                    queue_event_id="evt-merge-jam",
+                    target_agent="Codex",
+                )
+
+        self.assertTrue(ok)
+        self.assertIsNone(message)
+        self.assertEqual(refresh_worktree.call_count, 1)
+        # Nothing modifies the jammed worktree, so there is nothing to preserve.
+        quarantine.assert_not_called()
+        self.assertEqual(
+            [call.args[1]["type"] for call in write_activity_log.call_args_list],
+            ["worker_worktree_refreshed", "worker_worktree_lease_recovered", "worker_worktree_reused"],
+        )
+        recovered = write_activity_log.call_args_list[1].args[1]
+        self.assertEqual(recovered["quarantined_worktree_path"], str(worktree_path))
+        self.assertNotEqual(recovered["workspace_path"], str(worktree_path))
+
     def test_prepare_worker_workspace_blocks_every_other_unsafe_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -12503,6 +12575,154 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
 
         self.assertEqual(route, "waiting")
         self.assertEqual(calls, [])
+
+
+class FleetDispatchLivelockTests(unittest.TestCase):
+    """The three faults that left the fleet idle for ten hours on 2026-08-17.
+
+    Each one is individually fail-closed and defensible; together they meant no
+    task could ever be dispatched again without a human touching the state file.
+    """
+
+    def _task(self, task_id="ODP-LIVELOCK-001"):
+        return {
+            "id": task_id,
+            "status": "in_progress",
+            "owner": "Antigravity2",
+            "reviewer": "Claude",
+            "depends_on": [],
+        }
+
+    def _blocked_state(self, task, *, blocked_at, reason="owned_in_progress_dispatch"):
+        import dispatch_engine
+
+        signature = dispatch_engine.ready_dispatch_signature(task, reason, {task["id"]: task})
+        return {
+            "worker_worktree_lease_blocks": {
+                supervisor.normalize_agent_id(task["id"]): {
+                    "dispatch_signature": signature,
+                    "last_at": blocked_at,
+                    "refresh_status": "unresolved_git_operation",
+                }
+            }
+        }
+
+    def test_a_fresh_block_still_suppresses_the_identical_wake(self) -> None:
+        import dispatch_engine
+
+        task = self._task()
+        recent = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=recent)
+
+        self.assertTrue(
+            dispatch_engine.worktree_block_still_matches_dispatch(
+                state,
+                task,
+                "owned_in_progress_dispatch",
+                {task["id"]: task},
+                retry_after_seconds=1800.0,
+            )
+        )
+
+    def test_an_expired_block_lets_the_task_be_retried(self) -> None:
+        """A task parked in `in_progress` never changes dispatch signature, so
+        without an expiry the block suppressed the only thing that could clear
+        it and the task waited forever."""
+        import dispatch_engine
+
+        task = self._task()
+        stale = (datetime.now(UTC) - timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=stale)
+
+        self.assertFalse(
+            dispatch_engine.worktree_block_still_matches_dispatch(
+                state,
+                task,
+                "owned_in_progress_dispatch",
+                {task["id"]: task},
+                retry_after_seconds=1800.0,
+            )
+        )
+
+    def test_a_block_with_no_timestamp_still_suppresses(self) -> None:
+        import dispatch_engine
+
+        task = self._task()
+        state = self._blocked_state(task, blocked_at="")
+
+        self.assertTrue(
+            dispatch_engine.worktree_block_still_matches_dispatch(
+                state,
+                task,
+                "owned_in_progress_dispatch",
+                {task["id"]: task},
+                retry_after_seconds=1800.0,
+            )
+        )
+
+    def test_retry_window_comes_from_worker_runtime_settings(self) -> None:
+        import dispatch_engine
+
+        self.assertEqual(
+            dispatch_engine.lease_block_retry_after_seconds(
+                {"worker_runtime": {"lease_block_retry_after_seconds": 90}}
+            ),
+            90.0,
+        )
+        self.assertEqual(
+            dispatch_engine.lease_block_retry_after_seconds({}),
+            dispatch_engine.LEASE_BLOCK_RETRY_AFTER_SECONDS,
+        )
+        self.assertEqual(
+            dispatch_engine.lease_block_retry_after_seconds(
+                {"worker_runtime": {"lease_block_retry_after_seconds": "not-a-number"}}
+            ),
+            dispatch_engine.LEASE_BLOCK_RETRY_AFTER_SECONDS,
+        )
+
+    def test_a_pr_that_changes_nothing_is_classified_not_unknown(self) -> None:
+        """GitHub answering "no files" is an answer. Collapsing it into None
+        made a zero-diff PR indistinguishable from an unreadable diff, so three
+        reviewed PRs sat unroutable with `change scope could not be classified`."""
+        import dispatch_engine
+
+        with unittest.mock.patch.object(
+            dispatch_engine, "_pr_changed_paths", return_value=[]
+        ):
+            self.assertEqual(dispatch_engine.approved_pr_change_scope(461), "product_or_mixed")
+
+    def test_an_unreadable_diff_is_still_unknown(self) -> None:
+        import dispatch_engine
+
+        with unittest.mock.patch.object(
+            dispatch_engine, "_pr_changed_paths", return_value=None
+        ):
+            self.assertIsNone(dispatch_engine.approved_pr_change_scope(461))
+
+    def test_changed_paths_reports_an_empty_pr_as_empty(self) -> None:
+        import dispatch_engine
+
+        proc = unittest.mock.Mock(stdout='{"files": []}')
+        with unittest.mock.patch("github_bus.run_gh", return_value=proc):
+            self.assertEqual(dispatch_engine._pr_changed_paths(461), [])
+
+    def test_a_recovery_lease_does_not_nest_its_suffix(self) -> None:
+        """Repeated recoveries used to build `name.lease_A.lease_B.lease_C...`
+        because the replacement name was derived from the current path."""
+        once = supervisor._fresh_lease_path(Path("/w/odp-conc-001"), "S1")
+        twice = supervisor._fresh_lease_path(once, "S2")
+
+        self.assertEqual(once.name, "odp-conc-001.lease_S1")
+        self.assertEqual(twice.name, "odp-conc-001.lease_S2")
+        self.assertEqual(twice.parent, once.parent)
+
+    def test_interrupted_merge_is_a_recoverable_lease_status(self) -> None:
+        import worker_workspace
+
+        self.assertIn(
+            "unresolved_git_operation",
+            worker_workspace.LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE,
+        )
 
 
 if __name__ == "__main__":

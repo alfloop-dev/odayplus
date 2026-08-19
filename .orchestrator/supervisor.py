@@ -129,6 +129,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_existing_worktree_for_branch",
 "_fetch_authoritative_task_head",
 "_file_or_dir_hash",
+"_fresh_lease_path",
 "_generated_collaboration_guide",
 "_generated_worker_task_brief",
 "_get_remote_heads_snapshot",
@@ -3816,8 +3817,18 @@ def worktree_block_still_matches_dispatch(
     task: dict[str, Any],
     reason: str,
     task_map: dict[str, dict[str, Any]],
+    *,
+    retry_after_seconds: float | None = None,
 ) -> bool:
-    return dispatch_ops.worktree_block_still_matches_dispatch(state, task, reason, task_map)
+    if retry_after_seconds is None:
+        return dispatch_ops.worktree_block_still_matches_dispatch(state, task, reason, task_map)
+    return dispatch_ops.worktree_block_still_matches_dispatch(
+        state,
+        task,
+        reason,
+        task_map,
+        retry_after_seconds=retry_after_seconds,
+    )
 
 
 def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, task_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
