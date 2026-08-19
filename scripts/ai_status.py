@@ -1609,6 +1609,24 @@ def clear_ai_status_caches() -> None:
     _TASK_SHA_CACHE.clear()
 
 
+_UNUSABLE_BRANCH_CHARS = re.compile(r"[\s~^:?*\[\\]")
+
+
+def task_branch_name(task: dict[str, Any] | None, task_id: str | None = None) -> str:
+    """The task's branch as recorded, falling back to the derived name.
+
+    Building `task/<id>` unconditionally invented a branch for every task
+    reimported from an existing GitHub PR, whose branch does not follow that
+    convention. Looking a task up by an invented ref finds nothing, and the
+    caller reads that as missing work rather than as a wrong question.
+    """
+    recorded = str((task or {}).get("branch") or "").strip()
+    if recorded and not _UNUSABLE_BRANCH_CHARS.search(recorded) and ".." not in recorded:
+        return recorded
+    resolved_id = str(task_id or (task or {}).get("id") or "").strip()
+    return f"task/{resolved_id}"
+
+
 def task_pr_lookup_scope(task_id: str) -> tuple[Path, list[str], int | None]:
     """Where to ask GitHub about a task's PR: checkout, `--repo` args, number.
 
@@ -2321,7 +2339,7 @@ def is_approved_head_satisfied(
         repository_id = task_primary_repository_id(config, task) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
-        branch = f"task/{task_id}"
+        branch = task_branch_name(task, task_id)
 
         slug = repository_slug(config, repository_id) or git_remote_repository_slug(repo_root, "origin") or get_repository_slug_safe()
         if not slug:
@@ -2464,6 +2482,13 @@ def collect_done_delivery_metadata(
         )
     repository_id = task_primary_repository_id(config, task)
     if repository_id is None:
+        declared = str(task.get("repository") or "").strip()
+        if declared:
+            raise SystemExit(
+                f"Cannot finalize task {task_id}: it declares repository `{declared}`, which is not "
+                "in the repository registry. Register it or correct the task's `repository` field; "
+                "finalization will not search a repository the task never named."
+            )
         repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
         raise SystemExit(
             "Cannot finalize task: task artifacts span multiple non-Pantheon repositories; "
@@ -5088,7 +5113,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
     config = status_runtime_config()
     repository_id = task_primary_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
-    branch = f"task/{task_id}"
+    branch = task_branch_name(task, task_id)
     base_branch = delivery_merge_target_branch(config, repository_id)
     remote_sha = resolve_task_sha(task_id, force_refresh=True)
     if not remote_sha:
@@ -6027,18 +6052,26 @@ def resolve_task_sha(
                 return cached_sha
 
     repo_root = ROOT
+    recorded_branch = ""
     try:
         config = status_runtime_config()
         state = load_state()
         task = get_task(state, task_id)
         if task:
+            recorded_branch = task_branch_name(task, task_id)
             binding = resolve_task_repository(config, task)
             if binding.resolved and binding.root:
                 repo_root = binding.root
     except Exception:
         repo_root = ROOT
+        recorded_branch = ""
 
+    # The record's own branch leads: a task reimported from an existing PR does
+    # not follow either naming convention, and asking origin only about the
+    # conventional names finds nothing and reads as "the branch is gone".
     branch_names = [f"task/{task_id}", f"task-{task_id}"]
+    if recorded_branch and recorded_branch not in branch_names:
+        branch_names.insert(0, recorded_branch)
 
     remote_refs = [f"refs/heads/{branch_name}" for branch_name in branch_names]
     result = subprocess.run(
