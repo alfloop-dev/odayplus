@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from common import (
     claude_auth_ready,
+    claude_model_selection_args,
     config_path,
     delivery_workspace_root,
     shell_quote,
@@ -108,7 +109,17 @@ class ClaudeCLIAdapter(FileInboxAdapter):
         workspace_root = delivery_workspace_root(self.config, request.metadata)
         output_format = runtime.get("output_format", "stream-json")
         command = [
-            runtime.get("cli") or cli,
+            # `cli` is this same `runtime.cli` value already resolved to an
+            # absolute path by command_exists; preferring the raw config string
+            # threw that resolution away. The worker is spawned with cwd set to
+            # its workspace, so a relative argv[0] like `.orchestrator/bin/claude`
+            # resolved only while that workspace happened to be the pantheon
+            # checkout. Every cross-repository worker died on it -- observed
+            # 2026-08-19T07:35:38Z finalizing DPF-GOV-001 from the
+            # oday-data-platform worktree: FileNotFoundError on
+            # '.orchestrator/bin/claude'. `deliver` has already returned the
+            # inbox fallback when `cli` is falsy, so it is set by this point.
+            cli,
             "-p",
             request.message,
             "--output-format",
@@ -118,6 +129,7 @@ class ClaudeCLIAdapter(FileInboxAdapter):
             command.append("--verbose")
         if runtime.get("include_hook_events", True):
             command.append("--include-hook-events")
+        command.extend(claude_model_selection_args(runtime))
 
         provider_info = (
             (self.provider_capabilities or {}).get("providers", {}).get(provider_id)

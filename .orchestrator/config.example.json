@@ -99,7 +99,7 @@
   "worker_worktrees": {
     "enabled": true,
     "root": "/tmp/pantheon-worker-worktrees",
-    "base_ref": "origin/main",
+    "base_ref": "origin/dev",
     "reuse_existing": true,
     "recover_clean_diverged_worktrees": true,
     "git_network_timeout_seconds": 30,
@@ -472,6 +472,8 @@
       },
       "runtime": {
         "cli": ".orchestrator/bin/claude",
+        "model": "sonnet",
+        "effort": "medium",
         "output_format": "stream-json",
         "include_hook_events": true,
         "permission_mode": "acceptEdits",

@@ -123,10 +123,14 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_atomic_copy_context_file",
 "_atomic_replace_context_bytes",
 "_atomic_write_context_text",
+"_blocking_dirt_entries",
 "_classify_worktree_dirt",
 "_clear_remote_head_snapshot_cache",
 "_clear_worktree_lease_block",
 "_create_worker_worktree",
+"_describe_dirt_entries",
+"_detached_head_is_merged",
+"_dirty_worktree_detail",
 "_create_worker_worktree_fallback",
 "_existing_worktree_for_branch",
 "_fetch_authoritative_task_head",
@@ -140,8 +144,14 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_git_operation_in_progress",
 "_git_output",
 "_git_worktree_records",
+"_is_reusable_dirt_entry",
+"_is_skipped_dirty_worktree",
 "_is_tracked_in_worktree",
 "_is_valid_sha256",
+"_lease_status_kind",
+"_normalize_materialized_paths",
+"_orchestrator_materialized_paths",
+"_parse_porcelain_entries",
 "_path_matches_any_glob",
 "_preserve_and_reset_clean_diverged_worktree",
 "_prune_worktree_lease_blocks",
@@ -160,6 +170,8 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "materialize_worker_context_files",
 "prepare_worker_workspace",
 "prune_orphan_worktrees",
+"branch_name_is_usable",
+"canonical_task_record",
 "worker_task_branch",
 "worker_task_repo_root",
 "worker_task_worktree_path",
@@ -362,6 +374,11 @@ from watch_events import (
     run_scan,
     trim_seen_events,
 )
+
+# Set once the boot reconciliation pass has run in THIS process. Deliberately a
+# process global rather than runtime state: every new supervisor process needs its
+# own boot pass, so this must reset on restart and must not persist to state.json.
+_BOOT_RECONCILED = False
 
 SIDECAR_READY_PRIORITY_OFFSET = 10
 STATUS_WRITE_REVISION_FIELD = "_status_write_revision"
@@ -1499,6 +1516,13 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
 _REUSABLE_DIRTY_PREFIXES = (
     ".orchestrator/task-briefs/",
     ".orchestrator/reviews/",
+    # Orchestrator-owned reference material. `worker_tree_guard.blocking_globs`
+    # already forbids a worker from modifying `.orchestrator/skills/**`, so an
+    # untracked copy of it is never deliverable work. A repository that does not
+    # track these files gets one per worker that follows its brief, and treating
+    # them as real dirt blocked the lease permanently: DPF-GOV-001 was refused on
+    # a worktree already sitting at its exact reviewer-approved head.
+    ".orchestrator/skills/",
 )
 _REUSABLE_CONTEXT_FILES = (
     "AI_COLLABORATION_GUIDE.md",
@@ -3909,7 +3933,23 @@ def run_once(
     changed = False
     try:
         stage_started = time.monotonic()
-        changed = reconcile_runtime_on_boot(config, state) or changed
+        # Boot reconciliation, as the name says, settles what the PREVIOUS
+        # supervisor process left behind. Running it on every loop made it a
+        # second, permanent worker-settlement path that always ran BEFORE
+        # poll_workers -- and it deliberately has no retry/fallback branch, so it
+        # hard-failed every dead `running`/`stalled` worker before poll_workers
+        # could offer one. That silently disabled the whole `worker_retry` config
+        # (max_attempts, backoff_schedule_seconds, fallback_mode) for the most
+        # common failure there is.
+        #
+        # The two paths are intentionally NOT identical -- see
+        # test_boot_reconciliation_correlates_flushed_receipt_before_missing_process_failure
+        # versus its poll-path sibling, which pin different outcomes on purpose --
+        # so this is a scheduling fix, not a de-duplication.
+        global _BOOT_RECONCILED
+        if not _BOOT_RECONCILED:
+            changed = reconcile_runtime_on_boot(config, state) or changed
+            _BOOT_RECONCILED = True
         if changed:
             save_runtime_state(config, state)
         continue_or_skip_empty(THIS_DIR.parent)
@@ -4041,6 +4081,56 @@ def run_supervisor_cycle(
         return False
 
 
+def install_termination_logging(config: dict[str, Any]) -> None:
+    """Make the supervisor announce its own death.
+
+    Without this the process has no way to record being terminated. `atexit` does
+    NOT run on SIGTERM -- Python's default disposition kills the process outright --
+    and never on SIGKILL, so a signalled supervisor simply stops mid-loop and the
+    log's last line is an ordinary tick. Four terminations inside one hour were
+    diagnosable only by elimination (not OOM, no traceback, no clean-exit message,
+    no `supervisor_replaced` event) because nothing recorded what ended them.
+
+    Raising SystemExit unwinds the main thread normally, which also lets the
+    registered atexit hook clear `supervisor.pid` instead of leaving a stale one
+    for the watchdog to read as a live supervisor.
+
+    SIGKILL cannot be caught; that case stays silent by construction.
+    """
+
+    def _handle(signum: int, _frame: Any) -> None:
+        try:
+            name = signal.Signals(signum).name
+        except ValueError:  # pragma: no cover - platform-specific signal numbers
+            name = str(signum)
+        message = f"Supervisor received {name}; shutting down."
+        # Both sinks are best-effort: a handler that raises on its way out would
+        # replace the diagnostic it exists to record.
+        try:
+            console_log(f"{message} pid={os.getpid()}", quiet=SUPERVISOR_LOG_QUIET)
+        except Exception:
+            pass
+        try:
+            write_activity_log(
+                config,
+                {
+                    "type": "supervisor_terminated",
+                    "message": message,
+                    "signal": name,
+                    "pid": os.getpid(),
+                },
+            )
+        except Exception:
+            pass
+        raise SystemExit(128 + signum)
+
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        try:
+            signal.signal(signum, _handle)
+        except (OSError, ValueError):  # pragma: no cover - not installable everywhere
+            continue
+
+
 def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
@@ -4068,6 +4158,7 @@ def main() -> int:
         return 0
     terminate_other_supervisors(config)
     atexit.register(clear_supervisor_pid, config)
+    install_termination_logging(config)
     write_supervisor_pid(config)
     bootstrap_supervisor_runtime_state(config, lifecycle="starting")
     poll_interval, poll_source = resolve_poll_interval(

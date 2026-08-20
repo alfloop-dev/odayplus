@@ -5820,5 +5820,39 @@ class TaskPrLookupScopeTests(unittest.TestCase):
         self.assertEqual([call[2] for call in calls], ["task/T-2", "task-T-2"])
 
 
+class TaskBranchNameTests(unittest.TestCase):
+    """Look a task up by the branch it records, not by an invented one.
+
+    Building `task/<id>` unconditionally invented a branch for every task
+    reimported from an existing GitHub PR. SINGLE-RUNTIME-RELEASE-0D1603CF is
+    on `single-runtime-release-0d1603cf` (PR #822); asking origin about
+    `task/SINGLE-RUNTIME-RELEASE-0D1603CF` finds nothing, which reads as lost
+    work rather than as a wrong question.
+    """
+
+    def test_the_recorded_branch_is_used(self) -> None:
+        task = {"id": "SINGLE-RUNTIME-RELEASE-0D1603CF", "branch": "single-runtime-release-0d1603cf"}
+
+        self.assertEqual(ai_status.task_branch_name(task), "single-runtime-release-0d1603cf")
+        self.assertEqual(
+            ai_status.task_branch_name(task, "SINGLE-RUNTIME-RELEASE-0D1603CF"),
+            "single-runtime-release-0d1603cf",
+        )
+
+    def test_a_record_naming_no_branch_derives_the_conventional_name(self) -> None:
+        for task in ({"id": "ODP-CONC-001"}, {"id": "ODP-CONC-001", "branch": ""}, {"id": "ODP-CONC-001", "branch": "  "}):
+            with self.subTest(task=task):
+                self.assertEqual(ai_status.task_branch_name(task), "task/ODP-CONC-001")
+
+    def test_the_task_id_argument_wins_for_the_derived_name(self) -> None:
+        self.assertEqual(ai_status.task_branch_name({}, "T-7"), "task/T-7")
+        self.assertEqual(ai_status.task_branch_name(None, "T-7"), "task/T-7")
+
+    def test_a_name_git_would_reject_is_not_used(self) -> None:
+        for bad in ("has space", "tilde~1", "caret^", "colon:x", "star*", "q?", "br[x", "dot..dot"):
+            with self.subTest(branch=bad):
+                self.assertEqual(ai_status.task_branch_name({"id": "T-8", "branch": bad}), "task/T-8")
+
+
 if __name__ == "__main__":
     unittest.main()

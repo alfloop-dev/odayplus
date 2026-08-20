@@ -196,5 +196,71 @@ class MultiRepoRegistryTests(unittest.TestCase):
             )
 
 
+class TaskRepositoryDeclarationTests(unittest.TestCase):
+    """A task that names its repository must not be re-derived from artifacts.
+
+    DPF-GOV-001 declared `alfloop-dev/oday-data-platform` and carried no
+    artifacts key, so the artifacts-only derivation answered `pantheon` and the
+    finalize gate searched the Pantheon checkout for a commit that only exists
+    in the data-platform repository -- a check no retry could pass.
+    """
+
+    def test_a_declared_repository_wins_over_artifact_inference(self) -> None:
+        task = {
+            "id": "DPF-GOV-001",
+            "repository": "alfloop-dev/oday-data-platform",
+            "artifacts": ["execute-plans/e2e/dummy.spec.ts"],
+        }
+
+        self.assertEqual(
+            multi_repo_registry.task_primary_repository_id({}, task), "oday_data_platform"
+        )
+
+    def test_a_declared_repository_applies_with_no_artifacts_at_all(self) -> None:
+        for task in (
+            {"id": "DPF-GOV-001", "repository": "alfloop-dev/oday-data-platform"},
+            {"id": "DPF-GOV-001", "repository": "alfloop-dev/oday-data-platform", "artifacts": []},
+        ):
+            with self.subTest(task=task):
+                self.assertEqual(
+                    multi_repo_registry.task_primary_repository_id({}, task), "oday_data_platform"
+                )
+
+    def test_an_unregistered_declaration_fails_closed(self) -> None:
+        """Falling back to artifact inference here would search a repository the
+        task never named, which is the failure this ordering exists to prevent."""
+        task = {"id": "T-1", "repository": "someone/not-registered"}
+
+        self.assertIsNone(multi_repo_registry.task_primary_repository_id({}, task))
+
+    def test_undeclared_tasks_keep_the_artifact_derivation(self) -> None:
+        self.assertEqual(multi_repo_registry.task_primary_repository_id({}, {"id": "T-2"}), "pantheon")
+        self.assertEqual(
+            multi_repo_registry.task_primary_repository_id(
+                {}, {"id": "T-3", "artifacts": ["execute-plans/e2e/dummy.spec.ts"]}
+            ),
+            "execute_plans",
+        )
+        self.assertIsNone(
+            multi_repo_registry.task_primary_repository_id(
+                {},
+                {
+                    "id": "T-4",
+                    "artifacts": [
+                        "execute-plans/e2e/dummy.spec.ts",
+                        "front-ai-trading-system/src/routes/dummy.tsx",
+                    ],
+                },
+            )
+        )
+
+    def test_it_now_agrees_with_the_authoritative_resolver(self) -> None:
+        task = {"id": "DPF-GOV-001", "repository": "alfloop-dev/oday-data-platform"}
+
+        binding = multi_repo_registry.resolve_task_repository({}, task)
+
+        self.assertEqual(multi_repo_registry.task_primary_repository_id({}, task), binding.repo_id)
+
+
 if __name__ == "__main__":
     unittest.main()

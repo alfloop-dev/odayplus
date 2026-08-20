@@ -1955,6 +1955,7 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         text = workflow.read_text(encoding="utf-8")
         if_lines = [line for line in text.splitlines() if line.strip().startswith("if:")]
         assert all("secrets." not in line for line in if_lines)
+        assert "env.HAS_WIF" in text
         assert "GCP_SA_KEY" not in text
         assert "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT" in text
         assert 'ODP_REQUIRE_LIVE_DATA: "true"' in text
@@ -1976,13 +1977,45 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
-        assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
+        if workflow.name == "deploy-dev.yml":
+            assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" in text
+            assert "ODP_AUTH_SUBJECT_ROLE_BINDINGS" in text
+        else:
+            assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
         assert "ODP_AUTH_JWKS_URI" in text
         assert "ODP_POI_PROVIDER_URL" in text
         assert "ODP_ADMIN_BOUNDARY_PROVIDER_URL" in text
         assert "ODP_WEB_OIDC_CLIENT_ID" in text
         assert "ODP_WEB_OIDC_CLIENT_SECRET_SECRET" in text
         assert "ODP_WEB_SESSION_SECRET_SECRET" in text
+
+
+def test_dev_deploy_has_non_mutating_wif_oidc_smoke_gate() -> None:
+    text = WORKFLOWS[0].read_text(encoding="utf-8")
+
+    assert "wif-oidc-smoke:" in text
+    assert "needs: [wif-oidc-smoke, e2e-operational-evidence]" in text
+    assert "Authenticate to Google Cloud for read-only smoke" in text
+    assert "gcloud auth list" in text
+    assert 'gcloud projects describe "${GCP_PROJECT}"' in text
+    assert "iamcredentials.googleapis.com" in text
+    assert ":generateIdToken" in text
+    assert "ODP_OPERATOR_SMOKE_SUBJECT" in text
+    assert "minted token subject does not match configured smoke subject" in text
+    assert "secrets.ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
+
+    smoke = text.split("  wif-oidc-smoke:", 1)[1].split(
+        "  e2e-operational-evidence:", 1
+    )[0]
+    mutating_commands = (
+        "gcloud run deploy",
+        "gcloud run jobs",
+        "gcloud scheduler jobs create",
+        "gcloud projects add-iam-policy-binding",
+        "gcloud storage buckets create",
+        "terraform apply",
+    )
+    assert all(command not in smoke for command in mutating_commands)
 
 
 def test_dev_workflow_bootstraps_locked_dependencies_before_preflight() -> None:
@@ -5365,3 +5398,11 @@ def test_deploy_dev_workflow_documents_smoke_principal_least_privilege_composite
     assert "operations_manager" in text
     assert "model_owner" in text
     assert "data_owner" in text
+
+
+def test_deploy_dev_workflow_smoke_minting_handles_multi_audience() -> None:
+    """ODP-RUNTIME-GCP-001: deploy-dev.yml smoke token minting handles multi-audience ODP_AUTH_AUDIENCES."""
+    text = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    assert 'aud = [a.strip() for a in os.environ["ODP_AUTH_AUDIENCES"].split(",") if a.strip()][0]' in text
+    assert 'expected_audience = [\n              a.strip()\n              for a in os.environ["ODP_AUTH_AUDIENCES"].split(",")\n              if a.strip()\n          ][0]' in text
+    assert 'if claims.get("aud") != expected_audience:' in text

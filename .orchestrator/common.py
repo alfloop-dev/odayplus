@@ -605,6 +605,32 @@ def refresh_claude_oauth_tokens(env: dict[str, str] | None = None, *, timeout: f
     return updated
 
 
+CLAUDE_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def claude_model_selection_args(runtime: dict[str, Any]) -> list[str]:
+    """Build the --model/--effort flags for a Claude CLI worker.
+
+    Both are optional. Without them the CLI falls back to the user's
+    ~/.claude/settings.json, which is tuned for interactive sessions rather
+    than for spec-driven worker runs. Keep every worker on the same model:
+    the prompt cache is model-scoped, so mixing models across workers throws
+    away the cache the previous run just paid to write.
+    """
+    args: list[str] = []
+    model = str(runtime.get("model") or "").strip()
+    if model:
+        args.extend(["--model", model])
+    effort = str(runtime.get("effort") or "").strip().lower()
+    if effort:
+        if effort not in CLAUDE_EFFORT_LEVELS:
+            raise ValueError(
+                f"Unsupported Claude effort level {effort!r}; expected one of {', '.join(CLAUDE_EFFORT_LEVELS)}."
+            )
+        args.extend(["--effort", effort])
+    return args
+
+
 def claude_auth_ready(binary: str | None, *, env: dict[str, str] | None = None, refresh_if_needed: bool = True) -> bool:
     if not binary:
         return False

@@ -522,6 +522,25 @@ def task_artifact_repository_ids(config: dict[str, Any], task: dict[str, Any]) -
 
 
 def task_primary_repository_id(config: dict[str, Any], task: dict[str, Any]) -> str | None:
+    """The repository a task belongs to, declaration first.
+
+    Deriving this from ``task.artifacts`` alone made a task that names its
+    repository outright resolve to ``pantheon`` whenever it listed no
+    artifacts. DPF-GOV-001 declared ``alfloop-dev/oday-data-platform`` and
+    carried no artifacts key at all, so the finalize gate looked for its
+    reviewed commit in the Pantheon checkout, where that object does not exist
+    -- a check no retry could ever pass. ``resolve_task_repository`` already
+    gave the declaration precedence; this is the same order, so the two can no
+    longer answer differently for the same task.
+
+    A declaration that is not in the registry returns None rather than falling
+    back: silently searching a repository the task never named is what this
+    exists to prevent. Callers that treat None as "ambiguous" must say so for
+    both reasons.
+    """
+    declared = str((task or {}).get("repository") or "").strip()
+    if declared:
+        return matching_repo_id(config, declared)
     repo_ids = task_artifact_repository_ids(config, task)
     non_pantheon = [repo_id for repo_id in repo_ids if repo_id != "pantheon"]
     if len(non_pantheon) == 1:

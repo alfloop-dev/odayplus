@@ -8,7 +8,17 @@
   "enforce_admins": true,
   "branches": {
     "dev": {
-      "strict": false
+      "strict": false,
+      "merge_queue": {
+        "ruleset_name": "dev-merge-queue",
+        "merge_method": "MERGE",
+        "grouping_strategy": "ALLGREEN",
+        "max_entries_to_build": 5,
+        "max_entries_to_merge": 5,
+        "min_entries_to_merge": 1,
+        "min_entries_to_merge_wait_minutes": 5,
+        "check_response_timeout_minutes": 60
+      }
     }
   }
 }
