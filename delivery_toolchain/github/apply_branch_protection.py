@@ -28,6 +28,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+ORCHESTRATOR_DIR = ROOT / ".orchestrator"
+if str(ORCHESTRATOR_DIR) not in sys.path:
+    sys.path.insert(0, str(ORCHESTRATOR_DIR))
+
+import common as orchestrator_common  # noqa: E402
 
 BRANCHES = ["dev", "main"]
 
@@ -52,15 +57,10 @@ query($owner: String!, $name: String!, $branch: String!) {
 
 
 def get_gh_executable() -> str:
-    import shutil
-    gh_path = shutil.which("gh")
-    if gh_path:
-        if ".orchestrator/bin/gh" in gh_path:
-            for p in ["/usr/bin/gh", "/usr/local/bin/gh"]:
-                if os.path.exists(p):
-                    return p
-        return gh_path
-    return "gh"
+    # One rule, in common.resolve_github_cli: never prefer the broker shim at
+    # `.orchestrator/bin/gh`. This used to be spelled out here and in three other
+    # places, and the copies had drifted apart.
+    return orchestrator_common.resolve_github_cli() or "gh"
 
 
 def run_gh_cli(args: list[str], input_data: str | None = None) -> tuple[int, str, str]:

@@ -624,7 +624,12 @@ class HandedOffWorkerStatusTests(unittest.TestCase):
         self.assertIn("run-fallback", state["workers"])
 
     def test_handed_off_statuses_are_not_double_counted_as_active(self) -> None:
-        self.assertEqual(runtime_state.HANDED_OFF_WORKER_STATUSES, {"retried", "fallback"})
+        # `retried` is deliberately NOT here. It is terminal, so poll_workers skips
+        # it at the top of the loop and the handed-off guard further down can never
+        # see it -- keeping it in this set made it a dead member that read as
+        # meaningful. `fallback` is the only status the guard actually acts on.
+        self.assertEqual(runtime_state.HANDED_OFF_WORKER_STATUSES, {"fallback"})
+        self.assertIn("retried", runtime_state.TERMINAL_WORKER_STATUSES)
         self.assertIn("retried", runtime_state.TERMINAL_WORKER_STATUSES)
         # `fallback` must stay out of the terminal set: the queue event is still
         # in flight through the fallback child, and `_rebuild_queue_records`

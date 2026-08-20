@@ -26,7 +26,7 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
-from common import load_config  # noqa: E402
+from common import load_config, resolve_github_cli  # noqa: E402
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -39,15 +39,10 @@ def load_json_file(path: Path) -> dict[str, Any]:
 
 
 def get_gh_executable() -> str:
-    import shutil
-    gh_path = shutil.which("gh")
-    if gh_path:
-        if ".orchestrator/bin/gh" in gh_path:
-            for p in ["/usr/bin/gh", "/usr/local/bin/gh"]:
-                if os.path.exists(p):
-                    return p
-        return gh_path
-    return "gh"
+    # One rule, in common.resolve_github_cli: never prefer the broker shim at
+    # `.orchestrator/bin/gh`. This used to be spelled out here and in three other
+    # places, and the copies had drifted apart.
+    return resolve_github_cli() or "gh"
 
 
 def run_gh_cli(args: list[str], repo: str | None = None) -> str:

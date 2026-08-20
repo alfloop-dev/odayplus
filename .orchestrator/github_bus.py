@@ -16,13 +16,13 @@ from typing import Any
 from common import (
     ROOT,
     agent_config_for,
-    command_exists,
     config_path,
     execution_context_files,
     load_config,
     load_json,
     load_status,
     render_template,
+    resolve_github_cli,
     run_command,
     utc_now,
     write_activity_log,
@@ -62,30 +62,17 @@ class GitHubBusOffline(GitHubBusError):
 
 
 def resolve_gh_binary() -> str | None:
-    """Resolve the `gh` this process should run: the real CLI first.
+    """Resolve the `gh` the bus should run.
 
-    `.orchestrator/bin/gh` is a broker shim, not the real CLI
-    (delivery_toolchain/git/README.md), and every other consumer honours that:
-    task_finalize.sh, check_pr_merge_eligibility.py, apply_branch_protection.py
-    and ai_status.py all discard a `gh` that resolves into `.orchestrator/bin/`.
-
-    The priority here used to be inverted -- the shim was preferred whenever it
-    existed and was executable, with no check that it could actually run. That
-    made the bus the one consumer in the system routed through the shim, so a
-    shim that could not resolve its own target took the whole GitHub bus down
-    while every other caller kept working against /usr/bin/gh.
-
-    The shim stays as a last resort (see
-    test_run_gh_uses_vendored_wrapper_when_system_gh_missing): on a host with no
-    real CLI it is better to run it and get its diagnostic than to give up here.
+    Delegates to `common.resolve_github_cli`, which is the single place that rule
+    lives. This function used to carry its own copy that PREFERRED
+    `.orchestrator/bin/gh` -- the broker shim, not the real CLI -- making the bus
+    the one consumer in the system routed through it, while task_finalize.sh,
+    check_pr_merge_eligibility.py, apply_branch_protection.py and ai_status.py
+    each carried their own copy that rejected it. Five spellings of one rule,
+    with this one inverted.
     """
-    system_gh = command_exists("gh")
-    if system_gh:
-        return system_gh
-    vendored = ROOT / ".orchestrator" / "bin" / "gh"
-    if vendored.exists() and os.access(vendored, os.X_OK):
-        return str(vendored)
-    return None
+    return resolve_github_cli(ROOT)
 
 
 def _iso_now_dt() -> datetime:

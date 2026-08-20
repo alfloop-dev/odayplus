@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import common
 import github_bus
 import github_cloud_relay
 from common import load_jsonl
@@ -1148,7 +1149,10 @@ class GitHubBusProcessTests(unittest.TestCase):
 
             with (
                 mock.patch.object(github_bus, "ROOT", root),
-                mock.patch.object(github_bus, "command_exists", return_value=None),
+                # The rule now lives in common.resolve_github_cli, so "no system
+                # gh" is simulated at its seams, not at github_bus.command_exists.
+                mock.patch.object(common.shutil, "which", return_value=None),
+                mock.patch.object(common, "SYSTEM_GH_PATHS", ()),
                 mock.patch.object(
                     github_bus,
                     "run_gh_process",
@@ -2031,7 +2035,7 @@ class GhBinaryResolutionTests(unittest.TestCase):
             self._vendored(root)
             with (
                 mock.patch.object(github_bus, "ROOT", root),
-                mock.patch.object(github_bus, "command_exists", return_value="/usr/bin/gh"),
+                mock.patch.object(common.shutil, "which", return_value="/usr/bin/gh"),
             ):
                 self.assertEqual(github_bus.resolve_gh_binary(), "/usr/bin/gh")
 
@@ -2041,7 +2045,10 @@ class GhBinaryResolutionTests(unittest.TestCase):
             vendored = self._vendored(root)
             with (
                 mock.patch.object(github_bus, "ROOT", root),
-                mock.patch.object(github_bus, "command_exists", return_value=None),
+                # The rule now lives in common.resolve_github_cli, so "no system
+                # gh" is simulated at its seams, not at github_bus.command_exists.
+                mock.patch.object(common.shutil, "which", return_value=None),
+                mock.patch.object(common, "SYSTEM_GH_PATHS", ()),
             ):
                 self.assertEqual(github_bus.resolve_gh_binary(), str(vendored))
 
@@ -2049,7 +2056,8 @@ class GhBinaryResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with (
                 mock.patch.object(github_bus, "ROOT", Path(tmpdir)),
-                mock.patch.object(github_bus, "command_exists", return_value=None),
+                mock.patch.object(common.shutil, "which", return_value=None),
+                mock.patch.object(common, "SYSTEM_GH_PATHS", ()),
             ):
                 self.assertIsNone(github_bus.resolve_gh_binary())
 
