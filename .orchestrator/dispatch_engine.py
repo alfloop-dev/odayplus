@@ -467,7 +467,7 @@ def reassign_unavailable_reviewers(
     owned_statuses = {
         str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])
     }
-    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     reserved_agents = set(active_agents) | set(pending_agents)
@@ -644,7 +644,7 @@ def higher_priority_ready_task_exists(
     agent_name = display_name_for(config, logical_agent_id)
     current_task_id = str(worker.get("task_id") or "")
     settings = ready_dispatch_settings(config)
-    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     review_statuses = normalized_status_set(settings.get("review_statuses"), ["review"])
     dependency_done_statuses = normalized_status_set(settings.get("dependency_done_statuses"), ["done"])
     schema = config.get("schema", {})
@@ -915,7 +915,7 @@ def dispatch_discussion_planning(
     if not paths.get("event_queue") or not paths.get("activity_log"):
         return False
 
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     changed = False
@@ -976,7 +976,7 @@ def dispatch_ready_tasks(
     review_statuses = {str(value).lower() for value in settings.get("review_statuses", ["review"])}
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
-    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
 
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import json
 import tempfile
 import unittest
@@ -710,3 +711,89 @@ class WorkerStatusTaxonomyTests(unittest.TestCase):
 
     def test_handed_off_statuses_are_a_subset_of_the_vocabulary(self) -> None:
         self.assertTrue(runtime_state.HANDED_OFF_WORKER_STATUSES <= self.KNOWN_WORKER_STATUSES)
+
+
+class ActiveWorkerStatusFloorTests(unittest.TestCase):
+    """Configuration may widen "still working"; it may not narrow it.
+
+    Sixteen call sites ask this question -- can this queue event be finalized, is
+    this agent at capacity, is a worker using this worktree -- and all sixteen are
+    dangerous in the same direction: treating a live worker as finished. The
+    shipped `ready_dispatcher.active_worker_statuses` was missing `fallback` and
+    `started`, so a parent that had handed off to a file_inbox child did not
+    protect its own queue event.
+    """
+
+    def test_configured_list_cannot_drop_below_the_floor(self) -> None:
+        for configured in ([], ["running"], ["running", "stalled"]):
+            with self.subTest(configured=configured):
+                config = {"ready_dispatcher": {"active_worker_statuses": configured}}
+                self.assertTrue(
+                    runtime_state.ACTIVE_WORKER_STATUSES
+                    <= runtime_state.active_worker_statuses(config)
+                )
+
+    def test_missing_key_and_null_still_give_the_floor(self) -> None:
+        for config in ({}, {"ready_dispatcher": {}}, {"ready_dispatcher": {"active_worker_statuses": None}}):
+            with self.subTest(config=config):
+                self.assertEqual(
+                    runtime_state.active_worker_statuses(config),
+                    runtime_state.ACTIVE_WORKER_STATUSES,
+                )
+
+    def test_configuration_can_still_add(self) -> None:
+        config = {"ready_dispatcher": {"active_worker_statuses": ["a_custom_status"]}}
+        resolved = runtime_state.active_worker_statuses(config)
+        self.assertIn("a_custom_status", resolved)
+        self.assertTrue(runtime_state.ACTIVE_WORKER_STATUSES <= resolved)
+
+    def test_the_floor_covers_the_statuses_that_were_missing(self) -> None:
+        """`fallback` and `started` are the two the shipped config omitted."""
+        for status in ("fallback", "started"):
+            with self.subTest(status=status):
+                self.assertIn(status, runtime_state.active_worker_statuses({}))
+
+    # `compute_mode_occupancy` is the one legitimate raw reader. It answers
+    # "does the execution lane look busy", not "is this worker still live", and a
+    # manual-inbox record parked with no PID must not hold focus on execution.
+    # Everything else is a safety question where narrowing is the dangerous
+    # direction.
+    RAW_READER_EXEMPTIONS = {"supervisor.py"}
+
+    def test_no_safety_caller_reads_the_raw_setting(self) -> None:
+        """A re-added direct read reintroduces the narrowing, so fail here instead."""
+        package = Path(runtime_state.__file__).parent
+        offenders = []
+        for path in sorted(package.glob("*.py")):
+            if (
+                path.name.startswith("test_")
+                or path.name == "runtime_state.py"
+                or path.name in self.RAW_READER_EXEMPTIONS
+            ):
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if 'get("active_worker_statuses"' in line:
+                    offenders.append(f"{path.name}:{number}")
+        self.assertEqual(
+            offenders,
+            [],
+            f"{offenders} read the raw setting; call "
+            "runtime_state.active_worker_statuses(config) so the floor applies",
+        )
+
+    def test_the_exemption_is_only_compute_mode_occupancy(self) -> None:
+        """Keep the exemption honest: one reader, in one function."""
+        source = (Path(runtime_state.__file__).parent / "supervisor.py").read_text(encoding="utf-8")
+        raw_reads = [
+            number
+            for number, line in enumerate(source.splitlines(), 1)
+            if 'get("active_worker_statuses"' in line
+        ]
+        self.assertEqual(len(raw_reads), 1, f"supervisor.py raw reads at {raw_reads}")
+        tree = ast.parse(source)
+        owning = [
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.lineno <= raw_reads[0] <= node.end_lineno
+        ]
+        self.assertIn("compute_mode_occupancy", owning)

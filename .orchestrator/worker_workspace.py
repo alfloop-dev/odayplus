@@ -939,7 +939,7 @@ def _preserve_and_reset_clean_diverged_worktree(
     the remotely published task head.  The operator can recover the preserved
     commits later, while dispatch proceeds only from the reviewed remote head.
     """
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     for worker in (state.get("workers", {}) or {}).values():
         if str(worker.get("status") or "") not in active_statuses:
             continue
@@ -2518,7 +2518,7 @@ def _quarantine_and_preserve_dirty_worktree(
     if not local_head:
         return False
 
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     for other in state.get("workers", {}).values():
         if not isinstance(other, dict):
             continue

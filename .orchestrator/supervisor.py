@@ -358,6 +358,7 @@ from provider_runtime import (
 from rebase_helper import continue_or_skip_empty
 from runtime_state import (
     ACTIVE_WORKER_STATUSES,
+    active_worker_statuses,
     compact_worker_history,
     enqueue_event,
     load_approval_state,
@@ -822,15 +823,22 @@ def mode_has_activity(bucket: dict[str, Any] | None) -> bool:
 
 def compute_mode_occupancy(config: dict[str, Any], state: dict[str, Any]) -> dict[str, dict[str, int]]:
     occupancy = empty_mode_occupancy()
+    # Deliberately NOT `active_worker_statuses(config)`. That floor exists so a
+    # live worker is never mistaken for a finished one -- a safety question. This
+    # is not one: occupancy decides whether the execution lane looks busy enough
+    # to keep focus off planning, and a manual-inbox record parked with no PID is
+    # not executing anything. Widening it here would hold focus on execution for
+    # work nobody is doing (see
+    # SupervisorRuntimeFocusTests.test_discussion_planning_focus_overrides_execution_draining).
     settings = ready_dispatch_settings(config)
-    active_worker_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
-    active_worker_statuses.update({"started", "suspended_approval", "fallback"})
+    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_statuses.update({"started", "suspended_approval", "fallback"})
     pending_worker_statuses = {"waiting_approval", "manual_pending", "suspended_approval", "retry_backoff"}
     active_event_ids: set[str] = set()
 
     for worker in state.get("workers", {}).values():
         status = str(worker.get("status") or "")
-        if status not in active_worker_statuses:
+        if status not in active_statuses:
             continue
         mode = worker_dispatch_mode(worker)
         bucket = occupancy.setdefault(mode, {"running": 0, "pending": 0, "queued": 0})
@@ -1244,7 +1252,7 @@ def active_quota_group_counts(
 def queued_quota_group_counts(config: dict[str, Any], state: dict[str, Any]) -> dict[str, int]:
     counts: dict[str, int] = {}
     queue_records = state.get("queue", {}).get("events", {})
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     active_queue_event_ids = {
         str(worker.get("queue_event_id") or "")
         for worker in state.get("workers", {}).values()
@@ -2673,7 +2681,7 @@ def reconcile_queue_records(config: dict[str, Any], state: dict[str, Any]) -> bo
     queue_events = state.get("queue", {}).get("events", {})
     if not queue_events:
         return False
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     for event_id, record in queue_events.items():
         workers = [worker for worker in state.get("workers", {}).values() if worker.get("queue_event_id") == event_id]
         if not workers:
@@ -2710,7 +2718,7 @@ def _reset_queue_record_for_redispatch(record: dict[str, Any], *, reason: str) -
 def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> bool:
     changed = False
     now = datetime.now(UTC)
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     redispatch_statuses = redispatch_candidate_statuses(config)
     counts = {
         "marker_updates": 0,
@@ -3628,7 +3636,7 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
     queue_event_id = worker.get("queue_event_id")
     if not queue_event_id:
         return
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     for item in state.get("workers", {}).values():
         if item.get("run_id") == worker.get("run_id"):
             continue
@@ -3649,7 +3657,7 @@ def prune_event_queue(config: dict[str, Any], state: dict[str, Any]) -> bool:
     if not events:
         return False
     task_map = task_index_from_status(config, load_status(config))
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     redispatch_statuses = redispatch_candidate_statuses(config)
     queue_events = state.setdefault("queue", {}).setdefault("events", {})
     kept: list[dict[str, Any]] = []
