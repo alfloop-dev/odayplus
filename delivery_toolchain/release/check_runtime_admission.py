@@ -26,6 +26,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.e2e.check_release_gate_registry import check_candidate_ancestry
+
 DEFAULT_REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 # Shape only - see the module docstring. These reject a malformed argument, not
@@ -42,6 +47,7 @@ def admission_errors(
     environment: str,
     task_id: str,
     lease: str,
+    root: Path = ROOT,
 ) -> list[str]:
     errors: list[str] = []
     if environment not in {"dev", "staging"}:
@@ -58,8 +64,12 @@ def admission_errors(
         return errors + ["registry.release is missing"]
     if release.get("decision") != "go":
         errors.append(f"registry decision is {release.get('decision')!r}, expected 'go'")
-    if release.get("candidate_sha") != release_sha:
-        errors.append("registry candidate_sha does not match release_sha")
+
+    candidate_sha = release.get("candidate_sha")
+    if not isinstance(candidate_sha, str) or not SHA_RE.fullmatch(candidate_sha):
+        errors.append(f"registry candidate_sha {candidate_sha!r} is not a valid SHA")
+    elif SHA_RE.fullmatch(release_sha):
+        errors.extend(check_candidate_ancestry(candidate_sha, release_sha, root))
 
     gates = registry.get("gates")
     if not isinstance(gates, list) or len(gates) != 7:
@@ -72,8 +82,8 @@ def admission_errors(
         gate_id = str(gate.get("id") or "unknown")
         if gate.get("status") not in PASSING_STATUSES:
             errors.append(f"{gate_id} status is {gate.get('status')!r}")
-        if gate.get("release_sha") != release_sha:
-            errors.append(f"{gate_id} release_sha does not match release_sha")
+        if candidate_sha and gate.get("release_sha") != candidate_sha:
+            errors.append(f"{gate_id} release_sha does not match candidate_sha")
         if not isinstance(gate.get("receipts"), list) or not gate["receipts"]:
             errors.append(f"{gate_id} has no release receipt")
     return errors

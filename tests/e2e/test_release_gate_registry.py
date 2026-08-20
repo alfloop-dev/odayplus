@@ -650,7 +650,9 @@ def test_ci_is_not_a_deployment_authority() -> None:
 
     assert "run: make product-e2e-gate" in ci_workflow
     assert "run: make product-release-gate" not in ci_workflow
-    assert "push" not in runtime_workflow.get("on", {})
+    triggers = runtime_workflow.get(True, runtime_workflow.get("on", {}))
+    assert "workflow_dispatch" in triggers
+    assert "push" not in triggers
     assert "Validate supervisor release admission" in runtime_workflow_text
     assert "check_runtime_admission.py" in runtime_workflow_text
     assert "check_product_release_gate.py --dev-merge" in makefile

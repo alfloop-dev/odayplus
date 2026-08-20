@@ -94,3 +94,39 @@ def test_gate_status_failure_is_blocked() -> None:
     payload["gates"][1]["status"] = "failed"
     errors = module().admission_errors(payload, **kwargs())
     assert "gate-1 status is 'failed'" in errors
+
+
+def test_gate_release_sha_mismatch_is_blocked() -> None:
+    payload = registry()
+    payload["gates"][0]["release_sha"] = "f" * 40
+    errors = module().admission_errors(payload, **kwargs())
+    assert "gate-0 release_sha does not match candidate_sha" in errors
+
+
+def test_candidate_ancestry_admitted_when_ancestry_valid(monkeypatch) -> None:
+    mod = module()
+    monkeypatch.setattr(mod, "check_candidate_ancestry", lambda c, e, r: [])
+    payload = registry()
+    payload["release"]["candidate_sha"] = "a" * 40
+    for gate in payload["gates"]:
+        gate["release_sha"] = "a" * 40
+    args = kwargs()
+    args["release_sha"] = "b" * 40
+    assert mod.admission_errors(payload, **args) == []
+
+
+def test_candidate_ancestry_error_propagated(monkeypatch) -> None:
+    mod = module()
+    monkeypatch.setattr(
+        mod,
+        "check_candidate_ancestry",
+        lambda c, e, r: ["intervening commits touch non-evidence paths: src/main.py"],
+    )
+    payload = registry()
+    payload["release"]["candidate_sha"] = "a" * 40
+    for gate in payload["gates"]:
+        gate["release_sha"] = "a" * 40
+    args = kwargs()
+    args["release_sha"] = "b" * 40
+    errors = mod.admission_errors(payload, **args)
+    assert any("intervening commits" in error for error in errors)
