@@ -40,6 +40,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/supervisor_watchdog.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/sync_provider_permissions.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/task_archive.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+.orchestrator/task_reality.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/test_adapter_fallback_policy.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_approval_queue.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_auth_loader.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -64,6 +65,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_supervisor_scope_injection.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_supervisor_watchdog.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_task_brief_source_docs.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_task_reality.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_watch_events.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_worker_settlement_paths.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/watch_events.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
