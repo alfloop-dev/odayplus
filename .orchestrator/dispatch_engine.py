@@ -30,6 +30,7 @@ def _sync_supervisor_scope() -> None:
         'stale_dispatch_skip_message', 
         'ready_dispatch_signature', 
         'worktree_block_still_matches_dispatch', 
+        'escalated_lease_block', 
         'build_dispatch_event', 
         'dispatch_discussion_planning', 
         'dispatch_ready_tasks'
@@ -868,10 +869,34 @@ def worktree_block_still_matches_dispatch(
         return False
     if str(entry.get("dispatch_signature") or "") != ready_dispatch_signature(task, reason, task_map):
         return False
+    if entry.get("escalated"):
+        # Retrying is the thing that has already been established not to work:
+        # this block has repeated unchanged past the escalation threshold. The
+        # window exists to let a repairable worktree come back on its own, and
+        # by definition this one has not. Suppress until something actually
+        # changes - the entry resets whenever `refresh_status` differs, and an
+        # operator clearing the block removes it outright.
+        #
+        # Suppressing alone was tried on 2026-08-17 and jammed six worktrees for
+        # ten hours, because nothing said so anywhere an operator looks. That is
+        # why the caller writes the reason onto the task record: stopping and
+        # saying so are one change, and either half without the other is how
+        # this has failed twice.
+        return True
     blocked_at = parse_runtime_timestamp(str(entry.get("last_at") or "") or None)
     if blocked_at is None:
         return True
     return (datetime.now(UTC) - blocked_at).total_seconds() < retry_after_seconds
+
+
+@_entrypoint
+def escalated_lease_block(state: dict[str, Any], task: dict[str, Any]) -> dict[str, Any] | None:
+    """The lease block that has stopped this task's dispatch, if there is one."""
+    task_id = str(task.get("id") or "")
+    entry = (state.get("worker_worktree_lease_blocks") or {}).get(normalize_agent_id(task_id) or task_id)
+    if isinstance(entry, dict) and entry.get("escalated"):
+        return entry
+    return None
 
 @_entrypoint
 
@@ -1308,6 +1333,34 @@ def dispatch_ready_tasks(
                 task_map,
                 retry_after_seconds=lease_block_retry_after_seconds(config),
             ):
+                # An escalated block is terminal until something changes, so it
+                # has to appear where an owner looks. Between 2026-08-19 and
+                # 2026-08-20 this shape produced 341 blocked dispatches whose
+                # only record was an activity-log line, and every one was
+                # cleared by a person editing state by hand.
+                blocked = escalated_lease_block(state, task)
+                if blocked is not None:
+                    msg = (
+                        f"Dispatch for task {task_id} is stopped: the worker worktree lease has "
+                        f"been blocked {blocked.get('count')} consecutive times with "
+                        f"`{blocked.get('refresh_status')}`. Retrying does not clear this; an "
+                        "owner must repair the worktree or correct the task record."
+                    )
+                    if task.get("next") != msg:
+                        task["next"] = msg
+                        if not commit_canonical_task_transition(config, status):
+                            return changed
+                        write_activity_log(
+                            config,
+                            {
+                                "type": "dispatch_stopped_worktree_lease",
+                                "task_id": task_id,
+                                "message": msg,
+                                "refresh_status": blocked.get("refresh_status"),
+                                "consecutive_blocks": blocked.get("count"),
+                            },
+                        )
+                        changed = True
                 continue
 
             if is_sidecar_task:

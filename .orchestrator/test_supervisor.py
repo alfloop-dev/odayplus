@@ -3278,6 +3278,75 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
+    def test_an_escalated_lease_block_is_reported_on_the_task_record(self) -> None:
+        """Stopping dispatch silently is the 2026-08-17 jam; retrying forever is
+        the 2026-08-19 livelock. An escalated block has to do both - stop, and
+        say so where an owner looks - or it repeats one of the two."""
+        import dispatch_engine
+
+        task = {
+            "id": "REG-BLOCKED-001",
+            "status": "in_progress",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "last_update": "2026-08-20T09:00:00Z",
+            "next": "continue",
+        }
+        status = {"tasks": [task]}
+        reason = "owned_in_progress_dispatch"
+        signature = dispatch_engine.ready_dispatch_signature(task, reason, {task["id"]: task})
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "worker_worktree_lease_blocks": {
+                supervisor.normalize_agent_id(task["id"]): {
+                    "dispatch_signature": signature,
+                    "last_at": "2026-08-20T00:00:00Z",
+                    "refresh_status": "unverifiable_refs: remote task branch is missing",
+                    "escalated": True,
+                    "count": 29,
+                }
+            },
+        }
+        logged: list[dict] = []
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(
+                supervisor, "write_activity_log", side_effect=lambda _c, e: logged.append(e)
+            ),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queued,
+        ):
+            supervisor.dispatch_ready_tasks(self.config, state)
+
+        queued.assert_not_called()
+        self.assertIn("is stopped", task["next"])
+        self.assertIn("29 consecutive times", task["next"])
+        self.assertIn("remote task branch is missing", task["next"])
+        self.assertEqual(
+            [e["type"] for e in logged if e.get("type") == "dispatch_stopped_worktree_lease"],
+            ["dispatch_stopped_worktree_lease"],
+        )
+
+        # Steady state: the same stopped block must not rewrite the board.
+        logged.clear()
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(
+                supervisor, "write_activity_log", side_effect=lambda _c, e: logged.append(e)
+            ),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queued2,
+        ):
+            supervisor.dispatch_ready_tasks(self.config, state)
+
+        queued2.assert_not_called()
+        self.assertEqual([e for e in logged if e.get("type") == "dispatch_stopped_worktree_lease"], [])
+
     def test_dispatcher_queues_multiple_codex_tasks_up_to_worker_slot_capacity(self) -> None:
         config = json.loads(json.dumps(self.config))
         config["agents"]["codex"]["worker_slots"] = ["codex1_1", "codex1_2", "codex1_3", "codex1_4"]
@@ -13406,6 +13475,50 @@ class FleetDispatchLivelockTests(unittest.TestCase):
                 retry_after_seconds=1800.0,
             )
         )
+
+    def test_an_escalated_block_is_not_retried_when_the_window_expires(self) -> None:
+        """Escalation means the block repeated unchanged past the threshold, so
+        the retry window has already been shown not to help. Expiring it anyway
+        is what produced 341 blocked dispatches over two days, each clearing
+        only when a person edited state by hand."""
+        import dispatch_engine
+
+        task = self._task()
+        stale = (datetime.now(UTC) - timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=stale)
+        entry = state["worker_worktree_lease_blocks"][supervisor.normalize_agent_id(task["id"])]
+        entry.update({"escalated": True, "count": 7})
+
+        self.assertTrue(
+            dispatch_engine.worktree_block_still_matches_dispatch(
+                state,
+                task,
+                "owned_in_progress_dispatch",
+                {task["id"]: task},
+                retry_after_seconds=1800.0,
+            )
+        )
+        self.assertIs(dispatch_engine.escalated_lease_block(state, task), entry)
+
+    def test_a_block_below_the_threshold_still_expires(self) -> None:
+        """Stopping every block would re-create the 2026-08-17 jam. Only an
+        escalated one is terminal; a repairable worktree still comes back."""
+        import dispatch_engine
+
+        task = self._task()
+        stale = (datetime.now(UTC) - timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=stale)
+
+        self.assertFalse(
+            dispatch_engine.worktree_block_still_matches_dispatch(
+                state,
+                task,
+                "owned_in_progress_dispatch",
+                {task["id"]: task},
+                retry_after_seconds=1800.0,
+            )
+        )
+        self.assertIsNone(dispatch_engine.escalated_lease_block(state, task))
 
     def test_an_expired_block_lets_the_task_be_retried(self) -> None:
         """A task parked in `in_progress` never changes dispatch signature, so
