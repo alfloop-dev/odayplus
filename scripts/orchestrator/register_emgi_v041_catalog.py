@@ -33,6 +33,47 @@ def _load_json(path: Path) -> dict[str, Any]:
     return payload
 
 
+def hydrate_archived_catalog_tasks(
+    status_payload: dict[str, Any],
+    catalog: dict[str, Any],
+    archive_tasks_dir: Path,
+) -> int:
+    """Restore terminal catalog lifecycle long enough to release dependencies.
+
+    A rebuilt active board intentionally omits archived terminal tasks.  Catalog
+    registration still needs those tasks while deciding whether a staged wave
+    may be unlocked.  The ordinary status sync archives them again after the
+    registration transaction, so this does not resurrect completed work.
+    """
+    tasks = status_payload.setdefault("tasks", [])
+    if not isinstance(tasks, list):
+        raise CatalogRegistrationError("status payload tasks must be an array")
+    existing_ids = {
+        str(task.get("id"))
+        for task in tasks
+        if isinstance(task, dict) and task.get("id")
+    }
+    catalog_ids = {str(task["id"]) for task in catalog["definitions"]}
+    restored = 0
+    for task_id in sorted(catalog_ids - existing_ids):
+        snapshot_path = archive_tasks_dir / f"{task_id}.json"
+        if not snapshot_path.exists():
+            continue
+        snapshot = _load_json(snapshot_path)
+        archived_task = snapshot.get("task")
+        if not isinstance(archived_task, dict):
+            continue
+        if str(snapshot.get("terminal_status") or archived_task.get("status") or "").lower() not in TERMINAL_DONE:
+            continue
+        restored_task = copy.deepcopy(archived_task)
+        restored_task["id"] = task_id
+        restored_task["status"] = "done"
+        restored_task.setdefault("terminal_outcome", snapshot.get("terminal_outcome") or "completed")
+        tasks.append(restored_task)
+        restored += 1
+    return restored
+
+
 def _git(root: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(root), *args],
@@ -359,6 +400,11 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true")
     parser.add_argument("--unlock-wave-1", action="store_true")
     parser.add_argument(
+        "--archive-tasks-dir",
+        type=Path,
+        default=Path("ai-task-archive/tasks"),
+    )
+    parser.add_argument(
         "--receipt",
         type=Path,
         default=Path(".orchestrator/evidence/emgi-v0.4.1-live-registration.json"),
@@ -367,11 +413,17 @@ def main() -> int:
 
     catalog = load_catalog(args.manifest_root, authority_ref=args.authority_ref)
     status_payload = _load_json(args.status_file) if args.status_file.exists() else {"tasks": []}
+    archived_restored = hydrate_archived_catalog_tasks(
+        status_payload,
+        catalog,
+        args.archive_tasks_dir,
+    )
     updated, receipt = register_catalog(
         status_payload,
         catalog,
         unlock_wave_1=args.unlock_wave_1,
     )
+    receipt["archived_terminal_restored"] = archived_restored
     print(json.dumps(receipt, indent=2, sort_keys=True))
     if not args.apply:
         return 0
