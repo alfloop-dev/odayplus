@@ -26,11 +26,7 @@ ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
 
-import common as orchestrator_common  # noqa: E402
-if str(ORCHESTRATOR_DIR) not in sys.path:
-    sys.path.insert(0, str(ORCHESTRATOR_DIR))
-
-from common import load_config  # noqa: E402
+from common import load_config, resolve_github_cli  # noqa: E402
 
 
 def load_json_file(path: Path) -> dict[str, Any]:
@@ -46,7 +42,7 @@ def get_gh_executable() -> str:
     # One rule, in common.resolve_github_cli: never prefer the broker shim at
     # `.orchestrator/bin/gh`. This used to be spelled out here and in three other
     # places, and the copies had drifted apart.
-    return orchestrator_common.resolve_github_cli() or "gh"
+    return resolve_github_cli() or "gh"
 
 
 def run_gh_cli(args: list[str], repo: str | None = None) -> str:

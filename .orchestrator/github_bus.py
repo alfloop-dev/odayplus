@@ -14,16 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from common import (
-    resolve_github_cli,
     ROOT,
     agent_config_for,
-    command_exists,
     config_path,
     execution_context_files,
     load_config,
     load_json,
     load_status,
     render_template,
+    resolve_github_cli,
     run_command,
     utc_now,
     write_activity_log,
