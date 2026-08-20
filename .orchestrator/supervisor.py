@@ -877,6 +877,112 @@ def compute_mode_occupancy(config: dict[str, Any], state: dict[str, Any]) -> dic
     return occupancy
 
 
+_LOADED_PROVENANCE: dict[str, str | None] | None = None
+_TREE_PROVENANCE_CACHE: tuple[float, dict[str, str | None]] | None = None
+#: The tree is polled for drift, not for every heartbeat. Drift matters within
+#: minutes, and a `git rev-parse` per heartbeat is a fork per tick for a value
+#: that changes when a person moves the checkout.
+TREE_PROVENANCE_MAX_AGE_SECONDS = 300.0
+
+
+def runtime_provenance() -> dict[str, str | None]:
+    """What this process actually loaded, so nobody has to infer it.
+
+    A supervisor loads its code once at import and its config once at startup,
+    while the checkout underneath it keeps moving. "Is the running supervisor
+    the one with the fix?" was answered wrongly twice on 2026-08-20 - once from
+    a process start time that turned out to predate a fast-forward by 36
+    seconds, once from a `pgrep` that matched the observer's own command line.
+    Both were reasoning about the artifact instead of asking the process.
+
+    Recorded once per heartbeat: the commit the loaded code came from, and a
+    digest of the config document in force. Neither is a guess.
+    """
+    global _TREE_PROVENANCE_CACHE
+    import subprocess
+    import time as _time
+
+    from common import ROOT as _root
+
+    cached = _TREE_PROVENANCE_CACHE
+    if cached is not None and (_time.time() - cached[0]) < TREE_PROVENANCE_MAX_AGE_SECONDS:
+        return dict(cached[1])
+
+    code_sha: str | None = None
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        if proc.returncode == 0:
+            candidate = (proc.stdout or "").strip()
+            # Only a real object name is evidence. Recording whatever came back
+            # would let a failed or substituted probe be cached as provenance,
+            # which is worse than recording nothing.
+            if len(candidate) == 40 and all(c in "0123456789abcdef" for c in candidate):
+                code_sha = candidate
+    except (OSError, subprocess.SubprocessError):
+        code_sha = None
+
+    config_digest: str | None = None
+    config_path = os.environ.get(CONFIG_PATH_ENV_VAR)
+    if config_path:
+        try:
+            config_digest = hashlib.sha256(
+                Path(config_path).read_bytes()
+            ).hexdigest()[:16]
+        except OSError:
+            config_digest = None
+
+    result = {"code_sha": code_sha, "config_digest": config_digest}
+    _TREE_PROVENANCE_CACHE = (_time.time(), dict(result))
+    return result
+
+
+def loaded_runtime_provenance() -> dict[str, str | None]:
+    """What this process loaded, computed once. It cannot change while it runs."""
+    global _LOADED_PROVENANCE
+    if _LOADED_PROVENANCE is None:
+        _LOADED_PROVENANCE = runtime_provenance()
+    return dict(_LOADED_PROVENANCE)
+
+
+def runtime_is_stale(supervisor_state: dict[str, Any]) -> str | None:
+    """Why the loaded runtime no longer matches the tree, or None.
+
+    Code is imported once and config is read once at startup, so a checkout
+    that moves underneath a running supervisor leaves it executing a version
+    that no longer exists on disk with nothing saying so. Comparing the values
+    stamped at load against the tree right now turns that into an observation
+    instead of an inference.
+    """
+    loaded_code = str(supervisor_state.get("loaded_code_sha") or "")
+    loaded_config = str(supervisor_state.get("loaded_config_digest") or "")
+    current = runtime_provenance()
+    reasons: list[str] = []
+    if loaded_code and current.get("code_sha") and current["code_sha"] != loaded_code:
+        reasons.append(
+            f"code moved from {loaded_code[:8]} to {str(current['code_sha'])[:8]}"
+        )
+    if (
+        loaded_config
+        and current.get("config_digest")
+        and current["config_digest"] != loaded_config
+    ):
+        reasons.append("config document changed")
+    if not reasons:
+        return None
+    return (
+        "Running supervisor no longer matches the tree it was started from: "
+        + "; ".join(reasons)
+        + ". It will keep executing the loaded version until it is restarted."
+    )
+
+
 def check_control_plane(config: dict[str, Any], state: dict[str, Any]) -> bool:
     """Report an unreviewed change to the governing code; return whether to block.
 
@@ -946,6 +1052,25 @@ def stamp_supervisor_runtime_state(
 
     supervisor_state["pid"] = current_pid
     supervisor_state["last_heartbeat_at"] = heartbeat_at
+    provenance = loaded_runtime_provenance()
+    supervisor_state.update(provenance)
+    # Stamped once, at the first heartbeat of this pid: what this process
+    # actually loaded. Everything after compares against it rather than
+    # overwriting it, which is what makes drift observable at all.
+    if previous_pid != current_pid or not supervisor_state.get("loaded_code_sha"):
+        supervisor_state["loaded_code_sha"] = provenance.get("code_sha")
+        supervisor_state["loaded_config_digest"] = provenance.get("config_digest")
+        supervisor_state.pop("runtime_stale_reported", None)
+
+    stale_reason = runtime_is_stale(supervisor_state)
+    if stale_reason:
+        if supervisor_state.get("runtime_stale_reported") != stale_reason:
+            supervisor_state["runtime_stale_reported"] = stale_reason
+            write_activity_log(
+                config, {"type": "supervisor_runtime_stale", "message": stale_reason}
+            )
+    else:
+        supervisor_state.pop("runtime_stale_reported", None)
     if not supervisor_state.get("started_at") or previous_pid != current_pid:
         supervisor_state["started_at"] = heartbeat_at
         supervisor_state["last_successful_loop_at"] = None

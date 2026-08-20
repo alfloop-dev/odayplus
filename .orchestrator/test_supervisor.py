@@ -4689,8 +4689,16 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             self.assertTrue(changed)
             dispatch_discussion_planning.assert_not_called()
             dispatch_ready_tasks.assert_called_once()
-            run_mock.assert_called_once()
-            self.assertEqual(run_mock.call_args.args[0][-1], "materialize")
+            materialize_calls = [
+                call
+                for call in run_mock.call_args_list
+                if any(
+                    "planning_state.py" in str(arg)
+                    for arg in (call.args[0] if call.args else [])
+                )
+            ]
+            self.assertEqual(len(materialize_calls), 1)
+            self.assertEqual(materialize_calls[0].args[0][-1], "materialize")
 
 
 class SupervisorRuntimeFocusTests(unittest.TestCase):
