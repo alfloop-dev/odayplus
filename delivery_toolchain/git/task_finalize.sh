@@ -231,7 +231,7 @@ if [ "$STATUS_SUBMIT" -eq 1 ]; then
     echo "task_finalize: re-run with AI_NAME=<task-owner>, or use --no-status-submit only for untracked housekeeping PRs." >&2
     exit 1
   fi
-  AI_NAME="$AI_NAME" "$ROOT/scripts/ai-status.sh" submit_review "$TASK_ID" "$PR_NUMBER" \
+  AI_NAME="$AI_NAME" "${PANTHEON_STATUS_ROOT:-$ROOT}/scripts/ai-status.sh" submit_review "$TASK_ID" "$PR_NUMBER" \
     "Remote PR #$PR_NUMBER is open against $BASE_BRANCH: ${PR_URL:-GitHub URL unavailable}"
   echo "task_finalize: review submission recorded atomically for $TASK_ID"
 fi
