@@ -899,7 +899,6 @@ def runtime_provenance() -> dict[str, str | None]:
     digest of the config document in force. Neither is a guess.
     """
     global _TREE_PROVENANCE_CACHE
-    import hashlib
     import subprocess
     import time as _time
 
