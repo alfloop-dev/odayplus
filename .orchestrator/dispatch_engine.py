@@ -321,6 +321,70 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
         return None
 
 
+def _task_repository_slug(config: dict[str, Any], task: dict[str, Any]) -> str:
+    """The task's repository slug, or "" when it cannot be resolved.
+
+    Routing used to rely on the supervisor's cwd, which silently answered for
+    Pantheon whatever repository the task belonged to.
+    """
+    declared = str((task or {}).get("repository") or "").strip()
+    if declared:
+        return declared
+    try:
+        from multi_repo_registry import resolve_task_repository
+
+        binding = resolve_task_repository(config, task)
+        return str(binding.slug or "")
+    except Exception:
+        return ""
+
+
+_MERGE_QUEUE_BY_REPO: dict[str, bool] = {}
+
+
+def repository_has_merge_queue(slug: str | None, base: str) -> bool | None:
+    """Does `base` in this repository have a merge queue? None when unreadable.
+
+    Routing was written against Pantheon, whose `dev` requires a queue, and
+    assumed every repository looked the same. `oday-data-platform` is private on
+    a plan without branch protection -- the protection API answers 403 -- so it
+    has no queue at all, and a bare `gh pr merge` there enqueues nothing. Four
+    reviewed, CI-green PRs sat until they were reported `stalled` and merged by
+    hand, and every DPF task that reached review_approved would have repeated it.
+
+    Cached per repository for the process: a queue is not created or removed
+    between ticks, and the alternative is a GraphQL round trip per PR per tick.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    slug = str(slug or "").strip()
+    if not slug or "/" not in slug:
+        return None
+    if slug in _MERGE_QUEUE_BY_REPO:
+        return _MERGE_QUEUE_BY_REPO[slug]
+    owner, _, name = slug.partition("/")
+    query = (
+        f"{{repository(owner:{_json.dumps(owner)},name:{_json.dumps(name)})"
+        f"{{mergeQueue(branch:{_json.dumps(base)}){{id}}}}}}"
+    )
+    try:
+        proc = run_gh(["api", "graphql", "-f", f"query={query}"])
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    repo = ((payload.get("data") or {}).get("repository")) or {}
+    if "mergeQueue" not in repo:
+        return None
+    present = repo.get("mergeQueue") is not None
+    _MERGE_QUEUE_BY_REPO[slug] = present
+    return present
+
+
 def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
     """Enqueue a reviewed, CI-green PR for merge.
 
@@ -382,8 +446,24 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         ):
             return "waiting", str(previous.get("route") or "already routed")
 
+    # A repository without a merge queue cannot be enqueued into; `gh pr merge`
+    # with no strategy has nothing to do there. Ask once per repository and pick
+    # the only route that repository actually has.
+    slug = _task_repository_slug(config, task)
+    base = str(task.get("base_branch") or "dev").strip() or "dev"
+    queued_repo = repository_has_merge_queue(slug, base)
+    if queued_repo is False:
+        args, route = ["pr", "merge", str(pr_number), "--merge"], "merged"
+    else:
+        # None means unreadable. Enqueueing is the conservative choice: it is
+        # what a queue-protected repository requires, and a direct merge there
+        # would be the bypass this routing exists to avoid.
+        args, route = ["pr", "merge", str(pr_number)], "queued"
+    if slug:
+        args += ["--repo", slug]
+
     try:
-        run_gh(["pr", "merge", str(pr_number)])
+        run_gh(args)
     except (GitHubBusError, GitHubBusOffline) as exc:
         return "blocked", str(exc)
 
@@ -397,7 +477,7 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     task[MERGE_ROUTE_FIELD] = {
         "head": approved_head,
         "scope": scope,
-        "route": "queued",
+        "route": route,
         "pr_number": pr_number,
         "at": utc_now(),
         "attempts": previous_attempts + 1,
@@ -407,10 +487,15 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         {
             "type": "merge_route_applied",
             "task_id": str(task.get("id") or ""),
-            "message": f"PR #{pr_number} enqueued for merge (scope {scope}).",
+            "message": (
+                f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
+                f"(scope {scope}; repository has no merge queue)."
+                if route == "merged"
+                else f"PR #{pr_number} enqueued for merge (scope {scope})."
+            ),
         },
     )
-    return "queued", f"scope={scope}"
+    return route, f"scope={scope}"
 
 
 def advance_approved_prs_to_merge(

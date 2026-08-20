@@ -14102,5 +14102,103 @@ class HandedOffChildProtectsItsQueueEventTests(unittest.TestCase):
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
 
 
+class MergeRouteWithoutQueueTests(unittest.TestCase):
+    """A repository without a merge queue must be merged, not enqueued.
+
+    Routing was written against Pantheon, whose `dev` requires a queue.
+    `oday-data-platform` is private on a plan without branch protection, so it
+    has no queue and a bare `gh pr merge` there enqueues nothing. On 2026-08-20
+    four reviewed, CI-green PRs sat until they were reported `stalled` and
+    merged by hand, and every DPF task reaching review_approved would repeat it.
+    """
+
+    HEAD = "1111111122222222333333334444444455555555"
+
+    def _route(self, *, has_queue, repository="alfloop-dev/oday-data-platform"):
+        import dispatch_engine
+
+        calls = []
+
+        def fake_run_gh(args, **kwargs):
+            calls.append(list(args))
+            return unittest.mock.Mock(stdout="{}")
+
+        task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD,
+                "repository": repository, "base_branch": "dev"}
+        with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", return_value=has_queue), \
+                unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="product_or_mixed"), \
+                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
+                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
+                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
+                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
+            route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
+        return route, detail, calls, task
+
+    def test_a_repository_without_a_queue_is_merged_directly(self) -> None:
+        route, _d, calls, task = self._route(has_queue=False)
+
+        self.assertEqual(route, "merged")
+        self.assertEqual(
+            calls,
+            [["pr", "merge", "42", "--merge", "--repo", "alfloop-dev/oday-data-platform"]],
+        )
+        self.assertEqual(task["merge_route"]["route"], "merged")
+
+    def test_a_repository_with_a_queue_is_still_enqueued(self) -> None:
+        route, _d, calls, task = self._route(has_queue=True, repository="alfloop-dev/odayplus")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(task["merge_route"]["route"], "queued")
+
+    def test_an_unreadable_answer_enqueues_rather_than_merging(self) -> None:
+        """None means unknown. A direct merge on a queue-protected repository
+        would be exactly the bypass this routing exists to prevent."""
+        route, _d, calls, _task = self._route(has_queue=None)
+
+        self.assertEqual(route, "queued")
+        self.assertNotIn("--merge", calls[0])
+
+    def test_detection_is_cached_per_repository(self) -> None:
+        import dispatch_engine
+
+        calls = []
+
+        def fake_run_gh(args, **kwargs):
+            calls.append(list(args))
+            return unittest.mock.Mock(
+                stdout='{"data":{"repository":{"mergeQueue":null}}}'
+            )
+
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/repo", None)
+        with unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh):
+            first = dispatch_engine.repository_has_merge_queue("owner/repo", "dev")
+            second = dispatch_engine.repository_has_merge_queue("owner/repo", "dev")
+
+        self.assertFalse(first)
+        self.assertFalse(second)
+        self.assertEqual(len(calls), 1, "second lookup should come from the cache")
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/repo", None)
+
+    def test_a_present_queue_reads_as_true(self) -> None:
+        import dispatch_engine
+
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/queued", None)
+        with unittest.mock.patch(
+            "github_bus.run_gh",
+            return_value=unittest.mock.Mock(stdout='{"data":{"repository":{"mergeQueue":{"id":"MQ_x"}}}}'),
+        ):
+            self.assertTrue(dispatch_engine.repository_has_merge_queue("owner/queued", "dev"))
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/queued", None)
+
+    def test_a_malformed_slug_is_not_queried(self) -> None:
+        import dispatch_engine
+
+        with unittest.mock.patch("github_bus.run_gh") as run_gh:
+            self.assertIsNone(dispatch_engine.repository_has_merge_queue("", "dev"))
+            self.assertIsNone(dispatch_engine.repository_has_merge_queue("noslash", "dev"))
+        run_gh.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
