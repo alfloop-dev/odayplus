@@ -15,7 +15,7 @@ tasks.
 
 The GitHub `staging` environment exists, but repository variables and secrets
 are not configured in the current external state. The workflow
-`.github/workflows/deploy-staging.yml` is a fail-closed verifier: it runs
+`.github/workflows/deploy-dev.yml` (Runtime Release, `environment: staging`) is a fail-closed verifier: it runs
 `delivery_toolchain/e2e/check_remote_staging_proof.py` and uploads the redacted proof
 report. It does not contain provider secrets, and it does not fabricate a
 successful deployment when the staging host/API URL/secret owner are absent.

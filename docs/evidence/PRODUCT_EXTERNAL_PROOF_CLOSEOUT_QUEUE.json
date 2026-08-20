@@ -301,7 +301,7 @@
       ],
       "evidence_refs": [
         "docs/evidence/REMOTE_STAGING_PROOF_RUNBOOK.md",
-        ".github/workflows/deploy-staging.yml",
+        ".github/workflows/deploy-dev.yml",
         "delivery_toolchain/e2e/check_remote_staging_proof.py",
         "docs/evidence/fleet_dispatch/ODP-PV-STAGE-001-002_WORKER_EVIDENCE.md"
       ],

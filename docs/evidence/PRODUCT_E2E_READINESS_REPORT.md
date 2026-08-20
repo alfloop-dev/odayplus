@@ -91,7 +91,7 @@ provider activation and remote staging require human/ops action documented in
 |---|---|---|---|
 | Live external provider (listing / POI / geocoder) | ✅ Wired. `ODP_EXTERNAL_PROVIDER_MODE=live` switches all adapters from fixture replay to HTTP; `validate_external_providers_or_raise()` is fail-closed at startup. | Set `ODP_EXTERNAL_PROVIDER_MODE=live` + inject all named API key env vars per §2 of risk acceptance doc. | Real API keys / provider licensing |
 | Live map tile / geocoder (frontend) | ✅ Wired. `NEXT_PUBLIC_ODP_MAP_TILE_URL` and `NEXT_PUBLIC_ODP_GEOCODER_URL` are read at build time. Empty = local MapLibre style (safe fallback, no error). | Set the four `NEXT_PUBLIC_ODP_MAP_*` vars at Next.js build time. | Provider-issued tile URL + geocoder URL + attribution/terms |
-| Remote staging | ✅ Wired. `.github/workflows/deploy-staging.yml` is fail-closed; `check_remote_staging_proof.py` requires host/url/secret owner or fails. | Configure GitHub `staging` environment variables/secrets per runbook. | GitHub environment config + host |
+| Remote staging | ✅ Wired. `.github/workflows/deploy-dev.yml` (Runtime Release) is fail-closed; `check_remote_staging_proof.py` requires host/url/secret owner or fails. | Configure GitHub `staging` environment variables/secrets per runbook. | GitHub environment config + host |
 
 ### Live Code Path References
 
@@ -102,7 +102,7 @@ provider activation and remote staging require human/ops action documented in
 | Live geocoder HTTP client | `modules/external_data/providers/live.py` | `HttpGeocodeClient` |
 | Map tile / geocoder wiring | `apps/web/features/map/HeatZoneMap.tsx` | `readMapBoundaryConfig()` (lines 350–375) |
 | Remote staging checker | `delivery_toolchain/e2e/check_remote_staging_proof.py` | — |
-| Staging workflow | `.github/workflows/deploy-staging.yml` | — |
+| Staging workflow | `.github/workflows/deploy-dev.yml` | `Runtime Release` (`environment: staging`) |
 | Risk acceptance + secret inventory | `docs/evidence/PRODUCT_RELEASE_RISK_ACCEPTANCE.md` | §2, §3, §4 |
 
 ### E2E Map Tests Covering Live Boundary Config
