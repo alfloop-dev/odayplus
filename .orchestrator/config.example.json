@@ -25,7 +25,7 @@
     "max_seen_events": 2000
   },
   "supervisor": {
-    "poll_interval_seconds": 60.0,
+    "poll_interval_seconds": 180.0,
     "heartbeat_warn_after_seconds": 10.0,
     "stall_after_seconds": 300,
     "max_worker_history": 200,
