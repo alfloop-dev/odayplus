@@ -14200,5 +14200,130 @@ class MergeRouteWithoutQueueTests(unittest.TestCase):
         run_gh.assert_not_called()
 
 
+class QuarantineCrossRepositoryTests(unittest.TestCase):
+    """Quarantine must judge a worktree against its own repository.
+
+    It derived the repository from the status file's directory, which is always
+    the Pantheon checkout, then compared git identities and refused anything
+    that did not match. Every oday-data-platform worktree failed that check
+    silently, so the recovery that exists for `skipped_dirty_worktree` could
+    never run there -- DPF-SRC-RIS-NLSC-001 and DPF-SRC-OSM-TDX-001 each blocked
+    five times and escalated with no backup ever written.
+    """
+
+    def _repo(self, root: Path, name: str) -> Path:
+        repo = root / name
+        repo.mkdir(parents=True)
+        for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                     ["config", "user.name", "t"]):
+            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+        (repo / "seed.txt").write_text("seed\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "seed"], cwd=repo, check=True, capture_output=True)
+        return repo
+
+    def _dirty_worktree(self, repo: Path, path: Path, branch: str) -> Path:
+        subprocess.run(["git", "worktree", "add", "-q", "-b", branch, str(path)],
+                       cwd=repo, check=True, capture_output=True)
+        (path / "seed.txt").write_text("edited\n")
+        return path
+
+    def test_a_sibling_repository_worktree_is_quarantined(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            sibling = self._repo(root, "data-platform")
+            wt = self._dirty_worktree(sibling, root / "wt", "task/T-1")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            # Without the owning repository it compares against Pantheon and refuses.
+            self.assertFalse(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-1", expected_branch="task/T-1", trigger="t"
+                )
+            )
+            # With it, the worktree is judged against the repository it belongs to.
+            self.assertTrue(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-1", expected_branch="task/T-1", trigger="t",
+                    owning_repo_root=sibling,
+                )
+            )
+
+    def test_the_backup_stays_in_the_fleet_root(self) -> None:
+        """The orchestrator's state lives in Pantheon regardless of whose code
+        is being preserved."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            sibling = self._repo(root, "data-platform")
+            wt = self._dirty_worktree(sibling, root / "wt", "task/T-2")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            self.assertTrue(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-2", expected_branch="task/T-2", trigger="t",
+                    owning_repo_root=sibling,
+                )
+            )
+
+            backups = fleet / ".orchestrator" / "worktree-dirt-backups"
+            written = sorted(backups.glob("t-2-*"))
+            self.assertEqual(len(written), 1, f"expected one backup, found {written}")
+            self.assertFalse((sibling / ".orchestrator").exists(),
+                             "backups must not be written into the task's repository")
+            manifest = json.loads((written[0] / "manifest.json").read_text())
+            self.assertEqual(manifest["task_id"], "T-2")
+            self.assertEqual([f["path"] for f in manifest["files"]], ["seed.txt"])
+
+    def test_the_same_repository_still_works_without_the_argument(self) -> None:
+        """Pantheon's own worktrees must behave exactly as before."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            wt = self._dirty_worktree(fleet, root / "wt", "task/T-3")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            self.assertTrue(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-3", expected_branch="task/T-3", trigger="t"
+                )
+            )
+
+    def test_a_worktree_of_neither_repository_is_still_refused(self) -> None:
+        """The guard must keep refusing a path that is not a worktree of the
+        repository it is claimed to belong to."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            sibling = self._repo(root, "data-platform")
+            stranger = self._repo(root, "stranger")
+            wt = self._dirty_worktree(stranger, root / "wt", "task/T-4")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            self.assertFalse(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-4", expected_branch="task/T-4", trigger="t",
+                    owning_repo_root=sibling,
+                )
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
