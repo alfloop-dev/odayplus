@@ -110,6 +110,12 @@ class WorkerSettlementPathTests(unittest.TestCase):
             mock.patch.object(supervisor, "write_activity_log"),
             mock.patch.object(supervisor, "console_log"),
             mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-2", None)),
+            # Reassignment depends on `worker_reassignment.owner_fallbacks`, which
+            # differs between this host's config and the bootstrapped example CI
+            # uses -- an earlier version of this file asserted an outcome that only
+            # held under one of them. These tests are about which STATUSES each path
+            # reaches and whether it retries, so hold reassignment policy still.
+            mock.patch.object(supervisor, "maybe_reassign_task_after_worker_failure", return_value=None),
         ]
         for patch in patches:
             patch.start()
@@ -139,7 +145,12 @@ class WorkerSettlementPathTests(unittest.TestCase):
         self.assertEqual(self._settle(supervisor.poll_workers, worker)[0], "failed")
 
     def test_both_paths_agree_on_a_terminal_quota_failure(self) -> None:
-        """Where the outcome should NOT differ, it does not."""
+        """Where the outcome should NOT differ, it does not.
+
+        With reassignment held still, a terminal quota failure settles the same way
+        on both paths -- the classification is shared, only the retry/resume
+        branches around it differ.
+        """
         worker = self._worker(log_path=self._log("q", "Error: you have exhausted your capacity for model\n"))
         self.assertEqual(
             self._settle(supervisor.reconcile_runtime_on_boot, worker),
