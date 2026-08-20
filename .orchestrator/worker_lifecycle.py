@@ -19,11 +19,18 @@ def _supervisor_module():
 
 def _sync_supervisor_scope() -> None:
     sv = _supervisor_module()
-    excluded = {"__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
+    excluded = {"_parse_iso_utc", "_isoformat_utc", "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
     module_exports = {"process_queue", "poll_workers"}
+    # Skip only dunders. The four copies of this function used to disagree --
+    # two skipped every `_`-prefixed name, two skipped only `__` -- so whether a
+    # single-underscore helper resolved depended on which file asked. That is how
+    # `_reset_queue_record_for_redispatch` came to be called in `process_queue`
+    # while never being present in this module's globals: supervisor defines it,
+    # and this module's rule filtered it out. Module-local names that must NOT be
+    # replaced are listed in `excluded` by name rather than inferred from a prefix.
     g = globals()
     for key, value in sv.__dict__.items():
-        if key in excluded or key in module_exports or key.startswith("_"):
+        if key in excluded or key in module_exports or key.startswith("__"):
             continue
         g[key] = value
 
