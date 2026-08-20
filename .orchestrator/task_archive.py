@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import os
 from collections.abc import Iterable
 from copy import deepcopy
@@ -9,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+
+from common import load_json, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,24 +39,6 @@ DEFAULT_RECENT_LIMIT = 20
 
 def iso_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def ensure_parent(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-
-def load_json(path: Path, default: Any | None = None) -> Any:
-    if not path.exists():
-        return deepcopy(default)
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        return deepcopy(default)
-    return json.loads(text)
-
-
-def write_json(path: Path, payload: Any) -> None:
-    ensure_parent(path)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def normalize_task_id(task_id: str | None) -> str:

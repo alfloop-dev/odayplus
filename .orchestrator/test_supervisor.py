@@ -6723,8 +6723,8 @@ class WorktreeLeaseBlockEscalationTests(unittest.TestCase):
         )
         fresh = datetime.now(UTC) - timedelta(minutes=5)
         bucket = {
-            "odp-orch-abandoned-001": {"count": 9, "last_at": supervisor._isoformat_utc(stale)},
-            "odp-orch-live-001": {"count": 2, "last_at": supervisor._isoformat_utc(fresh)},
+            "odp-orch-abandoned-001": {"count": 9, "last_at": supervisor.isoformat_utc(stale)},
+            "odp-orch-live-001": {"count": 2, "last_at": supervisor.isoformat_utc(fresh)},
             "odp-orch-undated-001": {"count": 1},
             "odp-orch-garbage-001": "not-a-mapping",
         }

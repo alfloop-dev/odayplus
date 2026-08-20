@@ -367,18 +367,18 @@ def record_worker_runtime_measurement(
 def worker_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
     settings = worker_runtime_settings(config)
     now_dt = now or datetime.now(UTC)
-    return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("worker_lease_seconds", 1800)))))
+    return isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("worker_lease_seconds", 1800)))))
 
 @_entrypoint
 def queue_lease_expiry(config: dict[str, Any], now: datetime | None = None) -> str:
     settings = worker_runtime_settings(config)
     now_dt = now or datetime.now(UTC)
-    return _isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("queue_lease_seconds", 1800)))))
+    return isoformat_utc(now_dt + timedelta(seconds=max(60, int(settings.get("queue_lease_seconds", 1800)))))
 
 @_entrypoint
 def refresh_worker_lease(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> None:
     now_dt = now or datetime.now(UTC)
-    worker.setdefault("lease_acquired_at", _isoformat_utc(now_dt))
+    worker.setdefault("lease_acquired_at", isoformat_utc(now_dt))
     worker["lease_expires_at"] = worker_lease_expiry(config, now_dt)
 
 @_entrypoint
@@ -2470,9 +2470,9 @@ def resume_claude_worker(
     worker["deferred_action"] = None
     worker["deferred_tool_use"] = None
     worker["deferred_tool_use_id"] = None
-    worker["last_event_at"] = _isoformat_utc(now_dt)
+    worker["last_event_at"] = isoformat_utc(now_dt)
     worker["last_heartbeat_at"] = None
-    worker["lease_acquired_at"] = _isoformat_utc(now_dt)
+    worker["lease_acquired_at"] = isoformat_utc(now_dt)
     worker["lease_expires_at"] = worker_lease_expiry(config, now_dt)
     worker["heartbeat_path"] = str(runtime_paths["heartbeat_path"])
     worker["runner_status_path"] = str(runtime_paths["status_path"])

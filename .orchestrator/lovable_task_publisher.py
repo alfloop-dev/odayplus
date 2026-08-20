@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import os
 import re
 from pathlib import Path
 from typing import Any
 
-from common import ensure_parent
+from common import (
+    write_text_if_changed,
+    yaml_dump,
+)
 from multi_repo_registry import coordination_responses_dir, repository_local_path, repository_slug
-
-try:
-    import yaml
-except ImportError:  # pragma: no cover - best effort fallback
-    yaml = None
-
 
 DEFAULT_REQUIRED_FEEDBACK_FILES = (
     "LOVABLE_CHANGE_FEEDBACK.md",
@@ -22,21 +18,6 @@ DEFAULT_REQUIRED_FEEDBACK_FILES = (
     "UI_DECISIONS.md",
     "QA_STATUS.md",
 )
-
-
-def _write_if_changed(path: Path, content: str) -> bool:
-    existing = path.read_text(encoding="utf-8") if path.exists() else None
-    if existing == content:
-        return False
-    ensure_parent(path)
-    path.write_text(content, encoding="utf-8")
-    return True
-
-
-def _yaml_dump(payload: dict[str, Any]) -> str:
-    if yaml is not None:
-        return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
 def _env_or_value(env_name: str | None, explicit: str | None = None) -> str | None:
@@ -319,10 +300,10 @@ def publish_lovable_task_packet(config: dict[str, Any], contract_payload: dict[s
     }
 
     packet_path = responses_dir / f"{feature_id}-lovable-ui-task.yaml"
-    packet_changed = _write_if_changed(packet_path, _yaml_dump(machine_packet))
+    packet_changed = write_text_if_changed(packet_path, yaml_dump(machine_packet))
 
     prompt_path = responses_dir / f"{feature_id}-lovable-prompt.md"
-    prompt_changed = _write_if_changed(prompt_path, render_lovable_prompt(machine_packet))
+    prompt_changed = write_text_if_changed(prompt_path, render_lovable_prompt(machine_packet))
 
     return {
         "packet_path": str(packet_path),

@@ -20,7 +20,7 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from common import run_command, utc_now, write_activity_log
+from common import parse_utc_timestamp, run_command, utc_now, write_activity_log
 
 ALARM_TASK_PR_STALE = "task_pr_stale"
 ALARM_DEV_MAIN_DIVERGED = "dev_main_diverged"
@@ -30,16 +30,6 @@ ALARM_DEV_MAIN_DIVERGED = "dev_main_diverged"
 # would bury the log; emitting once and never again would hide a drift that
 # recurs after being cleared.
 _STATE_KEY = "branch_drift_alarms"
-
-
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _minutes_between(earlier: datetime, later: datetime) -> float:
@@ -74,7 +64,7 @@ def evaluate_drift(
     pr_budget = settings.get("task_pr_must_merge_within_minutes")
     if pr_budget:
         for pr in open_task_prs:
-            opened_at = _parse_iso(pr.get("createdAt"))
+            opened_at = parse_utc_timestamp(pr.get("createdAt"))
             if opened_at is None:
                 continue
             age = _minutes_between(opened_at, now)
@@ -158,7 +148,7 @@ def measure_divergence_since(config: dict[str, Any], remote: str = "origin") -> 
     lines = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
     if not lines:
         return None
-    return _parse_iso(lines[-1])  # oldest commit not in main
+    return parse_utc_timestamp(lines[-1])  # oldest commit not in main
 
 
 def resolve_repo_slug(config: dict[str, Any]) -> str | None:
