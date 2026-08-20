@@ -8,12 +8,14 @@ REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
 REASON_OWNED_IN_PROGRESS = "owned_in_progress_dispatch"
 REASON_OWNED_READY = "owned_ready_dispatch"
+REASON_HELPER_CLAIM = "helper_claim_dispatch"
 
 EXECUTION_DISPATCH_REASONS = {
     REASON_REVIEW_READY,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
+    REASON_HELPER_CLAIM,
 }
 
 DISPATCH_REASON_PRIORITIES = {
@@ -21,12 +23,14 @@ DISPATCH_REASON_PRIORITIES = {
     REASON_OWNED_FINALIZE: 1,
     REASON_OWNED_IN_PROGRESS: 2,
     REASON_OWNED_READY: 3,
+    REASON_HELPER_CLAIM: 4,
 }
 
 DISPATCH_STATUS_ACTIONS = {
     REASON_OWNED_READY: ("start", {"todo"}),
     REASON_OWNED_FINALIZE: ("note", {"review_approved"}),
     REASON_OWNED_IN_PROGRESS: ("progress", {"in_progress"}),
+    REASON_HELPER_CLAIM: ("progress", {"todo", "in_progress"}),
 }
 
 DEFAULT_REVIEW_STATUSES = ["review"]
@@ -92,6 +96,15 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("orphaned_queue_event_grace_seconds", DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS)
     settings.setdefault("worker_os_duplicate_guard", DEFAULT_WORKER_OS_DUPLICATE_GUARD)
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
+    helper = dict(settings.get("helper_execution_lease", {}) or {})
+    helper.setdefault("enabled", True)
+    helper.setdefault("claimable_statuses", ["todo"])
+    helper.setdefault("dispatch_sla_seconds", 600)
+    helper.setdefault("lease_seconds", 1800)
+    helper.setdefault("max_claims_per_tick", 4)
+    helper.setdefault("max_claims_per_agent", 2)
+    helper.setdefault("require_owner_saturated", True)
+    settings["helper_execution_lease"] = helper
     return settings
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dispatch_policy import worker_logical_dispatch_agent_id
+from dispatch_policy import REASON_HELPER_CLAIM, worker_logical_dispatch_agent_id
 
 
 def _supervisor_module():
@@ -563,6 +563,14 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
         eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
     elif reason == REASON_OWNED_READY:
         eligible = task_status in {"todo", "in_progress"} and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+    elif reason == REASON_HELPER_CLAIM:
+        claim = task.get("helper_execution_lease") or {}
+        eligible = (
+            task_status in {"todo", "in_progress"}
+            and normalize_agent_id(str(claim.get("claimed_by") or "")) == normalize_agent_id(target_agent)
+            and helper_claim_is_live(claim)
+            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        )
 
     if not eligible:
         return None
@@ -632,7 +640,42 @@ def dispatch_priority_for_task(
         and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 3
+    claim = task.get("helper_execution_lease") or {}
+    if (
+        task_status in {"todo", "in_progress"}
+        and normalize_agent_id(str(claim.get("claimed_by") or "")) == norm_target
+        and helper_claim_is_live(claim)
+        and dependencies_satisfied(task, tmap, dependency_done_statuses)
+    ):
+        return 4
     return None
+
+
+def helper_claim_is_live(claim: dict[str, Any], *, now: datetime | None = None) -> bool:
+    if not isinstance(claim, dict) or not claim.get("claimed_by"):
+        return False
+    expires_at = parse_iso_timestamp(str(claim.get("lease_expires_at") or ""))
+    if expires_at is None:
+        return False
+    current = now or datetime.now(UTC)
+    return expires_at > current
+
+
+def helper_owner_is_saturated(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    agent_loads: dict[str, list[int]],
+    helper_settings: dict[str, Any],
+) -> bool:
+    owner = str(task.get("owner") or "")
+    owner_load = len(agent_loads.get(owner, []))
+    if owner_load >= agent_dispatch_capacity(config, owner):
+        return True
+    last_update = parse_iso_timestamp(str(task.get("last_update") or ""))
+    if last_update is None:
+        return not helper_settings.get("require_owner_saturated", True)
+    age = (datetime.now(UTC) - last_update).total_seconds()
+    return age >= float(helper_settings.get("dispatch_sla_seconds", 600))
 
 @_entrypoint
 
@@ -1012,7 +1055,12 @@ def worker_matches_current_assignment(
     if task_status in finalize_statuses:
         return task.get(owner_field) == agent_name
     if task_status in owned_statuses:
-        return task.get(owner_field) == agent_name
+        claim = task.get("helper_execution_lease") or {}
+        return task.get(owner_field) == agent_name or (
+            helper_claim_is_live(claim)
+            and normalize_agent_id(str(claim.get("claimed_by") or ""))
+            == normalize_agent_id(agent_name)
+        )
     return False
 
 @_entrypoint
@@ -1148,6 +1196,7 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
         "helper_kind",
         "mutates_canonical",
         "auto_created_by",
+        "helper_execution_lease",
     ):
         if key in task:
             task_payload[key] = task.get(key)
@@ -1598,6 +1647,32 @@ def dispatch_ready_tasks(
                 reason = "owned_ready_dispatch"
                 priority = 3
 
+            helper_settings = settings.get("helper_execution_lease", {}) or {}
+            if reason is None and helper_settings.get("enabled", True):
+                claimable_statuses = {
+                    str(value).lower()
+                    for value in helper_settings.get("claimable_statuses", ["todo"])
+                }
+                claim = task.get("helper_execution_lease") or {}
+                claimed_by = normalize_agent_id(str(claim.get("claimed_by") or ""))
+                existing_claim_live = helper_claim_is_live(claim)
+                independent = norm_target not in {norm_task_owner, norm_task_reviewer}
+                owner_saturated = helper_owner_is_saturated(
+                    config, task, agent_loads, helper_settings
+                )
+                if (
+                    task_status in claimable_statuses
+                    and dependencies_satisfied(task, task_map, dependency_done_statuses)
+                    and independent
+                    and (not existing_claim_live or claimed_by == norm_target)
+                    and (
+                        owner_saturated
+                        or not helper_settings.get("require_owner_saturated", True)
+                    )
+                ):
+                    reason = REASON_HELPER_CLAIM
+                    priority = 4
+
             if reason is not None and not agent_can_take_task(config, target_agent, task):
                 continue
             if reason is None or priority is None:
@@ -1650,6 +1725,56 @@ def dispatch_ready_tasks(
         candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         queued_for_agent = 0
         for _, _, _, task, reason in candidates[:available_agent_slots]:
+            if reason == REASON_HELPER_CLAIM:
+                helper_settings = settings.get("helper_execution_lease", {}) or {}
+                active_claims_for_agent = sum(
+                    1
+                    for candidate in tasks
+                    if helper_claim_is_live(candidate.get("helper_execution_lease") or {})
+                    and normalize_agent_id(
+                        str((candidate.get("helper_execution_lease") or {}).get("claimed_by") or "")
+                    )
+                    == normalize_agent_id(target_agent)
+                )
+                if active_claims_for_agent >= int(helper_settings.get("max_claims_per_agent", 2)):
+                    continue
+                helper_dispatches = int(dispatch_state.get("helper_dispatches_this_tick", 0) or 0)
+                chair_max = int(
+                    ((state.get("capacity_controller", {}) or {}).get("chair_decision", {}) or {}).get(
+                        "max_helper_claims", helper_settings.get("max_claims_per_tick", 4)
+                    )
+                    or 0
+                )
+                max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
+                if helper_dispatches >= max_helper:
+                    continue
+                now = datetime.now(UTC)
+                generation = int((task.get("helper_execution_lease") or {}).get("generation", 0) or 0) + 1
+                task["helper_execution_lease"] = {
+                    "claimed_by": target_agent,
+                    "original_owner": task.get(owner_field),
+                    "claimed_at": now.isoformat().replace("+00:00", "Z"),
+                    "lease_expires_at": (
+                        now + timedelta(seconds=float(helper_settings.get("lease_seconds", 1800)))
+                    ).isoformat().replace("+00:00", "Z"),
+                    "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
+                    "generation": generation,
+                }
+                if not commit_canonical_task_transition(config, status):
+                    task.pop("helper_execution_lease", None)
+                    continue
+                dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
+                write_activity_log(
+                    config,
+                    {
+                        "type": "helper_claim_leased",
+                        "task_id": task.get(task_id_field),
+                        "claimed_by": target_agent,
+                        "owner": task.get(owner_field),
+                        "lease_expires_at": task["helper_execution_lease"]["lease_expires_at"],
+                        "message": "Idle capacity leased existing canonical work without changing owner.",
+                    },
+                )
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 pending_event_keys.add(event["key"])
@@ -1679,4 +1804,5 @@ def dispatch_ready_tasks(
             cursor_revision = 0
         dispatch_state["dispatch_cursor_revision"] = max(0, cursor_revision) + 1
         dispatch_state["dispatch_cursor_updated_at"] = utc_now()
+    dispatch_state["helper_dispatches_this_tick"] = 0
     return changed

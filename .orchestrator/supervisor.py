@@ -118,6 +118,7 @@ import worker_lifecycle
 import dispatch_engine
 import worker_workspace
 import worker_failure_policy
+import capacity_controller
 
 _WORKSPACE_HELPER_FUNCTIONS = [
 "_atomic_copy_context_file",
@@ -339,6 +340,53 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
     return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
+
+
+def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Run the governed capacity Chair and materialize its bounded sidecars."""
+    status = load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
+    expired_claim_ids = set(capacity_controller.expired_helper_claim_task_ids(tasks))
+    if expired_claim_ids:
+        for task in tasks:
+            if str(task.get("id") or "") in expired_claim_ids:
+                task.pop("helper_execution_lease", None)
+        if not commit_canonical_task_transition(config, status):
+            return False
+        for task_id in sorted(expired_claim_ids):
+            write_activity_log(
+                config,
+                {
+                    "type": "helper_claim_expired",
+                    "task_id": task_id,
+                    "message": "Expired helper execution lease released back to its canonical owner.",
+                },
+            )
+    controller, state_changed = capacity_controller.evaluate_chair(config, state, tasks)
+    additions = capacity_controller.sidecar_candidates(config, state, tasks)
+    if additions:
+        known = {str(task.get("id") or "") for task in tasks}
+        additions = [task for task in additions if str(task.get("id") or "") not in known]
+    if additions:
+        status.setdefault(tasks_path, []).extend(additions)
+        if not commit_canonical_task_transition(config, status):
+            return state_changed
+        for task in additions:
+            write_activity_log(
+                config,
+                {
+                    "type": "capacity_sidecar_created",
+                    "task_id": task.get("id"),
+                    "parent_task_id": task.get("helper_parent"),
+                    "message": "Capacity Chair created a bounded diagnostic sidecar.",
+                },
+            )
+        state_changed = True
+    if state_changed:
+        state.setdefault("capacity_controller", {}).update(controller)
+    return state_changed
 
 
 from github_bus import sync_github_bus
@@ -4262,8 +4310,9 @@ def run_once(
         elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
-            # Work dispatch has one purpose: assign an already canonical,
-            # ready task. Runtime heuristics never create or reassign tasks.
+            changed = reconcile_capacity_controller(config, state) or changed
+            # The Capacity Chair may create only bounded diagnostic sidecars;
+            # canonical product work remains owned by the task board.
             if check_control_plane(config, state):
                 console_log(
                     "control plane is dirty and control_plane_guard.mode is `block`; "

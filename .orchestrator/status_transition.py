@@ -153,7 +153,7 @@ def _task_index_from_status(config: dict[str, Any], status: dict[str, Any]) -> d
 def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -> bool:
     sv = _supervisor_module()
     reason = str(event.get("reason") or "").strip()
-    from dispatch_policy import DISPATCH_STATUS_ACTIONS, REASON_OWNED_FINALIZE, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY
+    from dispatch_policy import DISPATCH_STATUS_ACTIONS, REASON_HELPER_CLAIM, REASON_OWNED_FINALIZE, REASON_OWNED_IN_PROGRESS, REASON_OWNED_READY
 
     action = DISPATCH_STATUS_ACTIONS.get(reason)
     if action is None:
@@ -182,7 +182,9 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
     task = _task_index_from_status(config, sv.load_status(config)).get(task_id)
     if not task:
         return False
-    if str(task.get("owner") or "").strip() != target_agent:
+    claim = task.get("helper_execution_lease") or {}
+    helper_actor = reason == REASON_HELPER_CLAIM and str(claim.get("claimed_by") or "").strip() == target_agent
+    if str(task.get("owner") or "").strip() != target_agent and not helper_actor:
         return False
     if str(task.get("status") or "").lower() not in eligible_statuses:
         return False
@@ -191,6 +193,7 @@ def sync_dispatched_task_status(config: dict[str, Any], event: dict[str, Any]) -
         REASON_OWNED_READY: f"Supervisor auto-started {task_id} after successful dispatch.",
         REASON_OWNED_FINALIZE: f"Supervisor resumed {task_id} for finalize after successful dispatch.",
         REASON_OWNED_IN_PROGRESS: f"Supervisor re-dispatched {task_id}; task remains in progress.",
+        REASON_HELPER_CLAIM: f"Supervisor started {task_id} under a bounded helper execution lease.",
     }[reason]
     env = __import__("os").environ.copy()
     env["AI_NAME"] = target_agent

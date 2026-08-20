@@ -4,6 +4,7 @@ import pytest
 from dispatch_policy import (
     DEFAULT_ACTIVE_WORKER_STATUSES,
     DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS,
+    REASON_HELPER_CLAIM,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
@@ -22,6 +23,7 @@ from dispatch_policy import (
         (REASON_OWNED_FINALIZE, 1),
         (REASON_OWNED_IN_PROGRESS, 2),
         (REASON_OWNED_READY, 3),
+        (REASON_HELPER_CLAIM, 4),
         ("discussion_planning_readout_dispatch", None),
         (None, None),
     ],
@@ -37,6 +39,7 @@ def test_dispatch_reason_priority_cases(reason: str | None, expected: int | None
         (REASON_OWNED_FINALIZE, True),
         (REASON_OWNED_IN_PROGRESS, True),
         (REASON_OWNED_READY, True),
+        (REASON_HELPER_CLAIM, True),
         ("discussion_planning_baton_dispatch", False),
         ("", False),
         (None, False),
@@ -73,6 +76,8 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
     assert settings["max_dispatches_per_tick"] == 4
     assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
+    assert settings["helper_execution_lease"]["enabled"] is True
+    assert settings["helper_execution_lease"]["require_owner_saturated"] is True
 
 
 def test_ready_dispatch_settings_treats_missing_ready_dispatcher_as_defaults() -> None:
