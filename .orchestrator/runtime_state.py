@@ -23,6 +23,7 @@ from common import (
     utc_now,
     write_json,
 )
+from dispatch_policy import ready_dispatch_settings
 
 
 def default_state() -> dict[str, Any]:
@@ -295,6 +296,32 @@ TERMINAL_WORKER_STATUSES = {
 # still running.  `fallback` is deliberately NOT terminal: the queue event is
 # still in flight through the fallback child.
 HANDED_OFF_WORKER_STATUSES = {"fallback"}
+
+def active_worker_statuses(config: dict[str, Any]) -> set[str]:
+    """Which statuses mean "this worker may still be doing something".
+
+    Configuration may WIDEN this set and may not narrow it. Sixteen call sites ask
+    this question -- can this queue event be finalized, is this agent at capacity,
+    is a worker using this worktree -- and every one of them is dangerous in the
+    same direction: treating a live worker as finished. `ready_dispatcher.
+    active_worker_statuses` shipped with `fallback` and `started` missing, so a
+    parent that had handed off to a file_inbox child did not protect its own queue
+    event; the record was marked `failed` while the child was still running.
+
+    Only `compute_mode_occupancy` compensated, by patching three names back on by
+    hand -- and it too missed one. A list maintained by hand in config has already
+    been got wrong twice (the shipped default carries four names, the example six,
+    the code needs eight), which is why the floor now lives in code.
+
+    The same shape as the delivery gate in `ai_status.collect_done_delivery_metadata`:
+    local settings may make things stricter, never laxer.
+    """
+    configured = {
+        str(value)
+        for value in (ready_dispatch_settings(config).get("active_worker_statuses") or [])
+    }
+    return ACTIVE_WORKER_STATUSES | configured
+
 
 TERMINAL_QUEUE_STATUSES = {"completed", "failed", "done", "cancelled"}
 QUEUE_STATUS_RANK = {

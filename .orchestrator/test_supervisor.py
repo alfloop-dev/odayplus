@@ -13783,5 +13783,44 @@ class SupervisorTerminationLoggingTests(unittest.TestCase):
         self.assertLess(install_at, write_at)
 
 
+class HandedOffChildProtectsItsQueueEventTests(unittest.TestCase):
+    """A queue event must not settle while a worker on it is still running.
+
+    `finalize_queue_event_record` refuses when another worker on the same event is
+    active -- but it asked the raw `ready_dispatcher.active_worker_statuses`, which
+    shipped without `fallback`. So a parent that had handed off to a file_inbox
+    child settled the event as `failed` underneath the child. Reproduced against
+    the real function before the floor was introduced.
+    """
+
+    def _state(self, child_status: str) -> dict:
+        return {
+            "workers": {
+                "parent": {"run_id": "parent", "status": "failed", "queue_event_id": "evt-1", "task_id": "T-1"},
+                "child": {"run_id": "child", "status": child_status, "queue_event_id": "evt-1", "task_id": "T-1"},
+            },
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+        }
+
+    def test_a_running_fallback_child_blocks_finalization(self) -> None:
+        config = {"ready_dispatcher": {"active_worker_statuses": ["running", "waiting_approval"]}}
+        state = self._state("fallback")
+        supervisor.finalize_queue_event_record(config, state, state["workers"]["parent"], "failed", "parent died")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
+
+    def test_a_started_child_blocks_finalization(self) -> None:
+        config = {"ready_dispatcher": {"active_worker_statuses": []}}
+        state = self._state("started")
+        supervisor.finalize_queue_event_record(config, state, state["workers"]["parent"], "failed", "parent died")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "started")
+
+    def test_a_finished_child_does_not_block_finalization(self) -> None:
+        """The floor widens what counts as live; it does not stop settlement."""
+        config = {"ready_dispatcher": {"active_worker_statuses": []}}
+        state = self._state("completed")
+        supervisor.finalize_queue_event_record(config, state, state["workers"]["parent"], "failed", "parent died")
+        self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

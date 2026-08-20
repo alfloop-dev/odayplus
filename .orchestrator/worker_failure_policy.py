@@ -1522,7 +1522,7 @@ def agent_auto_dispatch_block_reason(
         if pool_block_reason:
             return pool_block_reason
     settings = ready_dispatch_settings(config)
-    active_statuses = {str(value) for value in settings.get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     if state is not None:
         quota_limit = account_pool_effective_concurrency(config, state, normalized_agent)
         quota_group = agent_quota_group_id(config, normalized_agent)
@@ -1937,10 +1937,9 @@ def fence_account_pool_workers(
     pool_id = agent_account_pool_id(config, triggering_identity)
     if not pool_id:
         return 0
-    active_statuses = {
-        str(value).lower()
-        for value in ready_dispatch_settings(config).get("active_worker_statuses", [])
-    }
+    # `.lower()` preserved: this call site compares against lowercased sibling
+    # statuses, unlike the other fifteen.
+    active_statuses = {status.lower() for status in active_worker_statuses(config)}
     fenced = 0
     for sibling in list((state.get("workers", {}) or {}).values()):
         if str(sibling.get("run_id") or "") == triggering_run_id:

@@ -69,7 +69,7 @@ def process_queue(
 
     changed = False
     task_map = task_index_from_status(config, load_status(config))
-    active_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     for event in load_event_queue(config):
         event_id = event.get("event_id")
         if not event_id:
@@ -448,7 +448,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
     task_map = task_index_from_status(config, load_status(config))
     valid_queue_event_ids = set(state.get("queue", {}).get("events", {}))
     redispatch_statuses = redispatch_candidate_statuses(config)
-    active_worker_statuses = {str(value) for value in ready_dispatch_settings(config).get("active_worker_statuses", [])}
+    active_statuses = active_worker_statuses(config)
     pending_by_run: dict[str, list[dict[str, Any]]] = {}
     resolved_by_run: dict[str, list[dict[str, Any]]] = {}
     for item in approval_state.get("pending", []):
@@ -526,7 +526,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             ).append(adopted_approval)
             changed = True
         alive = pid_is_alive(worker.get("pid"))
-        if alive and worker.get("status") in active_worker_statuses and worker.get("last_heartbeat_at"):
+        if alive and worker.get("status") in active_statuses and worker.get("last_heartbeat_at"):
             if not worker_heartbeat_is_stale(config, worker, now):
                 refresh_worker_lease(config, worker, now)
                 poll_counts["lease_refreshes"] += 1
@@ -534,7 +534,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     record = queue_event_record(state, worker["queue_event_id"])
                     record["lease_owner"] = worker.get("run_id")
                     record["lease_expires_at"] = queue_lease_expiry(config, now)
-        if alive and worker.get("status") in active_worker_statuses and worker_lease_is_expired(config, worker, now):
+        if alive and worker.get("status") in active_statuses and worker_lease_is_expired(config, worker, now):
             terminate_worker_pid(worker.get("pid"))
             worker["status"] = "failed"
             worker["last_event_at"] = utc_now()
@@ -662,7 +662,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             continue
         if (
             worker.get("queue_event_id")
-            and worker.get("status") in active_worker_statuses
+            and worker.get("status") in active_statuses
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
             if alive:
