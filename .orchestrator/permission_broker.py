@@ -146,6 +146,20 @@ DENY_BASH_PATTERNS = [
     re.compile(r"^git reset --hard"),
     re.compile(r"^git checkout --(\s|$)"),
     re.compile(r"^git push(?:\s|$).*?(?:--force(?:-with-lease)?|-f|--mirror|--delete|--all|--tags|--prune|--atomic)(?:\s|$)"),
+    # The line above denies destroying a published ref via git. `gh` reaches the
+    # same repository over the API and was not covered, so the same capability
+    # stayed open through a different tool. On 2026-08-20 PR #822 was closed at
+    # 08:48:23Z and its head branch `single-runtime-release-0d1603cf` deleted at
+    # 08:58:57Z -- two deliberate steps, ten minutes apart, by the shared
+    # `ajoe734` account, with no matching command in any worker log and no code
+    # path in this repository that closes a PR or deletes a remote branch. The
+    # actor was never identified; what is certain is that this was the only
+    # unguarded route to it. Deny the capability rather than one spelling of it.
+    re.compile(r"^gh pr close(\s|$)"),
+    re.compile(r"^gh pr(?:\s|$).*?--delete-branch(?:\s|$)"),
+    re.compile(r"^gh api(?:\s|$).*?(?:-X\s+DELETE|--method\s+DELETE)(?:\s|$)"),
+    re.compile(r"^gh repo delete(\s|$)"),
+    re.compile(r"^gh release delete(\s|$)"),
     re.compile(r"^sudo(\s|$)"),
     re.compile(r"^rm -rf /\*?$"),
     re.compile(r"^chmod 777(\s|$)"),

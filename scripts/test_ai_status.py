@@ -4596,6 +4596,7 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "prune_agents": ["--apply", "cleanup"],
         "restore_approved": [TASK_ID, "restoring"],
         "restore_approved_head": [TASK_ID, "1111111122222222333333334444444455555555", "attesting"],
+        "retarget_branch": [TASK_ID, "task/OTHER", "old branch was deleted"],
         "done": [TASK_ID, "finished"],
         "supersede": [TASK_ID, "superseded"],
         "approve": [TASK_ID, "approved"],
@@ -5852,6 +5853,88 @@ class TaskBranchNameTests(unittest.TestCase):
         for bad in ("has space", "tilde~1", "caret^", "colon:x", "star*", "q?", "br[x", "dot..dot"):
             with self.subTest(branch=bad):
                 self.assertEqual(ai_status.task_branch_name({"id": "T-8", "branch": bad}), "task/T-8")
+
+
+class RetargetBranchTests(unittest.TestCase):
+    """A task must be able to change which branch it means, lawfully.
+
+    Nothing else writes `task["branch"]`: `command_submit_review` derives it
+    from the record it is writing, so it can confirm a branch but never change
+    one. On 2026-08-20 that left hand-editing ai-status.json as the only way to
+    repoint a task whose branch had been deleted -- the audit bypass this file
+    refuses everywhere else.
+    """
+
+    def _task(self, **over):
+        task = {
+            "id": "T-RB-1",
+            "status": "in_progress",
+            "owner": "Claude",
+            "reviewer": "Antigravity",
+            "branch": "task/OLD",
+        }
+        task.update(over)
+        return task
+
+    def _run(self, task, args, *, actor="Claude", published=True):
+        state = {"tasks": [task], "agents": [], "log": []}
+        with mock.patch.object(ai_status, "current_actor_validated", return_value=actor), \
+                mock.patch.object(ai_status, "canonical_agent_name", side_effect=lambda v: str(v or "")), \
+                mock.patch.object(ai_status, "status_runtime_config", return_value={}), \
+                mock.patch.object(ai_status, "task_primary_repository_id", return_value="pantheon"), \
+                mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT), \
+                mock.patch.object(ai_status, "run_git_command",
+                                  return_value="abc123\trefs/heads/task/NEW\n" if published else ""), \
+                mock.patch.object(ai_status, "append_log") as logged:
+            ai_status.command_retarget_branch(state, args)
+        return task, logged
+
+    def test_it_repoints_the_branch_and_records_why(self) -> None:
+        task, logged = self._run(self._task(), ["T-RB-1", "task/NEW", "old branch was deleted"])
+
+        self.assertEqual(task["branch"], "task/NEW")
+        self.assertEqual(task["next"], "old branch was deleted")
+        entry = logged.call_args.args[0]
+        self.assertEqual(entry["type"], "branch_retargeted")
+        self.assertEqual(entry["previous_branch"], "task/OLD")
+        self.assertEqual(entry["branch"], "task/NEW")
+
+    def test_an_unpublished_branch_is_refused(self) -> None:
+        """Swapping one unreachable branch for another only moves the problem."""
+        with self.assertRaisesRegex(SystemExit, "origin has no such branch"):
+            self._run(self._task(), ["T-RB-1", "task/NEW", "why"], published=False)
+
+    def test_the_reviewer_may_also_retarget(self) -> None:
+        task, _ = self._run(self._task(), ["T-RB-1", "task/NEW", "why"], actor="Antigravity")
+        self.assertEqual(task["branch"], "task/NEW")
+
+    def test_a_stranger_may_not(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "Only the owner"):
+            self._run(self._task(), ["T-RB-1", "task/NEW", "why"], actor="Codex")
+
+    def test_a_terminal_task_may_not_be_retargeted(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "already terminal"):
+            self._run(self._task(status="done"), ["T-RB-1", "task/NEW", "why"])
+
+    def test_retargeting_the_same_branch_is_refused(self) -> None:
+        with self.assertRaisesRegex(SystemExit, "already names branch"):
+            self._run(self._task(), ["T-RB-1", "task/OLD", "why"])
+
+    def test_an_approved_head_cannot_vouch_for_a_different_branch(self) -> None:
+        """Same shape the dispatcher applies when a branch moves after approval."""
+        task, logged = self._run(
+            self._task(status="review_approved", approved_head="a" * 40, review_gate_sha="a" * 40),
+            ["T-RB-1", "task/NEW", "old branch was deleted"],
+        )
+
+        self.assertEqual(task["status"], "review")
+        self.assertNotIn("approved_head", task)
+        self.assertNotIn("review_gate_sha", task)
+        self.assertTrue(logged.call_args.args[0]["cleared_approved_head"])
+
+    def test_it_is_registered_as_a_mutating_command(self) -> None:
+        self.assertIs(ai_status.MUTATING_COMMANDS["retarget_branch"], ai_status.command_retarget_branch)
+        self.assertNotIn("retarget_branch", ai_status.ACTORLESS_MUTATING_COMMANDS)
 
 
 if __name__ == "__main__":
