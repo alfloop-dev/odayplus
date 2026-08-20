@@ -877,6 +877,57 @@ def compute_mode_occupancy(config: dict[str, Any], state: dict[str, Any]) -> dic
     return occupancy
 
 
+def check_control_plane(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Report an unreviewed change to the governing code; return whether to block.
+
+    Reports once per distinct set of dirty paths rather than per tick, and
+    clears when the tree is clean again so the next occurrence is reported
+    afresh.
+    """
+    import control_plane
+
+    from common import ROOT as _root
+
+    settings = control_plane.control_plane_settings(config)
+    if not settings.get("enabled"):
+        return False
+
+    paths = control_plane.dirty_control_plane_paths(_root, settings["globs"])
+    supervisor_state = state.setdefault("supervisor", {})
+    if paths is None:
+        # Unreadable is not clean, but it is also not evidence of a change.
+        return False
+    if not paths:
+        supervisor_state.pop("control_plane_dirty", None)
+        supervisor_state.pop("control_plane_reported", None)
+        return False
+
+    supervisor_state["control_plane_dirty"] = paths
+    alarm = control_plane.control_plane_alarm(paths)
+    if supervisor_state.get("control_plane_reported") != alarm:
+        supervisor_state["control_plane_reported"] = alarm
+        console_log(alarm, quiet=SUPERVISOR_LOG_QUIET)
+        try:
+            write_activity_log(
+                config,
+                {
+                    "type": "control_plane_modified",
+                    "message": alarm,
+                    "paths": paths,
+                    "mode": settings["mode"],
+                },
+            )
+        except (KeyError, OSError) as exc:
+            # An observer must never be able to halt what it observes. The
+            # alarm has already reached the console; degrade rather than take
+            # the dispatch loop down over a log path.
+            console_log(
+                f"control plane alarm could not be written to the activity log: {exc}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+    return settings["mode"] == "block"
+
+
 def stamp_supervisor_runtime_state(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -4005,7 +4056,14 @@ def run_once(
         else:
             # Work dispatch has one purpose: assign an already canonical,
             # ready task. Runtime heuristics never create or reassign tasks.
-            changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
+            if check_control_plane(config, state):
+                console_log(
+                    "control plane is dirty and control_plane_guard.mode is `block`; "
+                    "skipping dispatch this tick",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
+            else:
+                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             changed = process_queue(config, state, provider_report) or changed
         finish_loop_stage_timing(state, "dispatch_and_queue", stage_started)
