@@ -190,6 +190,8 @@ verification_ownership:
         - tests/security/**/*.py
         - tests/tooling/*.py
         - tests/tooling/**/*.py
+        - tests/release/*.py
+        - tests/release/**/*.py
         - tests/contract/test_openapi_artifact_and_client.py
     - scope: product_operations_tooling
       include:

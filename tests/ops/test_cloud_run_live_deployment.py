@@ -23,7 +23,6 @@ SCHEDULER_HELPER_PATH = ROOT / "product_ops/deployment/cloud_scheduler_trigger.p
 DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 WORKFLOWS = (
     ROOT / ".github/workflows/deploy-dev.yml",
-    ROOT / ".github/workflows/deploy-staging.yml",
 )
 EXPECTED_SHA = "a" * 40
 

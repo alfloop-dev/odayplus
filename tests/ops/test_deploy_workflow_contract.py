@@ -1,33 +1,9 @@
-"""Deploy Dev / Deploy Staging artifact path contract.
+"""Runtime Release artifact and single-entrypoint contract.
 
-ODP-DEPLOY-JOB-RECEIPT-UPLOAD-001: Deploy Dev run 30436771086 wrote three Cloud
-Run Job validation receipts —
-`.odp_data/deployment/cloud-run-jobs/{migration,scheduler,worker}-validation.json`,
-all passing — and published none of them. The upload step's
-`.odp_data/deployment/*.json` glob is not recursive, so the artifact held only
-the three top-level reports and the Job receipts died with the runner.
-
-ODP-DEPLOY-STAGING-JOB-RECEIPT-UPLOAD-001: Deploy Staging carried the identical
-glob. It has never lost a receipt only because it has never produced one — every
-run to date fails closed at the WIF gate (run 30445252373: "Workload Identity
-Federation variables are required", then "No files were found with the provided
-path: .odp_data/deployment/*.json"). The first genuinely configured staging
-deploy would have dropped its Job receipts exactly as dev did.
-
-Replacing a glob with an explicit allowlist fixes that, but an allowlist is a
-second place that has to stay true: the deploy script decides which receipts
-exist, and nothing forces a workflow to keep up. These tests derive the expected
-file set from `product_ops/deployment/deploy_cloud_run_waji.sh` and from each workflow's own
-steps, then run it against every deploy workflow in one parametrised sweep. So
-adding a fourth Cloud Run Job kind, renaming a report, or landing a third
-environment workflow fails here instead of silently shipping another evidence
-gap — and dev and staging cannot drift apart from each other either.
-
-The allowlist also carries a confidentiality obligation. The same directory
-holds the raw `gcloud run jobs describe` / `executions describe` /
-`executions list` dumps, which restate the deployed env block and secret
-selectors verbatim. A recursive include would have published them, so the
-exclusion is asserted as a property of the path list, not left to review.
+The release workflow is intentionally the only deployment workflow. These tests
+derive the expected receipt set from the deploy script and assert that the
+workflow publishes only redacted validation reports, never raw Cloud Run
+descriptions containing environment or secret selectors.
 """
 
 from __future__ import annotations
@@ -54,8 +30,8 @@ DEPLOYMENT_REPORT_DIR = ".odp_data/deployment"
 # environment and its secret selectors.
 UNREDACTED_RECEIPT_SUFFIXES = ("-job.json", "-execution.json", "-execution-list.json")
 
-# Deploy Staging names its remote proof after the run, so the upload path has to
-# carry the same expansion the checker step used. Only run-scoped context is
+# Runtime Release names its remote proof after the run, so the upload path has
+# to carry the same expansion the checker step used. Only run-scoped context is
 # allowed in: an expression that can be steered by workflow input or event
 # payload would put path selection back outside review.
 ALLOWED_PATH_EXPRESSIONS = ("github.run_id",)
@@ -95,18 +71,11 @@ class DeployWorkflow:
 
 DEPLOY_WORKFLOWS = (
     DeployWorkflow(
-        label="dev",
+        label="runtime",
         filename="deploy-dev.yml",
-        workflow_name="Deploy Dev",
+        workflow_name="Runtime Release",
         job_id="deploy",
-        artifact_name="cloud-run-dev-validation",
-    ),
-    DeployWorkflow(
-        label="staging",
-        filename="deploy-staging.yml",
-        workflow_name="Deploy/Verify Staging",
-        job_id="deploy-staging",
-        artifact_name="remote-staging-proof",
+        artifact_name="runtime-release-${{ inputs.environment }}-validation",
         extra_report_roots=(".odp_data/remote-staging-proof/",),
     ),
 )
@@ -257,7 +226,7 @@ def test_deploy_workflow_is_valid_yaml_and_still_uploads_on_failure(
     assert step["with"]["if-no-files-found"] == "ignore"
 
 
-def test_every_deploy_workflow_runs_the_same_receipt_writing_script() -> None:
+def test_runtime_release_is_the_only_workflow_running_the_deploy_script() -> None:
     """Why one derivation from the deploy script is valid for both environments.
 
     `deploy_cloud_run_waji.sh` reads `ODP_DEPLOY_ENV` for naming and gate
@@ -269,10 +238,7 @@ def test_every_deploy_workflow_runs_the_same_receipt_writing_script() -> None:
     invocation = "./product_ops/deployment/deploy_cloud_run_waji.sh"
     for workflow in DEPLOY_WORKFLOWS:
         runs = [step.get("run", "") for step in _steps(workflow)]
-        assert any(invocation in run for run in runs), (
-            f"{workflow.filename} no longer runs {invocation}; its receipt set must be "
-            "derived from whatever it runs instead"
-        )
+        assert sum(invocation in run for run in runs) == 1
 
 
 @pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
@@ -510,3 +476,58 @@ def test_the_excluded_dumps_are_the_files_the_deploy_script_actually_writes(
     assert written_by in _deploy_script_text(), (
         f"deploy script no longer writes {suffix} dumps; revisit the upload exclusions"
     )
+
+
+def test_all_checkout_steps_bind_to_release_sha_input() -> None:
+    """Every checkout step in Runtime Release must explicitly specify ref: inputs.release_sha."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    checkout_count = 0
+    for job_id, job in parsed.get("jobs", {}).items():
+        for step in job.get("steps", []):
+            if not isinstance(step, dict):
+                continue
+            if str(step.get("uses", "")).startswith("actions/checkout@"):
+                checkout_count += 1
+                assert step.get("with", {}).get("ref") == "${{ inputs.release_sha }}", (
+                    f"Job {job_id} checkout step does not bind ref to inputs.release_sha"
+                )
+    assert checkout_count >= 3, f"Expected at least 3 checkout steps, found {checkout_count}"
+
+
+def test_jobs_assert_checked_out_head_matches_release_sha() -> None:
+    """Every job must assert git rev-parse HEAD equals inputs.release_sha."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    for job_id, job in parsed.get("jobs", {}).items():
+        steps = job.get("steps", [])
+        runs = [
+            step.get("run", "")
+            for step in steps
+            if isinstance(step, dict) and isinstance(step.get("run"), str)
+        ]
+        assert any("git rev-parse HEAD" in run for run in runs), (
+            f"Job {job_id} does not assert that git rev-parse HEAD equals the expected release SHA"
+        )
+
+
+def test_runtime_release_is_single_entrypoint() -> None:
+    """deploy-staging.yml and promote-dev-to-main.yml are removed; deploy-dev.yml is the sole deploy entrypoint."""
+    assert not (WORKFLOW_DIR / "deploy-staging.yml").exists()
+    assert not (WORKFLOW_DIR / "promote-dev-to-main.yml").exists()
+    assert (WORKFLOW_DIR / "deploy-dev.yml").exists()
+
+
+def test_staging_proof_checker_gated_on_staging_environment() -> None:
+    """The fail-closed remote staging proof checker runs in deploy job when environment is staging."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    staging_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "check_remote_staging_proof.py" in str(step.get("run", ""))
+    ]
+    assert len(staging_steps) == 1
+    step = staging_steps[0]
+    assert step.get("if") == "${{ inputs.environment == 'staging' }}"
+    assert "ODP_STAGING_DEPLOY_URL" in step.get("env", {})
+    assert "ODP_STAGING_API_URL" in step.get("env", {})
+    assert "ODP_STAGING_SECRET_OWNER" in step.get("env", {})

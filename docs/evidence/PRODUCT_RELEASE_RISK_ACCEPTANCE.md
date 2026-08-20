@@ -159,7 +159,7 @@ full URL as sensitive and do not commit it.
 
 ### Remote Staging: Code Path and Required Config
 
-`.github/workflows/deploy-staging.yml` runs
+`.github/workflows/deploy-dev.yml` (Runtime Release, `environment: staging`) runs
 `delivery_toolchain/e2e/check_remote_staging_proof.py`. Missing host/url/secret owner
 produce a failed check, not a fabricated pass.
 
