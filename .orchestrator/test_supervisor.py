@@ -13294,18 +13294,89 @@ class ApprovedPrMergeRoutingTests(unittest.TestCase):
         self.assertEqual(task["merge_route"]["scope"], "unknown")
         self.assertEqual(calls, [["pr", "merge", "43"]])
 
-    def test_same_reviewed_head_is_not_routed_twice(self) -> None:
+    def _routed_at(self, seconds_ago: float) -> str:
+        stamp = datetime.now(UTC) - timedelta(seconds=seconds_ago)
+        return stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def test_same_reviewed_head_is_not_routed_twice_within_the_window(self) -> None:
         task = {
             "id": "T-3",
             "pr_number": 44,
             "approved_head": self.HEAD,
-            "merge_route": {"head": self.HEAD, "route": "queued"},
+            "merge_route": {
+                "head": self.HEAD,
+                "route": "queued",
+                "at": self._routed_at(60),
+                "attempts": 1,
+            },
         }
 
         route, _, calls = self._route(task, scope="product_or_mixed")
 
         self.assertEqual(route, "waiting")
         self.assertEqual(calls, [])
+
+    def test_a_recorded_enqueue_is_retried_once_the_window_elapses(self) -> None:
+        """The record proves an enqueue was issued, not that the PR is queued.
+
+        On 2026-08-19 four reviewed, CI-green PRs each carried `route: queued`
+        while the dev queue was empty, and this guard suppressed every retry
+        until an operator cleared the field by hand.
+        """
+        task = {
+            "id": "T-5",
+            "pr_number": 46,
+            "approved_head": self.HEAD,
+            "merge_route": {
+                "head": self.HEAD,
+                "route": "queued",
+                "at": self._routed_at(7200),
+                "attempts": 1,
+            },
+        }
+
+        route, _, calls = self._route(task, scope="product_or_mixed")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "46"]])
+        self.assertEqual(task["merge_route"]["attempts"], 2)
+
+    def test_repeated_enqueues_stop_and_report_rather_than_continue(self) -> None:
+        """Retrying forever is the other failure. Past the cap the missing step
+        is not another `gh pr merge`, so say so instead of issuing a fifth."""
+        task = {
+            "id": "T-6",
+            "pr_number": 47,
+            "approved_head": self.HEAD,
+            "merge_route": {
+                "head": self.HEAD,
+                "route": "queued",
+                "at": self._routed_at(7200),
+                "attempts": 4,
+            },
+        }
+
+        route, detail, calls = self._route(task, scope="product_or_mixed")
+
+        self.assertEqual(route, "stalled")
+        self.assertIn("4 times", detail)
+        self.assertEqual(calls, [])
+
+    def test_a_record_without_a_timestamp_self_heals(self) -> None:
+        """A malformed record is retried once, which stamps a real `at`, and the
+        attempt cap still bounds it."""
+        task = {
+            "id": "T-7",
+            "pr_number": 48,
+            "approved_head": self.HEAD,
+            "merge_route": {"head": self.HEAD, "route": "queued"},
+        }
+
+        route, _, calls = self._route(task, scope="product_or_mixed")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "48"]])
+        self.assertTrue(task["merge_route"]["at"])
 
     def test_queue_ejection_is_reported_rather_than_waited_on(self) -> None:
         """An entry dropped for conflicting with a newly merged base is never
@@ -13410,6 +13481,25 @@ class ApprovedPrMergeAdvanceTests(unittest.TestCase):
 
         repeat_changed, repeat_logged = self._advance(
             task, route="blocked", detail="rule violations"
+        )
+
+        self.assertFalse(repeat_changed)
+        self.assertEqual(repeat_logged, [])
+
+    def test_a_stalled_enqueue_is_reported_once_and_not_retried(self) -> None:
+        """Same shape as an escalated worktree lease: stop, and say so where an
+        owner looks. Reporting without stopping is what left four PRs cycling."""
+        task = self._task()
+
+        changed, logged = self._advance(task, route="stalled", detail="enqueued 4 times")
+
+        self.assertTrue(changed)
+        self.assertIn("has not merged after being enqueued repeatedly", task["next"])
+        self.assertIn("enqueued 4 times", task["next"])
+        self.assertEqual([e["type"] for e in logged], ["merge_route_stalled"])
+
+        repeat_changed, repeat_logged = self._advance(
+            task, route="stalled", detail="enqueued 4 times"
         )
 
         self.assertFalse(repeat_changed)
