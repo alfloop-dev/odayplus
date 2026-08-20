@@ -3278,6 +3278,75 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
+    def test_idle_worker_leases_sla_overdue_task_without_reassigning_owner(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"].update(
+            {
+                "claude": {
+                    "id": "claude",
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "adapter": "claude",
+                },
+                "gemini": {
+                    "id": "gemini",
+                    "display_name": "Gemini",
+                    "provider": "gemini",
+                    "adapter": "gemini",
+                },
+            }
+        )
+        config["providers"].update(
+            {
+                "claude": {"delivery_mode": "claude"},
+                "gemini": {"delivery_mode": "gemini"},
+            }
+        )
+        config["ready_dispatcher"]["helper_execution_lease"] = {
+            "enabled": True,
+            "claimable_statuses": ["todo"],
+            "require_owner_saturated": True,
+            "dispatch_sla_seconds": 1,
+            "lease_seconds": 1800,
+        }
+        task = {
+            "id": "HELPER-LEASE-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-08-20T00:00:00Z",
+        }
+        status = {"tasks": [task]}
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "capacity_controller": {"chair_decision": {"max_helper_claims": 1}},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queued,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex"],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Gemini")
+        self.assertEqual(task["helper_execution_lease"]["claimed_by"], "Codex")
+        queued.assert_called_once()
+        event = queued.call_args.args[1]
+        self.assertEqual(event["target_agent"], "Codex")
+        self.assertEqual(event["reason"], "helper_claim_dispatch")
+
     def test_an_escalated_lease_block_is_reported_on_the_task_record(self) -> None:
         """Stopping dispatch silently is the 2026-08-17 jam; retrying forever is
         the 2026-08-19 livelock. An escalated block has to do both - stop, and

@@ -3528,6 +3528,10 @@ def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
 def expected_task_actor(task: dict[str, Any]) -> str:
     if str(task.get("status") or "").lower() == "review":
         return canonical_agent_name(task.get("reviewer"))
+    claim = task.get("helper_execution_lease") or {}
+    claimed_by = canonical_agent_name(claim.get("claimed_by"))
+    if claimed_by and task_actor_may_execute(task, claimed_by):
+        return claimed_by
     return canonical_agent_name(task.get("owner"))
 
 
@@ -4662,6 +4666,33 @@ def build_dashboard_bundle(
     sprint_started_at_value = str(state.get("sprint_started_at") or "").strip() or None
     completed_in_sprint, superseded_in_sprint = count_terminal_since(sprint_started_at_value)
 
+    controller_state = (
+        orchestrator.get("capacity_controller")
+        if isinstance(orchestrator.get("capacity_controller"), dict)
+        else {}
+    )
+    controller_snapshot = (
+        controller_state.get("snapshot")
+        if isinstance(controller_state.get("snapshot"), dict)
+        else {}
+    )
+    live_sidecar_workers = sum(
+        1
+        for worker in live_workers
+        if str((task_map.get(str(worker.get("task_id") or "")) or {}).get("task_class") or "").lower()
+        == "sidecar"
+    )
+    live_helper_workers = sum(
+        1 for worker in live_workers if worker.get("reason") == "helper_claim_dispatch"
+    )
+    capacity_summary = {
+        **controller_snapshot,
+        "live_canonical_workers": max(0, len(live_workers) - live_sidecar_workers),
+        "live_sidecar_workers": live_sidecar_workers,
+        "live_helper_workers": live_helper_workers,
+        "chair_decision": controller_state.get("chair_decision"),
+    }
+
     bff_consol_archived_ids: list[str] = []
     if ARCHIVE_TASKS_DIR.exists():
         for path in ARCHIVE_TASKS_DIR.glob("BFF-CONSOL-*.json"):
@@ -4687,6 +4718,7 @@ def build_dashboard_bundle(
             "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
             "mode_occupancy": mode_occupancy,
             "lanes": lanes,
+            "capacity": capacity_summary,
         },
         "execution_summary": {
             "ready_now": ready_now,
@@ -4735,6 +4767,7 @@ def build_dashboard_bundle(
         "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
         "dispatch_policy": dispatch_policy,
+        "capacity_summary": capacity_summary,
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
@@ -5021,6 +5054,24 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def task_actor_may_execute(task: dict[str, Any], actor: str) -> bool:
+    """Owner or the holder of a live helper lease may mutate execution state."""
+    if canonical_agent_name(task.get("owner")) == canonical_agent_name(actor):
+        return True
+    claim = task.get("helper_execution_lease") or {}
+    if canonical_agent_name(claim.get("claimed_by")) != canonical_agent_name(actor):
+        return False
+    try:
+        expires_at = datetime.fromisoformat(
+            str(claim.get("lease_expires_at") or "").replace("Z", "+00:00")
+        )
+    except ValueError:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at.astimezone(UTC) > datetime.now(UTC)
+
+
 def command_start(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: start <task-id> <message>")
@@ -5029,7 +5080,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
     timestamp = iso_now()
     task["status"] = "in_progress"
@@ -5048,7 +5099,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
     if task["status"] in {"todo", "review_approved"}:
@@ -5183,7 +5234,7 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can submit {task_id} for review")
     reviewer = canonical_agent_name(task.get("reviewer"))
     if not reviewer:
@@ -5199,6 +5250,7 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["pr_number"] = submission["pr_number"]
     task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
+    task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -5308,7 +5360,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can hand off {task_id} for review")
     if task.get("reviewer") != to_agent:
         raise SystemExit(
@@ -5326,6 +5378,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("approved_head", None)
+    task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -5385,13 +5438,14 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
     timestamp = iso_now()
     task["status"] = "blocked"
     task["waiting_for"] = waiting_for
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     state.setdefault("blockers", []).append(
         {

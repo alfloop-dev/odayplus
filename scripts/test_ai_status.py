@@ -4443,6 +4443,36 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
     )
     TASK_ID = "ODP-ACTOR-REF-001"
 
+    def test_execution_lease_allows_helper_without_changing_canonical_owner(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "helper_execution_lease": {
+                "claimed_by": "Antigravity",
+                "lease_expires_at": "2099-01-01T00:00:00Z",
+            },
+        }
+
+        self.assertTrue(ai_status.task_actor_may_execute(task, "Antigravity"))
+        self.assertTrue(ai_status.task_actor_may_execute(task, "Claude"))
+        self.assertFalse(ai_status.task_actor_may_execute(task, "Codex2"))
+        self.assertEqual(ai_status.expected_task_actor(task), "Antigravity")
+        self.assertEqual(task["owner"], "Claude")
+
+    def test_expired_execution_lease_does_not_authorize_helper(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "helper_execution_lease": {
+                "claimed_by": "Antigravity",
+                "lease_expires_at": "2000-01-01T00:00:00Z",
+            },
+        }
+
+        self.assertFalse(ai_status.task_actor_may_execute(task, "Antigravity"))
+
     def setUp(self) -> None:
         self._known_before = dict(ai_status.KNOWN_AGENTS)
         self._quarantined_before = set(ai_status.QUARANTINED_AGENTS)
