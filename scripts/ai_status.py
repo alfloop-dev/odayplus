@@ -5223,6 +5223,82 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def command_retarget_branch(state: dict[str, Any], args: list[str]) -> None:
+    """Point a task at a different branch, with an audit trail.
+
+    Usage: retarget_branch <task-id> <branch> <reason>
+
+    Nothing else can write `task["branch"]`. The only other writer is
+    `command_submit_review`, and it derives the branch from the record it is
+    writing, so it can confirm a branch but never change which one a task
+    means. That left no lawful path when a task's branch stops existing --
+    twice on 2026-08-20 -- and hand-editing ai-status.json was the only way
+    through, which is exactly the audit bypass the rest of this file refuses.
+
+    Fails closed on a branch that is not published: retargeting onto a name
+    with no remote ref would swap one unreachable branch for another.
+
+    A reviewer-approved head cannot vouch for a different branch, so an
+    approved task returns to `review` and its frozen head is cleared -- the
+    same shape the dispatcher applies when a branch moves after approval.
+    """
+    if len(args) < 3:
+        raise SystemExit("Usage: retarget_branch <task-id> <branch> <reason>")
+    task_id, branch, reason = args[0], args[1].strip(), args[2]
+    actor = current_actor_validated()
+    task = get_task(state, task_id)
+    if task is None:
+        raise SystemExit(f"Unknown task: {task_id}")
+    owner = canonical_agent_name(task.get("owner"))
+    reviewer = canonical_agent_name(task.get("reviewer"))
+    if actor not in {owner, reviewer}:
+        raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can retarget {task_id}")
+    if str(task.get("status") or "").lower() == "done":
+        raise SystemExit(f"Cannot retarget {task_id}: it is already terminal")
+    if not branch:
+        raise SystemExit("Usage: retarget_branch <task-id> <branch> <reason>")
+
+    previous = str(task.get("branch") or "")
+    if branch == previous:
+        raise SystemExit(f"{task_id} already names branch {branch}")
+
+    repository_id = task_primary_repository_id(status_runtime_config(), task) or "pantheon"
+    repository_root = repository_local_path(status_runtime_config(), repository_id) or ROOT
+    published = run_git_command(
+        ["ls-remote", "--heads", "origin", f"refs/heads/{branch}"],
+        cwd=repository_root,
+        required=False,
+    )
+    if not (published or "").strip():
+        raise SystemExit(
+            f"Cannot retarget {task_id} onto {branch}: origin has no such branch. "
+            "Push it first; retargeting onto an unpublished name only moves the problem."
+        )
+
+    timestamp = iso_now()
+    task["branch"] = branch
+    task["last_update"] = timestamp
+    task["next"] = reason
+    cleared_approval = False
+    if task.get("approved_head") or str(task.get("status") or "").lower() == "review_approved":
+        cleared_approval = True
+        task.pop("approved_head", None)
+        task.pop("review_gate_sha", None)
+        task["status"] = "review"
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "branch_retargeted",
+            "task_id": task_id,
+            "message": reason,
+            "previous_branch": previous,
+            "branch": branch,
+            "cleared_approved_head": cleared_approval,
+        }
+    )
+
+
 def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 3:
         raise SystemExit("Usage: handoff <task-id> <to-agent> <message>")
@@ -6543,6 +6619,7 @@ MUTATING_COMMANDS = {
     "done": command_done,
     "restore_approved": command_restore_approved,
     "restore_approved_head": command_restore_approved_head,
+    "retarget_branch": command_retarget_branch,
     "supersede": command_supersede,
     "approve": command_approve,
     "archive_migrate": command_archive_migrate,
