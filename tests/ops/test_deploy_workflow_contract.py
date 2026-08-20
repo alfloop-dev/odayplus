@@ -530,3 +530,17 @@ def test_staging_proof_checker_gated_on_staging_environment() -> None:
     assert "ODP_STAGING_DEPLOY_URL" in step.get("env", {})
     assert "ODP_STAGING_API_URL" in step.get("env", {})
     assert "ODP_STAGING_SECRET_OWNER" in step.get("env", {})
+
+
+def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:
+    """The admission job must checkout with fetch-depth: 0 so git merge-base --is-ancestor can check ancestry."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    admission_steps = parsed["jobs"]["admission"]["steps"]
+    checkout_steps = [
+        step
+        for step in admission_steps
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    assert len(checkout_steps) == 1
+    assert checkout_steps[0].get("with", {}).get("fetch-depth") == 0
+

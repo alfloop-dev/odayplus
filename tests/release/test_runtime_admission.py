@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,30 +104,112 @@ def test_gate_release_sha_mismatch_is_blocked() -> None:
     assert "gate-0 release_sha does not match candidate_sha" in errors
 
 
-def test_candidate_ancestry_admitted_when_ancestry_valid(monkeypatch) -> None:
+def test_candidate_ancestry_real_git_evidence_only_is_admitted(tmp_path: Path) -> None:
     mod = module()
-    monkeypatch.setattr(mod, "check_candidate_ancestry", lambda c, e, r: [])
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "docs" / "evidence").mkdir(parents=True)
+    (repo / "docs" / "evidence" / "gate.md").write_text("initial evidence\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate commit")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    (repo / "docs" / "evidence" / "gate2.md").write_text("extra evidence\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "evidence commit")
+    release_sha = run_git("rev-parse", "HEAD")
+
     payload = registry()
-    payload["release"]["candidate_sha"] = "a" * 40
+    payload["release"]["candidate_sha"] = candidate_sha
     for gate in payload["gates"]:
-        gate["release_sha"] = "a" * 40
+        gate["release_sha"] = candidate_sha
+
     args = kwargs()
-    args["release_sha"] = "b" * 40
-    assert mod.admission_errors(payload, **args) == []
+    args["release_sha"] = release_sha
+    assert mod.admission_errors(payload, root=repo, **args) == []
 
 
-def test_candidate_ancestry_error_propagated(monkeypatch) -> None:
+def test_candidate_ancestry_real_git_non_evidence_change_blocked(tmp_path: Path) -> None:
     mod = module()
-    monkeypatch.setattr(
-        mod,
-        "check_candidate_ancestry",
-        lambda c, e, r: ["intervening commits touch non-evidence paths: src/main.py"],
-    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "main.py").write_text("print('v1')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "candidate commit")
+    candidate_sha = run_git("rev-parse", "HEAD")
+
+    (repo / "main.py").write_text("print('v2')\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "product commit")
+    release_sha = run_git("rev-parse", "HEAD")
+
     payload = registry()
-    payload["release"]["candidate_sha"] = "a" * 40
+    payload["release"]["candidate_sha"] = candidate_sha
     for gate in payload["gates"]:
-        gate["release_sha"] = "a" * 40
+        gate["release_sha"] = candidate_sha
+
     args = kwargs()
-    args["release_sha"] = "b" * 40
-    errors = mod.admission_errors(payload, **args)
-    assert any("intervening commits" in error for error in errors)
+    args["release_sha"] = release_sha
+    errors = mod.admission_errors(payload, root=repo, **args)
+    assert any("intervening commits touch non-evidence paths" in error for error in errors)
+    assert any("main.py" in error for error in errors)
+
+
+def test_candidate_ancestry_real_git_not_an_ancestor_blocked(tmp_path: Path) -> None:
+    mod = module()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def run_git(*args: str) -> str:
+        res = subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        )
+        return res.stdout.strip()
+
+    run_git("init")
+    run_git("config", "user.email", "test@example.com")
+    run_git("config", "user.name", "Test")
+
+    (repo / "a.txt").write_text("a\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "commit a")
+    sha_a = run_git("rev-parse", "HEAD")
+
+    run_git("checkout", "--orphan", "branch-b")
+    run_git("rm", "-rf", ".")
+    (repo / "b.txt").write_text("b\n")
+    run_git("add", ".")
+    run_git("commit", "-m", "commit b")
+    sha_b = run_git("rev-parse", "HEAD")
+
+    payload = registry()
+    payload["release"]["candidate_sha"] = sha_a
+    for gate in payload["gates"]:
+        gate["release_sha"] = sha_a
+
+    args = kwargs()
+    args["release_sha"] = sha_b
+    errors = mod.admission_errors(payload, root=repo, **args)
+    assert any("not an ancestor of expected SHA" in error for error in errors)
