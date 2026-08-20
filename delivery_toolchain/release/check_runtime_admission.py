@@ -2,10 +2,19 @@
 """Fail-closed admission check for the supervisor-owned runtime release.
 
 This is intentionally small and local. It is the only check that may admit a
-deployment workflow: it validates the supervisor's lease and exact SHA against
-the committed Gate 0-6 registry without invoking other checkers, GitHub, or
-cloud CLIs. The broader evidence check remains a CI/reporting tool and is not
-part of the deployment control path.
+deployment workflow: it validates the exact release SHA against the committed
+Gate 0-6 registry without invoking other checkers, GitHub, or cloud CLIs. The
+broader evidence check remains a CI/reporting tool and is not part of the
+deployment control path.
+
+`task_id` and `release_lease` are recorded for provenance and checked for
+shape only. Neither is looked up against supervisor state, so neither
+constrains who may dispatch a release: any actor with write access can pass a
+lease it invented. Mutual exclusion comes from the workflow's
+`concurrency: runtime-release-<environment>` group, not from this check.
+Binding the lease to durable supervisor state is separate work; until then the
+name is all it is, and saying so here is cheaper than a control that appears
+to exist and does not.
 """
 
 from __future__ import annotations
@@ -19,6 +28,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# Shape only - see the module docstring. These reject a malformed argument, not
+# an unauthorised one.
 TASK_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 LEASE_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 PASSING_STATUSES = frozenset({"passed", "pass", "success"})
