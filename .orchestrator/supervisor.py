@@ -1535,6 +1535,61 @@ def agent_dispatch_preference_rank(config: dict[str, Any], agent_id: str | None)
     return 99
 
 
+#: How often the interruptible sleep looks for new work. Small enough that a
+#: freed slot is taken up in seconds, large enough that idling costs one `stat`
+#: every few seconds.
+WAKE_POLL_SLICE_SECONDS = 5.0
+
+
+def _event_queue_signature(config: dict[str, Any]) -> tuple[float, int] | None:
+    """Cheap fingerprint of the wake queue, or None when it cannot be read."""
+    try:
+        path = Path(config_path(config, "event_queue"))
+        stat = path.stat()
+    except (KeyError, OSError):
+        return None
+    return (stat.st_mtime, stat.st_size)
+
+
+def sleep_until_work_or_interval(
+    config: dict[str, Any],
+    poll_interval: float,
+    *,
+    slice_seconds: float = WAKE_POLL_SLICE_SECONDS,
+) -> bool:
+    """Sleep up to ``poll_interval``, returning early when work is queued.
+
+    The loop used to sleep the whole interval unconditionally. Every wake this
+    system produces - a worker finishing, a review landing, a task becoming
+    ready - is written to the event queue and was then invisible until the next
+    scheduled tick, up to five minutes later. With workers finishing in one to
+    five minutes, slots sat empty for most of every interval and the fleet ran
+    far below its declared capacity.
+
+    Watching the queue file rather than the board keeps this to one `stat` per
+    slice: the queue is exactly where "there is something to do" is recorded,
+    and it is the same signal `wake_queued` already writes.
+
+    Returns True when it woke early.
+    """
+    if poll_interval <= 0:
+        return False
+    baseline = _event_queue_signature(config)
+    deadline = time.monotonic() + poll_interval
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(slice_seconds, remaining))
+        current = _event_queue_signature(config)
+        if current is None or baseline is None:
+            # Unreadable is not a wake signal. Fall back to the plain interval
+            # rather than spinning the loop on a missing file.
+            continue
+        if current != baseline:
+            return True
+
+
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None) -> int:
     normalized = normalize_agent_id(agent_id or "")
     # Slots model actual processes. Aliases never create capacity.
@@ -4379,7 +4434,7 @@ def main() -> int:
         verbose=args.verbose,
     )
     while True:
-        time.sleep(poll_interval)
+        sleep_until_work_or_interval(config, poll_interval)
         run_supervisor_cycle(
             config,
             watch=not args.no_watch,

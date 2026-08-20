@@ -22,6 +22,8 @@ def _sync_supervisor_scope() -> None:
         'current_dispatch_event_key', 
         'dispatch_priority_for_task', 
         'agent_dispatch_loads', 
+        'configured_worker_slot_total', 
+        'default_max_dispatches_per_tick', 
         'reassign_unavailable_reviewers', 
         'is_sidecar_review_of_current_parent', 
         'worker_logical_dispatch_agent_id', 
@@ -1157,6 +1159,32 @@ def dispatch_discussion_planning(
 
     return changed
 
+def configured_worker_slot_total(config: dict[str, Any]) -> int:
+    """How many worker processes this configuration can actually run at once."""
+    agents = config.get("agents", {}) or {}
+    return sum(1 for agent in agents.values() if isinstance(agent, dict) and agent.get("slot_id"))
+
+
+def default_max_dispatches_per_tick(config: dict[str, Any]) -> int:
+    """Enough dispatches to fill every slot the configuration declares.
+
+    A fixed cap is a second limit on top of the one that already exists: slots
+    already bound concurrency, and `agent_dispatch_capacity` already refuses to
+    exceed them. Capping ticks as well only decides how *slowly* free capacity
+    is taken up.
+
+    On 2026-08-20 the two compounded. Eleven slots were configured, the cap was
+    3, and the poll interval was 300s - so at most three workers could start
+    every five minutes, while workers finish in one to five. The fleet sat at a
+    fraction of its capacity with eligible work on the board, and an operator
+    had to keep prodding it.
+
+    So the default is the slot total. An operator who wants a smaller batch can
+    still say so; nothing here overrides an explicit setting.
+    """
+    return max(4, configured_worker_slot_total(config))
+
+
 @_entrypoint
 
 def dispatch_ready_tasks(
@@ -1190,7 +1218,14 @@ def dispatch_ready_tasks(
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = active_worker_statuses(config)
-    max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
+    max_dispatches_per_tick = max(
+        1,
+        int(
+            max_dispatches_override
+            or settings.get("max_dispatches_per_tick")
+            or default_max_dispatches_per_tick(config)
+        ),
+    )
 
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
