@@ -28,7 +28,8 @@ gate edited the done gate. So this one is deliberately incapable of choosing
 between two possible truths. When it cannot tell, it says so and stops.
 """
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 MERGE_ROUTE_FIELD = "merge_route"
 

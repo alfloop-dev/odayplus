@@ -59,6 +59,11 @@ def _entrypoint(func):
 
 
 MERGE_ROUTE_FIELD = "merge_route"
+# How long a recorded enqueue is trusted before it is tried again, and how many
+# enqueues may be recorded for one reviewed head before the task is reported as
+# stalled rather than retried further.
+MERGE_ROUTE_RETRY_AFTER_SECONDS = 1800.0
+MERGE_ROUTE_MAX_ATTEMPTS = 4
 #: Reconciling costs one `gh pr view` per task with a PR, so it runs on its own
 #: cadence rather than every tick. Drift is measured in hours, not seconds.
 TASK_REALITY_RECONCILE_INTERVAL_SECONDS = 900.0
@@ -160,7 +165,8 @@ def task_reality_reconcile_is_due(
     interval_seconds: float = TASK_REALITY_RECONCILE_INTERVAL_SECONDS,
 ) -> bool:
     """Whether enough time has passed to re-probe reality."""
-    from datetime import UTC as _utc, datetime as _dt
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
 
     from common import parse_iso_timestamp as _parse
 
@@ -281,8 +287,9 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     still governs whether the workflow auto-stamps `task-review-gate` - that is
     the workflow's decision, upstream of this and not repeated here.
 
-    Returns ``(route, detail)`` where route is ``queued``, ``waiting`` (already
-    routed, or nothing to do), ``ejected`` or ``blocked``.
+    Returns ``(route, detail)`` where route is ``queued``, ``waiting`` (recently
+    routed, or nothing to do), ``stalled`` (enqueued repeatedly and still not
+    merged), ``ejected`` or ``blocked``.
     """
     from github_bus import GitHubBusError, GitHubBusOffline, run_gh
 
@@ -304,7 +311,29 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         # exists; only the owner can advance the base.
         if _pr_merge_state(pr_number) == "DIRTY":
             return "ejected", "conflicts with base after an earlier merge"
-        return "waiting", str(previous.get("route") or "already routed")
+
+        # The record is evidence that an enqueue was issued, not that the PR is
+        # in the queue. Nothing here can observe the queue directly, and on
+        # 2026-08-19 four reviewed, CI-green PRs each carried `route: queued`
+        # while the dev queue was empty; the guard suppressed every retry and
+        # they sat for hours until an operator cleared the field by hand.
+        #
+        # So trust it for a window and then try again - re-enqueueing something
+        # already queued is harmless, whereas never retrying is what stalled
+        # them. Bounded, because retrying forever is its own failure: past
+        # MERGE_ROUTE_MAX_ATTEMPTS the enqueue is demonstrably not the missing
+        # step and the caller reports that instead of issuing a fifth.
+        attempts = int(previous.get("attempts") or 1)
+        if attempts >= MERGE_ROUTE_MAX_ATTEMPTS:
+            return "stalled", (
+                f"enqueued {attempts} times for this reviewed head without merging"
+            )
+        routed_at = parse_runtime_timestamp(str(previous.get("at") or "") or None)
+        if (
+            routed_at is not None
+            and (datetime.now(UTC) - routed_at).total_seconds() < MERGE_ROUTE_RETRY_AFTER_SECONDS
+        ):
+            return "waiting", str(previous.get("route") or "already routed")
 
     try:
         run_gh(["pr", "merge", str(pr_number)])
@@ -315,12 +344,16 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     # enqueue: an unreadable diff is a reason to say so, not to strand a
     # reviewed PR that the queue would have accepted.
     scope = approved_pr_change_scope(pr_number) or "unknown"
+    previous_attempts = 0
+    if isinstance(previous, dict) and str(previous.get("head") or "") == approved_head:
+        previous_attempts = int(previous.get("attempts") or 1)
     task[MERGE_ROUTE_FIELD] = {
         "head": approved_head,
         "scope": scope,
         "route": "queued",
         "pr_number": pr_number,
         "at": utc_now(),
+        "attempts": previous_attempts + 1,
     }
     write_activity_log(
         config,
@@ -386,6 +419,23 @@ def advance_approved_prs_to_merge(
             write_activity_log(
                 config,
                 {"type": "merge_route_blocked", "task_id": task_id, "message": msg},
+            )
+        elif route == "stalled":
+            # Terminal until the head changes: the enqueue has been issued
+            # repeatedly and the PR has still not merged, so whatever is missing
+            # is not another `gh pr merge`. Same shape as an escalated worktree
+            # lease - stop, and say so where an owner looks.
+            msg = (
+                f"PR for task {task_id} is CI-green but has not merged after being enqueued "
+                f"repeatedly ({detail}); enqueueing again will not resolve it and an owner "
+                "must look at the merge queue."
+            )
+            if task.get("next") == msg:
+                continue
+            task["next"] = msg
+            write_activity_log(
+                config,
+                {"type": "merge_route_stalled", "task_id": task_id, "message": msg},
             )
         elif route == "waiting":
             # Nothing to route - already in the queue, or no PR to enqueue.

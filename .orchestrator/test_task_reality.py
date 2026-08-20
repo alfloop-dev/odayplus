@@ -8,7 +8,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import task_reality  # noqa: E402
 
-
 HEAD = "1111111122222222333333334444444455555555"
 
 
