@@ -543,6 +543,7 @@ scripts/orchestrator/test_rollout_supervisor_runtime.py,verification,verificatio
 scripts/supervisor_runtime_health.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/supervisor_watchdog_install.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/test_ai_status.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+scripts/test_restart_supervisor.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/test_supervisor_runtime_health.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/test_supervisor_watchdog_install.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 scripts/validate_external_data_boundary.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
