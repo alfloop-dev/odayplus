@@ -175,6 +175,7 @@ verification_ownership:
         - scripts/orchestrator/test_*.py
         - scripts/test_ai_status.py
         - scripts/test_supervisor_runtime_health.py
+        - scripts/test_restart_supervisor.py
         - scripts/test_supervisor_watchdog_install.py
         - tests/orchestrator/*.py
         - tests/orchestrator/**/*.py
