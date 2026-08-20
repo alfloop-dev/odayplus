@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -150,6 +152,40 @@ class EmgiCatalogRegistrationTests(unittest.TestCase):
         consumer = next(task for task in updated["tasks"] if task["id"] == "EMGI-DUMMY-001")
         self.assertTrue(all(path.startswith("oday-data-platform/") for path in platform["artifacts"]))
         self.assertTrue(all(path.startswith("odayplus/") for path in consumer["artifacts"]))
+
+    def test_archived_governance_restores_lifecycle_and_unlocks_wave_one(self) -> None:
+        status = {"tasks": []}
+        with tempfile.TemporaryDirectory() as directory:
+            archive_dir = Path(directory)
+            (archive_dir / "DPF-GOV-001.json").write_text(
+                json.dumps(
+                    {
+                        "terminal_status": "done",
+                        "terminal_outcome": "completed",
+                        "task": {
+                            "id": "DPF-GOV-001",
+                            "status": "done",
+                            "owner": "Claude",
+                            "reviewer": "Antigravity",
+                            "pr_number": 6,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            restored = catalog.hydrate_archived_catalog_tasks(
+                status, synthetic_catalog(), archive_dir
+            )
+
+        self.assertEqual(1, restored)
+        updated, receipt = catalog.register_catalog(
+            status, synthetic_catalog(), unlock_wave_1=True
+        )
+        states = {task["id"]: task["status"] for task in updated["tasks"]}
+        self.assertEqual("done", states["DPF-GOV-001"])
+        for task_id in catalog.WAVE_1:
+            self.assertEqual("todo", states[task_id])
+        self.assertTrue(receipt["wave_1_unlocked"])
 
 
 if __name__ == "__main__":
