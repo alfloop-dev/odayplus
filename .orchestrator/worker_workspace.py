@@ -26,6 +26,13 @@ def _sync_supervisor_scope() -> None:
     module_exports = {
         "__all__",
     }
+    # Skip only dunders. The four copies of this function used to disagree --
+    # two skipped every `_`-prefixed name, two skipped only `__` -- so whether a
+    # single-underscore helper resolved depended on which file asked. That is how
+    # `_reset_queue_record_for_redispatch` came to be called in `process_queue`
+    # while never being present in this module's globals: supervisor defines it,
+    # and this module's rule filtered it out. Module-local names that must NOT be
+    # replaced are listed in `excluded` by name rather than inferred from a prefix.
     g = globals()
     for key, value in sv.__dict__.items():
         if key in excluded or key in module_exports or key.startswith("__"):

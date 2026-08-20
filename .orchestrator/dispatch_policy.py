@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from common import normalize_agent_id
+
 REASON_REVIEW_READY = "review_ready_dispatch"
 REASON_OWNED_FINALIZE = "owned_finalize_dispatch"
 REASON_OWNED_IN_PROGRESS = "owned_in_progress_dispatch"
@@ -91,3 +93,20 @@ def ready_dispatch_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("worker_os_duplicate_guard", DEFAULT_WORKER_OS_DUPLICATE_GUARD)
     settings.setdefault("max_active_workers_per_task", DEFAULT_MAX_ACTIVE_WORKERS_PER_TASK)
     return settings
+
+
+def worker_logical_dispatch_agent_id(config: dict[str, Any], worker: dict[str, Any]) -> str:
+    """Resolve the logical agent a worker's dispatch slot belongs to.
+
+    Lives here rather than in `dispatch_engine` because it is the one name that
+    made the module graph cyclic: `dispatch_engine` needs seven names from
+    `worker_failure_policy`, and `worker_failure_policy` needed only this one
+    back. It is a pure function of `config` and the worker record -- no dispatch
+    state -- so a leaf is where it belongs.
+    """
+    explicit = normalize_agent_id(str(worker.get("logical_agent_id") or ""))
+    if explicit:
+        return explicit
+    agent_id = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
+    agent = config.get("agents", {}).get(agent_id, {}) or {}
+    return normalize_agent_id(str(agent.get("dispatch_slot_for") or agent_id))

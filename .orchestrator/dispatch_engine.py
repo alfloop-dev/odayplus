@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from dispatch_policy import worker_logical_dispatch_agent_id
+
 
 def _supervisor_module():
     import supervisor
@@ -32,9 +34,16 @@ def _sync_supervisor_scope() -> None:
         'dispatch_discussion_planning', 
         'dispatch_ready_tasks'
     }
+    # Skip only dunders. The four copies of this function used to disagree --
+    # two skipped every `_`-prefixed name, two skipped only `__` -- so whether a
+    # single-underscore helper resolved depended on which file asked. That is how
+    # `_reset_queue_record_for_redispatch` came to be called in `process_queue`
+    # while never being present in this module's globals: supervisor defines it,
+    # and this module's rule filtered it out. Module-local names that must NOT be
+    # replaced are listed in `excluded` by name rather than inferred from a prefix.
     g = globals()
     for key, value in sv.__dict__.items():
-        if key in excluded or key in module_exports or key.startswith("_"):
+        if key in excluded or key in module_exports or key.startswith("__"):
             continue
         g[key] = value
 
@@ -616,16 +625,6 @@ def is_sidecar_review_of_current_parent(
         return False
     task_class = str(candidate_task.get("task_class") or "").lower()
     return task_class == "sidecar" or bool(candidate_task.get("helper_kind"))
-
-@_entrypoint
-
-def worker_logical_dispatch_agent_id(config: dict[str, Any], worker: dict[str, Any]) -> str:
-    explicit = normalize_agent_id(str(worker.get("logical_agent_id") or ""))
-    if explicit:
-        return explicit
-    agent_id = normalize_agent_id(str(worker.get("agent_id") or worker.get("provider") or ""))
-    agent = config.get("agents", {}).get(agent_id, {}) or {}
-    return normalize_agent_id(str(agent.get("dispatch_slot_for") or agent_id))
 
 @_entrypoint
 

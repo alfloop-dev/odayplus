@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import ast
 import builtins
+import importlib
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -96,6 +98,52 @@ class InjectedScopeIntegrityTests(unittest.TestCase):
                     "`# ruff: noqa: F821` means nothing else will catch this -- it "
                     "would surface as a NameError inside a live supervisor loop.",
                 )
+
+    def test_every_injected_name_survives_the_module_own_sync_rule(self) -> None:
+        """`hasattr(supervisor, name)` is necessary but NOT sufficient.
+
+        Each module filters what it copies. Asking only whether supervisor defines
+        a name misses one that supervisor has and the module's own rule discards --
+        which is exactly what happened to `_reset_queue_record_for_redispatch`:
+        `process_queue` called it, supervisor defined it, and `worker_lifecycle`
+        skipped every `_`-prefixed key, so the call site was a NameError on the
+        Antigravity pool-fallback path. Run each module's real sync and ask the
+        module, not supervisor.
+        """
+        for module_name in INJECTED_MODULES:
+            with self.subTest(module=module_name):
+                module = importlib.import_module(module_name)
+                module._sync_supervisor_scope()
+                missing = sorted(
+                    name
+                    for name in _free_names(THIS_DIR / f"{module_name}.py")
+                    if not hasattr(module, name)
+                )
+                self.assertEqual(
+                    missing,
+                    [],
+                    f"{module_name}.py calls {missing}, which survive neither its own "
+                    "definitions nor what its `_sync_supervisor_scope` copies in. "
+                    "Every call would raise NameError.",
+                )
+
+    def test_the_modules_agree_on_what_sync_skips(self) -> None:
+        """One rule, or static analysis of this package cannot be trusted.
+
+        Two of the four used to skip every `_`-prefixed key and two only `__`, so
+        whether a single-underscore helper resolved depended on which file asked.
+        """
+        rules = {}
+        for module_name in INJECTED_MODULES:
+            source = (THIS_DIR / f"{module_name}.py").read_text(encoding="utf-8")
+            matches = re.findall(r'key\.startswith\("(_+)"\)', source)
+            self.assertEqual(len(matches), 1, f"{module_name}: expected one sync prefix rule")
+            rules[module_name] = matches[0]
+        self.assertEqual(
+            len(set(rules.values())),
+            1,
+            f"the sync rules have diverged again: {rules}",
+        )
 
     def test_the_modules_actually_depend_on_injection(self) -> None:
         """Guard the premise: if a module stops needing injection, drop its noqa."""
