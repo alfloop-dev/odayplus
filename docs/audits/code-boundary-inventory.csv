@@ -10,6 +10,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/auth_loader.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/auto_commit_archive.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/branch_drift_alarms.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+.orchestrator/capacity_controller.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/claude_permission_prompt_mcp.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/codex_login_helper.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/common.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
@@ -46,6 +47,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_approval_queue.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_auth_loader.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_branch_drift_alarms.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_capacity_controller.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_common.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_control_plane.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_coordination_file_watcher.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
