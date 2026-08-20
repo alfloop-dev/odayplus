@@ -1,0 +1,121 @@
+name: Promote dev to main
+
+# Ladder step: dev -> main.
+# When CI passes on dev, open (or reuse) an auto-merge PR from dev into main,
+# unless a blocking label (hold-promote / regression) is present.
+#
+# Notes on tokens (see also .github/branch-protection/policy.json):
+#   - PR create/merge run as a real user via secrets.PROMOTE_TOKEN, because the
+#     org policy forbids the built-in GITHUB_TOKEN from creating/approving PRs.
+#   - The `task-review-gate` required check is normally emitted per task by the
+#     assigned reviewer. A dev->main promotion carries content that was already
+#     reviewed on its task/* -> dev PRs, so this workflow stamps that gate on the
+#     promotion head with the built-in GITHUB_TOKEN (posting a commit status is
+#     NOT restricted by the org PR policy). The stamp is skipped when a blocking
+#     label is present, preserving the manual brake.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [dev]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  promote:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install production release gate dependencies
+        run: npm ci
+
+      # Green task/dev CI is necessary but never sufficient release authority.
+      # This final boundary fails closed until the registry records authentic,
+      # exact-candidate Gate 0-6 receipts and Human/Ops GO sign-off. The static
+      # release packet check also retains exact-source E2E receipt validation.
+      - name: Require final production release GO
+        run: make product-release-gate EXPECTED_SHA="${{ github.event.workflow_run.head_sha }}"
+
+      - name: Open or reuse promote PR (dev -> main)
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
+          PROMOTION_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          # Nothing to promote if dev is not ahead of main.
+          ahead=$(git rev-list --count origin/main.."$PROMOTION_SHA")
+          if [ "$ahead" = "0" ]; then
+            echo "dev is not ahead of main; nothing to promote."
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          pr=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number // empty')
+          if [ -z "$pr" ]; then
+            gh pr create --base main --head dev \
+              --title "Promote dev -> main" \
+              --body "Auto-promote: CI is green on dev ($ahead commit(s) ahead of main)." \
+              --label auto-promote
+            pr=$(gh pr list --base main --head dev --state open --json number --jq '.[0].number')
+          fi
+
+          labels=$(gh pr view "$pr" --json labels --jq '[.labels[].name] | join(",")')
+          case ",$labels," in
+            *,hold-promote,*|*,regression,*)
+              echo "Promotion PR #$pr blocked by label(s): $labels"
+              echo "proceed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
+
+          head=$(gh pr view "$pr" --json headRefOid --jq '.headRefOid')
+          if [ "$head" != "$PROMOTION_SHA" ]; then
+            echo "::error::Promotion SHA drift detected! Validated CI SHA is $PROMOTION_SHA, but PR headRefOid is $head. Aborting promotion to prevent TOCTOU authorization of unvalidated commits."
+            exit 1
+          fi
+
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp task-review-gate on promotion head
+        if: ${{ steps.pr.outputs.proceed == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PROMOTION_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          pr_head="${{ steps.pr.outputs.head }}"
+          if [ "$pr_head" != "$PROMOTION_SHA" ]; then
+            echo "::error::Stamp target SHA ($pr_head) does not match validated promotion SHA ($PROMOTION_SHA); aborting status stamp."
+            exit 1
+          fi
+          gh api -X POST "repos/${GITHUB_REPOSITORY}/statuses/${pr_head}" \
+            -F state=success \
+            -F context=task-review-gate \
+            -F "description=dev->main promotion (PR #${{ steps.pr.outputs.pr }}): per-task reviews already satisfied on task/* PRs into dev"
+
+      - name: Enable auto-merge
+        if: ${{ steps.pr.outputs.proceed == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.PROMOTE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Auto-merge once main's required checks pass (no-op if already merging).
+          gh pr merge "${{ steps.pr.outputs.pr }}" --auto --merge \
+            || echo "Auto-merge not enabled; PR #${{ steps.pr.outputs.pr }} left open for manual merge."

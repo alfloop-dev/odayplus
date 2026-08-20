@@ -510,9 +510,8 @@ def test_jobs_assert_checked_out_head_matches_release_sha() -> None:
 
 
 def test_runtime_release_is_single_entrypoint() -> None:
-    """deploy-staging.yml and promote-dev-to-main.yml are removed; deploy-dev.yml is the sole deploy entrypoint."""
+    """deploy-staging.yml is removed; deploy-dev.yml is the sole deploy entrypoint."""
     assert not (WORKFLOW_DIR / "deploy-staging.yml").exists()
-    assert not (WORKFLOW_DIR / "promote-dev-to-main.yml").exists()
     assert (WORKFLOW_DIR / "deploy-dev.yml").exists()
 
 

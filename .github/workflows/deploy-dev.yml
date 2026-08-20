@@ -39,24 +39,27 @@ jobs:
           ref: ${{ inputs.release_sha }}
 
       - name: Assert exact release SHA is checked out
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
           head_sha="$(git rev-parse HEAD)"
-          if [ "${head_sha}" != "${{ inputs.release_sha }}" ]; then
-            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${{ inputs.release_sha }})." >&2
+          if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
             exit 1
           fi
 
       - name: Validate supervisor release admission
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_TASK_ID: ${{ inputs.task_id }}
           RELEASE_LEASE: ${{ inputs.release_lease }}
         run: |
           set -euo pipefail
           python3 delivery_toolchain/release/check_runtime_admission.py \
             --sha "${RELEASE_SHA}" \
-            --environment "${{ inputs.environment }}" \
+            --environment "${RELEASE_ENVIRONMENT}" \
             --task-id "${RELEASE_TASK_ID}" \
             --lease "${RELEASE_LEASE}"
 
@@ -69,11 +72,13 @@ jobs:
           ref: ${{ inputs.release_sha }}
 
       - name: Assert exact release SHA is checked out
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
           head_sha="$(git rev-parse HEAD)"
-          if [ "${head_sha}" != "${{ inputs.release_sha }}" ]; then
-            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${{ inputs.release_sha }})." >&2
+          if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
             exit 1
           fi
 
