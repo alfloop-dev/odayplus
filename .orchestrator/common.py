@@ -806,6 +806,45 @@ def pid_is_alive(pid: Any) -> bool:
     return True
 
 
+# `.orchestrator/bin/gh` is a broker shim, not the real CLI. Recognised by this
+# suffix so a hit anywhere on PATH is caught, not just the one under ROOT.
+GH_BROKER_SHIM_SUFFIX = ".orchestrator/bin/gh"
+# Standard locations for the real GitHub CLI, tried when PATH resolves to the
+# broker shim or to nothing at all.
+SYSTEM_GH_PATHS = ("/usr/bin/gh", "/usr/local/bin/gh")
+
+
+def resolve_github_cli(repo_root: Path | None = None) -> str | None:
+    """Resolve the real `gh`, never preferring `.orchestrator/bin/gh`.
+
+    That file is a broker shim, not the real CLI
+    (delivery_toolchain/git/README.md). This rule was previously written out five
+    times -- task_finalize.sh, check_pr_merge_eligibility.py,
+    apply_branch_protection.py, ai_status.py and github_bus.resolve_gh_binary --
+    and they had drifted: the first four rejected the shim outright while the
+    fifth actively preferred it, which is how the GitHub bus ended up as the only
+    consumer in the system routed through a shim that could not run.
+
+    Order: whatever PATH gives, unless that is the shim; then the standard system
+    paths; then the shim as a genuine last resort, because on a host with no real
+    CLI running it yields its "GitHub CLI binary not found" diagnostic, which the
+    orchestrator recognises, rather than a bare ENOENT.
+
+    Returns None when nothing is installed. Callers that must hand a string to
+    subprocess spell their own fallback.
+    """
+    found = shutil.which("gh")
+    if found and not found.replace(os.sep, "/").endswith(GH_BROKER_SHIM_SUFFIX):
+        return found
+    for candidate in SYSTEM_GH_PATHS:
+        if os.access(candidate, os.X_OK):
+            return candidate
+    vendored = (repo_root or ROOT) / GH_BROKER_SHIM_SUFFIX
+    if vendored.exists() and os.access(vendored, os.X_OK):
+        return str(vendored)
+    return None
+
+
 def pid_is_supervisor_process(pid: Any, repo_root: Path) -> bool:
     """Return True when ``pid`` is really *this repo's* supervisor.
 

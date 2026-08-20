@@ -1392,14 +1392,10 @@ def git_command_succeeds(args: list[str], *, cwd: Path | None = None) -> bool:
 
 
 def get_gh_executable() -> str:
-    gh_path = shutil.which("gh")
-    if gh_path:
-        if ".orchestrator/bin/gh" in gh_path:
-            for p in ["/usr/bin/gh", "/usr/local/bin/gh"]:
-                if os.path.exists(p):
-                    return p
-        return gh_path
-    return "gh"
+    # One rule, in common.resolve_github_cli: never prefer the broker shim at
+    # `.orchestrator/bin/gh`. This used to be spelled out here and in three other
+    # places, and the copies had drifted apart.
+    return orchestrator_common.resolve_github_cli() or "gh"
 
 
 def run_gh_json_command(args: list[str], *, cwd: Path | None = None) -> dict[str, Any] | None:

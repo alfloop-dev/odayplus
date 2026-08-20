@@ -733,7 +733,6 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
     workers = state.get("workers", {}) or {}
     queue_events = state.get("queue", {}).get("events", {}) or {}
     pending_approvals = approval_state.get("pending", []) or []
-    active_statuses = {"running", "started", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled", "fallback"}
     active_workers = [
         {
             "run_id": run_id,
@@ -743,7 +742,7 @@ def summarize_runtime(state: dict[str, Any], approval_state: dict[str, Any]) -> 
             "status": worker.get("status"),
         }
         for run_id, worker in workers.items()
-        if worker.get("status") in active_statuses
+        if worker.get("status") in ACTIVE_WORKER_STATUSES
     ]
     queue_items = [
         {

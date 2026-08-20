@@ -456,3 +456,69 @@ class RecentTaskActivityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class GithubCliResolutionTests(unittest.TestCase):
+    """One rule for "never prefer the broker shim", in one place.
+
+    It used to be written out five times -- task_finalize.sh (bash, still its own),
+    check_pr_merge_eligibility.py, apply_branch_protection.py, ai_status.py and
+    github_bus.resolve_gh_binary -- and they had drifted: the first four rejected
+    the shim while the fifth preferred it, which is how the GitHub bus became the
+    only consumer routed through a shim that could not run.
+    """
+
+    def test_path_result_wins_when_it_is_not_the_shim(self) -> None:
+        with mock.patch.object(common.shutil, "which", return_value="/usr/bin/gh"):
+            self.assertEqual(common.resolve_github_cli(), "/usr/bin/gh")
+
+    def test_a_shim_on_path_is_rejected_for_a_system_path(self) -> None:
+        shim = f"/anywhere/{common.GH_BROKER_SHIM_SUFFIX}"
+        with (
+            mock.patch.object(common.shutil, "which", return_value=shim),
+            mock.patch.object(common, "SYSTEM_GH_PATHS", ("/usr/bin/gh",)),
+            mock.patch.object(common.os, "access", return_value=True),
+        ):
+            self.assertEqual(common.resolve_github_cli(), "/usr/bin/gh")
+
+    def test_shim_is_the_last_resort_not_the_preference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shim = root / common.GH_BROKER_SHIM_SUFFIX
+            shim.parent.mkdir(parents=True, exist_ok=True)
+            shim.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            shim.chmod(0o755)
+            with (
+                mock.patch.object(common.shutil, "which", return_value=None),
+                mock.patch.object(common, "SYSTEM_GH_PATHS", ()),
+            ):
+                self.assertEqual(common.resolve_github_cli(root), str(shim))
+
+    def test_returns_none_when_nothing_is_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch.object(common.shutil, "which", return_value=None),
+                mock.patch.object(common, "SYSTEM_GH_PATHS", ()),
+            ):
+                self.assertIsNone(common.resolve_github_cli(Path(tmp)))
+
+    def test_no_python_caller_still_spells_the_rule_itself(self) -> None:
+        """Guard the consolidation: a re-added copy should fail here, not drift."""
+        repo = Path(common.ROOT)
+        callers = [
+            repo / "delivery_toolchain/github/check_pr_merge_eligibility.py",
+            repo / "delivery_toolchain/github/apply_branch_protection.py",
+            repo / "scripts/ai_status.py",
+            repo / ".orchestrator/github_bus.py",
+        ]
+        for path in callers:
+            with self.subTest(caller=path.name):
+                if not path.is_file():
+                    self.skipTest(f"{path} not present")
+                body = path.read_text(encoding="utf-8")
+                self.assertNotIn(
+                    '"/usr/bin/gh", "/usr/local/bin/gh"',
+                    body,
+                    f"{path.name} re-spells the system-gh fallback; call "
+                    "common.resolve_github_cli instead",
+                )

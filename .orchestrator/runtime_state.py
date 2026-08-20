@@ -294,7 +294,7 @@ TERMINAL_WORKER_STATUSES = {
 # provider, and can reassign the task out from under the successor while it is
 # still running.  `fallback` is deliberately NOT terminal: the queue event is
 # still in flight through the fallback child.
-HANDED_OFF_WORKER_STATUSES = {"retried", "fallback"}
+HANDED_OFF_WORKER_STATUSES = {"fallback"}
 
 TERMINAL_QUEUE_STATUSES = {"completed", "failed", "done", "cancelled"}
 QUEUE_STATUS_RANK = {
