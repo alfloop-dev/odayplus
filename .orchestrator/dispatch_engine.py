@@ -30,6 +30,8 @@ def _sync_supervisor_scope() -> None:
         'stale_dispatch_skip_message', 
         'ready_dispatch_signature', 
         'worktree_block_still_matches_dispatch', 
+        'reconcile_task_reality', 
+        'task_reality_reconcile_is_due', 
         'escalated_lease_block', 
         'build_dispatch_event', 
         'dispatch_discussion_planning', 
@@ -57,6 +59,9 @@ def _entrypoint(func):
 
 
 MERGE_ROUTE_FIELD = "merge_route"
+#: Reconciling costs one `gh pr view` per task with a PR, so it runs on its own
+#: cadence rather than every tick. Drift is measured in hours, not seconds.
+TASK_REALITY_RECONCILE_INTERVAL_SECONDS = 900.0
 
 
 def _pr_changed_paths(pr_number: int) -> list[str] | None:
@@ -100,6 +105,139 @@ def _pr_merge_state(pr_number: int) -> str | None:
     except ValueError:
         return None
     return str(payload.get("mergeStateStatus") or "").strip().upper() or None
+
+
+def _remote_branch_names() -> set[str] | None:
+    """Every branch that exists on `origin`, or None when it cannot be read."""
+    import subprocess
+
+    from common import ROOT as _root
+
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", "--heads", "origin"],
+            cwd=_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    names: set[str] = set()
+    for line in (proc.stdout or "").splitlines():
+        _, _, ref = line.partition("\t")
+        ref = ref.strip()
+        if ref.startswith("refs/heads/"):
+            names.add(ref[len("refs/heads/") :])
+    return names
+
+
+def _pull_request_record(pr_number: int) -> dict[str, Any] | None:
+    """The PR's state, or None when there is no readable PR."""
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    try:
+        proc = run_gh(
+            ["pr", "view", str(pr_number), "--json", "number,state,merged,headRefName"]
+        )
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    return payload if payload.get("number") else None
+
+
+def task_reality_reconcile_is_due(
+    state: dict[str, Any],
+    *,
+    interval_seconds: float = TASK_REALITY_RECONCILE_INTERVAL_SECONDS,
+) -> bool:
+    """Whether enough time has passed to re-probe reality."""
+    from datetime import UTC as _utc, datetime as _dt
+
+    from common import parse_iso_timestamp as _parse
+
+    last = _parse(str(state.get("task_reality_reconciled_at") or "") or None)
+    if last is None:
+        return True
+    return (_dt.now(_utc) - last).total_seconds() >= interval_seconds
+
+
+def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bool:
+    """Repair what reality determines, report what it does not.
+
+    Runs against the branches `origin` actually has and the PRs GitHub actually
+    reports.  A probe that cannot answer yields no findings, so an unreachable
+    `gh` or remote never looks like drift.
+    """
+    import task_reality
+
+    schema = config.get("schema", {})
+    tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
+    tasks = [t for t in (status.get(tasks_path) or []) if t.get(task_id_field)]
+    if not tasks:
+        return False
+
+    remote_branches = _remote_branch_names()
+    if remote_branches is None:
+        # Without the branch list every task would look as though its branch had
+        # vanished. Reconciling from a failed lookup is how a repair becomes a
+        # corruption.
+        return False
+
+    def probe(task: dict[str, Any]) -> dict[str, Any]:
+        try:
+            pr_number = int(task.get("pr_number") or 0)
+        except (TypeError, ValueError):
+            pr_number = 0
+        return {
+            "pull_request": _pull_request_record(pr_number) if pr_number > 0 else None,
+            "branch_exists": str(task.get("branch") or "") in remote_branches,
+        }
+
+    results = task_reality.reconcile_tasks(tasks, probe=probe)
+    if not results:
+        return False
+
+    changed = False
+    for result in results:
+        task_id = str(result.get("task_id") or "")
+        for applied in result.get("applied") or []:
+            changed = True
+            write_activity_log(
+                config,
+                {
+                    "type": "task_reality_repaired",
+                    "task_id": task_id,
+                    "message": (
+                        f"Repaired `{applied.get('field')}` on {task_id}: {applied.get('detail')}."
+                    ),
+                },
+            )
+        summary = str(result.get("summary") or "")
+        if not summary:
+            continue
+        task = next((t for t in tasks if str(t.get(task_id_field)) == task_id), None)
+        if task is None or task.get("next") == summary:
+            continue
+        task["next"] = summary
+        changed = True
+        write_activity_log(
+            config,
+            {"type": "task_reality_unresolved", "task_id": task_id, "message": summary},
+        )
+
+    if changed:
+        commit_canonical_task_transition(config, status)
+    return changed
 
 
 def approved_pr_change_scope(pr_number: int) -> str | None:
@@ -1042,6 +1180,14 @@ def dispatch_ready_tasks(
         status = load_status(config)
         tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
         task_map = {task.get(task_id_field): task for task in tasks}
+
+    if task_reality_reconcile_is_due(state):
+        state["task_reality_reconciled_at"] = utc_now()
+        if reconcile_task_reality(config, status):
+            changed = True
+            status = load_status(config)
+            tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+            task_map = {task.get(task_id_field): task for task in tasks}
 
     if advance_approved_prs_to_merge(config, status, finalize_statuses):
         changed = True
