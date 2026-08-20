@@ -33,6 +33,7 @@ def _sync_supervisor_scope() -> None:
         'ready_dispatch_signature', 
         'worktree_block_still_matches_dispatch', 
         'reconcile_task_reality', 
+        '_this_repository_slug', 
         'task_reality_reconcile_is_due', 
         'escalated_lease_block', 
         'build_dispatch_event', 
@@ -178,6 +179,30 @@ def task_reality_reconcile_is_due(
     return (_dt.now(_utc) - last).total_seconds() >= interval_seconds
 
 
+def _this_repository_slug() -> str | None:
+    """`owner/name` for this checkout's `origin`, or None when unreadable."""
+    import re
+    import subprocess
+
+    from common import ROOT as _root
+
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", (proc.stdout or "").strip())
+    return match.group(1) if match else None
+
+
 def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bool:
     """Repair what reality determines, report what it does not.
 
@@ -190,7 +215,27 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
-    tasks = [t for t in (status.get(tasks_path) or []) if t.get(task_id_field)]
+    all_tasks = [t for t in (status.get(tasks_path) or []) if t.get(task_id_field)]
+    if not all_tasks:
+        return False
+
+    # A task that declares another repository names branches and PRs that live
+    # there, and probing this checkout's `origin` for them reports drift that
+    # does not exist. On 2026-08-20 three cross-repo tasks were reported as
+    # naming branches that "do not exist on the remote" while those branches
+    # were present in `oday-data-platform`. Reporting a false drift is worse
+    # than reporting none, so anything not belonging to this repository is left
+    # to whatever reconciles that one.
+    this_repo = _this_repository_slug()
+    tasks = []
+    for task in all_tasks:
+        declared = str(task.get("repository") or "").strip()
+        if declared and this_repo and declared.lower() != this_repo.lower():
+            continue
+        if declared and not this_repo:
+            # Cannot tell whose repository this is; declining is the safe half.
+            continue
+        tasks.append(task)
     if not tasks:
         return False
 

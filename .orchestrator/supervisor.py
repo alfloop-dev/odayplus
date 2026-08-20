@@ -1541,14 +1541,30 @@ def agent_dispatch_preference_rank(config: dict[str, Any], agent_id: str | None)
 WAKE_POLL_SLICE_SECONDS = 5.0
 
 
-def _event_queue_signature(config: dict[str, Any]) -> tuple[float, int] | None:
-    """Cheap fingerprint of the wake queue, or None when it cannot be read."""
-    try:
-        path = Path(config_path(config, "event_queue"))
-        stat = path.stat()
-    except (KeyError, OSError):
-        return None
-    return (stat.st_mtime, stat.st_size)
+#: Never re-enter the cycle more often than this, however busy the signals are.
+#: A running worker writes progress to the board continuously, and each cycle
+#: costs GitHub calls; without a floor the loop would spend its time reacting to
+#: its own fleet rather than dispatching.
+MIN_WAKE_INTERVAL_SECONDS = 30.0
+
+#: Files whose change means "there may be something to do now". The event queue
+#: is where an outbound dispatch is recorded; the board is where a worker
+#: finishing, a review landing, or a task becoming ready is recorded. Watching
+#: only the queue missed the case that matters most - capacity being freed -
+#: because a worker completing writes to the board, not the queue.
+WAKE_SIGNAL_PATH_KEYS = ("event_queue", "status_file")
+
+
+def _wake_signature(config: dict[str, Any]) -> tuple[tuple[float, int] | None, ...]:
+    """Cheap fingerprint of every wake signal; None per entry when unreadable."""
+    signature: list[tuple[float, int] | None] = []
+    for key in WAKE_SIGNAL_PATH_KEYS:
+        try:
+            stat = Path(config_path(config, key)).stat()
+            signature.append((stat.st_mtime, stat.st_size))
+        except (KeyError, OSError):
+            signature.append(None)
+    return tuple(signature)
 
 
 def sleep_until_work_or_interval(
@@ -1556,6 +1572,7 @@ def sleep_until_work_or_interval(
     poll_interval: float,
     *,
     slice_seconds: float = WAKE_POLL_SLICE_SECONDS,
+    min_wake_interval: float = MIN_WAKE_INTERVAL_SECONDS,
 ) -> bool:
     """Sleep up to ``poll_interval``, returning early when work is queued.
 
@@ -1574,20 +1591,31 @@ def sleep_until_work_or_interval(
     """
     if poll_interval <= 0:
         return False
-    baseline = _event_queue_signature(config)
-    deadline = time.monotonic() + poll_interval
+    if min_wake_interval >= poll_interval:
+        # The floor covers the whole interval, so no signal can shorten it.
+        # Sleeping straight through says that plainly instead of arriving at it
+        # through a deadline race on the final slice.
+        time.sleep(poll_interval)
+        return False
+
+    baseline = _wake_signature(config)
+    started = time.monotonic()
+    deadline = started + poll_interval
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return False
         time.sleep(min(slice_seconds, remaining))
-        current = _event_queue_signature(config)
-        if current is None or baseline is None:
-            # Unreadable is not a wake signal. Fall back to the plain interval
-            # rather than spinning the loop on a missing file.
+        if time.monotonic() - started < min_wake_interval:
             continue
-        if current != baseline:
-            return True
+        current = _wake_signature(config)
+        for was, now in zip(baseline, current, strict=True):
+            # Unreadable is not a wake signal. A missing file paces the loop
+            # rather than spinning it.
+            if was is None or now is None:
+                continue
+            if was != now:
+                return True
 
 
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None) -> int:

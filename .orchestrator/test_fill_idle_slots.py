@@ -159,3 +159,157 @@ class ScopeGuardDecorationTests(unittest.TestCase):
         for name in ("configured_worker_slot_total", "default_max_dispatches_per_tick"):
             with self.subTest(name=name):
                 self.assertEqual(getattr(dispatch_engine, name).__name__, name)
+
+
+class WakeSignalTests(unittest.TestCase):
+    """Watching only the event queue missed the case that matters most.
+
+    A worker finishing writes to the board, not to the queue, so on 2026-08-20
+    a completion at 14:55:11 did not wake the loop and the next cycle ran at
+    14:57:59 - the full 301s interval, with free slots the whole time.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self.dir = Path(tempfile.mkdtemp())
+        self.queue = self.dir / "event-queue.jsonl"
+        self.board = self.dir / "ai-status.json"
+        self.queue.write_text("")
+        self.board.write_text("{}")
+        self.paths = {"event_queue": str(self.queue), "status_file": str(self.board)}
+        self.config = {}
+
+    def _patched(self):
+        return mock.patch.object(
+            supervisor, "config_path", side_effect=lambda _c, key: self.paths[key]
+        )
+
+    def test_the_board_is_a_wake_signal(self) -> None:
+        with self._patched():
+            def touch(_seconds):
+                self.board.write_text('{"tasks": []}')
+
+            with mock.patch.object(time, "sleep", side_effect=touch):
+                woke = supervisor.sleep_until_work_or_interval(
+                    self.config, 300.0, slice_seconds=0.01, min_wake_interval=0.0
+                )
+
+        self.assertTrue(woke)
+
+    def test_the_queue_is_still_a_wake_signal(self) -> None:
+        with self._patched():
+            def touch(_seconds):
+                self.queue.write_text('{"event_id": "e1"}\n')
+
+            with mock.patch.object(time, "sleep", side_effect=touch):
+                woke = supervisor.sleep_until_work_or_interval(
+                    self.config, 300.0, slice_seconds=0.01, min_wake_interval=0.0
+                )
+
+        self.assertTrue(woke)
+
+    def test_a_floor_stops_the_loop_chasing_its_own_fleet(self) -> None:
+        """A running worker writes progress continuously; without a floor the
+        supervisor would re-enter its cycle every few seconds."""
+        with self._patched():
+            def touch(_seconds):
+                self.board.write_text('{"tasks": [1]}')
+
+            with mock.patch.object(time, "sleep", side_effect=touch):
+                woke = supervisor.sleep_until_work_or_interval(
+                    self.config, 0.2, slice_seconds=0.01, min_wake_interval=1000.0
+                )
+
+        # The floor exceeds the interval, so the change is never acted on early.
+        self.assertFalse(woke)
+
+    def test_one_unreadable_signal_does_not_mask_the_other(self) -> None:
+        self.queue.unlink()
+        with self._patched():
+            def touch(_seconds):
+                self.board.write_text('{"tasks": [2]}')
+
+            with mock.patch.object(time, "sleep", side_effect=touch):
+                woke = supervisor.sleep_until_work_or_interval(
+                    self.config, 300.0, slice_seconds=0.01, min_wake_interval=0.0
+                )
+
+        self.assertTrue(woke)
+
+
+class ReconcileScopeTests(unittest.TestCase):
+    """A task declaring another repository names branches that live there.
+
+    Probing this checkout's `origin` for them reported drift that did not
+    exist: on 2026-08-20 three `oday-data-platform` tasks were flagged as
+    naming branches that "do not exist on the remote" while those branches
+    were present in that repository.
+    """
+
+    def test_a_foreign_repository_task_is_left_alone(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "DPF-KRN-MEAS-001",
+                    "status": "review_approved",
+                    "branch": "task/DPF-KRN-MEAS-001",
+                    "repository": "alfloop-dev/oday-data-platform",
+                    "pr_number": 8,
+                }
+            ]
+        }
+        with mock.patch.object(
+            dispatch_engine, "_this_repository_slug", return_value="alfloop-dev/odayplus"
+        ), mock.patch.object(dispatch_engine, "_remote_branch_names") as branches:
+            changed = dispatch_engine.reconcile_task_reality({}, status)
+
+        self.assertFalse(changed)
+        branches.assert_not_called()
+        self.assertNotIn("next", status["tasks"][0])
+
+    def test_a_task_for_this_repository_is_still_reconciled(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "OPS-X-001",
+                    "status": "in_progress",
+                    "branch": "task/OPS-X-001",
+                    "repository": "alfloop-dev/odayplus",
+                }
+            ]
+        }
+        with mock.patch.object(
+            dispatch_engine, "_this_repository_slug", return_value="alfloop-dev/odayplus"
+        ), mock.patch.object(
+            dispatch_engine, "_remote_branch_names", return_value=set()
+        ) as branches, mock.patch.object(
+            dispatch_engine, "write_activity_log", create=True
+        ), mock.patch.object(
+            dispatch_engine, "commit_canonical_task_transition", create=True, return_value=True
+        ), mock.patch.object(
+            dispatch_engine, "_pull_request_record", return_value=None
+        ):
+            dispatch_engine.reconcile_task_reality({}, status)
+
+        branches.assert_called_once()
+
+    def test_an_unknown_local_repository_declines_declared_tasks(self) -> None:
+        """Unable to tell whose repository this is, declining is the safe half."""
+        status = {
+            "tasks": [
+                {
+                    "id": "DPF-KRN-MEAS-001",
+                    "status": "review_approved",
+                    "branch": "task/DPF-KRN-MEAS-001",
+                    "repository": "alfloop-dev/oday-data-platform",
+                }
+            ]
+        }
+        with mock.patch.object(
+            dispatch_engine, "_this_repository_slug", return_value=None
+        ), mock.patch.object(dispatch_engine, "_remote_branch_names") as branches:
+            changed = dispatch_engine.reconcile_task_reality({}, status)
+
+        self.assertFalse(changed)
+        branches.assert_not_called()
