@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 CHECKER = ROOT / "delivery_toolchain/e2e/check_release_gate_registry.py"
@@ -637,6 +638,23 @@ def test_ci_and_promotion_workflows_use_separate_gate_modes() -> None:
     assert "PROMOTION_SHA" in promotion_workflow
     assert "Promotion SHA drift detected" in promotion_workflow
     assert "github.event.workflow_run.head_sha" in promotion_workflow
+    assert "check_product_release_gate.py --dev-merge" in makefile
+    assert "check_product_release_gate.py --require-go" in makefile
+
+
+def test_ci_is_not_a_deployment_authority() -> None:
+    ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    runtime_workflow_text = (ROOT / ".github/workflows/deploy-dev.yml").read_text(encoding="utf-8")
+    runtime_workflow = yaml.safe_load(runtime_workflow_text)
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "run: make product-e2e-gate" in ci_workflow
+    assert "run: make product-release-gate" not in ci_workflow
+    triggers = runtime_workflow.get(True, runtime_workflow.get("on", {}))
+    assert "workflow_dispatch" in triggers
+    assert "push" not in triggers
+    assert "Validate supervisor release admission" in runtime_workflow_text
+    assert "check_runtime_admission.py" in runtime_workflow_text
     assert "check_product_release_gate.py --dev-merge" in makefile
     assert "check_product_release_gate.py --require-go" in makefile
 

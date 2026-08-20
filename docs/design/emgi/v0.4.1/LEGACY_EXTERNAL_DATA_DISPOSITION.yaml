@@ -587,7 +587,6 @@ blocked_capabilities:
       - product_ops/external_data_backfill.py
       # Deployment plumbing that carries those same secrets to Cloud Run.
       - .github/workflows/deploy-dev.yml
-      - .github/workflows/deploy-staging.yml
       - infra/terraform/main.tf
       - infra/terraform/validate_contract.py
       - infra/terraform/env/prod.tfvars.example
