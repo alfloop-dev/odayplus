@@ -479,6 +479,7 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if str(worker.get("status") or "").lower() in TERMINAL_WORKER_STATUSES:
             continue
         previous_last_event_at = worker.get("last_event_at")
+        previous_last_process_activity_at = worker.get("last_process_activity_at")
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
                 task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
@@ -605,6 +606,10 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             previous_last_event_at
             and worker.get("last_event_at")
             and worker.get("last_event_at") > previous_last_event_at
+        )
+        process_activity_advanced = bool(
+            worker.get("last_process_activity_at")
+            and worker.get("last_process_activity_at") > str(previous_last_process_activity_at or "")
         )
         if manual_pending_inbox_can_auto_redeliver(config, state, provider_report, worker):
             changed = (
@@ -910,16 +915,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             changed = True
 
         if alive:
-            if worker.get("status") == "stalled" and last_event_advanced:
+            if worker.get("status") == "stalled" and (last_event_advanced or process_activity_advanced):
                 worker["status"] = "running"
-                worker["last_event_at"] = worker.get("last_event_at") or utc_now()
                 write_activity_log(
                     config,
                     {
                         "type": "worker_recovered",
                         "provider": worker.get("provider"),
                         "task_id": worker.get("task_id"),
-                        "message": "Worker produced new output after being marked stalled; status restored to running.",
+                        "message": "Worker produced output or process activity after being marked stalled; status restored to running.",
                         "worker_run_id": worker["run_id"],
                     },
                 )
@@ -929,9 +933,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
-            last_event = worker.get("last_event_at")
-            if last_event:
-                last_dt = datetime.fromisoformat(last_event.replace("Z", "+00:00"))
+            activity_times = [
+                parse_iso_timestamp(str(value or ""))
+                for value in (worker.get("last_event_at"), worker.get("last_process_activity_at"))
+            ]
+            activity_times = [value.astimezone(UTC) for value in activity_times if value is not None]
+            if activity_times:
+                last_dt = max(activity_times)
                 stalled_for_seconds = (now - last_dt).total_seconds()
                 if worker.get("status") == "stalled" and stalled_for_seconds >= stall_after * 2:
                     terminate_worker_pid(worker.get("pid"))

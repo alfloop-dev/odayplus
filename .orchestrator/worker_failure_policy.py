@@ -413,6 +413,14 @@ def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
         if child_pid and worker.get("child_pid") != child_pid:
             worker["child_pid"] = child_pid
             changed = True
+        process_activity_at = str(payload.get("last_process_activity_at") or "").strip()
+        if process_activity_at and process_activity_at > str(worker.get("last_process_activity_at") or ""):
+            worker["last_process_activity_at"] = process_activity_at
+            changed = True
+        process_activity = payload.get("process_activity")
+        if isinstance(process_activity, dict) and worker.get("process_activity") != process_activity:
+            worker["process_activity"] = process_activity
+            changed = True
     if status_payload:
         runner_status = str(status_payload.get("status") or "").strip()
         if runner_status and worker.get("runner_status") != runner_status:

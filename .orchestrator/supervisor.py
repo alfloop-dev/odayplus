@@ -3861,13 +3861,22 @@ def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | 
     return "|".join(parts)
 
 
-def active_worker_indexes(state: dict[str, Any], active_statuses: set[str]) -> tuple[set[str], set[tuple[str, str]]]:
+def active_worker_indexes(
+    state: dict[str, Any],
+    active_statuses: set[str],
+    config: dict[str, Any] | None = None,
+) -> tuple[set[str], set[tuple[str, str]]]:
     agents: set[str] = set()
     task_agents: set[tuple[str, str]] = set()
     for worker in state.get("workers", {}).values():
-        if worker.get("status") not in active_statuses:
-            continue
-        if str(worker.get("status") or "").lower() == "stalled" and not pid_is_alive(worker.get("pid")):
+        if config is not None:
+            occupies_capacity = worker_counts_as_active_capacity(config, worker, active_statuses)
+        else:
+            occupies_capacity = worker.get("status") in active_statuses and not (
+                str(worker.get("status") or "").lower() == "stalled"
+                and not pid_is_alive(worker.get("pid"))
+            )
+        if not occupies_capacity:
             continue
         agent_id = str(worker.get("agent_id") or "")
         task_id = str(worker.get("task_id") or "")
@@ -3902,12 +3911,16 @@ def worker_counts_as_active_capacity(
         return True
     if not pid_is_alive(worker.get("pid")):
         return False
-    last_event = parse_iso_timestamp(str(worker.get("last_event_at") or ""))
-    if last_event is None:
+    activity_times = [
+        parse_iso_timestamp(str(value or ""))
+        for value in (worker.get("last_event_at"), worker.get("last_process_activity_at"))
+    ]
+    activity_times = [value.astimezone(UTC) for value in activity_times if value is not None]
+    if not activity_times:
         return True
     current_time = now or datetime.now(UTC)
     stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
-    return (current_time - last_event.astimezone(UTC)).total_seconds() < stall_after * 2
+    return (current_time - max(activity_times)).total_seconds() < stall_after * 2
 
 
 def orphaned_queue_event_grace_seconds(config: dict[str, Any]) -> int:

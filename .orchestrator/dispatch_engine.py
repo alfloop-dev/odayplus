@@ -838,7 +838,7 @@ def reassign_unavailable_reviewers(
         str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])
     }
     active_statuses = active_worker_statuses(config)
-    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses, config)
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     reserved_agents = set(active_agents) | set(pending_agents)
     reserved_tasks = {task_id for task_id, _agent_id in active_task_agents | pending_task_agents}
@@ -1316,7 +1316,7 @@ def dispatch_discussion_planning(
         return False
 
     active_statuses = active_worker_statuses(config)
-    active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, _active_task_agents = active_worker_indexes(state, active_statuses, config)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     changed = False
 
@@ -1412,7 +1412,7 @@ def dispatch_ready_tasks(
         ),
     )
 
-    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses, config)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}

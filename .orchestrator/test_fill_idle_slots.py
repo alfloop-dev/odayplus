@@ -5,6 +5,7 @@ import sys
 import time
 import unittest
 import unittest.mock as mock
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -84,6 +85,24 @@ class DispatchCapTests(unittest.TestCase):
         self.assertFalse(supervisor.worker_counts_as_active_capacity(config, worker, active_statuses))
         self.assertEqual(agents, set())
         self.assertEqual(task_agents, set())
+
+    def test_recent_process_activity_keeps_quiet_worker_capacity_live(self) -> None:
+        config = _config_with_slots(2)
+        config["supervisor"] = {"stall_after_seconds": 300}
+        active_statuses = supervisor.active_worker_statuses(config)
+        now = datetime(2026, 8, 21, 10, 30, tzinfo=UTC)
+        worker = {
+            "status": "stalled",
+            "pid": os.getpid(),
+            "last_event_at": "2026-08-21T10:00:00Z",
+            "last_process_activity_at": "2026-08-21T10:29:30Z",
+        }
+
+        self.assertTrue(
+            supervisor.worker_counts_as_active_capacity(
+                config, worker, active_statuses, now=now
+            )
+        )
 
     def test_started_queue_record_is_not_double_counted_with_worker(self) -> None:
         config = _config_with_slots(2)
