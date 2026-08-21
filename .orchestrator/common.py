@@ -21,8 +21,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+try:  # PyYAML is optional; yaml_dump falls back to JSON without it.
+    import yaml
+except ImportError:  # pragma: no cover - exercised only without PyYAML
+    yaml = None
+
 from jsonschema import Draft202012Validator
-from task_archive import TaskResolver
 
 ROOT = Path(__file__).resolve().parents[1]
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
@@ -32,6 +36,7 @@ CLOSEOUT_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "task-closeout-finalization.m
 WORKER_ANCHOR_SPEC_PATH = ORCHESTRATOR_DIR / "skills" / "worker-anchor-commit.md"
 SUPERVISOR_SCRIPT_NAME = "supervisor.py"
 SUPERVISOR_SCRIPT_REL = f".orchestrator/{SUPERVISOR_SCRIPT_NAME}"
+SUPERVISOR_SCRIPT_PATH = ORCHESTRATOR_DIR / SUPERVISOR_SCRIPT_NAME
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 CONFIG_SCHEMA_PATH = ORCHESTRATOR_DIR / "config.schema.json"
@@ -72,8 +77,44 @@ def utc_now() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def parse_utc_timestamp(value: Any) -> datetime | None:
+    """Parse an orchestrator timestamp into an aware UTC datetime.
+
+    :func:`parse_iso_timestamp` returns whatever the string carried, so a naive
+    document reads back naive and comparing it against ``datetime.now(UTC)``
+    raises. Callers that do arithmetic want one timezone: treat a naive stamp
+    as UTC (every writer here emits ``Z``) and convert an offset stamp to UTC.
+    """
+    parsed = parse_iso_timestamp(value)
+    if parsed is None:
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def isoformat_utc(value: datetime) -> str:
+    """Render ``value`` the way :func:`utc_now` renders the current time."""
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def write_text_if_changed(path: Path, content: str) -> bool:
+    """Write ``content`` only when it differs; return whether it was written."""
+    existing = path.read_text(encoding="utf-8") if path.exists() else None
+    if existing == content:
+        return False
+    ensure_parent(path)
+    path.write_text(content, encoding="utf-8")
+    return True
+
+
+def yaml_dump(payload: dict[str, Any]) -> str:
+    """Serialize ``payload`` as YAML, falling back to JSON without PyYAML."""
+    if yaml is not None:
+        return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
 def strip_json_comments(text: str) -> str:
@@ -863,6 +904,36 @@ def resolve_github_cli(repo_root: Path | None = None) -> str | None:
     return None
 
 
+def supervisor_pid_path(config: dict[str, Any]) -> Path:
+    return config_path(config, "state_file").parent / "supervisor.pid"
+
+
+def supervisor_lock_path(config: dict[str, Any]) -> Path:
+    return config_path(config, "state_file").parent / "supervisor.lock"
+
+
+def cmdline_is_supervisor_process(parts: list[str]) -> bool:
+    """Return True when ``parts`` is a supervisor's own argv, not a wrapper's.
+
+    ``timeout 20s python3 supervisor.py`` and ``bash -lc "... supervisor.py"``
+    carry the script path in their argv without being the supervisor. Matching
+    any argument lets the singleton guard SIGTERM the wrapper and lets a health
+    probe read the wrapper as a live supervisor, so require the script to be
+    argv[0] or an argument of a ``python*`` executable.
+    """
+    if not parts:
+        return False
+    script = str(SUPERVISOR_SCRIPT_PATH)
+    if parts[0] in {script, SUPERVISOR_SCRIPT_REL}:
+        return True
+    if not Path(parts[0]).name.startswith("python"):
+        return False
+    return any(
+        part in {script, SUPERVISOR_SCRIPT_REL} or part.endswith(f"/{SUPERVISOR_SCRIPT_NAME}")
+        for part in parts[1:]
+    )
+
+
 def pid_is_supervisor_process(pid: Any, repo_root: Path) -> bool:
     """Return True when ``pid`` is really *this repo's* supervisor.
 
@@ -883,7 +954,7 @@ def pid_is_supervisor_process(pid: Any, repo_root: Path) -> bool:
     parts = [part.decode("utf-8", errors="ignore") for part in cmdline.split(b"\x00") if part]
     if cwd != repo_root.resolve():
         return False
-    return any(part == SUPERVISOR_SCRIPT_REL or part.endswith(f"/{SUPERVISOR_SCRIPT_NAME}") for part in parts)
+    return cmdline_is_supervisor_process(parts)
 
 
 def normalize_agent_id(value: str | None) -> str:
@@ -1486,6 +1557,8 @@ def generate_task_brief_content(
         raise ValueError("task_id is required")
     status_data = load_status(config)
     tasks = status_data.get("tasks", []) or []
+    from task_archive import TaskResolver
+
     resolver = TaskResolver(tasks)
 
     active_task = next((t for t in tasks if str(t.get("id") or "").strip() == task_id), None)
@@ -1635,6 +1708,8 @@ def write_task_brief(config: dict[str, Any], task_id: str | None) -> Path | None
 
     status_data = load_status(config)
     tasks = status_data.get("tasks", []) or []
+    from task_archive import TaskResolver
+
     resolver = TaskResolver(tasks)
     task = resolver.get(task_id)
     if task is None:
@@ -1659,6 +1734,8 @@ def execution_context_files(config: dict[str, Any], task_id: str | None) -> list
 
     status_data = load_status(config)
     tasks = status_data.get("tasks", []) or []
+    from task_archive import TaskResolver
+
     resolver = TaskResolver(tasks)
     task = resolver.get(task_id)
 

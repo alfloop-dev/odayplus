@@ -54,16 +54,16 @@ from approval_queue import (
 )
 from branch_drift_alarms import check_branch_drift
 from common import (
-    CONFIG_PATH_ENV_VAR,
-    PROVIDER_CLI_FAMILY,
-    PROVIDER_LAUNCHER_MISSING_PATTERN,
     agent_config_for,
+    cmdline_is_supervisor_process,
     config_path,
+    CONFIG_PATH_ENV_VAR,
     display_name_for,
     execution_context_files,
     generate_task_brief_content,
     is_github_cli_auth_failure,
     is_task_brief_stale,
+    isoformat_utc,
     load_config,
     load_json,
     load_status,
@@ -71,13 +71,17 @@ from common import (
     normalize_agent_id,
     parse_iso_timestamp,
     pid_is_alive,
+    PROVIDER_CLI_FAMILY,
     provider_launcher_missing_cli,
+    PROVIDER_LAUNCHER_MISSING_PATTERN,
     relpath,
     resolve_path,
     selected_shared_files,
     shell_quote,
     spawn_background_process,
     summarize_failure_reason,
+    supervisor_lock_path,
+    supervisor_pid_path,
     utc_now,
     validate_destination_context_path,
     validate_source_doc_path,
@@ -504,14 +508,6 @@ PLANNING_STATE_FILE = THIS_DIR / "planning-state.json"
 _UNSET = object()
 
 
-def supervisor_pid_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.pid"
-
-
-def supervisor_lock_path(config: dict[str, Any]) -> Path:
-    return config_path(config, "state_file").parent / "supervisor.lock"
-
-
 # Held open for the lifetime of the winning supervisor process. The advisory
 # flock is released automatically by the kernel when the process exits (or is
 # killed), so a crashed supervisor never leaves the lock stuck.
@@ -573,25 +569,6 @@ def clear_supervisor_pid(config: dict[str, Any]) -> None:
         except Exception:
             pass
         path.unlink(missing_ok=True)
-
-
-def cmdline_is_supervisor_process(parts: list[str]) -> bool:
-    current_script = str(Path(__file__).resolve())
-    current_script_name = str(Path(__file__).name)
-    current_script_rel = ".orchestrator/supervisor.py"
-    if not parts:
-        return False
-    executable = Path(parts[0]).name
-    if parts[0] in {current_script, current_script_rel}:
-        return True
-    if not executable.startswith("python"):
-        return False
-    return any(
-        part == current_script
-        or part == current_script_rel
-        or part.endswith(f"/{current_script_name}")
-        for part in parts[1:]
-    )
 
 
 def iter_matching_supervisor_pids() -> list[int]:
@@ -2025,7 +2002,7 @@ def start_worker_for_request(
     logical_agent_id = str(request.metadata.get("logical_agent_id") or agent["id"])
     dispatch_slot_id = str(request.metadata.get("dispatch_slot_id") or "")
     now_dt = datetime.now(UTC)
-    now = _isoformat_utc(now_dt)
+    now = isoformat_utc(now_dt)
     result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
     state.setdefault("workers", {})[worker_run_id] = {
         "run_id": worker_run_id,
@@ -2603,12 +2580,6 @@ CLAUDE_SESSION_LIMIT_PATTERN = re.compile(
 
 
 
-
-
-
-
-def _isoformat_utc(dt: datetime) -> str:
-    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 

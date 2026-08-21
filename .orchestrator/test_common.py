@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest import mock
 from urllib.error import HTTPError
@@ -522,3 +524,114 @@ class GithubCliResolutionTests(unittest.TestCase):
                     f"{path.name} re-spells the system-gh fallback; call "
                     "common.resolve_github_cli instead",
                 )
+
+
+class SupervisorProcessIdentityTests(unittest.TestCase):
+    """A wrapper that merely names supervisor.py is not the supervisor.
+
+    ``pid_is_supervisor_process`` used to match any argv element ending in
+    ``supervisor.py``, so ``timeout 20s python3 .orchestrator/supervisor.py``
+    read as a live supervisor to the watchdog while the singleton guard --
+    which already applied the strict rule -- refused to treat it as one. The
+    two answers now come from one matcher.
+    """
+
+    def test_wrapper_process_is_not_read_as_the_supervisor(self) -> None:
+        repo = Path(common.ROOT)
+        script = repo / ".orchestrator" / "supervisor.py"
+        if not script.is_file():
+            self.skipTest("supervisor.py not present")
+        process = subprocess.Popen(
+            ["timeout", "10", "cat", ".orchestrator/supervisor.py"],
+            cwd=str(repo),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            self.assertFalse(common.pid_is_supervisor_process(process.pid, repo))
+        finally:
+            process.kill()
+            process.wait(timeout=10)
+
+    def test_real_supervisor_argv_still_matches(self) -> None:
+        self.assertTrue(
+            common.cmdline_is_supervisor_process(["python3", "-u", ".orchestrator/supervisor.py", "--verbose"])
+        )
+        self.assertTrue(common.cmdline_is_supervisor_process([".orchestrator/supervisor.py", "--once"]))
+
+    def test_supervisor_module_reuses_the_common_matcher(self) -> None:
+        import supervisor
+
+        self.assertIs(supervisor.cmdline_is_supervisor_process, common.cmdline_is_supervisor_process)
+
+
+class TaskArchiveSharesHardenedJsonIoTests(unittest.TestCase):
+    """The archive used to carry a weaker private copy of the JSON helpers.
+
+    ``common`` imported ``TaskResolver`` from ``task_archive``, so the archive
+    sat below ``common`` in the layering and could not import back -- it spelled
+    its own ``write_json``/``load_json`` with a plain ``write_text`` and no
+    retry. Readers of ``ai-task-archive`` therefore raced a non-atomic writer.
+    """
+
+    def setUp(self) -> None:
+        import task_archive
+
+        self.task_archive = task_archive
+        self.tmp = tempfile.TemporaryDirectory(prefix="pantheon-archive-io-")
+        self.addCleanup(self.tmp.cleanup)
+        self.path = Path(self.tmp.name) / "task.json"
+
+    def test_archive_read_tolerates_a_trailing_comma(self) -> None:
+        self.path.write_text('{"id": "T-1",}', encoding="utf-8")
+        self.assertEqual(self.task_archive.load_json(self.path), {"id": "T-1"})
+
+    def test_archive_write_leaves_the_previous_document_on_failure(self) -> None:
+        self.path.write_text('{"id": "T-1"}\n', encoding="utf-8")
+        with mock.patch("common.os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.task_archive.write_json(self.path, {"id": "T-2"})
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")), {"id": "T-1"})
+
+    def test_archive_uses_the_canonical_helpers(self) -> None:
+        self.assertIs(self.task_archive.write_json, common.write_json)
+        self.assertIs(self.task_archive.load_json, common.load_json)
+
+
+class UtcTimestampParsingTests(unittest.TestCase):
+    """One naive-timestamp policy instead of three.
+
+    ``supervisor_watchdog`` read a naive stamp as *local* time, ``github_bus``
+    left it naive (so subtracting it from an aware ``now`` raised TypeError)
+    and only ``branch_drift_alarms`` assumed UTC. Every writer here emits
+    ``Z``, so UTC is the one correct reading.
+    """
+
+    def test_naive_timestamp_is_read_as_utc(self) -> None:
+        parsed = common.parse_utc_timestamp("2026-08-20T12:00:00")
+        self.assertEqual(parsed, datetime(2026, 8, 20, 12, 0, tzinfo=UTC))
+
+    def test_offset_timestamp_is_converted_to_utc(self) -> None:
+        parsed = common.parse_utc_timestamp("2026-08-20T20:00:00+08:00")
+        self.assertEqual(parsed, datetime(2026, 8, 20, 12, 0, tzinfo=UTC))
+        self.assertEqual(parsed.tzinfo, UTC)
+
+    def test_naive_result_can_be_subtracted_from_now(self) -> None:
+        # github_bus._parse_iso used to return a naive datetime here, and the
+        # caller's `_iso_now_dt() - parsed` raised instead of backing off.
+        parsed = common.parse_utc_timestamp("2026-08-20T12:00:00")
+        self.assertIsInstance((datetime.now(UTC) - parsed).total_seconds(), float)
+
+    def test_junk_reads_as_no_timestamp_instead_of_raising(self) -> None:
+        for value in ("", None, "not-a-date", 17, {}):
+            with self.subTest(value=value):
+                self.assertIsNone(common.parse_utc_timestamp(value))
+
+    def test_consumers_share_the_canonical_parser(self) -> None:
+        import branch_drift_alarms
+        import github_bus
+        import supervisor_watchdog
+
+        for module in (github_bus, branch_drift_alarms, supervisor_watchdog):
+            with self.subTest(module=module.__name__):
+                self.assertIs(module.parse_utc_timestamp, common.parse_utc_timestamp)

@@ -8,7 +8,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from common import parse_iso_timestamp
+from common import (
+    isoformat_utc,
+    parse_iso_timestamp,
+)
 from runtime_state import HANDED_OFF_WORKER_STATUSES, TERMINAL_WORKER_STATUSES
 
 
@@ -19,7 +22,7 @@ def _supervisor_module():
 
 def _sync_supervisor_scope() -> None:
     sv = _supervisor_module()
-    excluded = {"_parse_iso_utc", "_isoformat_utc", "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
+    excluded = {"_parse_iso_utc", "__name__", "__doc__", "__package__", "__loader__", "__spec__", "__file__", "__cached__", "__builtins__", "Any", "_supervisor_module", "_sync_supervisor_scope", "_entrypoint", "_sync_scope_guard"}
     module_exports = {"process_queue", "poll_workers"}
     # Skip only dunders. The four copies of this function used to disagree --
     # two skipped every `_`-prefixed name, two skipped only `__` -- so whether a
@@ -43,10 +46,6 @@ def _entrypoint(func):
 
 
 _parse_iso_utc = parse_iso_timestamp
-
-
-def _isoformat_utc(dt: datetime) -> str:
-    return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 @_entrypoint
@@ -432,9 +431,9 @@ def process_queue(
         record["status"] = "manual_pending" if delivery and delivery.get("manual_confirmation_required") and not delivery.get("auto_delivered") else "started"
         record["run_id"] = worker_run_id
         record["lease_owner"] = worker_run_id
-        record["lease_acquired_at"] = _isoformat_utc(queue_started_at)
+        record["lease_acquired_at"] = isoformat_utc(queue_started_at)
         record["lease_expires_at"] = queue_lease_expiry(config, queue_started_at)
-        record["processed_at"] = _isoformat_utc(queue_started_at)
+        record["processed_at"] = isoformat_utc(queue_started_at)
         record.pop("last_wait_reason", None)
         sync_dispatched_task_status(config, event)
         changed = True

@@ -6,7 +6,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from common import ensure_parent
+from common import (
+    ensure_parent,
+    write_text_if_changed,
+    yaml_dump,
+)
 from lovable_task_publisher import render_lovable_prompt, resolve_contract_packet_refs
 from multi_repo_registry import coordination_responses_dir, repository_local_path
 
@@ -14,15 +18,6 @@ try:
     import yaml
 except ImportError:  # pragma: no cover - best effort fallback
     yaml = None
-
-
-def _write_if_changed(path: Path, content: str) -> bool:
-    existing = path.read_text(encoding="utf-8") if path.exists() else None
-    if existing == content:
-        return False
-    ensure_parent(path)
-    path.write_text(content, encoding="utf-8")
-    return True
 
 
 def _copy_if_changed(source: Path, target: Path) -> bool:
@@ -33,12 +28,6 @@ def _copy_if_changed(source: Path, target: Path) -> bool:
     ensure_parent(target)
     target.write_text(content, encoding="utf-8")
     return True
-
-
-def _yaml_dump(payload: dict[str, Any]) -> str:
-    if yaml is not None:
-        return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
-    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
 def _yaml_load(path: Path) -> dict[str, Any] | None:
@@ -144,7 +133,7 @@ def mirror_backend_delivery_bundle(
     )
 
     delivery_path = responses_dir / f"{feature_id}-backend-delivery.yaml"
-    changed = _write_if_changed(delivery_path, _yaml_dump(mirrored_delivery)) or changed
+    changed = write_text_if_changed(delivery_path, yaml_dump(mirrored_delivery)) or changed
     mirrored_paths.append(str(delivery_path.relative_to(target_root)))
 
     return {
@@ -267,8 +256,8 @@ def mirror_contract_ready_bundle(
 
     contract_path = responses_dir / f"{feature_id}-contract-ready.yaml"
     handoff_contract_path = handoff_dir / contract_path.name
-    changed = _write_if_changed(contract_path, _yaml_dump(mirrored_contract)) or changed
-    changed = _write_if_changed(handoff_contract_path, _yaml_dump(mirrored_contract)) or changed
+    changed = write_text_if_changed(contract_path, yaml_dump(mirrored_contract)) or changed
+    changed = write_text_if_changed(handoff_contract_path, yaml_dump(mirrored_contract)) or changed
     mirrored_paths.extend(
         [
             str(contract_path.relative_to(target_root)),
@@ -316,13 +305,13 @@ def mirror_contract_ready_bundle(
         if "lovable_prompt" in artifacts:
             local_artifacts["lovable_prompt"] = str(prompt_path.relative_to(target_root))
         mirrored_contract["artifacts"] = local_artifacts
-        changed = _write_if_changed(contract_path, _yaml_dump(mirrored_contract)) or changed
-        changed = _write_if_changed(handoff_contract_path, _yaml_dump(mirrored_contract)) or changed
+        changed = write_text_if_changed(contract_path, yaml_dump(mirrored_contract)) or changed
+        changed = write_text_if_changed(handoff_contract_path, yaml_dump(mirrored_contract)) or changed
 
-        changed = _write_if_changed(packet_path, _yaml_dump(mirrored_packet)) or changed
-        changed = _write_if_changed(prompt_path, rendered_prompt) or changed
-        changed = _write_if_changed(handoff_packet_path, _yaml_dump(mirrored_packet)) or changed
-        changed = _write_if_changed(handoff_prompt_path, rendered_prompt) or changed
+        changed = write_text_if_changed(packet_path, yaml_dump(mirrored_packet)) or changed
+        changed = write_text_if_changed(prompt_path, rendered_prompt) or changed
+        changed = write_text_if_changed(handoff_packet_path, yaml_dump(mirrored_packet)) or changed
+        changed = write_text_if_changed(handoff_prompt_path, rendered_prompt) or changed
         mirrored_paths.extend(
             [
                 str(packet_path.relative_to(target_root)),

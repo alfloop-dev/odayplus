@@ -21,6 +21,7 @@ from common import (
     load_config,
     load_json,
     load_status,
+    parse_utc_timestamp,
     render_template,
     resolve_github_cli,
     run_command,
@@ -77,12 +78,6 @@ def resolve_gh_binary() -> str | None:
 
 def _iso_now_dt() -> datetime:
     return datetime.now(UTC).replace(microsecond=0)
-
-
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def default_bus_state() -> dict[str, Any]:
@@ -1032,7 +1027,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     remote_head_sha = remote_branch_head_sha(branch)
     if not remote_head_sha:
         if previous_unpublished:
-            last_check = _parse_iso(str(pr_ref.get("last_remote_branch_check_at") or ""))
+            last_check = parse_utc_timestamp(str(pr_ref.get("last_remote_branch_check_at") or ""))
             if last_check and (_iso_now_dt() - last_check).total_seconds() < unpublished_branch_recheck_seconds(config):
                 return False
         checked_at = utc_now()
@@ -2169,7 +2164,7 @@ def sync_coordination_outbound(config: dict[str, Any], bus_state: dict[str, Any]
 
 
 def should_skip_for_offline_backoff(config: dict[str, Any], bus_state: dict[str, Any]) -> bool:
-    offline_until = _parse_iso(bus_state.get("offline_until"))
+    offline_until = parse_utc_timestamp(bus_state.get("offline_until"))
     if not offline_until:
         return False
     return _iso_now_dt() < offline_until
@@ -2192,7 +2187,7 @@ def sync_github_bus(config: dict[str, Any], runtime_state: dict[str, Any]) -> bo
     if should_skip_for_offline_backoff(config, bus_state):
         return False
 
-    last_sync = _parse_iso(bus_state.get("last_sync_at"))
+    last_sync = parse_utc_timestamp(bus_state.get("last_sync_at"))
     interval = int(bus_cfg.get("poll_interval_seconds", 30))
     if last_sync and (_iso_now_dt() - last_sync).total_seconds() < interval:
         return False
