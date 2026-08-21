@@ -22,7 +22,8 @@
       "scripts/ai-status.sh",
       "scripts/test_ai_status.py",
       "scripts/supervisor_runtime_health.py",
-      "scripts/supervisor_watchdog_install.py"
+      "scripts/supervisor_watchdog_install.py",
+      "scripts/test_supervisor_watchdog_install.py"
     ],
     "include_path_prefixes": [
       "scripts/orchestrator/"
