@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pantheon Fleet Dashboard</title>
+<style>
+/* ---------------------------------------------------------------------------
+   Tokens. Light is the base definition; dark is redefined under both the OS
+   media query and the explicit [data-theme] stamp so the toggle wins either way.
+   Palette values come from the validated reference instance (categorical slots
+   1-3 + the fixed status palette); do not hand-tune them.
+--------------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --plane:      #f9f9f7;
+  --surface:    #fcfcfb;
+  --ink:        #0b0b0b;
+  --ink-2:      #52514e;
+  --muted:      #898781;
+  --grid:       #e1e0d9;
+  --axis:       #c3c2b7;
+  --border:     rgba(11, 11, 11, 0.10);
+  --raised:     rgba(11, 11, 11, 0.04);
+  --s1:         #2a78d6;
+  --s2:         #eb6834;
+  --s3:         #1baf7a;
+  --good:       #0ca30c;
+  --good-text:  #006300;
+  --warning:    #fab219;
+  --serious:    #ec835a;
+  --critical:   #d03b3b;
+  --shadow:     0 1px 2px rgba(11, 11, 11, 0.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --plane:    #0d0d0d;
+    --surface:  #1a1a19;
+    --ink:      #ffffff;
+    --ink-2:    #c3c2b7;
+    --muted:    #898781;
+    --grid:     #2c2c2a;
+    --axis:     #383835;
+    --border:   rgba(255, 255, 255, 0.10);
+    --raised:   rgba(255, 255, 255, 0.05);
+    --s1:       #3987e5;
+    --s2:       #d95926;
+    --s3:       #199e70;
+    --good-text:#0ca30c;
+    --shadow:   0 1px 2px rgba(0, 0, 0, 0.4);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:    #0d0d0d;
+  --surface:  #1a1a19;
+  --ink:      #ffffff;
+  --ink-2:    #c3c2b7;
+  --muted:    #898781;
+  --grid:     #2c2c2a;
+  --axis:     #383835;
+  --border:   rgba(255, 255, 255, 0.10);
+  --raised:   rgba(255, 255, 255, 0.05);
+  --s1:       #3987e5;
+  --s2:       #d95926;
+  --s3:       #199e70;
+  --good-text:#0ca30c;
+  --shadow:   0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--plane);
+  color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--s1); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.wrap { max-width: 1500px; margin: 0 auto; padding: 20px 20px 64px; }
+
+/* ---- header ---- */
+header.top {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 18px;
+  padding-bottom: 14px; margin-bottom: 18px; border-bottom: 1px solid var(--border);
+}
+header.top h1 { font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+header.top .sub { color: var(--muted); font-size: 12px; }
+.spacer { flex: 1 1 auto; }
+.ctl {
+  font: inherit; font-size: 12px; color: var(--ink-2);
+  background: var(--surface); border: 1px solid var(--border); border-radius: 7px;
+  padding: 5px 10px; cursor: pointer;
+}
+.ctl:hover { background: var(--raised); color: var(--ink); }
+
+/* ---- chips ---- */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 550; padding: 3px 9px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--ink-2); white-space: nowrap;
+}
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.chip.good     .dot { background: var(--good); }
+.chip.warning  .dot { background: var(--warning); }
+.chip.serious  .dot { background: var(--serious); }
+.chip.critical .dot { background: var(--critical); }
+.chip.good     { color: var(--good-text); border-color: color-mix(in oklab, var(--good) 40%, var(--border)); }
+.chip.warning  { color: var(--ink); border-color: color-mix(in oklab, var(--warning) 45%, var(--border)); }
+.chip.serious  { color: var(--ink); border-color: color-mix(in oklab, var(--serious) 45%, var(--border)); }
+.chip.critical { color: var(--critical); border-color: color-mix(in oklab, var(--critical) 45%, var(--border)); }
+
+/* ---- banner ---- */
+.banner {
+  display: none; padding: 12px 14px; margin-bottom: 16px;
+  border: 1px solid color-mix(in oklab, var(--critical) 45%, var(--border));
+  border-left: 3px solid var(--critical);
+  border-radius: 8px; background: var(--surface); box-shadow: var(--shadow);
+}
+.banner.show { display: block; }
+.banner b { color: var(--critical); }
+.banner code {
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--raised); padding: 2px 6px; border-radius: 4px;
+}
+
+/* ---- tiles ---- */
+.tiles {
+  display: grid; gap: 10px; margin-bottom: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+}
+.tile {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; box-shadow: var(--shadow);
+}
+.tile .label {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px;
+}
+.tile .value { font-size: 27px; font-weight: 640; line-height: 1.1; letter-spacing: -0.02em; }
+.tile .value .unit { font-size: 14px; font-weight: 500; color: var(--muted); margin-left: 2px; }
+.tile .foot { font-size: 12px; color: var(--ink-2); margin-top: 5px; }
+.tile.is-critical { border-color: color-mix(in oklab, var(--critical) 45%, var(--border)); }
+.tile.is-critical .value { color: var(--critical); }
+.tile.is-warning  { border-color: color-mix(in oklab, var(--warning) 50%, var(--border)); }
+
+/* ---- sections ---- */
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(430px, 1fr)); }
+section.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px 16px; box-shadow: var(--shadow); min-width: 0;
+}
+section.card.full { grid-column: 1 / -1; }
+section.card > h2 {
+  font-size: 13px; font-weight: 650; margin: 0 0 2px; letter-spacing: -0.005em;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+section.card > .hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
+.count-pill {
+  font-size: 11px; font-weight: 600; color: var(--ink-2);
+  background: var(--raised); border-radius: 999px; padding: 1px 7px;
+}
+
+/* ---- bars ---- */
+.bars { display: grid; gap: 7px; }
+.bar-row {
+  display: grid; grid-template-columns: 116px 1fr 42px; align-items: center; gap: 10px;
+}
+.bar-row .k { font-size: 12px; color: var(--ink-2); text-align: right; }
+.bar-track {
+  position: relative; height: 15px; border-radius: 4px;
+  background: var(--raised); overflow: hidden;
+}
+.bar-fill { height: 100%; border-radius: 4px; background: var(--s1); min-width: 2px; }
+.bar-row .v { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* stacked (lane) bars: 2px surface gap between fills */
+.stack { display: flex; gap: 2px; height: 15px; }
+.stack .seg { border-radius: 4px; min-width: 3px; }
+.stack .seg.running { background: var(--s1); }
+.stack .seg.pending { background: var(--s2); }
+.stack .seg.failed  { background: var(--critical); }
+.stack .rest { flex: 1 1 auto; border-radius: 4px; background: var(--raised); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 12px; color: var(--ink-2); }
+.legend .item { display: inline-flex; align-items: center; gap: 6px; }
+.legend .swatch { width: 10px; height: 10px; border-radius: 3px; }
+.legend .running { background: var(--s1); }
+.legend .pending { background: var(--s2); }
+.legend .failed  { background: var(--critical); }
+
+/* ---- meter ---- */
+.meter { height: 8px; border-radius: 4px; background: var(--raised); overflow: hidden; margin-top: 8px; }
+.meter > div { height: 100%; border-radius: 4px; background: var(--s1); }
+
+/* ---- tables ---- */
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th {
+  text-align: left; font-size: 11px; font-weight: 600; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--muted);
+  padding: 0 10px 6px 0; border-bottom: 1px solid var(--grid); white-space: nowrap;
+}
+td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--grid); vertical-align: top; }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr:hover { background: var(--raised); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-right: 14px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+.dim { color: var(--muted); }
+.nowrap { white-space: nowrap; }
+.trunc { display: block; max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- status word ---- */
+.st { display: inline-flex; align-items: center; gap: 5px; font-weight: 550; white-space: nowrap; }
+.st::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+.st.good::before     { background: var(--good); }
+.st.warning::before  { background: var(--warning); }
+.st.serious::before  { background: var(--serious); }
+.st.critical::before { background: var(--critical); }
+.st.info::before     { background: var(--s1); }
+
+/* ---- alert cards ---- */
+.alerts { display: grid; gap: 9px; }
+.alert {
+  border: 1px solid var(--border); border-left: 3px solid var(--muted);
+  border-radius: 8px; padding: 10px 12px; background: var(--plane);
+}
+.alert.critical { border-left-color: var(--critical); }
+.alert.serious  { border-left-color: var(--serious); }
+.alert.warning  { border-left-color: var(--warning); }
+.alert.medium   { border-left-color: var(--warning); }
+.alert.low      { border-left-color: var(--s1); }
+.alert .t { font-weight: 600; font-size: 12.5px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.alert .s { font-size: 12.5px; color: var(--ink-2); margin-top: 4px; }
+.alert .h { font-size: 12px; color: var(--muted); margin-top: 5px; }
+.alert .h b { color: var(--ink-2); font-weight: 600; }
+
+/* ---- filters ---- */
+.filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+.fchip {
+  font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--plane); color: var(--ink-2);
+}
+.fchip:hover { background: var(--raised); }
+.fchip[aria-pressed="true"] { background: var(--s1); border-color: var(--s1); color: #fff; font-weight: 600; }
+input[type="search"] {
+  font: inherit; font-size: 12px; padding: 4px 10px; border-radius: 7px;
+  border: 1px solid var(--border); background: var(--plane); color: var(--ink); min-width: 200px;
+}
+
+/* ---- feed ---- */
+.feed { display: grid; gap: 0; max-height: 460px; overflow-y: auto; }
+.ev { display: grid; grid-template-columns: 62px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--grid); }
+.ev:last-child { border-bottom: 0; }
+.ev .ts { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 1px; }
+.ev .body { min-width: 0; }
+.ev .ty { font-size: 12px; font-weight: 600; }
+.ev .ty.err { color: var(--critical); }
+.ev .ty.warn { color: var(--serious); }
+.ev .ty.ok { color: var(--good-text); }
+.ev .msg { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+
+/* ---- kv ---- */
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 12.5px; }
+.kv dt { color: var(--muted); white-space: nowrap; }
+.kv dd { margin: 0; color: var(--ink-2); overflow-wrap: anywhere; }
+
+.empty { color: var(--muted); font-size: 12.5px; padding: 6px 0; }
+
+/* ---- tooltip ---- */
+#tip {
+  position: fixed; z-index: 50; pointer-events: none; opacity: 0;
+  transition: opacity 90ms ease; max-width: 300px;
+  background: var(--surface); color: var(--ink); font-size: 12px; line-height: 1.45;
+  border: 1px solid var(--border); border-radius: 7px; padding: 6px 9px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+}
+#tip.show { opacity: 1; }
+
+@media (max-width: 640px) {
+  .bar-row { grid-template-columns: 92px 1fr 38px; }
+  .trunc { max-width: 200px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <h1>Pantheon Fleet Dashboard</h1>
+      <div class="sub" id="subline">載入中…</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="chip" id="chip-fresh"><span class="dot"></span><span>資料</span></span>
+    <span class="chip" id="chip-sup"><span class="dot"></span><span>supervisor</span></span>
+    <span class="chip" id="chip-mode"><span class="dot"></span><span>mode</span></span>
+    <button class="ctl" id="btn-auto" title="暫停/恢復自動更新">⏸ 自動更新</button>
+    <button class="ctl" id="btn-now" title="立即重新載入">↻</button>
+    <button class="ctl" id="btn-theme" title="切換亮/暗">◐</button>
+  </header>
+
+  <div class="banner" id="banner"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="grid">
+    <section class="card" id="sec-capacity">
+      <h2>Capacity <span class="count-pill" id="cap-pill"></span></h2>
+      <p class="hint">slot 佔用與 capacity chair 的最新裁決</p>
+      <div id="capacity-body"></div>
+    </section>
+
+    <section class="card" id="sec-lanes">
+      <h2>Lanes</h2>
+      <p class="hint">每個 actor 的 worker 佔用;數字即為 worker 數</p>
+      <div id="lanes-body"></div>
+    </section>
+
+    <section class="card" id="sec-exec">
+      <h2>Task board 分佈</h2>
+      <p class="hint">execution_summary 的任務計數</p>
+      <div id="exec-body"></div>
+    </section>
+
+    <section class="card" id="sec-planes">
+      <h2>其他平面</h2>
+      <p class="hint">planning / bridge / coordination / dispatch policy</p>
+      <div id="planes-body"></div>
+    </section>
+
+    <section class="card full" id="sec-mismatch">
+      <h2>Truth mismatches <span class="count-pill" id="mm-pill"></span></h2>
+      <p class="hint">task board 與實際 runtime 對不上的地方 — 這裡有東西就是 fleet 在說謊</p>
+      <div class="alerts" id="mismatch-body"></div>
+    </section>
+
+    <section class="card full" id="sec-workers">
+      <h2>Workers <span class="count-pill" id="wk-pill"></span></h2>
+      <p class="hint">orchestrator state 裡的 worker 進程實況</p>
+      <div class="scroll" id="workers-body"></div>
+    </section>
+
+    <section class="card full" id="sec-tasks">
+      <h2>Tasks <span class="count-pill" id="tk-pill"></span></h2>
+      <p class="hint">ai-status.json 的 active task board</p>
+      <div class="filters" id="task-filters"></div>
+      <div class="scroll" id="tasks-body"></div>
+    </section>
+
+    <section class="card" id="sec-agents">
+      <h2>Agent 負載</h2>
+      <p class="hint">workload_summary,依 active 由多到少</p>
+      <div class="scroll" id="agents-body"></div>
+    </section>
+
+    <section class="card" id="sec-feed">
+      <h2>Activity <span class="count-pill" id="fd-pill"></span></h2>
+      <p class="hint">ai-activity-log.jsonl 最近事件(最新在上)</p>
+      <div class="feed" id="feed-body"></div>
+    </section>
+  </div>
+</div>
+
+<div id="tip" role="tooltip"></div>
+
+<script>
+"use strict";
+
+/* --------------------------------------------------------------------------
+   Data sources — all sibling files that scripts/ai_status.py sync_docs_site()
+   mirrors into docs-site/ on every canonical write.
+-------------------------------------------------------------------------- */
+const REFRESH_MS = 20000;
+const FEED_LINES = 150;
+
+const $ = (id) => document.getElementById(id);
+let timer = null;
+let auto = true;
+
+/* ---------- helpers ---------- */
+function esc(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function num(v) { return Number.isFinite(Number(v)) ? Number(v) : 0; }
+function ageSec(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return Math.round((Date.now() - t) / 1000);
+}
+function ago(iso) {
+  const s = ageSec(iso);
+  if (s == null) return "—";
+  if (s < 0) return "剛剛";
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m";
+  if (s < 86400) return Math.floor(s / 3600) + "h";
+  return Math.floor(s / 86400) + "d";
+}
+function clock(iso) {
+  if (!iso) return "—";
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return "—";
+  return t.toTimeString().slice(0, 8);
+}
+// Freshness is the whole point of this page: a dashboard whose feed has stopped
+// must say so loudly rather than keep showing a confident stale number.
+function freshness(sec, warnAt, critAt) {
+  if (sec == null) return "critical";
+  if (sec > critAt) return "critical";
+  if (sec > warnAt) return "warning";
+  return "good";
+}
+function setChip(el, level, text, title) {
+  el.className = "chip " + level;
+  el.lastElementChild.textContent = text;
+  el.title = title || "";
+}
+async function getJSON(name) {
+  const r = await fetch(name + "?t=" + Date.now(), { cache: "no-store" });
+  if (!r.ok) throw new Error(name + " HTTP " + r.status);
+  return r.json();
+}
+async function getText(name) {
+  const r = await fetch(name + "?t=" + Date.now(), { cache: "no-store" });
+  if (!r.ok) throw new Error(name + " HTTP " + r.status);
+  return r.text();
+}
+
+/* ---------- tooltip ---------- */
+const tip = $("tip");
+document.addEventListener("mouseover", (e) => {
+  const el = e.target.closest("[data-tip]");
+  if (!el) return;
+  tip.textContent = el.getAttribute("data-tip");
+  tip.classList.add("show");
+});
+document.addEventListener("mousemove", (e) => {
+  if (!tip.classList.contains("show")) return;
+  const pad = 14;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  const r = tip.getBoundingClientRect();
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - pad;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - pad;
+  tip.style.left = x + "px";
+  tip.style.top = y + "px";
+});
+document.addEventListener("mouseout", (e) => {
+  if (e.target.closest("[data-tip]")) tip.classList.remove("show");
+});
+
+/* ---------- header ---------- */
+function renderHeader(bundle, orch) {
+  const gen = bundle.generated_at;
+  const genAge = ageSec(gen);
+  const fLevel = freshness(genAge, 180, 900);
+  setChip($("chip-fresh"), fLevel,
+    "資料 " + ago(gen),
+    "dashboard-bundle.json generated_at " + (gen || "—"));
+
+  const sup = (orch && orch.supervisor) || {};
+  const hbAge = ageSec(sup.last_heartbeat_at);
+  const lifecycle = String(sup.lifecycle || "unknown");
+  let sLevel = freshness(hbAge, 300, 900);
+  if (lifecycle !== "running") sLevel = "critical";
+  setChip($("chip-sup"), sLevel,
+    "supervisor " + lifecycle + " · " + ago(sup.last_heartbeat_at),
+    "pid " + (sup.pid || "—") +
+    " · started " + (sup.started_at || "—") +
+    " · last loop " + (sup.last_loop_duration_ms != null ? sup.last_loop_duration_ms + "ms" : "—") +
+    (sup.last_loop_error ? " · error: " + sup.last_loop_error : ""));
+
+  const modeStatus = String((bundle.runtime_summary || {}).mode_status || "—");
+  setChip($("chip-mode"), modeStatus === "active" ? "good" : "",
+    "focus " + (bundle.focus_mode || "—") + " · " + modeStatus,
+    "focus_mode_source: " + (bundle.focus_mode_source || "—"));
+
+  $("subline").innerHTML =
+    "sprint <b>" + esc(bundle._sprint || "—") + "</b> · bundle " + esc(clock(gen)) +
+    " · supervisor heartbeat " + esc(clock(sup.last_heartbeat_at)) +
+    " · 每 " + REFRESH_MS / 1000 + "s 更新";
+
+  // Loud banner when the pipeline behind the page has stopped moving.
+  const b = $("banner");
+  if (fLevel === "critical" || sLevel === "critical") {
+    b.className = "banner show";
+    b.innerHTML =
+      "<b>資料不新鮮。</b> bundle 產出於 " + esc(gen || "未知") + "(" + esc(ago(gen)) + " 前)," +
+      "supervisor lifecycle <code>" + esc(lifecycle) + "</code>,heartbeat " + esc(ago(sup.last_heartbeat_at)) + " 前。" +
+      (sup.last_loop_error ? " 最後一次 loop error:<code>" + esc(sup.last_loop_error) + "</code>" : "") +
+      " 這頁顯示的是快照,不是現況。";
+  } else {
+    b.className = "banner";
+  }
+}
+
+/* ---------- tiles ---------- */
+function tile(label, value, unit, foot, level) {
+  return '<div class="tile' + (level ? " is-" + level : "") + '">' +
+    '<div class="label">' + esc(label) + "</div>" +
+    '<div class="value">' + esc(value) + (unit ? '<span class="unit">' + esc(unit) + "</span>" : "") + "</div>" +
+    (foot ? '<div class="foot">' + foot + "</div>" : "") +
+    "</div>";
+}
+function renderTiles(bundle) {
+  const rt = bundle.runtime_summary || {};
+  const cap = bundle.capacity_summary || rt.capacity || {};
+  const ex = bundle.execution_summary || {};
+  const mm = num(rt.mismatch_count);
+  const blocked = num(ex.blocked);
+  const slotTotal = num(cap.slot_total);
+  const active = num(cap.active_workers);
+  const pct = slotTotal ? Math.round((active / slotTotal) * 100) : 0;
+
+  $("tiles").innerHTML = [
+    tile("Running workers", num(rt.running_workers), "",
+      num(rt.pending_workers) + " pending · " + num(cap.live_sidecar_workers) + " sidecar"),
+    tile("Slots", active + " / " + slotTotal, "",
+      '<div class="meter"><div style="width:' + pct + '%"></div></div>' +
+      '<span class="dim">' + pct + "% 使用 · " + num(cap.available_slots) + " 空閒</span>"),
+    tile("Queue depth", num(rt.queue_depth), "",
+      num(cap.runnable_tasks) + " runnable", num(rt.queue_depth) > 0 && num(rt.running_workers) === 0 ? "warning" : ""),
+    tile("待審批", num(rt.pending_approvals), "", "pending approvals",
+      num(rt.pending_approvals) > 0 ? "warning" : ""),
+    tile("Truth mismatch", mm, "", mm > 0 ? "board 與 runtime 不一致" : "board 與 runtime 一致",
+      mm > 0 ? "critical" : ""),
+    tile("Blocked tasks", blocked, "",
+      num(ex.in_progress) + " in progress · " + num(ex.in_review) + " in review",
+      blocked > 0 ? "critical" : ""),
+    tile("完成(本 sprint)", num(((bundle.archive_summary || {}).counts || {}).completed_in_sprint), "",
+      num(((bundle.archive_summary || {}).counts || {}).superseded_in_sprint) + " superseded"),
+  ].join("");
+}
+
+/* ---------- capacity ---------- */
+function renderCapacity(bundle) {
+  const cap = bundle.capacity_summary || (bundle.runtime_summary || {}).capacity || {};
+  const cd = cap.chair_decision || {};
+  const slotTotal = num(cap.slot_total);
+  const active = num(cap.active_workers);
+  const pct = slotTotal ? (active / slotTotal) * 100 : 0;
+  const valid = cd.valid_until ? ageSec(cd.valid_until) : null;
+  const expired = valid != null && valid > 0;
+
+  $("cap-pill").textContent = active + "/" + slotTotal;
+  $("capacity-body").innerHTML =
+    '<div class="bar-row" style="margin-bottom:12px">' +
+      '<div class="k">slot 使用率</div>' +
+      '<div class="bar-track" data-tip="' + esc(active + " / " + slotTotal + " slots 使用中") + '">' +
+        '<div class="bar-fill" style="width:' + pct.toFixed(1) + '%"></div>' +
+      "</div>" +
+      '<div class="v">' + Math.round(pct) + "%</div>" +
+    "</div>" +
+    '<dl class="kv">' +
+      "<dt>canonical / sidecar / helper</dt><dd>" +
+        num(cap.live_canonical_workers) + " / " + num(cap.live_sidecar_workers) + " / " + num(cap.live_helper_workers) + "</dd>" +
+      "<dt>runnable tasks</dt><dd>" + num(cap.runnable_tasks) + "</dd>" +
+      "<dt>chair 裁決</dt><dd>" +
+        (cd.schema
+          ? '<span class="st ' + (cd.approve_helper_wave ? "good" : "info") + '">' +
+            (cd.approve_helper_wave ? "允許 helper wave(最多 " + num(cd.max_helper_claims) + ")" : "不放 helper wave") +
+            "</span>"
+          : "—") +
+      "</dd>" +
+      "<dt>sidecar wave</dt><dd>" +
+        ((cd.sidecar_wave || {}).approved
+          ? '<span class="st good">approved</span>'
+          : '<span class="st">' + esc((cd.sidecar_wave || {}).reason || "—") + "</span>") +
+      "</dd>" +
+      "<dt>理由</dt><dd>" + esc((cd.reasons || []).join("、") || "—") + "</dd>" +
+      "<dt>有效至</dt><dd>" + esc(cd.valid_until || "—") +
+        (expired ? ' <span class="st critical">已過期 ' + esc(ago(cd.valid_until)) + "</span>" : "") + "</dd>" +
+    "</dl>";
+}
+
+/* ---------- lanes ---------- */
+function renderLanes(bundle) {
+  const lanes = (bundle.runtime_summary || {}).lanes || {};
+  const names = Object.keys(lanes).sort();
+  if (!names.length) { $("lanes-body").innerHTML = '<p class="empty">目前沒有 lane 活動。</p>'; return; }
+  const peak = Math.max(1, ...names.map((n) => {
+    const l = lanes[n] || {};
+    return num(l.running) + num(l.pending) + num(l.failed);
+  }));
+  const rows = names.map((n) => {
+    const l = lanes[n] || {};
+    const parts = [
+      ["running", num(l.running)],
+      ["pending", num(l.pending)],
+      ["failed", num(l.failed)],
+    ].filter(([, v]) => v > 0);
+    const total = parts.reduce((a, [, v]) => a + v, 0);
+    const segs = parts.map(([k, v]) =>
+      '<div class="seg ' + k + '" style="flex:0 0 ' + ((v / peak) * 100).toFixed(1) + '%" ' +
+      'data-tip="' + esc(n + " — " + k + ": " + v) + '"></div>').join("");
+    return '<div class="bar-row">' +
+      '<div class="k">' + esc(n) + "</div>" +
+      '<div class="stack">' + segs + '<div class="rest"></div></div>' +
+      '<div class="v">' + total + "</div>" +
+    "</div>";
+  }).join("");
+  $("lanes-body").innerHTML =
+    '<div class="bars">' + rows + "</div>" +
+    '<div class="legend">' +
+      '<span class="item"><span class="swatch running"></span>running</span>' +
+      '<span class="item"><span class="swatch pending"></span>pending</span>' +
+      '<span class="item"><span class="swatch failed"></span>failed</span>' +
+      '<span class="item dim">completed 不計入長條</span>' +
+    "</div>";
+}
+
+/* ---------- execution distribution ---------- */
+function renderExec(bundle) {
+  const ex = bundle.execution_summary || {};
+  const rows = [
+    ["ready now", ex.ready_now],
+    ["dependency ready", ex.dependency_ready],
+    ["in progress", ex.in_progress],
+    ["in review", ex.in_review],
+    ["review approved", ex.review_approved],
+    ["blocked", ex.blocked],
+    ["done", ex.done],
+    ["superseded", ex.superseded],
+  ].map(([k, v]) => [k, num(v)]);
+  const peak = Math.max(1, ...rows.map(([, v]) => v));
+  $("exec-body").innerHTML =
+    '<div class="bars">' + rows.map(([k, v]) =>
+      '<div class="bar-row">' +
+        '<div class="k">' + esc(k) + "</div>" +
+        '<div class="bar-track" data-tip="' + esc(k + ": " + v + " tasks") + '">' +
+          '<div class="bar-fill" style="width:' + ((v / peak) * 100).toFixed(1) + '%"></div>' +
+        "</div>" +
+        '<div class="v">' + v + "</div>" +
+      "</div>").join("") + "</div>" +
+    '<div class="legend"><span class="item dim">單一量度:任務數。live attached ' +
+      num(ex.live_attached) + " · planning-backed " + num(ex.planning_backed_active) +
+      "/" + num(ex.planning_backed_total) + "</span></div>";
+}
+
+/* ---------- other planes ---------- */
+function renderPlanes(bundle) {
+  const pl = bundle.planning_summary || {};
+  const br = bundle.bridge_summary || {};
+  const co = bundle.coordination_summary || {};
+  const dp = bundle.dispatch_policy || {};
+  const coCounts = co.counts || {};
+  const coActive = Object.entries(coCounts).filter(([, v]) => num(v) > 0);
+  $("planes-body").innerHTML =
+    '<dl class="kv">' +
+      "<dt>planning</dt><dd>" + esc(pl.status || "inactive") +
+        " · materialized " + num(pl.materialized_count) +
+        " · proposed " + num(pl.proposed_execution_tasks) +
+        (pl.human_gate_status ? " · gate " + esc(pl.human_gate_status) : "") + "</dd>" +
+      "<dt>bridge</dt><dd>" + esc(br.source_plane || "—") +
+        " · pending materialization " + num(br.pending_materialization_count) +
+        " · missing source ref " + num(br.missing_source_ref_count) + "</dd>" +
+      "<dt>coordination</dt><dd>" +
+        (coActive.length
+          ? coActive.map(([k, v]) => esc(k) + " " + num(v)).join("、")
+          : "追蹤 0 個 feature") +
+        '<span class="dim"> · scan ' + esc(ago(co.last_scan_at)) + " 前</span></dd>" +
+      "<dt>dispatch</dt><dd>" + esc(dp.mode || "—") +
+        " · 每 tick 最多 " + num(dp.max_dispatches_per_tick) +
+        " · reviewer failover " + (dp.reviewer_failover_enabled ? "on" : "off") + "</dd>" +
+      "<dt>停用 agent</dt><dd>" + esc((dp.disabled_agents || []).join("、") || "無") + "</dd>" +
+      "<dt>archive</dt><dd>total " + num(((bundle.archive_summary || {}).counts || {}).total) +
+        " · sprint 起於 " + esc((bundle.archive_summary || {}).sprint_started_at || "—") + "</dd>" +
+    "</dl>";
+}
+
+/* ---------- mismatches ---------- */
+function renderMismatch(bundle) {
+  const list = bundle.truth_mismatches || [];
+  $("mm-pill").textContent = list.length;
+  if (!list.length) {
+    $("mismatch-body").innerHTML = '<p class="empty">✓ 沒有 mismatch — task board 與 runtime 一致。</p>';
+    return;
+  }
+  const rank = { critical: 0, high: 1, serious: 1, medium: 2, warning: 2, low: 3 };
+  const sorted = list.slice().sort((a, b) =>
+    (rank[String(a.severity).toLowerCase()] ?? 9) - (rank[String(b.severity).toLowerCase()] ?? 9));
+  $("mismatch-body").innerHTML = sorted.map((m) => {
+    const sev = String(m.severity || "medium").toLowerCase();
+    return '<div class="alert ' + esc(sev) + '">' +
+      '<div class="t"><span class="st ' + (sev === "critical" ? "critical" : sev === "low" ? "info" : "warning") + '">' +
+        esc(m.severity || "—") + "</span>" +
+        "<span>" + esc(m.title || m.type || "mismatch") + "</span>" +
+        (m.task_id ? '<span class="mono dim">' + esc(m.task_id) + "</span>" : "") +
+        (m.expected_actor ? '<span class="dim">expected ' + esc(m.expected_actor) + "</span>" : "") +
+        '<span class="dim">' + esc(ago(m.detected_at)) + " 前</span>" +
+      "</div>" +
+      (m.summary ? '<div class="s">' + esc(m.summary) + "</div>" : "") +
+      (m.resolution_hint ? '<div class="h"><b>處理方向:</b> ' + esc(m.resolution_hint) + "</div>" : "") +
+    "</div>";
+  }).join("");
+}
+
+/* ---------- workers ---------- */
+function renderWorkers(bundle, orch) {
+  const workersObj = (orch && orch.workers) || {};
+  const links = {};
+  (bundle.worker_task_links || []).forEach((l) => {
+    if (l.worker_run_id) links[l.worker_run_id] = l;
+  });
+  const rows = Object.values(workersObj).filter((w) => {
+    const b = String(w.runtime_bucket || "").toLowerCase();
+    return b === "running" || b === "pending" || w.pid_alive === true || w.is_live_runtime === true;
+  });
+  rows.sort((a, b) => String(b.last_event_at || "").localeCompare(String(a.last_event_at || "")));
+  $("wk-pill").textContent = rows.length + " live / " + Object.keys(workersObj).length;
+
+  if (!rows.length) {
+    $("workers-body").innerHTML = '<p class="empty">目前沒有 live worker。' +
+      (num((bundle.capacity_summary || {}).runnable_tasks) > 0
+        ? " 但有 " + num((bundle.capacity_summary || {}).runnable_tasks) + " 個 runnable task — 這通常表示 dispatch 卡住了。"
+        : "") + "</p>";
+    return;
+  }
+  const body = rows.map((w) => {
+    const link = links[w.run_id] || {};
+    const alive = w.pid_alive === true;
+    const status = String(w.status || "—");
+    const lvl = status === "failed" ? "critical"
+      : status === "stalled" ? "warning"
+      : alive ? "good" : "";
+    const leaseLeft = w.lease_expires_at ? -ageSec(w.lease_expires_at) : null;
+    return "<tr>" +
+      '<td class="nowrap"><span class="st ' + lvl + '">' + esc(status) + "</span></td>" +
+      '<td class="nowrap">' + esc(w.logical_agent_id || w.agent_id || w.provider || "—") +
+        '<div class="dim mono">' + esc(w.dispatch_slot_id || "") + "</div></td>" +
+      '<td><span class="mono">' + esc(w.task_id || "—") + "</span>" +
+        (link.task_title ? '<div class="dim"><span class="trunc">' + esc(link.task_title) + "</span></div>" : "") + "</td>" +
+      '<td class="nowrap">' + (alive ? "pid " + esc(w.pid || w.child_pid || "—") : '<span class="dim">no pid</span>') +
+        '<div class="dim">' + esc(w.pid_state || "") + "</div></td>" +
+      '<td class="nowrap">' + esc(ago(w.last_heartbeat_at || w.last_event_at)) + " 前</td>" +
+      '<td class="nowrap">' + (leaseLeft == null ? "—"
+        : leaseLeft > 0 ? "剩 " + Math.round(leaseLeft / 60) + "m"
+        : '<span class="st critical">過期 ' + esc(ago(w.lease_expires_at)) + "</span>") + "</td>" +
+      "<td>" + (w.last_error
+        ? '<span class="trunc" data-tip="' + esc(w.last_error) + '">' + esc(w.last_error) + "</span>"
+        : '<span class="dim">—</span>') + "</td>" +
+    "</tr>";
+  }).join("");
+  $("workers-body").innerHTML =
+    "<table><thead><tr>" +
+      "<th>狀態</th><th>agent</th><th>task</th><th>進程</th><th>心跳</th><th>lease</th><th>last error</th>" +
+    "</tr></thead><tbody>" + body + "</tbody></table>";
+}
+
+/* ---------- tasks ---------- */
+let taskFilter = "all";
+let taskQuery = "";
+let taskCache = [];
+
+function renderTaskFilters() {
+  const counts = {};
+  taskCache.forEach((t) => {
+    const s = String(t.status || "unknown");
+    counts[s] = (counts[s] || 0) + 1;
+  });
+  const keys = ["all"].concat(Object.keys(counts).sort());
+  $("task-filters").innerHTML =
+    keys.map((k) =>
+      '<button class="fchip" data-status="' + esc(k) + '" aria-pressed="' + (taskFilter === k) + '">' +
+      esc(k) + " " + (k === "all" ? taskCache.length : counts[k]) + "</button>").join("") +
+    '<input type="search" id="task-q" placeholder="搜尋 id / 標題 / owner" value="' + esc(taskQuery) + '" />';
+
+  $("task-filters").querySelectorAll(".fchip").forEach((b) => {
+    b.addEventListener("click", () => {
+      taskFilter = b.dataset.status;
+      renderTaskFilters();
+      renderTaskRows();
+    });
+  });
+  const q = $("task-q");
+  q.addEventListener("input", () => {
+    taskQuery = q.value;
+    renderTaskRows();
+  });
+}
+
+function renderTaskRows() {
+  const needle = taskQuery.trim().toLowerCase();
+  const rows = taskCache.filter((t) => {
+    if (taskFilter !== "all" && String(t.status) !== taskFilter) return false;
+    if (!needle) return true;
+    return [t.id, t.title, t.owner, t.reviewer, t.phase].some((v) =>
+      String(v || "").toLowerCase().includes(needle));
+  });
+  $("tk-pill").textContent = rows.length + " / " + taskCache.length;
+  if (!rows.length) { $("tasks-body").innerHTML = '<p class="empty">沒有符合的任務。</p>'; return; }
+
+  const order = { blocked: 0, review: 1, review_approved: 2, in_progress: 3, todo: 4 };
+  rows.sort((a, b) => {
+    const d = (order[a.status] ?? 9) - (order[b.status] ?? 9);
+    return d || String(a.id).localeCompare(String(b.id));
+  });
+
+  const body = rows.map((t) => {
+    const st = String(t.status || "—");
+    const lvl = st === "blocked" ? "critical"
+      : st === "review" ? "warning"
+      : st === "in_progress" ? "info"
+      : st === "review_approved" ? "good" : "";
+    const note = t.blocked_reason || t.next || t.summary_zh || "";
+    return "<tr>" +
+      '<td class="nowrap mono">' + esc(t.id) +
+        (t.pr_url ? ' <a href="' + esc(t.pr_url) + '" target="_blank" rel="noopener">#' + esc(t.pr_number || "PR") + "</a>" : "") + "</td>" +
+      '<td><span class="trunc" data-tip="' + esc(t.title || "") + '">' + esc(t.title || "—") + "</span>" +
+        '<div class="dim">' + esc(t.phase || "") + "</div></td>" +
+      '<td class="nowrap"><span class="st ' + lvl + '">' + esc(st) + "</span></td>" +
+      '<td class="nowrap">' + esc(t.priority || "—") + "</td>" +
+      '<td class="nowrap">' + esc(t.owner || "—") +
+        '<div class="dim">rev ' + esc(t.reviewer || "—") + "</div></td>" +
+      "<td>" + (note
+        ? '<span class="trunc" data-tip="' + esc(note) + '">' + esc(note) + "</span>"
+        : '<span class="dim">—</span>') + "</td>" +
+      '<td class="nowrap dim">' + esc(ago(t.last_update)) + "</td>" +
+    "</tr>";
+  }).join("");
+
+  $("tasks-body").innerHTML =
+    "<table><thead><tr>" +
+      "<th>id</th><th>標題</th><th>狀態</th><th>P</th><th>owner</th><th>next / blocked reason</th><th>更新</th>" +
+    "</tr></thead><tbody>" + body + "</tbody></table>";
+}
+
+/* ---------- agents ---------- */
+function renderAgents(status) {
+  const ws = status.workload_summary || {};
+  const rows = Object.entries(ws).map(([name, v]) => ({ name, ...v }));
+  if (!rows.length) { $("agents-body").innerHTML = '<p class="empty">沒有 agent 負載資料。</p>'; return; }
+  rows.sort((a, b) => num(b.active) - num(a.active) || String(a.name).localeCompare(String(b.name)));
+  $("agents-body").innerHTML =
+    "<table><thead><tr><th>agent</th><th class='num'>active</th><th class='num'>blocked</th>" +
+    "<th class='num'>review</th><th class='num'>todo</th><th class='num'>total</th></tr></thead><tbody>" +
+    rows.map((r) =>
+      "<tr><td class='nowrap'>" + esc(r.name) + "</td>" +
+      "<td class='num'>" + num(r.active) + "</td>" +
+      "<td class='num'>" + (num(r.blocked) > 0
+        ? '<span class="st critical">' + num(r.blocked) + "</span>"
+        : "0") + "</td>" +
+      "<td class='num'>" + num(r.review) + "</td>" +
+      "<td class='num'>" + num(r.todo) + "</td>" +
+      "<td class='num'>" + num(r.total) + "</td></tr>").join("") +
+    "</tbody></table>";
+}
+
+/* ---------- feed ---------- */
+function renderFeed(lines) {
+  const events = [];
+  for (let i = lines.length - 1; i >= 0 && events.length < FEED_LINES; i--) {
+    const raw = lines[i].trim();
+    if (!raw) continue;
+    try { events.push(JSON.parse(raw)); } catch (_) { /* skip partial line */ }
+  }
+  $("fd-pill").textContent = events.length;
+  if (!events.length) { $("feed-body").innerHTML = '<p class="empty">沒有事件。</p>'; return; }
+  $("feed-body").innerHTML = events.map((e) => {
+    const ty = String(e.type || "event");
+    const cls = /fail|error|blocked|stall|denied|abort/.test(ty) ? "err"
+      : /warn|retry|requeue|defer|pause/.test(ty) ? "warn"
+      : /done|complete|approved|merged|success/.test(ty) ? "ok" : "";
+    return '<div class="ev">' +
+      '<div class="ts">' + esc(clock(e.ts)) + "</div>" +
+      '<div class="body">' +
+        '<div class="ty ' + cls + '">' + esc(ty) +
+          (e.task_id ? ' <span class="dim mono">' + esc(e.task_id) + "</span>" : "") +
+          (e.target_agent ? ' <span class="dim">→ ' + esc(e.target_agent) + "</span>" : "") +
+        "</div>" +
+        (e.message ? '<div class="msg">' + esc(e.message) + "</div>" : "") +
+      "</div>" +
+    "</div>";
+  }).join("");
+}
+
+/* ---------- load ---------- */
+async function load() {
+  try {
+    const [bundle, status, orch] = await Promise.all([
+      getJSON("dashboard-bundle.json"),
+      getJSON("ai-status.json"),
+      getJSON("orchestrator-state.json"),
+    ]);
+    bundle._sprint = status.sprint;
+
+    renderHeader(bundle, orch);
+    renderTiles(bundle);
+    renderCapacity(bundle);
+    renderLanes(bundle);
+    renderExec(bundle);
+    renderPlanes(bundle);
+    renderMismatch(bundle);
+    renderWorkers(bundle, orch);
+    renderAgents(status);
+
+    taskCache = Array.isArray(status.tasks) ? status.tasks : [];
+    renderTaskFilters();
+    renderTaskRows();
+
+    try {
+      const text = await getText("ai-activity-log.jsonl");
+      renderFeed(text.split("\n"));
+    } catch (_) {
+      $("feed-body").innerHTML = '<p class="empty">讀不到 ai-activity-log.jsonl。</p>';
+    }
+  } catch (err) {
+    const b = $("banner");
+    b.className = "banner show";
+    const isFile = location.protocol === "file:";
+    b.innerHTML = "<b>讀不到資料檔。</b> " + esc(String(err && err.message ? err.message : err)) +
+      (isFile
+        ? "<br />用 <code>file://</code> 開啟時瀏覽器會擋掉同目錄的 fetch。請改用:" +
+          "<br /><code>python3 -m http.server 8787 --directory " +
+          "/home/lupin/odayplus/docs-site</code> 然後開 <code>http://localhost:8787/</code>"
+        : "<br />確認 docs-site/ 底下的 json 檔還在,而且 supervisor 有在寫。");
+  }
+}
+
+/* ---------- controls ---------- */
+function schedule() {
+  if (timer) clearInterval(timer);
+  if (auto) timer = setInterval(load, REFRESH_MS);
+}
+$("btn-auto").addEventListener("click", () => {
+  auto = !auto;
+  $("btn-auto").textContent = (auto ? "⏸" : "▶") + " 自動更新";
+  schedule();
+});
+$("btn-now").addEventListener("click", load);
+$("btn-theme").addEventListener("click", () => {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : cur === "light" ? "dark"
+    : (matchMedia("(prefers-color-scheme: dark)").matches ? "light" : "dark");
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("pantheon-dash-theme", next); } catch (_) {}
+});
+try {
+  const saved = localStorage.getItem("pantheon-dash-theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+} catch (_) {}
+
+load();
+schedule();
+</script>
+</body>
+</html>
