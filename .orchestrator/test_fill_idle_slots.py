@@ -85,6 +85,33 @@ class DispatchCapTests(unittest.TestCase):
         self.assertEqual(agents, set())
         self.assertEqual(task_agents, set())
 
+    def test_started_queue_record_is_not_double_counted_with_worker(self) -> None:
+        config = _config_with_slots(2)
+        active_statuses = supervisor.active_worker_statuses(config)
+        event = {
+            "event_id": "evt-1",
+            "target_agent": "claude",
+            "target_display_name": "Claude",
+            "reason": "review_ready_dispatch",
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "status": "running",
+                    "queue_event_id": "evt-1",
+                    "request_snapshot": {"reason": "review_ready_dispatch"},
+                    "logical_agent_id": "claude",
+                    "agent_id": "p_slot_1",
+                }
+            },
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[event]):
+            loads = dispatch_engine.agent_dispatch_loads(config, state, active_statuses)
+
+        self.assertEqual(loads, {"claude": [0]})
+
 
 class InterruptibleSleepTests(unittest.TestCase):
     """Every wake this system produces is written to the event queue and was

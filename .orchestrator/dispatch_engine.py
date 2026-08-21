@@ -770,10 +770,14 @@ def agent_dispatch_loads(
     active_statuses: set[str],
 ) -> dict[str, list[int]]:
     loads: dict[str, list[int]] = {}
+    active_event_ids: set[str] = set()
 
     for worker in state.get("workers", {}).values():
         if not worker_counts_as_active_capacity(config, worker, active_statuses):
             continue
+        event_id = str(worker.get("queue_event_id") or "")
+        if event_id:
+            active_event_ids.add(event_id)
         reason = str(worker.get("request_snapshot", {}).get("reason") or "")
         priority = dispatch_reason_priority(reason)
         if priority is None:
@@ -791,6 +795,8 @@ def agent_dispatch_loads(
     for event in load_event_queue(config):
         event_id = str(event.get("event_id") or "")
         if not event_id:
+            continue
+        if event_id in active_event_ids:
             continue
         record = queue_records.get(event_id, {})
         if record.get("status") in {"completed", "failed"}:
