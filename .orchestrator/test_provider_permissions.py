@@ -38,7 +38,7 @@ class ProviderPermissionsTest(unittest.TestCase):
     def test_codex_config_health_rejects_invalid_service_tier(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             codex_home = Path(tmpdir)
-            (codex_home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            (codex_home / "config.toml").write_text('service_tier = "turbo"\n', encoding="utf-8")
             config = {
                 "providers": {
                     "codex": {
@@ -52,12 +52,30 @@ class ProviderPermissionsTest(unittest.TestCase):
 
         self.assertFalse(health["valid"])
         self.assertIn("unsupported service_tier", health["error"])
+        self.assertEqual(health["checks"]["service_tier"], "turbo")
+
+    def test_codex_config_health_accepts_priority_service_tier(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_home = Path(tmpdir)
+            (codex_home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            config = {
+                "providers": {
+                    "codex": {
+                        "delivery_mode": "codex",
+                        "codex": {"codex_home": str(codex_home)},
+                    }
+                }
+            }
+
+            health = provider_permissions.codex_config_health(config, "codex")
+
+        self.assertTrue(health["valid"])
         self.assertEqual(health["checks"]["service_tier"], "priority")
 
     def test_provider_capabilities_marks_invalid_codex_config_blocked(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             codex_home = Path(tmpdir)
-            (codex_home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            (codex_home / "config.toml").write_text('service_tier = "turbo"\n', encoding="utf-8")
             config = {
                 "paths": {
                     "status_file": ".orchestrator/ai-status.json",
@@ -142,7 +160,7 @@ class ProviderPermissionsTest(unittest.TestCase):
         self.assertFalse(codex_report["config_valid"])
         self.assertEqual(codex_report["verified"], "blocked")
         self.assertIn("unsupported service_tier", codex_report["config_error"])
-        self.assertEqual(codex_report["config_checks"]["service_tier"], "priority")
+        self.assertEqual(codex_report["config_checks"]["service_tier"], "turbo")
         self.assertTrue(codex_report["local_cli_worker_supported"])
         self.assertTrue(codex_report["supports_auto_approve"])
         self.assertEqual(codex_report["paths"]["binary"], "/opt/pantheon/bin/codex")

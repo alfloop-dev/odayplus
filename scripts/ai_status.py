@@ -56,8 +56,12 @@ STATUS_ROOT = resolve_status_root()
 ORCHESTRATOR_DIR = ROOT / ".orchestrator"
 if str(ORCHESTRATOR_DIR) not in sys.path:
     sys.path.insert(0, str(ORCHESTRATOR_DIR))
+DELIVERY_GIT_DIR = ROOT / "delivery_toolchain" / "git"
+if str(DELIVERY_GIT_DIR) not in sys.path:
+    sys.path.insert(0, str(DELIVERY_GIT_DIR))
 
 import common as orchestrator_common
+from check_task_delivery_identity import validate_delivery_identity
 from multi_repo_registry import (
     repository_local_path,
     repository_slug,
@@ -5226,6 +5230,19 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
         raise SystemExit(
             f"Cannot submit {task_id} for review: PR #{pr_number} must be an open, non-draft "
             f"{branch} -> {base_branch} PR at remote SHA {remote_sha[:8]}."
+        )
+    identity_errors = validate_delivery_identity(
+        repository_root,
+        task_id=task_id,
+        base=base_branch,
+        head=remote_sha,
+        expected_branch=branch,
+        actual_branch=str(pr.get("headRefName") or ""),
+    )
+    if identity_errors:
+        details = "; ".join(identity_errors)
+        raise SystemExit(
+            f"Cannot submit {task_id} for review: delivery identity preflight failed: {details}"
         )
     return {
         "pr_number": int(pr_number),

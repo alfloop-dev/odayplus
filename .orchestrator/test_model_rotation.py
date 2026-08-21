@@ -498,6 +498,8 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     assert result.metadata[mr.WORKER_POOL_KEY] == "gemini"
     assert result.metadata[mr.WORKER_MODEL_KEY] == ""
     assert "--model" not in spawn.call_args.args[0]  # agy default (Gemini)
+    command = spawn.call_args.args[0]
+    assert command[command.index("--print-timeout") + 1] == "168h"
 
     mr.record_exhaustion(config, "antigravity5", 900, pool="gemini")
     result, spawn = _deliver(config, tmp_path)
@@ -510,6 +512,22 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     assert all(isinstance(part, str) for part in command)
     assert spawn.call_args.kwargs.get("env", {}).get("HOME") == str(pathlib.Path(tmp_path) / "home-ag5")
     assert not any(part.strip().startswith("&&") or ";" in part for part in command if part != "wake up")
+
+
+def test_adapter_hard_print_timeout_wins_and_legacy_key_remains_compatible(tmp_path):
+    _isolate(tmp_path)
+    config = _adapter_config(tmp_path)
+    settings = config["providers"]["antigravity5"]["antigravity"]
+    settings["print_timeout"] = "2h"
+    settings["hard_print_timeout"] = "24h"
+    _, spawn = _deliver(config, tmp_path)
+    command = spawn.call_args.args[0]
+    assert command[command.index("--print-timeout") + 1] == "24h"
+
+    settings.pop("hard_print_timeout")
+    _, spawn = _deliver(config, tmp_path)
+    command = spawn.call_args.args[0]
+    assert command[command.index("--print-timeout") + 1] == "2h"
 
 
 def test_rotation_does_not_leak_credentials_across_providers(tmp_path):

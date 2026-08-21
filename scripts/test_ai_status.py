@@ -326,6 +326,43 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         self.assertEqual(pending[0]["to"], "Claude")
 
+    def test_review_submission_rejects_delivery_identity_mismatch(self) -> None:
+        task = self.state["tasks"][0]
+        remote_sha = "1111111122222222333333334444444455555555"
+        pr = {
+            "number": 123,
+            "state": "OPEN",
+            "url": "https://github.com/example/repo/pull/123",
+            "headRefName": "task/REG-002",
+            "headRefOid": remote_sha,
+            "baseRefName": "dev",
+            "isDraft": False,
+        }
+        with (
+            mock.patch.object(ai_status, "status_runtime_config", return_value={}),
+            mock.patch.object(ai_status, "task_primary_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
+            mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
+            mock.patch.object(ai_status, "resolve_task_sha", return_value=remote_sha),
+            mock.patch.object(ai_status, "run_gh_json_command", return_value=pr),
+            mock.patch.object(
+                ai_status,
+                "validate_delivery_identity",
+                return_value=["commit deadbeef: Task-ID trailer belongs to REG-OLD"],
+            ) as identity_check,
+        ):
+            with self.assertRaisesRegex(SystemExit, "delivery identity preflight failed"):
+                ai_status.review_submission_for_task(task, "123")
+
+        identity_check.assert_called_once_with(
+            ai_status.ROOT,
+            task_id="REG-002",
+            base="dev",
+            head=remote_sha,
+            expected_branch="task/REG-002",
+            actual_branch="task/REG-002",
+        )
+
     def test_reviewer_reopen_creates_handoff_back_to_owner(self) -> None:
         self.state["tasks"][0]["status"] = "review"
         with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):

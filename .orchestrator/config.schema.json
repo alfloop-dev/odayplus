@@ -476,6 +476,11 @@
                 "type": "string"
               },
               "print_timeout": {
+                "description": "Deprecated compatibility key for agy's absolute wall-clock limit. Prefer hard_print_timeout; supervisor inactivity detection owns normal worker termination.",
+                "type": "string"
+              },
+              "hard_print_timeout": {
+                "description": "Last-resort absolute wall-clock cap passed to agy. This is not an inactivity timeout; the supervisor monitors process-tree activity.",
                 "type": "string"
               }
             },
