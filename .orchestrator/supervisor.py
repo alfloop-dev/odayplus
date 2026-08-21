@@ -162,6 +162,8 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_prune_worktree_lease_blocks",
 "_publish_unpublished_task_branch",
 "_quarantine_and_preserve_dirty_worktree",
+"_quarantine_refused",
+"QuarantineOutcome",
 "_record_worktree_lease_block",
 "_refresh_reused_worker_worktree",
 "_restore_reusable_scratch",
@@ -175,6 +177,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "materialize_worker_context_files",
 "prepare_worker_workspace",
 "prune_orphan_worktrees",
+"preserve_dead_worker_worktree",
 "branch_name_is_usable",
 "canonical_task_record",
 "worker_task_branch",
@@ -3063,6 +3066,17 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             continue
         if alive:
             terminate_worker_pid(worker.get("pid"))
+        # The process is gone (or has just been terminated) and nothing else is
+        # writing to its worktree. Preservation used to wait for the next lease
+        # attempt on this task, which is precisely the attempt that fails when
+        # the worker died before publishing a branch.
+        preserve_dead_worker_worktree(
+            config,
+            state,
+            worker,
+            task=task_map.get(str(worker.get("task_id") or "")),
+            trigger="expired_lease" if expired_lease else "missing_process",
+        )
         reason = (
             "Worker lease expired during supervisor boot reconciliation."
             if expired_lease

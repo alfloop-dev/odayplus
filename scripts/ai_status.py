@@ -64,7 +64,7 @@ from multi_repo_registry import (
     resolve_repository,
     resolve_task_repository,
     task_artifact_repository_ids,
-    task_primary_repository_id,
+    task_repository_id,
 )
 from runtime_state import load_runtime_state
 from task_archive import (
@@ -2368,7 +2368,7 @@ def is_approved_head_satisfied(
 
     try:
         config = status_runtime_config()
-        repository_id = task_primary_repository_id(config, task) or "pantheon"
+        repository_id = task_repository_id(config, task) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
         branch = task_branch_name(task, task_id)
@@ -2512,7 +2512,7 @@ def collect_done_delivery_metadata(
         raise SystemExit(
             f"Cannot finalize task {task_id}: delivery metadata requires an immutable approved head."
         )
-    repository_id = task_primary_repository_id(config, task)
+    repository_id = task_repository_id(config, task)
     if repository_id is None:
         declared = str(task.get("repository") or "").strip()
         if declared:
@@ -5194,7 +5194,7 @@ def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str
         raise SystemExit("Review submission requires a task id and numeric PR number")
 
     config = status_runtime_config()
-    repository_id = task_primary_repository_id(config, task) or "pantheon"
+    repository_id = task_repository_id(config, task) or "pantheon"
     repository_root = repository_local_path(config, repository_id) or ROOT
     branch = task_branch_name(task, task_id)
     base_branch = delivery_merge_target_branch(config, repository_id)
@@ -5329,7 +5329,7 @@ def command_retarget_branch(state: dict[str, Any], args: list[str]) -> None:
     if branch == previous:
         raise SystemExit(f"{task_id} already names branch {branch}")
 
-    repository_id = task_primary_repository_id(status_runtime_config(), task) or "pantheon"
+    repository_id = task_repository_id(status_runtime_config(), task) or "pantheon"
     repository_root = repository_local_path(status_runtime_config(), repository_id) or ROOT
     published = run_git_command(
         ["ls-remote", "--heads", "origin", f"refs/heads/{branch}"],
@@ -6302,7 +6302,7 @@ def resolve_task_checkout_sha(
 
     try:
         config = status_runtime_config()
-        repository_id = task_primary_repository_id(config, task_dict) or "pantheon"
+        repository_id = task_repository_id(config, task_dict) or "pantheon"
         repo_root = repository_root or repository_local_path(config, repository_id) or ROOT
         repo_root = repo_root.resolve(strict=False)
 

@@ -361,7 +361,21 @@ def resolve_task_repository(config: dict[str, Any], task: dict[str, Any] | None)
             )
         return resolve_repository_binding(config, repo_id, expected_slug=declared)
 
-    inferred = task_primary_repository_id(config, task) or "pantheon"
+    inferred = _infer_repository_from_artifacts(config, task)
+    if inferred is None:
+        # Inference returns None only for genuine ambiguity: artifacts spanning
+        # more than one non-ODay-Plus repository. `or "pantheon"` used to turn
+        # that into an answer, which is the same silent wrong-repository choice
+        # the declared-but-unknown branch above already refuses. Treat both
+        # "cannot answer" cases the same way and let the caller decide.
+        prefixes = ", ".join(task_artifact_repository_ids(config, task)) or "none"
+        return RepositoryBinding(
+            "",
+            None,
+            None,
+            "unresolved",
+            f"ambiguous_repository: task artifacts span several repositories ({prefixes})",
+        )
     return resolve_repository_binding(config, inferred)
 
 
@@ -540,26 +554,34 @@ def task_artifact_repository_ids(config: dict[str, Any], task: dict[str, Any]) -
     return repo_ids or ["pantheon"]
 
 
-def task_primary_repository_id(config: dict[str, Any], task: dict[str, Any]) -> str | None:
-    """The repository a task belongs to, declaration first.
+def task_repository_id(config: dict[str, Any], task: dict[str, Any] | None) -> str | None:
+    """The repository a task belongs to. The only public answer to that question.
 
-    Deriving this from ``task.artifacts`` alone made a task that names its
-    repository outright resolve to ``pantheon`` whenever it listed no
-    artifacts. DPF-GOV-001 declared ``alfloop-dev/oday-data-platform`` and
-    carried no artifacts key at all, so the finalize gate looked for its
-    reviewed commit in the ODay Plus checkout, where that object does not exist
-    -- a check no retry could ever pass. ``resolve_task_repository`` already
-    gave the declaration precedence; this is the same order, so the two can no
-    longer answer differently for the same task.
+    Every subsystem used to derive this for itself -- from artifact prefixes,
+    from the status file's directory, from a fleet-wide default -- and the
+    derivations disagreed. Five separate call sites were fixed on 2026-08-20
+    for the same defect, one at a time, because being wrong was always
+    reachable. This exists so there is one place to be right.
 
-    A declaration that is not in the registry returns None rather than falling
-    back: silently searching a repository the task never named is what this
-    exists to prevent. Callers that treat None as "ambiguous" must say so for
-    both reasons.
+    Returns None when the task names a repository the registry does not know,
+    or when artifacts span several: both mean "cannot answer", and a caller
+    that treats them as an answer picks a repository the task never named.
     """
-    declared = str((task or {}).get("repository") or "").strip()
-    if declared:
-        return matching_repo_id(config, declared)
+    binding = resolve_task_repository(config, task or {})
+    return binding.repo_id or None
+
+
+def _infer_repository_from_artifacts(config: dict[str, Any], task: dict[str, Any]) -> str | None:
+    """Artifact-prefix inference, for tasks that declare no repository.
+
+    Private on purpose. This is the *fallback* half of
+    ``resolve_task_repository``, not an alternative to it: it cannot see a
+    declared ``task.repository`` and will happily answer ``pantheon`` for a
+    task that named something else. Callers outside this module must use
+    ``task_repository_id`` or ``resolve_task_repository``, and
+    ``test_repository_inference_is_not_reachable_outside_the_registry`` keeps
+    that true.
+    """
     repo_ids = task_artifact_repository_ids(config, task)
     non_pantheon = [repo_id for repo_id in repo_ids if repo_id != "pantheon"]
     if len(non_pantheon) == 1:
