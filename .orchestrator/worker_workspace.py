@@ -69,7 +69,11 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
         git_network_timeout_seconds = 30.0
     return {
         "enabled": bool(settings.get("enabled", False)),
-        "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        # Fallback only, for a checkout with no configured root. A live fleet
+        # sets this explicitly and must keep whatever it already set: the path
+        # is baked into every `git worktree` registration on disk, so changing
+        # it would orphan them all at once -- 127 of them on this host.
+        "root": str(settings.get("root") or "/tmp/orchestrator-worker-worktrees"),
         "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
         "reuse_existing": bool(settings.get("reuse_existing", True)),
         "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
@@ -1731,7 +1735,7 @@ def _orchestrator_materialized_paths(
     """Paths the orchestrator seeds into the worker workspace itself.
 
     These are the context files a worker is told to read, written by the supervisor
-    rather than by the worker. A repository that version-controls them (Pantheon's own)
+    rather than by the worker. A repository that version-controls them (ODay Plus's own)
     never sees them as dirt; a repository that does not (any cross-repository workspace)
     sees them as untracked, so without this allowlist the orchestrator's own writes deny
     the next lease and the task can never be dispatched into that workspace again.
@@ -1857,6 +1861,7 @@ def prepare_worker_workspace(
                             expected_branch=branch,
                             run_id=None,
                             trigger="lease_recovery",
+                            owning_repo_root=repo_root,
                         )
                     if not task_sha:
                         refresh_status = task_sha_source
@@ -2464,6 +2469,7 @@ def _quarantine_and_preserve_dirty_worktree(
     expected_branch: str | None = None,
     run_id: str | None = None,
     trigger: str = "",
+    owning_repo_root: Path | str | None = None,
 ) -> bool:
     """Quarantine and preserve dirty worktree state as an immutable backup without destructive reset/clean/stash or modifying the worktree.
 
@@ -2472,7 +2478,25 @@ def _quarantine_and_preserve_dirty_worktree(
     """
     if worktree_path is None:
         return False
-    repo_root = config_path(config, "status_file").parents[0].resolve()
+    # Two different roots doing two different jobs, conflated until 2026-08-20.
+    #
+    # `fleet_root` owns the backup directory: the orchestrator's state lives in
+    # the Pantheon checkout no matter whose code is being preserved.
+    #
+    # `repo_root` is the repository this worktree is supposed to belong to, and
+    # it is what the git-identity check below compares against. Deriving it from
+    # the status file made it Pantheon for every task, so a worktree in a
+    # sibling repository compared two different repositories, failed the check
+    # and returned False -- silently, every time. That disabled quarantine for
+    # every oday-data-platform task, which is where the DPF work lives:
+    # DPF-SRC-RIS-NLSC-001 and DPF-SRC-OSM-TDX-001 each blocked five times with
+    # `skipped_dirty_worktree` and escalated, with no backup ever written,
+    # because the recovery that exists for exactly that status could not run.
+    fleet_root = config_path(config, "status_file").parents[0].resolve()
+    try:
+        repo_root = Path(owning_repo_root).expanduser().resolve() if owning_repo_root else fleet_root
+    except (OSError, TypeError, ValueError):
+        repo_root = fleet_root
     try:
         worktree_path = Path(worktree_path).expanduser().resolve()
     except (OSError, TypeError, ValueError):
@@ -2601,7 +2625,7 @@ def _quarantine_and_preserve_dirty_worktree(
         })
 
     try:
-        backup_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+        backup_dir = fleet_root / ".orchestrator" / "worktree-dirt-backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         now_str = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         stamp = f"{now_str}_{uuid.uuid4().hex[:8]}"

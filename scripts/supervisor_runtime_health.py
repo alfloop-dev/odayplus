@@ -382,8 +382,8 @@ def evaluate_runtime_health(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check Pantheon supervisor/watchdog runtime health.")
-    parser.add_argument("--repo", default=".", help="Pantheon repository root. Defaults to cwd.")
+    parser = argparse.ArgumentParser(description="Check the orchestrator supervisor/watchdog runtime health.")
+    parser.add_argument("--repo", default=".", help="ODay Plus repository root. Defaults to cwd.")
     parser.add_argument("--config-path", default=None, help="Path to .orchestrator/config.json.")
     parser.add_argument("--max-heartbeat-age", type=float, default=None)
     parser.add_argument("--require-watchdog", action="store_true")

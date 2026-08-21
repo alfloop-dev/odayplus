@@ -50,6 +50,12 @@ boundaries:
       - services/**/*.py
       - infra/mlflow/*.py
       - infra/mlflow/**/*.py
+      # Generated data-platform contract client (ODP-XR-CLIENT-001). Runtime
+      # library code: product modules read released foundation contracts
+      # through it. Listed per package rather than as `packages/**` so a new
+      # Python surface under packages/ still has to be classified on purpose.
+      - packages/oday_data_contracts_client/*.py
+      - packages/oday_data_contracts_client/**/*.py
     exclude:
       - '**/test_*.py'
       - '**/tests/*.py'
@@ -175,6 +181,7 @@ verification_ownership:
         - scripts/orchestrator/test_*.py
         - scripts/test_ai_status.py
         - scripts/test_supervisor_runtime_health.py
+        - scripts/test_restart_supervisor.py
         - scripts/test_supervisor_watchdog_install.py
         - tests/orchestrator/*.py
         - tests/orchestrator/**/*.py

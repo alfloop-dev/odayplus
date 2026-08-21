@@ -40,8 +40,15 @@ SUPERVISOR_SCRIPT_PATH = ORCHESTRATOR_DIR / SUPERVISOR_SCRIPT_NAME
 DEFAULT_CONFIG_PATH = ORCHESTRATOR_DIR / "config.json"
 LOCAL_CONFIG_PATH = ORCHESTRATOR_DIR / "config.local.json"
 CONFIG_SCHEMA_PATH = ORCHESTRATOR_DIR / "config.schema.json"
-CONFIG_PATH_ENV_VAR = "PANTHEON_CONFIG_PATH"
-STATUS_ROOT_ENV_VAR = "PANTHEON_STATUS_ROOT"
+# The orchestrator was ported from a project called Pantheon and its environment
+# contract still carries that name. Workers are running with the old variables
+# set right now, and a worker's environment is fixed when it is spawned, so the
+# old names cannot simply be replaced -- they are read here for as long as any
+# process started under them can still be alive. New spawns get both.
+CONFIG_PATH_ENV_VAR = "ORCH_CONFIG_PATH"
+LEGACY_CONFIG_PATH_ENV_VAR = "PANTHEON_CONFIG_PATH"
+STATUS_ROOT_ENV_VAR = "ORCH_STATUS_ROOT"
+LEGACY_STATUS_ROOT_ENV_VAR = "PANTHEON_STATUS_ROOT"
 PLANNING_STATE_PATH = ORCHESTRATOR_DIR / "planning-state.json"
 DEFAULT_PLANNING_SHARED_FILES = [
     ROOT / "docs" / "02-architecture" / "consensus" / "phase1" / "README.md",
@@ -325,7 +332,11 @@ def load_config(
     """
     selected_path = config_path
     if selected_path is None:
-        selected_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip() or None
+        selected_path = str(
+            os.environ.get(CONFIG_PATH_ENV_VAR)
+            or os.environ.get(LEGACY_CONFIG_PATH_ENV_VAR)
+            or ""
+        ).strip() or None
     config_file = resolve_path(selected_path) if selected_path else DEFAULT_CONFIG_PATH
     if config_file is None:
         raise RuntimeError("Unable to resolve orchestrator config path")
@@ -376,7 +387,9 @@ def authoritative_status_root(env: Mapping[str, str] | None = None) -> Path | No
     ``ROOT``-relative behaviour instead of guessing at another root.
     """
     source = env if env is not None else os.environ
-    raw = str(source.get(STATUS_ROOT_ENV_VAR) or "").strip()
+    raw = str(
+        source.get(STATUS_ROOT_ENV_VAR) or source.get(LEGACY_STATUS_ROOT_ENV_VAR) or ""
+    ).strip()
     if not raw:
         return None
     candidate = Path(os.path.expanduser(raw))
@@ -458,17 +471,22 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
     workspace_root = delivery_workspace_root(config, metadata)
     status_root = delivery_status_root(config, metadata)
     result = {
-        "PANTHEON_WORKTREE_ROOT": str(workspace_root),
-        "PANTHEON_STATUS_ROOT": str(status_root),
-        # Keep the Supervisor-selected coordination root separate from the
-        # worker-facing compatibility variable.  A worker may reasonably
-        # override PANTHEON_STATUS_ROOT while inspecting a task worktree; the
-        # official status/archive commands must still materialize mutations in
-        # the fleet root recorded by the dispatch receipt.
+        "ORCH_WORKTREE_ROOT": str(workspace_root),
         "ORCH_STATUS_ROOT": str(status_root),
         "ORCH_WORKSPACE_PATH": str(workspace_root),
+        # The Pantheon-prefixed names are the orchestrator's original contract,
+        # from the project this was ported from. Every worker prompt, task
+        # script and skill document in the tree still names them, so they are
+        # set alongside the new ones rather than replaced. Removing them is a
+        # separate change that has to update those callers first.
+        "PANTHEON_WORKTREE_ROOT": str(workspace_root),
+        "PANTHEON_STATUS_ROOT": str(status_root),
     }
-    config_path = str(os.environ.get(CONFIG_PATH_ENV_VAR) or "").strip()
+    config_path = str(
+        os.environ.get(CONFIG_PATH_ENV_VAR)
+        or os.environ.get(LEGACY_CONFIG_PATH_ENV_VAR)
+        or ""
+    ).strip()
     if config_path:
         result[CONFIG_PATH_ENV_VAR] = config_path
     actor_name = str((metadata or {}).get("target_display_name") or "").strip()

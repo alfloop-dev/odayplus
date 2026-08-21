@@ -466,7 +466,7 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Probe and optionally restart the Pantheon supervisor safely.")
+    parser = argparse.ArgumentParser(description="Probe and optionally restart the the orchestrator supervisor safely.")
     parser.add_argument("--config", default=".orchestrator/config.json")
     parser.add_argument("--restart", action="store_true", help="Restart unhealthy supervisor when resource and budget gates allow it.")
     parser.add_argument("--dry-run", action="store_true", help="Report the restart decision without launching a process.")

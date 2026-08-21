@@ -1624,7 +1624,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("## Recently Executed Tasks", content)
         self.assertIn("`DONE-001`", content)
         self.assertIn("`ai-task-archive/tasks/DONE-001.json`", content)
-        self.assertNotIn("### Pantheon Product Work", content)
+        self.assertNotIn("### ODay Plus Product Work", content)
         self.assertIn("Canonical map", content)
         self.assertIn("Workbench backlog", content)
         self.assertIn("Loop closure", content)
@@ -3016,7 +3016,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "KW-01-institutional-memory": {
                         "feature_id": "KW-01-institutional-memory",
                         "screen": "institutional-memory",
-                        "summary": "Pantheon closeout proof ready",
+                        "summary": "ODay Plus closeout proof ready",
                         "current_payload_type": "lovable-ui-task",
                         "source_repo": "ajoe734/pantheon",
                         "source_repo_id": "pantheon",
@@ -4442,6 +4442,36 @@ class ActorCommandMutationGuardTests(unittest.TestCase):
         "open at once and both need Codex2/coordinator action, not more owner work."
     )
     TASK_ID = "ODP-ACTOR-REF-001"
+
+    def test_execution_lease_allows_helper_without_changing_canonical_owner(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "helper_execution_lease": {
+                "claimed_by": "Antigravity",
+                "lease_expires_at": "2099-01-01T00:00:00Z",
+            },
+        }
+
+        self.assertTrue(ai_status.task_actor_may_execute(task, "Antigravity"))
+        self.assertTrue(ai_status.task_actor_may_execute(task, "Claude"))
+        self.assertFalse(ai_status.task_actor_may_execute(task, "Codex2"))
+        self.assertEqual(ai_status.expected_task_actor(task), "Antigravity")
+        self.assertEqual(task["owner"], "Claude")
+
+    def test_expired_execution_lease_does_not_authorize_helper(self) -> None:
+        task = {
+            "id": self.TASK_ID,
+            "owner": "Claude",
+            "reviewer": "Codex2",
+            "helper_execution_lease": {
+                "claimed_by": "Antigravity",
+                "lease_expires_at": "2000-01-01T00:00:00Z",
+            },
+        }
+
+        self.assertFalse(ai_status.task_actor_may_execute(task, "Antigravity"))
 
     def setUp(self) -> None:
         self._known_before = dict(ai_status.KNOWN_AGENTS)

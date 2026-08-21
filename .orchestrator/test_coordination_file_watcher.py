@@ -381,7 +381,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "  example_payload: docs/examples/PKT-003-lineage-view.json",
                     "  lovable_ui_task: .coordination/responses/PKT-003-lineage-view-lovable-ui-task.yaml",
                     "front_actions_required:",
-                    "  - build the Lineage list panel from Pantheon BFF data",
+                    "  - build the Lineage list panel from ODay Plus BFF data",
                 ]
             )
             + "\n",
@@ -509,7 +509,7 @@ class CoordinationWatcherTests(unittest.TestCase):
                     "source_branch: main",
                     "screen: promotion-review",
                     "type: frontend-feedback",
-                    "summary: Promotion Review UI feedback bundle is ready for Pantheon review",
+                    "summary: Promotion Review UI feedback bundle is ready for ODay Plus review",
                     "required_feedback:",
                     "  - ux-signoff",
                 ]

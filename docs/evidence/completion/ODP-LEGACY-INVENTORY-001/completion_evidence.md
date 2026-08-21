@@ -2,10 +2,10 @@
 
 Freeze and exhaustively classify legacy odayplus external-data code.
 
-- Owner: Claude
-- Reviewer: Antigravity2
+- Owner: Antigravity
+- Reviewer: Claude
 - Provides contract: `odayplus.legacy-external-data-disposition.v2`
-- Source catalog: `alfloop-dev/oday-data-platform@75688bca257b98be119a2ae8d7e1686572ec0413`
+- Source catalog: `alfloop-dev/oday-data-platform@63e9c2fc5171c0e335f6465f5860704fe4dc4694`
   (`docs/design/emgi/v0.4.1/tasks/definitions/consumer-a.json`)
 
 ## Deliverables
@@ -38,23 +38,19 @@ Both commands from the task definition, run at the reviewed head:
 ```console
 $ uv run python scripts/validate_external_data_boundary.py
 contract: odayplus.legacy-external-data-disposition.v2
-tracked files: 2457
-  classified: 2457
+tracked files: 2542
+  classified: 2542
   unclassified: 0
-  by_disposition: {"archived": 77, "assisted_intake_workflow": 58,
-    "delivery_and_governance": 75, "development_platform": 196,
-    "documentation_and_evidence": 888, "frozen_legacy_producer": 32,
-    "migrating_to_platform_client": 46, "product_consumer_owned": 611,
-    "product_review_workflow": 146, "repository_metadata": 14,
-    "shared_platform_support": 61, "verification_only": 253}
+  by_disposition: {"archived": 75, "assisted_intake_workflow": 58, "delivery_and_governance": 76, "development_platform": 222, "documentation_and_evidence": 942, "frozen_legacy_producer": 32, "migrating_to_platform_client": 46, "product_consumer_owned": 612, "product_review_workflow": 146, "repository_metadata": 15, "shared_platform_support": 61, "verification_only": 257}
   frozen_files: 32
-  capability_detections: 69
-  provider_reference_hits: 227
+  capability_detections: 68
+  provider_reference_hits: 218
 external-data boundary: OK
 # exit 0
 
 $ uv run pytest tests/architecture/test_external_data_boundary.py -q
-69 passed
+.....................................................................    [100%]
+69 passed in 40.52s
 # exit 0
 ```
 
@@ -94,7 +90,7 @@ Code boundary checks passed for 819 files.
 
 ### 1. Classify every tracked file and detected provider reference, not only known directories
 
-All **2457** tracked files carry a disposition. The classification rule list has
+All **2542** tracked files carry a disposition. The classification rule list has
 **no catch-all** (asserted by `test_classification_has_no_catch_all_rule`), so a
 genuinely new top-level surface fails validation until a human gives it an
 explicit disposition rather than inheriting one by accident. Dead rules fail
@@ -111,7 +107,7 @@ external-data surface:
 | `packages/schemas/source_contracts/external/**` | `frozen_legacy_producer` |
 | `apps/data_platform/**`, `modules/integration/connectors/**`, `apps/api/app/routes/external_data.py` | `migrating_to_platform_client` |
 
-**227** provider references were detected across `.py`, `.ts`, `.tsx`, `.yaml`,
+**218** provider references were detected across `.py`, `.ts`, `.tsx`, `.yaml`,
 `.tf`, `.sh`, `.json` and `.sql` by three signals — provider host, provider
 credential env var, frozen-producer package import — and every one is covered
 by a declaration naming both the matched text and a path glob. Declarations

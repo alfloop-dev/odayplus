@@ -167,8 +167,8 @@ def render_lovable_prompt(machine_packet: dict[str, Any]) -> str:
     required_feedback = list(machine_packet.get("required_feedback") or [])
     delivery_dependencies = list(machine_packet.get("delivery_dependencies") or [])
     prompt_lines = [
-        f"Build the `{machine_packet.get('feature_id')}` UI flow in `front-ai-trading-system` using only Pantheon APIs.",
-        "Pantheon has already published the contract-ready handoff for this feature.",
+        f"Build the `{machine_packet.get('feature_id')}` UI flow in `front-ai-trading-system` using only ODay Plus APIs.",
+        "The orchestrator has already published the contract-ready handoff for this feature.",
     ]
     if gap_handoff_path:
         gap_line = f"If backend fields are missing or the live payload diverges from the synced contract, stop implementation and write `{gap_handoff_path}`"
@@ -176,7 +176,7 @@ def render_lovable_prompt(machine_packet: dict[str, Any]) -> str:
             gap_line += f" using `{gap_handoff_template}` as the template."
         else:
             gap_line += "."
-        gap_line += " Then sync that file back to GitHub through the normal Lovable flow so Pantheon supervisor can continue the loop."
+        gap_line += " Then sync that file back to GitHub through the normal Lovable flow so the orchestrator supervisor can continue the loop."
         prompt_lines.append(gap_line)
     if machine_packet.get("screen"):
         prompt_lines.append(f"Screen: `{machine_packet['screen']}`.")
@@ -188,7 +188,7 @@ def render_lovable_prompt(machine_packet: dict[str, Any]) -> str:
         prompt_lines.append("Allowed endpoints:")
         prompt_lines.extend(f"- {endpoint}" for endpoint in endpoints)
     if delivery_dependencies:
-        prompt_lines.append("Published Pantheon dependencies:")
+        prompt_lines.append("Published ODay Plus dependencies:")
         prompt_lines.extend(f"- {item}" for item in delivery_dependencies)
     prompt_lines.append("Constraints:")
     prompt_lines.extend(f"- {item}" for item in list(machine_packet.get("constraints") or []))
@@ -218,7 +218,7 @@ def render_lovable_prompt(machine_packet: dict[str, Any]) -> str:
         prompt_lines.append("Feedback return:")
         prompt_lines.append(f"- {feedback_line}")
         prompt_lines.append(
-            "- Pantheon supervisor polls the coordination and GitHub-visible return loop on a fixed cadence; once both `ui-done` and `frontend-feedback` land, supervisor will decide closeout vs. another follow-up cycle automatically."
+            "- the orchestrator supervisor polls the coordination and GitHub-visible return loop on a fixed cadence; once both `ui-done` and `frontend-feedback` land, supervisor will decide closeout vs. another follow-up cycle automatically."
         )
     links = dict(machine_packet.get("links") or {})
     ref_lines: list[str] = []

@@ -1,6 +1,20 @@
 {
   "templates": [
     {
+      "template_id": "blocked_task_diagnostics",
+      "kind": "blocked_task_diagnostics",
+      "parent_statuses": [
+        "blocked"
+      ],
+      "title_template": "Diagnose and verify blocker for {{parent_task_id}}",
+      "summary_zh_template": "針對 {{parent_task_id}} 執行唯讀阻塞診斷與驗證補強，不改 canonical truth。",
+      "artifact_targets": [
+        "support/sidecars/{{parent_task_id}}/{{sidecar_task_id}}.md"
+      ],
+      "reviewer_policy": "parent_owner",
+      "mutates_canonical": false
+    },
+    {
       "template_id": "phase3_acceptance_packet",
       "kind": "acceptance_packet",
       "parent_phase_match": "Phase 3: Telemetry, Lineage, and Incident Backbone",

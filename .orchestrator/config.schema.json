@@ -720,6 +720,19 @@
             "type": "string"
           }
         },
+        "helper_execution_lease": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "claimable_statuses": {"type": "array", "items": {"type": "string"}},
+            "dispatch_sla_seconds": {"type": "number", "minimum": 0},
+            "lease_seconds": {"type": "number", "exclusiveMinimum": 0},
+            "max_claims_per_tick": {"type": "integer", "minimum": 0},
+            "max_claims_per_agent": {"type": "integer", "minimum": 0},
+            "require_owner_saturated": {"type": "boolean"}
+          },
+          "additionalProperties": false
+        },
         "max_active_workers_per_task": {
           "type": "integer"
         },
@@ -752,6 +765,30 @@
           "items": {
             "type": "string"
           }
+        }
+      },
+      "additionalProperties": false
+    },
+    "capacity_controller": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "chair_interval_seconds": {"type": "number", "exclusiveMinimum": 0},
+        "stall_window_seconds": {"type": "number", "minimum": 0},
+        "underutilization_threshold_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+        "underutilization_window_seconds": {"type": "number", "minimum": 0},
+        "coordination_reserved_slots": {"type": "integer", "minimum": 0},
+        "sidecars": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "require_chair_approval": {"type": "boolean"},
+            "max_new_per_wave": {"type": "integer", "minimum": 0},
+            "max_active": {"type": "integer", "minimum": 0},
+            "max_capacity_ratio": {"type": "number", "minimum": 0, "maximum": 1},
+            "ttl_seconds": {"type": "number", "exclusiveMinimum": 0}
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

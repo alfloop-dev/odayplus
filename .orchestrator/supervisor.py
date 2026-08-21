@@ -122,6 +122,7 @@ import worker_lifecycle
 import dispatch_engine
 import worker_workspace
 import worker_failure_policy
+import capacity_controller
 
 _WORKSPACE_HELPER_FUNCTIONS = [
 "_atomic_copy_context_file",
@@ -343,6 +344,53 @@ def sync_preempted_task_status(config: dict[str, Any], worker: dict[str, Any]) -
 
 def commit_canonical_task_transition(config: dict[str, Any], status: dict[str, Any]) -> bool:
     return write_status_snapshot_if_current(config, status) and sync_status_pipeline(config)
+
+
+def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Run the governed capacity Chair and materialize its bounded sidecars."""
+    status = load_status(config)
+    schema = config.get("schema", {}) or {}
+    tasks_path = schema.get("tasks_path", "tasks")
+    tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
+    expired_claim_ids = set(capacity_controller.expired_helper_claim_task_ids(tasks))
+    if expired_claim_ids:
+        for task in tasks:
+            if str(task.get("id") or "") in expired_claim_ids:
+                task.pop("helper_execution_lease", None)
+        if not commit_canonical_task_transition(config, status):
+            return False
+        for task_id in sorted(expired_claim_ids):
+            write_activity_log(
+                config,
+                {
+                    "type": "helper_claim_expired",
+                    "task_id": task_id,
+                    "message": "Expired helper execution lease released back to its canonical owner.",
+                },
+            )
+    controller, state_changed = capacity_controller.evaluate_chair(config, state, tasks)
+    additions = capacity_controller.sidecar_candidates(config, state, tasks)
+    if additions:
+        known = {str(task.get("id") or "") for task in tasks}
+        additions = [task for task in additions if str(task.get("id") or "") not in known]
+    if additions:
+        status.setdefault(tasks_path, []).extend(additions)
+        if not commit_canonical_task_transition(config, status):
+            return state_changed
+        for task in additions:
+            write_activity_log(
+                config,
+                {
+                    "type": "capacity_sidecar_created",
+                    "task_id": task.get("id"),
+                    "parent_task_id": task.get("helper_parent"),
+                    "message": "Capacity Chair created a bounded diagnostic sidecar.",
+                },
+            )
+        state_changed = True
+    if state_changed:
+        state.setdefault("capacity_controller", {}).update(controller)
+    return state_changed
 
 
 from github_bus import sync_github_bus
@@ -854,6 +902,163 @@ def compute_mode_occupancy(config: dict[str, Any], state: dict[str, Any]) -> dic
     return occupancy
 
 
+_LOADED_PROVENANCE: dict[str, str | None] | None = None
+_TREE_PROVENANCE_CACHE: tuple[float, dict[str, str | None]] | None = None
+#: The tree is polled for drift, not for every heartbeat. Drift matters within
+#: minutes, and a `git rev-parse` per heartbeat is a fork per tick for a value
+#: that changes when a person moves the checkout.
+TREE_PROVENANCE_MAX_AGE_SECONDS = 300.0
+
+
+def runtime_provenance() -> dict[str, str | None]:
+    """What this process actually loaded, so nobody has to infer it.
+
+    A supervisor loads its code once at import and its config once at startup,
+    while the checkout underneath it keeps moving. "Is the running supervisor
+    the one with the fix?" was answered wrongly twice on 2026-08-20 - once from
+    a process start time that turned out to predate a fast-forward by 36
+    seconds, once from a `pgrep` that matched the observer's own command line.
+    Both were reasoning about the artifact instead of asking the process.
+
+    Recorded once per heartbeat: the commit the loaded code came from, and a
+    digest of the config document in force. Neither is a guess.
+    """
+    global _TREE_PROVENANCE_CACHE
+    import subprocess
+    import time as _time
+
+    from common import ROOT as _root
+
+    cached = _TREE_PROVENANCE_CACHE
+    if cached is not None and (_time.time() - cached[0]) < TREE_PROVENANCE_MAX_AGE_SECONDS:
+        return dict(cached[1])
+
+    code_sha: str | None = None
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        if proc.returncode == 0:
+            candidate = (proc.stdout or "").strip()
+            # Only a real object name is evidence. Recording whatever came back
+            # would let a failed or substituted probe be cached as provenance,
+            # which is worse than recording nothing.
+            if len(candidate) == 40 and all(c in "0123456789abcdef" for c in candidate):
+                code_sha = candidate
+    except (OSError, subprocess.SubprocessError):
+        code_sha = None
+
+    config_digest: str | None = None
+    config_path = os.environ.get(CONFIG_PATH_ENV_VAR)
+    if config_path:
+        try:
+            config_digest = hashlib.sha256(
+                Path(config_path).read_bytes()
+            ).hexdigest()[:16]
+        except OSError:
+            config_digest = None
+
+    result = {"code_sha": code_sha, "config_digest": config_digest}
+    _TREE_PROVENANCE_CACHE = (_time.time(), dict(result))
+    return result
+
+
+def loaded_runtime_provenance() -> dict[str, str | None]:
+    """What this process loaded, computed once. It cannot change while it runs."""
+    global _LOADED_PROVENANCE
+    if _LOADED_PROVENANCE is None:
+        _LOADED_PROVENANCE = runtime_provenance()
+    return dict(_LOADED_PROVENANCE)
+
+
+def runtime_is_stale(supervisor_state: dict[str, Any]) -> str | None:
+    """Why the loaded runtime no longer matches the tree, or None.
+
+    Code is imported once and config is read once at startup, so a checkout
+    that moves underneath a running supervisor leaves it executing a version
+    that no longer exists on disk with nothing saying so. Comparing the values
+    stamped at load against the tree right now turns that into an observation
+    instead of an inference.
+    """
+    loaded_code = str(supervisor_state.get("loaded_code_sha") or "")
+    loaded_config = str(supervisor_state.get("loaded_config_digest") or "")
+    current = runtime_provenance()
+    reasons: list[str] = []
+    if loaded_code and current.get("code_sha") and current["code_sha"] != loaded_code:
+        reasons.append(
+            f"code moved from {loaded_code[:8]} to {str(current['code_sha'])[:8]}"
+        )
+    if (
+        loaded_config
+        and current.get("config_digest")
+        and current["config_digest"] != loaded_config
+    ):
+        reasons.append("config document changed")
+    if not reasons:
+        return None
+    return (
+        "Running supervisor no longer matches the tree it was started from: "
+        + "; ".join(reasons)
+        + ". It will keep executing the loaded version until it is restarted."
+    )
+
+
+def check_control_plane(config: dict[str, Any], state: dict[str, Any]) -> bool:
+    """Report an unreviewed change to the governing code; return whether to block.
+
+    Reports once per distinct set of dirty paths rather than per tick, and
+    clears when the tree is clean again so the next occurrence is reported
+    afresh.
+    """
+    import control_plane
+
+    from common import ROOT as _root
+
+    settings = control_plane.control_plane_settings(config)
+    if not settings.get("enabled"):
+        return False
+
+    paths = control_plane.dirty_control_plane_paths(_root, settings["globs"])
+    supervisor_state = state.setdefault("supervisor", {})
+    if paths is None:
+        # Unreadable is not clean, but it is also not evidence of a change.
+        return False
+    if not paths:
+        supervisor_state.pop("control_plane_dirty", None)
+        supervisor_state.pop("control_plane_reported", None)
+        return False
+
+    supervisor_state["control_plane_dirty"] = paths
+    alarm = control_plane.control_plane_alarm(paths)
+    if supervisor_state.get("control_plane_reported") != alarm:
+        supervisor_state["control_plane_reported"] = alarm
+        console_log(alarm, quiet=SUPERVISOR_LOG_QUIET)
+        try:
+            write_activity_log(
+                config,
+                {
+                    "type": "control_plane_modified",
+                    "message": alarm,
+                    "paths": paths,
+                    "mode": settings["mode"],
+                },
+            )
+        except (KeyError, OSError) as exc:
+            # An observer must never be able to halt what it observes. The
+            # alarm has already reached the console; degrade rather than take
+            # the dispatch loop down over a log path.
+            console_log(
+                f"control plane alarm could not be written to the activity log: {exc}",
+                quiet=SUPERVISOR_LOG_QUIET,
+            )
+    return settings["mode"] == "block"
+
+
 def stamp_supervisor_runtime_state(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -872,6 +1077,25 @@ def stamp_supervisor_runtime_state(
 
     supervisor_state["pid"] = current_pid
     supervisor_state["last_heartbeat_at"] = heartbeat_at
+    provenance = loaded_runtime_provenance()
+    supervisor_state.update(provenance)
+    # Stamped once, at the first heartbeat of this pid: what this process
+    # actually loaded. Everything after compares against it rather than
+    # overwriting it, which is what makes drift observable at all.
+    if previous_pid != current_pid or not supervisor_state.get("loaded_code_sha"):
+        supervisor_state["loaded_code_sha"] = provenance.get("code_sha")
+        supervisor_state["loaded_config_digest"] = provenance.get("config_digest")
+        supervisor_state.pop("runtime_stale_reported", None)
+
+    stale_reason = runtime_is_stale(supervisor_state)
+    if stale_reason:
+        if supervisor_state.get("runtime_stale_reported") != stale_reason:
+            supervisor_state["runtime_stale_reported"] = stale_reason
+            write_activity_log(
+                config, {"type": "supervisor_runtime_stale", "message": stale_reason}
+            )
+    else:
+        supervisor_state.pop("runtime_stale_reported", None)
     if not supervisor_state.get("started_at") or previous_pid != current_pid:
         supervisor_state["started_at"] = heartbeat_at
         supervisor_state["last_successful_loop_at"] = None
@@ -1334,6 +1558,89 @@ def agent_dispatch_preference_rank(config: dict[str, Any], agent_id: str | None)
     if provider.startswith("codex"):
         return 2
     return 99
+
+
+#: How often the interruptible sleep looks for new work. Small enough that a
+#: freed slot is taken up in seconds, large enough that idling costs one `stat`
+#: every few seconds.
+WAKE_POLL_SLICE_SECONDS = 5.0
+
+
+#: Never re-enter the cycle more often than this, however busy the signals are.
+#: A running worker writes progress to the board continuously, and each cycle
+#: costs GitHub calls; without a floor the loop would spend its time reacting to
+#: its own fleet rather than dispatching.
+MIN_WAKE_INTERVAL_SECONDS = 30.0
+
+#: Files whose change means "there may be something to do now". The event queue
+#: is where an outbound dispatch is recorded; the board is where a worker
+#: finishing, a review landing, or a task becoming ready is recorded. Watching
+#: only the queue missed the case that matters most - capacity being freed -
+#: because a worker completing writes to the board, not the queue.
+WAKE_SIGNAL_PATH_KEYS = ("event_queue", "status_file")
+
+
+def _wake_signature(config: dict[str, Any]) -> tuple[tuple[float, int] | None, ...]:
+    """Cheap fingerprint of every wake signal; None per entry when unreadable."""
+    signature: list[tuple[float, int] | None] = []
+    for key in WAKE_SIGNAL_PATH_KEYS:
+        try:
+            stat = Path(config_path(config, key)).stat()
+            signature.append((stat.st_mtime, stat.st_size))
+        except (KeyError, OSError):
+            signature.append(None)
+    return tuple(signature)
+
+
+def sleep_until_work_or_interval(
+    config: dict[str, Any],
+    poll_interval: float,
+    *,
+    slice_seconds: float = WAKE_POLL_SLICE_SECONDS,
+    min_wake_interval: float = MIN_WAKE_INTERVAL_SECONDS,
+) -> bool:
+    """Sleep up to ``poll_interval``, returning early when work is queued.
+
+    The loop used to sleep the whole interval unconditionally. Every wake this
+    system produces - a worker finishing, a review landing, a task becoming
+    ready - is written to the event queue and was then invisible until the next
+    scheduled tick, up to five minutes later. With workers finishing in one to
+    five minutes, slots sat empty for most of every interval and the fleet ran
+    far below its declared capacity.
+
+    Watching the queue file rather than the board keeps this to one `stat` per
+    slice: the queue is exactly where "there is something to do" is recorded,
+    and it is the same signal `wake_queued` already writes.
+
+    Returns True when it woke early.
+    """
+    if poll_interval <= 0:
+        return False
+    if min_wake_interval >= poll_interval:
+        # The floor covers the whole interval, so no signal can shorten it.
+        # Sleeping straight through says that plainly instead of arriving at it
+        # through a deadline race on the final slice.
+        time.sleep(poll_interval)
+        return False
+
+    baseline = _wake_signature(config)
+    started = time.monotonic()
+    deadline = started + poll_interval
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(slice_seconds, remaining))
+        if time.monotonic() - started < min_wake_interval:
+            continue
+        current = _wake_signature(config)
+        for was, now in zip(baseline, current, strict=True):
+            # Unreadable is not a wake signal. A missing file paces the loop
+            # rather than spinning it.
+            if was is None or now is None:
+                continue
+            if was != now:
+                return True
 
 
 def agent_dispatch_capacity(config: dict[str, Any], agent_id: str | None) -> int:
@@ -3974,9 +4281,17 @@ def run_once(
         elif discussion_planning_is_active(planning_state):
             changed = dispatch_discussion_planning(config, state, planning_state, provider_report=provider_report) or changed
         else:
-            # Work dispatch has one purpose: assign an already canonical,
-            # ready task. Runtime heuristics never create or reassign tasks.
-            changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
+            changed = reconcile_capacity_controller(config, state) or changed
+            # The Capacity Chair may create only bounded diagnostic sidecars;
+            # canonical product work remains owned by the task board.
+            if check_control_plane(config, state):
+                console_log(
+                    "control plane is dirty and control_plane_guard.mode is `block`; "
+                    "skipping dispatch this tick",
+                    quiet=SUPERVISOR_LOG_QUIET,
+                )
+            else:
+                changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
             changed = process_queue(config, state, provider_report) or changed
         finish_loop_stage_timing(state, "dispatch_and_queue", stage_started)
@@ -4167,7 +4482,7 @@ def main() -> int:
         verbose=args.verbose,
     )
     while True:
-        time.sleep(poll_interval)
+        sleep_until_work_or_interval(config, poll_interval)
         run_supervisor_cycle(
             config,
             watch=not args.no_watch,

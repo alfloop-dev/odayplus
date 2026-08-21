@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from dispatch_policy import worker_logical_dispatch_agent_id
+from dispatch_policy import REASON_HELPER_CLAIM, worker_logical_dispatch_agent_id
 
 
 def _supervisor_module():
@@ -22,6 +22,8 @@ def _sync_supervisor_scope() -> None:
         'current_dispatch_event_key', 
         'dispatch_priority_for_task', 
         'agent_dispatch_loads', 
+        'configured_worker_slot_total', 
+        'default_max_dispatches_per_tick', 
         'reassign_unavailable_reviewers', 
         'is_sidecar_review_of_current_parent', 
         'worker_logical_dispatch_agent_id', 
@@ -31,6 +33,7 @@ def _sync_supervisor_scope() -> None:
         'ready_dispatch_signature', 
         'worktree_block_still_matches_dispatch', 
         'reconcile_task_reality', 
+        '_this_repository_slug', 
         'task_reality_reconcile_is_due', 
         'escalated_lease_block', 
         'build_dispatch_event', 
@@ -176,6 +179,30 @@ def task_reality_reconcile_is_due(
     return (_dt.now(_utc) - last).total_seconds() >= interval_seconds
 
 
+def _this_repository_slug() -> str | None:
+    """`owner/name` for this checkout's `origin`, or None when unreadable."""
+    import re
+    import subprocess
+
+    from common import ROOT as _root
+
+    try:
+        proc = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"[:/]([^/:]+/[^/]+?)(?:\.git)?/?$", (proc.stdout or "").strip())
+    return match.group(1) if match else None
+
+
 def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bool:
     """Repair what reality determines, report what it does not.
 
@@ -188,7 +215,27 @@ def reconcile_task_reality(config: dict[str, Any], status: dict[str, Any]) -> bo
     schema = config.get("schema", {})
     tasks_path = schema.get("tasks_path", "tasks")
     task_id_field = schema.get("task_id_field", "id")
-    tasks = [t for t in (status.get(tasks_path) or []) if t.get(task_id_field)]
+    all_tasks = [t for t in (status.get(tasks_path) or []) if t.get(task_id_field)]
+    if not all_tasks:
+        return False
+
+    # A task that declares another repository names branches and PRs that live
+    # there, and probing this checkout's `origin` for them reports drift that
+    # does not exist. On 2026-08-20 three cross-repo tasks were reported as
+    # naming branches that "do not exist on the remote" while those branches
+    # were present in `oday-data-platform`. Reporting a false drift is worse
+    # than reporting none, so anything not belonging to this repository is left
+    # to whatever reconciles that one.
+    this_repo = _this_repository_slug()
+    tasks = []
+    for task in all_tasks:
+        declared = str(task.get("repository") or "").strip()
+        if declared and this_repo and declared.lower() != this_repo.lower():
+            continue
+        if declared and not this_repo:
+            # Cannot tell whose repository this is; declining is the safe half.
+            continue
+        tasks.append(task)
     if not tasks:
         return False
 
@@ -274,6 +321,70 @@ def approved_pr_change_scope(pr_number: int) -> str | None:
         return None
 
 
+def _task_repository_slug(config: dict[str, Any], task: dict[str, Any]) -> str:
+    """The task's repository slug, or "" when it cannot be resolved.
+
+    Routing used to rely on the supervisor's cwd, which silently answered for
+    ODay Plus whatever repository the task belonged to.
+    """
+    declared = str((task or {}).get("repository") or "").strip()
+    if declared:
+        return declared
+    try:
+        from multi_repo_registry import resolve_task_repository
+
+        binding = resolve_task_repository(config, task)
+        return str(binding.slug or "")
+    except Exception:
+        return ""
+
+
+_MERGE_QUEUE_BY_REPO: dict[str, bool] = {}
+
+
+def repository_has_merge_queue(slug: str | None, base: str) -> bool | None:
+    """Does `base` in this repository have a merge queue? None when unreadable.
+
+    Routing was written against ODay Plus, whose `dev` requires a queue, and
+    assumed every repository looked the same. `oday-data-platform` is private on
+    a plan without branch protection -- the protection API answers 403 -- so it
+    has no queue at all, and a bare `gh pr merge` there enqueues nothing. Four
+    reviewed, CI-green PRs sat until they were reported `stalled` and merged by
+    hand, and every DPF task that reached review_approved would have repeated it.
+
+    Cached per repository for the process: a queue is not created or removed
+    between ticks, and the alternative is a GraphQL round trip per PR per tick.
+    """
+    import json as _json
+
+    from github_bus import GitHubBusError, GitHubBusOffline, run_gh
+
+    slug = str(slug or "").strip()
+    if not slug or "/" not in slug:
+        return None
+    if slug in _MERGE_QUEUE_BY_REPO:
+        return _MERGE_QUEUE_BY_REPO[slug]
+    owner, _, name = slug.partition("/")
+    query = (
+        f"{{repository(owner:{_json.dumps(owner)},name:{_json.dumps(name)})"
+        f"{{mergeQueue(branch:{_json.dumps(base)}){{id}}}}}}"
+    )
+    try:
+        proc = run_gh(["api", "graphql", "-f", f"query={query}"])
+    except (GitHubBusError, GitHubBusOffline):
+        return None
+    try:
+        payload = _json.loads(proc.stdout or "{}")
+    except ValueError:
+        return None
+    repo = ((payload.get("data") or {}).get("repository")) or {}
+    if "mergeQueue" not in repo:
+        return None
+    present = repo.get("mergeQueue") is not None
+    _MERGE_QUEUE_BY_REPO[slug] = present
+    return present
+
+
 def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> tuple[str, str]:
     """Enqueue a reviewed, CI-green PR for merge.
 
@@ -335,8 +446,24 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         ):
             return "waiting", str(previous.get("route") or "already routed")
 
+    # A repository without a merge queue cannot be enqueued into; `gh pr merge`
+    # with no strategy has nothing to do there. Ask once per repository and pick
+    # the only route that repository actually has.
+    slug = _task_repository_slug(config, task)
+    base = str(task.get("base_branch") or "dev").strip() or "dev"
+    queued_repo = repository_has_merge_queue(slug, base)
+    if queued_repo is False:
+        args, route = ["pr", "merge", str(pr_number), "--merge"], "merged"
+    else:
+        # None means unreadable. Enqueueing is the conservative choice: it is
+        # what a queue-protected repository requires, and a direct merge there
+        # would be the bypass this routing exists to avoid.
+        args, route = ["pr", "merge", str(pr_number)], "queued"
+    if slug:
+        args += ["--repo", slug]
+
     try:
-        run_gh(["pr", "merge", str(pr_number)])
+        run_gh(args)
     except (GitHubBusError, GitHubBusOffline) as exc:
         return "blocked", str(exc)
 
@@ -350,7 +477,7 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
     task[MERGE_ROUTE_FIELD] = {
         "head": approved_head,
         "scope": scope,
-        "route": "queued",
+        "route": route,
         "pr_number": pr_number,
         "at": utc_now(),
         "attempts": previous_attempts + 1,
@@ -360,10 +487,15 @@ def route_approved_pr_to_merge(config: dict[str, Any], task: dict[str, Any]) -> 
         {
             "type": "merge_route_applied",
             "task_id": str(task.get("id") or ""),
-            "message": f"PR #{pr_number} enqueued for merge (scope {scope}).",
+            "message": (
+                f"PR #{pr_number} {'merged directly' if route == 'merged' else 'enqueued for merge'} "
+                f"(scope {scope}; repository has no merge queue)."
+                if route == "merged"
+                else f"PR #{pr_number} enqueued for merge (scope {scope})."
+            ),
         },
     )
-    return "queued", f"scope={scope}"
+    return route, f"scope={scope}"
 
 
 def advance_approved_prs_to_merge(
@@ -516,6 +648,14 @@ def current_dispatch_event_key(config: dict[str, Any], event: dict[str, Any], ta
         eligible = task_status == "in_progress" and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
     elif reason == REASON_OWNED_READY:
         eligible = task_status in {"todo", "in_progress"} and task.get(owner_field) == target_agent and dependencies_satisfied(task, task_map, dependency_done_statuses)
+    elif reason == REASON_HELPER_CLAIM:
+        claim = task.get("helper_execution_lease") or {}
+        eligible = (
+            task_status in {"todo", "in_progress"}
+            and normalize_agent_id(str(claim.get("claimed_by") or "")) == normalize_agent_id(target_agent)
+            and helper_claim_is_live(claim)
+            and dependencies_satisfied(task, task_map, dependency_done_statuses)
+        )
 
     if not eligible:
         return None
@@ -585,7 +725,42 @@ def dispatch_priority_for_task(
         and dependencies_satisfied(task, tmap, dependency_done_statuses)
     ):
         return 3
+    claim = task.get("helper_execution_lease") or {}
+    if (
+        task_status in {"todo", "in_progress"}
+        and normalize_agent_id(str(claim.get("claimed_by") or "")) == norm_target
+        and helper_claim_is_live(claim)
+        and dependencies_satisfied(task, tmap, dependency_done_statuses)
+    ):
+        return 4
     return None
+
+
+def helper_claim_is_live(claim: dict[str, Any], *, now: datetime | None = None) -> bool:
+    if not isinstance(claim, dict) or not claim.get("claimed_by"):
+        return False
+    expires_at = parse_iso_timestamp(str(claim.get("lease_expires_at") or ""))
+    if expires_at is None:
+        return False
+    current = now or datetime.now(UTC)
+    return expires_at > current
+
+
+def helper_owner_is_saturated(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    agent_loads: dict[str, list[int]],
+    helper_settings: dict[str, Any],
+) -> bool:
+    owner = str(task.get("owner") or "")
+    owner_load = len(agent_loads.get(owner, []))
+    if owner_load >= agent_dispatch_capacity(config, owner):
+        return True
+    last_update = parse_iso_timestamp(str(task.get("last_update") or ""))
+    if last_update is None:
+        return not helper_settings.get("require_owner_saturated", True)
+    age = (datetime.now(UTC) - last_update).total_seconds()
+    return age >= float(helper_settings.get("dispatch_sla_seconds", 600))
 
 @_entrypoint
 
@@ -965,7 +1140,12 @@ def worker_matches_current_assignment(
     if task_status in finalize_statuses:
         return task.get(owner_field) == agent_name
     if task_status in owned_statuses:
-        return task.get(owner_field) == agent_name
+        claim = task.get("helper_execution_lease") or {}
+        return task.get(owner_field) == agent_name or (
+            helper_claim_is_live(claim)
+            and normalize_agent_id(str(claim.get("claimed_by") or ""))
+            == normalize_agent_id(agent_name)
+        )
     return False
 
 @_entrypoint
@@ -1101,6 +1281,7 @@ def build_dispatch_event(task: dict[str, Any], target_agent: str, reason: str, t
         "helper_kind",
         "mutates_canonical",
         "auto_created_by",
+        "helper_execution_lease",
     ):
         if key in task:
             task_payload[key] = task.get(key)
@@ -1157,6 +1338,32 @@ def dispatch_discussion_planning(
 
     return changed
 
+def configured_worker_slot_total(config: dict[str, Any]) -> int:
+    """How many worker processes this configuration can actually run at once."""
+    agents = config.get("agents", {}) or {}
+    return sum(1 for agent in agents.values() if isinstance(agent, dict) and agent.get("slot_id"))
+
+
+def default_max_dispatches_per_tick(config: dict[str, Any]) -> int:
+    """Enough dispatches to fill every slot the configuration declares.
+
+    A fixed cap is a second limit on top of the one that already exists: slots
+    already bound concurrency, and `agent_dispatch_capacity` already refuses to
+    exceed them. Capping ticks as well only decides how *slowly* free capacity
+    is taken up.
+
+    On 2026-08-20 the two compounded. Eleven slots were configured, the cap was
+    3, and the poll interval was 300s - so at most three workers could start
+    every five minutes, while workers finish in one to five. The fleet sat at a
+    fraction of its capacity with eligible work on the board, and an operator
+    had to keep prodding it.
+
+    So the default is the slot total. An operator who wants a smaller batch can
+    still say so; nothing here overrides an explicit setting.
+    """
+    return max(4, configured_worker_slot_total(config))
+
+
 @_entrypoint
 
 def dispatch_ready_tasks(
@@ -1190,7 +1397,14 @@ def dispatch_ready_tasks(
     finalize_statuses = {str(value).lower() for value in settings.get("finalize_statuses", ["review_approved"])}
     dependency_done_statuses = {str(value).lower() for value in settings.get("dependency_done_statuses", ["done"])}
     active_statuses = active_worker_statuses(config)
-    max_dispatches_per_tick = max(1, int(max_dispatches_override or settings.get("max_dispatches_per_tick", 4)))
+    max_dispatches_per_tick = max(
+        1,
+        int(
+            max_dispatches_override
+            or settings.get("max_dispatches_per_tick")
+            or default_max_dispatches_per_tick(config)
+        ),
+    )
 
     active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
@@ -1518,6 +1732,32 @@ def dispatch_ready_tasks(
                 reason = "owned_ready_dispatch"
                 priority = 3
 
+            helper_settings = settings.get("helper_execution_lease", {}) or {}
+            if reason is None and helper_settings.get("enabled", True):
+                claimable_statuses = {
+                    str(value).lower()
+                    for value in helper_settings.get("claimable_statuses", ["todo"])
+                }
+                claim = task.get("helper_execution_lease") or {}
+                claimed_by = normalize_agent_id(str(claim.get("claimed_by") or ""))
+                existing_claim_live = helper_claim_is_live(claim)
+                independent = norm_target not in {norm_task_owner, norm_task_reviewer}
+                owner_saturated = helper_owner_is_saturated(
+                    config, task, agent_loads, helper_settings
+                )
+                if (
+                    task_status in claimable_statuses
+                    and dependencies_satisfied(task, task_map, dependency_done_statuses)
+                    and independent
+                    and (not existing_claim_live or claimed_by == norm_target)
+                    and (
+                        owner_saturated
+                        or not helper_settings.get("require_owner_saturated", True)
+                    )
+                ):
+                    reason = REASON_HELPER_CLAIM
+                    priority = 4
+
             if reason is not None and not agent_can_take_task(config, target_agent, task):
                 continue
             if reason is None or priority is None:
@@ -1570,6 +1810,56 @@ def dispatch_ready_tasks(
         candidates.sort(key=lambda item: (item[0], item[1], item[2]))
         queued_for_agent = 0
         for _, _, _, task, reason in candidates[:available_agent_slots]:
+            if reason == REASON_HELPER_CLAIM:
+                helper_settings = settings.get("helper_execution_lease", {}) or {}
+                active_claims_for_agent = sum(
+                    1
+                    for candidate in tasks
+                    if helper_claim_is_live(candidate.get("helper_execution_lease") or {})
+                    and normalize_agent_id(
+                        str((candidate.get("helper_execution_lease") or {}).get("claimed_by") or "")
+                    )
+                    == normalize_agent_id(target_agent)
+                )
+                if active_claims_for_agent >= int(helper_settings.get("max_claims_per_agent", 2)):
+                    continue
+                helper_dispatches = int(dispatch_state.get("helper_dispatches_this_tick", 0) or 0)
+                chair_max = int(
+                    ((state.get("capacity_controller", {}) or {}).get("chair_decision", {}) or {}).get(
+                        "max_helper_claims", helper_settings.get("max_claims_per_tick", 4)
+                    )
+                    or 0
+                )
+                max_helper = min(int(helper_settings.get("max_claims_per_tick", 4)), chair_max or 0)
+                if helper_dispatches >= max_helper:
+                    continue
+                now = datetime.now(UTC)
+                generation = int((task.get("helper_execution_lease") or {}).get("generation", 0) or 0) + 1
+                task["helper_execution_lease"] = {
+                    "claimed_by": target_agent,
+                    "original_owner": task.get(owner_field),
+                    "claimed_at": now.isoformat().replace("+00:00", "Z"),
+                    "lease_expires_at": (
+                        now + timedelta(seconds=float(helper_settings.get("lease_seconds", 1800)))
+                    ).isoformat().replace("+00:00", "Z"),
+                    "reason": "owner_capacity_saturated_or_dispatch_sla_exceeded",
+                    "generation": generation,
+                }
+                if not commit_canonical_task_transition(config, status):
+                    task.pop("helper_execution_lease", None)
+                    continue
+                dispatch_state["helper_dispatches_this_tick"] = helper_dispatches + 1
+                write_activity_log(
+                    config,
+                    {
+                        "type": "helper_claim_leased",
+                        "task_id": task.get(task_id_field),
+                        "claimed_by": target_agent,
+                        "owner": task.get(owner_field),
+                        "lease_expires_at": task["helper_execution_lease"]["lease_expires_at"],
+                        "message": "Idle capacity leased existing canonical work without changing owner.",
+                    },
+                )
             event = build_dispatch_event(task, target_agent, reason, task_map)
             if queue_dispatch_event_safely(config, event):
                 pending_event_keys.add(event["key"])
@@ -1599,4 +1889,5 @@ def dispatch_ready_tasks(
             cursor_revision = 0
         dispatch_state["dispatch_cursor_revision"] = max(0, cursor_revision) + 1
         dispatch_state["dispatch_cursor_updated_at"] = utc_now()
+    dispatch_state["helper_dispatches_this_tick"] = 0
     return changed

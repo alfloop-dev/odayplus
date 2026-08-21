@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Open (or re-enter) the per-task branch for a Pantheon task.
+# Open (or re-enter) the per-task branch for a orchestrator task.
 #
 #   ./delivery_toolchain/git/task_start.sh "ODP-EXAMPLE-001"
 #
-# Pantheon's branch model is per-task ephemeral branches cut from the tip of
+# ODay Plus's branch model is per-task ephemeral branches cut from the tip of
 # the workflow target (`dev`), merged back by PR. Permanent `worker/<name>`
 # branches are retired. Every worker wakeup prompt and
 # `.orchestrator/skills/*` point here rather than at hand-written branch

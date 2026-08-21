@@ -3278,6 +3278,75 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(queued_event["target_agent"], "Codex")
         self.assertEqual(queued_event["reason"], "owned_in_progress_dispatch")
 
+    def test_idle_worker_leases_sla_overdue_task_without_reassigning_owner(self) -> None:
+        config = json.loads(json.dumps(self.config))
+        config["agents"].update(
+            {
+                "claude": {
+                    "id": "claude",
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "adapter": "claude",
+                },
+                "gemini": {
+                    "id": "gemini",
+                    "display_name": "Gemini",
+                    "provider": "gemini",
+                    "adapter": "gemini",
+                },
+            }
+        )
+        config["providers"].update(
+            {
+                "claude": {"delivery_mode": "claude"},
+                "gemini": {"delivery_mode": "gemini"},
+            }
+        )
+        config["ready_dispatcher"]["helper_execution_lease"] = {
+            "enabled": True,
+            "claimable_statuses": ["todo"],
+            "require_owner_saturated": True,
+            "dispatch_sla_seconds": 1,
+            "lease_seconds": 1800,
+        }
+        task = {
+            "id": "HELPER-LEASE-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+            "last_update": "2026-08-20T00:00:00Z",
+        }
+        status = {"tasks": [task]}
+        state = {
+            "queue": {"events": {}},
+            "workers": {},
+            "capacity_controller": {"chair_decision": {"max_helper_claims": 1}},
+        }
+
+        with (
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_event_queue", return_value=[]),
+            mock.patch.object(supervisor, "commit_canonical_task_transition", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None),
+            mock.patch.object(supervisor, "queue_delivery_event", return_value=True) as queued,
+        ):
+            changed = supervisor.dispatch_ready_tasks(
+                config,
+                state,
+                agent_ids_override=["codex"],
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(task["owner"], "Claude")
+        self.assertEqual(task["reviewer"], "Gemini")
+        self.assertEqual(task["helper_execution_lease"]["claimed_by"], "Codex")
+        queued.assert_called_once()
+        event = queued.call_args.args[1]
+        self.assertEqual(event["target_agent"], "Codex")
+        self.assertEqual(event["reason"], "helper_claim_dispatch")
+
     def test_an_escalated_lease_block_is_reported_on_the_task_record(self) -> None:
         """Stopping dispatch silently is the 2026-08-17 jam; retrying forever is
         the 2026-08-19 livelock. An escalated block has to do both - stop, and
@@ -4689,8 +4758,16 @@ class RunOnceSupervisorStateTests(unittest.TestCase):
             self.assertTrue(changed)
             dispatch_discussion_planning.assert_not_called()
             dispatch_ready_tasks.assert_called_once()
-            run_mock.assert_called_once()
-            self.assertEqual(run_mock.call_args.args[0][-1], "materialize")
+            materialize_calls = [
+                call
+                for call in run_mock.call_args_list
+                if any(
+                    "planning_state.py" in str(arg)
+                    for arg in (call.args[0] if call.args else [])
+                )
+            ]
+            self.assertEqual(len(materialize_calls), 1)
+            self.assertEqual(materialize_calls[0].args[0][-1], "materialize")
 
 
 class SupervisorRuntimeFocusTests(unittest.TestCase):
@@ -4815,7 +4892,7 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             "session_id": "phase1-2026-04-11",
             "status": "active",
             "planning_mode": "discussion_planning",
-            "summary": "Plan the Pantheon backend completion wave.",
+            "summary": "Plan the ODay Plus backend completion wave.",
             "baton_owner": "Codex",
             "next_reviewer": "Helper",
             "current_round": 0,
@@ -4854,7 +4931,7 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             "session_file": f"{planning_dir}/planning-session.json",
             "status": "active",
             "planning_mode": "discussion_planning",
-            "summary": "Formalize the Pantheon Console closed loop.",
+            "summary": "Formalize the ODay Plus Console closed loop.",
             "objective": "Define the canonical closed-loop coordination protocol and execution backlog for all 8 workbenches.",
             "baton_owner": "Codex",
             "next_reviewer": "Helper",
@@ -14023,6 +14100,229 @@ class HandedOffChildProtectsItsQueueEventTests(unittest.TestCase):
         state = self._state("completed")
         supervisor.finalize_queue_event_record(config, state, state["workers"]["parent"], "failed", "parent died")
         self.assertEqual(state["queue"]["events"]["evt-1"]["status"], "failed")
+
+
+class MergeRouteWithoutQueueTests(unittest.TestCase):
+    """A repository without a merge queue must be merged, not enqueued.
+
+    Routing was written against ODay Plus, whose `dev` requires a queue.
+    `oday-data-platform` is private on a plan without branch protection, so it
+    has no queue and a bare `gh pr merge` there enqueues nothing. On 2026-08-20
+    four reviewed, CI-green PRs sat until they were reported `stalled` and
+    merged by hand, and every DPF task reaching review_approved would repeat it.
+    """
+
+    HEAD = "1111111122222222333333334444444455555555"
+
+    def _route(self, *, has_queue, repository="alfloop-dev/oday-data-platform"):
+        import dispatch_engine
+
+        calls = []
+
+        def fake_run_gh(args, **kwargs):
+            calls.append(list(args))
+            return unittest.mock.Mock(stdout="{}")
+
+        task = {"id": "T-1", "pr_number": 42, "approved_head": self.HEAD,
+                "repository": repository, "base_branch": "dev"}
+        with unittest.mock.patch.object(dispatch_engine, "repository_has_merge_queue", return_value=has_queue), \
+                unittest.mock.patch.object(dispatch_engine, "approved_pr_change_scope", return_value="product_or_mixed"), \
+                unittest.mock.patch.object(dispatch_engine, "_pr_merge_state", return_value="CLEAN"), \
+                unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh), \
+                unittest.mock.patch.object(dispatch_engine, "write_activity_log", create=True), \
+                unittest.mock.patch.object(dispatch_engine, "utc_now", create=True, return_value="T"):
+            route, detail = dispatch_engine.route_approved_pr_to_merge({}, task)
+        return route, detail, calls, task
+
+    def test_a_repository_without_a_queue_is_merged_directly(self) -> None:
+        route, _d, calls, task = self._route(has_queue=False)
+
+        self.assertEqual(route, "merged")
+        self.assertEqual(
+            calls,
+            [["pr", "merge", "42", "--merge", "--repo", "alfloop-dev/oday-data-platform"]],
+        )
+        self.assertEqual(task["merge_route"]["route"], "merged")
+
+    def test_a_repository_with_a_queue_is_still_enqueued(self) -> None:
+        route, _d, calls, task = self._route(has_queue=True, repository="alfloop-dev/odayplus")
+
+        self.assertEqual(route, "queued")
+        self.assertEqual(calls, [["pr", "merge", "42", "--repo", "alfloop-dev/odayplus"]])
+        self.assertEqual(task["merge_route"]["route"], "queued")
+
+    def test_an_unreadable_answer_enqueues_rather_than_merging(self) -> None:
+        """None means unknown. A direct merge on a queue-protected repository
+        would be exactly the bypass this routing exists to prevent."""
+        route, _d, calls, _task = self._route(has_queue=None)
+
+        self.assertEqual(route, "queued")
+        self.assertNotIn("--merge", calls[0])
+
+    def test_detection_is_cached_per_repository(self) -> None:
+        import dispatch_engine
+
+        calls = []
+
+        def fake_run_gh(args, **kwargs):
+            calls.append(list(args))
+            return unittest.mock.Mock(
+                stdout='{"data":{"repository":{"mergeQueue":null}}}'
+            )
+
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/repo", None)
+        with unittest.mock.patch("github_bus.run_gh", side_effect=fake_run_gh):
+            first = dispatch_engine.repository_has_merge_queue("owner/repo", "dev")
+            second = dispatch_engine.repository_has_merge_queue("owner/repo", "dev")
+
+        self.assertFalse(first)
+        self.assertFalse(second)
+        self.assertEqual(len(calls), 1, "second lookup should come from the cache")
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/repo", None)
+
+    def test_a_present_queue_reads_as_true(self) -> None:
+        import dispatch_engine
+
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/queued", None)
+        with unittest.mock.patch(
+            "github_bus.run_gh",
+            return_value=unittest.mock.Mock(stdout='{"data":{"repository":{"mergeQueue":{"id":"MQ_x"}}}}'),
+        ):
+            self.assertTrue(dispatch_engine.repository_has_merge_queue("owner/queued", "dev"))
+        dispatch_engine._MERGE_QUEUE_BY_REPO.pop("owner/queued", None)
+
+    def test_a_malformed_slug_is_not_queried(self) -> None:
+        import dispatch_engine
+
+        with unittest.mock.patch("github_bus.run_gh") as run_gh:
+            self.assertIsNone(dispatch_engine.repository_has_merge_queue("", "dev"))
+            self.assertIsNone(dispatch_engine.repository_has_merge_queue("noslash", "dev"))
+        run_gh.assert_not_called()
+
+
+class QuarantineCrossRepositoryTests(unittest.TestCase):
+    """Quarantine must judge a worktree against its own repository.
+
+    It derived the repository from the status file's directory, which is always
+    the Pantheon checkout, then compared git identities and refused anything
+    that did not match. Every oday-data-platform worktree failed that check
+    silently, so the recovery that exists for `skipped_dirty_worktree` could
+    never run there -- DPF-SRC-RIS-NLSC-001 and DPF-SRC-OSM-TDX-001 each blocked
+    five times and escalated with no backup ever written.
+    """
+
+    def _repo(self, root: Path, name: str) -> Path:
+        repo = root / name
+        repo.mkdir(parents=True)
+        for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"],
+                     ["config", "user.name", "t"]):
+            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+        (repo / "seed.txt").write_text("seed\n")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "seed"], cwd=repo, check=True, capture_output=True)
+        return repo
+
+    def _dirty_worktree(self, repo: Path, path: Path, branch: str) -> Path:
+        subprocess.run(["git", "worktree", "add", "-q", "-b", branch, str(path)],
+                       cwd=repo, check=True, capture_output=True)
+        (path / "seed.txt").write_text("edited\n")
+        return path
+
+    def test_a_sibling_repository_worktree_is_quarantined(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            sibling = self._repo(root, "data-platform")
+            wt = self._dirty_worktree(sibling, root / "wt", "task/T-1")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            # Without the owning repository it compares against Pantheon and refuses.
+            self.assertFalse(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-1", expected_branch="task/T-1", trigger="t"
+                )
+            )
+            # With it, the worktree is judged against the repository it belongs to.
+            self.assertTrue(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-1", expected_branch="task/T-1", trigger="t",
+                    owning_repo_root=sibling,
+                )
+            )
+
+    def test_the_backup_stays_in_the_fleet_root(self) -> None:
+        """The orchestrator's state lives in Pantheon regardless of whose code
+        is being preserved."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            sibling = self._repo(root, "data-platform")
+            wt = self._dirty_worktree(sibling, root / "wt", "task/T-2")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            self.assertTrue(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-2", expected_branch="task/T-2", trigger="t",
+                    owning_repo_root=sibling,
+                )
+            )
+
+            backups = fleet / ".orchestrator" / "worktree-dirt-backups"
+            written = sorted(backups.glob("t-2-*"))
+            self.assertEqual(len(written), 1, f"expected one backup, found {written}")
+            self.assertFalse((sibling / ".orchestrator").exists(),
+                             "backups must not be written into the task's repository")
+            manifest = json.loads((written[0] / "manifest.json").read_text())
+            self.assertEqual(manifest["task_id"], "T-2")
+            self.assertEqual([f["path"] for f in manifest["files"]], ["seed.txt"])
+
+    def test_the_same_repository_still_works_without_the_argument(self) -> None:
+        """Pantheon's own worktrees must behave exactly as before."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            wt = self._dirty_worktree(fleet, root / "wt", "task/T-3")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            self.assertTrue(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-3", expected_branch="task/T-3", trigger="t"
+                )
+            )
+
+    def test_a_worktree_of_neither_repository_is_still_refused(self) -> None:
+        """The guard must keep refusing a path that is not a worktree of the
+        repository it is claimed to belong to."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fleet = self._repo(root, "pantheon")
+            sibling = self._repo(root, "data-platform")
+            stranger = self._repo(root, "stranger")
+            wt = self._dirty_worktree(stranger, root / "wt", "task/T-4")
+            config = {"paths": {
+                "status_file": str(fleet / "ai-status.json"),
+                "activity_log": str(fleet / "ai-activity-log.jsonl"),
+                "state_file": str(fleet / ".orchestrator" / "state.json"),
+            }}
+
+            self.assertFalse(
+                supervisor._quarantine_and_preserve_dirty_worktree(
+                    config, {}, wt, "T-4", expected_branch="task/T-4", trigger="t",
+                    owning_repo_root=sibling,
+                )
+            )
 
 
 if __name__ == "__main__":

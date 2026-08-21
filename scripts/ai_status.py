@@ -588,9 +588,24 @@ def actor_reference_problem(name: str | None) -> str | None:
     return None
 
 
+def configured_config_path_env() -> str:
+    """The explicitly configured orchestrator config path, under either name.
+
+    The orchestrator was ported from a project called Pantheon and its
+    environment contract still carries that prefix. Processes are running with
+    the old name set right now, so both are read until nothing started under it
+    can still be alive.
+    """
+    return str(
+        os.environ.get(orchestrator_common.CONFIG_PATH_ENV_VAR)
+        or os.environ.get(orchestrator_common.LEGACY_CONFIG_PATH_ENV_VAR)
+        or ""
+    ).strip()
+
+
 def local_config_overlay_paths() -> list[Path]:
     """Legacy local overlays for interactive commands without an explicit config."""
-    if str(os.environ.get(orchestrator_common.CONFIG_PATH_ENV_VAR) or "").strip():
+    if configured_config_path_env():
         return []
     config_file = active_config_file()
     paths: list[Path] = []
@@ -603,7 +618,7 @@ def local_config_overlay_paths() -> list[Path]:
 
 def active_config_file() -> Path:
     """Resolve Supervisor's config after startup has published its CLI choice."""
-    configured = str(os.environ.get(orchestrator_common.CONFIG_PATH_ENV_VAR) or "").strip()
+    configured = configured_config_path_env()
     path = Path(os.path.expanduser(configured)) if configured else CONFIG_FILE
     return path if path.is_absolute() else ROOT / path
 
@@ -756,7 +771,7 @@ def default_state() -> dict[str, Any]:
         "sprint": "2026-04-09-canonical-adoption-platform-plan",
         "objective": (
             "Adopt the layered canonical document system, align architecture and planning truth, and publish the "
-            "full Pantheon platform backlog without overwriting historical collaboration records."
+            "full ODay Plus platform backlog without overwriting historical collaboration records."
         ),
         "updated_at": timestamp,
         "canonical_document_layers": canonical_layers,
@@ -2508,7 +2523,7 @@ def collect_done_delivery_metadata(
             )
         repo_ids = [repo_id for repo_id in task_artifact_repository_ids(config, task) if repo_id != "pantheon"]
         raise SystemExit(
-            "Cannot finalize task: task artifacts span multiple non-Pantheon repositories; "
+            "Cannot finalize task: task artifacts span multiple non-ODay Plus repositories; "
             f"split closeout or set a single artifact prefix. Repositories: {', '.join(repo_ids)}."
         )
     repository_root = repository_local_path(config, repository_id)
@@ -2523,8 +2538,8 @@ def collect_done_delivery_metadata(
                 "from_repository_id": repository_id,
                 "missing_repository_path": str(repository_root.resolve(strict=False)),
                 "reason": (
-                    "non-Pantheon artifact repository local_path is unavailable; "
-                    "using Pantheon because the task also has Pantheon artifacts"
+                    "non-ODay Plus artifact repository local_path is unavailable; "
+                    "using ODay Plus because the task also has ODay Plus artifacts"
                 ),
             }
             repository_id = "pantheon"
@@ -3382,7 +3397,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
             f"- Frontend feedback returned: `{coordination_counts.get('frontend_feedback_received', 0)}`",
             f"- Open BFF gaps: `{coordination_counts.get('open_bff_gaps', 0)}`",
             f"- Backend route live: `{coordination_counts.get('backend_route_live', 0)}`",
-            f"- Pantheon handoff published: `{coordination_counts.get('pantheon_handoff_published', 0)}`",
+            f"- ODay Plus handoff published: `{coordination_counts.get('pantheon_handoff_published', 0)}`",
             f"- Mirrored to front default branch: `{coordination_counts.get('mirrored_to_front_default_branch', 0)}`",
             f"- Dispatch recorded in coordinator state: `{coordination_counts.get('dispatch_emitted', 0)}`",
             f"- Receiver-visible payload on front default branch: `{coordination_counts.get('front_receiver_applied', 0)}`",
@@ -3424,7 +3439,7 @@ def write_current_work(state: dict[str, Any], logs: list[dict[str, Any]]) -> Non
                 "Tracked-feature note: the table above only lists modules that currently have coordination feature records.",
                 "Archive-done route-live activation publication lanes that remain outside explicit feature rows: "
                 + ", ".join(f"`{module}`" for module in route_live_activation_outside_feature_rows) + ".",
-                "Do not read those omitted modules as open Pantheon backlog purely because they are absent from the coordination feature table.",
+                "Do not read those omitted modules as open orchestrator backlog purely because they are absent from the coordination feature table.",
             ]
         )
 
@@ -3528,6 +3543,10 @@ def runtime_dispatch_mode(payload: dict[str, Any] | None) -> str:
 def expected_task_actor(task: dict[str, Any]) -> str:
     if str(task.get("status") or "").lower() == "review":
         return canonical_agent_name(task.get("reviewer"))
+    claim = task.get("helper_execution_lease") or {}
+    claimed_by = canonical_agent_name(claim.get("claimed_by"))
+    if claimed_by and task_actor_may_execute(task, claimed_by):
+        return claimed_by
     return canonical_agent_name(task.get("owner"))
 
 
@@ -4316,7 +4335,7 @@ def coordination_stage(feature: dict[str, Any]) -> tuple[str, str]:
     )
 
     if explicit_loop_complete:
-        return "loop_complete", "Pantheon closeout record marks the current packet loop complete."
+        return "loop_complete", "ODay Plus closeout record marks the current packet loop complete."
 
     if response_marks_followup:
         if explicit_closed and not response_coordination_stage and response_next_action and response_next_action.lower() != "none":
@@ -4325,9 +4344,9 @@ def coordination_stage(feature: dict[str, Any]) -> tuple[str, str]:
         elif explicit_closed and not response_coordination_stage:
             return "closed", "Current packet record is closed for this scope; reopen only if a later follow-up cycle is dispatched."
         return "frontend_feedback_reviewed_followup", (
-            f"Pantheon review is complete; follow-up remains ({response_next_action})."
+            f"Orchestrator review is complete; follow-up remains ({response_next_action})."
             if response_next_action and response_next_action.lower() != "none"
-            else "Pantheon review is complete; follow-up remains per the closeout response."
+            else "Orchestrator review is complete; follow-up remains per the closeout response."
         )
 
     if explicit_closed:
@@ -4336,21 +4355,21 @@ def coordination_stage(feature: dict[str, Any]) -> tuple[str, str]:
     if frontend_feedback:
         if review:
             if review.get("disposition") == "approved":
-                return "frontend_feedback_reviewed", "Pantheon review packet approves loop closeout; finalize the closure record."
+                return "frontend_feedback_reviewed", "The orchestrator review packet approves loop closeout; finalize the closure record."
             if review.get("disposition") == "follow_up_required":
-                return "frontend_feedback_reviewed_followup", "Pantheon review is complete; follow-up remains per the review packet."
-            return "frontend_feedback_reviewed", "Pantheon review packet exists; inspect the recorded disposition."
-        return "frontend_feedback_received", "Pantheon should review the frontend feedback bundle and decide follow-up work."
+                return "frontend_feedback_reviewed_followup", "Orchestrator review is complete; follow-up remains per the review packet."
+            return "frontend_feedback_reviewed", "The orchestrator review packet exists; inspect the recorded disposition."
+        return "frontend_feedback_received", "The orchestrator should review the frontend feedback bundle and decide follow-up work."
     if ui_done:
         if review:
             if review.get("disposition") == "approved":
-                return "ui_done_reviewed", "Pantheon reviewed the ui-done handoff; finalize the next closure or publish step."
+                return "ui_done_reviewed", "The orchestrator reviewed the ui-done handoff; finalize the next closure or publish step."
             if review.get("disposition") == "follow_up_required":
-                return "ui_done_reviewed_followup", "Pantheon reviewed the ui-done handoff; follow-up remains per the review packet."
-            return "ui_done_reviewed", "Pantheon review packet exists for the ui-done handoff; inspect the recorded disposition."
-        return "ui_done_received", "Pantheon should pick up review and integration from the returned ui-done handoff."
+                return "ui_done_reviewed_followup", "The orchestrator reviewed the ui-done handoff; follow-up remains per the review packet."
+            return "ui_done_reviewed", "The orchestrator review packet exists for the ui-done handoff; inspect the recorded disposition."
+        return "ui_done_received", "The orchestrator should pick up review and integration from the returned ui-done handoff."
     if bff_gap and not coordination_payload_resolved(bff_gap):
-        return "bff_gap_open", "Pantheon must resolve the open BFF gap before the front-end lane can continue."
+        return "bff_gap_open", "ODay Plus must resolve the open BFF gap before the front-end lane can continue."
     if lovable_task or feature.get("lovable_task_path"):
         return "waiting_for_lovable", "Lovable or the front-end lane can implement the screen and emit ui-done when finished."
     if contract_ready:
@@ -4662,6 +4681,33 @@ def build_dashboard_bundle(
     sprint_started_at_value = str(state.get("sprint_started_at") or "").strip() or None
     completed_in_sprint, superseded_in_sprint = count_terminal_since(sprint_started_at_value)
 
+    controller_state = (
+        orchestrator.get("capacity_controller")
+        if isinstance(orchestrator.get("capacity_controller"), dict)
+        else {}
+    )
+    controller_snapshot = (
+        controller_state.get("snapshot")
+        if isinstance(controller_state.get("snapshot"), dict)
+        else {}
+    )
+    live_sidecar_workers = sum(
+        1
+        for worker in live_workers
+        if str((task_map.get(str(worker.get("task_id") or "")) or {}).get("task_class") or "").lower()
+        == "sidecar"
+    )
+    live_helper_workers = sum(
+        1 for worker in live_workers if worker.get("reason") == "helper_claim_dispatch"
+    )
+    capacity_summary = {
+        **controller_snapshot,
+        "live_canonical_workers": max(0, len(live_workers) - live_sidecar_workers),
+        "live_sidecar_workers": live_sidecar_workers,
+        "live_helper_workers": live_helper_workers,
+        "chair_decision": controller_state.get("chair_decision"),
+    }
+
     bff_consol_archived_ids: list[str] = []
     if ARCHIVE_TASKS_DIR.exists():
         for path in ARCHIVE_TASKS_DIR.glob("BFF-CONSOL-*.json"):
@@ -4687,6 +4733,7 @@ def build_dashboard_bundle(
             "mode_switch_requested": supervisor_state.get("mode_switch_requested"),
             "mode_occupancy": mode_occupancy,
             "lanes": lanes,
+            "capacity": capacity_summary,
         },
         "execution_summary": {
             "ready_now": ready_now,
@@ -4735,6 +4782,7 @@ def build_dashboard_bundle(
         "coordination_summary": coordination_summary,
         "bridge_summary": bridge_summary,
         "dispatch_policy": dispatch_policy,
+        "capacity_summary": capacity_summary,
         "worker_task_links": worker_task_links,
         "truth_mismatches": mismatches,
     }
@@ -5021,6 +5069,24 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     )
 
 
+def task_actor_may_execute(task: dict[str, Any], actor: str) -> bool:
+    """Owner or the holder of a live helper lease may mutate execution state."""
+    if canonical_agent_name(task.get("owner")) == canonical_agent_name(actor):
+        return True
+    claim = task.get("helper_execution_lease") or {}
+    if canonical_agent_name(claim.get("claimed_by")) != canonical_agent_name(actor):
+        return False
+    try:
+        expires_at = datetime.fromisoformat(
+            str(claim.get("lease_expires_at") or "").replace("Z", "+00:00")
+        )
+    except ValueError:
+        return False
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    return expires_at.astimezone(UTC) > datetime.now(UTC)
+
+
 def command_start(state: dict[str, Any], args: list[str]) -> None:
     if len(args) < 2:
         raise SystemExit("Usage: start <task-id> <message>")
@@ -5029,7 +5095,7 @@ def command_start(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can start {task_id}")
     timestamp = iso_now()
     task["status"] = "in_progress"
@@ -5048,7 +5114,7 @@ def command_progress(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can progress {task_id}")
     timestamp = iso_now()
     if task["status"] in {"todo", "review_approved"}:
@@ -5183,7 +5249,7 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can submit {task_id} for review")
     reviewer = canonical_agent_name(task.get("reviewer"))
     if not reviewer:
@@ -5199,6 +5265,7 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["pr_number"] = submission["pr_number"]
     task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
+    task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -5308,7 +5375,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can hand off {task_id} for review")
     if task.get("reviewer") != to_agent:
         raise SystemExit(
@@ -5326,6 +5393,7 @@ def command_handoff(state: dict[str, Any], args: list[str]) -> None:
     task["last_update"] = timestamp
     task["next"] = message
     task.pop("approved_head", None)
+    task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
     state.setdefault("handoffs", []).append(
@@ -5385,13 +5453,14 @@ def command_blocker(state: dict[str, Any], args: list[str]) -> None:
     task = get_task(state, task_id)
     if task is None:
         raise SystemExit(f"Unknown task: {task_id}")
-    if task.get("owner") != actor:
+    if not task_actor_may_execute(task, actor):
         raise SystemExit(f"Only the owner ({task.get('owner')}) can block {task_id}")
     timestamp = iso_now()
     task["status"] = "blocked"
     task["waiting_for"] = waiting_for
     task["last_update"] = timestamp
     task["next"] = message
+    task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     state.setdefault("blockers", []).append(
         {

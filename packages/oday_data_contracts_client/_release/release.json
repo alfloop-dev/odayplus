@@ -1,0 +1,251 @@
+{
+  "authoritative_repository": "alfloop-dev/oday-data-platform",
+  "checksums": {
+    "compatibility.json": "b0a6c2ecd2cb75152abf52e258e07a280cbb6c939f808cbcb0aafd9908c0ee87",
+    "relation-ownership.yaml": "49bcfd55b8e61b02de08aa328fb1bc7e7d7fe9edebeda92dbcb44befb4b3624d",
+    "schemas.json": "26ccbe17f8be954314482af2d18a519d8e7f7fe76ff4b4a67716e291c4ef2efe",
+    "schemas/coverage.schema.json": "a566b543d3edfeb75e171fd79fca44d431b9cc6e772f767f867110ea258bbd59",
+    "schemas/field-survey.schema.json": "77c4e396c40659314174e28dcfe033898acdaa9bc511fe713b1d169f7fd8f351",
+    "schemas/machine-capacity.schema.json": "1ba2be3c41c2f7527e485cf4d8657b99500894e0bf4d02d66195d8eb35b9a5b8",
+    "schemas/manifests/feature-manifest.schema.json": "b6aa0f83b597fdc419ec1ebc3aaacd02c6e89cd791f891705134b3ffde3f2daa",
+    "schemas/manifests/label-manifest.schema.json": "846109234fb611325f807e7627c4f0b5457657536aa7212b65daf546c78bb3b4",
+    "schemas/manifests/manifests.schema.json": "899ca56783d1c88728074d866cbabd3c38b51736d0eba6d9124f4e3aff6106b7",
+    "schemas/manifests/product-manifest.schema.json": "6e5528ac4ae2fa23c58f471cde7e1cd21446517dfa13a7873085637544d22806",
+    "schemas/manifests/source-manifest.schema.json": "52f12badbf7c416d66cd5d7b32b7e8ec193eaa37617900c611e6f6bf90c7a805",
+    "schemas/manifests/training-manifest.schema.json": "3efe1ac1241b24ec7fdb92063f086f96087250cf22a53686a106a9d9f9e3a4c3",
+    "schemas/measurement-envelope.schema.json": "1b7863c09a3b0f98b67d3a0790cb4f8191a150b338584eec352f0c7e7f565dcb",
+    "schemas/operational-start-observation.schema.json": "a6b4aaae1d95d5319b89bef707610419ac309f2486d4ef9053824f1512171266",
+    "schemas/platform-foundation.schema.json": "270a638afbf2d460b14bb166486299ac1451575e971191e9d41c7674e215e1b6",
+    "schemas/scope-principal.schema.json": "0d9b374a399203fbbc03a8b38162b878e5fed6a5b485ff41b7798cfafb3e1fd8",
+    "schemas/search-execution.schema.json": "ea37df8da42ea5f74327babb1fb9053b9adc0f15ed24cf6c8389f66cac105841",
+    "schemas/source-observation.schema.json": "0fea157afe5692b90be677d1cc66e95534ae45be30a9ce9b6cb0ca39c41cfef6",
+    "schemas/source-registry.schema.json": "f1c90fe367724586dd98bed4b6ba2a74229a92623ebbf0e12bbe810c9fb76557",
+    "schemas/store-coverage.schema.json": "f74244075fe67eee4abaf5607c24e6ee947021780c36da5dbb58c77b9e0745f8",
+    "schemas/store-daily-performance.schema.json": "a42809d11c3ee0e76d5c781acb0d9eb6359ac1c1554819dc31170a2242c9f51a",
+    "schemas/store-reference.schema.json": "f3aa29224a3110f4fce39f5e91d7ecbc870fb6dc3fb6da11bf9db1791479a23c",
+    "schemas/time-contract.schema.json": "cd73320375adaeb151d348ff7a244fcf47512842c11c3875ec1718b6c4232b01",
+    "storage-schema.sql": "f46f5a07ba07905128f41cf2d0ecf15919431d3863546241dcc8ce0265002a3a"
+  },
+  "compatibility": {
+    "breaking_change": false,
+    "compatibility_mode": "backward-compatible",
+    "consumer_client_contract": "odayplus.data-platform-foundation-client.v1",
+    "consumer_repository": "alfloop-dev/odayplus",
+    "contract_id": "oday-data-foundation-contracts.v0.4.1",
+    "contracts_included": [
+      "emgi.platform-foundation.v1",
+      "emgi.manifests.v4.1",
+      "emgi.storage-schema.v1",
+      "emgi.relation-ownership.v1",
+      "oday.store-reference.v1",
+      "oday.store-daily-performance.v1",
+      "oday.machine-capacity.v1",
+      "oday.store-coverage.v1",
+      "oday.operational-start-observation.v1",
+      "emgi.measurement-envelope.v4.1",
+      "emgi.source-registry.v4.1",
+      "emgi.scope-principal.v4.1",
+      "emgi.source-evidence.v4.1",
+      "emgi.time-contract.v4.1",
+      "emgi.coverage.v4.1"
+    ],
+    "policy": "Additive minor release. Consumers pin the released foundation package and generate client models from schemas rather than copying producer internal implementation tables.",
+    "semantic_version": "0.4.1",
+    "supported_consumer_versions": [
+      "0.4.0",
+      "0.4.1"
+    ],
+    "verification_receipt": {
+      "status": "DECLARED",
+      "verification_source": "XR-COMPAT-CI-001",
+      "verified_against_consumer_contract": "odayplus.data-platform-foundation-client.v1"
+    }
+  },
+  "content_digest": "22d71f4460db75dc8fb1f5bfe8cf253427af11954c8d68915935dfb47ffd87f6",
+  "contract_catalog": [
+    {
+      "category": "platform_foundation",
+      "contract_id": "emgi.platform-foundation.v1",
+      "contract_version": "1.0.0",
+      "description": "EMGI runtime dependencies, object store, geospatial and PostGIS/H3 resources.",
+      "schema_file": "schemas/platform-foundation.schema.json",
+      "sha256": "92c942cc7188b621f579c4ae7b3b880a84ae276619d22ab95f9ae0514880e09b"
+    },
+    {
+      "category": "storage_schema",
+      "contract_id": "emgi.storage-schema.v1",
+      "contract_version": "1.0.0",
+      "description": "Canonical PostgreSQL/PostGIS storage schema DDL assembled deterministically from migration fragments.",
+      "schema_file": "storage-schema.sql",
+      "sha256": "f46f5a07ba07905128f41cf2d0ecf15919431d3863546241dcc8ce0265002a3a"
+    },
+    {
+      "category": "relation_ownership",
+      "contract_id": "emgi.relation-ownership.v1",
+      "contract_version": "1.0.0",
+      "description": "Authoritative relation ownership, grain, purpose, and writer catalog for EMGI storage relations.",
+      "schema_file": "relation-ownership.yaml",
+      "sha256": "49bcfd55b8e61b02de08aa328fb1bc7e7d7fe9edebeda92dbcb44befb4b3624d"
+    },
+    {
+      "category": "manifests",
+      "contract_id": "emgi.manifests.v4.1",
+      "contract_version": "4.1.0",
+      "description": "EMGI source, feature, label, training, and product manifest contracts enforcing point-in-time causality.",
+      "schema_file": "schemas/manifests/manifests.schema.json",
+      "sha256": "d618ee198004c844d193794d688512db2f6935968e14b72c339411c6c58d5366"
+    },
+    {
+      "category": "kernel",
+      "contract_id": "emgi.measurement-envelope.v4.1",
+      "contract_version": "4.1.0",
+      "description": "Measurement, missingness and valid-zero envelope.",
+      "schema_file": "schemas/measurement-envelope.schema.json",
+      "sha256": "29a5b602189b4c38f289edeb2e55b0d9b4cf790a26ee336bcd89c5153fcca656"
+    },
+    {
+      "category": "kernel",
+      "contract_id": "emgi.source-registry.v4.1",
+      "contract_version": "4.1.0",
+      "description": "Provider, dataset, dataset version, and adapter registry.",
+      "schema_file": "schemas/source-registry.schema.json",
+      "sha256": "2c463e84e26a3b49f20ad34b0a44219276542bd6a9a7ef0034272fc442dc49d5"
+    },
+    {
+      "category": "kernel",
+      "contract_id": "emgi.scope-principal.v4.1",
+      "contract_version": "4.1.0",
+      "description": "Platform, licensed-shared, and tenant scope principals.",
+      "schema_file": "schemas/scope-principal.schema.json",
+      "sha256": "3d67b579854d007811faf3fcd64017d44fd0bb20f169f55b30a428abb2230571"
+    },
+    {
+      "category": "kernel",
+      "contract_id": "emgi.source-evidence.v4.1",
+      "contract_version": "4.1.0",
+      "description": "Content blobs, source observations, search executions, and retractions.",
+      "schema_file": "schemas/source-observation.schema.json",
+      "sha256": "e70dea0b291659c4d6ade4c8f4213e7cdb9058cfd4eac5e37731646e86ea03da"
+    },
+    {
+      "category": "kernel",
+      "contract_id": "emgi.time-contract.v4.1",
+      "contract_version": "4.1.0",
+      "description": "Effective, knowledge, business, feature, and label time contracts.",
+      "schema_file": "schemas/time-contract.schema.json",
+      "sha256": "d1e4a7e51c5c819dcdbe4cc4faf895779b078dbd4455cd395133b0a27c3fa7b4"
+    },
+    {
+      "category": "kernel",
+      "contract_id": "emgi.coverage.v4.1",
+      "contract_version": "4.1.0",
+      "description": "Entity-partition coverage and valid-zero proof.",
+      "schema_file": "schemas/coverage.schema.json",
+      "sha256": "84eaa0217c1b90c6a894076be79728e51deadbd0e03e07c262e9126b1ff4982e"
+    },
+    {
+      "category": "internal_analytical",
+      "contract_id": "oday.store-reference.v1",
+      "contract_version": "1.0.0",
+      "description": "Effective-dated store identity, operator attribution and WGS84 point.",
+      "raw_contract_fingerprints": {
+        "merchant": "236fe1d8fb18aea4caec5ce17f93fd3d8594eb8b61168d60f9b2530acc2a34f1",
+        "place": "d4beb6e864de97e12ae9ded60a19ee65c6ca53648a15fa5e6110d75f53a61c78"
+      },
+      "raw_tables": [
+        "place",
+        "merchant"
+      ],
+      "schema_file": "schemas/store-reference.schema.json",
+      "sha256": "b434a7d2436d440025985bae45dd70c5ef11b59ce1a09b781acbad629d421c60"
+    },
+    {
+      "category": "internal_analytical",
+      "contract_id": "oday.store-daily-performance.v1",
+      "contract_version": "1.0.0",
+      "description": "Store-day transaction aggregates on the store business calendar, with missingness kept distinct from affirmative zero.",
+      "raw_contract_fingerprints": {
+        "transactions": "46625efbfed128aa260eb5321d41d7b1189b8316cf3af00508a36b27708ace9e"
+      },
+      "raw_tables": [
+        "transactions"
+      ],
+      "schema_file": "schemas/store-daily-performance.schema.json",
+      "sha256": "9c16ff0041ceeb93e14c100dc7987bb8b2dcdaf7447d33510d5f77e0715e757b"
+    },
+    {
+      "category": "internal_analytical",
+      "contract_id": "oday.machine-capacity.v1",
+      "contract_version": "1.0.0",
+      "description": "Installed machine capacity by class, defaulting to an explicit unobserved state rather than an inferred or zero count.",
+      "schema_file": "schemas/machine-capacity.schema.json",
+      "sha256": "6eceacb8941e7743bae9ddfc4b0f5350ccc36cd89bbc3d4c06cd607500d17f38"
+    },
+    {
+      "category": "internal_analytical",
+      "contract_id": "oday.store-coverage.v1",
+      "contract_version": "1.0.0",
+      "description": "Entity-partition coverage proof for a store-day under emgi.coverage.v4.1.",
+      "raw_contract_fingerprints": {
+        "transactions": "46625efbfed128aa260eb5321d41d7b1189b8316cf3af00508a36b27708ace9e"
+      },
+      "raw_tables": [
+        "transactions"
+      ],
+      "schema_file": "schemas/store-coverage.schema.json",
+      "sha256": "0899467a76a97a6dd334327f78f1fa1b049db1b6ebc01497250368cac3d29e6e"
+    },
+    {
+      "category": "internal_analytical",
+      "contract_id": "oday.operational-start-observation.v1",
+      "contract_version": "1.0.0",
+      "description": "Observed, retention-censored lower bound on when a store began trading; evidence rather than operator truth.",
+      "raw_contract_fingerprints": {
+        "transactions": "46625efbfed128aa260eb5321d41d7b1189b8316cf3af00508a36b27708ace9e"
+      },
+      "raw_tables": [
+        "transactions"
+      ],
+      "schema_file": "schemas/operational-start-observation.schema.json",
+      "sha256": "009642e121aa34e8142f847ead7b9945f3d112a6bc38e255f6f800084df3af9f"
+    }
+  ],
+  "created_at": "2026-08-14T14:40:00Z",
+  "internal_registry_digest": "2bbef7c5075c2172b6ae7d6d7d8233277d05b113dbfc55e20927e53bd0b432f7",
+  "owner_task_id": "XR-CONTRACTS-001",
+  "provides_contracts": [
+    "oday-data-foundation-contracts.v0.4.1"
+  ],
+  "published_at": "2026-08-14T14:40:00Z",
+  "relation_ownership": {
+    "contract_id": "emgi.relation-ownership.v1",
+    "contract_version": "1.0.0",
+    "file": "relation-ownership.yaml",
+    "relations_count": 31,
+    "sha256": "49bcfd55b8e61b02de08aa328fb1bc7e7d7fe9edebeda92dbcb44befb4b3624d"
+  },
+  "release_id": "oday-data-foundation-contracts.v0.4.1",
+  "release_name": "oday-data-foundation-contracts",
+  "release_type": "foundation",
+  "requires_contracts": [
+    "emgi.platform-foundation.v1",
+    "emgi.manifests.v4.1",
+    "emgi.storage-schema.v1",
+    "emgi.relation-ownership.v1",
+    "oday.store-reference.v1",
+    "oday.store-daily-performance.v1",
+    "oday.machine-capacity.v1",
+    "oday.store-coverage.v1",
+    "oday.operational-start-observation.v1"
+  ],
+  "semantic_version": "0.4.1",
+  "status": "PUBLISHED",
+  "storage_schema": {
+    "contract_id": "emgi.storage-schema.v1",
+    "contract_version": "1.0.0",
+    "file": "storage-schema.sql",
+    "fragments_count": 13,
+    "relations_count": 31,
+    "sha256": "f46f5a07ba07905128f41cf2d0ecf15919431d3863546241dcc8ce0265002a3a"
+  }
+}

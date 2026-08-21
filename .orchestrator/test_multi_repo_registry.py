@@ -201,7 +201,7 @@ class TaskRepositoryDeclarationTests(unittest.TestCase):
 
     DPF-GOV-001 declared `alfloop-dev/oday-data-platform` and carried no
     artifacts key, so the artifacts-only derivation answered `pantheon` and the
-    finalize gate searched the Pantheon checkout for a commit that only exists
+    finalize gate searched the ODay Plus checkout for a commit that only exists
     in the data-platform repository -- a check no retry could pass.
     """
 
