@@ -107,7 +107,8 @@
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
-      "review_ready_dispatch"
+      "review_ready_dispatch",
+      "helper_claim_dispatch"
     ]
   },
   "worker_retry": {
