@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import dispatch_engine  # noqa: E402
+import dispatch_policy  # noqa: E402
 import supervisor  # noqa: E402
 
 
@@ -58,6 +59,31 @@ class DispatchCapTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved, 2)
+
+    def test_policy_does_not_materialize_legacy_cap_default(self) -> None:
+        """Leaving max_dispatches_per_tick unset lets dispatch use slot total."""
+        settings = dispatch_policy.ready_dispatch_settings({"ready_dispatcher": {}})
+
+        self.assertNotIn("max_dispatches_per_tick", settings)
+
+    def test_dead_stalled_workers_do_not_occupy_capacity(self) -> None:
+        config = _config_with_slots(2)
+        active_statuses = supervisor.active_worker_statuses(config)
+        worker = {
+            "status": "stalled",
+            "pid": 99999999,
+            "agent_id": "p_slot_1",
+            "task_id": "TASK-1",
+        }
+
+        agents, task_agents = supervisor.active_worker_indexes(
+            {"workers": {"run-1": worker}},
+            active_statuses,
+        )
+
+        self.assertFalse(supervisor.worker_counts_as_active_capacity(config, worker, active_statuses))
+        self.assertEqual(agents, set())
+        self.assertEqual(task_agents, set())
 
 
 class InterruptibleSleepTests(unittest.TestCase):

@@ -772,7 +772,7 @@ def agent_dispatch_loads(
     loads: dict[str, list[int]] = {}
 
     for worker in state.get("workers", {}).values():
-        if worker.get("status") not in active_statuses:
+        if not worker_counts_as_active_capacity(config, worker, active_statuses):
             continue
         reason = str(worker.get("request_snapshot", {}).get("reason") or "")
         priority = dispatch_reason_priority(reason)
@@ -1068,7 +1068,7 @@ def higher_priority_ready_task_exists(
     current_run_id = str(worker.get("run_id") or "")
 
     for run_id, other in (effective_state.get("workers", {}) or {}).items():
-        if other.get("status") not in active_statuses:
+        if not worker_counts_as_active_capacity(config, other, active_statuses):
             continue
         other_agent_id = worker_logical_dispatch_agent_id(config, other)
         if display_name_for(config, other_agent_id) != agent_name:

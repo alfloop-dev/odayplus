@@ -526,6 +526,54 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             ).append(adopted_approval)
             changed = True
         alive = pid_is_alive(worker.get("pid"))
+        if not alive and str(worker.get("status") or "").lower() == "stalled":
+            current_task = task_map.get(str(worker.get("task_id") or ""), {})
+            terminal_statuses = {
+                str(value).lower()
+                for value in ready_dispatch_settings(config).get(
+                    "worker_terminal_statuses", ["review", "done", "review_approved"]
+                )
+            }
+            progress_outcome = successful_worker_exit_outcome(
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if progress_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
+                worker["status"] = "completed"
+                worker["progress_outcome"] = progress_outcome
+                message = (
+                    "Reaped dead stalled worker after its task board state advanced; capacity released."
+                    if progress_outcome != "incremental_progress"
+                    else "Reaped dead stalled worker after recording incremental task progress; capacity released."
+                )
+                queue_status = "completed"
+            else:
+                worker["status"] = "failed"
+                message = "Reaped dead stalled worker with no durable task progress; capacity released for redispatch."
+                worker["last_error"] = message
+                queue_status = "failed"
+            worker["last_event_at"] = utc_now()
+            finalize_queue_event_record(
+                config,
+                state,
+                worker,
+                queue_status,
+                None if queue_status == "completed" else message,
+            )
+            write_activity_log(
+                config,
+                {
+                    "type": "worker_reaped" if queue_status == "completed" else "worker_failed",
+                    "provider": worker.get("provider"),
+                    "task_id": worker.get("task_id"),
+                    "message": message,
+                    "worker_run_id": worker.get("run_id"),
+                    "progress_outcome": progress_outcome,
+                },
+            )
+            changed = True
+            continue
         if alive and worker.get("status") in active_statuses and worker.get("last_heartbeat_at"):
             if not worker_heartbeat_is_stale(config, worker, now):
                 refresh_worker_lease(config, worker, now)

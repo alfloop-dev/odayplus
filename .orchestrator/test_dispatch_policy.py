@@ -74,7 +74,7 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["dependency_done_statuses"] == ["done"]
     assert settings["worker_terminal_statuses"] == ["review", "done", "review_approved"]
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
-    assert settings["max_dispatches_per_tick"] == 4
+    assert "max_dispatches_per_tick" not in settings
     assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
     assert settings["helper_execution_lease"]["enabled"] is True
     assert settings["helper_execution_lease"]["require_owner_saturated"] is True
