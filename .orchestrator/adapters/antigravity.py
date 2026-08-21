@@ -25,6 +25,13 @@ from adapters.base import BaseAdapter, DeliveryCapability, DeliveryRequest, Deli
 # from the legacy Gemini CLI oauth_creds.json.
 ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity-oauth-token"
 
+# `agy --print-timeout` is an absolute wall-clock limit; it does not observe
+# worker process-tree activity.  The supervisor already owns activity-aware
+# stall detection and terminates genuinely inactive workers, so keep the CLI
+# timeout only as a last-resort runaway guard.  A week is deliberately beyond
+# the normal task lifetime without pretending the CLI can reset this timer.
+DEFAULT_HARD_PRINT_TIMEOUT = "168h"
+
 
 def _antigravity_home(config: dict | None = None, provider_id: str | None = None) -> Path:
     runtime = provider_section(config, provider_id=provider_id, section="antigravity", default="antigravity")
@@ -124,9 +131,13 @@ class AntigravityAdapter(BaseAdapter):
         if model:
             # Structured argv: the model string is one argument, never shell text.
             command.extend(["--model", model])
-        print_timeout = str(settings.get("print_timeout") or "").strip()
-        if print_timeout:
-            command.extend(["--print-timeout", print_timeout])
+        hard_print_timeout = str(
+            settings.get("hard_print_timeout")
+            or settings.get("print_timeout")  # backward-compatible legacy key
+            or DEFAULT_HARD_PRINT_TIMEOUT
+        ).strip()
+        if hard_print_timeout:
+            command.extend(["--print-timeout", hard_print_timeout])
         # Auto-approve tool/edit permissions for non-interactive worker runs.
         if approval.get("dangerously_skip_permissions", True):
             command.append("--dangerously-skip-permissions")
