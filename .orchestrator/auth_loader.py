@@ -231,7 +231,7 @@ def load_git_credentials(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Resolve non-interactive git push credentials for Pantheon workers.")
+    parser = argparse.ArgumentParser(description="Resolve non-interactive git push credentials for ODay Plus workers.")
     parser.add_argument("--env-file", help="Optional worker git env file to load before process environment.")
     parser.add_argument("--json", action="store_true", help="Print a secret-free JSON summary.")
     args = parser.parse_args(argv)

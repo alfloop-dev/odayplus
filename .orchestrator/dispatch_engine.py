@@ -325,7 +325,7 @@ def _task_repository_slug(config: dict[str, Any], task: dict[str, Any]) -> str:
     """The task's repository slug, or "" when it cannot be resolved.
 
     Routing used to rely on the supervisor's cwd, which silently answered for
-    Pantheon whatever repository the task belonged to.
+    ODay Plus whatever repository the task belonged to.
     """
     declared = str((task or {}).get("repository") or "").strip()
     if declared:
@@ -345,7 +345,7 @@ _MERGE_QUEUE_BY_REPO: dict[str, bool] = {}
 def repository_has_merge_queue(slug: str | None, base: str) -> bool | None:
     """Does `base` in this repository have a merge queue? None when unreadable.
 
-    Routing was written against Pantheon, whose `dev` requires a queue, and
+    Routing was written against ODay Plus, whose `dev` requires a queue, and
     assumed every repository looked the same. `oday-data-platform` is private on
     a plan without branch protection -- the protection API answers 403 -- so it
     has no queue at all, and a bare `gh pr merge` there enqueues nothing. Four

@@ -60,7 +60,7 @@ def coordination_issue_body(feature: dict[str, Any], *, repo_slug: str, counterp
 
     body = [
         "<!-- pantheon-bus -->",
-        "# Pantheon Coordination Bus",
+        "# ODay Plus Coordination Bus",
         "",
         "## Feature",
         f"- ID: `{feature_id}`",

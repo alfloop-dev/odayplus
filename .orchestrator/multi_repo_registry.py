@@ -17,9 +17,23 @@ from typing import Any
 
 from common import repo_root_for_config, to_bool
 
+# `pantheon` is the orchestrator's original name, from the project this code was
+# ported from. It survives as the repo id of the checkout the supervisor runs
+# from, because it is written into ai-status.json records, the task archive and
+# runtime state going back months; renaming the key would strand all of that.
+# Everything human-facing now says ODay Plus, `aliases` lets the new name
+# resolve, and `LEGACY_SELF_REPO_ID` gives call sites one name to refer to
+# instead of a bare string repeated across the codebase.
+LEGACY_SELF_REPO_ID = "pantheon"
+
 DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
-    "pantheon": {
-        "display_name": "Pantheon",
+    LEGACY_SELF_REPO_ID: {
+        "display_name": "ODay Plus",
+        # Deliberately no alias for "odayplus": that is a separate repo id in
+        # this registry, carrying the GitHub slug this one lacks. Aliasing it
+        # here would route tasks that declare `alfloop-dev/odayplus` to a
+        # repository with no slug, and status-check emission needs the slug.
+
         "repo": None,
         "local_path": ".",
         "default_branch": "master",
@@ -107,7 +121,7 @@ def _coalesce_repo_local_path_candidates(repo_id: str, local_path: str | None) -
 DEFAULT_WORKER_ROUTES: dict[str, dict[str, Any]] = {
     "pantheon-bff-worker": {
         "target_agent": "Codex",
-        "description": "Pantheon BFF and contract work",
+        "description": "ODay Plus BFF and contract work",
     },
     "front-sync-worker": {
         "target_agent": "Codex",
@@ -361,6 +375,11 @@ def matching_repo_id(config: dict[str, Any], value: str | None) -> str | None:
             repo_id,
             str(repo.get("display_name") or ""),
             str(repo.get("repo") or ""),
+            # A repository may answer to more than one name while a rename is in
+            # flight: `pantheon` is the id on disk, `odayplus` is what people
+            # write. Both must resolve to the same repository or a task declaring
+            # either one routes somewhere else.
+            *(str(alias) for alias in (repo.get("aliases") or [])),
         }
         normalized = {item.strip().casefold() for item in options if item and item.strip()}
         if lowered in normalized:
@@ -528,7 +547,7 @@ def task_primary_repository_id(config: dict[str, Any], task: dict[str, Any]) -> 
     repository outright resolve to ``pantheon`` whenever it listed no
     artifacts. DPF-GOV-001 declared ``alfloop-dev/oday-data-platform`` and
     carried no artifacts key at all, so the finalize gate looked for its
-    reviewed commit in the Pantheon checkout, where that object does not exist
+    reviewed commit in the ODay Plus checkout, where that object does not exist
     -- a check no retry could ever pass. ``resolve_task_repository`` already
     gave the declaration precedence; this is the same order, so the two can no
     longer answer differently for the same task.

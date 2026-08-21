@@ -1624,7 +1624,7 @@ class PortableStateRenderingTests(unittest.TestCase):
         self.assertIn("## Recently Executed Tasks", content)
         self.assertIn("`DONE-001`", content)
         self.assertIn("`ai-task-archive/tasks/DONE-001.json`", content)
-        self.assertNotIn("### Pantheon Product Work", content)
+        self.assertNotIn("### ODay Plus Product Work", content)
         self.assertIn("Canonical map", content)
         self.assertIn("Workbench backlog", content)
         self.assertIn("Loop closure", content)
@@ -3016,7 +3016,7 @@ class PortableStateRenderingTests(unittest.TestCase):
                     "KW-01-institutional-memory": {
                         "feature_id": "KW-01-institutional-memory",
                         "screen": "institutional-memory",
-                        "summary": "Pantheon closeout proof ready",
+                        "summary": "ODay Plus closeout proof ready",
                         "current_payload_type": "lovable-ui-task",
                         "source_repo": "ajoe734/pantheon",
                         "source_repo_id": "pantheon",

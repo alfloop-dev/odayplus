@@ -17,7 +17,7 @@ def test_render_systemd_service_points_at_repo_watchdog() -> None:
 
     unit = render_systemd_service(repo)
 
-    assert "Description=Pantheon supervisor watchdog" in unit
+    assert "Description=the orchestrator supervisor watchdog" in unit
     assert "Type=oneshot" in unit
     assert 'WorkingDirectory="/tmp/pantheon repo"' in unit
     assert 'ExecStart="/tmp/pantheon repo/scripts/run-supervisor-watchdog.sh" --restart' in unit

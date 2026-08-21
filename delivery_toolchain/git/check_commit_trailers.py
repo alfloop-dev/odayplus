@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a Pantheon task commit message.
+"""Validate a the task commit message.
 
 Contract source: `.orchestrator/skills/task-closeout-finalization.md`
 § Commit Requirements, which declares these rules "enforced by
