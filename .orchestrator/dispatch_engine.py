@@ -770,10 +770,14 @@ def agent_dispatch_loads(
     active_statuses: set[str],
 ) -> dict[str, list[int]]:
     loads: dict[str, list[int]] = {}
+    active_event_ids: set[str] = set()
 
     for worker in state.get("workers", {}).values():
-        if worker.get("status") not in active_statuses:
+        if not worker_counts_as_active_capacity(config, worker, active_statuses):
             continue
+        event_id = str(worker.get("queue_event_id") or "")
+        if event_id:
+            active_event_ids.add(event_id)
         reason = str(worker.get("request_snapshot", {}).get("reason") or "")
         priority = dispatch_reason_priority(reason)
         if priority is None:
@@ -791,6 +795,8 @@ def agent_dispatch_loads(
     for event in load_event_queue(config):
         event_id = str(event.get("event_id") or "")
         if not event_id:
+            continue
+        if event_id in active_event_ids:
             continue
         record = queue_records.get(event_id, {})
         if record.get("status") in {"completed", "failed"}:
@@ -832,7 +838,7 @@ def reassign_unavailable_reviewers(
         str(value).lower() for value in settings.get("owned_statuses", ["in_progress", "todo"])
     }
     active_statuses = active_worker_statuses(config)
-    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses, config)
     pending_agents, pending_task_agents, _pending_event_keys = outstanding_delivery_indexes(config, state)
     reserved_agents = set(active_agents) | set(pending_agents)
     reserved_tasks = {task_id for task_id, _agent_id in active_task_agents | pending_task_agents}
@@ -1068,7 +1074,7 @@ def higher_priority_ready_task_exists(
     current_run_id = str(worker.get("run_id") or "")
 
     for run_id, other in (effective_state.get("workers", {}) or {}).items():
-        if other.get("status") not in active_statuses:
+        if not worker_counts_as_active_capacity(config, other, active_statuses):
             continue
         other_agent_id = worker_logical_dispatch_agent_id(config, other)
         if display_name_for(config, other_agent_id) != agent_name:
@@ -1310,7 +1316,7 @@ def dispatch_discussion_planning(
         return False
 
     active_statuses = active_worker_statuses(config)
-    active_agents, _active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, _active_task_agents = active_worker_indexes(state, active_statuses, config)
     pending_agents, _pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     changed = False
 
@@ -1406,7 +1412,7 @@ def dispatch_ready_tasks(
         ),
     )
 
-    active_agents, active_task_agents = active_worker_indexes(state, active_statuses)
+    active_agents, active_task_agents = active_worker_indexes(state, active_statuses, config)
     pending_agents, pending_task_agents, pending_event_keys = outstanding_delivery_indexes(config, state)
     active_task_ids = {task_id for task_id, _agent_id in active_task_agents if task_id}
     pending_task_ids = {task_id for task_id, _agent_id in pending_task_agents if task_id}

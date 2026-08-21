@@ -35,6 +35,58 @@ def normalize_command(raw: list[str]) -> list[str]:
     return raw
 
 
+def process_tree_activity(root_pid: int | None) -> dict[str, int]:
+    """Return monotonic CPU/I/O counters for a Linux process tree.
+
+    The runner heartbeat proves only that the wrapper is alive.  Sampling the
+    child tree lets the supervisor distinguish a quiet-but-working CLI from a
+    process that is genuinely making no progress.  Every read is best-effort:
+    processes may exit between /proc reads and non-Linux hosts simply report
+    no counters.
+    """
+
+    if not root_pid:
+        return {}
+    pending = [int(root_pid)]
+    seen: set[int] = set()
+    totals = {
+        "processes": 0,
+        "cpu_ticks": 0,
+        "rchar": 0,
+        "wchar": 0,
+        "read_bytes": 0,
+        "write_bytes": 0,
+    }
+    while pending:
+        pid = pending.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        proc_root = Path(f"/proc/{pid}")
+        try:
+            stat_text = (proc_root / "stat").read_text(encoding="utf-8")
+            # comm is parenthesized and may contain spaces, so fields after the
+            # final ')' are safer than a plain split of the complete record.
+            stat_fields = stat_text.rsplit(")", 1)[1].strip().split()
+            totals["cpu_ticks"] += int(stat_fields[11]) + int(stat_fields[12])
+            totals["processes"] += 1
+        except (OSError, IndexError, ValueError):
+            continue
+        try:
+            children = (proc_root / "task" / str(pid) / "children").read_text(encoding="utf-8")
+            pending.extend(int(value) for value in children.split())
+        except (OSError, ValueError):
+            pass
+        try:
+            for line in (proc_root / "io").read_text(encoding="utf-8").splitlines():
+                key, separator, raw_value = line.partition(":")
+                if separator and key in totals:
+                    totals[key] += int(raw_value.strip())
+        except (OSError, ValueError):
+            pass
+    return totals if totals["processes"] else {}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run an auto-worker command with heartbeat and terminal markers.")
     parser.add_argument("--run-id", required=True)
@@ -55,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     started_at = utc_now()
     child: subprocess.Popen[str] | None = None
     terminating_signal: int | None = None
+    last_activity_sample: dict[str, int] = {}
 
     status: dict[str, Any] = {
         "run_id": args.run_id,
@@ -64,13 +117,21 @@ def main(argv: list[str] | None = None) -> int:
         "command": command,
         "started_at": started_at,
         "last_heartbeat_at": started_at,
+        "last_process_activity_at": started_at,
+        "process_activity": {},
         "finished_at": None,
         "exit_code": None,
         "signal": None,
     }
 
     def publish(next_status: str) -> None:
+        nonlocal last_activity_sample
         now = utc_now()
+        activity_sample = process_tree_activity(child.pid if child is not None else None)
+        if activity_sample and activity_sample != last_activity_sample:
+            status["last_process_activity_at"] = now
+            last_activity_sample = activity_sample
+        status["process_activity"] = activity_sample
         status["status"] = next_status
         status["last_heartbeat_at"] = now
         write_json(heartbeat_path, {
@@ -79,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
             "pid": os.getpid(),
             "child_pid": status.get("child_pid"),
             "updated_at": now,
+            "last_process_activity_at": status.get("last_process_activity_at"),
+            "process_activity": activity_sample,
         })
         write_json(status_path, status)
 

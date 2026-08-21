@@ -5,11 +5,13 @@ import sys
 import time
 import unittest
 import unittest.mock as mock
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import dispatch_engine  # noqa: E402
+import dispatch_policy  # noqa: E402
 import supervisor  # noqa: E402
 
 
@@ -58,6 +60,76 @@ class DispatchCapTests(unittest.TestCase):
         )
 
         self.assertEqual(resolved, 2)
+
+    def test_policy_does_not_materialize_legacy_cap_default(self) -> None:
+        """Leaving max_dispatches_per_tick unset lets dispatch use slot total."""
+        settings = dispatch_policy.ready_dispatch_settings({"ready_dispatcher": {}})
+
+        self.assertNotIn("max_dispatches_per_tick", settings)
+
+    def test_dead_stalled_workers_do_not_occupy_capacity(self) -> None:
+        config = _config_with_slots(2)
+        active_statuses = supervisor.active_worker_statuses(config)
+        worker = {
+            "status": "stalled",
+            "pid": 99999999,
+            "agent_id": "p_slot_1",
+            "task_id": "TASK-1",
+        }
+
+        agents, task_agents = supervisor.active_worker_indexes(
+            {"workers": {"run-1": worker}},
+            active_statuses,
+        )
+
+        self.assertFalse(supervisor.worker_counts_as_active_capacity(config, worker, active_statuses))
+        self.assertEqual(agents, set())
+        self.assertEqual(task_agents, set())
+
+    def test_recent_process_activity_keeps_quiet_worker_capacity_live(self) -> None:
+        config = _config_with_slots(2)
+        config["supervisor"] = {"stall_after_seconds": 300}
+        active_statuses = supervisor.active_worker_statuses(config)
+        now = datetime(2026, 8, 21, 10, 30, tzinfo=UTC)
+        worker = {
+            "status": "stalled",
+            "pid": os.getpid(),
+            "last_event_at": "2026-08-21T10:00:00Z",
+            "last_process_activity_at": "2026-08-21T10:29:30Z",
+        }
+
+        self.assertTrue(
+            supervisor.worker_counts_as_active_capacity(
+                config, worker, active_statuses, now=now
+            )
+        )
+
+    def test_started_queue_record_is_not_double_counted_with_worker(self) -> None:
+        config = _config_with_slots(2)
+        active_statuses = supervisor.active_worker_statuses(config)
+        event = {
+            "event_id": "evt-1",
+            "target_agent": "claude",
+            "target_display_name": "Claude",
+            "reason": "review_ready_dispatch",
+        }
+        state = {
+            "workers": {
+                "run-1": {
+                    "status": "running",
+                    "queue_event_id": "evt-1",
+                    "request_snapshot": {"reason": "review_ready_dispatch"},
+                    "logical_agent_id": "claude",
+                    "agent_id": "p_slot_1",
+                }
+            },
+            "queue": {"events": {"evt-1": {"status": "started"}}},
+        }
+
+        with mock.patch.object(supervisor, "load_event_queue", return_value=[event]):
+            loads = dispatch_engine.agent_dispatch_loads(config, state, active_statuses)
+
+        self.assertEqual(loads, {"claude": [0]})
 
 
 class InterruptibleSleepTests(unittest.TestCase):

@@ -1439,7 +1439,7 @@ def active_quota_group_counts(
 ) -> dict[str, int]:
     counts: dict[str, int] = {}
     for worker in state.get("workers", {}).values():
-        if worker.get("status") not in active_statuses:
+        if not worker_counts_as_active_capacity(config, worker, active_statuses):
             continue
         group_id = normalize_agent_id(str(worker.get("quota_group") or ""))
         if not group_id:
@@ -1457,7 +1457,7 @@ def queued_quota_group_counts(config: dict[str, Any], state: dict[str, Any]) -> 
     active_queue_event_ids = {
         str(worker.get("queue_event_id") or "")
         for worker in state.get("workers", {}).values()
-        if worker.get("status") in active_statuses and worker.get("queue_event_id")
+        if worker_counts_as_active_capacity(config, worker, active_statuses) and worker.get("queue_event_id")
     }
     try:
         queued_events = load_event_queue(config)
@@ -1668,7 +1668,7 @@ def select_dispatch_agent_id(
     active_slots = {
         normalize_agent_id(str(worker.get("agent_id") or ""))
         for worker in state.get("workers", {}).values()
-        if worker.get("status") in active_statuses
+        if worker_counts_as_active_capacity(config, worker, active_statuses)
     }
     for slot_id in slot_ids:
         if slot_id in active_slots:
@@ -3832,11 +3832,22 @@ def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | 
     return "|".join(parts)
 
 
-def active_worker_indexes(state: dict[str, Any], active_statuses: set[str]) -> tuple[set[str], set[tuple[str, str]]]:
+def active_worker_indexes(
+    state: dict[str, Any],
+    active_statuses: set[str],
+    config: dict[str, Any] | None = None,
+) -> tuple[set[str], set[tuple[str, str]]]:
     agents: set[str] = set()
     task_agents: set[tuple[str, str]] = set()
     for worker in state.get("workers", {}).values():
-        if worker.get("status") not in active_statuses:
+        if config is not None:
+            occupies_capacity = worker_counts_as_active_capacity(config, worker, active_statuses)
+        else:
+            occupies_capacity = worker.get("status") in active_statuses and not (
+                str(worker.get("status") or "").lower() == "stalled"
+                and not pid_is_alive(worker.get("pid"))
+            )
+        if not occupies_capacity:
             continue
         agent_id = str(worker.get("agent_id") or "")
         task_id = str(worker.get("task_id") or "")
@@ -3845,6 +3856,42 @@ def active_worker_indexes(state: dict[str, Any], active_statuses: set[str]) -> t
         if task_id and agent_id:
             task_agents.add((task_id, agent_id))
     return agents, task_agents
+
+
+def worker_counts_as_active_capacity(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    active_statuses: set[str] | None = None,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Whether a worker should occupy dispatch capacity right now.
+
+    `stalled` is intentionally part of the lifecycle-active taxonomy: the
+    poller still has to observe it, recover it if output resumes, or settle its
+    queue event. Capacity accounting is narrower. A dead stalled process is not
+    doing work and must not keep a logical agent, task, slot, or quota group
+    reserved until the next successful cleanup pass.
+    """
+
+    statuses = active_statuses if active_statuses is not None else active_worker_statuses(config)
+    status = str(worker.get("status") or "").lower()
+    if status not in statuses:
+        return False
+    if status != "stalled":
+        return True
+    if not pid_is_alive(worker.get("pid")):
+        return False
+    activity_times = [
+        parse_iso_timestamp(str(value or ""))
+        for value in (worker.get("last_event_at"), worker.get("last_process_activity_at"))
+    ]
+    activity_times = [value.astimezone(UTC) for value in activity_times if value is not None]
+    if not activity_times:
+        return True
+    current_time = now or datetime.now(UTC)
+    stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
+    return (current_time - max(activity_times)).total_seconds() < stall_after * 2
 
 
 def orphaned_queue_event_grace_seconds(config: dict[str, Any]) -> int:
@@ -3918,7 +3965,7 @@ def finalize_queue_event_record(config: dict[str, Any], state: dict[str, Any], w
     for item in state.get("workers", {}).values():
         if item.get("run_id") == worker.get("run_id"):
             continue
-        if item.get("queue_event_id") == queue_event_id and item.get("status") in active_statuses:
+        if item.get("queue_event_id") == queue_event_id and worker_counts_as_active_capacity(config, item, active_statuses):
             return
     record = queue_event_record(state, queue_event_id)
     record["status"] = status
