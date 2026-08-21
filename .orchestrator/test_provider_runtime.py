@@ -51,7 +51,7 @@ class ProviderRuntimeTests(unittest.TestCase):
     def test_codex_config_health_uses_nested_profile_home(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
-            (home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            (home / "config.toml").write_text('service_tier = "turbo"\n', encoding="utf-8")
             config = {"providers": {"codex-alt": {
                 "delivery_mode": "codex", "codex": {"codex_home": str(home)}
             }}}

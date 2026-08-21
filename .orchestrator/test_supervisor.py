@@ -8135,7 +8135,7 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
     def test_block_reason_rejects_invalid_codex_service_tier(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             codex_home = Path(tmpdir)
-            (codex_home / "config.toml").write_text('service_tier = "priority"\n', encoding="utf-8")
+            (codex_home / "config.toml").write_text('service_tier = "turbo"\n', encoding="utf-8")
             config = {
                 "agents": {"codex": {"provider": "codex"}},
                 "providers": {
@@ -8153,7 +8153,7 @@ class WorkerOsDuplicateGuardTests(unittest.TestCase):
         self.assertIsNotNone(reason)
         assert reason is not None
         self.assertIn("unsupported service_tier", reason)
-        self.assertIn("priority", reason)
+        self.assertIn("turbo", reason)
 
     def test_block_reason_uses_hyphenated_provider_key_for_codex_slot_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
