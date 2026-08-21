@@ -1,0 +1,178 @@
+# ODay data-platform foundation contract pin
+#
+# Task ODP-XR-CLIENT-001 / contract `odayplus.data-platform-foundation-client.v1`.
+#
+# odayplus consumes the *released* EMGI foundation package published by
+# alfloop-dev/oday-data-platform (task XR-CONTRACTS-001). This file is the pin:
+# it names the exact release, the exact producer commit, the byte checksums of
+# the vendored release artifacts, and the canonical digest of every contract
+# schema the generated client is built from.
+#
+# Nothing here is a producer implementation table. `storage-schema.sql` and
+# `relation-ownership.yaml` ship in the upstream release and are deliberately
+# not vendored: they are the producer's internal DDL and writer catalog, and
+# copying them is exactly what this task exists to stop.
+#
+# To move the pin: re-vendor the three artifacts from the new producer commit,
+# refresh the checksums and the [[contracts]] digests here, then regenerate the
+# client with
+#
+#     uv run python -m packages.oday_data_contracts_client.codegen --write
+#
+# `tests/contract/test_oday_data_contract_pin.py` fails CI when any of those
+# steps is skipped or when a kernel/internal schema moved underneath the pin.
+
+schema_version = 1
+client_contract = "odayplus.data-platform-foundation-client.v1"
+
+[release]
+id = "oday-data-foundation-contracts.v0.4.1"
+name = "oday-data-foundation-contracts"
+type = "foundation"
+semantic_version = "0.4.1"
+status = "PUBLISHED"
+content_digest = "22d71f4460db75dc8fb1f5bfe8cf253427af11954c8d68915935dfb47ffd87f6"
+internal_registry_digest = "2bbef7c5075c2172b6ae7d6d7d8233277d05b113dbfc55e20927e53bd0b432f7"
+owner_task_id = "XR-CONTRACTS-001"
+published_at = "2026-08-14T14:40:00Z"
+
+[source]
+repository = "alfloop-dev/oday-data-platform"
+branch = "dev"
+commit_sha = "3f0bd995bbd2248a9cff9176f27ed0e39d25948f"
+release_path = "contracts/releases/emgi/foundation"
+
+[compatibility]
+required_contract_id = "oday-data-foundation-contracts.v0.4.1"
+required_semantic_version = "0.4.1"
+required_compatibility_mode = "backward-compatible"
+consumer_client_contract = "odayplus.data-platform-foundation-client.v1"
+allow_breaking_change = false
+supported_release_versions = ["0.4.0", "0.4.1"]
+# Categories whose contracts are pinned individually below. A drift in any of
+# them fails the contract test, and therefore CI.
+enforced_categories = ["platform_foundation", "kernel", "manifests", "internal_analytical"]
+
+[vendor]
+release_root = "packages/oday_data_contracts_client/_release"
+generated_root = "packages/oday_data_contracts_client/models"
+# Upstream release artifacts vendored verbatim, with their published byte
+# checksums from contracts/releases/emgi/foundation/checksums.sha256.
+
+[vendor.artifacts]
+"release.json" = "64a9e424829a574173ec96e8c3dd0052412b84f58bfb19b792a027bc5d375ee3"
+"compatibility.json" = "b0a6c2ecd2cb75152abf52e258e07a280cbb6c939f808cbcb0aafd9908c0ee87"
+"schemas.json" = "26ccbe17f8be954314482af2d18a519d8e7f7fe76ff4b4a67716e291c4ef2efe"
+
+# Released artifacts this consumer must never vendor or copy.
+[vendor.excluded]
+"storage-schema.sql" = "producer PostgreSQL/PostGIS implementation tables"
+"relation-ownership.yaml" = "producer relation ownership and writer catalog"
+
+# Every pinned contract. `sha256` is the canonical digest of the schema
+# document as published in the release catalog:
+#   sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")))
+
+[[contracts]]
+contract_id = "emgi.platform-foundation.v1"
+category = "platform_foundation"
+contract_version = "1.0.0"
+schema_file = "schemas/platform-foundation.schema.json"
+sha256 = "92c942cc7188b621f579c4ae7b3b880a84ae276619d22ab95f9ae0514880e09b"
+module = "platform_foundation"
+
+[[contracts]]
+contract_id = "emgi.manifests.v4.1"
+category = "manifests"
+contract_version = "4.1.0"
+schema_file = "schemas/manifests/manifests.schema.json"
+sha256 = "d618ee198004c844d193794d688512db2f6935968e14b72c339411c6c58d5366"
+module = "manifests"
+
+[[contracts]]
+contract_id = "emgi.measurement-envelope.v4.1"
+category = "kernel"
+contract_version = "4.1.0"
+schema_file = "schemas/measurement-envelope.schema.json"
+sha256 = "29a5b602189b4c38f289edeb2e55b0d9b4cf790a26ee336bcd89c5153fcca656"
+module = "measurement_envelope"
+
+[[contracts]]
+contract_id = "emgi.source-registry.v4.1"
+category = "kernel"
+contract_version = "4.1.0"
+schema_file = "schemas/source-registry.schema.json"
+sha256 = "2c463e84e26a3b49f20ad34b0a44219276542bd6a9a7ef0034272fc442dc49d5"
+module = "source_registry"
+
+[[contracts]]
+contract_id = "emgi.scope-principal.v4.1"
+category = "kernel"
+contract_version = "4.1.0"
+schema_file = "schemas/scope-principal.schema.json"
+sha256 = "3d67b579854d007811faf3fcd64017d44fd0bb20f169f55b30a428abb2230571"
+module = "scope_principal"
+
+[[contracts]]
+contract_id = "emgi.source-evidence.v4.1"
+category = "kernel"
+contract_version = "4.1.0"
+schema_file = "schemas/source-observation.schema.json"
+sha256 = "e70dea0b291659c4d6ade4c8f4213e7cdb9058cfd4eac5e37731646e86ea03da"
+module = "source_evidence"
+
+[[contracts]]
+contract_id = "emgi.time-contract.v4.1"
+category = "kernel"
+contract_version = "4.1.0"
+schema_file = "schemas/time-contract.schema.json"
+sha256 = "d1e4a7e51c5c819dcdbe4cc4faf895779b078dbd4455cd395133b0a27c3fa7b4"
+module = "time_contract"
+
+[[contracts]]
+contract_id = "emgi.coverage.v4.1"
+category = "kernel"
+contract_version = "4.1.0"
+schema_file = "schemas/coverage.schema.json"
+sha256 = "84eaa0217c1b90c6a894076be79728e51deadbd0e03e07c262e9126b1ff4982e"
+module = "coverage"
+
+[[contracts]]
+contract_id = "oday.store-reference.v1"
+category = "internal_analytical"
+contract_version = "1.0.0"
+schema_file = "schemas/store-reference.schema.json"
+sha256 = "b434a7d2436d440025985bae45dd70c5ef11b59ce1a09b781acbad629d421c60"
+module = "store_reference"
+
+[[contracts]]
+contract_id = "oday.store-daily-performance.v1"
+category = "internal_analytical"
+contract_version = "1.0.0"
+schema_file = "schemas/store-daily-performance.schema.json"
+sha256 = "9c16ff0041ceeb93e14c100dc7987bb8b2dcdaf7447d33510d5f77e0715e757b"
+module = "store_daily_performance"
+
+[[contracts]]
+contract_id = "oday.machine-capacity.v1"
+category = "internal_analytical"
+contract_version = "1.0.0"
+schema_file = "schemas/machine-capacity.schema.json"
+sha256 = "6eceacb8941e7743bae9ddfc4b0f5350ccc36cd89bbc3d4c06cd607500d17f38"
+module = "machine_capacity"
+
+[[contracts]]
+contract_id = "oday.store-coverage.v1"
+category = "internal_analytical"
+contract_version = "1.0.0"
+schema_file = "schemas/store-coverage.schema.json"
+sha256 = "0899467a76a97a6dd334327f78f1fa1b049db1b6ebc01497250368cac3d29e6e"
+module = "store_coverage"
+
+[[contracts]]
+contract_id = "oday.operational-start-observation.v1"
+category = "internal_analytical"
+contract_version = "1.0.0"
+schema_file = "schemas/operational-start-observation.schema.json"
+sha256 = "009642e121aa34e8142f847ead7b9945f3d112a6bc38e255f6f800084df3af9f"
+module = "operational_start_observation"

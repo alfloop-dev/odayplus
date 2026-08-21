@@ -1,0 +1,35 @@
+{
+  "breaking_change": false,
+  "compatibility_mode": "backward-compatible",
+  "consumer_client_contract": "odayplus.data-platform-foundation-client.v1",
+  "consumer_repository": "alfloop-dev/odayplus",
+  "contract_id": "oday-data-foundation-contracts.v0.4.1",
+  "contracts_included": [
+    "emgi.platform-foundation.v1",
+    "emgi.manifests.v4.1",
+    "emgi.storage-schema.v1",
+    "emgi.relation-ownership.v1",
+    "oday.store-reference.v1",
+    "oday.store-daily-performance.v1",
+    "oday.machine-capacity.v1",
+    "oday.store-coverage.v1",
+    "oday.operational-start-observation.v1",
+    "emgi.measurement-envelope.v4.1",
+    "emgi.source-registry.v4.1",
+    "emgi.scope-principal.v4.1",
+    "emgi.source-evidence.v4.1",
+    "emgi.time-contract.v4.1",
+    "emgi.coverage.v4.1"
+  ],
+  "policy": "Additive minor release. Consumers pin the released foundation package and generate client models from schemas rather than copying producer internal implementation tables.",
+  "semantic_version": "0.4.1",
+  "supported_consumer_versions": [
+    "0.4.0",
+    "0.4.1"
+  ],
+  "verification_receipt": {
+    "status": "DECLARED",
+    "verification_source": "XR-COMPAT-CI-001",
+    "verified_against_consumer_contract": "odayplus.data-platform-foundation-client.v1"
+  }
+}
