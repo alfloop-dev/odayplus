@@ -32,6 +32,7 @@ os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
+import dispatch_policy
 import runtime_state
 import supervisor
 import worker_failure_policy
@@ -6726,6 +6727,49 @@ class UnversionedOrchestratorWorkspaceLeaseTests(unittest.TestCase):
             (self.worktree / "README.md").read_text(encoding="utf-8"),
             "owner edit in progress\n",
         )
+
+
+class EveryDispatchReasonGetsAnIsolatedWorktreeTests(unittest.TestCase):
+    """A worker without a worktree runs in the repository root.
+
+    ``helper_claim_dispatch`` was missing from the execution-reason allowlist,
+    so ``prepare_worker_workspace`` returned early and the worker checked the
+    task branch out in the shared root, committed there and left it. Every
+    later lease for that branch then failed with "currently checked out in
+    repository root" until a human moved the root back to dev -- 19.3 hours of
+    blocked dispatch across 12 tasks in one 22-hour window.
+    """
+
+    def _settings(self) -> dict:
+        return supervisor.worker_worktree_settings({"worker_worktrees": {"enabled": True}})
+
+    def test_every_dispatch_reason_is_worktree_enabled(self) -> None:
+        reasons = {
+            value
+            for name, value in vars(dispatch_policy).items()
+            if name.startswith("REASON_") and isinstance(value, str)
+        }
+        self.assertTrue(reasons, "dispatch_policy exposes no REASON_* constants")
+        settings = self._settings()
+        for reason in sorted(reasons):
+            with self.subTest(reason=reason):
+                self.assertTrue(
+                    supervisor.worker_worktree_reason_enabled(reason, settings),
+                    f"{reason} dispatches a worker with no isolated worktree, so it "
+                    "would run in the repository root",
+                )
+
+    def test_helper_claim_is_worktree_enabled(self) -> None:
+        self.assertTrue(
+            supervisor.worker_worktree_reason_enabled(dispatch_policy.REASON_HELPER_CLAIM, self._settings())
+        )
+
+    def test_shipped_config_matches_the_code_default(self) -> None:
+        shipped = json.loads((Path(supervisor.__file__).parent / "config.example.json").read_text(encoding="utf-8"))
+        configured = shipped.get("worker_worktrees", {}).get("execution_reasons")
+        if configured is None:
+            self.skipTest("config.example.json does not pin execution_reasons")
+        self.assertEqual(sorted(configured), sorted(supervisor.WORKER_WORKTREE_EXECUTION_REASONS))
 
 
 class WorktreeLeaseBlockEscalationTests(unittest.TestCase):
