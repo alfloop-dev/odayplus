@@ -203,7 +203,17 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     task_id = f"{TASK_ID_PREFIX}-{timestamp}"
     kebab = task_id.lower()
-    worktree_path = Path(f"/tmp/pantheon-worker-worktrees/pantheon/{kebab}")
+    # This script runs standalone and cannot read the orchestrator config, so it
+    # takes the root from the environment the supervisor already exports and
+    # falls back to the same default worker_worktree_settings uses. Hardcoding
+    # it meant this one path stayed on the old name after every other caller
+    # moved, and the two would have diverged silently.
+    worktree_root = (
+        os.environ.get("ORCH_WORKTREE_ROOT")
+        or os.environ.get("PANTHEON_WORKTREE_ROOT")
+        or "/tmp/orchestrator-worker-worktrees"
+    )
+    worktree_path = Path(worktree_root) / "pantheon" / kebab
     msg_path = Path(f"/tmp/{task_id}-msg.txt")
     index_file = Path(f"/tmp/git-index-task-{task_id}")
 

@@ -33,7 +33,7 @@ def render_systemd_service(repo_root: Path) -> str:
     return "\n".join(
         [
             "[Unit]",
-            "Description=Pantheon supervisor watchdog",
+            "Description=the orchestrator supervisor watchdog",
             "Documentation=file://%s" % (repo_root / "docs" / "operations" / "supervisor-watchdog-persistence.md"),
             "After=default.target",
             "",
@@ -51,7 +51,7 @@ def render_systemd_timer() -> str:
     return "\n".join(
         [
             "[Unit]",
-            "Description=Run Pantheon supervisor watchdog",
+            "Description=Run the orchestrator supervisor watchdog",
             "",
             "[Timer]",
             "OnBootSec=30s",
@@ -164,9 +164,9 @@ def uninstall_cron(*, dry_run: bool) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Install or remove the persistent Pantheon supervisor watchdog."
+        description="Install or remove the persistent the orchestrator supervisor watchdog."
     )
-    parser.add_argument("--repo", default=".", help="Pantheon repository root. Defaults to cwd.")
+    parser.add_argument("--repo", default=".", help="ODay Plus repository root. Defaults to cwd.")
     parser.add_argument(
         "--method",
         choices=["auto", "systemd", "cron"],
@@ -189,7 +189,7 @@ def main() -> int:
     args = parse_args()
     repo_root = repo_root_from(args.repo)
     if not (repo_root / "scripts" / "run-supervisor-watchdog.sh").exists():
-        print(f"not a Pantheon repo root, missing scripts/run-supervisor-watchdog.sh: {repo_root}", file=sys.stderr)
+        print(f"not a ODay Plus repo root, missing scripts/run-supervisor-watchdog.sh: {repo_root}", file=sys.stderr)
         return 2
 
     method = args.method

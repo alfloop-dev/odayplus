@@ -4892,7 +4892,7 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             "session_id": "phase1-2026-04-11",
             "status": "active",
             "planning_mode": "discussion_planning",
-            "summary": "Plan the Pantheon backend completion wave.",
+            "summary": "Plan the ODay Plus backend completion wave.",
             "baton_owner": "Codex",
             "next_reviewer": "Helper",
             "current_round": 0,
@@ -4931,7 +4931,7 @@ class DiscussionPlanningDispatchTests(unittest.TestCase):
             "session_file": f"{planning_dir}/planning-session.json",
             "status": "active",
             "planning_mode": "discussion_planning",
-            "summary": "Formalize the Pantheon Console closed loop.",
+            "summary": "Formalize the ODay Plus Console closed loop.",
             "objective": "Define the canonical closed-loop coordination protocol and execution backlog for all 8 workbenches.",
             "baton_owner": "Codex",
             "next_reviewer": "Helper",
@@ -14105,7 +14105,7 @@ class HandedOffChildProtectsItsQueueEventTests(unittest.TestCase):
 class MergeRouteWithoutQueueTests(unittest.TestCase):
     """A repository without a merge queue must be merged, not enqueued.
 
-    Routing was written against Pantheon, whose `dev` requires a queue.
+    Routing was written against ODay Plus, whose `dev` requires a queue.
     `oday-data-platform` is private on a plan without branch protection, so it
     has no queue and a bare `gh pr merge` there enqueues nothing. On 2026-08-20
     four reviewed, CI-green PRs sat until they were reported `stalled` and

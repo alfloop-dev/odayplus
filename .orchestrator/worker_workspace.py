@@ -69,7 +69,11 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
         git_network_timeout_seconds = 30.0
     return {
         "enabled": bool(settings.get("enabled", False)),
-        "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        # Fallback only, for a checkout with no configured root. A live fleet
+        # sets this explicitly and must keep whatever it already set: the path
+        # is baked into every `git worktree` registration on disk, so changing
+        # it would orphan them all at once -- 127 of them on this host.
+        "root": str(settings.get("root") or "/tmp/orchestrator-worker-worktrees"),
         "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
         "reuse_existing": bool(settings.get("reuse_existing", True)),
         "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
@@ -1731,7 +1735,7 @@ def _orchestrator_materialized_paths(
     """Paths the orchestrator seeds into the worker workspace itself.
 
     These are the context files a worker is told to read, written by the supervisor
-    rather than by the worker. A repository that version-controls them (Pantheon's own)
+    rather than by the worker. A repository that version-controls them (ODay Plus's own)
     never sees them as dirt; a repository that does not (any cross-repository workspace)
     sees them as untracked, so without this allowlist the orchestrator's own writes deny
     the next lease and the task can never be dispatched into that workspace again.

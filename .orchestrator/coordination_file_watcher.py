@@ -91,7 +91,7 @@ def _event_message(worker_kind: str, feature_id: str, payload: dict[str, Any], s
     summary = payload.get("summary") or payload.get("reason") or payload.get("type") or "coordination update"
     source_repo = payload.get("source_repo") or payload.get("source_repo_id") or "unknown"
     lines = [
-        "You were dispatched through the Pantheon coordination bus.",
+        "You were dispatched through the ODay Plus coordination bus.",
         f"Worker kind: {worker_kind}",
         f"Feature ID: {feature_id}",
         f"Payload type: {payload.get('type') or 'unknown'}",
@@ -103,7 +103,7 @@ def _event_message(worker_kind: str, feature_id: str, payload: dict[str, Any], s
     lines.extend(
         [
             "Rules:",
-            "- follow the coordination payload and canonical Pantheon docs",
+            "- follow the coordination payload and canonical ODay Plus docs",
             "- do not invent new endpoints or shadow state",
             "- if you need another repo or runtime layer, emit the next coordination handoff instead of guessing",
             "",
