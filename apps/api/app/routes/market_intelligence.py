@@ -29,11 +29,16 @@ from modules.market_intelligence_api.domain.models import (
     CoverageFilter,
     DataGapFilter,
 )
+from modules.external_data.infrastructure.data_platform_client import (
+    DataPlatformClient,
+    InMemoryDataPlatformTransport,
+)
 from modules.market_intelligence_api.infrastructure.repositories import (
     MarketIntelligenceRepository,
 )
 from packages.oday_data_product_contracts_client.models.data_acquisition_plan import (
     AcquisitionGap,
+    AcquisitionScope,
     DataAcquisitionPlan,
     ExperimentStatus,
     PlanStatus,
@@ -79,14 +84,21 @@ else:
 
     class SourceValueExperimentPayload(BaseModel):
         experiment_id: str
-        domain: str
         source_id: str
+        scope: str = "site"
         status: str = "planned"
         sample_size: int = 10
-        uncertainty_reduction_observed: float | None = None
-        cost_incurred: float | None = None
-        confidence_delta: float | None = None
-        notes: str | None = None
+        hypothesis: str = ""
+        baseline_uncertainty_pct: float = 50.0
+        expected_uplift_pct: float = 20.0
+        max_cost_units: float = 100.0
+        max_latency_hours: float = 24.0
+        max_quota_units: float = 10.0
+        survey_effort_hours: float = 4.0
+        paid_source: bool = False
+        prior_value_evidence: bool = False
+        gap_ids: list[str] = Field(default_factory=list)
+        success_criteria: list[str] = Field(default_factory=list)
 
     class CreateAcquisitionPlanPayload(BaseModel):
         plan_id: str
@@ -134,9 +146,17 @@ else:
                 enforce_auth=enforce_auth,
             )
         else:
-            raise MarketIntelligenceError(
-                "create_market_intelligence_router requires service, facade, or repository",
-                code="missing_dependencies",
+            default_transport = InMemoryDataPlatformTransport()
+            default_client = DataPlatformClient(transport=default_transport)
+            default_facade = MarketDataFacade(
+                client=default_client,
+                auth_engine=authz_engine,
+                enforce_auth=enforce_auth,
+            )
+            active_service = MarketIntelligenceService(
+                facade=default_facade,
+                auth_engine=authz_engine,
+                enforce_auth=enforce_auth,
             )
 
         router = APIRouter(prefix="/market-intelligence", tags=["market-intelligence"])
@@ -567,14 +587,21 @@ else:
             experiments = [
                 SourceValueExperiment(
                     experiment_id=e.experiment_id,
-                    domain=e.domain,
                     source_id=e.source_id,
-                    status=ExperimentStatus(e.status),
+                    scope=AcquisitionScope(e.scope) if isinstance(e.scope, str) else e.scope,
+                    status=ExperimentStatus(e.status) if isinstance(e.status, str) else e.status,
                     sample_size=e.sample_size,
-                    uncertainty_reduction_observed=e.uncertainty_reduction_observed,
-                    cost_incurred=e.cost_incurred,
-                    confidence_delta=e.confidence_delta,
-                    notes=e.notes,
+                    hypothesis=e.hypothesis,
+                    baseline_uncertainty_pct=e.baseline_uncertainty_pct,
+                    expected_uplift_pct=e.expected_uplift_pct,
+                    max_cost_units=e.max_cost_units,
+                    max_latency_hours=e.max_latency_hours,
+                    max_quota_units=e.max_quota_units,
+                    survey_effort_hours=e.survey_effort_hours,
+                    paid_source=e.paid_source,
+                    prior_value_evidence=e.prior_value_evidence,
+                    gap_ids=list(e.gap_ids),
+                    success_criteria=list(e.success_criteria),
                 )
                 for e in body.experiments
             ]

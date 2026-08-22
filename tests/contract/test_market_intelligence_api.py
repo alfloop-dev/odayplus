@@ -979,3 +979,114 @@ def test_health_and_diagnostics_endpoints(
     diag_data = resp_diag.json()
     assert diag_data["contract"] == CONTRACT_ID
     assert diag_data["version"] == CONTRACT_VERSION
+
+
+def test_create_acquisition_plan_with_canonical_experiments_success(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    """Validate that POST acquisition-plans correctly constructs canonical SourceValueExperiment models."""
+    client, _, _ = test_setup
+    new_plan_id = f"plan-exp-{uuid4()}"
+    exp_id = f"exp-001-{uuid4()}"
+    payload = {
+        "plan_id": new_plan_id,
+        "site_context_id": "site-taipei-001",
+        "coverage_surface_id": "cov-surface-001",
+        "status": "proposed",
+        "plan_version": 1,
+        "effective_as_of": "2026-08-14T00:00:00Z",
+        "knowledge_as_of": "2026-08-14T00:00:00Z",
+        "gaps": [
+            {
+                "gap_id": "gap-poi-01",
+                "domain": "poi",
+                "measure": "poi_density",
+                "priority_rank": 1,
+                "current_uncertainty_pct": 40.0,
+                "expected_uncertainty_reduction_pct": 25.0,
+                "decision_sensitivity": 0.9,
+                "estimated_cost_units": 300.0,
+                "estimated_latency_hours": 12.0,
+                "survey_effort_hours": 3.0,
+                "quota_units": 5.0,
+                "rationale": "High density corridor survey",
+                "recommended_source_ids": ["src-survey-01"],
+            }
+        ],
+        "experiments": [
+            {
+                "experiment_id": exp_id,
+                "source_id": "src-survey-01",
+                "scope": "site",
+                "status": "planned",
+                "sample_size": 25,
+                "hypothesis": "Field survey reduces foot-traffic uncertainty by 20%",
+                "baseline_uncertainty_pct": 45.0,
+                "expected_uplift_pct": 20.0,
+                "max_cost_units": 500.0,
+                "max_latency_hours": 48.0,
+                "max_quota_units": 15.0,
+                "survey_effort_hours": 6.0,
+                "paid_source": True,
+                "prior_value_evidence": False,
+                "gap_ids": ["gap-poi-01"],
+                "success_criteria": ["uncertainty_reduction_gte_15pct"],
+            }
+        ],
+        "policy": {"max_budget": 2000.0, "risk_tolerance": "moderate"},
+        "metadata": {"author": "expansion_planner"},
+    }
+
+    resp = client.post(
+        "/api/v1/market-intelligence/acquisition-plans",
+        json=payload,
+        headers={**HEADERS_EXPANSION_ALPHA, "Idempotency-Key": f"idem-acq-exp-{uuid4()}"},
+    )
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    assert created["plan_id"] == new_plan_id
+    assert created["status"] == "proposed"
+    assert len(created["experiments"]) == 1
+
+    exp = created["experiments"][0]
+    assert exp["experiment_id"] == exp_id
+    assert exp["source_id"] == "src-survey-01"
+    assert exp["scope"] == "site"
+    assert exp["status"] == "planned"
+    assert exp["sample_size"] == 25
+    assert exp["hypothesis"] == "Field survey reduces foot-traffic uncertainty by 20%"
+    assert exp["baseline_uncertainty_pct"] == 45.0
+    assert exp["expected_uplift_pct"] == 20.0
+    assert exp["max_cost_units"] == 500.0
+    assert exp["paid_source"] is True
+    assert exp["gap_ids"] == ["gap-poi-01"]
+    assert exp["success_criteria"] == ["uncertainty_reduction_gte_15pct"]
+
+    # Verify retrieval by plan_id
+    resp_get = client.get(
+        f"/api/v1/market-intelligence/acquisition-plans/{new_plan_id}",
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp_get.status_code == 200
+    retrieved = resp_get.json()
+    assert retrieved["plan_id"] == new_plan_id
+    assert len(retrieved["experiments"]) == 1
+    assert retrieved["experiments"][0]["experiment_id"] == exp_id
+
+
+def test_production_create_app_mounts_market_intelligence_router() -> None:
+    """Ensure production create_app mounts Market Intelligence router on /api/v1 and legacy alias."""
+    from apps.api.oday_api.main import create_app
+
+    app = create_app()
+    with TestClient(app) as test_client:
+        resp_v1 = test_client.get("/api/v1/market-intelligence/health")
+        assert resp_v1.status_code == 200
+        assert resp_v1.json()["status"] == "healthy"
+        assert resp_v1.json()["contract"] == CONTRACT_ID
+
+        resp_alias = test_client.get("/market-intelligence/health")
+        assert resp_alias.status_code == 200
+        assert resp_alias.headers.get("Deprecation") == "true"
+        assert resp_alias.json()["status"] == "healthy"
+
