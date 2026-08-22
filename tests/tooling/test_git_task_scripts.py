@@ -33,6 +33,21 @@ Reviewer: Antigravity4
 """
 
 
+def _ruff_resolvable() -> bool:
+    """Mirror task_finalize.sh's own interpreter resolution.
+
+    The guard degrades to a warning when it cannot find ruff, so a test that
+    asserts a refusal is only meaningful where the script would actually find
+    one. Checking `which uv` instead would assert on a different environment
+    than the one under test.
+    """
+    candidate = REPO_ROOT / ".venv" / "bin" / "python"
+    if not candidate.exists():
+        return False
+    probe = subprocess.run([str(candidate), "-m", "ruff", "--version"], capture_output=True, text=True)
+    return probe.returncode == 0
+
+
 def run(cmd: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     merged = os.environ.copy()
     merged.update(env or {})
@@ -379,6 +394,50 @@ def test_task_finalize_rejects_head_that_done_cannot_close(
     assert result.returncode == 1
     assert expected_error in result.stderr
     assert "dry-run: git push" not in result.stdout
+
+
+def test_task_finalize_refuses_a_branch_whose_own_python_fails_lint(repo: Path, tmp_path: Path):
+    """The lint preflight refuses here rather than letting CI find it 20 minutes later.
+
+    `product` reruns ruff over the same files, so a branch that fails this
+    cannot merge. Publishing the PR first only moves the refusal somewhere
+    slower. Skipped when no ruff is resolvable -- the guard is deliberately a
+    warning in that case, and asserting a refusal would test the environment.
+    """
+    if not _ruff_resolvable():
+        pytest.skip("task_finalize cannot resolve ruff here; the guard warns instead of refusing")
+
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    # F401: imported but unused -- the exact rule that reddened #968.
+    (repo / "owned.py").write_text("import os\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.py")
+    assert committed.returncode == 0, committed.stderr
+
+    result = task_finalize(repo, TASK, "--dry-run")
+
+    assert result.returncode == 1
+    assert "ruff reports errors" in result.stderr
+    assert "F401" in result.stderr
+    assert "dry-run: git push" not in result.stdout
+
+
+def test_task_finalize_lint_preflight_ignores_files_the_branch_did_not_touch(repo: Path, tmp_path: Path):
+    """Only the branch's own Python is linted, so a task is never blocked by pre-existing findings."""
+    if not _ruff_resolvable():
+        pytest.skip("task_finalize cannot resolve ruff here; the guard warns instead of refusing")
+
+    # A lint-broken file that is already on the base branch, not introduced here.
+    (repo / "preexisting.py").write_text("import os\n", encoding="utf-8")
+    git(repo, "add", "preexisting.py")
+    git(repo, "commit", "--quiet", "--no-verify", "-m", "seed a pre-existing lint finding")
+    git(repo, "push", "--quiet", "origin", "dev")
+
+    commit_on_task_branch(repo, tmp_path)
+    result = task_finalize(repo, TASK, "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert "dry-run: git push" in result.stdout
 
 
 def test_task_finalize_reports_already_merged_branch(repo: Path):

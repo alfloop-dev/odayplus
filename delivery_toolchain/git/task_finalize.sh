@@ -103,6 +103,76 @@ python3 "$SCRIPT_DIR/check_task_delivery_identity.py" \
   --expected-branch "$BRANCH" \
   --actual-branch "$CURRENT"
 
+# Preflight the two CI failures that are decidable here in seconds but otherwise
+# surface ~20 minutes later, after a review round has already been spent on them.
+#
+# `orchestrator` reruns the boundary inventory and `product` reruns ruff. A task
+# that fails either cannot merge, so publishing the PR first does not buy
+# anything -- it just moves the same refusal somewhere slower and more expensive.
+# Both degrade to a warning when the tooling is unavailable: a missing linter is
+# not evidence of clean code, but it must not wedge delivery either.
+
+# Resolve an interpreter that can import ruff. Prefer the toolchain checkout's
+# environment: these checks ship with this script, and the repository being
+# finalized is not required to carry a virtualenv of its own. Ruff still reads
+# the target repo's own config, because it is invoked with cwd = $ROOT.
+TOOLCHAIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+resolve_py() {
+  if [ -x "$TOOLCHAIN_ROOT/.venv/bin/python" ]; then echo "$TOOLCHAIN_ROOT/.venv/bin/python"; return 0; fi
+  if [ -x "$ROOT/.venv/bin/python" ]; then echo "$ROOT/.venv/bin/python"; return 0; fi
+  if command -v uv >/dev/null 2>&1; then echo "uv run --quiet python"; return 0; fi
+  echo "python3"
+}
+PY_RUN="$(resolve_py)"
+
+# 1. Boundary inventory. Adding files to a module without regenerating
+#    docs/audits/code-boundary-inventory.csv is the single most common
+#    `orchestrator` failure, and the fix is one deterministic command.
+if [ -f "$ROOT/delivery_toolchain/governance/check_code_boundaries.py" ]; then
+  boundary_out=""
+  if boundary_out="$($PY_RUN "$ROOT/delivery_toolchain/governance/check_code_boundaries.py" 2>&1)"; then
+    :
+  else
+    boundary_rc=$?
+    case "$boundary_out" in
+      *ModuleNotFoundError*|*"No module named"*)
+        echo "task_finalize: warning: could not run the boundary check ($boundary_rc); skipping preflight." >&2 ;;
+      *)
+        echo "task_finalize: refusing to publish -- the code boundary check fails:" >&2
+        echo "$boundary_out" | sed 's/^/  /' >&2
+        echo "task_finalize: this is the CI 'orchestrator' job's check. Fix it here:" >&2
+        echo "  $PY_RUN delivery_toolchain/governance/check_code_boundaries.py --write-inventory" >&2
+        echo "task_finalize: then commit the regenerated inventory and re-run." >&2
+        exit 1 ;;
+    esac
+  fi
+fi
+
+# 2. Lint, restricted to the Python files this branch actually changed. Linting
+#    the whole tree would block a task on someone else's pre-existing findings.
+changed_py="$(git diff --name-only "$BASE_REF...HEAD" -- '*.py' 2>/dev/null || true)"
+lint_targets=""
+for f in $changed_py; do
+  [ -f "$ROOT/$f" ] && lint_targets="$lint_targets $f"
+done
+if [ -n "$lint_targets" ]; then
+  lint_out=""
+  if lint_out="$($PY_RUN -m ruff check $lint_targets 2>&1)"; then
+    :
+  else
+    case "$lint_out" in
+      *"No module named"*)
+        echo "task_finalize: warning: ruff unavailable; skipping lint preflight." >&2 ;;
+      *)
+        echo "task_finalize: refusing to publish -- ruff reports errors in this task's own files:" >&2
+        echo "$lint_out" | tail -20 | sed 's/^/  /' >&2
+        echo "task_finalize: this is the CI 'product' job's lint step. Most are auto-fixable:" >&2
+        echo "  $PY_RUN -m ruff check --fix$lint_targets" >&2
+        exit 1 ;;
+    esac
+  fi
+fi
+
 # gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
 # .orchestrator/bin/gh is a broker shim, not the real CLI.
 resolve_gh() {
