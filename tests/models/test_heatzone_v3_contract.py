@@ -12,7 +12,9 @@ from modules.heatzone.v3 import (
     HeatZoneV3ScoreResult,
     HeatZoneV3ShadowRunner,
     HeatZoneV3State,
+    from_catchment_profile,
     from_legacy_feature_input,
+    from_market_cell_profile,
     score_heatzone_v3_feature,
     score_heatzones_v3,
 )
@@ -33,6 +35,7 @@ from packages.oday_data_contracts_client.models.store_coverage import (
 )
 from packages.oday_data_contracts_client.models.store_coverage import (
     EntityPartitionCoverage,
+    QueryGeometry,
     StoreDayCoverage,
 )
 from packages.oday_data_product_contracts_client.models.catchment_profile import (
@@ -147,6 +150,7 @@ def _sample_machine_capacity(
     store_id: str = "store-001",
     machine_count: int = 12,
     machine_class: MachineClass = MachineClass.WASHER,
+    evidence_ref: str | None = "884a1072b7fffff",
 ) -> MachineCapacityRecord:
     return MachineCapacityRecord(
         store_id=store_id,
@@ -154,6 +158,7 @@ def _sample_machine_capacity(
         machine_class=machine_class,
         machine_count=machine_count,
         evidence_kind=CapacityEvidenceKind.DECLARED_INVENTORY,
+        evidence_ref=evidence_ref,
         coverage_state=MachineCoverageState.complete,
         time_contract=TimeContract(
             business_day_boundary="00:00:00",
@@ -166,6 +171,7 @@ def _sample_machine_capacity(
 def _sample_store_coverage(
     store_id: str = "store-001",
     business_date: str = "2026-08-14",
+    h3_index: str | None = "884a1072b7fffff",
 ) -> StoreDayCoverage:
     return StoreDayCoverage(
         store_id=store_id,
@@ -180,6 +186,7 @@ def _sample_store_coverage(
             state=StoreCoverageState.complete,
             is_complete=True,
             observed_count=150,
+            query_geometry=QueryGeometry(h3_index=h3_index) if h3_index else None,
         ),
     )
 
@@ -814,3 +821,156 @@ def test_heatzone_v3_saturated_state_when_competitor_saturated_and_zero_own_stor
     res = score_heatzone_v3_feature(inp)
     assert res.state is HeatZoneV3State.SATURATED
     assert res.unmet_demand_score < 0.25
+
+
+def test_heatzone_v3_r1_store_capacity_isolation_across_cells_and_catchments() -> None:
+    """R1: Store capacities must be spatially isolated to matching cells/catchments, not attributed to every cell."""
+    cell_a = _sample_market_cell_profile(h3_index="884a1072b7fffff", total_population=6000.0, active_competitors=1, total_capacity=10.0)
+    cell_b = _sample_market_cell_profile(h3_index="884a1072b1fffff", total_population=6000.0, active_competitors=1, total_capacity=10.0)
+    cell_c = _sample_market_cell_profile(h3_index="884a1072b3fffff", total_population=6000.0, active_competitors=1, total_capacity=10.0)
+
+    doc = MarketCellProfileDocument(
+        profile_id="mcp-doc-multi",
+        cells=[cell_a, cell_b, cell_c],
+        h3_resolution=8,
+        period_grain=MarketCellPeriodGrain.MONTHLY,
+        period_key="2026-08",
+        generated_at="2026-08-14T14:40:00Z",
+        source_support=_sample_source_support(),
+    )
+
+    cap_a = _sample_machine_capacity(store_id="store-a", machine_count=10, evidence_ref="884a1072b7fffff")
+    cap_b = _sample_machine_capacity(store_id="store-b", machine_count=10, evidence_ref="884a1072b1fffff")
+    cap_c = _sample_machine_capacity(store_id="store-c", machine_count=10, evidence_ref="884a1072b3fffff")
+
+    runner = HeatZoneV3ShadowRunner()
+    batch = runner.evaluate_market_cells(
+        doc,
+        own_store_capacities=[cap_a, cap_b, cap_c],
+    )
+
+    assert batch.total_evaluated == 3
+    assert batch.scored_count == 3
+    assert batch.abstained_count == 0
+
+    for score_res in batch.scores:
+        assert score_res.input_dimensions["own_store_count"] == 1
+        assert score_res.input_dimensions["own_store_machine_capacity"] == 10.0
+        assert score_res.cannibalization_risk_score < 0.50
+        assert score_res.state != HeatZoneV3State.SATURATED
+        assert score_res.score is not None and score_res.score > 55.0
+
+
+def test_heatzone_v3_r2_distinct_store_count_with_multiple_machine_classes() -> None:
+    """R2: own_store_count counts distinct store IDs, not total machine capacity records (1 store with 2 classes == 1 store)."""
+    cell = _sample_market_cell_profile(h3_index="884a1072b7fffff")
+    cap_washer = _sample_machine_capacity(
+        store_id="store-multi-001",
+        machine_class=MachineClass.WASHER,
+        machine_count=8,
+        evidence_ref="884a1072b7fffff",
+    )
+    cap_dryer = _sample_machine_capacity(
+        store_id="store-multi-001",
+        machine_class=MachineClass.DRYER,
+        machine_count=6,
+        evidence_ref="884a1072b7fffff",
+    )
+
+    adapted = from_market_cell_profile(
+        cell,
+        own_store_capacities=[cap_washer, cap_dryer],
+    )
+
+    assert adapted.own_store_count == 1
+    assert adapted.own_store_machine_capacity == 14.0
+    assert len(adapted.own_store_capacities) == 2
+
+    # Score result check
+    res = score_heatzone_v3_feature(adapted)
+    assert res.input_dimensions["own_store_count"] == 1
+    assert res.input_dimensions["own_store_machine_capacity"] == 14.0
+
+
+def test_heatzone_v3_r3_readiness_usable_with_gaps_is_supported() -> None:
+    """R3: ReadinessLevel.usable_with_gaps is supported and does not collapse to unsupported or OUT_OF_SUPPORT_BOUNDS."""
+    cell = _sample_market_cell_profile(
+        h3_index="884a1072b7fffff",
+        overall_readiness=ReadinessLevel.usable_with_gaps,
+        has_gaps=True,
+    )
+    adapted = from_market_cell_profile(cell)
+
+    assert adapted.support_level == "supported"
+    assert adapted.overall_readiness == ReadinessLevel.usable_with_gaps
+    assert adapted.has_coverage_gaps is True
+
+    res = score_heatzone_v3_feature(adapted)
+    assert res.abstained is False
+    assert res.score is not None
+    assert AbstainReasonCode.OUT_OF_SUPPORT_BOUNDS.value not in res.abstain_reasons
+    assert "domain_coverage_gaps_present" in res.warnings
+
+    # Also verify from_catchment_profile
+    prof = CatchmentProfile(
+        profile_id="prof-gaps-001",
+        period_grain=CatchmentPeriodGrain.MONTHLY,
+        period_key="2026-08",
+        origin=CatchmentOrigin(
+            origin_id="orig-001",
+            origin_h3="884a1072b7fffff",
+            latitude=25.04,
+            longitude=121.56,
+            origin_geom={"type": "Point", "coordinates": [121.56, 25.04]},
+            county="Taipei",
+            district="Zhongshan",
+        ),
+        boundary=CatchmentBoundary(
+            catchment_id="boundary-001",
+            travel_mode=TravelMode.motorcycle,
+            cutoff_seconds=600,
+            routing_engine="valhalla",
+            graph_version="2026.08",
+            h3_cells=["884a1072b7fffff"],
+            h3_resolution=9,
+            total_cells_count=1,
+            geom={"type": "Polygon", "coordinates": [[[121.5, 25.0], [121.6, 25.0], [121.6, 25.1], [121.5, 25.0]]]},
+        ),
+        demographics=CatchmentDemographics(
+            status=DomainStatus.available,
+            total_population=8500.0,
+            household_count=3200.0,
+            daytime_population_ratio=1.5,
+        ),
+        competitors=CatchmentCompetitors(
+            status=DomainStatus.available,
+            active_competitors=3,
+            total_capacity=50.0,
+            stores_by_category={"laundromat": 3, "convenience": 5},
+        ),
+        rent=CatchmentRent(
+            status=DomainStatus.available,
+            median_rent_per_ping=2500.0,
+            sample_count=15,
+        ),
+        mobility=CatchmentMobility(
+            status=DomainStatus.available,
+            activity_population=7000.0,
+            resident_population=5000.0,
+        ),
+        traffic=CatchmentTrafficAccess(status=DomainStatus.available),
+        coverage=CatchmentCoverage(
+            overall_readiness=CatchmentReadinessLevel.usable_with_gaps,
+            domain_coverage={"DEMOGRAPHICS": "complete", "COMPETITOR": "complete", "RENT": "complete"},
+            has_gaps=True,
+        ),
+        source_support=_sample_source_support(),
+    )
+    adapted_catch = from_catchment_profile(prof)
+    assert adapted_catch.support_level == "supported"
+    res_catch = score_heatzone_v3_feature(adapted_catch)
+    assert res_catch.abstained is False
+    assert res_catch.score is not None
+    assert AbstainReasonCode.OUT_OF_SUPPORT_BOUNDS.value not in res_catch.abstain_reasons
+
+

@@ -17,6 +17,102 @@ from packages.oday_data_product_contracts_client.models.market_cell_profile impo
 )
 
 
+def _match_store_capacities_and_coverage(
+    target_h3_indices: set[str],
+    target_entity_ids: set[str],
+    own_store_capacities: Sequence[MachineCapacityRecord] | None,
+    store_coverage_records: Sequence[StoreDayCoverage] | None,
+) -> tuple[list[MachineCapacityRecord], list[StoreDayCoverage], int, float]:
+    """Match capacity and coverage records to a spatial target (cell or catchment).
+
+    Returns:
+        (matched_caps, matched_store_covs, distinct_store_count, total_machine_capacity)
+    """
+    valid_h3s = {h for h in target_h3_indices if h}
+    valid_ids = {i for i in target_entity_ids if i}
+
+    if not valid_h3s and not valid_ids:
+        return [], [], 0, 0.0
+
+    matched_store_ids: set[str] = set()
+
+    # 1. Match from store coverage records
+    cov_list = list(store_coverage_records or ())
+    for s in cov_list:
+        store_id = getattr(s, "store_id", "")
+        if not store_id:
+            continue
+        cov = getattr(s, "coverage", None)
+        matched = False
+        if cov is not None:
+            qgeom = getattr(cov, "query_geometry", None)
+            if qgeom is not None:
+                gh3 = getattr(qgeom, "h3_index", None)
+                if gh3 and gh3 in valid_h3s:
+                    matched = True
+            eid = getattr(cov, "entity_id", None)
+            if eid and (eid in valid_h3s or eid in valid_ids):
+                matched = True
+            spid = getattr(cov, "scope_principal_id", None)
+            if spid and spid in valid_ids:
+                matched = True
+            meta = getattr(cov, "metadata", None)
+            if isinstance(meta, dict):
+                if meta.get("h3_index") in valid_h3s or meta.get("cell_id") in valid_ids:
+                    matched = True
+            subparts = getattr(cov, "sub_partitions", None) or ()
+            for sub in subparts:
+                sub_geom = getattr(sub, "geometry", None)
+                if sub_geom and getattr(sub_geom, "h3_index", None) in valid_h3s:
+                    matched = True
+                if getattr(sub, "sub_partition_key", None) in valid_h3s:
+                    matched = True
+        if store_id in valid_h3s or store_id in valid_ids:
+            matched = True
+        if matched:
+            matched_store_ids.add(store_id)
+
+    # 2. Match from machine capacity records
+    cap_list = list(own_store_capacities or ())
+    for c in cap_list:
+        store_id = getattr(c, "store_id", "")
+        if not store_id:
+            continue
+        ev_ref = getattr(c, "evidence_ref", None)
+        if ev_ref:
+            ev_str = str(ev_ref)
+            if ev_str in valid_h3s or ev_str in valid_ids:
+                matched_store_ids.add(store_id)
+            elif any(h in ev_str for h in valid_h3s if len(h) >= 7):
+                matched_store_ids.add(store_id)
+            elif any(i in ev_str for i in valid_ids if len(i) >= 4):
+                matched_store_ids.add(store_id)
+        if store_id in valid_h3s or store_id in valid_ids:
+            matched_store_ids.add(store_id)
+
+    # 3. Filter matched records
+    matched_caps = [
+        c for c in cap_list
+        if getattr(c, "store_id", "") in matched_store_ids
+        or (getattr(c, "evidence_ref", None) and any(h in str(c.evidence_ref) for h in valid_h3s if len(h) >= 7))
+    ]
+    matched_store_covs = [
+        s for s in cov_list
+        if getattr(s, "store_id", "") in matched_store_ids
+    ]
+
+    # 4. Compute distinct store count (R2) and sum machine capacity
+    distinct_store_ids = {
+        getattr(c, "store_id", "") for c in matched_caps if getattr(c, "store_id", "")
+    } | {
+        getattr(s, "store_id", "") for s in matched_store_covs if getattr(s, "store_id", "")
+    }
+    distinct_store_count = len(distinct_store_ids)
+    total_machine_capacity = sum(float(c.machine_count or 0) for c in matched_caps)
+
+    return matched_caps, matched_store_covs, distinct_store_count, total_machine_capacity
+
+
 def from_market_cell_profile(
     cell: MarketCellProfile | Mapping[str, Any],
     *,
@@ -98,17 +194,17 @@ def from_market_cell_profile(
         else median_rent
     )
 
-    # Own-store capacity and coverage proof
-    matched_caps = [
-        c for c in (own_store_capacities or ())
-        if getattr(c, "store_id", "") and (cell_obj.h3_index in (getattr(c, "evidence_ref", None) or "") or not getattr(c, "evidence_ref", None))
-    ]
-    matched_store_covs = [
-        s for s in (store_coverage_records or ())
-        if getattr(s, "store_id", "")
-    ]
-    own_store_count = len(matched_caps) if matched_caps else 0
-    own_machine_cap = sum(float(c.machine_count or 0) for c in matched_caps)
+    # Own-store capacity and coverage proof (R1 & R2)
+    target_h3s = {cell_obj.h3_index} if cell_obj.h3_index else set()
+    target_ids = {cell_obj.cell_id, cell_obj.h3_index} if (cell_obj.cell_id or cell_obj.h3_index) else set()
+    matched_caps, matched_store_covs, own_store_count, own_machine_cap = (
+        _match_store_capacities_and_coverage(
+            target_h3s,
+            target_ids,
+            own_store_capacities,
+            store_coverage_records,
+        )
+    )
 
     # Coverage & Support
     overall_readiness = cell_obj.coverage.overall_readiness
@@ -125,7 +221,7 @@ def from_market_cell_profile(
         cov_ratio = 1.0 if not has_gaps else 0.8
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
-    support_lvl = "supported" if readiness_str == "ready" and not is_quar else "unsupported"
+    support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
     # Confidence calculation
     conf = 1.0
@@ -270,17 +366,30 @@ def from_catchment_profile(
         else rent_samples
     )
 
-    # Own-store capacity
-    matched_caps = [
-        c for c in (own_store_capacities or ())
-        if getattr(c, "store_id", "")
-    ]
-    matched_store_covs = [
-        s for s in (store_coverage_records or ())
-        if getattr(s, "store_id", "")
-    ]
-    own_store_count = len(matched_caps) if matched_caps else 0
-    own_machine_cap = sum(float(c.machine_count or 0) for c in matched_caps)
+    # Own-store capacity and coverage proof (R1 & R2)
+    target_h3s = set()
+    if prof_obj.origin and prof_obj.origin.origin_h3:
+        target_h3s.add(prof_obj.origin.origin_h3)
+    if prof_obj.boundary and prof_obj.boundary.h3_cells:
+        target_h3s.update(prof_obj.boundary.h3_cells)
+
+    target_ids = set(target_h3s)
+    if prof_obj.profile_id:
+        target_ids.add(prof_obj.profile_id)
+        target_ids.add(f"catchment:{prof_obj.profile_id}")
+    if prof_obj.origin and prof_obj.origin.origin_id:
+        target_ids.add(prof_obj.origin.origin_id)
+    if prof_obj.boundary and prof_obj.boundary.catchment_id:
+        target_ids.add(prof_obj.boundary.catchment_id)
+
+    matched_caps, matched_store_covs, own_store_count, own_machine_cap = (
+        _match_store_capacities_and_coverage(
+            target_h3s,
+            target_ids,
+            own_store_capacities,
+            store_coverage_records,
+        )
+    )
 
     # Coverage
     overall_readiness = prof_obj.coverage.overall_readiness
@@ -296,7 +405,7 @@ def from_catchment_profile(
         cov_ratio = 1.0 if not has_gaps else 0.8
         
     readiness_str = overall_readiness.value if hasattr(overall_readiness, "value") else str(overall_readiness).lower()
-    support_lvl = "supported" if readiness_str == "ready" and not is_quar else "unsupported"
+    support_lvl = "supported" if readiness_str in ("ready", "usable_with_gaps") and not is_quar else "unsupported"
 
     conf = 1.0
     if prof_obj.demographics.status is not DomainStatus.available:

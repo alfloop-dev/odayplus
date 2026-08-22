@@ -6,8 +6,8 @@ uv run pytest tests/models/test_heatzone_v3_contract.py -q
 ```
 
 ## Results
-- **Status**: PASSED (22 / 22 tests)
-- **Execution Time**: 0.61s
+- **Status**: PASSED (25 / 25 tests)
+- **Execution Time**: 0.58s
 - **Linter Status**: PASSED (ruff check 0 errors)
 
 ### Test Cases Covered
@@ -33,6 +33,9 @@ uv run pytest tests/models/test_heatzone_v3_contract.py -q
 20. `test_heatzone_v3_abstains_when_critical_domain_empty_even_if_ready_and_no_gaps`: Acceptance B2 fail-closed verification.
 21. `test_heatzone_v3_rent_feasibility_monotonic_without_rent_data`: C1 monotonic rent feasibility verification.
 22. `test_heatzone_v3_saturated_state_when_competitor_saturated_and_zero_own_stores`: C3 competitor saturated state verification.
+23. `test_heatzone_v3_r1_store_capacity_isolation_across_cells_and_catchments`: R1 spatial isolation of store capacities and coverage proofs across cells/catchments without cross-cell leakage.
+24. `test_heatzone_v3_r2_distinct_store_count_with_multiple_machine_classes`: R2 distinct store count calculation when a store has multiple machine capacity classes.
+25. `test_heatzone_v3_r3_readiness_usable_with_gaps_is_supported`: R3 `ReadinessLevel.usable_with_gaps` correctly maps to `supported` without collapsing to `OUT_OF_SUPPORT_BOUNDS`.
 
 ## Code Boundary Governance
 ```bash
