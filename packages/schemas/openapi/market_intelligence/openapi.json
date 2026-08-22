@@ -650,7 +650,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Select one published coverage surface by id."
           },
           {
             "name": "admin_code",
@@ -658,7 +659,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Cell filter: administrative area code of the coverage cell."
           },
           {
             "name": "h3_index",
@@ -666,7 +668,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Cell filter: H3 index of the coverage cell."
           },
           {
             "name": "business_date",
@@ -674,7 +677,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Cell filter: business date of the coverage cell."
           },
           {
             "name": "readiness",
@@ -682,7 +686,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Cell filter: readiness of the coverage cell (not the surface envelope readiness)."
           },
           {
             "name": "state",
@@ -690,7 +695,8 @@
             "required": false,
             "schema": {
               "type": "string"
-            }
+            },
+            "description": "Cell filter: coverage state of the cell."
           },
           {
             "name": "limit",
@@ -699,7 +705,8 @@
             "schema": {
               "type": "integer",
               "default": 100
-            }
+            },
+            "description": "Maximum number of matched cells to return. Values <= 0 mean unbounded."
           }
         ],
         "responses": {
@@ -718,8 +725,12 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
           }
-        }
+        },
+        "description": "Filters select coverage cells, not the surface envelope. `admin_code`, `h3_index`, `business_date`, `readiness` and `state` name CoverageCell fields, so a surface is returned only when at least one of its cells satisfies every supplied filter, and `cells` is narrowed to those matches. A query that matches no cell returns 404 rather than an unfiltered surface. When the response is narrowed by a filter or by `limit`, `metadata.cell_query` reports the applied filters and the published / matched / returned cell counts. Contract aggregates (`state_breakdown`, `freshness`, `search_completeness`) always describe the full published surface, not the returned subset."
       }
     },
     "/market-intelligence/data-gaps": {

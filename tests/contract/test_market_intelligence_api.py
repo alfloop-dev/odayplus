@@ -34,6 +34,9 @@ from modules.market_intelligence_api import (
     REQUIRED_CONTRACTS,
     CandidateCellSummary,
     CandidateSiteSummary,
+    CoverageFilter,
+    DataPlatformMarketIntelligenceRepository,
+    MarketIntelligenceNotFoundError,
     MarketIntelligenceService,
 )
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
@@ -1068,6 +1071,284 @@ def test_unscoped_coverage_surface_is_hidden_from_every_tenant(
             headers=headers,
         )
         assert response.status_code == 404
+
+
+# ===========================================================================
+# 7b. Coverage Query Filter Semantics
+# ===========================================================================
+#
+# admin_code, h3_index, business_date, readiness and state name CoverageCell
+# fields, so they select which cells a surface reports. A surface must never
+# be served for a query whose predicates none of its cells satisfy.
+
+
+def _coverage_cell(
+    cell_id: str,
+    *,
+    state: str = "complete",
+    readiness: str = "ready",
+    admin_code: str = "63000010",
+    business_date: str | None = None,
+) -> dict[str, Any]:
+    cell: dict[str, Any] = {
+        "cell_id": cell_id,
+        "h3_index": cell_id,
+        "state": state,
+        "readiness": readiness,
+        "is_complete": state == "complete",
+        "negative_evidence_valid": True,
+        "observed_count": 10,
+        "expected_count": 10,
+        "freshness_state": "fresh",
+        "admin_code": admin_code,
+        "reasons": [],
+    }
+    if business_date is not None:
+        cell["business_date"] = business_date
+    return cell
+
+
+def _coverage_surface_with(
+    base: dict[str, Any],
+    *,
+    surface_id: str,
+    cells: list[dict[str, Any]],
+    tenant_id: str = TENANT_ALPHA,
+    readiness: str = "ready",
+) -> dict[str, Any]:
+    payload = json.loads(json.dumps(base))
+    payload["surface_id"] = surface_id
+    payload["tenant_id"] = tenant_id
+    payload["readiness"] = readiness
+    payload["cells"] = cells
+    return payload
+
+
+class _ParamsIgnoringTransport(InMemoryDataPlatformTransport):
+    """Transport that returns the stored document regardless of query filters.
+
+    A remote transport may ignore filters it does not implement, so the BFF
+    must enforce coverage query semantics itself rather than trusting them
+    to have been applied upstream.
+    """
+
+    def fetch_document(
+        self,
+        contract_id: str,
+        *,
+        document_id: str | None = None,
+        params: Any = None,
+    ) -> Any:
+        return super().fetch_document(contract_id, document_id=document_id, params=None)
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"surface_id": "cov-surface-001", "readiness": "blocked"},
+        {"surface_id": "cov-surface-001", "admin_code": "does-not-exist"},
+        {"surface_id": "cov-surface-001", "h3_index": "does-not-exist"},
+        {"surface_id": "cov-surface-001", "state": "blocked"},
+        {"surface_id": "cov-surface-001", "business_date": "1999-01-01"},
+        {"readiness": "blocked"},
+        {"admin_code": "does-not-exist"},
+    ],
+)
+def test_coverage_query_filters_are_applied_not_ignored(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+    query: dict[str, str],
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/coverage",
+        params=query,
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 404, (
+        f"query {query} must not be served the ready surface: {resp.json()}"
+    )
+
+
+def test_coverage_query_filters_that_match_return_the_cell(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/coverage",
+        params={
+            "surface_id": "cov-surface-001",
+            "admin_code": "63000010",
+            "h3_index": "8928308280fffff",
+            "readiness": "ready",
+            "state": "complete",
+        },
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["surface_id"] == "cov-surface-001"
+    assert [cell["cell_id"] for cell in data["cells"]] == ["8928308280fffff"]
+
+
+def test_coverage_filter_selects_the_surface_whose_cells_match(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+    sample_coverage_surface_payload: dict[str, Any],
+) -> None:
+    client, _, transport = test_setup
+    transport.store_document(
+        "emgi.coverage-surface.v1",
+        "cov-surface-blocked",
+        _coverage_surface_with(
+            sample_coverage_surface_payload,
+            surface_id="cov-surface-blocked",
+            readiness="blocked",
+            cells=[
+                _coverage_cell("89283082807ffff", state="empty", readiness="blocked"),
+            ],
+        ),
+    )
+
+    resp = client.get(
+        "/api/v1/market-intelligence/coverage",
+        params={"readiness": "blocked"},
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["surface_id"] == "cov-surface-blocked"
+    assert [cell["cell_id"] for cell in data["cells"]] == ["89283082807ffff"]
+
+
+def test_coverage_filter_narrows_cells_to_the_matching_subset(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+    sample_coverage_surface_payload: dict[str, Any],
+) -> None:
+    client, _, transport = test_setup
+    transport.store_document(
+        "emgi.coverage-surface.v1",
+        "cov-surface-multi",
+        _coverage_surface_with(
+            sample_coverage_surface_payload,
+            surface_id="cov-surface-multi",
+            cells=[
+                _coverage_cell("8928308280fffff", admin_code="63000010"),
+                _coverage_cell("89283082803ffff", admin_code="63000020"),
+                _coverage_cell("89283082805ffff", admin_code="63000010"),
+            ],
+        ),
+    )
+
+    resp = client.get(
+        "/api/v1/market-intelligence/coverage",
+        params={"surface_id": "cov-surface-multi", "admin_code": "63000010"},
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert [cell["cell_id"] for cell in data["cells"]] == [
+        "8928308280fffff",
+        "89283082805ffff",
+    ]
+    assert {cell["admin_code"] for cell in data["cells"]} == {"63000010"}
+
+    query = data["metadata"]["cell_query"]
+    assert query["filters"] == {"admin_code": "63000010"}
+    assert query["cell_count_published"] == 3
+    assert query["cell_count_matched"] == 2
+    assert query["cell_count_returned"] == 2
+    assert query["truncated_by_limit"] is False
+
+
+def test_coverage_limit_truncates_cells_and_reports_truncation(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+    sample_coverage_surface_payload: dict[str, Any],
+) -> None:
+    client, _, transport = test_setup
+    transport.store_document(
+        "emgi.coverage-surface.v1",
+        "cov-surface-multi",
+        _coverage_surface_with(
+            sample_coverage_surface_payload,
+            surface_id="cov-surface-multi",
+            cells=[
+                _coverage_cell("8928308280fffff"),
+                _coverage_cell("89283082803ffff"),
+                _coverage_cell("89283082805ffff"),
+            ],
+        ),
+    )
+
+    resp = client.get(
+        "/api/v1/market-intelligence/coverage",
+        params={"surface_id": "cov-surface-multi", "limit": 2},
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["cells"]) == 2
+
+    query = data["metadata"]["cell_query"]
+    assert query["limit"] == 2
+    assert query["cell_count_published"] == 3
+    assert query["cell_count_matched"] == 3
+    assert query["cell_count_returned"] == 2
+    assert query["truncated_by_limit"] is True
+
+
+def test_unfiltered_coverage_query_returns_the_published_surface_unannotated(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/coverage",
+        params={"surface_id": "cov-surface-001"},
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["cells"]) == 1
+    # Nothing was narrowed, so the surface is passed through untouched.
+    assert "cell_query" not in data["metadata"]
+    assert data["state_breakdown"]["complete"] == 10
+
+
+def test_coverage_filter_cannot_reach_another_tenants_cells(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/coverage",
+        params={"admin_code": "63000010", "readiness": "ready"},
+        headers=HEADERS_EXPANSION_BETA,
+    )
+    assert resp.status_code == 404
+
+
+def test_coverage_filters_hold_when_the_transport_ignores_query_params(
+    sample_coverage_surface_payload: dict[str, Any],
+) -> None:
+    transport = _ParamsIgnoringTransport()
+    transport.store_document(
+        "emgi.coverage-surface.v1", "cov-surface-001", sample_coverage_surface_payload
+    )
+    facade = MarketDataFacade(
+        client=DataPlatformClient(transport=transport), auth_engine=AuthorizationEngine()
+    )
+    repo = DataPlatformMarketIntelligenceRepository(facade, transport=transport)
+
+    with pytest.raises(MarketIntelligenceNotFoundError):
+        repo.get_coverage_surface(
+            "cov-surface-001",
+            filters=CoverageFilter(readiness="blocked", tenant_id=TENANT_ALPHA),
+            tenant_id=TENANT_ALPHA,
+        )
+
+    surface = repo.get_coverage_surface(
+        "cov-surface-001",
+        filters=CoverageFilter(readiness="ready", tenant_id=TENANT_ALPHA),
+        tenant_id=TENANT_ALPHA,
+    )
+    assert [cell.cell_id for cell in surface.cells] == ["8928308280fffff"]
 
 
 def test_list_data_gaps_success(

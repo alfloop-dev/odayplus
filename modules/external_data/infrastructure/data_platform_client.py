@@ -134,6 +134,12 @@ class DataPlatformTransport(Protocol):
         ...
 
 
+# Query parameters of `emgi.coverage-surface.v1` that describe a coverage cell
+# rather than the surface envelope. Consumers filter a surface down to the
+# cells they asked about, so these must never be matched top-level.
+COVERAGE_CELL_PARAMS = ("admin_code", "h3_index", "business_date", "readiness", "state")
+
+
 @dataclass
 class InMemoryDataPlatformTransport:
     """In-memory transport implementation for testing and local replay."""
@@ -170,12 +176,14 @@ class InMemoryDataPlatformTransport:
         if contract_id not in self._documents and contract_id not in self._records:
             return None
 
-        # 1. Exact document_id match in documents
+        # 1. Exact document_id match in documents. An id hit still has to
+        #    satisfy the rest of the query: returning it on tenant_id alone
+        #    would silently drop every other filter for keyed reads, so a
+        #    caller could ask for a state it excluded and still be served.
         if document_id and contract_id in self._documents and document_id in self._documents[contract_id]:
             doc = self._documents[contract_id][document_id]
-            if "tenant_id" in query_params and "tenant_id" in doc and doc["tenant_id"] != query_params["tenant_id"]:
-                return None
-            return doc
+            if self._document_matches_params(contract_id, doc, query_params):
+                return doc
 
         # 2. Search documents by params
         if contract_id in self._documents:
@@ -224,16 +232,32 @@ class InMemoryDataPlatformTransport:
                 return False
 
         if contract_id == "emgi.site-market-context.v1":
+            if not self._has_item_params(params, "site_id"):
+                return True
             contexts = doc.get("contexts", [])
             return any(self._context_item_matches(ctx, params) for ctx in contexts)
 
         if contract_id == "emgi.market-cell-profile.v1":
+            if not self._has_item_params(params, "cell_id"):
+                return True
             cells = doc.get("cells", [])
             return any(self._cell_item_matches(cell, params) for cell in cells)
 
         if contract_id == "emgi.catchment-profile.v1":
+            if not self._has_item_params(params, "catchment_id"):
+                return True
             profiles = doc.get("profiles", [])
             return any(self._catchment_item_matches(prof, params) for prof in profiles)
+
+        if contract_id == "emgi.coverage-surface.v1":
+            if not self._coverage_surface_matches(doc, params):
+                return False
+            for k, v in params.items():
+                if k in COVERAGE_CELL_PARAMS:
+                    continue
+                if k in doc and str(doc[k]) != str(v):
+                    return False
+            return True
 
         if contract_id == "emgi.property-observation.v1":
             if "property_id" in params:
@@ -291,6 +315,35 @@ class InMemoryDataPlatformTransport:
             if cell.get("period_key") != params["period_key"]:
                 return False
         return True
+
+    @staticmethod
+    def _has_item_params(params: Mapping[str, Any], identity_key: str) -> bool:
+        """True when the query names a predicate about the nested items.
+
+        A tenant-only query says nothing about individual contexts, cells or
+        profiles, so the nested list must not decide the match: an envelope
+        that carries an empty or absent list is still the document asked for.
+        """
+        return any(
+            params.get(key) is not None for key in (identity_key, "period_grain", "period_key")
+        )
+
+    def _coverage_surface_matches(self, doc: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+        """Match a coverage surface by the cell-level predicates in the query.
+
+        `admin_code`, `h3_index`, `business_date`, `readiness` and `state`
+        describe individual coverage cells, not the surface envelope, so a
+        surface qualifies only when at least one of its cells satisfies every
+        supplied predicate. Matching them against the envelope instead would
+        select a ready surface for a query that asked for blocked coverage.
+        """
+        predicates = {k: params[k] for k in COVERAGE_CELL_PARAMS if params.get(k) is not None}
+        if not predicates:
+            return True
+        return any(
+            all(str(cell.get(k)) == str(v) for k, v in predicates.items())
+            for cell in doc.get("cells", [])
+        )
 
     def _catchment_item_matches(self, prof: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
         if "catchment_id" in params:

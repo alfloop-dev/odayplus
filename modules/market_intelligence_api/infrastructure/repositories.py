@@ -7,6 +7,7 @@ Task ID: `ODP-API-001`.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from typing import Any, Protocol, runtime_checkable
 
 from modules.external_data.application.market_data_facade import (
@@ -17,6 +18,7 @@ from modules.external_data.application.market_data_facade import (
     MarketDataValidationError,
 )
 from modules.external_data.infrastructure.data_platform_client import (
+    COVERAGE_CELL_PARAMS,
     DataPlatformTransport,
 )
 from modules.market_intelligence_api.application.auth import (
@@ -31,6 +33,7 @@ from modules.market_intelligence_api.domain.models import (
     DataGapFilter,
 )
 from packages.oday_data_product_contracts_client.models.coverage_surface import (
+    CoverageCell,
     CoverageSurface,
     DataGap,
     DataGapDocument,
@@ -122,6 +125,77 @@ def _require_scoped_product_document(
                 "tenant_id": tenant_id,
             },
         )
+
+
+def _coverage_cell_predicates(filters: CoverageFilter | None) -> dict[str, str]:
+    """Collect the coverage-cell predicates a caller actually supplied.
+
+    Every one of these names is a `CoverageCell` field, not a surface
+    envelope field, so they narrow which cells the surface reports.
+    """
+    if filters is None:
+        return {}
+    predicates: dict[str, str] = {}
+    for name in COVERAGE_CELL_PARAMS:
+        value = getattr(filters, name, None)
+        if value:
+            predicates[name] = str(value)
+    return predicates
+
+
+def _coverage_cell_matches(cell: CoverageCell, predicates: Mapping[str, str]) -> bool:
+    """True when a cell satisfies every supplied predicate."""
+    return all(str(getattr(cell, name, None)) == value for name, value in predicates.items())
+
+
+def _project_coverage_surface(
+    surface: CoverageSurface,
+    *,
+    predicates: Mapping[str, str],
+    limit: int,
+    surface_id: str | None,
+) -> CoverageSurface:
+    """Narrow a stored surface to the cells the query asked for.
+
+    Filtering is applied here as well as in the transport so the semantics
+    hold for any transport, including one that ignores query parameters and
+    returns the whole document. A filter that matches no cell is an empty
+    result, not a surface served with cells the caller excluded.
+
+    Contract-level aggregates (`state_breakdown`, `freshness`,
+    `search_completeness`) are left exactly as the producer published them:
+    they describe the whole surface and the BFF cannot honestly recompute
+    them from an embedded cell subset. The projection is reported in
+    `metadata.cell_query` instead.
+    """
+    if not predicates and limit <= 0:
+        return surface
+
+    matched = [cell for cell in surface.cells if _coverage_cell_matches(cell, predicates)]
+    if predicates and not matched:
+        raise MarketIntelligenceNotFoundError(
+            f"No coverage cell matches the query (surface_id={surface.surface_id}, "
+            f"filters={dict(predicates)})",
+            details={
+                "surface_id": surface_id or surface.surface_id,
+                "filters": dict(predicates),
+            },
+        )
+
+    visible = matched[:limit] if limit > 0 else matched
+    if not predicates and len(visible) == len(surface.cells):
+        return surface
+
+    metadata = dict(surface.metadata)
+    metadata["cell_query"] = {
+        "filters": dict(predicates),
+        "limit": limit if limit > 0 else None,
+        "cell_count_published": len(surface.cells),
+        "cell_count_matched": len(matched),
+        "cell_count_returned": len(visible),
+        "truncated_by_limit": len(visible) < len(matched),
+    }
+    return replace(surface, cells=visible, metadata=metadata)
 
 
 @runtime_checkable
@@ -427,19 +501,11 @@ class DataPlatformMarketIntelligenceRepository:
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> CoverageSurface:
-        params: dict[str, Any] = {}
         effective_tenant = _effective_tenant_id(tenant_id, principal)
-        if filters:
-            if filters.admin_code:
-                params["admin_code"] = filters.admin_code
-            if filters.h3_index:
-                params["h3_index"] = filters.h3_index
-            if filters.business_date:
-                params["business_date"] = filters.business_date
-            if filters.readiness:
-                params["readiness"] = filters.readiness
-            if filters.state:
-                params["state"] = filters.state
+        predicates = _coverage_cell_predicates(filters)
+        limit = filters.limit if filters else 0
+
+        params: dict[str, Any] = dict(predicates)
         if effective_tenant:
             params["tenant_id"] = effective_tenant
 
@@ -454,12 +520,18 @@ class DataPlatformMarketIntelligenceRepository:
                 details={"surface_id": surface_id, "params": params},
             )
         try:
-            return CoverageSurface.from_dict(raw)
+            surface = CoverageSurface.from_dict(raw)
         except Exception as err:
             raise MarketIntelligenceValidationError(
                 f"Failed to parse CoverageSurface: {err}",
                 details={"contract_id": "emgi.coverage-surface.v1", "raw": raw},
             ) from err
+        return _project_coverage_surface(
+            surface,
+            predicates=predicates,
+            limit=limit,
+            surface_id=surface_id,
+        )
 
     def list_data_gaps(
         self,
