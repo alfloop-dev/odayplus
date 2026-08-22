@@ -107,7 +107,8 @@
       "owned_ready_dispatch",
       "owned_in_progress_dispatch",
       "owned_finalize_dispatch",
-      "review_ready_dispatch"
+      "review_ready_dispatch",
+      "helper_claim_dispatch"
     ]
   },
   "worker_retry": {
@@ -507,7 +508,7 @@
       },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
-        "print_timeout": "2h",
+        "hard_print_timeout": "168h",
         "include_directories": true,
         "env": {
           "GEMINI_CLI_TRUST_WORKSPACE": "true",
@@ -527,7 +528,7 @@
       },
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
-        "print_timeout": "2h",
+        "hard_print_timeout": "168h",
         "config_home": "~/.gemini-ag2",
         "home": "~/.gemini-ag2",
         "include_directories": true,

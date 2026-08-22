@@ -105,6 +105,7 @@ def validate_message(
     *,
     task_id: str | None = None,
     files: list[str] | None = None,
+    allow_maintenance_skip: bool = True,
 ) -> list[str]:
     """Return a list of rule violations; empty means the message is valid."""
     errors: list[str] = []
@@ -113,7 +114,7 @@ def validate_message(
 
     if not subject:
         return ["commit message is empty"]
-    if subject.startswith(SKIP_SUBJECT_PREFIXES):
+    if allow_maintenance_skip and subject.startswith(SKIP_SUBJECT_PREFIXES):
         return []
 
     if len(subject) > SUBJECT_MAX:

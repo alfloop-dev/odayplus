@@ -1,0 +1,37 @@
+{
+  "breaking_change": false,
+  "compatibility_mode": "backward-compatible",
+  "consumer_client_contract": "odayplus.data-platform-product-client.v1",
+  "consumer_repository": "alfloop-dev/odayplus",
+  "contract_id": "oday-data-product-contracts.v0.4.1",
+  "contracts_included": [
+    "emgi.catchment-profile.v1",
+    "emgi.coverage-surface.v1",
+    "emgi.data-acquisition-plan.v1",
+    "emgi.data-gap.v1",
+    "emgi.field-survey.v1",
+    "emgi.market-cell-profile.v1",
+    "emgi.property-observation.v1",
+    "emgi.site-market-context.v1"
+  ],
+  "depends_on_releases": [
+    "oday-data-foundation-contracts.v0.4.1"
+  ],
+  "policy": "Additive minor release. Consumers pin the released product package and generate client models from the published document schemas. The release publishes decision-ready documents only; producer-internal storage relations, DDL and raw read surfaces are never part of the consumer surface.",
+  "producer_internal_exposure": {
+    "raw_contract_fingerprints_published": false,
+    "raw_read_surfaces_published": false,
+    "relation_ownership_published": false,
+    "storage_schema_published": false
+  },
+  "semantic_version": "0.4.1",
+  "supported_consumer_versions": [
+    "0.4.0",
+    "0.4.1"
+  ],
+  "verification_receipt": {
+    "status": "DECLARED",
+    "verification_source": "XR-COMPAT-CI-001",
+    "verified_against_consumer_contract": "odayplus.data-platform-product-client.v1"
+  }
+}

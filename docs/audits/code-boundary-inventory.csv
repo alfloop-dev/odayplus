@@ -200,6 +200,8 @@ delivery_toolchain/e2e/worker_heartbeat.py,development_delivery_tooling,delivery
 delivery_toolchain/git/__init__.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/git/check_commit_scope.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/git/check_commit_trailers.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/git/check_task_delivery_identity.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/git/test_check_task_delivery_identity.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 delivery_toolchain/git/worker_commit.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/github/__init__.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/github/apply_branch_protection.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -525,6 +527,21 @@ packages/oday_data_contracts_client/models/store_reference.py,product_system,pro
 packages/oday_data_contracts_client/models/time_contract.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 packages/oday_data_contracts_client/pin.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 packages/oday_data_contracts_client/release.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/codegen.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/compatibility.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/diagnostics.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/errors.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/catchment_profile.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/coverage_surface.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/data_acquisition_plan.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/field_survey.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/market_cell_profile.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/property_observation.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/models/site_market_context.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/pin.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+packages/oday_data_product_contracts_client/release.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 pipelines/data_quality/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 pipelines/data_quality/gates.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 pipelines/features/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -689,6 +706,7 @@ tests/contract/test_frontend_domain_type_coverage.py,verification,verification_o
 tests/contract/test_ingestion_contracts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_netplan_human_gate_ledger.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_oday_data_contract_pin.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/contract/test_oday_data_product_contract_pin.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_openapi_artifact_and_client.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_operator_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_operator_assisted_listing_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

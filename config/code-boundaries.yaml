@@ -56,6 +56,11 @@ boundaries:
       # Python surface under packages/ still has to be classified on purpose.
       - packages/oday_data_contracts_client/*.py
       - packages/oday_data_contracts_client/**/*.py
+      # Generated data-platform product-contract client (ODP-XR-PRODUCT-CLIENT-001).
+      # Runtime library code: product modules read released product contracts
+      # through it.
+      - packages/oday_data_product_contracts_client/*.py
+      - packages/oday_data_product_contracts_client/**/*.py
     exclude:
       - '**/test_*.py'
       - '**/tests/*.py'

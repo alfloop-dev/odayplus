@@ -356,11 +356,11 @@ def test_task_finalize_refuses_uncommitted_changes(repo: Path, tmp_path: Path):
 @pytest.mark.parametrize(
     ("message", "expected_error"),
     [
-        ("fix: missing task id", "subject must include task id"),
-        (f"{TASK}: missing metadata", "missing required metadata: LLM-Agent"),
+        ("fix: missing task id", "subject must start with the task id 'ODP-TEST-001'"),
+        (f"{TASK}: missing metadata", "missing required trailer 'LLM-Agent:'"),
         (
             f"{TASK}: wrong task metadata\n\nLLM-Agent: Claude\nTask-ID: OTHER\nReviewer: Antigravity\n",
-            "expected 'ODP-TEST-001'",
+            "Task-ID trailer 'OTHER' does not match 'ODP-TEST-001'",
         ),
     ],
 )

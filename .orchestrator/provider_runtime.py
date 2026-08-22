@@ -22,7 +22,10 @@ from common import (
     run_command,
 )
 
-CODEX_ALLOWED_SERVICE_TIERS = ("fast", "flex")
+# Keep this aligned with the installed Codex config schema.  `priority` is a
+# valid tier in current Codex CLI releases; treating it as invalid silently
+# removes otherwise healthy Codex lanes from supervisor dispatch.
+CODEX_ALLOWED_SERVICE_TIERS = ("fast", "flex", "priority")
 
 
 def provider_config_entry(

@@ -94,6 +94,7 @@ from common import (
 from coordination_file_watcher import sync_coordination_files
 from dispatch_policy import (
     DISPATCH_STATUS_ACTIONS,
+    REASON_HELPER_CLAIM,
     REASON_OWNED_FINALIZE,
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_READY,
@@ -1753,6 +1754,12 @@ WORKER_WORKTREE_EXECUTION_REASONS = [
     REASON_OWNED_IN_PROGRESS,
     REASON_OWNED_FINALIZE,
     REASON_REVIEW_READY,
+    # A helper claim executes the canonical work of a `todo` task on idle
+    # capacity. Leaving it off this list gave it no isolated worktree, so it
+    # ran in the repository root, checked the task branch out there and left
+    # it -- blocking every later lease for that branch until a human moved the
+    # root back to dev.
+    REASON_HELPER_CLAIM,
 ]
 
 
