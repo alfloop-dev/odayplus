@@ -183,10 +183,12 @@ else:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail={"code": exc.code, "message": str(exc), "details": exc.details},
                 )
-            if isinstance(exc, MarketIntelligenceValidationError):
+            if isinstance(exc, (MarketIntelligenceValidationError, ValueError)):
+                code = getattr(exc, "code", "market_intelligence_validation_error")
+                details = getattr(exc, "details", {})
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={"code": exc.code, "message": str(exc), "details": exc.details},
+                    detail={"code": code, "message": str(exc), "details": details},
                 )
             if isinstance(exc, HTTPException):
                 raise exc
@@ -565,62 +567,62 @@ else:
             tid = resolve_tenant_id(request)
             principal = _get_principal(request)
 
-            gaps = [
-                AcquisitionGap(
-                    gap_id=g.gap_id,
-                    domain=g.domain,
-                    measure=g.measure,
-                    priority_rank=g.priority_rank,
-                    current_uncertainty_pct=g.current_uncertainty_pct,
-                    expected_uncertainty_reduction_pct=g.expected_uncertainty_reduction_pct,
-                    decision_sensitivity=g.decision_sensitivity,
-                    estimated_cost_units=g.estimated_cost_units,
-                    estimated_latency_hours=g.estimated_latency_hours,
-                    survey_effort_hours=g.survey_effort_hours,
-                    quota_units=g.quota_units,
-                    rationale=g.rationale,
-                    recommended_source_ids=g.recommended_source_ids,
-                )
-                for g in body.gaps
-            ]
-
-            experiments = [
-                SourceValueExperiment(
-                    experiment_id=e.experiment_id,
-                    source_id=e.source_id,
-                    scope=AcquisitionScope(e.scope) if isinstance(e.scope, str) else e.scope,
-                    status=ExperimentStatus(e.status) if isinstance(e.status, str) else e.status,
-                    sample_size=e.sample_size,
-                    hypothesis=e.hypothesis,
-                    baseline_uncertainty_pct=e.baseline_uncertainty_pct,
-                    expected_uplift_pct=e.expected_uplift_pct,
-                    max_cost_units=e.max_cost_units,
-                    max_latency_hours=e.max_latency_hours,
-                    max_quota_units=e.max_quota_units,
-                    survey_effort_hours=e.survey_effort_hours,
-                    paid_source=e.paid_source,
-                    prior_value_evidence=e.prior_value_evidence,
-                    gap_ids=list(e.gap_ids),
-                    success_criteria=list(e.success_criteria),
-                )
-                for e in body.experiments
-            ]
-
-            plan = DataAcquisitionPlan(
-                plan_id=body.plan_id,
-                site_context_id=body.site_context_id,
-                coverage_surface_id=body.coverage_surface_id,
-                status=PlanStatus(body.status),
-                gaps=gaps,
-                experiments=experiments,
-                effective_as_of=body.effective_as_of or "",
-                knowledge_as_of=body.knowledge_as_of or "",
-                plan_version=body.plan_version,
-                policy=body.policy,
-                metadata=body.metadata,
-            )
-
             try:
+                gaps = [
+                    AcquisitionGap(
+                        gap_id=g.gap_id,
+                        domain=g.domain,
+                        measure=g.measure,
+                        priority_rank=g.priority_rank,
+                        current_uncertainty_pct=g.current_uncertainty_pct,
+                        expected_uncertainty_reduction_pct=g.expected_uncertainty_reduction_pct,
+                        decision_sensitivity=g.decision_sensitivity,
+                        estimated_cost_units=g.estimated_cost_units,
+                        estimated_latency_hours=g.estimated_latency_hours,
+                        survey_effort_hours=g.survey_effort_hours,
+                        quota_units=g.quota_units,
+                        rationale=g.rationale,
+                        recommended_source_ids=g.recommended_source_ids,
+                    )
+                    for g in body.gaps
+                ]
+
+                experiments = [
+                    SourceValueExperiment(
+                        experiment_id=e.experiment_id,
+                        source_id=e.source_id,
+                        scope=AcquisitionScope(e.scope) if isinstance(e.scope, str) else e.scope,
+                        status=ExperimentStatus(e.status) if isinstance(e.status, str) else e.status,
+                        sample_size=e.sample_size,
+                        hypothesis=e.hypothesis,
+                        baseline_uncertainty_pct=e.baseline_uncertainty_pct,
+                        expected_uplift_pct=e.expected_uplift_pct,
+                        max_cost_units=e.max_cost_units,
+                        max_latency_hours=e.max_latency_hours,
+                        max_quota_units=e.max_quota_units,
+                        survey_effort_hours=e.survey_effort_hours,
+                        paid_source=e.paid_source,
+                        prior_value_evidence=e.prior_value_evidence,
+                        gap_ids=list(e.gap_ids),
+                        success_criteria=list(e.success_criteria),
+                    )
+                    for e in body.experiments
+                ]
+
+                plan = DataAcquisitionPlan(
+                    plan_id=body.plan_id,
+                    site_context_id=body.site_context_id,
+                    coverage_surface_id=body.coverage_surface_id,
+                    status=PlanStatus(body.status) if isinstance(body.status, str) else body.status,
+                    gaps=gaps,
+                    experiments=experiments,
+                    effective_as_of=body.effective_as_of or "",
+                    knowledge_as_of=body.knowledge_as_of or "",
+                    plan_version=body.plan_version,
+                    policy=body.policy,
+                    metadata=body.metadata,
+                )
+
                 saved = active_service.propose_acquisition_plan(
                     plan,
                     tenant_id=tid,

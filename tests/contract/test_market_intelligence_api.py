@@ -68,6 +68,13 @@ HEADERS_EXPANSION_ALPHA = {
     "x-operator-role": "expansion-manager",
 }
 
+HEADERS_EXPANSION_BETA = {
+    "x-subject-id": "00000000-0000-0000-0000-000000000201",
+    "x-tenant-id": TENANT_BETA,
+    "x-roles": "expansion_user,site_reviewer",
+    "x-operator-role": "expansion-manager",
+}
+
 HEADERS_ADMIN_ALPHA = {
     "x-subject-id": "00000000-0000-0000-0000-000000000001",
     "x-tenant-id": TENANT_ALPHA,
@@ -1072,6 +1079,125 @@ def test_create_acquisition_plan_with_canonical_experiments_success(
     assert retrieved["plan_id"] == new_plan_id
     assert len(retrieved["experiments"]) == 1
     assert retrieved["experiments"][0]["experiment_id"] == exp_id
+
+
+def test_acquisition_plan_tenant_isolation(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    """Verify that locally saved acquisition plans are isolated by tenant and cross-tenant access returns 404."""
+    client, _, _ = test_setup
+    plan_id = f"plan-isolated-{uuid4()}"
+    payload = {
+        "plan_id": plan_id,
+        "site_context_id": "site-taipei-001",
+        "coverage_surface_id": "cov-surface-001",
+        "status": "ready",
+        "plan_version": 1,
+        "gaps": [],
+        "experiments": [],
+        "policy": {"tenant": TENANT_ALPHA},
+        "metadata": {"creator": "alpha_user"},
+    }
+
+    # Create plan under Tenant Alpha
+    resp_create = client.post(
+        "/api/v1/market-intelligence/acquisition-plans",
+        json=payload,
+        headers={**HEADERS_EXPANSION_ALPHA, "Idempotency-Key": f"idem-{uuid4()}"},
+    )
+    assert resp_create.status_code == 201
+
+    # Tenant Alpha can get the plan
+    resp_alpha = client.get(
+        f"/api/v1/market-intelligence/acquisition-plans/{plan_id}",
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp_alpha.status_code == 200
+    assert resp_alpha.json()["plan_id"] == plan_id
+
+    # Tenant Beta attempting to get Tenant Alpha's plan gets 404
+    resp_beta = client.get(
+        f"/api/v1/market-intelligence/acquisition-plans/{plan_id}",
+        headers=HEADERS_EXPANSION_BETA,
+    )
+    assert resp_beta.status_code == 404
+
+    # Tenant Beta listing acquisition plans does not see Tenant Alpha's plan
+    resp_list_beta = client.get(
+        "/api/v1/market-intelligence/acquisition-plans",
+        headers=HEADERS_EXPANSION_BETA,
+    )
+    assert resp_list_beta.status_code == 200
+    beta_plan_ids = [p["plan_id"] for p in resp_list_beta.json().get("items", [])]
+    assert plan_id not in beta_plan_ids
+
+
+def test_create_acquisition_plan_invalid_enum_returns_422(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    """Verify that invalid enum values for plan status, experiment scope, and experiment status return HTTP 422."""
+    client, _, _ = test_setup
+
+    # 1. Invalid plan status
+    resp_invalid_status = client.post(
+        "/api/v1/market-intelligence/acquisition-plans",
+        json={
+            "plan_id": f"plan-err-{uuid4()}",
+            "site_context_id": "site-taipei-001",
+            "coverage_surface_id": "cov-surface-001",
+            "status": "not_a_valid_plan_status",
+            "gaps": [],
+            "experiments": [],
+        },
+        headers={**HEADERS_EXPANSION_ALPHA, "Idempotency-Key": f"idem-{uuid4()}"},
+    )
+    assert resp_invalid_status.status_code == 422
+    err_body = resp_invalid_status.json()
+    assert err_body["detail"]["code"] == "market_intelligence_validation_error" or "detail" in err_body
+
+    # 2. Invalid experiment scope
+    resp_invalid_scope = client.post(
+        "/api/v1/market-intelligence/acquisition-plans",
+        json={
+            "plan_id": f"plan-err-{uuid4()}",
+            "site_context_id": "site-taipei-001",
+            "coverage_surface_id": "cov-surface-001",
+            "status": "proposed",
+            "gaps": [],
+            "experiments": [
+                {
+                    "experiment_id": "exp-invalid-scope",
+                    "source_id": "src-01",
+                    "scope": "invalid_scope_value",
+                    "status": "planned",
+                }
+            ],
+        },
+        headers={**HEADERS_EXPANSION_ALPHA, "Idempotency-Key": f"idem-{uuid4()}"},
+    )
+    assert resp_invalid_scope.status_code == 422
+
+    # 3. Invalid experiment status
+    resp_invalid_exp_status = client.post(
+        "/api/v1/market-intelligence/acquisition-plans",
+        json={
+            "plan_id": f"plan-err-{uuid4()}",
+            "site_context_id": "site-taipei-001",
+            "coverage_surface_id": "cov-surface-001",
+            "status": "proposed",
+            "gaps": [],
+            "experiments": [
+                {
+                    "experiment_id": "exp-invalid-status",
+                    "source_id": "src-01",
+                    "scope": "site",
+                    "status": "invalid_experiment_status_value",
+                }
+            ],
+        },
+        headers={**HEADERS_EXPANSION_ALPHA, "Idempotency-Key": f"idem-{uuid4()}"},
+    )
+    assert resp_invalid_exp_status.status_code == 422
 
 
 def test_production_create_app_mounts_market_intelligence_router() -> None:
