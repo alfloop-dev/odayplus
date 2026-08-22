@@ -693,9 +693,7 @@ def test_openapi_documents_fail_closed_health_and_unavailable_routes() -> None:
     health_response_schema = spec["paths"]["/market-intelligence/health"]["get"]["responses"][
         "200"
     ]["content"]["application/json"]["schema"]
-    assert health_response_schema == {
-        "$ref": "#/components/schemas/MarketIntelligenceHealth"
-    }
+    assert health_response_schema == {"$ref": "#/components/schemas/MarketIntelligenceHealth"}
     health_schema = spec["components"]["schemas"]["MarketIntelligenceHealth"]
 
     assert set(health_schema["properties"]["status"]["enum"]) == {
