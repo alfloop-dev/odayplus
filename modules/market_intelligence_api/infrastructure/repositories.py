@@ -79,6 +79,51 @@ def _payload_is_in_tenant_scope(
     return payload_tenant is not None and str(payload_tenant).strip() == tenant_id
 
 
+def _product_read_params(
+    *,
+    resource_key: str | None = None,
+    resource_id: str | None = None,
+    period_grain: PeriodGrain | str | None = None,
+    period_key: str | None = None,
+    tenant_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the raw query used to prove a facade product read is scoped."""
+    params: dict[str, Any] = {}
+    if resource_key is not None and resource_id is not None:
+        params[resource_key] = resource_id
+    if period_grain is not None:
+        params["period_grain"] = str(
+            period_grain.value if isinstance(period_grain, PeriodGrain) else period_grain
+        )
+    if period_key is not None:
+        params["period_key"] = period_key
+    if tenant_id is not None:
+        params["tenant_id"] = tenant_id
+    return params
+
+
+def _require_scoped_product_document(
+    transport: DataPlatformTransport,
+    contract_id: str,
+    *,
+    document_id: str | None = None,
+    params: Mapping[str, Any] | None = None,
+    tenant_id: str | None,
+    resource_id: str | None,
+) -> None:
+    """Require raw product evidence before returning a facade projection."""
+    raw = transport.fetch_document(contract_id, document_id=document_id, params=params)
+    if not _payload_is_in_tenant_scope(raw, tenant_id):
+        raise MarketIntelligenceNotFoundError(
+            f"Unscoped {contract_id} read rejected (resource_id={resource_id})",
+            details={
+                "contract_id": contract_id,
+                "resource_id": resource_id,
+                "tenant_id": tenant_id,
+            },
+        )
+
+
 @runtime_checkable
 class MarketIntelligenceRepository(Protocol):
     """Protocol for Market Intelligence data access."""
@@ -206,13 +251,28 @@ class DataPlatformMarketIntelligenceRepository:
         principal: Principal | None = None,
     ) -> SiteMarketContext:
         try:
-            return self._facade.get_site_market_context(
+            context = self._facade.get_site_market_context(
                 site_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=tenant_id,
                 principal=principal,
             )
+            effective_tenant = _effective_tenant_id(tenant_id, principal)
+            _require_scoped_product_document(
+                self._transport,
+                "emgi.site-market-context.v1",
+                params=_product_read_params(
+                    resource_key="site_id",
+                    resource_id=site_id,
+                    period_grain=period_grain,
+                    period_key=period_key,
+                    tenant_id=effective_tenant,
+                ),
+                tenant_id=effective_tenant,
+                resource_id=site_id,
+            )
+            return context
         except MarketDataAuthorizationError as err:
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
@@ -235,7 +295,7 @@ class DataPlatformMarketIntelligenceRepository:
         principal: Principal | None = None,
     ) -> SiteMarketContextDocument:
         try:
-            return self._facade.get_site_market_context_document(
+            document = self._facade.get_site_market_context_document(
                 document_id=document_id,
                 site_id=site_id,
                 period_grain=period_grain,
@@ -243,6 +303,22 @@ class DataPlatformMarketIntelligenceRepository:
                 tenant_id=tenant_id,
                 principal=principal,
             )
+            effective_tenant = _effective_tenant_id(tenant_id, principal)
+            _require_scoped_product_document(
+                self._transport,
+                "emgi.site-market-context.v1",
+                document_id=document_id,
+                params=_product_read_params(
+                    resource_key="site_id",
+                    resource_id=site_id,
+                    period_grain=period_grain,
+                    period_key=period_key,
+                    tenant_id=effective_tenant,
+                ),
+                tenant_id=effective_tenant,
+                resource_id=document_id or site_id,
+            )
+            return document
         except MarketDataAuthorizationError as err:
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
@@ -264,13 +340,28 @@ class DataPlatformMarketIntelligenceRepository:
         principal: Principal | None = None,
     ) -> MarketCellProfile:
         try:
-            return self._facade.get_market_cell_profile(
+            profile = self._facade.get_market_cell_profile(
                 cell_id,
                 period_grain=period_grain,
                 period_key=period_key,
                 tenant_id=tenant_id,
                 principal=principal,
             )
+            effective_tenant = _effective_tenant_id(tenant_id, principal)
+            _require_scoped_product_document(
+                self._transport,
+                "emgi.market-cell-profile.v1",
+                params=_product_read_params(
+                    resource_key="cell_id",
+                    resource_id=cell_id,
+                    period_grain=period_grain,
+                    period_key=period_key,
+                    tenant_id=effective_tenant,
+                ),
+                tenant_id=effective_tenant,
+                resource_id=cell_id,
+            )
+            return profile
         except MarketDataAuthorizationError as err:
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details
@@ -293,7 +384,7 @@ class DataPlatformMarketIntelligenceRepository:
         principal: Principal | None = None,
     ) -> MarketCellProfileDocument:
         try:
-            return self._facade.get_market_cell_profile_document(
+            document = self._facade.get_market_cell_profile_document(
                 document_id=document_id,
                 cell_id=cell_id,
                 period_grain=period_grain,
@@ -301,6 +392,22 @@ class DataPlatformMarketIntelligenceRepository:
                 tenant_id=tenant_id,
                 principal=principal,
             )
+            effective_tenant = _effective_tenant_id(tenant_id, principal)
+            _require_scoped_product_document(
+                self._transport,
+                "emgi.market-cell-profile.v1",
+                document_id=document_id,
+                params=_product_read_params(
+                    resource_key="cell_id",
+                    resource_id=cell_id,
+                    period_grain=period_grain,
+                    period_key=period_key,
+                    tenant_id=effective_tenant,
+                ),
+                tenant_id=effective_tenant,
+                resource_id=document_id or cell_id,
+            )
+            return document
         except MarketDataAuthorizationError as err:
             raise MarketIntelligenceAuthorizationError(
                 str(err), code=err.code, details=err.details

@@ -759,6 +759,22 @@ def test_get_site_market_context_success(
     assert data["coverage"]["overall_readiness"] == "ready"
 
 
+def test_unscoped_site_context_is_hidden_from_every_tenant(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, transport = test_setup
+    raw = transport.fetch_document("emgi.site-market-context.v1", document_id="smc-doc-001")
+    assert raw is not None
+    raw.pop("tenant_id", None)
+
+    for headers in (HEADERS_EXPANSION_ALPHA, HEADERS_EXPANSION_BETA):
+        response = client.get(
+            "/api/v1/market-intelligence/sites/site-taipei-001/context",
+            headers=headers,
+        )
+        assert response.status_code == 404
+
+
 def test_get_site_market_context_not_found(
     test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
@@ -803,6 +819,22 @@ def test_get_market_cell_profile_success(
     assert data["cell_id"] == "8928308280fffff"
     assert data["demographics"]["total_population"] == 12000.0
     assert data["competitors"]["active_competitors"] == 2
+
+
+def test_unscoped_market_cell_profile_is_hidden_from_every_tenant(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, transport = test_setup
+    raw = transport.fetch_document("emgi.market-cell-profile.v1", document_id="mcp-doc-001")
+    assert raw is not None
+    raw.pop("tenant_id", None)
+
+    for headers in (HEADERS_EXPANSION_ALPHA, HEADERS_EXPANSION_BETA):
+        response = client.get(
+            "/api/v1/market-intelligence/cells/8928308280fffff",
+            headers=headers,
+        )
+        assert response.status_code == 404
 
 
 def test_list_market_cells_success(
