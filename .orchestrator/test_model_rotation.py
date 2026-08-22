@@ -31,15 +31,93 @@ def _isolate(tmp_path):
     mr._STATE_PATH = pathlib.Path(tmp_path) / "cd.json"
 
 
-def test_fresh_uses_gemini_default(tmp_path):
+def test_fresh_uses_standard_high_reasoning_model(tmp_path):
     _isolate(tmp_path)
     assert mr.active_pool(CFG, "antigravity5") == "gemini"
-    assert mr.resolve_active_model(CFG, "antigravity5") == ""  # agy default (Gemini)
+    assert mr.resolve_active_model(CFG, "antigravity5") == "gemini-3.7-flash-high"
 
 
 def test_rotation_disabled_preserves_static_model(tmp_path):
     _isolate(tmp_path)
     assert mr.resolve_active_model(CFG, "antigravity_legacy") == "StaticModel"
+
+
+def test_p0_and_sensitive_scope_use_pro(tmp_path):
+    _isolate(tmp_path)
+    p0 = mr.resolve_active_selection(
+        CFG,
+        "antigravity5",
+        task={"id": "ODP-CORE-1", "priority": "P0", "artifacts": ["app/service.py"]},
+    )
+    assert p0["model"] == "gemini-3.1-pro-high"
+    assert p0["risk_tier"] == "high"
+    assert p0["selection_reason"] == "business_priority_P0"
+
+    sensitive = mr.resolve_active_selection(
+        CFG,
+        "antigravity5",
+        task={"id": "ODP-DATA-1", "priority": "P2", "artifacts": ["src/domain/ledger.py"]},
+    )
+    assert sensitive["model"] == "gemini-3.1-pro-high"
+    assert sensitive["selection_reason"].startswith("sensitive_scope:")
+
+
+def test_first_review_reopen_forces_pro(tmp_path):
+    _isolate(tmp_path)
+    selection = mr.resolve_active_selection(
+        CFG,
+        "antigravity5",
+        task={"id": "ODP-REOPEN-1", "priority": "P2", "review_reopen_count": 1},
+    )
+    assert selection["model"] == "gemini-3.1-pro-high"
+    assert selection["risk_tier"] == "high"
+    assert selection["selection_reason"] == "review_reopened_1_time(s)"
+
+
+def test_sidecar_and_finalize_stay_on_flash_high(tmp_path):
+    _isolate(tmp_path)
+    sidecar = mr.resolve_active_selection(
+        CFG,
+        "antigravity5",
+        task={"id": "ODP-SIDECAR-1", "priority": "P0", "task_class": "sidecar"},
+    )
+    assert sidecar["model"] == "gemini-3.7-flash-high"
+    assert sidecar["selection_reason"] == "bounded_sidecar_or_finalize"
+
+    finalize = mr.resolve_active_selection(
+        CFG,
+        "antigravity5",
+        task={"id": "ODP-FINAL-1", "priority": "P0", "review_reopen_count": 4},
+        reason="owned_finalize_dispatch",
+    )
+    assert finalize["model"] == "gemini-3.7-flash-high"
+
+    reopened_docs = mr.resolve_active_selection(
+        CFG,
+        "antigravity5",
+        task={
+            "id": "ODP-DOCS-1",
+            "priority": "P2",
+            "artifacts": ["docs/operations.md"],
+            "review_reopen_count": 1,
+        },
+    )
+    assert reopened_docs["model"] == "gemini-3.1-pro-high"
+    assert reopened_docs["selection_reason"] == "review_reopened_1_time(s)"
+
+
+def test_quota_rotation_overrides_gemini_risk_model_but_keeps_audit_reason(tmp_path):
+    _isolate(tmp_path)
+    mr.record_exhaustion(CFG, "antigravity5", 900, pool="gemini")
+    selection = mr.resolve_active_selection(
+        CFG,
+        "antigravity5",
+        task={"id": "ODP-P0-1", "priority": "P0"},
+    )
+    assert selection["pool"] == "claude"
+    assert selection["model"] == "Claude Sonnet 4.6 (Thinking)"
+    assert selection["risk_tier"] == "high"
+    assert selection["selection_reason"] == "quota_pool_fallback:business_priority_P0"
 
 
 def test_gemini_exhaustion_rotates_to_claude(tmp_path):
@@ -210,7 +288,10 @@ def test_selection_reports_pool_and_model(tmp_path):
     _isolate(tmp_path)
     now = datetime(2026, 7, 27, 6, 0, 0, tzinfo=UTC)
     fresh = mr.resolve_active_selection(CFG, "antigravity5", now=now)
-    assert fresh == {"pool": "gemini", "model": "", "rotating": True}
+    assert fresh["pool"] == "gemini"
+    assert fresh["model"] == "gemini-3.7-flash-high"
+    assert fresh["rotating"] is True
+    assert fresh["risk_tier"] == "standard"
     mr.record_exhaustion(CFG, "antigravity5", 900, pool="gemini", now=now)
     rotated = mr.resolve_active_selection(CFG, "antigravity5", now=now)
     assert rotated["pool"] == "claude"
@@ -218,10 +299,13 @@ def test_selection_reports_pool_and_model(tmp_path):
     # After cooldown the provider returns to the primary policy (agy default).
     back = mr.resolve_active_selection(CFG, "antigravity5", now=now + timedelta(seconds=901))
     assert back["pool"] == "gemini"
-    assert back["model"] == ""
+    assert back["model"] == "gemini-3.7-flash-high"
     # Rotation-disabled providers report no pool and keep the static model.
     legacy = mr.resolve_active_selection(CFG, "antigravity_legacy", now=now)
-    assert legacy == {"pool": None, "model": "StaticModel", "rotating": False}
+    assert legacy["pool"] is None
+    assert legacy["model"] == "StaticModel"
+    assert legacy["rotating"] is False
+    assert legacy["selection_reason"] == "model_policy_disabled"
 
 
 def test_two_concurrent_gemini_workers_never_exhaust_claude(tmp_path):
@@ -463,7 +547,7 @@ def _adapter_config(tmp_path) -> dict:
     }
 
 
-def _deliver(config, tmp_path):
+def _deliver(config, tmp_path, *, task=None, reason=None):
     from adapters.antigravity import AntigravityAdapter
     from adapters.base import DeliveryRequest
 
@@ -473,6 +557,8 @@ def _deliver(config, tmp_path):
         delivery_mode="antigravity",
         message="wake up",
         task_id="ODP-TEST-ROT",
+        reason=reason,
+        metadata={"task": task or {}},
     )
     process = mock.Mock()
     process.pid = 4321
@@ -496,8 +582,10 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     result, spawn = _deliver(config, tmp_path)
     assert result.ok
     assert result.metadata[mr.WORKER_POOL_KEY] == "gemini"
-    assert result.metadata[mr.WORKER_MODEL_KEY] == ""
-    assert "--model" not in spawn.call_args.args[0]  # agy default (Gemini)
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "gemini-3.7-flash-high"
+    assert result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY] == "standard"
+    assert result.metadata[mr.WORKER_MODEL_REASON_KEY] == "ordinary_single_module_or_unclassified"
+    assert spawn.call_args.args[0][spawn.call_args.args[0].index("--model") + 1] == "gemini-3.7-flash-high"
     command = spawn.call_args.args[0]
     assert command[command.index("--print-timeout") + 1] == "168h"
 
@@ -509,6 +597,24 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     # Structured argv: the model (with spaces/parentheses) stays ONE argument
     # and is never interpolated into a shell string.
     assert command[command.index("--model") + 1] == "Claude Sonnet 4.6 (Thinking)"
+
+
+def test_adapter_selects_pro_from_dispatched_task_snapshot(tmp_path):
+    _isolate(tmp_path)
+    config = _adapter_config(tmp_path)
+    result, spawn = _deliver(
+        config,
+        tmp_path,
+        task={"id": "ODP-RBAC-1", "priority": "P0", "artifacts": ["src/rbac/policy.py"]},
+        reason="owned_ready_dispatch",
+    )
+
+    assert result.ok
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "gemini-3.1-pro-high"
+    assert result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY] == "high"
+    assert result.metadata[mr.WORKER_MODEL_REASON_KEY] == "business_priority_P0"
+    command = spawn.call_args.args[0]
+    assert command[command.index("--model") + 1] == "gemini-3.1-pro-high"
     assert all(isinstance(part, str) for part in command)
     assert spawn.call_args.kwargs.get("env", {}).get("HOME") == str(pathlib.Path(tmp_path) / "home-ag5")
     assert not any(part.strip().startswith("&&") or ";" in part for part in command if part != "wake up")

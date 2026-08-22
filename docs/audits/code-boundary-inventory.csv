@@ -74,6 +74,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_task_reality.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_watch_events.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_worker_settlement_paths.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_worktree_authority.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/watch_events.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/wave_guards.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/worker_failure_policy.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
@@ -93,6 +94,8 @@ apps/api/app/routes/forecastops.py,product_system,product_required,true,,enginee
 apps/api/app/routes/interventions.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/learninghub.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/listings.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/api/app/routes/market_intelligence.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+apps/api/app/routes/market_survey.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/netplan.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/operator.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/routes/operator_modules/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -438,6 +441,26 @@ modules/listing/domain/intake_states.py,product_system,product_required,true,,en
 modules/listing/domain/models.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/listing/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/application/auth.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/application/service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/domain/contracts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/domain/models.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_intelligence_api/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/application/facade_adapter.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/application/survey_service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/domain/models.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/domain/state_machine.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/workers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/market_survey/workers/expiry_worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/netplan/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/netplan/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/netplan/application/planning.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -512,6 +535,12 @@ modules/site_economics/domain/models.py,product_system,product_required,true,,en
 modules/site_economics/domain/simulator.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/site_economics/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/site_economics/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/site_feasibility/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/site_feasibility/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/site_feasibility/application/service.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/site_feasibility/domain/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/site_feasibility/domain/contracts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/site_feasibility/domain/models.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/sitescore/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/sitescore/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/sitescore/application/reporting.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -595,6 +624,7 @@ scripts/orchestrator/backfill_task_archive_snapshots.py,development_platform_sys
 scripts/orchestrator/check_runtime_freshness.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/check_task_dependency_resolvability.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/finalize_lane_doctor.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+scripts/orchestrator/migrate_worker_worktree_config.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/register_emgi_v041_catalog.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/rollout_supervisor_runtime.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/test_backfill_task_archive_snapshots.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -721,6 +751,7 @@ tests/contract/test_control_plane_router_contract_doc.py,verification,verificati
 tests/contract/test_deferred_oss_adr.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_frontend_domain_type_coverage.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_ingestion_contracts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/contract/test_market_intelligence_api.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_netplan_human_gate_ledger.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_oday_data_contract_pin.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/contract/test_oday_data_product_contract_pin.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -747,6 +778,7 @@ tests/data/test_pit_snapshot.py,verification,verification_only,false,product_sys
 tests/data/test_source_to_canonical.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/data/test_taiwan_real_estate_outcomes.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/domain/test_site_economics.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/domain/test_site_feasibility.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_acceptance_coverage.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_external_source_product_e2e.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/e2e/test_live_e2e_gate.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
@@ -832,6 +864,7 @@ tests/integration/test_scheduled_ingestion_tenant_propagation.py,verification,ve
 tests/integration/test_scoring_model_binding.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_sitescore_decision.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_store_opening_backfill.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_survey_workflow.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_worker_scheduler_runtime.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/models/test_dagster_training.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/models/test_evidently_monitor.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

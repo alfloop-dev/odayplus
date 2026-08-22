@@ -55,6 +55,7 @@ from approval_queue import (
 from branch_drift_alarms import check_branch_drift
 from common import (
     agent_config_for,
+    authoritative_status_root,
     cmdline_is_supervisor_process,
     config_path,
     CONFIG_PATH_ENV_VAR,
@@ -65,6 +66,7 @@ from common import (
     is_task_brief_stale,
     isoformat_utc,
     load_config,
+    load_config_for_status_root,
     load_json,
     load_status,
     new_runtime_id,
@@ -131,20 +133,15 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_atomic_write_context_text",
 "_blocking_dirt_entries",
 "_classify_worktree_dirt",
-"_clear_remote_head_snapshot_cache",
 "_clear_worktree_lease_block",
 "_create_worker_worktree",
 "_describe_dirt_entries",
 "_detached_head_is_merged",
 "_dirty_worktree_detail",
-"_create_worker_worktree_fallback",
 "_existing_worktree_for_branch",
-"_fetch_authoritative_task_head",
 "_file_or_dir_hash",
-"_fresh_lease_path",
 "_generated_collaboration_guide",
 "_generated_worker_task_brief",
-"_get_remote_heads_snapshot",
 "_git_commit_oid",
 "_git_dirty_entries",
 "_git_operation_in_progress",
@@ -159,9 +156,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_orchestrator_materialized_paths",
 "_parse_porcelain_entries",
 "_path_matches_any_glob",
-"_preserve_and_reset_clean_diverged_worktree",
 "_prune_worktree_lease_blocks",
-"_publish_unpublished_task_branch",
 "_quarantine_and_preserve_dirty_worktree",
 "_quarantine_refused",
 "QuarantineOutcome",
@@ -173,6 +168,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_task_brief_context_candidates",
 "_task_id_slug",
 "_worker_worktree_base_root",
+"_worker_base_cache_key",
 "_worktree_record_branch",
 "check_worker_tree_clean",
 "materialize_worker_context_files",
@@ -181,12 +177,13 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "preserve_dead_worker_worktree",
 "branch_name_is_usable",
 "canonical_task_record",
+"resolve_worker_base",
 "worker_task_branch",
+"worker_task_repository_binding",
 "worker_task_repo_root",
 "worker_task_worktree_path",
 "worker_tree_guard_settings",
 "worker_worktree_housekeeping_settings",
-"worker_worktree_reason_enabled",
 "worker_worktree_settings",
 ]
 _FAILURE_HELPER_FUNCTIONS = [
@@ -241,6 +238,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "mark_account_pool_cooldown",
 "mark_provider_dispatch_paused",
 "maybe_reassign_task_after_worker_failure",
+"reassign_tasks_after_review_churn",
 "maybe_trigger_retry_or_fallback",
 "normalized_mapping_values",
 "parse_quota_retry_hint",
@@ -277,6 +275,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "worker_lease_expiry",
 "worker_lease_is_expired",
 "worker_reassignment_settings",
+"review_churn_settings",
 "worker_retry_settings",
 "worker_runner_succeeded",
 "worker_runtime_metrics_bucket",
@@ -645,7 +644,11 @@ def terminate_other_supervisors(config: dict[str, Any]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the local orchestrator supervisor loop.")
-    parser.add_argument("--config", default=".orchestrator/config.json")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="authoritative config path (defaults to ORCH_CONFIG_PATH, then repository config)",
+    )
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--no-watch", action="store_true", help="Process the event queue without running watch_events first.")
     parser.add_argument("--replay", action="store_true", help="Pass replay through to watch_events for the first scan.")
@@ -1749,22 +1752,6 @@ def request_from_snapshot(snapshot: dict[str, Any]) -> DeliveryRequest:
     )
 
 
-WORKER_WORKTREE_EXECUTION_REASONS = [
-    REASON_OWNED_READY,
-    REASON_OWNED_IN_PROGRESS,
-    REASON_OWNED_FINALIZE,
-    REASON_REVIEW_READY,
-    # A helper claim executes the canonical work of a `todo` task on idle
-    # capacity. Leaving it off this list gave it no isolated worktree, so it
-    # ran in the repository root, checked the task branch out there and left
-    # it -- blocking every later lease for that branch until a human moved the
-    # root back to dev.
-    REASON_HELPER_CLAIM,
-]
-
-
-
-
 
 
 
@@ -1895,8 +1882,6 @@ def _is_safe_context_destination(workspace_path: Path, rel_value: str) -> bool:
 
 
 
-
-_REMOTE_HEAD_SNAPSHOTS: dict[tuple[str, str], tuple[float, dict[str, str], float]] = {}
 
 
 
@@ -2046,6 +2031,10 @@ def start_worker_for_request(
         "workspace_path": request.metadata.get("workspace_path"),
         "workspace_branch": request.metadata.get("workspace_branch"),
         "status_root": request.metadata.get("status_root"),
+        "repository_id": request.metadata.get("repository_id"),
+        "base_ref": request.metadata.get("base_ref"),
+        "base_sha": request.metadata.get("base_sha"),
+        "base_relation": request.metadata.get("base_relation"),
         "pid": result.pid,
         "heartbeat_path": result_metadata.get("heartbeat_path"),
         "runner_status_path": result_metadata.get("runner_status_path"),
@@ -2055,6 +2044,15 @@ def start_worker_for_request(
         model_rotation.WORKER_POOL_KEY: model_rotation.normalize_pool(
             result_metadata.get(model_rotation.WORKER_POOL_KEY)
         ),
+        **{
+            key: result_metadata.get(key)
+            for key in (
+                model_rotation.WORKER_MODEL_KEY,
+                model_rotation.WORKER_MODEL_RISK_TIER_KEY,
+                model_rotation.WORKER_MODEL_REASON_KEY,
+            )
+            if key in result_metadata
+        },
         "notes": result.notes,
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
@@ -2077,6 +2075,15 @@ def start_worker_for_request(
             "task_id": request.task_id,
             "agent_id": agent["id"],
             "provider": request.provider,
+            **{
+                key: result_metadata.get(key)
+                for key in (
+                    model_rotation.WORKER_MODEL_KEY,
+                    model_rotation.WORKER_MODEL_RISK_TIER_KEY,
+                    model_rotation.WORKER_MODEL_REASON_KEY,
+                )
+                if key in result_metadata
+            },
             "lease_expires_at": state["workers"][worker_run_id].get("lease_expires_at"),
         },
         emit_activity=False,
@@ -2091,6 +2098,15 @@ def start_worker_for_request(
             "task_id": request.task_id,
             "target_agent": display_name_for(config, agent["id"]),
             "provider": request.provider,
+            **{
+                key: result_metadata.get(key)
+                for key in (
+                    model_rotation.WORKER_MODEL_KEY,
+                    model_rotation.WORKER_MODEL_RISK_TIER_KEY,
+                    model_rotation.WORKER_MODEL_REASON_KEY,
+                )
+                if key in result_metadata
+            },
             "delivery_mode": result.mode,
             "message": activity_message or f"Worker started via {result.adapter}: {request.reason}",
             "queue_event_id": event_id_for_log,
@@ -2103,6 +2119,10 @@ def start_worker_for_request(
             "workspace_path": request.metadata.get("workspace_path"),
             "workspace_branch": request.metadata.get("workspace_branch"),
             "status_root": request.metadata.get("status_root"),
+            "repository_id": request.metadata.get("repository_id"),
+            "base_ref": request.metadata.get("base_ref"),
+            "base_sha": request.metadata.get("base_sha"),
+            "base_relation": request.metadata.get("base_relation"),
         },
     )
     return True, worker_run_id, result.as_dict()
@@ -2115,6 +2135,7 @@ def process_queue(
     *,
     agent_ids_override: list[str] | None = None,
     agent_override: str | None = None,
+    base_cache: dict | None = None,
 ) -> bool:
     return worker_lifecycle.process_queue(
         config,
@@ -2122,6 +2143,7 @@ def process_queue(
         provider_report,
         agent_ids_override=agent_ids_override,
         agent_override=agent_override,
+        base_cache=base_cache,
     )
 
 
@@ -2897,11 +2919,19 @@ def auto_commit_archive_settings(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> bool:
-    """Periodically run .orchestrator/auto_commit_archive.py so supervisor-side
-    archive metadata + task briefs are not stranded as untracked files in the
-    main worktree. Returns True iff the script ran AND produced a PR (so the
-    caller can mark state as changed and refresh runtime artifacts)."""
+def maybe_auto_commit_archive(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    base_cache: dict | None = None,
+) -> bool:
+    """Run archive backfill through the same Worker Manager lease as tasks.
+
+    ``auto_commit_archive.py`` may copy/commit/publish archive files, but it
+    never gets to choose a checkout, fetch a base, or create/remove a worktree.
+    Keeping those authority decisions here prevents an innocuous maintenance
+    job from growing a second Git workspace manager.
+    """
     settings = auto_commit_archive_settings(config)
     if not settings["enabled"]:
         return False
@@ -2927,8 +2957,65 @@ def maybe_auto_commit_archive(config: dict[str, Any], state: dict[str, Any]) -> 
         return False
 
     try:
+        import auto_commit_archive
+
+        pending = auto_commit_archive.detect_pending()
+        trigger, trigger_reason = auto_commit_archive.should_trigger(pending)
+    except Exception as exc:
+        bucket["last_error"] = f"archive inspection failed: {type(exc).__name__}: {exc}"
+        return False
+    if not trigger:
+        bucket["last_result"] = f"no trigger: {trigger_reason}"
+        return False
+    if auto_commit_archive.open_pr_exists():
+        bucket["last_result"] = "existing archive PR"
+        return False
+
+    task_id = f"{auto_commit_archive.TASK_ID_PREFIX}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
+    archive_repo = str((config.get("github_bus") or {}).get("repo") or "").strip()
+    lease_request = DeliveryRequest(
+        agent_id="orchestrator",
+        provider="internal",
+        delivery_mode="maintenance",
+        message="Archive backfill maintenance lease.",
+        task_id=task_id,
+        reason="archive_maintenance",
+        metadata={
+            "workspace_task_id": task_id,
+            "task": {
+                "id": task_id,
+                "branch": f"task/{task_id}",
+                **({"repository": archive_repo} if archive_repo else {}),
+            },
+        },
+    )
+    lease_ok, lease_error = prepare_worker_workspace(
+        config,
+        state,
+        lease_request,
+        queue_event_id=None,
+        target_agent="Orchestrator",
+        base_cache=base_cache,
+    )
+    if not lease_ok:
+        bucket["last_error"] = f"archive lease blocked: {lease_error}"
+        return False
+    workspace_path = str(lease_request.metadata.get("workspace_path") or "")
+    if not workspace_path:
+        bucket["last_error"] = "archive lease returned no workspace path"
+        return False
+
+    try:
         proc = subprocess.run(
-            ["python3", str(script), "--quiet"],
+            [
+                "python3",
+                str(script),
+                "--quiet",
+                "--workspace",
+                workspace_path,
+                "--task-id",
+                task_id,
+            ],
             cwd=str(repo_root),
             capture_output=True,
             text=True,
@@ -4284,6 +4371,8 @@ def run_once(
     )
     save_runtime_state(config, state)
     changed = False
+    # Scoped to this invocation only.  It deliberately is not runtime state.
+    worker_base_cache: dict = {}
     try:
         stage_started = time.monotonic()
         # Boot reconciliation, as the name says, settles what the PREVIOUS
@@ -4361,7 +4450,10 @@ def run_once(
             else:
                 changed = dispatch_ready_tasks(config, state, provider_report=provider_report) or changed
         if not dispatch_suppressed_by_watchdog:
-            changed = process_queue(config, state, provider_report) or changed
+            # An in-memory cycle cache fixes every repository base to exactly
+            # one freshly fetched remote SHA without creating runtime state or
+            # touching a developer's local branch.
+            changed = process_queue(config, state, provider_report, base_cache=worker_base_cache) or changed
         finish_loop_stage_timing(state, "dispatch_and_queue", stage_started)
 
         stage_started = time.monotonic()
@@ -4381,8 +4473,8 @@ def run_once(
         stage_started = time.monotonic()
         trim_worker_history(state, int(config.get("supervisor", {}).get("max_worker_history", 200)))
         trim_seen_events(state, int(config.get("watcher", {}).get("max_seen_events", 2000)))
-        changed = prune_orphan_worktrees(config, state) or changed
-        changed = maybe_auto_commit_archive(config, state) or changed
+        changed = prune_orphan_worktrees(config, state, base_cache=worker_base_cache) or changed
+        changed = maybe_auto_commit_archive(config, state, base_cache=worker_base_cache) or changed
         finish_loop_stage_timing(state, "retention_and_maintenance", stage_started)
 
         loop_finished_at = utc_now()
@@ -4496,11 +4588,22 @@ def main() -> int:
     global SUPERVISOR_LOG_QUIET
     args = parse_args()
     SUPERVISOR_LOG_QUIET = args.quiet
-    selected_config_path = resolve_path(args.config)
+    selected_config = str(
+        args.config
+        or os.environ.get(CONFIG_PATH_ENV_VAR)
+        or os.environ.get("PANTHEON_CONFIG_PATH")
+        or ".orchestrator/config.json"
+    )
+    selected_config_path = resolve_path(selected_config)
     if selected_config_path is None:
         raise RuntimeError(f"Unable to resolve orchestrator config path: {args.config}")
     os.environ[CONFIG_PATH_ENV_VAR] = str(selected_config_path)
-    config = load_config(args.config)
+    status_root = authoritative_status_root()
+    config = (
+        load_config_for_status_root(status_root)
+        if status_root is not None
+        else load_config(selected_config_path)
+    )
     if args.clear_provider_pause:
         state = load_runtime_state(config)
         changed = clear_provider_dispatch_pause(config, state, args.clear_provider_pause)

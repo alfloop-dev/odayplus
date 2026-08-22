@@ -1421,6 +1421,18 @@ def dispatch_ready_tasks(
     pending_quota_counts = queued_quota_group_counts(config, state)
 
     changed = metadata_repaired or review_states_repaired
+    if reassign_tasks_after_review_churn(
+        config,
+        state,
+        status,
+        provider_report=provider_report,
+        skip_task_ids=active_task_ids | pending_task_ids,
+    ):
+        changed = True
+        status = load_status(config)
+        tasks = [task for task in status.get(tasks_path, []) if task.get(task_id_field)]
+        task_map = {task.get(task_id_field): task for task in tasks}
+
     normalized = False
     for task in tasks:
         task_id = str(task.get(task_id_field) or "")

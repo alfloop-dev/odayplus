@@ -1113,6 +1113,14 @@ def resolve_task_progress_head(task_id: str | None) -> str | None:
         return None
     return str(head).strip() if head else None
 
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 @_entrypoint
 def task_progress_snapshot(task: dict[str, Any] | None) -> dict[str, Any]:
     """Return durable task state; timestamps alone are not meaningful progress."""
@@ -1127,6 +1135,11 @@ def task_progress_snapshot(task: dict[str, Any] | None) -> dict[str, Any]:
         "status": str(task.get("status") or "").strip().lower(),
         "owner": normalize_agent_id(str(task.get("owner") or "")),
         "reviewer": normalize_agent_id(str(task.get("reviewer") or "")),
+        "priority": str(task.get("priority") or "").strip().upper(),
+        "title": str(task.get("title") or task.get("summary") or "").strip(),
+        "task_class": str(task.get("task_class") or "").strip().lower(),
+        "review_reopen_count": _nonnegative_int(task.get("review_reopen_count")),
+        "review_churn_reassigned_at_count": _nonnegative_int(task.get("review_churn_reassigned_at_count")),
         "next": " ".join(str(task.get("next") or "").split()),
         "head": head,
     }
@@ -1258,6 +1271,18 @@ def worker_reassignment_settings(config: dict[str, Any]) -> dict[str, Any]:
     }
     settings.setdefault("owner_fallbacks", default_fallbacks)
     settings.setdefault("reviewer_fallbacks", default_fallbacks)
+    return settings
+
+
+@_entrypoint
+def review_churn_settings(config: dict[str, Any]) -> dict[str, Any]:
+    """Shared cross-provider policy for repeated reviewer rejections."""
+    raw = worker_reassignment_settings(config).get("review_churn")
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    settings.setdefault("enabled", True)
+    settings.setdefault("reassign_after_reopens", 2)
+    settings.setdefault("eligible_statuses", ["todo", "in_progress"])
+    settings.setdefault("require_different_account_pool", True)
     return settings
 
 @_entrypoint
@@ -1665,6 +1690,7 @@ def persist_task_reassignment(
     handoff_to: str | None = None,
     handoff_from: str | None = None,
     resolve_open_blockers: bool = False,
+    task_updates: dict[str, Any] | None = None,
 ) -> bool:
     status = load_status(config)
     tasks = status.get("tasks", []) or []
@@ -1685,6 +1711,8 @@ def persist_task_reassignment(
         task["waiting_for"] = new_waiting_for
     task["last_update"] = timestamp
     task["assignment_note"] = message
+    if isinstance(task_updates, dict):
+        task.update(task_updates)
     # Reassignment is coordination metadata, not resolution of an external
     # gate.  Preserve the actionable blocker text until the task is explicitly
     # moved out of blocked; otherwise dashboards claim the assignment changed
@@ -1721,6 +1749,150 @@ def persist_task_reassignment(
         )
 
     return commit_canonical_task_transition(config, status)
+
+
+@_entrypoint
+def reassign_tasks_after_review_churn(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    status: dict[str, Any],
+    *,
+    provider_report: dict[str, Any] | None = None,
+    skip_task_ids: set[str] | None = None,
+) -> bool:
+    """Move repeatedly rejected work to another healthy provider/account pool.
+
+    The first reviewer reopen is consumed by Antigravity's model policy and
+    upgrades the next attempt to Pro. On the second reopen this shared policy
+    changes ownership, regardless of which LLM owned the task. It deliberately
+    uses the existing reassignment candidates and viability checks rather than
+    introducing a second scheduler.
+    """
+    settings = review_churn_settings(config)
+    if not settings.get("enabled", True):
+        return False
+    try:
+        threshold = max(2, int(settings.get("reassign_after_reopens", 2) or 2))
+    except (TypeError, ValueError):
+        threshold = 2
+    eligible_statuses = {str(value).strip().lower() for value in settings.get("eligible_statuses", [])}
+    skipped = {str(value) for value in (skip_task_ids or set())}
+    changed = False
+
+    for snapshot in list(status.get("tasks", []) or []):
+        if not isinstance(snapshot, dict):
+            continue
+        task_id = str(snapshot.get("id") or "").strip()
+        if not task_id or task_id in skipped:
+            continue
+        if str(snapshot.get("status") or "").strip().lower() not in eligible_statuses:
+            continue
+        if task_is_human_gate(snapshot) or bool(snapshot.get("non_dispatchable")):
+            continue
+        try:
+            reopen_count = max(0, int(snapshot.get("review_reopen_count", 0) or 0))
+            last_reassigned_count = max(0, int(snapshot.get("review_churn_reassigned_at_count", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+        if reopen_count < threshold or reopen_count - last_reassigned_count < threshold:
+            continue
+
+        owner = str(snapshot.get("owner") or "").strip()
+        reviewer = str(snapshot.get("reviewer") or "").strip()
+        if not owner or is_human_gate_agent(owner):
+            continue
+        owner_pool = agent_account_pool_id(config, owner)
+        excluded_pools = {owner_pool} if settings.get("require_different_account_pool", True) and owner_pool else set()
+        owner_candidates = get_agent_reassignment_candidates(config, owner, role="owner", task=snapshot)
+        new_owner = first_viable_agent(
+            config,
+            owner_candidates,
+            exclude={owner, reviewer},
+            state=state,
+            task=snapshot,
+            provider_report=provider_report,
+            status=status,
+            role="owner",
+            exclude_pools=excluded_pools,
+        )
+        if not new_owner or is_human_gate_agent(new_owner):
+            continue
+
+        if is_human_gate_agent(reviewer):
+            new_reviewer = reviewer
+        else:
+            new_reviewer = (
+                first_viable_agent(
+                    config,
+                    [reviewer],
+                    exclude={new_owner},
+                    state=state,
+                    task=snapshot,
+                    provider_report=provider_report,
+                    status=status,
+                    balance_load=False,
+                    role="reviewer",
+                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                )
+                if reviewer
+                else None
+            )
+            if not new_reviewer:
+                reviewer_candidates = get_agent_reassignment_candidates(
+                    config, reviewer or owner, role="reviewer", task=snapshot
+                )
+                new_reviewer = first_viable_agent(
+                    config,
+                    reviewer_candidates,
+                    exclude={new_owner},
+                    state=state,
+                    task=snapshot,
+                    provider_report=provider_report,
+                    status=status,
+                    role="reviewer",
+                    exclude_pools={agent_account_pool_id(config, new_owner)},
+                )
+        if not new_reviewer:
+            continue
+
+        message = (
+            f"Auto-reassigned ownership from {owner} to {new_owner} after "
+            f"{reopen_count} reviewer reopens. Task returned to todo for a fresh implementation run."
+        )
+        if not persist_task_reassignment(
+            config,
+            task_id=task_id,
+            new_owner=new_owner,
+            new_reviewer=new_reviewer,
+            message=message,
+            new_status="todo",
+            handoff_to=new_owner,
+            handoff_from=owner,
+            task_updates={
+                "review_churn_reassigned_at_count": reopen_count,
+                "review_churn_previous_owner": owner,
+                "review_churn_last_reassigned_at": utc_now(),
+            },
+        ):
+            continue
+        write_activity_log(
+            config,
+            {
+                "type": "review_churn_reassigned",
+                "task_id": task_id,
+                "message": message,
+                "review_reopen_count": reopen_count,
+                "from_owner": owner,
+                "to_owner": new_owner,
+                "from_owner_pool": owner_pool,
+                "to_owner_pool": agent_account_pool_id(config, new_owner),
+                "reviewer": new_reviewer,
+            },
+        )
+        clear_task_failure_streaks_for_task(state, task_id)
+        changed = True
+
+    return changed
 
 @_entrypoint
 def maybe_reassign_task_after_worker_failure(
