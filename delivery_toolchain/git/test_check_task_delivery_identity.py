@@ -96,3 +96,23 @@ def test_recorded_branch_mismatch_fails(tmp_path: Path) -> None:
     )
 
     assert any("does not match recorded task branch" in error for error in errors)
+
+
+def test_matching_trailer_does_not_excuse_a_subject_without_the_task_id(tmp_path: Path) -> None:
+    """The subject rule is not satisfiable by the trailer alone.
+
+    Every other case here writes a subject that already starts with the task id,
+    or a commit with no matching trailer at all, so nothing pinned the one
+    combination that matters: a well-formed ``Task-ID:`` trailer on a commit
+    whose subject does not name the task. An edit found running uncommitted in
+    the shared checkout exempted exactly that combination, and the suite stayed
+    green either way.
+    """
+    repo = repository(tmp_path)
+    head = commit(repo, "chore: tidy the delivery guard", "TASK-ONE")
+
+    errors = validate_delivery_identity(repo, task_id="TASK-ONE", base="dev", head=head)
+
+    assert any("subject must start with the task id" in error for error in errors), (
+        "a matching Task-ID trailer must not excuse a subject that does not name the task"
+    )
