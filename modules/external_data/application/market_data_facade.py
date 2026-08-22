@@ -23,6 +23,7 @@ from modules.external_data.infrastructure.data_platform_client import (
     DataPlatformClientError,
     DataPlatformDocumentNotFoundError,
     DataPlatformIntegrityError,
+    DataPlatformTransport,
     DataPlatformValidationError,
 )
 from packages.oday_data_contracts_client.models import (
@@ -51,7 +52,16 @@ from packages.oday_data_product_contracts_client.models.site_market_context impo
     PeriodGrain,
     SiteMarketContext,
 )
-from shared.auth import DataClassification, Principal, Role
+from shared.audit.policy import build_security_event, requires_audit
+from shared.auth import (
+    AccessRequest,
+    Action,
+    DataClassification,
+    Decision,
+    Principal,
+    ResourceDescriptor,
+    Role,
+)
 from shared.auth.engine import AuthorizationEngine
 
 FACADE_CONTRACT = "odayplus.market-data-facade.v2"
@@ -121,9 +131,18 @@ class MarketDataFacade:
         client: DataPlatformClient | None = None,
         auth_engine: AuthorizationEngine | None = None,
         *,
+        transport: DataPlatformTransport | None = None,
         enforce_auth: bool = True,
     ) -> None:
-        self._client = client if client is not None else DataPlatformClient()
+        if client is not None:
+            self._client = client
+        elif transport is not None:
+            self._client = DataPlatformClient(transport=transport)
+        else:
+            raise MarketDataFacadeError(
+                "MarketDataFacade requires an explicit DataPlatformClient or DataPlatformTransport.",
+                code="missing_client",
+            )
         self._auth_engine = auth_engine if auth_engine is not None else AuthorizationEngine()
         self._enforce_auth = enforce_auth
 
@@ -155,10 +174,16 @@ class MarketDataFacade:
         tenant_id: str | None = None,
         principal: Principal | None = None,
         classification: DataClassification = DataClassification.CONFIDENTIAL,
-    ) -> None:
-        """Enforce odayplus product authorization and tenant isolation rules."""
+    ) -> str | None:
+        """Enforce odayplus product authorization and tenant isolation rules.
+
+        Returns:
+            The effective tenant_id to be forwarded to downstream client queries.
+        """
+        effective_tenant_id = tenant_id or (principal.tenant_id if principal is not None else None)
+
         if not self._enforce_auth and principal is None:
-            return
+            return effective_tenant_id
 
         if principal is None:
             raise MarketDataAuthorizationError(
@@ -167,23 +192,45 @@ class MarketDataFacade:
                 details={"resource_type": resource_type, "resource_id": resource_id},
             )
 
+        access = AccessRequest(
+            principal=principal,
+            action=Action.VIEW,
+            resource=ResourceDescriptor(
+                type=resource_type,
+                resource_id=resource_id,
+                tenant_id=effective_tenant_id,
+                data_classification=classification,
+            ),
+        )
+
         if not principal.authenticated:
+            decision = Decision.deny("Principal is not authenticated", policy_id="authenticated")
+            if hasattr(self._auth_engine, "audit_log"):
+                self._auth_engine.audit_log.record(build_security_event(access, decision))
             raise MarketDataAuthorizationError(
                 "Principal is not authenticated",
                 code="unauthenticated_principal",
                 details={"subject_id": principal.subject_id, "resource_type": resource_type},
             )
 
-        # 1. Tenant Isolation Check
-        if tenant_id and principal.tenant_id and principal.tenant_id != tenant_id:
-            # Platform admin with global clearance or matching tenant is allowed
+        # 1. Tenant Isolation Check:
+        # Default effective_tenant_id to principal.tenant_id if not explicitly provided.
+        # If an explicit tenant_id is provided and differs from principal.tenant_id,
+        # require PLATFORM_ADMIN role.
+        if effective_tenant_id and principal.tenant_id and principal.tenant_id != effective_tenant_id:
             if not principal.has_role(Role.PLATFORM_ADMIN):
+                decision = Decision.deny(
+                    f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
+                    policy_id="tenant_isolation",
+                )
+                if hasattr(self._auth_engine, "audit_log"):
+                    self._auth_engine.audit_log.record(build_security_event(access, decision))
                 raise MarketDataAuthorizationError(
-                    f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {tenant_id!r}",
+                    f"Cross-tenant access denied: principal tenant {principal.tenant_id!r} cannot access resource tenant {effective_tenant_id!r}",
                     code="cross_tenant_access_denied",
                     details={
                         "principal_tenant_id": principal.tenant_id,
-                        "resource_tenant_id": tenant_id,
+                        "resource_tenant_id": effective_tenant_id,
                         "resource_id": resource_id,
                     },
                 )
@@ -192,6 +239,12 @@ class MarketDataFacade:
         has_allowed_role = any(role in ALLOWED_MARKET_DATA_ROLES for role in principal.roles)
         if not has_allowed_role:
             role_names = [getattr(r, "value", str(r)) for r in principal.roles]
+            decision = Decision.deny(
+                f"Principal {principal.subject_id!r} with roles {role_names} is not authorized for market data",
+                policy_id="rbac",
+            )
+            if hasattr(self._auth_engine, "audit_log"):
+                self._auth_engine.audit_log.record(build_security_event(access, decision))
             raise MarketDataAuthorizationError(
                 f"Principal {principal.subject_id!r} with roles {role_names} is not authorized for market data",
                 code="role_unauthorized",
@@ -200,16 +253,24 @@ class MarketDataFacade:
 
         # 3. Data classification clearance check
         if not principal.scope.permits_classification(classification):
+            decision = Decision.deny(
+                f"Principal clearance {principal.scope.clearance.name} insufficient for {classification.name} data",
+                policy_id="data_classification",
+            )
+            if hasattr(self._auth_engine, "audit_log"):
+                self._auth_engine.audit_log.record(build_security_event(access, decision))
             raise MarketDataAuthorizationError(
                 f"Principal clearance {principal.scope.clearance.name} insufficient for {classification.name} data",
                 code="insufficient_clearance",
                 details={"clearance": principal.scope.clearance.value, "required": classification.value},
             )
 
-        # 4. Audit recording if auth engine is available
-        if hasattr(self._auth_engine, "audit_log") and resource_id:
-            # Emit audit log record for security observability
-            pass
+        # 4. Audit recording for authorized reads
+        decision = Decision.allow("authorized")
+        if requires_audit(Action.VIEW, classification) and hasattr(self._auth_engine, "audit_log"):
+            self._auth_engine.audit_log.record(build_security_event(access, decision))
+
+        return effective_tenant_id
 
     # -----------------------------------------------------------------------
     # Product Reads: Site Market Context (emgi.site-market-context.v1)
@@ -225,13 +286,13 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> SiteMarketContext:
         """Authorized read of a single SiteMarketContext for a site."""
-        self._authorize_read("site_market_context", site_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("site_market_context", site_id, tenant_id=tenant_id, principal=principal)
         try:
             return self._client.get_site_market_context(
                 site_id,
                 period_grain=period_grain,
                 period_key=period_key,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Site market context not found for site_id={site_id}: {err}", details=err.details) from err
@@ -251,14 +312,14 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> SiteMarketContextDocument:
         """Authorized read of a complete SiteMarketContextDocument."""
-        self._authorize_read("site_market_context_document", document_id or site_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("site_market_context_document", document_id or site_id, tenant_id=tenant_id, principal=principal)
         try:
             return self._client.get_site_market_context_document(
                 document_id=document_id,
                 site_id=site_id,
                 period_grain=period_grain,
                 period_key=period_key,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Site market context document not found: {err}", details=err.details) from err
@@ -281,13 +342,13 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> MarketCellProfile:
         """Authorized read of a single MarketCellProfile for an H3 cell."""
-        self._authorize_read("market_cell_profile", cell_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("market_cell_profile", cell_id, tenant_id=tenant_id, principal=principal)
         try:
             return self._client.get_market_cell_profile(
                 cell_id,
                 period_grain=period_grain,
                 period_key=period_key,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Market cell profile not found for cell_id={cell_id}: {err}", details=err.details) from err
@@ -307,14 +368,14 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> MarketCellProfileDocument:
         """Authorized read of a complete MarketCellProfileDocument."""
-        self._authorize_read("market_cell_profile_document", document_id or cell_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("market_cell_profile_document", document_id or cell_id, tenant_id=tenant_id, principal=principal)
         try:
             return self._client.get_market_cell_profile_document(
                 document_id=document_id,
                 cell_id=cell_id,
                 period_grain=period_grain,
                 period_key=period_key,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Market cell profile document not found: {err}", details=err.details) from err
@@ -337,13 +398,13 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> CatchmentProfile:
         """Authorized read of a single CatchmentProfile."""
-        self._authorize_read("catchment_profile", catchment_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("catchment_profile", catchment_id, tenant_id=tenant_id, principal=principal)
         try:
             return self._client.get_catchment_profile(
                 catchment_id,
                 period_grain=period_grain,
                 period_key=period_key,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Catchment profile not found for catchment_id={catchment_id}: {err}", details=err.details) from err
@@ -363,14 +424,14 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> CatchmentProfileDocument:
         """Authorized read of a complete CatchmentProfileDocument."""
-        self._authorize_read("catchment_profile_document", document_id or catchment_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("catchment_profile_document", document_id or catchment_id, tenant_id=tenant_id, principal=principal)
         try:
             return self._client.get_catchment_profile_document(
                 document_id=document_id,
                 catchment_id=catchment_id,
                 period_grain=period_grain,
                 period_key=period_key,
-                tenant_id=tenant_id,
+                tenant_id=effective_tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Catchment profile document not found: {err}", details=err.details) from err
@@ -391,9 +452,9 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> PropertyEntity:
         """Authorized read of a canonical real estate property entity."""
-        self._authorize_read("property_entity", property_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("property_entity", property_id, tenant_id=tenant_id, principal=principal)
         try:
-            return self._client.get_property_entity(property_id)
+            return self._client.get_property_entity(property_id, tenant_id=effective_tenant_id)
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Property entity not found for property_id={property_id}: {err}", details=err.details) from err
         except DataPlatformValidationError as err:
@@ -409,9 +470,9 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> PropertyListingObservation:
         """Authorized read of a property listing observation."""
-        self._authorize_read("listing_observation", listing_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("listing_observation", listing_id, tenant_id=tenant_id, principal=principal)
         try:
-            return self._client.get_listing_observation(listing_id)
+            return self._client.get_listing_observation(listing_id, tenant_id=effective_tenant_id)
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Listing observation not found for listing_id={listing_id}: {err}", details=err.details) from err
         except DataPlatformValidationError as err:
@@ -429,12 +490,13 @@ class MarketDataFacade:
         principal: Principal | None = None,
     ) -> PropertyObservationDocument:
         """Authorized read of a complete PropertyObservationDocument."""
-        self._authorize_read("property_observation_document", document_id or property_id or listing_id, tenant_id=tenant_id, principal=principal)
+        effective_tenant_id = self._authorize_read("property_observation_document", document_id or property_id or listing_id, tenant_id=tenant_id, principal=principal)
         try:
             return self._client.get_property_observation_document(
                 document_id=document_id,
                 property_id=property_id,
                 listing_id=listing_id,
+                tenant_id=effective_tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
             raise MarketDataNotFoundError(f"Property observation document not found: {err}", details=err.details) from err

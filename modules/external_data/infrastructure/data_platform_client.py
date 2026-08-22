@@ -326,7 +326,13 @@ class DataPlatformClient:
     """
 
     def __init__(self, transport: DataPlatformTransport | None = None) -> None:
-        self._transport = transport if transport is not None else InMemoryDataPlatformTransport()
+        if transport is None:
+            raise DataPlatformClientError(
+                "DataPlatformClient requires an explicit DataPlatformTransport; "
+                "InMemoryDataPlatformTransport is not a silent production default.",
+                code="missing_transport",
+            )
+        self._transport = transport
 
     @property
     def transport(self) -> DataPlatformTransport:

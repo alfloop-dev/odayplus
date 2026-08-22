@@ -19,14 +19,17 @@ from modules.external_data.application.market_data_facade import (
     FACADE_VERSION,
     MarketDataAuthorizationError,
     MarketDataFacade,
+    MarketDataFacadeError,
     MarketDataNotFoundError,
     MarketDataValidationError,
 )
 from modules.external_data.infrastructure.data_platform_client import (
     DataPlatformClient,
+    DataPlatformClientError,
     DataPlatformDocumentNotFoundError,
     InMemoryDataPlatformTransport,
 )
+from shared.auth.engine import AuthorizationEngine
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
     StoreDailyPerformance,
@@ -962,4 +965,245 @@ def test_c2_polymorphic_transport_compatibility(sample_site_context_payload):
     client_custom = DataPlatformClient(transport=CustomTransport())
     ctx = client_custom.get_site_market_context("site-taipei-001", period_grain=PeriodGrain.MONTHLY, period_key="2026-08")
     assert ctx.identity.site_id == "site-taipei-001"
+
+
+# ===========================================================================
+# 10. Rejection Round 2 Regression Tests (T1, T2, T3, M1, M2)
+# ===========================================================================
+
+def test_t1_t2_two_tenant_isolation_and_default_scoping(
+    sample_site_context_payload,
+    sample_cell_profile_payload,
+    sample_catchment_profile_payload,
+    sample_property_observation_payload,
+):
+    """T1 & T2: Multi-tenant test verifying default tenant scoping and full property entity isolation."""
+    # Build distinct payloads for tenant-beta
+    site_beta_payload = dict(sample_site_context_payload)
+    site_beta_payload["document_id"] = "smc-doc-beta-001"
+    site_beta_payload["tenant_id"] = "tenant-beta"
+    site_beta_payload["contexts"] = [
+        {
+            **sample_site_context_payload["contexts"][0],
+            "context_id": "smc-ctx-beta-001",
+            "identity": {
+                **sample_site_context_payload["contexts"][0]["identity"],
+                "site_id": "site-beta-001",
+                "site_name": "Beta Store #1",
+            },
+        }
+    ]
+
+    cell_beta_payload = dict(sample_cell_profile_payload)
+    cell_beta_payload["profile_id"] = "mcp-doc-beta-001"
+    cell_beta_payload["tenant_id"] = "tenant-beta"
+    cell_beta_payload["cells"] = [
+        {
+            **sample_cell_profile_payload["cells"][0],
+            "cell_id": "8928308280bbbbb",
+            "h3_index": "8928308280bbbbb",
+        }
+    ]
+
+    cat_beta_payload = dict(sample_catchment_profile_payload)
+    cat_beta_payload["document_id"] = "cp-doc-beta-001"
+    cat_beta_payload["tenant_id"] = "tenant-beta"
+    cat_beta_payload["profiles"] = [
+        {
+            **sample_catchment_profile_payload["profiles"][0],
+            "profile_id": "catchment-beta-10m",
+            "boundary": {
+                **sample_catchment_profile_payload["profiles"][0]["boundary"],
+                "catchment_id": "catchment-beta-10m",
+            },
+        }
+    ]
+
+    prop_beta_payload = {
+        "created_at": "2026-08-14T00:00:00Z",
+        "contract_id": "emgi.property-observation.v1",
+        "tenant_id": "tenant-beta",
+        "properties": [
+            {
+                "property_id": "prop-beta-001",
+                "county": "Taichung City",
+                "district": "Xitun",
+                "normalized_address": "No. 100, Taiwan Blvd.",
+                "created_at": "2026-08-01T00:00:00Z",
+                "updated_at": "2026-08-14T00:00:00Z",
+            }
+        ],
+        "listing_observations": [
+            {
+                "listing_obs_id": "list-beta-001",
+                "property_id": "prop-beta-001",
+                "channel": "listing_portal",
+                "observed_at": "2026-08-14T00:00:00Z",
+                "first_seen_at": "2026-08-01T00:00:00Z",
+                "last_seen_at": "2026-08-14T00:00:00Z",
+                "listing_status": "ACTIVE",
+                "listing_kind": "RENTAL",
+                "monthly_rent": 45000,
+                "floor_area_ping": 22.0,
+            }
+        ],
+        "status_histories": [],
+    }
+
+    prop_alpha_payload = {
+        **sample_property_observation_payload,
+        "tenant_id": "tenant-alpha",
+    }
+
+    transport = InMemoryDataPlatformTransport()
+    # Seed tenant-alpha
+    transport.store_document("emgi.site-market-context.v1", "smc-doc-test-001", sample_site_context_payload)
+    transport.store_document("emgi.market-cell-profile.v1", "mcp-doc-001", sample_cell_profile_payload)
+    transport.store_document("emgi.catchment-profile.v1", "cp-doc-001", sample_catchment_profile_payload)
+    transport.store_document("emgi.property-observation.v1", "prop-doc-001", prop_alpha_payload)
+
+    # Seed tenant-beta
+    transport.store_document("emgi.site-market-context.v1", "smc-doc-beta-001", site_beta_payload)
+    transport.store_document("emgi.market-cell-profile.v1", "mcp-doc-beta-001", cell_beta_payload)
+    transport.store_document("emgi.catchment-profile.v1", "cp-doc-beta-001", cat_beta_payload)
+    transport.store_document("emgi.property-observation.v1", "prop-doc-beta-001", prop_beta_payload)
+
+    client = DataPlatformClient(transport=transport)
+    facade = MarketDataFacade(client=client, enforce_auth=True)
+
+    principal_alpha = Principal(
+        subject_id="user-alpha",
+        roles=frozenset({Role.EXPANSION_USER}),
+        scope=Scope(tenant_id="tenant-alpha", clearance=DataClassification.CONFIDENTIAL),
+        authenticated=True,
+    )
+    principal_beta = Principal(
+        subject_id="user-beta",
+        roles=frozenset({Role.EXPANSION_USER}),
+        scope=Scope(tenant_id="tenant-beta", clearance=DataClassification.CONFIDENTIAL),
+        authenticated=True,
+    )
+
+    # T2: Omitting tenant_id defaults to principal.tenant_id
+    ctx_alpha = facade.get_site_market_context(
+        "site-taipei-001",
+        period_grain=PeriodGrain.MONTHLY,
+        period_key="2026-08",
+        principal=principal_alpha,
+    )
+    assert ctx_alpha.identity.site_id == "site-taipei-001"
+
+    ctx_beta = facade.get_site_market_context(
+        "site-beta-001",
+        period_grain=PeriodGrain.MONTHLY,
+        period_key="2026-08",
+        principal=principal_beta,
+    )
+    assert ctx_beta.identity.site_id == "site-beta-001"
+
+    # T2: Cross-tenant read attempts with explicit foreign tenant are denied by gate
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context(
+            "site-beta-001",
+            period_grain=PeriodGrain.MONTHLY,
+            period_key="2026-08",
+            tenant_id="tenant-beta",
+            principal=principal_alpha,
+        )
+    assert exc_info.value.code == "cross_tenant_access_denied"
+
+    # T2: Attempting to read foreign site without tenant_id raises NotFound in own tenant (no cross-tenant leak)
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_site_market_context(
+            "site-beta-001",
+            period_grain=PeriodGrain.MONTHLY,
+            period_key="2026-08",
+            principal=principal_alpha,
+        )
+
+    # T1: Property Entity and Listing Observation isolation
+    prop_a = facade.get_property_entity("prop-tw-001", principal=principal_alpha)
+    assert prop_a.property_id == "prop-tw-001"
+
+    prop_b = facade.get_property_entity("prop-beta-001", principal=principal_beta)
+    assert prop_b.property_id == "prop-beta-001"
+
+    # Principal Alpha querying Principal Beta's property entity raises NotFound (does not leak)
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_property_entity("prop-beta-001", principal=principal_alpha)
+
+    # Principal Beta querying Principal Alpha's property entity raises NotFound (does not leak)
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_property_entity("prop-tw-001", principal=principal_beta)
+
+    # Listing observation isolation
+    listing_a = facade.get_listing_observation("list-obs-001", principal=principal_alpha)
+    assert listing_a.listing_obs_id == "list-obs-001"
+
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_listing_observation("list-beta-001", principal=principal_alpha)
+
+
+def test_m1_m2_authorization_engine_security_audit_events(facade, foreign_tenant_principal):
+    """M1 & M2: Security denials and audited reads write canonical AuditEvents to AuthorizationEngine."""
+    engine = AuthorizationEngine()
+    facade_with_engine = MarketDataFacade(client=facade.client, auth_engine=engine, enforce_auth=True)
+
+    # 1. Unauthenticated denial emits audit event
+    with pytest.raises(MarketDataAuthorizationError):
+        facade_with_engine.get_site_market_context("site-taipei-001", principal=ANONYMOUS)
+
+    # 2. Cross-tenant denial emits audit event
+    with pytest.raises(MarketDataAuthorizationError):
+        facade_with_engine.get_site_market_context(
+            "site-taipei-001",
+            tenant_id="tenant-alpha",
+            principal=foreign_tenant_principal,
+        )
+
+    # 3. Role unauthorized denial emits audit event
+    unauth_role_principal = Principal(
+        subject_id="intruder-1",
+        roles=frozenset(),
+        scope=Scope(tenant_id="tenant-alpha", clearance=DataClassification.CONFIDENTIAL),
+        authenticated=True,
+    )
+    with pytest.raises(MarketDataAuthorizationError):
+        facade_with_engine.get_site_market_context(
+            "site-taipei-001",
+            tenant_id="tenant-alpha",
+            principal=unauth_role_principal,
+        )
+
+    # Assert all security denial events were recorded in audit_log
+    audit_events = engine.audit_log.list_events()
+    assert len(audit_events) >= 3
+    for ev in audit_events:
+        assert ev.event_type == "security.authorization"
+        assert ev.outcome == "deny"
+
+
+def test_t3_transport_explicit_requirement_and_rejection_of_silent_defaults(seeded_transport, expansion_principal):
+    """T3: Verify DataPlatformClient and MarketDataFacade require explicit transport and reject silent in-memory production defaults."""
+    # 1. DataPlatformClient() without transport raises DataPlatformClientError(missing_transport)
+    with pytest.raises(DataPlatformClientError) as exc_info:
+        DataPlatformClient()
+    assert exc_info.value.code == "missing_transport"
+
+    # 2. MarketDataFacade() without client or transport raises MarketDataFacadeError(missing_client)
+    with pytest.raises(MarketDataFacadeError) as exc_info:
+        MarketDataFacade()
+    assert exc_info.value.code == "missing_client"
+
+    # 3. Explicit transport passed to MarketDataFacade directly constructs and works
+    facade_direct_transport = MarketDataFacade(transport=seeded_transport, enforce_auth=True)
+    ctx = facade_direct_transport.get_site_market_context(
+        "site-taipei-001",
+        period_grain=PeriodGrain.MONTHLY,
+        period_key="2026-08",
+        tenant_id="tenant-alpha",
+        principal=expansion_principal,
+    )
+    assert ctx.identity.site_id == "site-taipei-001"
+
 
