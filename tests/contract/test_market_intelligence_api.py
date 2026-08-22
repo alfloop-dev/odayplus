@@ -472,6 +472,7 @@ def sample_market_cell_payload() -> dict[str, Any]:
 def sample_coverage_surface_payload() -> dict[str, Any]:
     return {
         "surface_id": "cov-surface-001",
+        "tenant_id": TENANT_ALPHA,
         "domain": "GEOGRAPHY",
         "dataset_ids": ["ds-geo-1"],
         "generated_at": "2026-08-14T00:00:00Z",
@@ -532,6 +533,7 @@ def sample_coverage_surface_payload() -> dict[str, Any]:
 def sample_data_gap_payload() -> dict[str, Any]:
     return {
         "contract_version": "emgi.data-gap.v1",
+        "tenant_id": TENANT_ALPHA,
         "generated_at": "2026-08-14T00:00:00Z",
         "surface_id": "cov-surface-001",
         "gaps": [
@@ -556,6 +558,7 @@ def sample_data_gap_payload() -> dict[str, Any]:
 def sample_acquisition_plan_payload() -> dict[str, Any]:
     return {
         "plan_id": "plan-acq-001",
+        "tenant_id": TENANT_ALPHA,
         "site_context_id": "site-taipei-002",
         "coverage_surface_id": "cov-surface-001",
         "status": "proposed",
@@ -1018,6 +1021,23 @@ def test_get_coverage_surface_success(
     assert len(data["cells"]) == 1
 
 
+def test_unscoped_coverage_surface_is_hidden_from_every_tenant(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, transport = test_setup
+    raw = transport.fetch_document("emgi.coverage-surface.v1", document_id="cov-surface-001")
+    assert raw is not None
+    raw.pop("tenant_id", None)
+
+    for headers in (HEADERS_EXPANSION_ALPHA, HEADERS_EXPANSION_BETA):
+        response = client.get(
+            "/api/v1/market-intelligence/coverage",
+            params={"surface_id": "cov-surface-001"},
+            headers=headers,
+        )
+        assert response.status_code == 404
+
+
 def test_list_data_gaps_success(
     test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
@@ -1030,6 +1050,29 @@ def test_list_data_gaps_success(
     data = resp.json()
     assert data["count"] == 1
     assert data["items"][0]["gap_id"] == "gap-rent-xinyi-01"
+
+
+def test_unscoped_data_gaps_are_hidden_from_every_tenant(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, transport = test_setup
+    raw = transport.fetch_document("emgi.data-gap.v1", document_id="gap-doc-001")
+    assert raw is not None
+    raw.pop("tenant_id", None)
+
+    for headers in (HEADERS_EXPANSION_ALPHA, HEADERS_EXPANSION_BETA):
+        list_response = client.get(
+            "/api/v1/market-intelligence/data-gaps",
+            headers=headers,
+        )
+        assert list_response.status_code == 200
+        assert list_response.json()["count"] == 0
+
+        get_response = client.get(
+            "/api/v1/market-intelligence/data-gaps/gap-rent-xinyi-01",
+            headers=headers,
+        )
+        assert get_response.status_code == 404
 
 
 def test_get_data_gap_by_id_success(
@@ -1074,6 +1117,29 @@ def test_list_and_get_acquisition_plans(
     assert plan_data["status"] == "proposed"
     assert len(plan_data["gaps"]) == 1
     assert len(plan_data["experiments"]) == 1
+
+
+def test_unscoped_remote_acquisition_plans_are_hidden_from_every_tenant(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, transport = test_setup
+    raw = transport.fetch_document("emgi.data-acquisition-plan.v1", document_id="plan-acq-001")
+    assert raw is not None
+    raw.pop("tenant_id", None)
+
+    for headers in (HEADERS_EXPANSION_ALPHA, HEADERS_EXPANSION_BETA):
+        list_response = client.get(
+            "/api/v1/market-intelligence/acquisition-plans",
+            headers=headers,
+        )
+        assert list_response.status_code == 200
+        assert list_response.json()["count"] == 0
+
+        get_response = client.get(
+            "/api/v1/market-intelligence/acquisition-plans/plan-acq-001",
+            headers=headers,
+        )
+        assert get_response.status_code == 404
 
 
 def test_create_acquisition_plan_success(

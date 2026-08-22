@@ -6,6 +6,7 @@ Task ID: `ODP-API-001`.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
 
 from modules.external_data.application.market_data_facade import (
@@ -47,6 +48,35 @@ from packages.oday_data_product_contracts_client.models.site_market_context impo
     SiteMarketContextDocument,
 )
 from shared.auth import Principal
+
+
+def _effective_tenant_id(
+    tenant_id: str | None,
+    principal: Principal | None,
+) -> str | None:
+    """Resolve the tenant scope used by every raw data-platform read."""
+    value = tenant_id or (principal.tenant_id if principal is not None else None)
+    clean_value = str(value).strip() if value is not None else ""
+    return clean_value or None
+
+
+def _payload_is_in_tenant_scope(
+    payload: Mapping[str, Any] | None,
+    tenant_id: str | None,
+) -> bool:
+    """Fail closed when a raw payload cannot prove its tenant ownership.
+
+    The released coverage, data-gap, and acquisition-plan contracts do not
+    all expose tenant_id as a typed model field. The transport may still
+    provide the scope as a top-level envelope attribute. A tenant-scoped BFF
+    read must not treat an unscoped payload as shared data.
+    """
+    if tenant_id is None:
+        return payload is not None
+    if payload is None:
+        return False
+    payload_tenant = payload.get("tenant_id")
+    return payload_tenant is not None and str(payload_tenant).strip() == tenant_id
 
 
 @runtime_checkable
@@ -291,6 +321,7 @@ class DataPlatformMarketIntelligenceRepository:
         principal: Principal | None = None,
     ) -> CoverageSurface:
         params: dict[str, Any] = {}
+        effective_tenant = _effective_tenant_id(tenant_id, principal)
         if filters:
             if filters.admin_code:
                 params["admin_code"] = filters.admin_code
@@ -302,15 +333,15 @@ class DataPlatformMarketIntelligenceRepository:
                 params["readiness"] = filters.readiness
             if filters.state:
                 params["state"] = filters.state
-        if tenant_id:
-            params["tenant_id"] = tenant_id
+        if effective_tenant:
+            params["tenant_id"] = effective_tenant
 
         raw = self._transport.fetch_document(
             "emgi.coverage-surface.v1",
             document_id=surface_id,
             params=params if params else None,
         )
-        if raw is None:
+        if not _payload_is_in_tenant_scope(raw, effective_tenant):
             raise MarketIntelligenceNotFoundError(
                 f"CoverageSurface not found (surface_id={surface_id}, params={params})",
                 details={"surface_id": surface_id, "params": params},
@@ -331,11 +362,12 @@ class DataPlatformMarketIntelligenceRepository:
         principal: Principal | None = None,
     ) -> list[DataGap]:
         params: dict[str, Any] = {}
-        if tenant_id:
-            params["tenant_id"] = tenant_id
+        effective_tenant = _effective_tenant_id(tenant_id, principal)
+        if effective_tenant:
+            params["tenant_id"] = effective_tenant
         raw = self._transport.fetch_document("emgi.data-gap.v1", params=params if params else None)
         gaps: list[DataGap] = []
-        if raw is not None:
+        if _payload_is_in_tenant_scope(raw, effective_tenant):
             try:
                 doc = DataGapDocument.from_dict(raw)
                 gaps = list(doc.gaps)
@@ -350,6 +382,8 @@ class DataPlatformMarketIntelligenceRepository:
                 "emgi.data-gap.v1", filter_params=params if params else None
             )
             for rec in records:
+                if not _payload_is_in_tenant_scope(rec, effective_tenant):
+                    continue
                 try:
                     gaps.append(DataGap.from_dict(rec))
                 except Exception:
@@ -391,7 +425,7 @@ class DataPlatformMarketIntelligenceRepository:
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> list[DataAcquisitionPlan]:
-        effective_tenant = tenant_id or (principal.tenant_id if principal is not None else None)
+        effective_tenant = _effective_tenant_id(tenant_id, principal)
         if effective_tenant is not None:
             plans: list[DataAcquisitionPlan] = [
                 p for (t_id, _), p in self._local_plans.items() if t_id == effective_tenant
@@ -407,7 +441,7 @@ class DataPlatformMarketIntelligenceRepository:
         raw = self._transport.fetch_document(
             "emgi.data-acquisition-plan.v1", params=params if params else None
         )
-        if raw is not None:
+        if _payload_is_in_tenant_scope(raw, effective_tenant):
             try:
                 plan = DataAcquisitionPlan.from_dict(raw)
                 if plan.plan_id not in [p.plan_id for p in plans]:
@@ -419,6 +453,8 @@ class DataPlatformMarketIntelligenceRepository:
             "emgi.data-acquisition-plan.v1", filter_params=params if params else None
         )
         for rec in records:
+            if not _payload_is_in_tenant_scope(rec, effective_tenant):
+                continue
             try:
                 p = DataAcquisitionPlan.from_dict(rec)
                 if p.plan_id not in [existing.plan_id for existing in plans]:
@@ -449,7 +485,7 @@ class DataPlatformMarketIntelligenceRepository:
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> DataAcquisitionPlan:
-        effective_tenant = tenant_id or (principal.tenant_id if principal is not None else None)
+        effective_tenant = _effective_tenant_id(tenant_id, principal)
         if (effective_tenant, plan_id) in self._local_plans:
             return self._local_plans[(effective_tenant, plan_id)]
         if effective_tenant is None:
@@ -464,7 +500,7 @@ class DataPlatformMarketIntelligenceRepository:
             if effective_tenant
             else {"plan_id": plan_id},
         )
-        if raw is None:
+        if not _payload_is_in_tenant_scope(raw, effective_tenant):
             raise MarketIntelligenceNotFoundError(
                 f"DataAcquisitionPlan not found: plan_id={plan_id}",
                 details={"plan_id": plan_id, "tenant_id": effective_tenant}
