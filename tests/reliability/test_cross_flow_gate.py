@@ -11,8 +11,8 @@ Flows exercised on a single migrated durable database:
 
 1. Integration/External: XR-CUTOVER-001 decommissioned odayplus-side external
    ingestion, so a *scheduler* tick enqueues nothing and an ``external-fetch``
-   job that survived the cutover dead-letters on its first claim instead of
-   reaching a provider.
+   job that survived the cutover fails permanently on its first claim instead
+   of reaching a provider.
 2. Operations: a ``forecast`` job enqueued through the *core-api* ``/jobs``
    endpoint (crossing the API boundary + writing an audit event) is claimed and
    executed by the *worker* and a forecast is persisted.
@@ -147,9 +147,9 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypat
         assert body["status"] == JobStatus.QUEUED.value
 
         # The worker drains both queued jobs: the forecast succeeds and the
-        # legacy external-fetch dead-letters.
+        # legacy external-fetch fails permanently on its first attempt.
         assert _drain(worker) == 2
-        assert bundle.job_queue.get(legacy_fetch.job_id).status == JobStatus.DEAD_LETTER
+        assert bundle.job_queue.get(legacy_fetch.job_id).status == JobStatus.FAILED
 
         # Job state machine reached the terminal success state for the forecast.
         assert bundle.job_queue.get(forecast_job_id).status == JobStatus.SUCCEEDED
@@ -185,11 +185,11 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypat
         bundle.engine.close()
 
     # --- Recovery: a fresh process (new bundle, same on-disk DB) still sees the
-    # persisted forecast and the dead-lettered job. Backup/recovery of durable
-    # runtime state.
+    # persisted forecast and the failed job. Backup/recovery of durable runtime
+    # state.
     reopened = _durable_bundle(db_path)
     try:
         assert reopened.forecastops_repository.latest_forecasts(TENANT_ID)
-        assert reopened.job_queue.get(legacy_fetch.job_id).status == JobStatus.DEAD_LETTER
+        assert reopened.job_queue.get(legacy_fetch.job_id).status == JobStatus.FAILED
     finally:
         reopened.engine.close()

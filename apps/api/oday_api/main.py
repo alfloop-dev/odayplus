@@ -800,16 +800,16 @@ else:
             oday-data-platform. Rejecting at the API boundary keeps the queue
             clean instead of admitting jobs the worker can only dead-letter.
             """
-            raise HTTPException(
-                status_code=status.HTTP_410_GONE,
-                detail={
-                    "code": "EXTERNAL_FETCH_DECOMMISSIONED",
-                    "message": (
-                        "External-data ingestion moved to oday-data-platform "
-                        "(XR-CUTOVER-001); read published datasets through the "
-                        "market data facade instead of enqueueing a fetch."
-                    ),
-                },
+            raise ApiError(
+                status.HTTP_410_GONE,
+                "External-data ingestion moved to oday-data-platform "
+                "(XR-CUTOVER-001); this deployment cannot fetch external "
+                "sources.",
+                code="external_fetch_decommissioned",
+                next_action=(
+                    "Read the published dataset through the market data facade; "
+                    "remove the schedule or client that enqueues external-fetch."
+                ),
             )
 
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])

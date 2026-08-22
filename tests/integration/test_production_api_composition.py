@@ -433,15 +433,25 @@ def test_production_routes_gate_only_the_dependency_they_use(
             assert history.status_code == 200
             assert history.json() == {"items": [], "count": 0}
 
+            # XR-CUTOVER-001 removed the manual ingestion trigger: the router
+            # is read-only and the job type is refused at the queue boundary,
+            # so an unavailable provider can no longer be reached at all.
             provider_route = client.post(
                 "/api/v1/external-data/ingestion-runs",
                 headers=EXTERNAL_DATA_HEADERS,
                 json={"provider_id": "listing.partner_feed"},
             )
-            assert provider_route.status_code == 503
+            assert provider_route.status_code == 405
+
+            enqueue_fetch = client.post(
+                "/api/v1/jobs",
+                headers=EXTERNAL_DATA_HEADERS,
+                json={"job_type": "external-fetch", "payload": {}},
+            )
+            assert enqueue_fetch.status_code == 410
             assert (
-                provider_route.json()["error"]["code"]
-                == "external_provider_unavailable"
+                enqueue_fetch.json()["error"]["code"]
+                == "external_fetch_decommissioned"
             )
 
             model_route = client.get("/api/v1/forecastops/timeseries")
@@ -451,7 +461,8 @@ def test_production_routes_gate_only_the_dependency_they_use(
         bundle.engine.close()
 
 
-def test_non_production_fixture_ingestion_is_unchanged(monkeypatch: Any) -> None:
+def test_non_production_fixture_ingestion_trigger_is_gone(monkeypatch: Any) -> None:
+    """XR-CUTOVER-001: no product mode can start an ingestion run any more."""
     monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
     monkeypatch.setenv("ODP_PRODUCT_MODE", "test")
     monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "fixture")
@@ -466,17 +477,28 @@ def test_non_production_fixture_ingestion_is_unchanged(monkeypatch: Any) -> None
             },
             json={"provider_id": "listing.partner_feed"},
         )
+        history = client.get(
+            "/api/v1/external-data/ingestion-runs",
+            headers=EXTERNAL_DATA_HEADERS,
+        )
 
-    assert response.status_code == 202
-    assert response.json()["created"] is True
-    assert response.json()["accepted_count"] == 2
+    assert response.status_code == 405
+    # The read side still answers, and it answers empty: nothing ingested.
+    assert history.status_code == 200
+    assert history.json() == {"items": [], "count": 0}
 
 
-def test_external_ingestion_uses_bundle_scheduler_state_store() -> None:
+def test_bundle_carries_no_external_fetch_state_store() -> None:
+    """XR-CUTOVER-001 removed the scheduler's watermark/circuit-breaker state.
+
+    The read-only provenance store stays so operator views over pre-cutover
+    runs keep resolving; the fetch state that only a scheduler could advance
+    does not.
+    """
     bundle = _memory_bundle()
 
-    app = create_app(persistence=bundle)
+    create_app(persistence=bundle)
 
-    service = app.state.external_ingestion_service
-    assert service.store is bundle.ingestion_run_store
-    assert service.scheduler.state_store is bundle.external_fetch_state_store
+    assert bundle.ingestion_run_store is not None
+    assert not hasattr(bundle, "external_fetch_state_store")
+

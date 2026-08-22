@@ -13,7 +13,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add project root to path
@@ -42,7 +42,6 @@ from modules.external_data.connectors.provider_registry import (
     validate_external_providers_or_raise,
 )
 from modules.external_data.geo import GeocodeCandidate, GeoPipeline, StaticGeocodeProvider
-from modules.external_data.workers import run_external_fetch_backfill
 from modules.listing.application.pipeline import ListingPipeline
 from modules.listing.infrastructure.repositories import InMemoryListingRepository
 from shared.infrastructure.persistence.factory import build_persistence
@@ -203,14 +202,15 @@ def main() -> int:
     if args.start is not None:
         if args.end is None:
             parser.error("--end is required when running scheduled fetch backfill (with --start)")
-        runs = run_external_fetch_backfill(
-            provider_id=args.provider_id,
-            start=_parse_datetime(args.start),
-            end=_parse_datetime(args.end),
-            interval=timedelta(hours=args.interval_hours),
+        # XR-CUTOVER-001 retired the windowed fetch scheduler this replayed. A
+        # windowed backfill is a scheduler by another name, so it fails closed
+        # here rather than being quietly reshaped into something weaker.
+        parser.error(
+            "windowed external fetch backfill is decommissioned "
+            "(XR-CUTOVER-001): the provider datasets are ingested by "
+            "oday-data-platform and read through the market data facade. Run "
+            "the backfill there."
         )
-        print(json.dumps([run.to_dict() for run in runs], ensure_ascii=False, indent=2, sort_keys=True))
-        return 0 if all(run.status == "SUCCEEDED" for run in runs) else 10
 
     # Otherwise, run local ListingFeedAdapter backfill
     print(f"Starting {args.source} backfill in '{args.mode}' mode...")
