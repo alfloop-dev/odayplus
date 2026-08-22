@@ -340,7 +340,7 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
         }
         with (
             mock.patch.object(ai_status, "status_runtime_config", return_value={}),
-            mock.patch.object(ai_status, "task_primary_repository_id", return_value="pantheon"),
+            mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"),
             mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT),
             mock.patch.object(ai_status, "delivery_merge_target_branch", return_value="dev"),
             mock.patch.object(ai_status, "resolve_task_sha", return_value=remote_sha),
@@ -5948,7 +5948,7 @@ class RetargetBranchTests(unittest.TestCase):
         with mock.patch.object(ai_status, "current_actor_validated", return_value=actor), \
                 mock.patch.object(ai_status, "canonical_agent_name", side_effect=lambda v: str(v or "")), \
                 mock.patch.object(ai_status, "status_runtime_config", return_value={}), \
-                mock.patch.object(ai_status, "task_primary_repository_id", return_value="pantheon"), \
+                mock.patch.object(ai_status, "task_repository_id", return_value="pantheon"), \
                 mock.patch.object(ai_status, "repository_local_path", return_value=ai_status.ROOT), \
                 mock.patch.object(ai_status, "run_git_command",
                                   return_value="abc123\trefs/heads/task/NEW\n" if published else ""), \

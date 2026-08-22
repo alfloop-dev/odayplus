@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from runtime_state import ACTIVE_WORKER_STATUSES
 
@@ -1853,16 +1853,45 @@ def prepare_worker_workspace(
                         # the merge, and leasing is what the policy refuses.
                         recovered = bool(task_sha)
                     else:
-                        recovered = bool(task_sha) and _quarantine_and_preserve_dirty_worktree(
-                            config,
-                            state,
-                            worktree_path,
-                            workspace_task_id,
-                            expected_branch=branch,
-                            run_id=None,
-                            trigger="lease_recovery",
-                            owning_repo_root=repo_root,
+                        quarantine = (
+                            _quarantine_and_preserve_dirty_worktree(
+                                config,
+                                state,
+                                worktree_path,
+                                workspace_task_id,
+                                expected_branch=branch,
+                                run_id=None,
+                                trigger="lease_recovery",
+                                owning_repo_root=repo_root,
+                            )
+                            if task_sha
+                            else _quarantine_refused("no_authoritative_task_sha", task_sha_source)
                         )
+                        recovered = bool(quarantine)
+                        if not recovered:
+                            # `getattr`, not attribute access: the test doubles
+                            # for this helper predate the reason and still hand
+                            # back a plain bool. A missing reason is worth less
+                            # than a crash here is expensive.
+                            declined_reason = getattr(quarantine, "reason", "") or "unspecified"
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "worker_worktree_quarantine_declined",
+                                    "task_id": request.task_id,
+                                    "target_agent": target_agent,
+                                    "queue_event_id": queue_event_id,
+                                    "workspace_branch": branch,
+                                    "workspace_path": str(worktree_path),
+                                    "refresh_status": refresh_status,
+                                    "reason": declined_reason,
+                                    "detail": getattr(quarantine, "detail", ""),
+                                    "message": (
+                                        f"Declined to preserve dirty worktree for {request.task_id}: "
+                                        f"{declined_reason}."
+                                    ),
+                                },
+                            )
                     if not task_sha:
                         refresh_status = task_sha_source
                     if recovered:
@@ -2459,6 +2488,113 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
         return True
     return False
 
+class QuarantineOutcome(NamedTuple):
+    """Whether dirt was preserved, and -- when it was not -- why not.
+
+    This helper has thirteen distinct ways to decline and used to report all of
+    them as a bare ``False``. Every caller could see that preservation had not
+    happened and none could see whether that was routine ("the worktree was
+    already clean") or a defect ("this worktree is checked out of a repository
+    the caller did not expect"). Both of those were the same value, so an
+    operator reading the activity log after DPF-SRC-RIS-NLSC-001 blocked five
+    times could not tell that quarantine had been misrouted rather than simply
+    having nothing to do.
+
+    It stays falsy when it refuses, so ``bool(...)`` callers and the existing
+    ``return_value=False`` test doubles keep working unchanged; the reason is
+    additive.
+    """
+
+    preserved: bool
+    reason: str = ""
+    detail: str = ""
+
+    def __bool__(self) -> bool:
+        return self.preserved
+
+
+def _quarantine_refused(reason: str, detail: str = "") -> QuarantineOutcome:
+    return QuarantineOutcome(False, reason, detail)
+
+
+@_entrypoint
+def preserve_dead_worker_worktree(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    *,
+    task: dict[str, Any] | None = None,
+    trigger: str = "worker_death",
+) -> QuarantineOutcome:
+    """Back up a dead worker's uncommitted work when it is declared dead.
+
+    Preservation used to happen only on the *next* lease attempt for the task,
+    which is the one moment it is least likely to run. A worker that dies before
+    committing leaves no remote branch; the fail-closed refresh policy then
+    refuses the lease because the branch is missing from the remote -- so the
+    only worker that could have committed the work is the one refused entry, and
+    the quarantine that would have saved it sits behind that same refusal. Four
+    to five occurrences cost 4459+ lines that had to be recovered by hand.
+
+    Death is the correct moment: the process is gone, nothing is writing to the
+    worktree, and the dirt is still on disk. Running here makes the later lease
+    attempt a redundancy rather than the only chance.
+
+    This deliberately does NOT clean the worktree. The backup is a copy, and the
+    worktree's dirtiness is what keeps the worktree pruner from reclaiming it
+    before anyone has looked at what was lost. Preserve, then leave it alone.
+
+    Returns the `QuarantineOutcome` so the caller can log why nothing was saved;
+    it never raises, because a worker being settled must not be blocked by a
+    failure to back up its scratch space.
+    """
+    workspace_path = str(worker.get("workspace_path") or "")
+    task_id = str(worker.get("task_id") or "")
+    if not workspace_path:
+        return _quarantine_refused("worker_had_no_workspace")
+    try:
+        record = task if task is not None else canonical_task_record(config, task_id)
+        repo_root, _repo_source = worker_task_repo_root(config, record)
+        outcome = _quarantine_and_preserve_dirty_worktree(
+            config,
+            state,
+            workspace_path,
+            task_id,
+            expected_branch=worker_task_branch(config, task_id, record),
+            # The dying worker's own record is still in `state` with an active
+            # status. Naming its run id is what stops the helper mistaking it
+            # for a live owner and refusing to touch its own worktree.
+            run_id=str(worker.get("run_id") or "") or None,
+            trigger=trigger,
+            owning_repo_root=repo_root,
+        )
+    except Exception as error:  # pragma: no cover - settlement must not be blocked
+        return _quarantine_refused("preserve_raised", str(error))
+
+    write_activity_log(
+        config,
+        {
+            "type": "worker_death_worktree_preserved" if outcome else "worker_death_worktree_not_preserved",
+            "task_id": task_id,
+            "worker_run_id": worker.get("run_id"),
+            "provider": worker.get("provider"),
+            "trigger": trigger,
+            "workspace_path": workspace_path,
+            "reason": getattr(outcome, "reason", ""),
+            "detail": getattr(outcome, "detail", ""),
+            "message": (
+                f"Preserved uncommitted work for {task_id or 'unknown task'} when its worker was declared dead."
+                if outcome
+                else (
+                    f"No uncommitted work preserved for {task_id or 'unknown task'} at worker death: "
+                    f"{getattr(outcome, 'reason', '') or 'unspecified'}."
+                )
+            ),
+        },
+    )
+    return outcome
+
+
 @_entrypoint
 def _quarantine_and_preserve_dirty_worktree(
     config: dict[str, Any],
@@ -2470,14 +2606,15 @@ def _quarantine_and_preserve_dirty_worktree(
     run_id: str | None = None,
     trigger: str = "",
     owning_repo_root: Path | str | None = None,
-) -> bool:
+) -> QuarantineOutcome:
     """Quarantine and preserve dirty worktree state as an immutable backup without destructive reset/clean/stash or modifying the worktree.
 
-    Returns True iff it inventoried tracked/staged/untracked dirt, wrote verified immutable
+    Returns a falsy `QuarantineOutcome` carrying the reason it declined, or a
+    truthy one iff it inventoried tracked/staged/untracked dirt, wrote verified immutable
     backup to `.orchestrator/worktree-dirt-backups/`, leaving the original worktree wholly untouched.
     """
     if worktree_path is None:
-        return False
+        return _quarantine_refused("no_worktree_path")
     # Two different roots doing two different jobs, conflated until 2026-08-20.
     #
     # `fleet_root` owns the backup directory: the orchestrator's state lives in
@@ -2500,9 +2637,9 @@ def _quarantine_and_preserve_dirty_worktree(
     try:
         worktree_path = Path(worktree_path).expanduser().resolve()
     except (OSError, TypeError, ValueError):
-        return False
+        return _quarantine_refused("unreadable_worktree_path")
     if worktree_path == repo_root or not (worktree_path / ".git").exists():
-        return False
+        return _quarantine_refused("not_a_worktree")
 
     wt_git_rc, wt_git_dir = _git_output(worktree_path, "rev-parse", "--git-dir")
     repo_git_rc, _repo_git_dir = _git_output(repo_root, "rev-parse", "--git-dir")
@@ -2518,7 +2655,7 @@ def _quarantine_and_preserve_dirty_worktree(
         resolved_worktree_common = wt_cd.resolve()
         resolved_repo_common = repo_cd.resolve()
     except (OSError, RuntimeError, ValueError):
-        return False
+        return _quarantine_refused("unreadable_git_metadata")
     if (
         top_rc != 0
         or worktree_common_rc != 0
@@ -2528,19 +2665,19 @@ def _quarantine_and_preserve_dirty_worktree(
         or resolved_top != worktree_path
         or resolved_worktree_common != resolved_repo_common
     ):
-        return False
+        return _quarantine_refused("worktree_belongs_to_another_repository")
 
     branch_rc, current_branch = _git_output(worktree_path, "symbolic-ref", "--quiet", "--short", "HEAD")
     if branch_rc != 0 or not current_branch:
-        return False
+        return _quarantine_refused("detached_head")
     if expected_branch and current_branch != expected_branch:
-        return False
+        return _quarantine_refused("branch_mismatch")
     if _git_operation_in_progress(worktree_path):
-        return False
+        return _quarantine_refused("git_operation_in_progress")
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
     if not local_head:
-        return False
+        return _quarantine_refused("no_local_head")
 
     active_statuses = active_worker_statuses(config)
     for other in state.get("workers", {}).values():
@@ -2554,7 +2691,7 @@ def _quarantine_and_preserve_dirty_worktree(
             other_task_id = str(other.get("task_id") or "")
             other_path = str(other.get("workspace_path") or "")
             if (task_id and other_task_id == task_id) or (other_path and Path(other_path).resolve() == worktree_path):
-                return False
+                return _quarantine_refused("worktree_in_use_by_active_worker")
 
     status_proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
@@ -2563,11 +2700,11 @@ def _quarantine_and_preserve_dirty_worktree(
         check=False,
     )
     if status_proc.returncode != 0 or not status_proc.stdout:
-        return False
+        return _quarantine_refused("status_unreadable")
 
     raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
     if not raw_entries:
-        return False
+        return _quarantine_refused("nothing_to_preserve")
 
     inventory_files: list[dict[str, Any]] = []
     idx = 0
@@ -2695,8 +2832,8 @@ def _quarantine_and_preserve_dirty_worktree(
                     checksums[rel_bp] = h_b.hexdigest()
         (task_backup_dir / "backup_checksums.sha256").write_text(json.dumps(checksums, indent=2), encoding="utf-8")
 
-    except Exception:
-        return False
+    except Exception as exc:
+        return _quarantine_refused("backup_write_failed", str(exc))
 
     write_activity_log(
         config,
@@ -2714,4 +2851,4 @@ def _quarantine_and_preserve_dirty_worktree(
             ),
         },
     )
-    return True
+    return QuarantineOutcome(True, "preserved")

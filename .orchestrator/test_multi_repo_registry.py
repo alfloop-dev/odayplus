@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import os
 import subprocess
 import tempfile
@@ -61,7 +62,7 @@ class MultiRepoRegistryTests(unittest.TestCase):
         }
 
         self.assertEqual(multi_repo_registry.task_artifact_repository_ids({}, task), ["execute_plans", "pantheon"])
-        self.assertEqual(multi_repo_registry.task_primary_repository_id({}, task), "execute_plans")
+        self.assertEqual(multi_repo_registry.task_repository_id({}, task), "execute_plans")
 
     def test_task_primary_repository_rejects_multiple_non_pantheon_repos(self) -> None:
         task = {
@@ -72,7 +73,7 @@ class MultiRepoRegistryTests(unittest.TestCase):
             ],
         }
 
-        self.assertIsNone(multi_repo_registry.task_primary_repository_id({}, task))
+        self.assertIsNone(multi_repo_registry.task_repository_id({}, task))
 
     def test_relative_local_paths_anchor_on_the_fleet_root_not_the_code_root(self) -> None:
         # A supervisor running from a per-rollout code checkout must still find
@@ -213,7 +214,7 @@ class TaskRepositoryDeclarationTests(unittest.TestCase):
         }
 
         self.assertEqual(
-            multi_repo_registry.task_primary_repository_id({}, task), "oday_data_platform"
+            multi_repo_registry.task_repository_id({}, task), "oday_data_platform"
         )
 
     def test_a_declared_repository_applies_with_no_artifacts_at_all(self) -> None:
@@ -223,7 +224,7 @@ class TaskRepositoryDeclarationTests(unittest.TestCase):
         ):
             with self.subTest(task=task):
                 self.assertEqual(
-                    multi_repo_registry.task_primary_repository_id({}, task), "oday_data_platform"
+                    multi_repo_registry.task_repository_id({}, task), "oday_data_platform"
                 )
 
     def test_an_unregistered_declaration_fails_closed(self) -> None:
@@ -231,18 +232,18 @@ class TaskRepositoryDeclarationTests(unittest.TestCase):
         task never named, which is the failure this ordering exists to prevent."""
         task = {"id": "T-1", "repository": "someone/not-registered"}
 
-        self.assertIsNone(multi_repo_registry.task_primary_repository_id({}, task))
+        self.assertIsNone(multi_repo_registry.task_repository_id({}, task))
 
     def test_undeclared_tasks_keep_the_artifact_derivation(self) -> None:
-        self.assertEqual(multi_repo_registry.task_primary_repository_id({}, {"id": "T-2"}), "pantheon")
+        self.assertEqual(multi_repo_registry.task_repository_id({}, {"id": "T-2"}), "pantheon")
         self.assertEqual(
-            multi_repo_registry.task_primary_repository_id(
+            multi_repo_registry.task_repository_id(
                 {}, {"id": "T-3", "artifacts": ["execute-plans/e2e/dummy.spec.ts"]}
             ),
             "execute_plans",
         )
         self.assertIsNone(
-            multi_repo_registry.task_primary_repository_id(
+            multi_repo_registry.task_repository_id(
                 {},
                 {
                     "id": "T-4",
@@ -259,7 +260,69 @@ class TaskRepositoryDeclarationTests(unittest.TestCase):
 
         binding = multi_repo_registry.resolve_task_repository({}, task)
 
-        self.assertEqual(multi_repo_registry.task_primary_repository_id({}, task), binding.repo_id)
+        self.assertEqual(multi_repo_registry.task_repository_id({}, task), binding.repo_id)
+
+
+class RepositoryResolutionHasOneAuthorityTests(unittest.TestCase):
+    """Deriving a task's repository must not be reachable except through the registry.
+
+    Five call sites were fixed one at a time on 2026-08-20 for the same defect:
+    each answered "which repository" for itself and answered wrong for any task
+    outside ODay Plus. Fixing instances does not stop the sixth being written,
+    so the wrong answer is no longer reachable -- artifact inference is private
+    and this scan keeps it that way.
+
+    Modelled on `test_no_unvalidated_actor_read_remains`, which encodes the same
+    lesson for actor reads.
+    """
+
+    ALLOWED = {"multi_repo_registry.py"}
+
+    def _python_sources(self):
+        root = Path(__file__).resolve().parents[1]
+        for base in (root / ".orchestrator", root / "scripts", root / "delivery_toolchain"):
+            if not base.exists():
+                continue
+            for path in base.rglob("*.py"):
+                if path.name.startswith("test_") or path.name in self.ALLOWED:
+                    continue
+                yield path
+
+    def test_repository_inference_is_not_reachable_outside_the_registry(self) -> None:
+        offenders = []
+        for path in self._python_sources():
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and node.id == "_infer_repository_from_artifacts":
+                    offenders.append(f"{path.name}:{node.lineno}")
+                elif isinstance(node, ast.Attribute) and node.attr == "_infer_repository_from_artifacts":
+                    offenders.append(f"{path.name}:{node.lineno}")
+        self.assertEqual([], offenders, "use task_repository_id or resolve_task_repository instead")
+
+    def test_the_retired_public_name_stays_retired(self) -> None:
+        """`task_primary_repository_id` was the reachable wrong answer."""
+        self.assertFalse(hasattr(multi_repo_registry, "task_primary_repository_id"))
+
+    def test_the_authority_answers_for_a_declared_repository(self) -> None:
+        task = {"id": "T-1", "repository": "alfloop-dev/oday-data-platform"}
+        self.assertEqual(multi_repo_registry.task_repository_id({}, task), "oday_data_platform")
+
+    def test_the_authority_refuses_what_it_cannot_answer(self) -> None:
+        """Both kinds of "cannot answer" must look the same to a caller."""
+        unknown = {"id": "T-2", "repository": "someone/not-registered"}
+        ambiguous = {"id": "T-3", "artifacts": [
+            "execute-plans/e2e/a.spec.ts",
+            "front-ai-trading-system/src/b.tsx",
+        ]}
+        self.assertIsNone(multi_repo_registry.task_repository_id({}, unknown))
+        self.assertIsNone(multi_repo_registry.task_repository_id({}, ambiguous))
+        for task in (unknown, ambiguous):
+            binding = multi_repo_registry.resolve_task_repository({}, task)
+            self.assertEqual(binding.source, "unresolved")
+            self.assertIsNotNone(binding.error)
 
 
 if __name__ == "__main__":
