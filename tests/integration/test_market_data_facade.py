@@ -29,7 +29,6 @@ from modules.external_data.infrastructure.data_platform_client import (
     DataPlatformDocumentNotFoundError,
     InMemoryDataPlatformTransport,
 )
-from shared.auth.engine import AuthorizationEngine
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
     StoreDailyPerformance,
@@ -63,6 +62,7 @@ from shared.auth import (
     Role,
     Scope,
 )
+from shared.auth.engine import AuthorizationEngine
 
 
 @pytest.fixture
