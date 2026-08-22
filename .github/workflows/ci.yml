@@ -98,8 +98,12 @@ jobs:
           uv run python delivery_toolchain/governance/check_orchestrator_config.py
           uv run python delivery_toolchain/governance/check_config_wiring.py
 
+      # tests/tooling covers the delivery scripts themselves. It lives under
+      # tests/ but must run here: the `product` job is skipped for
+      # development_tooling scope, so a tooling-only change that breaks these
+      # scripts would otherwise land on dev with the covering tests never run.
       - name: Test orchestrator code
-        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts
+        run: uv run pytest -m "not requires_live_env" .orchestrator delivery_toolchain scripts tests/tooling
 
   product:
     needs: change-scope
