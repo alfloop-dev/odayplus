@@ -266,14 +266,15 @@ def task_start(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return run(["bash", str(GIT_DIR / "task_start.sh"), *args], repo)
 
 
-def test_task_start_creates_branch_from_base(repo: Path):
+def test_task_start_refuses_to_create_branch_outside_worker_manager(repo: Path):
     result = task_start(repo, TASK)
-    assert result.returncode == 0, result.stderr
-    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == f"task/{TASK}"
+    assert result.returncode == 1
+    assert "outside its Worker Manager lease" in result.stderr
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "dev"
 
 
 def test_task_start_is_idempotent(repo: Path):
-    assert task_start(repo, TASK).returncode == 0
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
     again = task_start(repo, TASK)
     assert again.returncode == 0
     assert "already on" in again.stdout
@@ -288,15 +289,18 @@ def test_task_start_refuses_dirty_tracked_tree(repo: Path):
 
 def test_task_start_ignores_untracked_state_mirrors(repo: Path):
     (repo / "ai-status.json").write_text("{}\n", encoding="utf-8")
-    assert task_start(repo, TASK).returncode == 0
+    result = task_start(repo, TASK)
+    assert result.returncode == 1
+    assert "outside its Worker Manager lease" in result.stderr
 
 
-def test_task_start_resumes_existing_branch(repo: Path):
+def test_task_start_refuses_to_attach_existing_branch_outside_worker_manager(repo: Path):
     git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
     git(repo, "switch", "--quiet", "dev")
     result = task_start(repo, TASK)
-    assert result.returncode == 0, result.stderr
-    assert "resumed existing" in result.stdout
+    assert result.returncode == 1
+    assert "outside its Worker Manager lease" in result.stderr
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "dev"
 
 
 def test_task_start_requires_a_task_id(repo: Path):
