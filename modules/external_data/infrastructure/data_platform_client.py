@@ -19,44 +19,40 @@ from typing import Any, Protocol, runtime_checkable
 # Foundation contracts client
 from packages.oday_data_contracts_client import (
     ContractClientError as FoundationClientError,
-    FoundationRelease,
+)
+from packages.oday_data_contracts_client import (
     FoundationVersion,
-    diagnostics as foundation_diagnostics,
-    foundation_contracts,
     foundation_version,
+)
+from packages.oday_data_contracts_client import (
+    diagnostics as foundation_diagnostics,
+)
+from packages.oday_data_contracts_client import (
     verify_release as verify_foundation_release,
 )
 from packages.oday_data_contracts_client.models import (
-    Coverage,
     EMGIPlatformFoundationConfig,
-    MachineCapacityRecord,
-    ManifestDocument,
-    MeasurementEnvelope,
-    OperationalStartObservation,
-    ScopePrincipalDocument,
-    SourceObservationDocument,
-    SourceRegistryDocument,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
-    TimeContract,
 )
 
 # Product contracts client
 from packages.oday_data_product_contracts_client import (
     ContractClientError as ProductClientError,
-    ProductRelease,
+)
+from packages.oday_data_product_contracts_client import (
     ProductVersion,
-    diagnostics as product_diagnostics,
-    product_contracts,
     product_version,
+)
+from packages.oday_data_product_contracts_client import (
+    diagnostics as product_diagnostics,
+)
+from packages.oday_data_product_contracts_client import (
     verify_release as verify_product_release,
 )
 from packages.oday_data_product_contracts_client.models import (
     CatchmentProfileDocument,
-    CoverageSurface,
-    DataAcquisitionPlan,
-    FieldSurveyDocument,
     MarketCellProfileDocument,
     PropertyObservationDocument,
     SiteMarketContextDocument,
@@ -144,14 +140,6 @@ class InMemoryDataPlatformTransport:
 
     _documents: dict[str, dict[str, Mapping[str, Any]]] = field(default_factory=dict)
     _records: dict[str, list[Mapping[str, Any]]] = field(default_factory=dict)
-    _site_contexts: dict[str, Mapping[str, Any]] = field(default_factory=dict)
-    _cell_profiles: dict[str, Mapping[str, Any]] = field(default_factory=dict)
-    _catchment_profiles: dict[str, Mapping[str, Any]] = field(default_factory=dict)
-    _properties: dict[str, Mapping[str, Any]] = field(default_factory=dict)
-    _listings: dict[str, Mapping[str, Any]] = field(default_factory=dict)
-    _stores: dict[str, Mapping[str, Any]] = field(default_factory=dict)
-    _store_coverage: dict[tuple[str, str], Mapping[str, Any]] = field(default_factory=dict)
-    _store_performance: dict[tuple[str, str], Mapping[str, Any]] = field(default_factory=dict)
 
     def store_document(
         self,
@@ -170,38 +158,6 @@ class InMemoryDataPlatformTransport:
             self._records[contract_id] = []
         self._records[contract_id].append(data)
 
-    def store_site_context(self, site_id: str, data: Mapping[str, Any]) -> None:
-        """Index a SiteMarketContext record by site_id."""
-        self._site_contexts[site_id] = data
-
-    def store_cell_profile(self, cell_id: str, data: Mapping[str, Any]) -> None:
-        """Index a MarketCellProfile record by cell_id."""
-        self._cell_profiles[cell_id] = data
-
-    def store_catchment_profile(self, catchment_id: str, data: Mapping[str, Any]) -> None:
-        """Index a CatchmentProfile record by catchment_id."""
-        self._catchment_profiles[catchment_id] = data
-
-    def store_property_entity(self, property_id: str, data: Mapping[str, Any]) -> None:
-        """Index a property entity by property_id."""
-        self._properties[property_id] = data
-
-    def store_listing_observation(self, listing_id: str, data: Mapping[str, Any]) -> None:
-        """Index a listing observation by listing_obs_id or source_listing_id."""
-        self._listings[listing_id] = data
-
-    def store_store_reference(self, store_id: str, data: Mapping[str, Any]) -> None:
-        """Index a store reference by store_id."""
-        self._stores[store_id] = data
-
-    def store_store_coverage_record(self, store_id: str, date_key: str, data: Mapping[str, Any]) -> None:
-        """Index store day coverage by (store_id, date_key)."""
-        self._store_coverage[(store_id, date_key)] = data
-
-    def store_store_daily_performance_record(self, store_id: str, date_key: str, data: Mapping[str, Any]) -> None:
-        """Index store daily performance by (store_id, date_key)."""
-        self._store_performance[(store_id, date_key)] = data
-
     def fetch_document(
         self,
         contract_id: str,
@@ -211,20 +167,29 @@ class InMemoryDataPlatformTransport:
     ) -> Mapping[str, Any] | None:
         query_params = dict(params) if params else {}
 
-        if document_id and contract_id in self._documents and document_id in self._documents[contract_id]:
-            return self._documents[contract_id][document_id]
+        if contract_id not in self._documents and contract_id not in self._records:
+            return None
 
-        if contract_id in self._documents and self._documents[contract_id]:
-            if not document_id and not query_params:
-                return next(iter(self._documents[contract_id].values()))
-            for doc in self._documents[contract_id].values():
-                matches = True
-                for k, v in query_params.items():
-                    if doc.get(k) != v:
-                        matches = False
-                        break
-                if matches:
+        # 1. Exact document_id match in documents
+        if document_id and contract_id in self._documents and document_id in self._documents[contract_id]:
+            doc = self._documents[contract_id][document_id]
+            if "tenant_id" in query_params and "tenant_id" in doc and doc["tenant_id"] != query_params["tenant_id"]:
+                return None
+            return doc
+
+        # 2. Search documents by params
+        if contract_id in self._documents:
+            for doc_key, doc in self._documents[contract_id].items():
+                if document_id and doc_key != document_id and doc.get("document_id") != document_id and doc.get("profile_id") != document_id:
+                    continue
+                if self._document_matches_params(contract_id, doc, query_params):
                     return doc
+
+        # 3. Fallback to records
+        if contract_id in self._records:
+            for rec in self._records[contract_id]:
+                if self._record_matches_params(contract_id, rec, query_params):
+                    return rec
 
         return None
 
@@ -243,29 +208,110 @@ class InMemoryDataPlatformTransport:
                 matched.append(rec)
         return matched
 
-    def get_indexed_site_context(self, site_id: str) -> Mapping[str, Any] | None:
-        return self._site_contexts.get(site_id)
+    def _document_matches_params(
+        self,
+        contract_id: str,
+        doc: Mapping[str, Any],
+        params: Mapping[str, Any],
+    ) -> bool:
+        """Check if a document payload matches the requested query parameters."""
+        if not params:
+            return True
 
-    def get_indexed_cell_profile(self, cell_id: str) -> Mapping[str, Any] | None:
-        return self._cell_profiles.get(cell_id)
+        # Check tenant_id at top level if specified
+        if "tenant_id" in params and "tenant_id" in doc:
+            if doc["tenant_id"] != params["tenant_id"]:
+                return False
 
-    def get_indexed_catchment_profile(self, catchment_id: str) -> Mapping[str, Any] | None:
-        return self._catchment_profiles.get(catchment_id)
+        if contract_id == "emgi.site-market-context.v1":
+            contexts = doc.get("contexts", [])
+            return any(self._context_item_matches(ctx, params) for ctx in contexts)
 
-    def get_indexed_property(self, property_id: str) -> Mapping[str, Any] | None:
-        return self._properties.get(property_id)
+        if contract_id == "emgi.market-cell-profile.v1":
+            cells = doc.get("cells", [])
+            return any(self._cell_item_matches(cell, params) for cell in cells)
 
-    def get_indexed_listing(self, listing_id: str) -> Mapping[str, Any] | None:
-        return self._listings.get(listing_id)
+        if contract_id == "emgi.catchment-profile.v1":
+            profiles = doc.get("profiles", [])
+            return any(self._catchment_item_matches(prof, params) for prof in profiles)
 
-    def get_indexed_store_reference(self, store_id: str) -> Mapping[str, Any] | None:
-        return self._stores.get(store_id)
+        if contract_id == "emgi.property-observation.v1":
+            if "property_id" in params:
+                props = doc.get("properties", [])
+                if not any(p.get("property_id") == params["property_id"] for p in props):
+                    return False
+            if "listing_id" in params:
+                listings = doc.get("listing_observations", [])
+                if not any(
+                    obs.get("listing_obs_id") == params["listing_id"] or obs.get("source_listing_id") == params["listing_id"]
+                    for obs in listings
+                ):
+                    return False
+            return True
 
-    def get_indexed_store_coverage(self, store_id: str, date_key: str) -> Mapping[str, Any] | None:
-        return self._store_coverage.get((store_id, date_key))
+        if contract_id in ("oday.store-reference.v1", "oday.store-coverage.v1", "oday.store-daily-performance.v1"):
+            for k, v in params.items():
+                if k == "date_key":
+                    if doc.get("business_date") != v and doc.get("date_key") != v:
+                        return False
+                elif k in doc and doc[k] != v:
+                    return False
+            return True
 
-    def get_indexed_store_performance(self, store_id: str, date_key: str) -> Mapping[str, Any] | None:
-        return self._store_performance.get((store_id, date_key))
+        for k, v in params.items():
+            if k in doc and str(doc[k]) != str(v):
+                return False
+        return True
+
+    def _context_item_matches(self, ctx: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+        if "site_id" in params:
+            identity = ctx.get("identity", {})
+            if identity.get("site_id") != params["site_id"]:
+                return False
+        if "period_grain" in params:
+            grain = str(ctx.get("period_grain"))
+            target_grain = str(params["period_grain"].value if hasattr(params["period_grain"], "value") else params["period_grain"])
+            if grain != target_grain:
+                return False
+        if "period_key" in params and params["period_key"] is not None:
+            if ctx.get("period_key") != params["period_key"]:
+                return False
+        return True
+
+    def _cell_item_matches(self, cell: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+        if "cell_id" in params:
+            if cell.get("cell_id") != params["cell_id"] and cell.get("h3_index") != params["cell_id"]:
+                return False
+        if "period_grain" in params:
+            grain = str(cell.get("period_grain"))
+            target_grain = str(params["period_grain"].value if hasattr(params["period_grain"], "value") else params["period_grain"])
+            if grain != target_grain:
+                return False
+        if "period_key" in params and params["period_key"] is not None:
+            if cell.get("period_key") != params["period_key"]:
+                return False
+        return True
+
+    def _catchment_item_matches(self, prof: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+        if "catchment_id" in params:
+            boundary_id = prof.get("boundary", {}).get("catchment_id") if isinstance(prof.get("boundary"), dict) else None
+            if prof.get("profile_id") != params["catchment_id"] and boundary_id != params["catchment_id"]:
+                return False
+        if "period_grain" in params:
+            grain = str(prof.get("period_grain"))
+            target_grain = str(params["period_grain"].value if hasattr(params["period_grain"], "value") else params["period_grain"])
+            if grain != target_grain:
+                return False
+        if "period_key" in params and params["period_key"] is not None:
+            if prof.get("period_key") != params["period_key"]:
+                return False
+        return True
+
+    def _record_matches_params(self, contract_id: str, rec: Mapping[str, Any], params: Mapping[str, Any]) -> bool:
+        for k, v in params.items():
+            if k in rec and str(rec[k]) != str(v):
+                return False
+        return True
 
 
 class DataPlatformClient:
@@ -276,6 +322,7 @@ class DataPlatformClient:
        and `oday_data_product_contracts_client`).
     2. Strict read-only semantics: no provider credentials, no raw fetch, and no direct source-snapshot writes.
     3. Fail-closed contract validation and comprehensive release diagnostics.
+    4. Strict polymorphic transport communication via DataPlatformTransport.
     """
 
     def __init__(self, transport: DataPlatformTransport | None = None) -> None:
@@ -342,12 +389,18 @@ class DataPlatformClient:
         document_id: str | None = None,
         *,
         site_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
         tenant_id: str | None = None,
     ) -> SiteMarketContextDocument:
         """Fetch and parse a complete SiteMarketContextDocument."""
         params: dict[str, Any] = {}
         if site_id:
             params["site_id"] = site_id
+        if period_grain is not None:
+            params["period_grain"] = str(period_grain.value if isinstance(period_grain, PeriodGrain) else period_grain)
+        if period_key is not None:
+            params["period_key"] = period_key
         if tenant_id:
             params["tenant_id"] = tenant_id
 
@@ -358,8 +411,8 @@ class DataPlatformClient:
         )
         if raw is None:
             raise DataPlatformDocumentNotFoundError(
-                f"SiteMarketContextDocument not found (document_id={document_id}, site_id={site_id})",
-                details={"document_id": document_id, "site_id": site_id, "tenant_id": tenant_id},
+                f"SiteMarketContextDocument not found (document_id={document_id}, site_id={site_id}, period_grain={period_grain}, period_key={period_key})",
+                details={"document_id": document_id, "site_id": site_id, "period_grain": str(period_grain), "period_key": period_key, "tenant_id": tenant_id},
             )
         try:
             return SiteMarketContextDocument.from_dict(raw)
@@ -377,28 +430,25 @@ class DataPlatformClient:
         period_key: str | None = None,
         tenant_id: str | None = None,
     ) -> SiteMarketContext:
-        """Retrieve a specific SiteMarketContext object by site_id."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_site_context(site_id)
-            if raw_indexed is not None:
-                try:
-                    return SiteMarketContext.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed SiteMarketContext for site_id={site_id}: {err}") from err
-
-        try:
-            doc = self.get_site_market_context_document(site_id=site_id, tenant_id=tenant_id)
-            for ctx in doc.contexts:
-                if ctx.identity.site_id == site_id:
-                    if period_key and ctx.period_key != period_key:
-                        continue
-                    return ctx
-        except DataPlatformDocumentNotFoundError:
-            pass
+        """Retrieve a specific SiteMarketContext object by site_id, matching period_grain and period_key."""
+        normalized_grain = PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+        doc = self.get_site_market_context_document(
+            site_id=site_id,
+            period_grain=normalized_grain,
+            period_key=period_key,
+            tenant_id=tenant_id,
+        )
+        for ctx in doc.contexts:
+            if ctx.identity.site_id == site_id:
+                if ctx.period_grain != normalized_grain:
+                    continue
+                if period_key is not None and ctx.period_key != period_key:
+                    continue
+                return ctx
 
         raise DataPlatformDocumentNotFoundError(
-            f"SiteMarketContext not found for site_id={site_id}",
-            details={"site_id": site_id, "period_grain": str(period_grain), "period_key": period_key},
+            f"SiteMarketContext not found for site_id={site_id}, period_grain={normalized_grain.value}, period_key={period_key}",
+            details={"site_id": site_id, "period_grain": normalized_grain.value, "period_key": period_key, "tenant_id": tenant_id},
         )
 
     # -----------------------------------------------------------------------
@@ -410,12 +460,18 @@ class DataPlatformClient:
         document_id: str | None = None,
         *,
         cell_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
         tenant_id: str | None = None,
     ) -> MarketCellProfileDocument:
         """Fetch and parse a complete MarketCellProfileDocument."""
         params: dict[str, Any] = {}
         if cell_id:
             params["cell_id"] = cell_id
+        if period_grain is not None:
+            params["period_grain"] = str(period_grain.value if isinstance(period_grain, PeriodGrain) else period_grain)
+        if period_key is not None:
+            params["period_key"] = period_key
         if tenant_id:
             params["tenant_id"] = tenant_id
 
@@ -426,8 +482,8 @@ class DataPlatformClient:
         )
         if raw is None:
             raise DataPlatformDocumentNotFoundError(
-                f"MarketCellProfileDocument not found (document_id={document_id}, cell_id={cell_id})",
-                details={"document_id": document_id, "cell_id": cell_id, "tenant_id": tenant_id},
+                f"MarketCellProfileDocument not found (document_id={document_id}, cell_id={cell_id}, period_grain={period_grain}, period_key={period_key})",
+                details={"document_id": document_id, "cell_id": cell_id, "period_grain": str(period_grain), "period_key": period_key, "tenant_id": tenant_id},
             )
         try:
             return MarketCellProfileDocument.from_dict(raw)
@@ -445,28 +501,25 @@ class DataPlatformClient:
         period_key: str | None = None,
         tenant_id: str | None = None,
     ) -> MarketCellProfile:
-        """Retrieve a specific MarketCellProfile object by cell_id."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_cell_profile(cell_id)
-            if raw_indexed is not None:
-                try:
-                    return MarketCellProfile.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed MarketCellProfile for cell_id={cell_id}: {err}") from err
-
-        try:
-            doc = self.get_market_cell_profile_document(cell_id=cell_id, tenant_id=tenant_id)
-            for cell in doc.cells:
-                if cell.cell_id == cell_id:
-                    if period_key and cell.period_key != period_key:
-                        continue
-                    return cell
-        except DataPlatformDocumentNotFoundError:
-            pass
+        """Retrieve a specific MarketCellProfile object by cell_id, matching period_grain and period_key."""
+        normalized_grain = PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+        doc = self.get_market_cell_profile_document(
+            cell_id=cell_id,
+            period_grain=normalized_grain,
+            period_key=period_key,
+            tenant_id=tenant_id,
+        )
+        for cell in doc.cells:
+            if cell.cell_id == cell_id or cell.h3_index == cell_id:
+                if cell.period_grain != normalized_grain:
+                    continue
+                if period_key is not None and cell.period_key != period_key:
+                    continue
+                return cell
 
         raise DataPlatformDocumentNotFoundError(
-            f"MarketCellProfile not found for cell_id={cell_id}",
-            details={"cell_id": cell_id, "period_grain": str(period_grain), "period_key": period_key},
+            f"MarketCellProfile not found for cell_id={cell_id}, period_grain={normalized_grain.value}, period_key={period_key}",
+            details={"cell_id": cell_id, "period_grain": normalized_grain.value, "period_key": period_key, "tenant_id": tenant_id},
         )
 
     # -----------------------------------------------------------------------
@@ -478,12 +531,18 @@ class DataPlatformClient:
         document_id: str | None = None,
         *,
         catchment_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
         tenant_id: str | None = None,
     ) -> CatchmentProfileDocument:
         """Fetch and parse a complete CatchmentProfileDocument."""
         params: dict[str, Any] = {}
         if catchment_id:
             params["catchment_id"] = catchment_id
+        if period_grain is not None:
+            params["period_grain"] = str(period_grain.value if isinstance(period_grain, PeriodGrain) else period_grain)
+        if period_key is not None:
+            params["period_key"] = period_key
         if tenant_id:
             params["tenant_id"] = tenant_id
 
@@ -494,8 +553,8 @@ class DataPlatformClient:
         )
         if raw is None:
             raise DataPlatformDocumentNotFoundError(
-                f"CatchmentProfileDocument not found (document_id={document_id}, catchment_id={catchment_id})",
-                details={"document_id": document_id, "catchment_id": catchment_id, "tenant_id": tenant_id},
+                f"CatchmentProfileDocument not found (document_id={document_id}, catchment_id={catchment_id}, period_grain={period_grain}, period_key={period_key})",
+                details={"document_id": document_id, "catchment_id": catchment_id, "period_grain": str(period_grain), "period_key": period_key, "tenant_id": tenant_id},
             )
         try:
             return CatchmentProfileDocument.from_dict(raw)
@@ -513,28 +572,28 @@ class DataPlatformClient:
         period_key: str | None = None,
         tenant_id: str | None = None,
     ) -> CatchmentProfile:
-        """Retrieve a specific CatchmentProfile object by catchment_id."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_catchment_profile(catchment_id)
-            if raw_indexed is not None:
-                try:
-                    return CatchmentProfile.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed CatchmentProfile for catchment_id={catchment_id}: {err}") from err
-
-        try:
-            doc = self.get_catchment_profile_document(catchment_id=catchment_id, tenant_id=tenant_id)
-            for prof in doc.profiles:
-                if prof.profile_id == catchment_id or (hasattr(prof, "boundary") and prof.boundary.catchment_id == catchment_id):
-                    if period_key and prof.period_key != period_key:
-                        continue
-                    return prof
-        except DataPlatformDocumentNotFoundError:
-            pass
+        """Retrieve a specific CatchmentProfile object by catchment_id, matching period_grain and period_key."""
+        normalized_grain = PeriodGrain(period_grain) if isinstance(period_grain, str) else period_grain
+        doc = self.get_catchment_profile_document(
+            catchment_id=catchment_id,
+            period_grain=normalized_grain,
+            period_key=period_key,
+            tenant_id=tenant_id,
+        )
+        for prof in doc.profiles:
+            is_match = prof.profile_id == catchment_id or (
+                hasattr(prof, "boundary") and prof.boundary.catchment_id == catchment_id
+            )
+            if is_match:
+                if prof.period_grain != normalized_grain:
+                    continue
+                if period_key is not None and prof.period_key != period_key:
+                    continue
+                return prof
 
         raise DataPlatformDocumentNotFoundError(
-            f"CatchmentProfile not found for catchment_id={catchment_id}",
-            details={"catchment_id": catchment_id, "period_grain": str(period_grain), "period_key": period_key},
+            f"CatchmentProfile not found for catchment_id={catchment_id}, period_grain={normalized_grain.value}, period_key={period_key}",
+            details={"catchment_id": catchment_id, "period_grain": normalized_grain.value, "period_key": period_key, "tenant_id": tenant_id},
         )
 
     # -----------------------------------------------------------------------
@@ -547,6 +606,7 @@ class DataPlatformClient:
         *,
         property_id: str | None = None,
         listing_id: str | None = None,
+        tenant_id: str | None = None,
     ) -> PropertyObservationDocument:
         """Fetch and parse a complete PropertyObservationDocument."""
         params: dict[str, Any] = {}
@@ -554,6 +614,8 @@ class DataPlatformClient:
             params["property_id"] = property_id
         if listing_id:
             params["listing_id"] = listing_id
+        if tenant_id:
+            params["tenant_id"] = tenant_id
 
         raw = self._transport.fetch_document(
             "emgi.property-observation.v1",
@@ -562,8 +624,8 @@ class DataPlatformClient:
         )
         if raw is None:
             raise DataPlatformDocumentNotFoundError(
-                f"PropertyObservationDocument not found (document_id={document_id}, property_id={property_id})",
-                details={"document_id": document_id, "property_id": property_id, "listing_id": listing_id},
+                f"PropertyObservationDocument not found (document_id={document_id}, property_id={property_id}, listing_id={listing_id})",
+                details={"document_id": document_id, "property_id": property_id, "listing_id": listing_id, "tenant_id": tenant_id},
             )
         try:
             return PropertyObservationDocument.from_dict(raw)
@@ -573,50 +635,28 @@ class DataPlatformClient:
                 details={"contract_id": "emgi.property-observation.v1", "raw": raw},
             ) from err
 
-    def get_property_entity(self, property_id: str) -> PropertyEntity:
+    def get_property_entity(self, property_id: str, *, tenant_id: str | None = None) -> PropertyEntity:
         """Retrieve a specific PropertyEntity by property_id."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_property(property_id)
-            if raw_indexed is not None:
-                try:
-                    return PropertyEntity.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed PropertyEntity for property_id={property_id}: {err}") from err
-
-        try:
-            doc = self.get_property_observation_document(property_id=property_id)
-            for prop in doc.properties:
-                if prop.property_id == property_id:
-                    return prop
-        except DataPlatformDocumentNotFoundError:
-            pass
+        doc = self.get_property_observation_document(property_id=property_id, tenant_id=tenant_id)
+        for prop in doc.properties:
+            if prop.property_id == property_id:
+                return prop
 
         raise DataPlatformDocumentNotFoundError(
             f"PropertyEntity not found for property_id={property_id}",
-            details={"property_id": property_id},
+            details={"property_id": property_id, "tenant_id": tenant_id},
         )
 
-    def get_listing_observation(self, listing_id: str) -> PropertyListingObservation:
+    def get_listing_observation(self, listing_id: str, *, tenant_id: str | None = None) -> PropertyListingObservation:
         """Retrieve a specific PropertyListingObservation by listing_obs_id or source_listing_id."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_listing(listing_id)
-            if raw_indexed is not None:
-                try:
-                    return PropertyListingObservation.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed PropertyListingObservation for listing_id={listing_id}: {err}") from err
-
-        try:
-            doc = self.get_property_observation_document(listing_id=listing_id)
-            for obs in doc.listing_observations:
-                if obs.listing_obs_id == listing_id or obs.source_listing_id == listing_id:
-                    return obs
-        except DataPlatformDocumentNotFoundError:
-            pass
+        doc = self.get_property_observation_document(listing_id=listing_id, tenant_id=tenant_id)
+        for obs in doc.listing_observations:
+            if obs.listing_obs_id == listing_id or obs.source_listing_id == listing_id:
+                return obs
 
         raise DataPlatformDocumentNotFoundError(
             f"PropertyListingObservation not found for listing_id={listing_id}",
-            details={"listing_id": listing_id},
+            details={"listing_id": listing_id, "tenant_id": tenant_id},
         )
 
     # -----------------------------------------------------------------------
@@ -635,15 +675,7 @@ class DataPlatformClient:
 
     def get_store_reference(self, store_id: str) -> StoreReference:
         """Retrieve StoreReference for a store_id."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_store_reference(store_id)
-            if raw_indexed is not None:
-                try:
-                    return StoreReference.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed StoreReference for store_id={store_id}: {err}") from err
-
-        raw = self._transport.fetch_document("oday.store-reference.v1", params={"store_id": store_id})
+        raw = self._transport.fetch_document("oday.store-reference.v1", document_id=store_id, params={"store_id": store_id})
         if raw is None:
             raise DataPlatformDocumentNotFoundError(
                 f"StoreReference not found for store_id={store_id}",
@@ -656,17 +688,11 @@ class DataPlatformClient:
 
     def get_store_day_coverage(self, store_id: str, date_key: str) -> StoreDayCoverage:
         """Retrieve StoreDayCoverage for (store_id, date_key)."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_store_coverage(store_id, date_key)
-            if raw_indexed is not None:
-                try:
-                    return StoreDayCoverage.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed StoreDayCoverage for store_id={store_id}, date={date_key}: {err}") from err
-
+        doc_id = f"{store_id}:{date_key}"
         raw = self._transport.fetch_document(
             "oday.store-coverage.v1",
-            params={"store_id": store_id, "date_key": date_key},
+            document_id=doc_id,
+            params={"store_id": store_id, "date_key": date_key, "business_date": date_key},
         )
         if raw is None:
             raise DataPlatformDocumentNotFoundError(
@@ -680,17 +706,11 @@ class DataPlatformClient:
 
     def get_store_daily_performance(self, store_id: str, date_key: str) -> StoreDailyPerformance:
         """Retrieve StoreDailyPerformance for (store_id, date_key)."""
-        if isinstance(self._transport, InMemoryDataPlatformTransport):
-            raw_indexed = self._transport.get_indexed_store_performance(store_id, date_key)
-            if raw_indexed is not None:
-                try:
-                    return StoreDailyPerformance.from_dict(raw_indexed)
-                except Exception as err:
-                    raise DataPlatformValidationError(f"Invalid indexed StoreDailyPerformance for store_id={store_id}, date={date_key}: {err}") from err
-
+        doc_id = f"{store_id}:{date_key}"
         raw = self._transport.fetch_document(
             "oday.store-daily-performance.v1",
-            params={"store_id": store_id, "date_key": date_key},
+            document_id=doc_id,
+            params={"store_id": store_id, "date_key": date_key, "business_date": date_key},
         )
         if raw is None:
             raise DataPlatformDocumentNotFoundError(

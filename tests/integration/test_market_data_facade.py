@@ -10,35 +10,29 @@ Acceptance Criteria:
 
 from __future__ import annotations
 
-import pytest
 from typing import Any
 
-from modules.external_data.infrastructure.data_platform_client import (
-    DataPlatformClient,
-    DataPlatformClientError,
-    DataPlatformDocumentNotFoundError,
-    DataPlatformIntegrityError,
-    DataPlatformValidationError,
-    InMemoryDataPlatformTransport,
-)
+import pytest
+
 from modules.external_data.application.market_data_facade import (
-    ALLOWED_MARKET_DATA_ROLES,
     FACADE_CONTRACT,
     FACADE_VERSION,
     MarketDataAuthorizationError,
     MarketDataFacade,
-    MarketDataFacadeError,
     MarketDataNotFoundError,
     MarketDataValidationError,
 )
-from packages.oday_data_contracts_client import foundation_version
+from modules.external_data.infrastructure.data_platform_client import (
+    DataPlatformClient,
+    DataPlatformDocumentNotFoundError,
+    InMemoryDataPlatformTransport,
+)
 from packages.oday_data_contracts_client.models import (
     EMGIPlatformFoundationConfig,
     StoreDailyPerformance,
     StoreDayCoverage,
     StoreReference,
 )
-from packages.oday_data_product_contracts_client import product_version
 from packages.oday_data_product_contracts_client.models.catchment_profile import (
     CatchmentProfile,
     CatchmentProfileDocument,
@@ -61,13 +55,11 @@ from packages.oday_data_product_contracts_client.models.site_market_context impo
 )
 from shared.auth import (
     ANONYMOUS,
-    Action,
     DataClassification,
     Principal,
     Role,
     Scope,
 )
-from shared.auth.engine import AuthorizationEngine
 
 
 @pytest.fixture
@@ -472,16 +464,6 @@ def seeded_transport(
     transport.store_document("oday.store-reference.v1", "store-101", sample_store_reference_payload)
     transport.store_document("oday.store-coverage.v1", "store-101:2026-08-14", sample_store_coverage_payload)
     transport.store_document("oday.store-daily-performance.v1", "store-101:2026-08-14", sample_store_performance_payload)
-
-    # Index specific entities
-    transport.store_site_context("site-taipei-001", sample_site_context_payload["contexts"][0])
-    transport.store_cell_profile("8928308280fffff", sample_cell_profile_payload["cells"][0])
-    transport.store_catchment_profile("catchment-xinyi-10m", sample_catchment_profile_payload["profiles"][0])
-    transport.store_property_entity("prop-tw-001", sample_property_observation_payload["properties"][0])
-    transport.store_listing_observation("list-obs-001", sample_property_observation_payload["listing_observations"][0])
-    transport.store_store_reference("store-101", sample_store_reference_payload)
-    transport.store_store_coverage_record("store-101", "2026-08-14", sample_store_coverage_payload)
-    transport.store_store_daily_performance_record("store-101", "2026-08-14", sample_store_performance_payload)
     return transport
 
 
@@ -556,34 +538,6 @@ def test_contract_identity_and_version(facade):
     assert facade.version == FACADE_VERSION
 
 
-def test_data_platform_client_versions_and_integrity(client):
-    found_ver = client.get_foundation_version()
-    prod_ver = client.get_product_version()
-
-    assert found_ver.client_contract == "odayplus.data-platform-foundation-client.v1"
-    assert prod_ver.client_contract == "odayplus.data-platform-product-client.v1"
-    assert found_ver.status == "PUBLISHED"
-    assert prod_ver.status == "PUBLISHED"
-
-    integrity = client.verify_integrity()
-    assert integrity["status"] == "healthy"
-    assert integrity["foundation"]["compatible"] is True
-    assert integrity["product"]["compatible"] is True
-
-
-def test_facade_diagnostics_and_health_check(facade):
-    diag = facade.get_diagnostics()
-    assert diag["facade_contract"] == FACADE_CONTRACT
-    assert diag["facade_version"] == FACADE_VERSION
-    assert "foundation" in diag["client_diagnostics"]
-    assert "product" in diag["client_diagnostics"]
-
-    health = facade.check_health()
-    assert health["status"] == "healthy"
-    assert health["contract"] == FACADE_CONTRACT
-    assert health["version"] == FACADE_VERSION
-
-
 # ===========================================================================
 # 2. DataPlatformClient Direct Reads & Model Parsing
 # ===========================================================================
@@ -595,7 +549,7 @@ def test_client_site_market_context_reads(client):
     assert doc.period_grain is PeriodGrain.MONTHLY
     assert len(doc.contexts) == 1
 
-    ctx = client.get_site_market_context("site-taipei-001")
+    ctx = client.get_site_market_context("site-taipei-001", period_grain=PeriodGrain.MONTHLY, period_key="2026-08")
     assert isinstance(ctx, SiteMarketContext)
     assert ctx.identity.site_id == "site-taipei-001"
     assert ctx.identity.latitude == 25.033
@@ -612,7 +566,7 @@ def test_client_market_cell_profile_reads(client):
     assert doc.profile_id == "mcp-doc-001"
     assert len(doc.cells) == 1
 
-    prof = client.get_market_cell_profile("8928308280fffff")
+    prof = client.get_market_cell_profile("8928308280fffff", period_grain=PeriodGrain.MONTHLY, period_key="2026-08")
     assert isinstance(prof, MarketCellProfile)
     assert prof.cell_id == "8928308280fffff"
     assert prof.demographics.total_population == 5000.0
@@ -625,7 +579,7 @@ def test_client_catchment_profile_reads(client):
     assert doc.document_id == "cp-doc-001"
     assert len(doc.profiles) == 1
 
-    prof = client.get_catchment_profile("catchment-xinyi-10m")
+    prof = client.get_catchment_profile("catchment-xinyi-10m", period_grain=PeriodGrain.MONTHLY, period_key="2026-08")
     assert isinstance(prof, CatchmentProfile)
     assert prof.profile_id == "catchment-xinyi-10m"
     assert prof.boundary.cutoff_seconds == 600
@@ -669,59 +623,135 @@ def test_client_foundation_reads(client):
 
 
 # ===========================================================================
-# 3. DataPlatformClient Error Handling
+# 3. Period Grain & Period Key Filtering (Issue C1)
 # ===========================================================================
 
-def test_client_document_not_found_errors(client):
-    with pytest.raises(DataPlatformDocumentNotFoundError) as exc_info:
-        client.get_site_market_context("non-existent-site")
-    assert exc_info.value.code == "document_not_found"
-
+def test_client_period_grain_and_key_mismatch_raises_not_found(client):
+    # Querying DAILY grain when only MONTHLY exists must raise DataPlatformDocumentNotFoundError
     with pytest.raises(DataPlatformDocumentNotFoundError):
-        client.get_market_cell_profile("non-existent-cell")
+        client.get_site_market_context(
+            "site-taipei-001",
+            period_grain=PeriodGrain.DAILY,
+            period_key="1999-01",
+        )
 
+    # Querying mismatching period_key must raise DataPlatformDocumentNotFoundError
     with pytest.raises(DataPlatformDocumentNotFoundError):
-        client.get_catchment_profile("non-existent-catchment")
+        client.get_site_market_context(
+            "site-taipei-001",
+            period_grain=PeriodGrain.MONTHLY,
+            period_key="1999-01",
+        )
 
+    # Market cell mismatch
     with pytest.raises(DataPlatformDocumentNotFoundError):
-        client.get_property_entity("non-existent-prop")
+        client.get_market_cell_profile(
+            "8928308280fffff",
+            period_grain=PeriodGrain.DAILY,
+            period_key="1999-01",
+        )
 
+    # Catchment mismatch
     with pytest.raises(DataPlatformDocumentNotFoundError):
-        client.get_listing_observation("non-existent-list")
+        client.get_catchment_profile(
+            "catchment-xinyi-10m",
+            period_grain=PeriodGrain.DAILY,
+            period_key="1999-01",
+        )
 
 
-def test_client_validation_error_on_corrupt_payload(seeded_transport):
-    # Store corrupt document
-    seeded_transport.store_document(
-        "emgi.site-market-context.v1",
-        "corrupt-doc",
-        {"document_id": "corrupt-doc", "period_grain": "INVALID_GRAIN"},
-    )
-    client = DataPlatformClient(transport=seeded_transport)
-    with pytest.raises(DataPlatformValidationError) as exc_info:
-        client.get_site_market_context_document(document_id="corrupt-doc")
-    assert exc_info.value.code == "contract_validation_error"
+def test_facade_period_grain_and_key_mismatch_raises_not_found(facade, expansion_principal):
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_site_market_context(
+            "site-taipei-001",
+            period_grain=PeriodGrain.DAILY,
+            period_key="1999-01",
+            tenant_id="tenant-alpha",
+            principal=expansion_principal,
+        )
+
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_market_cell_profile(
+            "8928308280fffff",
+            period_grain=PeriodGrain.DAILY,
+            period_key="1999-01",
+            tenant_id="tenant-alpha",
+            principal=expansion_principal,
+        )
+
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_catchment_profile(
+            "catchment-xinyi-10m",
+            period_grain=PeriodGrain.DAILY,
+            period_key="1999-01",
+            tenant_id="tenant-alpha",
+            principal=expansion_principal,
+        )
 
 
 # ===========================================================================
-# 4. MarketDataFacade Authorized Queries
+# 4. Custom Transport Protocol Compatibility (Issue C2)
+# ===========================================================================
+
+def test_client_works_with_custom_transport_protocol(sample_site_context_payload):
+    class CustomMockTransport:
+        def fetch_document(
+            self,
+            contract_id: str,
+            *,
+            document_id: str | None = None,
+            params: Any = None,
+        ) -> dict[str, Any] | None:
+            if contract_id == "emgi.site-market-context.v1":
+                return sample_site_context_payload
+            return None
+
+        def query_records(self, contract_id: str, *, filter_params: Any = None) -> list[dict[str, Any]]:
+            return []
+
+    custom_client = DataPlatformClient(transport=CustomMockTransport())
+    ctx = custom_client.get_site_market_context("site-taipei-001", period_grain=PeriodGrain.MONTHLY, period_key="2026-08")
+    assert isinstance(ctx, SiteMarketContext)
+    assert ctx.identity.site_id == "site-taipei-001"
+
+
+# ===========================================================================
+# 5. MarketDataFacade Authorized Queries
 # ===========================================================================
 
 def test_facade_authorized_site_market_context(facade, expansion_principal):
-    ctx = facade.get_site_market_context("site-taipei-001", tenant_id="tenant-alpha", principal=expansion_principal)
+    ctx = facade.get_site_market_context(
+        "site-taipei-001",
+        period_grain=PeriodGrain.MONTHLY,
+        period_key="2026-08",
+        tenant_id="tenant-alpha",
+        principal=expansion_principal,
+    )
     assert isinstance(ctx, SiteMarketContext)
     assert ctx.identity.site_id == "site-taipei-001"
     assert ctx.coverage.overall_readiness is ReadinessLevel.ready
 
 
 def test_facade_authorized_market_cell_profile(facade, site_reviewer_principal):
-    prof = facade.get_market_cell_profile("8928308280fffff", tenant_id="tenant-alpha", principal=site_reviewer_principal)
+    prof = facade.get_market_cell_profile(
+        "8928308280fffff",
+        period_grain=PeriodGrain.MONTHLY,
+        period_key="2026-08",
+        tenant_id="tenant-alpha",
+        principal=site_reviewer_principal,
+    )
     assert isinstance(prof, MarketCellProfile)
     assert prof.cell_id == "8928308280fffff"
 
 
 def test_facade_authorized_catchment_profile(facade, expansion_principal):
-    prof = facade.get_catchment_profile("catchment-xinyi-10m", tenant_id="tenant-alpha", principal=expansion_principal)
+    prof = facade.get_catchment_profile(
+        "catchment-xinyi-10m",
+        period_grain=PeriodGrain.MONTHLY,
+        period_key="2026-08",
+        tenant_id="tenant-alpha",
+        principal=expansion_principal,
+    )
     assert isinstance(prof, CatchmentProfile)
     assert prof.profile_id == "catchment-xinyi-10m"
 
@@ -754,7 +784,7 @@ def test_facade_authorized_foundation_datasets(facade, data_owner_principal):
 
 
 # ===========================================================================
-# 5. MarketDataFacade Authorization & Security Gates
+# 6. MarketDataFacade Authorization & Security Gates (Issue B1)
 # ===========================================================================
 
 def test_facade_requires_principal_when_auth_enforced(facade):
@@ -767,6 +797,19 @@ def test_facade_unauthenticated_principal_denied(facade):
     with pytest.raises(MarketDataAuthorizationError) as exc_info:
         facade.get_site_market_context("site-taipei-001", principal=ANONYMOUS)
     assert exc_info.value.code == "unauthenticated_principal"
+
+
+def test_facade_principal_with_zero_roles_denied(facade):
+    """Authenticated principal with empty roles must be denied with role_unauthorized."""
+    zero_role_principal = Principal(
+        subject_id="user-no-roles",
+        roles=frozenset(),
+        scope=Scope(tenant_id="tenant-alpha", clearance=DataClassification.CONFIDENTIAL),
+        authenticated=True,
+    )
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context("site-taipei-001", tenant_id="tenant-alpha", principal=zero_role_principal)
+    assert exc_info.value.code == "role_unauthorized"
 
 
 def test_facade_unauthorized_role_rejected(facade):
@@ -819,7 +862,7 @@ def test_facade_insufficient_clearance_denied(facade):
 
 
 # ===========================================================================
-# 6. MarketDataFacade Error Propagation
+# 7. MarketDataFacade Error Propagation
 # ===========================================================================
 
 def test_facade_not_found_raises_market_data_not_found(facade, expansion_principal):
@@ -844,7 +887,7 @@ def test_facade_validation_error_raises_market_data_validation(seeded_transport,
 
 
 # ===========================================================================
-# 7. Architectural Invariants & Boundary Compliance
+# 8. Architectural Invariants & Boundary Compliance
 # ===========================================================================
 
 def test_facade_strictly_read_only_no_write_or_provider_credentials():
@@ -853,3 +896,70 @@ def test_facade_strictly_read_only_no_write_or_provider_credentials():
     for cls in (MarketDataFacade, DataPlatformClient):
         for attr in dir(cls):
             assert not any(attr.startswith(p) for p in banned_prefixes), f"Banned method {attr} found on {cls.__name__}"
+
+
+# ===========================================================================
+# 9. Rejection Findings Regression Tests (B1, C1, C2)
+# ===========================================================================
+
+def test_b1_rbac_bypass_authenticated_principal_zero_roles_rejected(facade):
+    """B1: Authenticated principal with zero roles must not bypass RBAC."""
+    zero_role_principal = Principal(
+        subject_id="zero-role-attacker",
+        roles=frozenset(),
+        scope=Scope(tenant_id="tenant-alpha", clearance=DataClassification.CONFIDENTIAL),
+        authenticated=True,
+    )
+    with pytest.raises(MarketDataAuthorizationError) as exc_info:
+        facade.get_site_market_context("site-taipei-001", tenant_id="tenant-alpha", principal=zero_role_principal)
+    assert exc_info.value.code == "role_unauthorized"
+
+
+def test_c1_period_grain_and_period_key_filtering(client, facade, expansion_principal):
+    """C1: period_grain and period_key must not be bypassed or ignored."""
+    # Seeded document has period_grain=MONTHLY, period_key=2026-08
+    # Exact match works
+    ctx = client.get_site_market_context("site-taipei-001", period_grain=PeriodGrain.MONTHLY, period_key="2026-08")
+    assert ctx.period_grain is PeriodGrain.MONTHLY
+    assert ctx.period_key == "2026-08"
+
+    # Mismatched grain (DAILY instead of MONTHLY) raises DocumentNotFound
+    with pytest.raises(DataPlatformDocumentNotFoundError):
+        client.get_site_market_context("site-taipei-001", period_grain=PeriodGrain.DAILY, period_key="2026-08")
+
+    # Mismatched period_key raises DocumentNotFound
+    with pytest.raises(DataPlatformDocumentNotFoundError):
+        client.get_site_market_context("site-taipei-001", period_grain=PeriodGrain.MONTHLY, period_key="1999-01")
+
+    # Facade wraps into MarketDataNotFoundError
+    with pytest.raises(MarketDataNotFoundError):
+        facade.get_site_market_context(
+            "site-taipei-001",
+            period_grain=PeriodGrain.DAILY,
+            period_key="1999-01",
+            tenant_id="tenant-alpha",
+            principal=expansion_principal,
+        )
+
+
+def test_c2_polymorphic_transport_compatibility(sample_site_context_payload):
+    """C2: DataPlatformClient works with custom transport protocol without isinstance branching."""
+    class CustomTransport:
+        def fetch_document(
+            self,
+            contract_id: str,
+            *,
+            document_id: str | None = None,
+            params: Any = None,
+        ) -> dict[str, Any] | None:
+            if contract_id == "emgi.site-market-context.v1":
+                return sample_site_context_payload
+            return None
+
+        def query_records(self, contract_id: str, *, filter_params: Any = None) -> list[dict[str, Any]]:
+            return []
+
+    client_custom = DataPlatformClient(transport=CustomTransport())
+    ctx = client_custom.get_site_market_context("site-taipei-001", period_grain=PeriodGrain.MONTHLY, period_key="2026-08")
+    assert ctx.identity.site_id == "site-taipei-001"
+

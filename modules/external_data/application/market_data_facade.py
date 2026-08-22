@@ -16,7 +16,6 @@ Architectural Invariants:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 
 from modules.external_data.infrastructure.data_platform_client import (
@@ -52,8 +51,7 @@ from packages.oday_data_product_contracts_client.models.site_market_context impo
     PeriodGrain,
     SiteMarketContext,
 )
-from shared.auth import Action, DataClassification, Decision, Principal, Role
-from shared.auth.abac import AccessRequest, ResourceDescriptor
+from shared.auth import DataClassification, Principal, Role
 from shared.auth.engine import AuthorizationEngine
 
 FACADE_CONTRACT = "odayplus.market-data-facade.v2"
@@ -190,9 +188,9 @@ class MarketDataFacade:
                     },
                 )
 
-        # 2. RBAC / Role Check
+        # 2. RBAC / Role Check - Every caller must have at least one allowed role
         has_allowed_role = any(role in ALLOWED_MARKET_DATA_ROLES for role in principal.roles)
-        if not has_allowed_role and principal.roles:
+        if not has_allowed_role:
             role_names = [getattr(r, "value", str(r)) for r in principal.roles]
             raise MarketDataAuthorizationError(
                 f"Principal {principal.subject_id!r} with roles {role_names} is not authorized for market data",
@@ -247,6 +245,8 @@ class MarketDataFacade:
         document_id: str | None = None,
         *,
         site_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> SiteMarketContextDocument:
@@ -256,6 +256,8 @@ class MarketDataFacade:
             return self._client.get_site_market_context_document(
                 document_id=document_id,
                 site_id=site_id,
+                period_grain=period_grain,
+                period_key=period_key,
                 tenant_id=tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
@@ -299,6 +301,8 @@ class MarketDataFacade:
         document_id: str | None = None,
         *,
         cell_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> MarketCellProfileDocument:
@@ -308,6 +312,8 @@ class MarketDataFacade:
             return self._client.get_market_cell_profile_document(
                 document_id=document_id,
                 cell_id=cell_id,
+                period_grain=period_grain,
+                period_key=period_key,
                 tenant_id=tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
@@ -351,6 +357,8 @@ class MarketDataFacade:
         document_id: str | None = None,
         *,
         catchment_id: str | None = None,
+        period_grain: PeriodGrain | str | None = None,
+        period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> CatchmentProfileDocument:
@@ -360,6 +368,8 @@ class MarketDataFacade:
             return self._client.get_catchment_profile_document(
                 document_id=document_id,
                 catchment_id=catchment_id,
+                period_grain=period_grain,
+                period_key=period_key,
                 tenant_id=tenant_id,
             )
         except DataPlatformDocumentNotFoundError as err:
