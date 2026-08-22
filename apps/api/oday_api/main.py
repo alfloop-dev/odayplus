@@ -64,7 +64,6 @@ def release_sha_from_environment() -> str:
     return get_release_identity("local")
 
 
-
 def release_version_payload(*, correlation_id: str) -> dict[str, str]:
     return {
         **health_payload(),
@@ -161,7 +160,11 @@ else:
         production_persistence_supported = persistence_mode in {"postgres", "postgresql"} and bool(
             bundle.is_production
         )
-        if operator_live_repository is None and require_live_data and production_persistence_supported:
+        if (
+            operator_live_repository is None
+            and require_live_data
+            and production_persistence_supported
+        ):
             from modules.opsboard.application.operator_live_repository import (
                 OperatorLiveRepository,
             )
@@ -222,10 +225,7 @@ else:
             bundle, "market_data_facade", None
         )
         if market_intelligence_service is None:
-            if (
-                market_intelligence_facade is None
-                and market_intelligence_repository is None
-            ):
+            if market_intelligence_facade is None and market_intelligence_repository is None:
                 if market_intelligence_transport is not None:
                     market_intelligence_facade = MarketDataFacade(
                         transport=market_intelligence_transport,
@@ -250,9 +250,7 @@ else:
 
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
-        heatzone_store_for_tenant = (
-            bundle.heatzone_store_for_tenant if bundle.is_durable else None
-        )
+        heatzone_store_for_tenant = bundle.heatzone_store_for_tenant if bundle.is_durable else None
         ingestion_run_store_for_tenant = (
             bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
         )
@@ -517,6 +515,7 @@ else:
 
         class TelemetryMiddleware:
             """Production HTTP telemetry middleware recording api_request_count, api_error_count, and api_latency_ms."""
+
             pass
 
         # Built on first request: routers are still being mounted at the time
@@ -643,9 +642,15 @@ else:
                         rejected_ms = (time.monotonic() - start_t) * 1000.0
                         emit_telemetry(
                             context.correlation_id,
-                            lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
-                            lambda: telemetry.metrics.increment("api_error_count", labels=count_labels),
-                            lambda: telemetry.metrics.observe("api_latency_ms", rejected_ms, labels=latency_labels),
+                            lambda: telemetry.metrics.increment(
+                                "api_request_count", labels=count_labels
+                            ),
+                            lambda: telemetry.metrics.increment(
+                                "api_error_count", labels=count_labels
+                            ),
+                            lambda: telemetry.metrics.observe(
+                                "api_latency_ms", rejected_ms, labels=latency_labels
+                            ),
                         )
                         return response
                 response = await call_next(request)
@@ -656,7 +661,9 @@ else:
                 is_error = response.status_code >= 400
                 emissions = [
                     lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
-                    lambda: telemetry.metrics.observe("api_latency_ms", duration_ms, labels=latency_labels),
+                    lambda: telemetry.metrics.observe(
+                        "api_latency_ms", duration_ms, labels=latency_labels
+                    ),
                 ]
                 if is_error:
                     emissions.append(
@@ -823,9 +830,6 @@ else:
                 ) from exc
 
         mount_versioned(api, platform_observability_router)
-
-
-
 
         # Jobs and audit-event reads are product operations, so they are
         # versioned like every domain router rather than declared inline on the
