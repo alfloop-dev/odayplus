@@ -2,9 +2,10 @@
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 from uuid import uuid4
 
 from modules.site_feasibility.domain.models import FeasibilityAssessment

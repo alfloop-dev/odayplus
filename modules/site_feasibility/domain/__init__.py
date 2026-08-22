@@ -1,7 +1,12 @@
 """Domain for site feasibility."""
 
+from .contracts import (
+    CONTRACT_ID,
+    CONTRACT_VERSION,
+    SiteFeasibilityDocument,
+    validate_site_feasibility_document,
+)
 from .models import FeasibilityAssessment, FeasibilityDecision
-from .contracts import SiteFeasibilityDocument, validate_site_feasibility_document, CONTRACT_ID, CONTRACT_VERSION
 
 __all__ = [
     "FeasibilityAssessment",

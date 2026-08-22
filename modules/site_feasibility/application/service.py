@@ -1,10 +1,11 @@
 """Site Feasibility Service."""
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 from uuid import uuid4
 
-from modules.site_feasibility.domain.models import FeasibilityAssessment, FeasibilityDecision
 from modules.site_feasibility.domain.contracts import SiteFeasibilityDocument
+from modules.site_feasibility.domain.models import FeasibilityAssessment, FeasibilityDecision
 
 
 class SiteFeasibilityService:

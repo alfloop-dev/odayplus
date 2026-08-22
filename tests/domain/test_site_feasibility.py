@@ -5,10 +5,10 @@ Verifies acceptance criteria for ODP-FEASIBILITY-001:
 2. Return feasible, conditional, unknown-requires-survey or infeasible and fail closed before binding recommendation.
 """
 
-import pytest
 
-from modules.site_feasibility.domain.models import FeasibilityDecision, FeasibilityAssessment
 from modules.site_feasibility.application.service import SiteFeasibilityService
+from modules.site_feasibility.domain.models import FeasibilityDecision
+
 
 def test_missing_information_fails_closed_with_unknown_requires_survey():
     # If we have basic market context but no survey evidence about utilities/frontage, etc.
