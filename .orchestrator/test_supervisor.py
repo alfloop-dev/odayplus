@@ -7375,6 +7375,88 @@ class WorkerReassignmentTests(unittest.TestCase):
         write_activity_log.assert_called_once()
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "task_reassigned")
 
+    def test_second_review_reopen_reassigns_owner_to_different_account_pool(self) -> None:
+        config = {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": True,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Antigravity2", "Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "agy-shared",
+                },
+                "antigravity2": {
+                    "display_name": "Antigravity2",
+                    "provider": "antigravity2",
+                    "account_pool": "agy-shared",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "account_pool": "codex-main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "account_pool": "claude-main",
+                },
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-CHURN",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 2,
+                }
+            ]
+        }
+
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, {}, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertEqual(kwargs["new_status"], "todo")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 2)
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+        self.assertNotEqual(event["from_owner_pool"], event["to_owner_pool"])
+
+    def test_review_churn_reassignment_is_idempotent_until_two_more_reopens(self) -> None:
+        status = {
+            "tasks": [
+                {
+                    "id": "P3-CHURN-DONE",
+                    "status": "in_progress",
+                    "owner": "Gemini",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 3,
+                    "review_churn_reassigned_at_count": 2,
+                }
+            ]
+        }
+        with mock.patch.object(supervisor, "persist_task_reassignment") as persist:
+            changed = supervisor.reassign_tasks_after_review_churn(self.config, {}, status)
+        self.assertFalse(changed)
+        persist.assert_not_called()
+
     def test_reassign_review_skips_paused_reviewer_candidates(self) -> None:
         config = {
             "worker_reassignment": {
