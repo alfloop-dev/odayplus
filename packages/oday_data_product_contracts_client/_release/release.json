@@ -1,0 +1,248 @@
+{
+  "authoritative_repository": "alfloop-dev/oday-data-platform",
+  "checksums": {
+    "compatibility.json": "19e721680995066df184da7c65ce3c1a98ecb3b80e0ee0c340210a2849556475",
+    "dependency-closure.json": "b85a849c1a3aae2e51b41c2108262ad04518b53b60117d51720f51089d9f1ce9",
+    "schemas.json": "737559f6c0a37553edc9427f99c9d95737982ded5856566437e985a54c5f53d5",
+    "schemas/catchment-profile.schema.json": "cfc1fb9de42aebfc198736d381073a92d537ff5e521176103a6ee668fe12a238",
+    "schemas/coverage-surface.schema.json": "433bb973811781b3d327ce8e7378fb70d2c0fae330b35a2102b62f62c714d3d8",
+    "schemas/data-acquisition-plan.schema.json": "deb2f6bc71557de5b2890b0675ec18338c4ee7a08a23825607f2edaf3afba41e",
+    "schemas/field-survey.schema.json": "77c4e396c40659314174e28dcfe033898acdaa9bc511fe713b1d169f7fd8f351",
+    "schemas/market-cell-profile.schema.json": "b98c6916dc4902c61b461b9550aa51c2eb78447add1bb3f9f63127c2abc9cd8b",
+    "schemas/property-observation.schema.json": "387919eb1cc0cdc13df3f57cfef192ae1920816f8e7699bc479dbe3c10139f7b",
+    "schemas/site-market-context.schema.json": "cff44c3b50177a2b56884f7bc8f1b01988fc6bcf7fc3ff647efadea1e89d2105"
+  },
+  "compatibility": {
+    "breaking_change": false,
+    "compatibility_mode": "backward-compatible",
+    "consumer_client_contract": "odayplus.data-platform-product-client.v1",
+    "consumer_repository": "alfloop-dev/odayplus",
+    "contract_id": "oday-data-product-contracts.v0.4.1",
+    "contracts_included": [
+      "emgi.catchment-profile.v1",
+      "emgi.coverage-surface.v1",
+      "emgi.data-acquisition-plan.v1",
+      "emgi.data-gap.v1",
+      "emgi.field-survey.v1",
+      "emgi.market-cell-profile.v1",
+      "emgi.property-observation.v1",
+      "emgi.site-market-context.v1"
+    ],
+    "depends_on_releases": [
+      "oday-data-foundation-contracts.v0.4.1"
+    ],
+    "policy": "Additive minor release. Consumers pin the released product package and generate client models from the published document schemas. The release publishes decision-ready documents only; producer-internal storage relations, DDL and raw read surfaces are never part of the consumer surface.",
+    "producer_internal_exposure": {
+      "raw_contract_fingerprints_published": false,
+      "raw_read_surfaces_published": false,
+      "relation_ownership_published": false,
+      "storage_schema_published": false
+    },
+    "semantic_version": "0.4.1",
+    "supported_consumer_versions": [
+      "0.4.0",
+      "0.4.1"
+    ],
+    "verification_receipt": {
+      "status": "DECLARED",
+      "verification_source": "XR-COMPAT-CI-001",
+      "verified_against_consumer_contract": "odayplus.data-platform-product-client.v1"
+    }
+  },
+  "content_digest": "139d75f59fd1d39d9d28e4d9671246ebb5d4c0478ed6d4e36efae60208017b13",
+  "contract_catalog": [
+    {
+      "category": "source_evidence",
+      "contract_id": "emgi.field-survey.v1",
+      "contract_version": "1.0.0",
+      "description": "Portable, versioned document snapshot of governed field-survey observations and retractions.",
+      "document_model": "oday_data_platform.external.sources.survey.models.FieldSurveyDocument",
+      "model_schema_sha256": "fd74399ae6d7f04bc89854ea242ca1947229698281ef9bf9c3f9dbdd3e405bc3",
+      "producer_task_id": "DPF-SRC-SURVEY-001",
+      "schema_file": "schemas/field-survey.schema.json",
+      "sha256": "b9ac0d8e09a29d4f040f225b4f53ac4bc06c317d8b95ca9d97016da8bb938f4c"
+    },
+    {
+      "category": "domain_observation",
+      "contract_id": "emgi.property-observation.v1",
+      "contract_version": "1.0.0",
+      "description": "Portable, versioned document snapshot of canonical real estate property entities, listing observations, and status histories.",
+      "document_model": "oday_data_platform.market.real_estate.models.PropertyObservationDocument",
+      "model_schema_sha256": "4271555143262a5e63e0cf66e8cb05ac658adfa32f53207df116475f43f626c5",
+      "producer_task_id": "DPF-DOM-PROPERTY-001",
+      "schema_file": "schemas/property-observation.schema.json",
+      "sha256": "86bf3a958fb14135f49eae66044188cac1322dbcd5d7f76b6ce9ba2d5527f1c1"
+    },
+    {
+      "category": "decision_product",
+      "co_published_contracts": [
+        {
+          "contract_id": "emgi.data-gap.v1",
+          "document_model": "oday_data_platform.products.coverage.models.DataGapDocument",
+          "model_schema_sha256": "1b8080a20f11a0e3962b870135dc08c29707145f84f28fcdf895a33a5f463fec",
+          "schema_file": "schemas/coverage-surface.schema.json"
+        }
+      ],
+      "contract_id": "emgi.coverage-surface.v1",
+      "contract_version": "1.0.0",
+      "description": "Canonical contract schemas for published domain coverage surfaces (emgi.coverage-surface.v1) and addressable data gap products (emgi.data-gap.v1) across space, time, freshness, and readiness reasons in EMGI v0.4.1.",
+      "document_model": "oday_data_platform.products.coverage.models.CoverageSurface",
+      "model_schema_sha256": "abd0eec2b97c2014118964de388aa7ed274f4736a7e82a94d2618dd7698a9523",
+      "producer_task_id": "DPF-DP-COVERAGE-001",
+      "schema_file": "schemas/coverage-surface.schema.json",
+      "sha256": "d127f9dc57b38a70fbba9d55132bb561ad5127ae30eeeb8e31ae1408ae09896c"
+    },
+    {
+      "category": "decision_product",
+      "contract_id": "emgi.market-cell-profile.v1",
+      "contract_version": "1.0.0",
+      "description": "Canonical contract schemas for published market cell profiles (emgi.market-cell-profile.v1) and market zone profiles across H3 space, period grain, multi-domain observations, source support, and component manifests in EMGI v0.4.1.",
+      "document_model": "oday_data_platform.products.market_cells.models.MarketCellProfileDocument",
+      "model_schema_sha256": "1c34d6f28edded50992d97fbe35bd49dd4c6da24866366de159c859111d93987",
+      "producer_task_id": "DPF-DP-MARKET-CELL-001",
+      "schema_file": "schemas/market-cell-profile.schema.json",
+      "sha256": "d239e2aa294cd0a8382b5d653147b653b367cc4d3e695a5c9a7a76c38b91f103"
+    },
+    {
+      "category": "decision_product",
+      "contract_id": "emgi.catchment-profile.v1",
+      "contract_version": "1.0.0",
+      "description": "Canonical contract schemas for published versioned catchment profiles (emgi.catchment-profile.v1) aggregating multi-domain observations over versioned route/catchment geometry, preserving routing provider, graph snapshot and quality flags, and returning explicit unavailable states in EMGI v0.4.1.",
+      "document_model": "oday_data_platform.products.catchments.models.CatchmentProfileDocument",
+      "model_schema_sha256": "212c6beab42ad31206c340b24949b225d52324a33c824ebe7cc0442b1b5dc8c8",
+      "producer_task_id": "DPF-DP-CATCHMENT-001",
+      "schema_file": "schemas/catchment-profile.schema.json",
+      "sha256": "a4e20c9d01a7db4680d3363f78e302bae2955aec1a63c45e486a5de310b04aee"
+    },
+    {
+      "category": "decision_product",
+      "contract_id": "emgi.site-market-context.v1",
+      "contract_version": "1.0.0",
+      "description": "Canonical contract schemas for published componentized product-neutral site market context (emgi.site-market-context.v1) across identity, catchment, demand, POI, competitor, rent, listing, mobility, traffic, event, and coverage components in EMGI v0.4.1.",
+      "document_model": "oday_data_platform.products.site_context.models.SiteMarketContextDocument",
+      "model_schema_sha256": "143548bcc7b4fc83376d862a61502b0923aa3d8d7e95c2ee8c1c7619d5adb96f",
+      "producer_task_id": "DPF-DP-SITE-CONTEXT-001",
+      "schema_file": "schemas/site-market-context.schema.json",
+      "sha256": "4b433cf747c0f89d423e42a2ba3bd53119e2af1cacc2b2e83045214aab5c0300"
+    },
+    {
+      "category": "decision_product",
+      "contract_id": "emgi.data-acquisition-plan.v1",
+      "contract_version": "1.0.0",
+      "description": "Versioned acquisition priorities and bounded source-value experiments.",
+      "document_model": "oday_data_platform.products.acquisition.models.DataAcquisitionPlan",
+      "model_schema_sha256": "855ad3f34ecd97e665d55556014f61736f3400d81d10f1faec9a07100a503814",
+      "producer_task_id": "DPF-DP-ACQUISITION-001",
+      "schema_file": "schemas/data-acquisition-plan.schema.json",
+      "sha256": "751cc0373a10624234865afdd22b9ce608032bbf3ad242699ff731d7e935f487"
+    }
+  ],
+  "created_at": "2026-08-14T14:40:00Z",
+  "dependency_closure": {
+    "closure_complete": true,
+    "closure_id": "oday-data-product-contracts.v0.4.1.dependency-closure",
+    "owner_task_id": "XR-CONTRACTS-PRODUCT-001",
+    "release_id": "oday-data-product-contracts.v0.4.1",
+    "required_contracts": [
+      "oday-data-foundation-contracts.v0.4.1",
+      "emgi.field-survey.v1",
+      "emgi.property-observation.v1",
+      "emgi.coverage-surface.v1",
+      "emgi.market-cell-profile.v1",
+      "emgi.catchment-profile.v1",
+      "emgi.site-market-context.v1",
+      "emgi.data-acquisition-plan.v1"
+    ],
+    "resolved_contracts": [
+      {
+        "contract_id": "oday-data-foundation-contracts.v0.4.1",
+        "kind": "upstream_release",
+        "pinned_digest": "22d71f4460db75dc8fb1f5bfe8cf253427af11954c8d68915935dfb47ffd87f6",
+        "producer_task_id": "XR-CONTRACTS-001",
+        "resolution": "RESOLVED"
+      },
+      {
+        "contract_id": "emgi.field-survey.v1",
+        "kind": "product_contract",
+        "pinned_digest": "b9ac0d8e09a29d4f040f225b4f53ac4bc06c317d8b95ca9d97016da8bb938f4c",
+        "producer_task_id": "DPF-SRC-SURVEY-001",
+        "resolution": "RESOLVED"
+      },
+      {
+        "contract_id": "emgi.property-observation.v1",
+        "kind": "product_contract",
+        "pinned_digest": "86bf3a958fb14135f49eae66044188cac1322dbcd5d7f76b6ce9ba2d5527f1c1",
+        "producer_task_id": "DPF-DOM-PROPERTY-001",
+        "resolution": "RESOLVED"
+      },
+      {
+        "contract_id": "emgi.coverage-surface.v1",
+        "kind": "product_contract",
+        "pinned_digest": "d127f9dc57b38a70fbba9d55132bb561ad5127ae30eeeb8e31ae1408ae09896c",
+        "producer_task_id": "DPF-DP-COVERAGE-001",
+        "resolution": "RESOLVED"
+      },
+      {
+        "contract_id": "emgi.market-cell-profile.v1",
+        "kind": "product_contract",
+        "pinned_digest": "d239e2aa294cd0a8382b5d653147b653b367cc4d3e695a5c9a7a76c38b91f103",
+        "producer_task_id": "DPF-DP-MARKET-CELL-001",
+        "resolution": "RESOLVED"
+      },
+      {
+        "contract_id": "emgi.catchment-profile.v1",
+        "kind": "product_contract",
+        "pinned_digest": "a4e20c9d01a7db4680d3363f78e302bae2955aec1a63c45e486a5de310b04aee",
+        "producer_task_id": "DPF-DP-CATCHMENT-001",
+        "resolution": "RESOLVED"
+      },
+      {
+        "contract_id": "emgi.site-market-context.v1",
+        "kind": "product_contract",
+        "pinned_digest": "4b433cf747c0f89d423e42a2ba3bd53119e2af1cacc2b2e83045214aab5c0300",
+        "producer_task_id": "DPF-DP-SITE-CONTEXT-001",
+        "resolution": "RESOLVED"
+      },
+      {
+        "contract_id": "emgi.data-acquisition-plan.v1",
+        "kind": "product_contract",
+        "pinned_digest": "751cc0373a10624234865afdd22b9ce608032bbf3ad242699ff731d7e935f487",
+        "producer_task_id": "DPF-DP-ACQUISITION-001",
+        "resolution": "RESOLVED"
+      }
+    ],
+    "semantic_version": "0.4.1",
+    "unresolved_contracts": [],
+    "upstream_releases": [
+      {
+        "content_digest": "22d71f4460db75dc8fb1f5bfe8cf253427af11954c8d68915935dfb47ffd87f6",
+        "contract_id": "oday-data-foundation-contracts.v0.4.1",
+        "owner_task_id": "XR-CONTRACTS-001",
+        "release_type": "foundation",
+        "resolution": "RESOLVED",
+        "semantic_version": "0.4.1",
+        "status": "PUBLISHED"
+      }
+    ]
+  },
+  "owner_task_id": "XR-CONTRACTS-PRODUCT-001",
+  "provides_contracts": [
+    "oday-data-product-contracts.v0.4.1"
+  ],
+  "published_at": "2026-08-14T14:40:00Z",
+  "release_id": "oday-data-product-contracts.v0.4.1",
+  "release_name": "oday-data-product-contracts",
+  "release_type": "product",
+  "requires_contracts": [
+    "oday-data-foundation-contracts.v0.4.1",
+    "emgi.field-survey.v1",
+    "emgi.property-observation.v1",
+    "emgi.coverage-surface.v1",
+    "emgi.market-cell-profile.v1",
+    "emgi.catchment-profile.v1",
+    "emgi.site-market-context.v1",
+    "emgi.data-acquisition-plan.v1"
+  ],
+  "semantic_version": "0.4.1",
+  "status": "PUBLISHED"
+}

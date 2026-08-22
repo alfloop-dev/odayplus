@@ -1,0 +1,127 @@
+# ODay data-platform product contract pin
+#
+# Task ODP-XR-PRODUCT-CLIENT-001 / contract `odayplus.data-platform-product-client.v1`.
+#
+# odayplus consumes the *released* EMGI product package published by
+# alfloop-dev/oday-data-platform (task XR-CONTRACTS-PRODUCT-001). This file is the pin:
+# it names the exact release, the exact producer commit, the byte checksums of
+# the vendored release artifacts, and the canonical digest of every contract
+# schema the generated client is built from.
+#
+# Nothing here is a producer implementation table. `storage-schema.sql` and
+# `relation-ownership.yaml` are deliberately absent: they are the producer's
+# internal DDL and writer catalog, and copying them is forbidden.
+#
+# To move the pin: re-vendor the artifacts from the new producer commit,
+# refresh the checksums and the [[contracts]] digests here, then regenerate the
+# client with
+#
+#     uv run python -m packages.oday_data_product_contracts_client.codegen --write
+#
+# `tests/contract/test_oday_data_product_contract_pin.py` fails CI when any of those
+# steps is skipped or when a product schema moved underneath the pin.
+
+schema_version = 1
+client_contract = "odayplus.data-platform-product-client.v1"
+
+[release]
+id = "oday-data-product-contracts.v0.4.1"
+name = "oday-data-product-contracts"
+type = "product"
+semantic_version = "0.4.1"
+status = "PUBLISHED"
+content_digest = "139d75f59fd1d39d9d28e4d9671246ebb5d4c0478ed6d4e36efae60208017b13"
+owner_task_id = "XR-CONTRACTS-PRODUCT-001"
+published_at = "2026-08-14T14:40:00Z"
+
+[source]
+repository = "alfloop-dev/oday-data-platform"
+branch = "dev"
+commit_sha = "245aa00e417b6f8450baa608e8976584e00be6fc"
+release_path = "contracts/releases/emgi/product"
+
+[compatibility]
+required_contract_id = "oday-data-product-contracts.v0.4.1"
+required_semantic_version = "0.4.1"
+required_compatibility_mode = "backward-compatible"
+consumer_client_contract = "odayplus.data-platform-product-client.v1"
+allow_breaking_change = false
+supported_release_versions = ["0.4.0", "0.4.1"]
+enforced_categories = ["source_evidence", "domain_observation", "decision_product"]
+
+[vendor]
+release_root = "packages/oday_data_product_contracts_client/_release"
+generated_root = "packages/oday_data_product_contracts_client/models"
+
+[vendor.artifacts]
+"release.json" = "3442a9234de104c30a5caac99da781d6e27dae78eecde1b1b887125ee0f75f94"
+"compatibility.json" = "19e721680995066df184da7c65ce3c1a98ecb3b80e0ee0c340210a2849556475"
+"schemas.json" = "737559f6c0a37553edc9427f99c9d95737982ded5856566437e985a54c5f53d5"
+"dependency-closure.json" = "b85a849c1a3aae2e51b41c2108262ad04518b53b60117d51720f51089d9f1ce9"
+
+[vendor.excluded]
+"storage-schema.sql" = "producer PostgreSQL/PostGIS implementation tables"
+"relation-ownership.yaml" = "producer relation ownership and writer catalog"
+
+[[contracts]]
+contract_id = "emgi.field-survey.v1"
+category = "source_evidence"
+contract_version = "1.0.0"
+schema_file = "schemas/field-survey.schema.json"
+sha256 = "b9ac0d8e09a29d4f040f225b4f53ac4bc06c317d8b95ca9d97016da8bb938f4c"
+module = "field_survey"
+root_model = "FieldSurveyDocument"
+
+[[contracts]]
+contract_id = "emgi.property-observation.v1"
+category = "domain_observation"
+contract_version = "1.0.0"
+schema_file = "schemas/property-observation.schema.json"
+sha256 = "86bf3a958fb14135f49eae66044188cac1322dbcd5d7f76b6ce9ba2d5527f1c1"
+module = "property_observation"
+root_model = "PropertyObservationDocument"
+
+[[contracts]]
+contract_id = "emgi.coverage-surface.v1"
+category = "decision_product"
+contract_version = "1.0.0"
+schema_file = "schemas/coverage-surface.schema.json"
+sha256 = "d127f9dc57b38a70fbba9d55132bb561ad5127ae30eeeb8e31ae1408ae09896c"
+module = "coverage_surface"
+root_model = "CoverageSurface"
+
+[[contracts]]
+contract_id = "emgi.market-cell-profile.v1"
+category = "decision_product"
+contract_version = "1.0.0"
+schema_file = "schemas/market-cell-profile.schema.json"
+sha256 = "d239e2aa294cd0a8382b5d653147b653b367cc4d3e695a5c9a7a76c38b91f103"
+module = "market_cell_profile"
+root_model = "MarketCellProfileDocument"
+
+[[contracts]]
+contract_id = "emgi.catchment-profile.v1"
+category = "decision_product"
+contract_version = "1.0.0"
+schema_file = "schemas/catchment-profile.schema.json"
+sha256 = "a4e20c9d01a7db4680d3363f78e302bae2955aec1a63c45e486a5de310b04aee"
+module = "catchment_profile"
+root_model = "CatchmentProfileDocument"
+
+[[contracts]]
+contract_id = "emgi.site-market-context.v1"
+category = "decision_product"
+contract_version = "1.0.0"
+schema_file = "schemas/site-market-context.schema.json"
+sha256 = "4b433cf747c0f89d423e42a2ba3bd53119e2af1cacc2b2e83045214aab5c0300"
+module = "site_market_context"
+root_model = "SiteMarketContextDocument"
+
+[[contracts]]
+contract_id = "emgi.data-acquisition-plan.v1"
+category = "decision_product"
+contract_version = "1.0.0"
+schema_file = "schemas/data-acquisition-plan.schema.json"
+sha256 = "751cc0373a10624234865afdd22b9ce608032bbf3ad242699ff731d7e935f487"
+module = "data_acquisition_plan"
+root_model = "DataAcquisitionPlan"
