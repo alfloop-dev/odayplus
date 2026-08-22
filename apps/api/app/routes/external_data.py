@@ -22,7 +22,6 @@ from modules.external_data.application.ingestion_records import (
     InMemoryIngestionRunStore,
     SourceFreshnessEvidence,
 )
-from shared.api.errors import ApiError
 from shared.audit import InMemoryAuditLog
 
 _FIXTURE_PRODUCT_MODES = frozenset({"poc", "test"})
@@ -45,6 +44,11 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
+    # ``shared.api.errors`` builds its envelope on pydantic, so it belongs
+    # inside the optional-dependency branch: this module must still import in a
+    # dependency-light environment, which is the contract the guard above keeps.
+    from shared.api.errors import ApiError
+
 
     def create_external_data_router(
         *,
