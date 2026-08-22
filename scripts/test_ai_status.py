@@ -370,10 +370,29 @@ class ReviewApprovedWorkflowTests(unittest.TestCase):
 
         task = ai_status.get_task(self.state, "REG-002")
         self.assertEqual(task["status"], "in_progress")
+        self.assertEqual(task["review_reopen_count"], 1)
+        self.assertEqual(task["review_reopen_history"][0]["by"], "Claude")
+        self.assertEqual(task["review_reopen_history"][0]["owner"], "Codex")
         pending = [handoff for handoff in self.state["handoffs"] if handoff["status"] != "done"]
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0]["from"], "Claude")
         self.assertEqual(pending[0]["to"], "Codex")
+
+    def test_review_reopen_count_is_durable_but_owner_reopen_does_not_increment(self) -> None:
+        task = self.state["tasks"][0]
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "First review rejection"])
+
+        task["status"] = "review"
+        with mock.patch.dict(os.environ, {"AI_NAME": "Claude"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Second review rejection"])
+
+        self.assertEqual(task["review_reopen_count"], 2)
+        self.assertEqual([item["count"] for item in task["review_reopen_history"]], [1, 2])
+
+        with mock.patch.dict(os.environ, {"AI_NAME": "Codex"}, clear=False):
+            ai_status.command_reopen(self.state, ["REG-002", "Owner resumed work"])
+        self.assertEqual(task["review_reopen_count"], 2)
 
     def test_restore_approved_refuses_when_reviewer_reopened(self) -> None:
         """B23: restore_approved must refuse when the downgrade was a reviewer rejection."""

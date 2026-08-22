@@ -472,6 +472,43 @@
                 },
                 "additionalProperties": false
               },
+              "model_policy": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "standard_model": {
+                    "type": "string"
+                  },
+                  "high_risk_model": {
+                    "type": "string"
+                  },
+                  "high_risk_priorities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "high_risk_keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "standard_task_keywords": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "upgrade_after_review_reopens": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "additionalProperties": false
+              },
               "model": {
                 "type": "string"
               },
@@ -959,6 +996,28 @@
         },
         "reassign_on_terminal_failure": {
           "type": "boolean"
+        },
+        "review_churn": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "reassign_after_reopens": {
+              "type": "integer",
+              "minimum": 2
+            },
+            "eligible_statuses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "require_different_account_pool": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
         },
         "reviewer_fallbacks": {
           "type": "object",

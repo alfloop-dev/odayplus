@@ -5169,6 +5169,24 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
     mark_blockers_resolved(state, task_id)
     mark_handoffs_done(state, task_id)
     if actor == reviewer and owner and owner != reviewer:
+        try:
+            review_reopen_count = max(0, int(task.get("review_reopen_count", 0) or 0)) + 1
+        except (TypeError, ValueError):
+            review_reopen_count = 1
+        task["review_reopen_count"] = review_reopen_count
+        task["last_review_reopen_at"] = timestamp
+        raw_history = task.get("review_reopen_history")
+        review_reopen_history = list(raw_history) if isinstance(raw_history, list) else []
+        review_reopen_history.append(
+            {
+                "count": review_reopen_count,
+                "at": timestamp,
+                "by": reviewer,
+                "owner": owner,
+                "message": message,
+            }
+        )
+        task["review_reopen_history"] = review_reopen_history[-20:]
         state.setdefault("handoffs", []).append(
             {
                 "task_id": task_id,
@@ -5179,7 +5197,17 @@ def command_reopen(state: dict[str, Any], args: list[str]) -> None:
                 "created_at": timestamp,
             }
         )
-    append_log({"ts": timestamp, "agent": actor, "type": "reopen", "task_id": task_id, "message": message})
+    append_log(
+        {
+            "ts": timestamp,
+            "agent": actor,
+            "type": "reopen",
+            "task_id": task_id,
+            "message": message,
+            "review_reopen_count": task.get("review_reopen_count", 0),
+            "review_churn": actor == reviewer and owner != reviewer,
+        }
+    )
 
 
 def review_submission_for_task(task: dict[str, Any], pr_number: str) -> dict[str, Any]:
