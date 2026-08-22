@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 test.describe("Market Intelligence Features", () => {
   test("Market Explorer, Site Dossier, and Candidate Compare render without crashing", async ({ page }) => {
     // Navigate to the market intelligence page
-    await page.goto("/market-intelligence");
+    await page.goto("/market-intelligence?site_id=site-1&site_ids=site-1,site-2");
 
     // The page should have the headers
     await expect(page.locator("h1")).toHaveText("Market Intelligence");

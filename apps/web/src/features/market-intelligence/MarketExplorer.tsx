@@ -1,34 +1,43 @@
-import React from 'react';
-import { MarketIntelligenceClient } from '../../api/generated/market-intelligence/client';
+import React from "react";
 
-export async function MarketExplorer({ searchParams }: { searchParams?: { min_lat?: string, min_lng?: string, max_lat?: string, max_lng?: string } }) {
+import {
+  MarketIntelligenceClient,
+  type CoverageQuery,
+} from "../../api/generated/market-intelligence/client";
+import { asRecord, displayValue } from "./presentation";
+
+export async function MarketExplorer({ filters = {} }: { filters?: CoverageQuery }) {
   try {
-    const min_lat = Number(searchParams?.min_lat ?? 0);
-    const min_lng = Number(searchParams?.min_lng ?? 0);
-    const max_lat = Number(searchParams?.max_lat ?? 0);
-    const max_lng = Number(searchParams?.max_lng ?? 0);
-
-    const coverage = await MarketIntelligenceClient.getCoverageSurface({ min_lat, min_lng, max_lat, max_lng });
-    if (!coverage || !coverage.cells) {
+    const coverage = await MarketIntelligenceClient.getCoverageSurface(filters);
+    if (!coverage || coverage.cells.length === 0) {
       return <div data-testid="market-explorer-empty">No cells found</div>;
     }
 
     return (
-      <div data-testid="market-explorer">
+      <section data-testid="market-explorer">
         <h2>Market Explorer</h2>
-        <div data-testid="coverage">
-          {coverage.cells.map((cell: any) => (
-            <div key={cell.h3_index} data-testid={`cell-${cell.h3_index}`}>
-              <span>{cell.h3_index}</span>
-              <span data-testid="readiness">{cell.readiness ?? "Missing"}</span>
-              <span data-testid="uncertainty">{cell.state?.current_uncertainty_pct ?? "Missing"}</span>
-              <span data-testid="coverage-state">{cell.state?.overall_coverage_pct ?? "Missing"}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+        <p>
+          Surface readiness: <strong data-testid="surface-readiness">{displayValue(coverage.readiness)}</strong>
+        </p>
+        <ul data-testid="coverage">
+          {coverage.cells.map((rawCell, index) => {
+            const cell = asRecord(rawCell);
+            const identity = cell.h3_index ?? cell.cell_id;
+            const key = displayValue(identity) === "Missing" ? `cell-${index}` : String(identity);
+            return (
+              <li key={key} data-testid={`cell-${key}`}>
+                <span data-testid="cell-identity">{displayValue(identity)}</span>{" "}
+                <span data-testid="readiness">{displayValue(cell.readiness)}</span>{" "}
+                <span data-testid="coverage-state">{displayValue(cell.state)}</span>{" "}
+                <span data-testid="observed-count">{displayValue(cell.observed_count)}</span>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
     );
-  } catch (error: any) {
-    return <div data-testid="market-explorer-error">{error.message}</div>;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return <div data-testid="market-explorer-error">{message}</div>;
   }
 }

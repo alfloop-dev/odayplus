@@ -1,5 +1,7 @@
-import React from 'react';
-import { MarketIntelligenceClient } from '../../api/generated/market-intelligence/client';
+import React from "react";
+
+import { MarketIntelligenceClient } from "../../api/generated/market-intelligence/client";
+import { asRecord, displayValue, stringList } from "./presentation";
 
 export async function CandidateCompare({ siteIds }: { siteIds: string[] }) {
   try {
@@ -7,20 +9,36 @@ export async function CandidateCompare({ siteIds }: { siteIds: string[] }) {
     if (!compare) {
       return <div data-testid="candidate-compare-empty">No comparison</div>;
     }
+
+    const readiness = asRecord(compare.readiness_breakdown);
+    const missingDomains = asRecord(compare.missing_domains_by_candidate);
+    const candidates = compare.candidates.map(asRecord);
+
     return (
-      <div data-testid="candidate-compare">
+      <section data-testid="candidate-compare">
         <h2>Candidate Compare</h2>
-        <div data-testid="compare-results">
-          {Object.entries(compare.candidates ?? {}).map(([id, cand]: [string, any]) => (
-             <div key={id} data-testid={`cand-${id}`}>
-               <span data-testid="readiness">{cand.readiness ?? "Missing"}</span>
-               <span data-testid="missing-domains">{cand.missing_domains_by_candidate ? Object.keys(cand.missing_domains_by_candidate).length : "Missing"}</span>
-             </div>
-          ))}
-        </div>
-      </div>
+        <ul data-testid="compare-results">
+          {siteIds.map((id) => {
+            const candidate = candidates.find(
+              (item) => item.site_id === id || item.cell_id === id,
+            );
+            const missing = stringList(missingDomains[id]);
+            return (
+              <li key={id} data-testid={`cand-${id}`}>
+                <strong>{id}</strong>{" "}
+                <span data-testid="readiness">{displayValue(readiness[id])}</span>{" "}
+                <span data-testid="uncertainty">{displayValue(candidate?.uncertainty_pct)}</span>{" "}
+                <span data-testid="missing-domains">
+                  {missing === null ? "Missing" : missing.length ? missing.join(", ") : "None"}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
     );
-  } catch (error: any) {
-    return <div data-testid="candidate-compare-error">{error.message}</div>;
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return <div data-testid="candidate-compare-error">{message}</div>;
   }
 }
