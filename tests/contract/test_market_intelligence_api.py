@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
 
 from apps.api.app.routes.market_intelligence import create_market_intelligence_router
 from modules.external_data.application.market_data_facade import MarketDataFacade
@@ -683,6 +684,55 @@ def test_openapi_specification_file_validity() -> None:
     assert "/market-intelligence/data-gaps/{gap_id}" in paths
     assert "/market-intelligence/acquisition-plans" in paths
     assert "/market-intelligence/acquisition-plans/{plan_id}" in paths
+
+
+def test_openapi_documents_fail_closed_health_and_unavailable_routes() -> None:
+    """The canonical contract must describe the unbound production runtime."""
+    spec = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
+    paths = spec["paths"]
+    health_response_schema = spec["paths"]["/market-intelligence/health"]["get"]["responses"][
+        "200"
+    ]["content"]["application/json"]["schema"]
+    assert health_response_schema == {
+        "$ref": "#/components/schemas/MarketIntelligenceHealth"
+    }
+    health_schema = spec["components"]["schemas"]["MarketIntelligenceHealth"]
+
+    assert set(health_schema["properties"]["status"]["enum"]) == {
+        "healthy",
+        "degraded",
+        "unavailable",
+    }
+    assert "version" not in health_schema["required"]
+    for field in ("ready", "available", "reasonCode", "missing"):
+        assert field in health_schema["properties"]
+
+    unavailable_health = {
+        "status": "unavailable",
+        "ready": False,
+        "available": False,
+        "service": "market_intelligence_bff",
+        "contract": CONTRACT_ID,
+        "reasonCode": "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED",
+        "missing": ["data_platform_binding"],
+    }
+    assert not list(Draft202012Validator(health_schema).iter_errors(unavailable_health))
+
+    for path, path_item in paths.items():
+        if path == "/market-intelligence/health":
+            continue
+        for operation in path_item.values():
+            assert operation["responses"]["503"] == {
+                "$ref": "#/components/responses/ServiceUnavailableError"
+            }, f"missing fail-closed response for {path}"
+
+    unavailable_response = spec["components"]["responses"]["ServiceUnavailableError"]
+    assert (
+        unavailable_response["content"]["application/json"]["schema"]["properties"]["detail"][
+            "$ref"
+        ]
+        == "#/components/schemas/MarketIntelligenceUnavailableError"
+    )
 
 
 # ===========================================================================
@@ -1833,6 +1883,10 @@ def test_unavailable_router_reports_readiness_and_missingness_explicitly() -> No
         assert body["reasonCode"] == "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED"
         assert body["missing"] == ["data_platform_binding"]
 
+        spec = json.loads(OPENAPI_PATH.read_text(encoding="utf-8"))
+        health_schema = spec["components"]["schemas"]["MarketIntelligenceHealth"]
+        assert not list(Draft202012Validator(health_schema).iter_errors(body))
+
         for path in (
             "/api/v1/market-intelligence/cells",
             "/api/v1/market-intelligence/coverage",
@@ -1844,6 +1898,9 @@ def test_unavailable_router_reports_readiness_and_missingness_explicitly() -> No
             response = client.get(path, headers=HEADERS_EXPANSION_ALPHA)
             assert response.status_code == 503, (path, response.text)
             assert "BINDING_REQUIRED" in response.text, path
+            error_detail = response.json()["detail"]
+            assert error_detail["details"]["ready"] is False
+            assert error_detail["details"]["missing"] == ["data_platform_binding"]
 
         # Writes must fail closed too; an unbacked BFF accepts no plans.
         write = client.post(

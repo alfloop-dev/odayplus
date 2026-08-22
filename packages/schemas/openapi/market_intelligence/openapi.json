@@ -31,34 +31,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "required": [
-                    "status",
-                    "service",
-                    "contract",
-                    "version"
-                  ],
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "enum": [
-                        "healthy",
-                        "degraded"
-                      ]
-                    },
-                    "service": {
-                      "type": "string"
-                    },
-                    "contract": {
-                      "type": "string"
-                    },
-                    "version": {
-                      "type": "string"
-                    },
-                    "facade": {
-                      "type": "object"
-                    }
-                  }
+                  "$ref": "#/components/schemas/MarketIntelligenceHealth"
                 }
               }
             }
@@ -115,6 +88,9 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -172,6 +148,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFoundError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -257,6 +236,9 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -314,6 +296,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFoundError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -386,6 +371,9 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -457,6 +445,9 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       },
@@ -518,6 +509,9 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -575,6 +569,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFoundError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -632,6 +629,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFoundError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -728,6 +728,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFoundError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         },
         "description": "Filters select coverage cells, not the surface envelope. `admin_code`, `h3_index`, `business_date`, `readiness` and `state` name CoverageCell fields, so a surface is returned only when at least one of its cells satisfies every supplied filter, and `cells` is narrowed to those matches. A query that matches no cell returns 404 rather than an unfiltered surface. When the response is narrowed by a filter or by `limit`, `metadata.cell_query` reports the applied filters and the published / matched / returned cell counts. Contract aggregates (`state_breakdown`, `freshness`, `search_completeness`) always describe the full published surface, not the returned subset."
@@ -806,6 +809,9 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -846,6 +852,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFoundError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -923,6 +932,9 @@
           },
           "403": {
             "$ref": "#/components/responses/ForbiddenError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       },
@@ -961,6 +973,9 @@
           },
           "422": {
             "$ref": "#/components/responses/ValidationError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -1001,6 +1016,9 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFoundError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailableError"
           }
         }
       }
@@ -1809,6 +1827,55 @@
           }
         }
       },
+      "MarketIntelligenceHealth": {
+        "type": "object",
+        "required": [
+          "status",
+          "service",
+          "contract"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "healthy",
+              "degraded",
+              "unavailable"
+            ]
+          },
+          "service": {
+            "type": "string"
+          },
+          "contract": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean",
+            "description": "Whether the BFF can serve backed market intelligence. Omitted for ready health responses."
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Whether the data-platform binding is available. Omitted for ready health responses."
+          },
+          "reasonCode": {
+            "type": "string",
+            "description": "Machine-readable reason for an unavailable binding. Present when status is unavailable."
+          },
+          "missing": {
+            "type": "array",
+            "description": "Bindings or evidence missing while the BFF is unavailable.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "facade": {
+            "type": "object"
+          }
+        }
+      },
       "ApiError": {
         "type": "object",
         "required": [
@@ -1824,6 +1891,26 @@
           },
           "details": {
             "type": "object"
+          }
+        }
+      },
+      "MarketIntelligenceUnavailableError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "details"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "The binding reason code that caused fail-closed behavior."
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/components/schemas/MarketIntelligenceHealth"
           }
         }
       }
@@ -1865,6 +1952,24 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/ApiError"
+            }
+          }
+        }
+      },
+      "ServiceUnavailableError": {
+        "description": "Market Intelligence BFF is unavailable because its data-platform binding is missing; the response remains fail-closed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "$ref": "#/components/schemas/MarketIntelligenceUnavailableError"
+                }
+              }
             }
           }
         }
