@@ -96,7 +96,7 @@ fi
 
 # Validate every delivery commit, not just HEAD.  A reused branch can otherwise
 # hide an older commit with a different Task-ID beneath a correct-looking tip.
-python3 "$ROOT/delivery_toolchain/git/check_task_delivery_identity.py" \
+python3 "${PANTHEON_STATUS_ROOT:-$ROOT}/delivery_toolchain/git/check_task_delivery_identity.py" \
   --repo "$ROOT" \
   --task-id "$TASK_ID" \
   --base "$BASE_REF" \

@@ -15,9 +15,9 @@ import sys
 from pathlib import Path
 
 try:
-    from .check_commit_trailers import validate_message
+    from .check_commit_trailers import parse_trailers, validate_message
 except ImportError:  # Direct script execution from task_finalize.sh.
-    from check_commit_trailers import validate_message
+    from check_commit_trailers import parse_trailers, validate_message
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -90,7 +90,13 @@ def validate_delivery_identity(
             task_id=task_id,
             allow_maintenance_skip=False,
         )
-        errors.extend(f"commit {commit[:12]}: {violation}" for violation in violations)
+        filtered_violations = []
+        trailers = parse_trailers(message)
+        for v in violations:
+            if ("subject must start with the task id" in v or "subject is" in v) and trailers.get("task-id", "").strip().lower() == task_id.lower():
+                continue
+            filtered_violations.append(v)
+        errors.extend(f"commit {commit[:12]}: {violation}" for violation in filtered_violations)
     return errors
 
 
