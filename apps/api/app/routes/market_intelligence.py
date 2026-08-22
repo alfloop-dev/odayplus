@@ -463,16 +463,16 @@ else:
         def list_data_gaps(
             request: Request,
             domain: str | None = None,
-            min_uncertainty_pct: float | None = None,
-            severity: str | None = None,
+            gap_kind: str | None = None,
+            reason_code: str | None = None,
             limit: int = 100,
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
             principal = _get_principal(request)
             gap_filter = DataGapFilter(
                 domain=domain,
-                min_uncertainty_pct=min_uncertainty_pct,
-                severity=severity,
+                gap_kind=gap_kind,
+                reason_code=reason_code,
                 tenant_id=tid,
                 limit=limit,
             )

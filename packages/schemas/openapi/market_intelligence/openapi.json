@@ -20,7 +20,9 @@
   "paths": {
     "/market-intelligence/health": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Check market intelligence BFF service health",
         "operationId": "getMarketIntelligenceHealth",
         "responses": {
@@ -30,13 +32,32 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["status", "service", "contract", "version"],
+                  "required": [
+                    "status",
+                    "service",
+                    "contract",
+                    "version"
+                  ],
                   "properties": {
-                    "status": {"type": "string", "enum": ["healthy", "degraded"]},
-                    "service": {"type": "string"},
-                    "contract": {"type": "string"},
-                    "version": {"type": "string"},
-                    "facade": {"type": "object"}
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "healthy",
+                        "degraded"
+                      ]
+                    },
+                    "service": {
+                      "type": "string"
+                    },
+                    "contract": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "facade": {
+                      "type": "object"
+                    }
                   }
                 }
               }
@@ -47,7 +68,9 @@
     },
     "/market-intelligence/diagnostics": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get market intelligence BFF runtime diagnostics",
         "operationId": "getMarketIntelligenceDiagnostics",
         "responses": {
@@ -57,29 +80,50 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["contract", "version", "enforce_auth", "required_contracts"],
+                  "required": [
+                    "contract",
+                    "version",
+                    "enforce_auth",
+                    "required_contracts"
+                  ],
                   "properties": {
-                    "contract": {"type": "string"},
-                    "version": {"type": "string"},
-                    "enforce_auth": {"type": "boolean"},
+                    "contract": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "enforce_auth": {
+                      "type": "boolean"
+                    },
                     "required_contracts": {
                       "type": "array",
-                      "items": {"type": "string"}
+                      "items": {
+                        "type": "string"
+                      }
                     },
-                    "facade_diagnostics": {"type": "object"}
+                    "facade_diagnostics": {
+                      "type": "object"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       }
     },
     "/market-intelligence/cells/{cell_id}": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get market cell profile by cell ID",
         "operationId": "getMarketCellProfile",
         "parameters": [
@@ -87,19 +131,26 @@
             "name": "cell_id",
             "in": "path",
             "required": true,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "period_grain",
             "in": "query",
             "required": false,
-            "schema": {"type": "string", "default": "MONTHLY"}
+            "schema": {
+              "type": "string",
+              "default": "MONTHLY"
+            }
           },
           {
             "name": "period_key",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -107,19 +158,29 @@
             "description": "Market Cell Profile",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/MarketCellProfile"}
+                "schema": {
+                  "$ref": "#/components/schemas/MarketCellProfile"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"},
-          "404": {"$ref": "#/components/responses/NotFoundError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          }
         }
       }
     },
     "/market-intelligence/cells": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "List market cell profiles",
         "operationId": "listMarketCellProfiles",
         "parameters": [
@@ -127,31 +188,42 @@
             "name": "cell_ids",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "h3_resolution",
             "in": "query",
             "required": false,
-            "schema": {"type": "integer"}
+            "schema": {
+              "type": "integer"
+            }
           },
           {
             "name": "admin_code",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "period_grain",
             "in": "query",
             "required": false,
-            "schema": {"type": "string", "default": "MONTHLY"}
+            "schema": {
+              "type": "string",
+              "default": "MONTHLY"
+            }
           },
           {
             "name": "period_key",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -161,26 +233,39 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["items", "count"],
+                  "required": [
+                    "items",
+                    "count"
+                  ],
                   "properties": {
                     "items": {
                       "type": "array",
-                      "items": {"$ref": "#/components/schemas/MarketCellProfile"}
+                      "items": {
+                        "$ref": "#/components/schemas/MarketCellProfile"
+                      }
                     },
-                    "count": {"type": "integer"}
+                    "count": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       }
     },
     "/market-intelligence/sites/{site_id}/context": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get site market context by site ID",
         "operationId": "getSiteMarketContext",
         "parameters": [
@@ -188,19 +273,26 @@
             "name": "site_id",
             "in": "path",
             "required": true,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "period_grain",
             "in": "query",
             "required": false,
-            "schema": {"type": "string", "default": "MONTHLY"}
+            "schema": {
+              "type": "string",
+              "default": "MONTHLY"
+            }
           },
           {
             "name": "period_key",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -208,19 +300,29 @@
             "description": "Site Market Context",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/SiteMarketContext"}
+                "schema": {
+                  "$ref": "#/components/schemas/SiteMarketContext"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"},
-          "404": {"$ref": "#/components/responses/NotFoundError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          }
         }
       }
     },
     "/market-intelligence/sites/context/batch": {
       "post": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Batch get site market contexts",
         "operationId": "batchGetSiteMarketContexts",
         "requestBody": {
@@ -229,15 +331,25 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["site_ids"],
+                "required": [
+                  "site_ids"
+                ],
                 "properties": {
                   "site_ids": {
                     "type": "array",
-                    "items": {"type": "string"},
+                    "items": {
+                      "type": "string"
+                    },
                     "minItems": 1
                   },
-                  "period_grain": {"type": "string", "default": "MONTHLY"},
-                  "period_key": {"type": "string", "nullable": true}
+                  "period_grain": {
+                    "type": "string",
+                    "default": "MONTHLY"
+                  },
+                  "period_key": {
+                    "type": "string",
+                    "nullable": true
+                  }
                 }
               }
             }
@@ -250,26 +362,39 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["items", "count"],
+                  "required": [
+                    "items",
+                    "count"
+                  ],
                   "properties": {
                     "items": {
                       "type": "array",
-                      "items": {"$ref": "#/components/schemas/SiteMarketContext"}
+                      "items": {
+                        "$ref": "#/components/schemas/SiteMarketContext"
+                      }
                     },
-                    "count": {"type": "integer"}
+                    "count": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       }
     },
     "/market-intelligence/compare": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Compare candidate sites and cells via query parameters",
         "operationId": "compareCandidatesGet",
         "parameters": [
@@ -277,31 +402,43 @@
             "name": "site_ids",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "cell_ids",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "period_grain",
             "in": "query",
             "required": false,
-            "schema": {"type": "string", "default": "MONTHLY"}
+            "schema": {
+              "type": "string",
+              "default": "MONTHLY"
+            }
           },
           {
             "name": "period_key",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "include_raw_context",
             "in": "query",
             "required": false,
-            "schema": {"type": "boolean", "default": false}
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         ],
         "responses": {
@@ -309,16 +446,24 @@
             "description": "Candidate Compare Result",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/CandidateCompareResult"}
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateCompareResult"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       },
       "post": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Compare candidate sites and cells via request body",
         "operationId": "compareCandidatesPost",
         "requestBody": {
@@ -330,15 +475,28 @@
                 "properties": {
                   "site_ids": {
                     "type": "array",
-                    "items": {"type": "string"}
+                    "items": {
+                      "type": "string"
+                    }
                   },
                   "cell_ids": {
                     "type": "array",
-                    "items": {"type": "string"}
+                    "items": {
+                      "type": "string"
+                    }
                   },
-                  "period_grain": {"type": "string", "default": "MONTHLY"},
-                  "period_key": {"type": "string", "nullable": true},
-                  "include_raw_context": {"type": "boolean", "default": false}
+                  "period_grain": {
+                    "type": "string",
+                    "default": "MONTHLY"
+                  },
+                  "period_key": {
+                    "type": "string",
+                    "nullable": true
+                  },
+                  "include_raw_context": {
+                    "type": "boolean",
+                    "default": false
+                  }
                 }
               }
             }
@@ -349,18 +507,26 @@
             "description": "Candidate Compare Result",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/CandidateCompareResult"}
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateCompareResult"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       }
     },
     "/market-intelligence/evidence/{site_id}": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get evidence chain and lineage for a site",
         "operationId": "getSiteEvidence",
         "parameters": [
@@ -368,19 +534,26 @@
             "name": "site_id",
             "in": "path",
             "required": true,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "period_grain",
             "in": "query",
             "required": false,
-            "schema": {"type": "string", "default": "MONTHLY"}
+            "schema": {
+              "type": "string",
+              "default": "MONTHLY"
+            }
           },
           {
             "name": "period_key",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -388,19 +561,29 @@
             "description": "Site Evidence Chain",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/SiteEvidenceChain"}
+                "schema": {
+                  "$ref": "#/components/schemas/SiteEvidenceChain"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"},
-          "404": {"$ref": "#/components/responses/NotFoundError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          }
         }
       }
     },
     "/market-intelligence/evidence/cells/{cell_id}": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get evidence chain and lineage for a market cell",
         "operationId": "getCellEvidence",
         "parameters": [
@@ -408,19 +591,26 @@
             "name": "cell_id",
             "in": "path",
             "required": true,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "period_grain",
             "in": "query",
             "required": false,
-            "schema": {"type": "string", "default": "MONTHLY"}
+            "schema": {
+              "type": "string",
+              "default": "MONTHLY"
+            }
           },
           {
             "name": "period_key",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -428,19 +618,29 @@
             "description": "Cell Evidence Chain",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/CellEvidenceChain"}
+                "schema": {
+                  "$ref": "#/components/schemas/CellEvidenceChain"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"},
-          "404": {"$ref": "#/components/responses/NotFoundError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          }
         }
       }
     },
     "/market-intelligence/coverage": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get coverage surface across space and domains",
         "operationId": "getCoverageSurface",
         "parameters": [
@@ -448,43 +648,58 @@
             "name": "surface_id",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "admin_code",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "h3_index",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "business_date",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "readiness",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "state",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "limit",
             "in": "query",
             "required": false,
-            "schema": {"type": "integer", "default": 100}
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
           }
         ],
         "responses": {
@@ -492,18 +707,26 @@
             "description": "Coverage Surface",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/CoverageSurface"}
+                "schema": {
+                  "$ref": "#/components/schemas/CoverageSurface"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       }
     },
     "/market-intelligence/data-gaps": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "List addressable data gaps",
         "operationId": "listDataGaps",
         "parameters": [
@@ -511,25 +734,34 @@
             "name": "domain",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
-            "name": "min_uncertainty_pct",
+            "name": "gap_kind",
             "in": "query",
             "required": false,
-            "schema": {"type": "number"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
-            "name": "severity",
+            "name": "reason_code",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "limit",
             "in": "query",
             "required": false,
-            "schema": {"type": "integer", "default": 100}
+            "schema": {
+              "type": "integer",
+              "default": 100
+            }
           }
         ],
         "responses": {
@@ -539,26 +771,39 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["items", "count"],
+                  "required": [
+                    "items",
+                    "count"
+                  ],
                   "properties": {
                     "items": {
                       "type": "array",
-                      "items": {"$ref": "#/components/schemas/DataGap"}
+                      "items": {
+                        "$ref": "#/components/schemas/DataGap"
+                      }
                     },
-                    "count": {"type": "integer"}
+                    "count": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       }
     },
     "/market-intelligence/data-gaps/{gap_id}": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get data gap details by ID",
         "operationId": "getDataGap",
         "parameters": [
@@ -566,7 +811,9 @@
             "name": "gap_id",
             "in": "path",
             "required": true,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -574,19 +821,29 @@
             "description": "Data Gap",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/DataGap"}
+                "schema": {
+                  "$ref": "#/components/schemas/DataGap"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"},
-          "404": {"$ref": "#/components/responses/NotFoundError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          }
         }
       }
     },
     "/market-intelligence/acquisition-plans": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "List data acquisition plans",
         "operationId": "listAcquisitionPlans",
         "parameters": [
@@ -594,25 +851,34 @@
             "name": "status",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "site_context_id",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "coverage_surface_id",
             "in": "query",
             "required": false,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "limit",
             "in": "query",
             "required": false,
-            "schema": {"type": "integer", "default": 50}
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
           }
         ],
         "responses": {
@@ -622,31 +888,46 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["items", "count"],
+                  "required": [
+                    "items",
+                    "count"
+                  ],
                   "properties": {
                     "items": {
                       "type": "array",
-                      "items": {"$ref": "#/components/schemas/DataAcquisitionPlan"}
+                      "items": {
+                        "$ref": "#/components/schemas/DataAcquisitionPlan"
+                      }
                     },
-                    "count": {"type": "integer"}
+                    "count": {
+                      "type": "integer"
+                    }
                   }
                 }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          }
         }
       },
       "post": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Propose or record a new data acquisition plan",
         "operationId": "createAcquisitionPlan",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateAcquisitionPlanPayload"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateAcquisitionPlanPayload"
+              }
             }
           }
         },
@@ -655,19 +936,29 @@
             "description": "Created Acquisition Plan",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/DataAcquisitionPlan"}
+                "schema": {
+                  "$ref": "#/components/schemas/DataAcquisitionPlan"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"},
-          "422": {"$ref": "#/components/responses/ValidationError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
         }
       }
     },
     "/market-intelligence/acquisition-plans/{plan_id}": {
       "get": {
-        "tags": ["market-intelligence"],
+        "tags": [
+          "market-intelligence"
+        ],
         "summary": "Get data acquisition plan by ID",
         "operationId": "getAcquisitionPlan",
         "parameters": [
@@ -675,7 +966,9 @@
             "name": "plan_id",
             "in": "path",
             "required": true,
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -683,13 +976,21 @@
             "description": "Data Acquisition Plan",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/DataAcquisitionPlan"}
+                "schema": {
+                  "$ref": "#/components/schemas/DataAcquisitionPlan"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedError"},
-          "403": {"$ref": "#/components/responses/ForbiddenError"},
-          "404": {"$ref": "#/components/responses/NotFoundError"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedError"
+          },
+          "403": {
+            "$ref": "#/components/responses/ForbiddenError"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundError"
+          }
         }
       }
     }
@@ -699,265 +1000,708 @@
       "SiteMarketContext": {
         "type": "object",
         "required": [
-          "context_id", "identity", "catchment", "demand", "poi",
-          "competitor", "rent", "listing", "mobility", "traffic",
-          "event", "coverage", "source_support", "period_grain", "period_key"
+          "context_id",
+          "identity",
+          "catchment",
+          "demand",
+          "poi",
+          "competitor",
+          "rent",
+          "listing",
+          "mobility",
+          "traffic",
+          "event",
+          "coverage",
+          "source_support",
+          "period_grain",
+          "period_key"
         ],
         "properties": {
-          "context_id": {"type": "string"},
-          "period_grain": {"type": "string"},
-          "period_key": {"type": "string"},
-          "identity": {"type": "object"},
-          "catchment": {"type": "object"},
-          "demand": {"type": "object"},
-          "poi": {"type": "object"},
-          "competitor": {"type": "object"},
-          "rent": {"type": "object"},
-          "listing": {"type": "object"},
-          "mobility": {"type": "object"},
-          "traffic": {"type": "object"},
-          "event": {"type": "object"},
-          "coverage": {"type": "object"},
-          "source_support": {"type": "object"},
+          "context_id": {
+            "type": "string"
+          },
+          "period_grain": {
+            "type": "string"
+          },
+          "period_key": {
+            "type": "string"
+          },
+          "identity": {
+            "type": "object"
+          },
+          "catchment": {
+            "type": "object"
+          },
+          "demand": {
+            "type": "object"
+          },
+          "poi": {
+            "type": "object"
+          },
+          "competitor": {
+            "type": "object"
+          },
+          "rent": {
+            "type": "object"
+          },
+          "listing": {
+            "type": "object"
+          },
+          "mobility": {
+            "type": "object"
+          },
+          "traffic": {
+            "type": "object"
+          },
+          "event": {
+            "type": "object"
+          },
+          "coverage": {
+            "type": "object"
+          },
+          "source_support": {
+            "type": "object"
+          },
           "component_manifest_refs": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {
+              "type": "object"
+            }
           }
         }
       },
       "MarketCellProfile": {
         "type": "object",
-        "required": ["cell_id", "h3_index", "h3_resolution", "period_grain", "period_key"],
+        "required": [
+          "cell_id",
+          "h3_index",
+          "h3_resolution",
+          "period_grain",
+          "period_key"
+        ],
         "properties": {
-          "cell_id": {"type": "string"},
-          "h3_index": {"type": "string"},
-          "h3_resolution": {"type": "integer"},
-          "period_grain": {"type": "string"},
-          "period_key": {"type": "string"},
-          "admin_code": {"type": "string", "nullable": true},
-          "county": {"type": "string", "nullable": true},
-          "district": {"type": "string", "nullable": true},
-          "demographics": {"type": "object", "nullable": true},
-          "points_of_interest": {"type": "object", "nullable": true},
-          "competitors": {"type": "object", "nullable": true},
-          "rent": {"type": "object", "nullable": true},
-          "listings": {"type": "object", "nullable": true},
-          "mobility": {"type": "object", "nullable": true},
-          "transport": {"type": "object", "nullable": true},
-          "events": {"type": "object", "nullable": true},
-          "coverage": {"type": "object", "nullable": true},
-          "source_support": {"type": "object", "nullable": true}
+          "cell_id": {
+            "type": "string"
+          },
+          "h3_index": {
+            "type": "string"
+          },
+          "h3_resolution": {
+            "type": "integer"
+          },
+          "period_grain": {
+            "type": "string"
+          },
+          "period_key": {
+            "type": "string"
+          },
+          "admin_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "county": {
+            "type": "string",
+            "nullable": true
+          },
+          "district": {
+            "type": "string",
+            "nullable": true
+          },
+          "demographics": {
+            "type": "object",
+            "nullable": true
+          },
+          "points_of_interest": {
+            "type": "object",
+            "nullable": true
+          },
+          "competitors": {
+            "type": "object",
+            "nullable": true
+          },
+          "rent": {
+            "type": "object",
+            "nullable": true
+          },
+          "listings": {
+            "type": "object",
+            "nullable": true
+          },
+          "mobility": {
+            "type": "object",
+            "nullable": true
+          },
+          "transport": {
+            "type": "object",
+            "nullable": true
+          },
+          "events": {
+            "type": "object",
+            "nullable": true
+          },
+          "coverage": {
+            "type": "object",
+            "nullable": true
+          },
+          "source_support": {
+            "type": "object",
+            "nullable": true
+          }
         }
       },
       "CandidateCompareResult": {
         "type": "object",
         "required": [
-          "compare_id", "generated_at", "scope", "total_candidates",
-          "candidates", "domain_comparisons", "best_in_class",
-          "readiness_breakdown", "missing_domains_by_candidate",
+          "compare_id",
+          "generated_at",
+          "scope",
+          "total_candidates",
+          "candidates",
+          "domain_comparisons",
+          "best_in_class",
+          "readiness_breakdown",
+          "missing_domains_by_candidate",
           "period_grain"
         ],
         "properties": {
-          "compare_id": {"type": "string"},
-          "generated_at": {"type": "string", "format": "date-time"},
-          "scope": {"type": "string", "enum": ["site", "market_cell", "hybrid"]},
-          "total_candidates": {"type": "integer"},
-          "period_grain": {"type": "string"},
-          "period_key": {"type": "string", "nullable": true},
+          "compare_id": {
+            "type": "string"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "site",
+              "market_cell",
+              "hybrid"
+            ]
+          },
+          "total_candidates": {
+            "type": "integer"
+          },
+          "period_grain": {
+            "type": "string"
+          },
+          "period_key": {
+            "type": "string",
+            "nullable": true
+          },
           "candidates": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {
+              "type": "object"
+            }
           },
           "domain_comparisons": {
             "type": "object",
             "additionalProperties": {
               "type": "object",
-              "required": ["domain", "metric_name", "values_by_candidate", "missing_candidate_ids"],
+              "required": [
+                "domain",
+                "metric_name",
+                "values_by_candidate",
+                "missing_candidate_ids"
+              ],
               "properties": {
-                "domain": {"type": "string"},
-                "metric_name": {"type": "string"},
-                "best_candidate_id": {"type": "string", "nullable": true},
-                "values_by_candidate": {"type": "object"},
+                "domain": {
+                  "type": "string"
+                },
+                "metric_name": {
+                  "type": "string"
+                },
+                "best_candidate_id": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "values_by_candidate": {
+                  "type": "object"
+                },
                 "missing_candidate_ids": {
                   "type": "array",
-                  "items": {"type": "string"}
+                  "items": {
+                    "type": "string"
+                  }
                 },
-                "summary_text": {"type": "string"}
+                "summary_text": {
+                  "type": "string"
+                }
               }
             }
           },
-          "best_in_class": {"type": "object"},
-          "readiness_breakdown": {"type": "object"},
-          "missing_domains_by_candidate": {"type": "object"}
+          "best_in_class": {
+            "type": "object"
+          },
+          "readiness_breakdown": {
+            "type": "object"
+          },
+          "missing_domains_by_candidate": {
+            "type": "object"
+          }
         }
       },
       "SiteEvidenceChain": {
         "type": "object",
-        "required": ["site_id", "generated_at", "domains", "period_grain", "period_key"],
+        "required": [
+          "site_id",
+          "generated_at",
+          "domains",
+          "period_grain",
+          "period_key"
+        ],
         "properties": {
-          "site_id": {"type": "string"},
-          "tenant_id": {"type": "string", "nullable": true},
-          "generated_at": {"type": "string", "format": "date-time"},
-          "period_grain": {"type": "string"},
-          "period_key": {"type": "string"},
-          "overall_confidence_pct": {"type": "number", "nullable": true},
+          "site_id": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period_grain": {
+            "type": "string"
+          },
+          "period_key": {
+            "type": "string"
+          },
+          "overall_confidence_pct": {
+            "type": "number",
+            "nullable": true
+          },
           "domains": {
             "type": "object",
             "additionalProperties": {
               "type": "object",
-              "required": ["domain", "status", "sources", "observation_count", "freshness_state", "negative_evidence_valid"],
+              "required": [
+                "domain",
+                "status",
+                "sources",
+                "observation_count",
+                "freshness_state",
+                "negative_evidence_valid"
+              ],
               "properties": {
-                "domain": {"type": "string"},
-                "status": {"type": "string"},
+                "domain": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
                 "sources": {
                   "type": "array",
-                  "items": {"type": "string"}
+                  "items": {
+                    "type": "string"
+                  }
                 },
-                "observation_count": {"type": "integer"},
-                "freshness_state": {"type": "string"},
-                "age_seconds": {"type": "integer", "nullable": true},
-                "confidence_pct": {"type": "number", "nullable": true},
-                "negative_evidence_valid": {"type": "boolean"},
+                "observation_count": {
+                  "type": "integer"
+                },
+                "freshness_state": {
+                  "type": "string"
+                },
+                "age_seconds": {
+                  "type": "integer",
+                  "nullable": true
+                },
+                "confidence_pct": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "negative_evidence_valid": {
+                  "type": "boolean"
+                },
                 "lineage_refs": {
                   "type": "array",
-                  "items": {"type": "string"}
+                  "items": {
+                    "type": "string"
+                  }
                 },
-                "provenance_notes": {"type": "string", "nullable": true}
+                "provenance_notes": {
+                  "type": "string",
+                  "nullable": true
+                }
               }
             }
           },
           "component_manifest_refs": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {
+              "type": "object"
+            }
           }
         }
       },
       "CellEvidenceChain": {
         "type": "object",
-        "required": ["cell_id", "h3_index", "generated_at", "domains", "period_grain", "period_key"],
+        "required": [
+          "cell_id",
+          "h3_index",
+          "generated_at",
+          "domains",
+          "period_grain",
+          "period_key"
+        ],
         "properties": {
-          "cell_id": {"type": "string"},
-          "h3_index": {"type": "string"},
-          "tenant_id": {"type": "string", "nullable": true},
-          "generated_at": {"type": "string", "format": "date-time"},
-          "period_grain": {"type": "string"},
-          "period_key": {"type": "string"},
-          "domains": {"type": "object"},
+          "cell_id": {
+            "type": "string"
+          },
+          "h3_index": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period_grain": {
+            "type": "string"
+          },
+          "period_key": {
+            "type": "string"
+          },
+          "domains": {
+            "type": "object"
+          },
           "component_manifest_refs": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {
+              "type": "object"
+            }
           }
         }
       },
       "CoverageSurface": {
         "type": "object",
-        "required": ["surface_id", "cells", "coverage_percentage", "overall_state", "readiness"],
+        "required": [
+          "surface_id",
+          "cells",
+          "domain",
+          "dataset_ids",
+          "freshness",
+          "generated_at",
+          "product_version",
+          "readiness",
+          "readiness_reasons",
+          "scope_principal_id",
+          "search_completeness",
+          "spatial_grain",
+          "state_breakdown",
+          "temporal_grain"
+        ],
         "properties": {
-          "surface_id": {"type": "string"},
-          "coverage_percentage": {"type": "number"},
-          "overall_state": {"type": "string"},
-          "readiness": {"type": "string"},
+          "surface_id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
           "cells": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {
+              "type": "object"
+            }
           },
-          "state_breakdown": {"type": "object"},
-          "freshness_summary": {"type": "object"},
-          "reasons": {
+          "dataset_ids": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {
+              "type": "string"
+            }
+          },
+          "freshness": {
+            "type": "object"
+          },
+          "generated_at": {
+            "type": "string"
+          },
+          "product_version": {
+            "type": "string"
+          },
+          "readiness": {
+            "type": "string"
+          },
+          "readiness_reasons": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "scope_principal_id": {
+            "type": "string"
+          },
+          "search_completeness": {
+            "type": "object"
+          },
+          "spatial_grain": {
+            "type": "string"
+          },
+          "state_breakdown": {
+            "type": "object"
+          },
+          "temporal_grain": {
+            "type": "string"
           }
         }
       },
       "DataGap": {
         "type": "object",
-        "required": ["gap_id", "domain", "measure", "priority_rank", "uncertainty_pct", "severity", "rationale"],
+        "required": [
+          "blocking",
+          "dataset_id",
+          "detail",
+          "detected_at",
+          "domain",
+          "gap_id",
+          "gap_kind",
+          "reason_code",
+          "remediation",
+          "scope_principal_id"
+        ],
         "properties": {
-          "gap_id": {"type": "string"},
-          "domain": {"type": "string"},
-          "measure": {"type": "string"},
-          "priority_rank": {"type": "integer"},
-          "uncertainty_pct": {"type": "number"},
-          "severity": {"type": "string"},
-          "rationale": {"type": "string"},
-          "impact_score": {"type": "number", "nullable": true},
-          "remediation_action": {"type": "string", "nullable": true}
+          "blocking": {
+            "type": "boolean"
+          },
+          "dataset_id": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "detected_at": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "gap_id": {
+            "type": "string"
+          },
+          "gap_kind": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "remediation": {
+            "type": "string"
+          },
+          "scope_principal_id": {
+            "type": "string"
+          },
+          "age_seconds": {
+            "type": "integer",
+            "nullable": true
+          },
+          "business_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "cell_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "contract_version": {
+            "type": "string",
+            "nullable": true
+          },
+          "coverage_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dataset_version_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "entity_id": {
+            "type": "string",
+            "nullable": true
+          }
         }
       },
       "DataAcquisitionPlan": {
         "type": "object",
         "required": [
-          "plan_id", "site_context_id", "coverage_surface_id",
-          "status", "gaps", "experiments", "effective_as_of",
-          "knowledge_as_of", "plan_version", "policy", "metadata"
+          "plan_id",
+          "site_context_id",
+          "coverage_surface_id",
+          "status",
+          "gaps",
+          "experiments",
+          "effective_as_of",
+          "knowledge_as_of",
+          "plan_version",
+          "policy",
+          "metadata"
         ],
         "properties": {
-          "plan_id": {"type": "string"},
-          "site_context_id": {"type": "string"},
-          "coverage_surface_id": {"type": "string"},
-          "status": {"type": "string", "enum": ["proposed", "ready", "executing", "completed", "cancelled"]},
-          "plan_version": {"type": "integer"},
-          "effective_as_of": {"type": "string"},
-          "knowledge_as_of": {"type": "string"},
+          "plan_id": {
+            "type": "string"
+          },
+          "site_context_id": {
+            "type": "string"
+          },
+          "coverage_surface_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "proposed",
+              "ready",
+              "executing",
+              "completed",
+              "cancelled"
+            ]
+          },
+          "plan_version": {
+            "type": "integer"
+          },
+          "effective_as_of": {
+            "type": "string"
+          },
+          "knowledge_as_of": {
+            "type": "string"
+          },
           "gaps": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/AcquisitionGap"}
+            "items": {
+              "$ref": "#/components/schemas/AcquisitionGap"
+            }
           },
           "experiments": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/SourceValueExperiment"}
+            "items": {
+              "$ref": "#/components/schemas/SourceValueExperiment"
+            }
           },
-          "policy": {"type": "object"},
-          "metadata": {"type": "object"}
+          "policy": {
+            "type": "object"
+          },
+          "metadata": {
+            "type": "object"
+          }
         }
       },
       "CreateAcquisitionPlanPayload": {
         "type": "object",
-        "required": ["plan_id", "site_context_id", "coverage_surface_id"],
+        "required": [
+          "plan_id",
+          "site_context_id",
+          "coverage_surface_id"
+        ],
         "properties": {
-          "plan_id": {"type": "string"},
-          "site_context_id": {"type": "string"},
-          "coverage_surface_id": {"type": "string"},
-          "status": {"type": "string", "default": "proposed"},
-          "plan_version": {"type": "integer", "default": 1},
-          "effective_as_of": {"type": "string", "nullable": true},
-          "knowledge_as_of": {"type": "string", "nullable": true},
+          "plan_id": {
+            "type": "string"
+          },
+          "site_context_id": {
+            "type": "string"
+          },
+          "coverage_surface_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "default": "proposed"
+          },
+          "plan_version": {
+            "type": "integer",
+            "default": 1
+          },
+          "effective_as_of": {
+            "type": "string",
+            "nullable": true
+          },
+          "knowledge_as_of": {
+            "type": "string",
+            "nullable": true
+          },
           "gaps": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/AcquisitionGap"}
+            "items": {
+              "$ref": "#/components/schemas/AcquisitionGap"
+            }
           },
           "experiments": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/SourceValueExperiment"}
+            "items": {
+              "$ref": "#/components/schemas/SourceValueExperiment"
+            }
           },
-          "policy": {"type": "object"},
-          "metadata": {"type": "object"}
+          "policy": {
+            "type": "object"
+          },
+          "metadata": {
+            "type": "object"
+          }
         }
       },
       "AcquisitionGap": {
         "type": "object",
         "required": [
-          "gap_id", "domain", "measure", "priority_rank",
-          "current_uncertainty_pct", "expected_uncertainty_reduction_pct",
-          "decision_sensitivity", "estimated_cost_units", "estimated_latency_hours",
-          "survey_effort_hours", "quota_units", "rationale"
+          "gap_id",
+          "domain",
+          "measure",
+          "priority_rank",
+          "current_uncertainty_pct",
+          "expected_uncertainty_reduction_pct",
+          "decision_sensitivity",
+          "estimated_cost_units",
+          "estimated_latency_hours",
+          "survey_effort_hours",
+          "quota_units",
+          "rationale"
         ],
         "properties": {
-          "gap_id": {"type": "string"},
-          "domain": {"type": "string"},
-          "measure": {"type": "string"},
-          "priority_rank": {"type": "integer"},
-          "current_uncertainty_pct": {"type": "number"},
-          "expected_uncertainty_reduction_pct": {"type": "number"},
-          "decision_sensitivity": {"type": "number"},
-          "estimated_cost_units": {"type": "number"},
-          "estimated_latency_hours": {"type": "number"},
-          "survey_effort_hours": {"type": "number"},
-          "quota_units": {"type": "number"},
-          "rationale": {"type": "string"},
+          "gap_id": {
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "measure": {
+            "type": "string"
+          },
+          "priority_rank": {
+            "type": "integer"
+          },
+          "current_uncertainty_pct": {
+            "type": "number"
+          },
+          "expected_uncertainty_reduction_pct": {
+            "type": "number"
+          },
+          "decision_sensitivity": {
+            "type": "number"
+          },
+          "estimated_cost_units": {
+            "type": "number"
+          },
+          "estimated_latency_hours": {
+            "type": "number"
+          },
+          "survey_effort_hours": {
+            "type": "number"
+          },
+          "quota_units": {
+            "type": "number"
+          },
+          "rationale": {
+            "type": "string"
+          },
           "recommended_source_ids": {
             "type": "array",
-            "items": {"type": "string"},
+            "items": {
+              "type": "string"
+            },
             "nullable": true
           }
         }
@@ -965,50 +1709,109 @@
       "SourceValueExperiment": {
         "type": "object",
         "required": [
-          "experiment_id", "source_id", "scope", "status",
-          "sample_size", "hypothesis", "baseline_uncertainty_pct",
-          "expected_uplift_pct", "max_cost_units", "max_latency_hours",
-          "max_quota_units", "survey_effort_hours", "paid_source",
-          "prior_value_evidence", "gap_ids", "success_criteria"
+          "experiment_id",
+          "source_id",
+          "scope",
+          "status",
+          "sample_size",
+          "hypothesis",
+          "baseline_uncertainty_pct",
+          "expected_uplift_pct",
+          "max_cost_units",
+          "max_latency_hours",
+          "max_quota_units",
+          "survey_effort_hours",
+          "paid_source",
+          "prior_value_evidence",
+          "gap_ids",
+          "success_criteria"
         ],
         "properties": {
-          "experiment_id": {"type": "string"},
-          "source_id": {"type": "string"},
+          "experiment_id": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
           "scope": {
             "type": "string",
-            "enum": ["site", "market_cell", "catchment", "region", "nationwide"]
+            "enum": [
+              "site",
+              "market_cell",
+              "catchment",
+              "region",
+              "nationwide"
+            ]
           },
           "status": {
             "type": "string",
-            "enum": ["planned", "running", "evaluated", "stopped"]
+            "enum": [
+              "planned",
+              "running",
+              "evaluated",
+              "stopped"
+            ]
           },
-          "sample_size": {"type": "integer"},
-          "hypothesis": {"type": "string"},
-          "baseline_uncertainty_pct": {"type": "number"},
-          "expected_uplift_pct": {"type": "number"},
-          "max_cost_units": {"type": "number"},
-          "max_latency_hours": {"type": "number"},
-          "max_quota_units": {"type": "number"},
-          "survey_effort_hours": {"type": "number"},
-          "paid_source": {"type": "boolean"},
-          "prior_value_evidence": {"type": "boolean"},
+          "sample_size": {
+            "type": "integer"
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "baseline_uncertainty_pct": {
+            "type": "number"
+          },
+          "expected_uplift_pct": {
+            "type": "number"
+          },
+          "max_cost_units": {
+            "type": "number"
+          },
+          "max_latency_hours": {
+            "type": "number"
+          },
+          "max_quota_units": {
+            "type": "number"
+          },
+          "survey_effort_hours": {
+            "type": "number"
+          },
+          "paid_source": {
+            "type": "boolean"
+          },
+          "prior_value_evidence": {
+            "type": "boolean"
+          },
           "gap_ids": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           },
           "success_criteria": {
             "type": "array",
-            "items": {"type": "string"}
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
       "ApiError": {
         "type": "object",
-        "required": ["code", "message"],
+        "required": [
+          "code",
+          "message"
+        ],
         "properties": {
-          "code": {"type": "string"},
-          "message": {"type": "string"},
-          "details": {"type": "object"}
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object"
+          }
         }
       }
     },
@@ -1017,7 +1820,9 @@
         "description": "Authentication required or invalid principal",
         "content": {
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/ApiError"}
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       },
@@ -1025,7 +1830,9 @@
         "description": "Access forbidden by tenant isolation or RBAC policy",
         "content": {
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/ApiError"}
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       },
@@ -1033,7 +1840,9 @@
         "description": "Requested resource not found",
         "content": {
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/ApiError"}
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       },
@@ -1041,7 +1850,9 @@
         "description": "Input validation error",
         "content": {
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/ApiError"}
+            "schema": {
+              "$ref": "#/components/schemas/ApiError"
+            }
           }
         }
       }

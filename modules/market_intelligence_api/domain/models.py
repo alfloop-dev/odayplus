@@ -277,11 +277,7 @@ class CandidateSiteSummary:
                 or getattr(ctx.mobility, "stay_duration_minutes_mean", None)
             ) if ctx.mobility.status == DomainStatus.available else None,
             traffic_status=ctx.traffic.status.value,
-            daily_traffic_volume=(
-                float(getattr(ctx.traffic, "hourly_volume_vph", None) or 0.0)
-                if getattr(ctx.traffic, "hourly_volume_vph", None) is not None
-                else (getattr(ctx.traffic, "daily_traffic_volume", None))
-            ) if ctx.traffic.status == DomainStatus.available else None,
+            daily_traffic_volume=getattr(ctx.traffic, "daily_traffic_volume", None) if ctx.traffic.status == DomainStatus.available else None,
             event_status=ctx.event.status.value,
             active_events_count=ctx.event.active_events_count if ctx.event.status == DomainStatus.available else None,
             overall_readiness=overall_readiness,
@@ -637,8 +633,8 @@ class DataGapFilter:
     """Filter parameters for querying data gaps."""
 
     domain: str | None = None
-    min_uncertainty_pct: float | None = None
-    severity: str | None = None
+    gap_kind: str | None = None
+    reason_code: str | None = None
     tenant_id: str | None = None
     limit: int = 100
 

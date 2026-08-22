@@ -371,10 +371,10 @@ class DataPlatformMarketIntelligenceRepository:
         if filters:
             if filters.domain:
                 gaps = [g for g in gaps if g.domain == filters.domain]
-            if filters.min_uncertainty_pct is not None:
-                gaps = [g for g in gaps if g.uncertainty_pct >= filters.min_uncertainty_pct]
-            if filters.severity:
-                gaps = [g for g in gaps if g.severity == filters.severity]
+            if filters.gap_kind:
+                gaps = [g for g in gaps if g.gap_kind == filters.gap_kind]
+            if filters.reason_code:
+                gaps = [g for g in gaps if g.reason_code == filters.reason_code]
             if filters.limit > 0:
                 gaps = gaps[: filters.limit]
 

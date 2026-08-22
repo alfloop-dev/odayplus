@@ -144,6 +144,7 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "household_count": 18000.0,
                     "density_per_sq_km": 1000.0,
                     "daytime_population_ratio": 1.2,
+                    "source_support": {"observation_count": 50000, "sample_count": 50000, "uncertainty_pct": 5.0},
                 },
                 "poi": {
                     "status": "available",
@@ -163,6 +164,7 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "brands_present": ["BrandA", "BrandB"],
                     "stores_by_brand": {"BrandA": 5, "BrandB": 3},
                     "stores_by_category": {"laundromat": 8},
+                    "source_support": {"observation_count": 8, "sample_count": 8, "uncertainty_pct": 10.0, "negative_evidence_valid": True},
                 },
                 "rent": {
                     "status": "available",
@@ -1215,4 +1217,32 @@ def test_production_create_app_mounts_market_intelligence_router() -> None:
         assert resp_alias.status_code == 200
         assert resp_alias.headers.get("Deprecation") == "true"
         assert resp_alias.json()["status"] == "healthy"
+
+
+def test_list_data_gaps_with_filters(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/data-gaps",
+        params={"domain": "rent", "gap_kind": "missingness", "reason_code": "LOW_SAMPLE_COUNT"},
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    assert data["items"][0]["gap_id"] == "gap-rent-xinyi-01"
+
+def test_list_data_gaps_with_no_match_filters(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/data-gaps",
+        params={"reason_code": "WRONG_REASON"},
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 0
 
