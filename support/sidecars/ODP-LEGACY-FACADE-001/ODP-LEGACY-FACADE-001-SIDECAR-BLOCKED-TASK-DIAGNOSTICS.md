@@ -12,7 +12,7 @@
 | **Parent Owner / Reviewer** | `Antigravity5` / `Claude` |
 | **Target / Parent Branch** | `dev` / `task/ODP-LEGACY-FACADE-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS` |
 | **Parent Task Status** | `blocked` |
-| **Declared Blocked Reason** | `waiting for dependencies: ODP-XR-CLIENT-001, ODP-XR-PRODUCT-CLIENT-001, ODP-LEGACY-INVENTORY-001` |
+| **Declared Blocked Reason** | Waiting for dependency: `ODP-XR-PRODUCT-CLIENT-001` (`ODP-LEGACY-INVENTORY-001`, `ODP-XR-CLIENT-001`, and upstream `XR-CONTRACTS-PRODUCT-001` already merged) |
 | **Diagnostic Timestamp** | `2026-08-22` |
 | **Scope Boundary** | Support artifact under `support/sidecars/ODP-LEGACY-FACADE-001/` only. Strictly zero mutation of L1 canonical platform documents, core contracts, runtime tables, or governance policies. |
 
@@ -33,8 +33,9 @@ Parent task `ODP-LEGACY-FACADE-001` is the critical architectural junction in `o
 ### Diagnostic Finding Summary
 - **Dependency 1 Satisfied (`ODP-LEGACY-INVENTORY-001`)**: Completed via PR #950 (merged into `dev`). Delivered frozen legacy inventory classification, automated boundary validator (`scripts/validate_external_data_boundary.py`), 69 boundary architecture tests (`tests/architecture/test_external_data_boundary.py`), and formally declared the `migrating_to_platform_client` coupling list in `docs/design/emgi/v0.4.1/LEGACY_EXTERNAL_DATA_DISPOSITION.yaml`.
 - **Dependency 2 Satisfied (`ODP-XR-CLIENT-001`)**: Completed via PR #951 (merged into `dev`). Delivered the foundation contract client (`packages/oday_data_contracts_client/`), pin config (`config/oday_data_contracts.toml`), and 32 contract pin tests (`tests/contract/test_oday_data_contract_pin.py`).
-- **Dependency 3 True Active Blocker (`ODP-XR-PRODUCT-CLIENT-001`)**: Currently **in progress / blocked**. `ODP-XR-PRODUCT-CLIENT-001` is responsible for delivering the product contract client (`packages/oday_data_product_contracts_client/`), which requires upstream release `XR-CONTRACTS-PRODUCT-001` from `alfloop-dev/oday-data-platform`.
-- **Root Blocker Diagnosis**: While 2 of the 3 dependencies are fully merged and verified in `dev`, `ODP-LEGACY-FACADE-001` cannot complete its contract (`odayplus.market-data-facade.v2`) without `ODP-XR-PRODUCT-CLIENT-001` because the facade requires decision-ready product models (`emgi.site-market-context.v1`, `emgi.market-cell-profile.v1`, `emgi.catchment-profile.v1`). Therefore, `ODP-LEGACY-FACADE-001` must remain in `blocked` status until `ODP-XR-PRODUCT-CLIENT-001` completes.
+- **Upstream Release Satisfied (`XR-CONTRACTS-PRODUCT-001` in `alfloop-dev/oday-data-platform`)**: Completed & merged into `dev` at 2026-08-22T05:25Z. The upstream EMGI product contracts release bundle (`packages/oday_data_product_contracts`, `config/emgi_product_contracts.toml`) and domain schemas (`emgi.site-market-context.v1`, `emgi.market-cell-profile.v1`, `emgi.catchment-profile.v1`) are now published and canonical in the platform repository.
+- **Dependency 3 True Active Blocker (`ODP-XR-PRODUCT-CLIENT-001` in `alfloop-dev/odayplus`)**: Currently **in progress / undelivered**. With upstream `XR-CONTRACTS-PRODUCT-001` merged at 05:25Z, `ODP-XR-PRODUCT-CLIENT-001` is no longer blocked on cross-repo contract generation. However, the client package (`packages/oday_data_product_contracts_client/`), pin config (`config/oday_data_product_contracts.toml`), and contract pin tests have not yet landed in `dev` in `odayplus`.
+- **Root Blocker Diagnosis**: While 2 of the 3 local dependencies and the upstream contract release are fully merged, `ODP-LEGACY-FACADE-001` cannot implement its read models (`emgi.site-market-context.v1`, `emgi.market-cell-profile.v1`, `emgi.catchment-profile.v1`) without the client package delivered by `ODP-XR-PRODUCT-CLIENT-001`. The direct root blocker is therefore the **still-undelivered local consumer client `ODP-XR-PRODUCT-CLIENT-001`**. `ODP-LEGACY-FACADE-001` must remain in `blocked` status until `ODP-XR-PRODUCT-CLIENT-001` completes and merges into `dev`.
 
 ---
 
@@ -89,8 +90,11 @@ Per task specification and repo-wide governance:
 │                          │                       │            │ available at packages/oday_data_ │
 │                          │                       │            │ contracts_client.                │
 ├──────────────────────────┼───────────────────────┼────────────┼──────────────────────────────────┤
-│ ODP-XR-PRODUCT-CLIENT-001│ alfloop-dev/odayplus  │ IN PROGRESS│ TRUE BLOCKER. Product client     │
-│                          │                       │ / BLOCKED  │ packages/oday_data_product_      │
+│ XR-CONTRACTS-PRODUCT-001 │ alfloop-dev/          │ DONE       │ Satisfied upstream. Product      │
+│                          │ oday-data-platform    │ (05:25Z)   │ contract release bundle merged.  │
+├──────────────────────────┼───────────────────────┼────────────┼──────────────────────────────────┤
+│ ODP-XR-PRODUCT-CLIENT-001│ alfloop-dev/odayplus  │ IN PROGRESS│ TRUE ACTIVE BLOCKER. Client pkg  │
+│                          │                       │ /UNDELIVERED│ packages/oday_data_product_     │
 │                          │                       │            │ contracts_client not yet landed. │
 └──────────────────────────┴───────────────────────┴────────────┴──────────────────────────────────┘
 ```
@@ -112,15 +116,24 @@ Per task specification and repo-wide governance:
   - `config/oday_data_contracts.toml` pinning upstream release `oday-data-foundation-contracts.v0.4.1`.
   - 32 contract pin tests passing in `tests/contract/test_oday_data_contract_pin.py`.
 
-#### 3. `ODP-XR-PRODUCT-CLIENT-001` (Product Contract Client) — Active Root Cause Blocker
-- **Status**: **IN PROGRESS / BLOCKED**
+#### 3. `XR-CONTRACTS-PRODUCT-001` (Upstream EMGI Product Contracts Release Bundle in `oday-data-platform`)
+- **Status**: **DONE / MERGED** (Merged at 2026-08-22T05:25Z into `dev`).
+- **Delivered Capabilities**:
+  - Upstream product contract release bundle (`packages/oday_data_product_contracts`, `config/emgi_product_contracts.toml`).
+  - Domain schemas and models published: `emgi.site-market-context.v1`, `emgi.market-cell-profile.v1`, `emgi.catchment-profile.v1`, and `emgi.acquisition-opportunity.v1`.
+  - Clears all cross-repo blockers for consumer client generation in `odayplus`.
+
+#### 4. `ODP-XR-PRODUCT-CLIENT-001` (Product Contract Client in `odayplus`) — Active Direct Root Blocker
+- **Status**: **IN PROGRESS / UNDELIVERED**
 - **Pending Deliverables**:
   - `packages/oday_data_product_contracts_client/`
   - `config/oday_data_product_contracts.toml`
   - `tests/contract/test_oday_data_product_contract_pin.py`
-- **Upstream Root Cause**:
-  - Blocked on cross-repo upstream task `XR-CONTRACTS-PRODUCT-001` in `alfloop-dev/oday-data-platform`.
-  - Upstream release bundle requires completion of 8 domain producer tasks (`DPF-SRC-SURVEY-001`, `DPF-DOM-PROPERTY-001`, `DPF-DP-COVERAGE-001`, `DPF-DP-MARKET-CELL-001`, `DPF-DP-CATCHMENT-001`, `DPF-DP-SITE-CONTEXT-001`, `DPF-DP-ACQUISITION-001`, and `XR-CONTRACTS-001`).
+- **Root Cause & Diagnosis**:
+  - Upstream release `XR-CONTRACTS-PRODUCT-001` has landed (05:25Z), so `ODP-XR-PRODUCT-CLIENT-001` is unblocked and actively building the consumer-side client wrapper in `odayplus`.
+  - However, `ODP-XR-PRODUCT-CLIENT-001` has **not yet landed/merged** into `dev` in `odayplus`.
+  - Without `packages/oday_data_product_contracts_client/`, parent task `ODP-LEGACY-FACADE-001` cannot import product contract types or construct `modules/external_data/infrastructure/data_platform_client.py`.
+  - Therefore, `ODP-XR-PRODUCT-CLIENT-001` is the true, direct active blocker holding `ODP-LEGACY-FACADE-001` in `blocked` state.
 
 ---
 
@@ -150,12 +163,12 @@ Per `docs/design/emgi/v0.4.1/LEGACY_EXTERNAL_DATA_DISPOSITION.yaml` (§ `consume
 ```mermaid
 flowchart TD
     subgraph Upstream ["alfloop-dev/oday-data-platform"]
-        UP_PROD["Domain Producer Tasks<br/>(DPF-SRC-SURVEY-001, DPF-DOM-PROPERTY-001, etc.)"] --> UP_XR_PROD["XR-CONTRACTS-PRODUCT-001<br/>(EMGI Product Release Bundle)<br/>[BLOCKED]"]
+        UP_PROD["Domain Producer Tasks<br/>(DPF-SRC-SURVEY-001, DPF-DOM-PROPERTY-001, etc.)"] --> UP_XR_PROD["XR-CONTRACTS-PRODUCT-001<br/>(EMGI Product Release Bundle)<br/>[MERGED / DONE @ 05:25Z]"]
     end
 
     subgraph ODayPlus_Clients ["alfloop-dev/odayplus (Client Layer)"]
         XR_CLIENT["ODP-XR-CLIENT-001<br/>(Foundation Contract Client)<br/>[MERGED / DONE]"]
-        XR_PROD_CLIENT["ODP-XR-PRODUCT-CLIENT-001<br/>(Product Contract Client)<br/>[BLOCKED]"]
+        XR_PROD_CLIENT["ODP-XR-PRODUCT-CLIENT-001<br/>(Product Contract Client)<br/>[IN PROGRESS / UNDELIVERED - ROOT BLOCKER]"]
         INV["ODP-LEGACY-INVENTORY-001<br/>(Boundary & Disposition)<br/>[MERGED / DONE]"]
     end
 
@@ -171,7 +184,7 @@ flowchart TD
         CI_CUTOVER["XR-COMPAT-CI-001 & XR-CUTOVER-001<br/>(Cross-Repo CI & Cutover)"]
     end
 
-    UP_XR_PROD -->|Cross-repo artifact release| XR_PROD_CLIENT
+    UP_XR_PROD -->|Cross-repo contract release merged| XR_PROD_CLIENT
     XR_CLIENT --> FACADE
     XR_PROD_CLIENT --> FACADE
     INV --> FACADE
@@ -187,8 +200,8 @@ flowchart TD
     classDef blocked fill:#f8d7da,stroke:#dc3545,stroke-width:2px;
     classDef inprogress fill:#fff3cd,stroke:#ffc107,stroke-width:2px;
 
-    class XR_CLIENT,INV done;
-    class UP_XR_PROD,XR_PROD_CLIENT,FACADE,HEATZONE,FEASIBILITY,ECONOMICS,SITESCORE,CI_CUTOVER blocked;
+    class UP_XR_PROD,XR_CLIENT,INV done;
+    class XR_PROD_CLIENT,FACADE,HEATZONE,FEASIBILITY,ECONOMICS,SITESCORE,CI_CUTOVER blocked;
 ```
 
 ---
@@ -248,12 +261,12 @@ When `ODP-XR-PRODUCT-CLIENT-001` is completed and merged into `dev`, parent task
 To confirm the current repository state, boundary conformance, and readiness of existing client layers without mutating canonical product behavior, the following bounded verification suites were executed:
 
 ### Verification Run 1: Foundation Contract Client Suite
-- **Command**: `uv run --python 3.12 pytest tests/contract/test_oday_data_contract_pin.py -q`
+- **Command**: `.venv/bin/pytest tests/contract/test_oday_data_contract_pin.py -q`
 - **Result**: `32 passed in 1.25s`
 - **Finding**: Foundation client (`ODP-XR-CLIENT-001`) is fully operational and healthy.
 
 ### Verification Run 2: Architecture & External Data Boundary Suite
-- **Command**: `uv run --python 3.12 pytest tests/architecture/test_external_data_boundary.py -q`
+- **Command**: `.venv/bin/pytest tests/architecture/test_external_data_boundary.py -q`
 - **Result**: `69 passed in 40.81s`
 - **Finding**: Full isolation of frozen external data paths; zero unauthorized provider calls or leakage.
 
@@ -262,16 +275,16 @@ To confirm the current repository state, boundary conformance, and readiness of 
 - **Result**:
   ```text
   contract: odayplus.legacy-external-data-disposition.v2
-  tracked files: 2574
-    classified: 2574
+  tracked files: 2575
+    classified: 2575
     unclassified: 0
-    by_disposition: {"archived": 75, "assisted_intake_workflow": 58, "delivery_and_governance": 78, "development_platform": 223, "documentation_and_evidence": 944, "frozen_legacy_producer": 32, "migrating_to_platform_client": 46, "product_consumer_owned": 637, "product_review_workflow": 146, "repository_metadata": 16, "shared_platform_support": 61, "verification_only": 258}
+    by_disposition: {"archived": 75, "assisted_intake_workflow": 58, "delivery_and_governance": 78, "development_platform": 224, "documentation_and_evidence": 944, "frozen_legacy_producer": 32, "migrating_to_platform_client": 46, "product_consumer_owned": 637, "product_review_workflow": 146, "repository_metadata": 16, "shared_platform_support": 61, "verification_only": 258}
     frozen_files: 32
     capability_detections: 68
     provider_reference_hits: 218
   external-data boundary: OK
   ```
-- **Finding**: Complete disposition classification across 2,574 files with 0 unclassified gaps.
+- **Finding**: Complete disposition classification across 2,575 files with 0 unclassified gaps.
 
 ### Verification Run 4: Whole-Repository Code Boundary Conformance
 - **Command**: `python3 delivery_toolchain/governance/check_code_boundaries.py`
