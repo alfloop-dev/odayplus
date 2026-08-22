@@ -178,7 +178,7 @@ class DataPlatformMarketIntelligenceRepository:
     ) -> None:
         self._facade = facade
         self._transport = transport or facade.client.transport
-        self._local_plans: dict[str, DataAcquisitionPlan] = {}
+        self._local_plans: dict[tuple[str | None, str], DataAcquisitionPlan] = {}
 
     @property
     def facade(self) -> MarketDataFacade:
@@ -403,12 +403,18 @@ class DataPlatformMarketIntelligenceRepository:
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> list[DataAcquisitionPlan]:
-        plans: list[DataAcquisitionPlan] = list(self._local_plans.values())
+        effective_tenant = tenant_id or (principal.tenant_id if principal is not None else None)
+        if effective_tenant is not None:
+            plans: list[DataAcquisitionPlan] = [
+                p for (t_id, _), p in self._local_plans.items() if t_id == effective_tenant
+            ]
+        else:
+            plans = list(self._local_plans.values())
         params: dict[str, Any] = {}
         if filters and filters.site_context_id:
             params["site_context_id"] = filters.site_context_id
-        if tenant_id:
-            params["tenant_id"] = tenant_id
+        if effective_tenant:
+            params["tenant_id"] = effective_tenant
 
         raw = self._transport.fetch_document("emgi.data-acquisition-plan.v1", params=params if params else None)
         if raw is not None:
@@ -447,18 +453,23 @@ class DataPlatformMarketIntelligenceRepository:
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> DataAcquisitionPlan:
-        if plan_id in self._local_plans:
-            return self._local_plans[plan_id]
+        effective_tenant = tenant_id or (principal.tenant_id if principal is not None else None)
+        if (effective_tenant, plan_id) in self._local_plans:
+            return self._local_plans[(effective_tenant, plan_id)]
+        if effective_tenant is None:
+            for (t_id, p_id), p in self._local_plans.items():
+                if p_id == plan_id:
+                    return p
 
         raw = self._transport.fetch_document(
             "emgi.data-acquisition-plan.v1",
             document_id=plan_id,
-            params={"plan_id": plan_id, "tenant_id": tenant_id} if tenant_id else {"plan_id": plan_id},
+            params={"plan_id": plan_id, "tenant_id": effective_tenant} if effective_tenant else {"plan_id": plan_id},
         )
         if raw is None:
             raise MarketIntelligenceNotFoundError(
                 f"DataAcquisitionPlan not found: plan_id={plan_id}",
-                details={"plan_id": plan_id},
+                details={"plan_id": plan_id, "tenant_id": effective_tenant} if effective_tenant else {"plan_id": plan_id},
             )
         try:
             return DataAcquisitionPlan.from_dict(raw)
@@ -475,7 +486,8 @@ class DataPlatformMarketIntelligenceRepository:
         tenant_id: str | None = None,
         principal: Principal | None = None,
     ) -> DataAcquisitionPlan:
-        self._local_plans[plan.plan_id] = plan
+        effective_tenant = tenant_id or (principal.tenant_id if principal is not None else None)
+        self._local_plans[(effective_tenant, plan.plan_id)] = plan
         return plan
 
 
