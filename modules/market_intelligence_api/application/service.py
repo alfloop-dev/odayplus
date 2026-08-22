@@ -72,6 +72,78 @@ from shared.auth import Action, DataClassification, Principal
 from shared.auth.engine import AuthorizationEngine
 
 
+def _canonical_domain_freshness(coverage: Any, domain: str) -> str:
+    """Read the canonical per-domain freshness map without inventing a value."""
+    values = getattr(coverage, "domain_freshness", None) if coverage is not None else None
+    if isinstance(values, Mapping):
+        wanted = domain.casefold().replace("-", "_")
+        for key, value in values.items():
+            normalized = str(key).casefold().replace("-", "_")
+            if normalized == wanted:
+                return getattr(value, "value", str(value))
+    # `unknown` is a canonical freshness state and explicitly means that the
+    # producer did not publish a freshness verdict for this domain.
+    return "unknown"
+
+
+def _canonical_support_values(
+    support: Any,
+    *,
+    coverage: Any,
+    domain: str,
+) -> dict[str, Any]:
+    """Project only fields present in canonical SourceSupportSummary.
+
+    The BFF evidence shape has a few legacy presentation fields (freshness,
+    age, negative evidence, confidence).  Only freshness can be sourced from
+    the canonical coverage map; age and negative-evidence validity are not
+    fields of site/cell source support and therefore remain unknown.
+    """
+    if support is None:
+        return {
+            "sources": [],
+            "observation_count": None,
+            "freshness_state": _canonical_domain_freshness(coverage, domain),
+            "age_seconds": None,
+            "confidence_pct": None,
+            "negative_evidence_valid": None,
+            "lineage_refs": [],
+        }
+
+    uncertainty_pct = getattr(support, "uncertainty_pct", None)
+    confidence_pct = (
+        100.0 - uncertainty_pct
+        if isinstance(uncertainty_pct, (int, float))
+        else None
+    )
+    return {
+        "sources": list(getattr(support, "source_dataset_ids", []) or []),
+        "observation_count": getattr(support, "observation_count", None),
+        "freshness_state": _canonical_domain_freshness(coverage, domain),
+        "age_seconds": None,
+        "confidence_pct": confidence_pct,
+        "negative_evidence_valid": None,
+        "lineage_refs": list(getattr(support, "source_manifest_ids", []) or []),
+    }
+
+
+def _domain_evidence(
+    domain: str,
+    status: Any,
+    support: Any,
+    *,
+    coverage: Any,
+) -> DomainEvidence:
+    """Build evidence without substituting domain measures for source facts."""
+    values = _canonical_support_values(support, coverage=coverage, domain=domain)
+    return DomainEvidence(
+        domain=domain,
+        status=getattr(status, "value", str(status)),
+        provenance_notes=None,
+        **values,
+    )
+
+
 class MarketIntelligenceService:
     """Core BFF service implementing `odayplus.market-intelligence-api.v2`."""
 
@@ -539,133 +611,32 @@ class MarketIntelligenceService:
             principal=principal,
         )
 
-        def _extract_support(support: Any) -> tuple[str, int | None, bool, int, float | None]:
-            if support is None:
-                return "fresh", None, False, 0, None
-            f_state = getattr(support, "freshness_state", "fresh")
-            if hasattr(f_state, "value"):
-                f_state = f_state.value
-            age_s = getattr(support, "age_seconds", None)
-            neg_v = bool(getattr(support, "negative_evidence_valid", False))
-            obs_c = getattr(support, "observation_count", 0)
-            unc_p = getattr(support, "uncertainty_pct", None)
-            conf_p = (100.0 - unc_p) if unc_p is not None else None
-            return str(f_state), age_s, neg_v, obs_c, conf_p
-
-        doc_freshness, doc_age, doc_neg, doc_obs, doc_conf = _extract_support(ctx.source_support)
-
-        domains: dict[str, DomainEvidence] = {}
-
-        # Demand domain evidence
-        dem_fresh, dem_age, dem_neg, dem_obs, dem_conf = _extract_support(getattr(ctx.demand, "source_support", None))
-        domains["demand"] = DomainEvidence(
-            domain="demand",
-            status=ctx.demand.status.value,
-            sources=["ris_nlsc", "moi_census"] if ctx.demand.status == DomainStatus.available else [],
-            observation_count=dem_obs if ctx.demand.status == DomainStatus.available else 0,
-            freshness_state=dem_fresh or doc_freshness,
-            age_seconds=dem_age or doc_age,
-            confidence_pct=dem_conf if dem_conf is not None else doc_conf,
-            negative_evidence_valid=dem_neg or doc_neg,
-            provenance_notes="Aggregated statistical population from NLSC 100m grid",
-        )
-
-        # Competitor domain evidence
-        comp_sources = ["tgos", "commercial_register", "field_survey"] if ctx.competitor.status == DomainStatus.available else []
-        comp_fresh, comp_age, comp_neg, comp_obs, comp_conf = _extract_support(getattr(ctx.competitor, "source_support", None))
-        domains["competitor"] = DomainEvidence(
-            domain="competitor",
-            status=ctx.competitor.status.value,
-            sources=comp_sources,
-            observation_count=comp_obs if ctx.competitor.status == DomainStatus.available else 0,
-            freshness_state=comp_fresh or doc_freshness,
-            age_seconds=comp_age or doc_age,
-            confidence_pct=comp_conf if comp_conf is not None else doc_conf,
-            negative_evidence_valid=True if ctx.competitor.status == DomainStatus.available else False,
-            provenance_notes="Verified commercial competitor locations within catchment boundary",
-        )
-
-        # Rent domain evidence
-        rent_sources = ["mof_real_estate_actual_price", "listing_partner_feed"] if ctx.rent.status == DomainStatus.available else []
-        rent_fresh, rent_age, rent_neg, rent_obs, rent_conf = _extract_support(getattr(ctx.rent, "source_support", None))
-        domains["rent"] = DomainEvidence(
-            domain="rent",
-            status=ctx.rent.status.value,
-            sources=rent_sources,
-            observation_count=rent_obs if ctx.rent.status == DomainStatus.available else 0,
-            freshness_state=rent_fresh or doc_freshness,
-            age_seconds=rent_age or doc_age,
-            confidence_pct=rent_conf if rent_conf is not None else doc_conf,
-            negative_evidence_valid=rent_neg or doc_neg,
-            provenance_notes="Actual price registration and asking rent distribution",
-        )
-
-        # POI domain evidence
-        poi_sources = ["osm_tdx", "tgos_poi"] if ctx.poi.status == DomainStatus.available else []
-        poi_fresh, poi_age, poi_neg, poi_obs, poi_conf = _extract_support(getattr(ctx.poi, "source_support", None))
-        domains["poi"] = DomainEvidence(
-            domain="poi",
-            status=ctx.poi.status.value,
-            sources=poi_sources,
-            observation_count=poi_obs if ctx.poi.status == DomainStatus.available else 0,
-            freshness_state=poi_fresh or doc_freshness,
-            age_seconds=poi_age or doc_age,
-            confidence_pct=poi_conf if poi_conf is not None else doc_conf,
-            negative_evidence_valid=poi_neg or doc_neg,
-            provenance_notes="Points of interest classified by domain taxonomy",
-        )
-
-        # Mobility domain evidence
-        mob_sources = ["telecom_od_mobility", "transit_taps"] if ctx.mobility.status == DomainStatus.available else []
-        mob_fresh, mob_age, mob_neg, mob_obs_val, mob_conf = _extract_support(getattr(ctx.mobility, "source_support", None))
-        mob_obs = int(
-            getattr(ctx.mobility, "activity_population", None)
-            or getattr(ctx.mobility, "resident_population", None)
-            or getattr(ctx.mobility, "visitor_population", None)
-            or getattr(ctx.mobility, "unique_visitors_daily", 0)
-            or 0
-        )
-        domains["mobility"] = DomainEvidence(
-            domain="mobility",
-            status=ctx.mobility.status.value,
-            sources=mob_sources,
-            observation_count=mob_obs_val if ctx.mobility.status == DomainStatus.available else 0,
-            freshness_state=mob_fresh or doc_freshness,
-            age_seconds=mob_age or doc_age,
-            confidence_pct=mob_conf if mob_conf is not None else doc_conf,
-            negative_evidence_valid=mob_neg or doc_neg,
-            provenance_notes="Aggregated cellular and foot traffic telemetry",
-        )
-
-        # Listing domain evidence
-        listing_sources = ["listing_partner_feed", "user_assisted_intake"] if ctx.listing.status == DomainStatus.available else []
-        listing_fresh, listing_age, listing_neg, listing_obs, listing_conf = _extract_support(getattr(ctx.listing, "source_support", None))
-        domains["listing"] = DomainEvidence(
-            domain="listing",
-            status=ctx.listing.status.value,
-            sources=listing_sources,
-            observation_count=listing_obs if ctx.listing.status == DomainStatus.available else 0,
-            freshness_state=listing_fresh or doc_freshness,
-            age_seconds=listing_age or doc_age,
-            confidence_pct=listing_conf if listing_conf is not None else doc_conf,
-            negative_evidence_valid=listing_neg or doc_neg,
-            provenance_notes="Active commercial rental listings",
-        )
-
-        # Event domain evidence
-        event_sources = ["cwa_weather", "municipal_events"] if ctx.event.status == DomainStatus.available else []
-        event_fresh, event_age, event_neg, event_obs, event_conf = _extract_support(getattr(ctx.event, "source_support", None))
-        domains["event"] = DomainEvidence(
-            domain="event",
-            status=ctx.event.status.value,
-            sources=event_sources,
-            observation_count=event_obs if ctx.event.status == DomainStatus.available else 0,
-            freshness_state=event_fresh or doc_freshness,
-            age_seconds=event_age or doc_age,
-            confidence_pct=event_conf if event_conf is not None else doc_conf,
-            negative_evidence_valid=True,
-            provenance_notes="Observed and scheduled market/weather events",
-        )
+        domains: dict[str, DomainEvidence] = {
+            "demand": _domain_evidence(
+                "demand", ctx.demand.status, ctx.demand.source_support, coverage=ctx.coverage
+            ),
+            "competitor": _domain_evidence(
+                "competitor", ctx.competitor.status, ctx.competitor.source_support, coverage=ctx.coverage
+            ),
+            "rent": _domain_evidence(
+                "rent", ctx.rent.status, ctx.rent.source_support, coverage=ctx.coverage
+            ),
+            "poi": _domain_evidence(
+                "poi", ctx.poi.status, ctx.poi.source_support, coverage=ctx.coverage
+            ),
+            "mobility": _domain_evidence(
+                "mobility", ctx.mobility.status, ctx.mobility.source_support, coverage=ctx.coverage
+            ),
+            "traffic": _domain_evidence(
+                "traffic", ctx.traffic.status, ctx.traffic.source_support, coverage=ctx.coverage
+            ),
+            "listing": _domain_evidence(
+                "listing", ctx.listing.status, ctx.listing.source_support, coverage=ctx.coverage
+            ),
+            "event": _domain_evidence(
+                "event", ctx.event.status, ctx.event.source_support, coverage=ctx.coverage
+            ),
+        }
 
         manifest_refs = [ref.to_dict() for ref in ctx.component_manifest_refs]
 
@@ -673,7 +644,7 @@ class MarketIntelligenceService:
             site_id=site_id,
             tenant_id=effective_tenant,
             generated_at=datetime.now(UTC).isoformat(),
-            overall_confidence_pct=getattr(ctx.coverage, "coverage_percentage", 85.0) if ctx.coverage else 85.0,
+            overall_confidence_pct=None,
             domains=domains,
             component_manifest_refs=manifest_refs,
             period_grain=ctx.period_grain.value,
@@ -707,47 +678,42 @@ class MarketIntelligenceService:
             principal=principal,
         )
 
-        def _extract_support(support: Any) -> tuple[str, int | None, bool, int, float | None]:
-            if support is None:
-                return "fresh", None, False, 0, None
-            f_state = getattr(support, "freshness_state", "fresh")
-            if hasattr(f_state, "value"):
-                f_state = f_state.value
-            age_s = getattr(support, "age_seconds", None)
-            neg_v = bool(getattr(support, "negative_evidence_valid", False))
-            obs_c = getattr(support, "observation_count", 0)
-            unc_p = getattr(support, "uncertainty_pct", None)
-            conf_p = (100.0 - unc_p) if unc_p is not None else None
-            return str(f_state), age_s, neg_v, obs_c, conf_p
-
-        cell_fresh, cell_age, cell_neg, cell_obs, cell_conf = _extract_support(cell.source_support)
-
-        domains: dict[str, DomainEvidence] = {}
-        dem_avail = cell.demographics is not None and cell.demographics.total_population is not None
-        domains["demand"] = DomainEvidence(
-            domain="demand",
-            status="available" if dem_avail else "unavailable",
-            sources=["ris_nlsc"] if dem_avail else [],
-            observation_count=cell_obs if dem_avail else 0,
-            freshness_state=cell_fresh,
-            age_seconds=cell_age,
-            confidence_pct=cell_conf,
-            negative_evidence_valid=False,
-            provenance_notes="H3 cell demographic raster aggregation",
-        )
-
-        comp_avail = cell.competitors is not None and cell.competitors.total_competitors > 0
-        domains["competitor"] = DomainEvidence(
-            domain="competitor",
-            status="available" if comp_avail else "unavailable",
-            sources=["tgos", "field_survey"] if comp_avail else [],
-            observation_count=cell_obs if comp_avail else 0,
-            freshness_state=cell_fresh,
-            age_seconds=cell_age,
-            confidence_pct=cell_conf,
-            negative_evidence_valid=cell_neg,
-            provenance_notes="Competitor store points located inside cell boundary",
-        )
+        dem_avail = cell.demographics.total_population is not None
+        comp_avail = cell.competitors is not None
+        domains: dict[str, DomainEvidence] = {
+            "demand": _domain_evidence(
+                "demand",
+                "available" if dem_avail else "unavailable",
+                cell.demographics.source_support,
+                coverage=cell.coverage,
+            ),
+            "competitor": _domain_evidence(
+                "competitor",
+                "available" if comp_avail else "unavailable",
+                cell.competitors.source_support if comp_avail else None,
+                coverage=cell.coverage,
+            ),
+            "rent": _domain_evidence(
+                "rent",
+                "available" if cell.rent.mean_rent_per_ping is not None else "unavailable",
+                cell.rent.source_support,
+                coverage=cell.coverage,
+            ),
+            "mobility": _domain_evidence(
+                "mobility",
+                "available" if any(
+                    value is not None
+                    for value in (
+                        cell.mobility.activity_population,
+                        cell.mobility.resident_population,
+                        cell.mobility.visitor_population,
+                        cell.mobility.worker_population,
+                    )
+                ) else "unavailable",
+                cell.mobility.source_support,
+                coverage=cell.coverage,
+            ),
+        }
 
         manifest_refs = [ref.to_dict() for ref in cell.component_manifest_refs] if hasattr(cell, "component_manifest_refs") else []
 

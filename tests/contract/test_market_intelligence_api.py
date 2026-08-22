@@ -11,6 +11,7 @@ Acceptance Criteria:
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -31,6 +32,7 @@ from modules.market_intelligence_api import (
     CONTRACT_ID,
     CONTRACT_VERSION,
     PROVIDED_CONTRACTS,
+    CandidateCellSummary,
     REQUIRED_CONTRACTS,
     CandidateCompareRequest,
     CandidateCompareResult,
@@ -39,6 +41,9 @@ from modules.market_intelligence_api import (
     MarketIntelligenceNotFoundError,
     MarketIntelligenceService,
     SiteEvidenceChain,
+)
+from packages.oday_data_product_contracts_client.models.market_cell_profile import (
+    MarketCellProfile,
 )
 from shared.auth import (
     ANONYMOUS,
@@ -144,7 +149,12 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "household_count": 18000.0,
                     "density_per_sq_km": 1000.0,
                     "daytime_population_ratio": 1.2,
-                    "source_support": {"observation_count": 50000, "sample_count": 50000, "uncertainty_pct": 5.0},
+                    "source_support": {
+                        "observation_count": 50000,
+                        "sample_count": 50000,
+                        "source_dataset_ids": ["ds-demand"],
+                        "uncertainty_pct": 5.0,
+                    },
                 },
                 "poi": {
                     "status": "available",
@@ -164,7 +174,15 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "brands_present": ["BrandA", "BrandB"],
                     "stores_by_brand": {"BrandA": 5, "BrandB": 3},
                     "stores_by_category": {"laundromat": 8},
-                    "source_support": {"observation_count": 8, "sample_count": 8, "uncertainty_pct": 10.0, "negative_evidence_valid": True},
+                    "source_support": {
+                        "observation_count": 8,
+                        "sample_count": 8,
+                        "source_dataset_ids": ["ds-competitor"],
+                        "uncertainty_pct": 10.0,
+                        # Not part of canonical SourceSupportSummary; this
+                        # must not leak into the BFF evidence response.
+                        "negative_evidence_valid": True,
+                    },
                 },
                 "rent": {
                     "status": "available",
@@ -796,6 +814,10 @@ def test_candidate_compare_post_success(
     assert "site-taipei-002" in data["domain_comparisons"]["rent"]["missing_candidate_ids"]
     assert "rent" in data["missing_domains_by_candidate"]["site-taipei-002"]
 
+    first_candidate = next(c for c in data["candidates"] if c["site_id"] == "site-taipei-001")
+    assert first_candidate["traffic"]["hourly_volume_vph"] == 1200
+    assert "daily_traffic_volume" not in first_candidate["traffic"]
+
 
 def test_candidate_compare_get_success(
     test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
@@ -809,6 +831,42 @@ def test_candidate_compare_get_success(
     assert resp.status_code == 200
     data = resp.json()
     assert data["total_candidates"] == 2
+
+
+def test_candidate_compare_market_cell_uses_only_canonical_components(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/compare",
+        params={"cell_ids": "8928308280fffff"},
+        headers=HEADERS_EXPANSION_ALPHA,
+    )
+    assert resp.status_code == 200
+    candidate = resp.json()["candidates"][0]
+    assert candidate["competitor"]["status"] == "available"
+    assert "poi" in candidate["missing_domains"]
+    assert "listing" in candidate["missing_domains"]
+    assert "event" in candidate["missing_domains"]
+
+
+def test_zero_competitors_remain_an_observed_cell_domain(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    _, _, transport = test_setup
+    raw_cell = transport.fetch_document(
+        "emgi.market-cell-profile.v1", document_id="mcp-doc-001"
+    )
+    assert raw_cell is not None
+    cell = MarketCellProfile.from_dict(raw_cell["cells"][0])
+    empty_competitor_cell = replace(
+        cell,
+        competitors=replace(cell.competitors, active_competitors=0, total_competitors=0),
+    )
+    summary = CandidateCellSummary.from_cell_profile(empty_competitor_cell)
+    assert summary.competitor_status == "available"
+    assert summary.active_competitors == 0
+    assert "competitor" not in summary.missing_domains
 
 
 # ===========================================================================
@@ -828,10 +886,16 @@ def test_get_site_evidence_chain_success(
     assert data["site_id"] == "site-taipei-001"
     assert "domains" in data
     assert "demand" in data["domains"]
-    assert "ris_nlsc" in data["domains"]["demand"]["sources"]
     assert data["domains"]["demand"]["observation_count"] == 50000
+    assert data["domains"]["demand"]["sources"] == ["ds-demand"]
+    assert data["domains"]["demand"]["freshness_state"] == "unknown"
+    assert data["domains"]["demand"]["confidence_pct"] == 95.0
+    assert "age_seconds" not in data["domains"]["demand"]
     assert "competitor" in data["domains"]
-    assert data["domains"]["competitor"]["negative_evidence_valid"] is True
+    assert data["domains"]["competitor"]["sources"] == ["ds-competitor"]
+    assert data["domains"]["competitor"]["negative_evidence_valid"] is None
+    assert data["domains"]["event"]["negative_evidence_valid"] is None
+    assert data["overall_confidence_pct"] is None
     assert len(data["component_manifest_refs"]) >= 1
 
 
@@ -1245,4 +1309,3 @@ def test_list_data_gaps_with_no_match_filters(
     assert resp.status_code == 200
     data = resp.json()
     assert data["count"] == 0
-

@@ -1299,7 +1299,8 @@
                   }
                 },
                 "observation_count": {
-                  "type": "integer"
+                  "type": "integer",
+                  "nullable": true
                 },
                 "freshness_state": {
                   "type": "string"
@@ -1313,7 +1314,8 @@
                   "nullable": true
                 },
                 "negative_evidence_valid": {
-                  "type": "boolean"
+                  "type": "boolean",
+                  "nullable": true
                 },
                 "lineage_refs": {
                   "type": "array",

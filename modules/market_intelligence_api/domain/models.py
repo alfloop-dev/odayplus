@@ -115,7 +115,7 @@ class CandidateSiteSummary:
     unique_visitors_daily: float | None = None
     stay_duration_minutes_mean: float | None = None
     traffic_status: str = "unavailable"
-    daily_traffic_volume: float | None = None
+    hourly_volume_vph: int | None = None
     # Events
     event_status: str = "unavailable"
     active_events_count: int | None = None
@@ -177,7 +177,7 @@ class CandidateSiteSummary:
             },
             "traffic": {
                 "status": self.traffic_status,
-                "daily_traffic_volume": self.daily_traffic_volume,
+                "hourly_volume_vph": self.hourly_volume_vph,
             },
             "event": {
                 "status": self.event_status,
@@ -277,7 +277,11 @@ class CandidateSiteSummary:
                 or getattr(ctx.mobility, "stay_duration_minutes_mean", None)
             ) if ctx.mobility.status == DomainStatus.available else None,
             traffic_status=ctx.traffic.status.value,
-            daily_traffic_volume=getattr(ctx.traffic, "daily_traffic_volume", None) if ctx.traffic.status == DomainStatus.available else None,
+            hourly_volume_vph=(
+                ctx.traffic.hourly_volume_vph
+                if ctx.traffic.status == DomainStatus.available
+                else None
+            ),
             event_status=ctx.event.status.value,
             active_events_count=ctx.event.active_events_count if ctx.event.status == DomainStatus.available else None,
             overall_readiness=overall_readiness,
@@ -393,20 +397,27 @@ class CandidateCellSummary:
         data_gaps_count: int = 0,
     ) -> CandidateCellSummary:
         missing: list[str] = []
-        if not cell.demographics or not cell.demographics.total_population:
+        if not cell.demographics or cell.demographics.total_population is None:
             missing.append("demand")
-        if not cell.competitors:
+        if cell.competitors is None:
             missing.append("competitor")
         if not cell.rent or cell.rent.mean_rent_per_ping is None:
             missing.append("rent")
-        if not cell.points_of_interest:
-            missing.append("poi")
-        if not cell.mobility:
+        if not cell.mobility or not any(
+            value is not None
+            for value in (
+                cell.mobility.activity_population,
+                cell.mobility.resident_population,
+                cell.mobility.visitor_population,
+                cell.mobility.worker_population,
+            )
+        ):
             missing.append("mobility")
-        if not cell.listings:
-            missing.append("listing")
-        if not cell.events:
-            missing.append("event")
+
+        # MarketCellProfile v1 does not publish POI, listing, or event
+        # components. Keep those compare dimensions explicitly unavailable
+        # instead of reading legacy/invented attributes.
+        missing.extend(("poi", "listing", "event"))
 
         if cell.coverage:
             if hasattr(cell.coverage, "overall_readiness"):
@@ -434,14 +445,30 @@ class CandidateCellSummary:
             rent_status="available" if cell.rent and cell.rent.mean_rent_per_ping is not None else "unavailable",
             mean_rent_per_ping=cell.rent.mean_rent_per_ping if cell.rent else None,
             median_rent_per_ping=cell.rent.median_rent_per_ping if cell.rent else None,
-            listing_status="available" if cell.listings else "unavailable",
-            active_listings_count=cell.listings.active_listings_count if cell.listings else None,
-            poi_status="available" if cell.points_of_interest else "unavailable",
-            total_poi_count=cell.points_of_interest.total_poi_count if cell.points_of_interest else None,
-            mobility_status="available" if cell.mobility else "unavailable",
-            total_foot_traffic=cell.mobility.total_foot_traffic if cell.mobility else None,
-            event_status="available" if cell.events else "unavailable",
-            active_events_count=cell.events.active_events_count if cell.events else None,
+            listing_status="unavailable",
+            active_listings_count=None,
+            poi_status="unavailable",
+            total_poi_count=None,
+            mobility_status=(
+                "available"
+                if cell.mobility and any(
+                    value is not None
+                    for value in (
+                        cell.mobility.activity_population,
+                        cell.mobility.resident_population,
+                        cell.mobility.visitor_population,
+                        cell.mobility.worker_population,
+                    )
+                )
+                else "unavailable"
+            ),
+            total_foot_traffic=(
+                cell.mobility.activity_population
+                if cell.mobility
+                else None
+            ),
+            event_status="unavailable",
+            active_events_count=None,
             overall_readiness=cell_readiness,
             missing_domains=missing,
             data_gaps_count=data_gaps_count,
@@ -536,11 +563,11 @@ class DomainEvidence:
     domain: str
     status: str
     sources: list[str]
-    observation_count: int
-    freshness_state: str
+    observation_count: int | None
+    freshness_state: str | None
     age_seconds: int | None = None
     confidence_pct: float | None = None
-    negative_evidence_valid: bool = False
+    negative_evidence_valid: bool | None = None
     lineage_refs: list[str] = field(default_factory=list)
     provenance_notes: str | None = None
 
