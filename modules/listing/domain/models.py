@@ -73,9 +73,18 @@ class CandidateSiteDraft:
     prior_90d_cell_transaction_count: int | None = None
     prior_90d_cell_store_count: int | None = None
     feature_snapshot_time: datetime | None = None
+    property_entity_id: str | None = None
+    listing_observation_id: str | None = None
+    rent_benchmark_median: float | None = None
+    rent_benchmark_p25: float | None = None
+    rent_benchmark_p75: float | None = None
+    rent_benchmark_confidence: float | None = None
+    rent_benchmark_sample_count: int | None = None
+    rent_benchmark_id: str | None = None
+    observation_metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_card_dict(self) -> dict[str, object]:
-        return {
+        card: dict[str, object] = {
             "candidateSiteId": self.candidate_site.candidate_site_id,
             "address": self.address.normalized_address or self.address.raw_address,
             "geocodeConfidence": self.address.geocode_confidence,
@@ -89,6 +98,21 @@ class CandidateSiteDraft:
             "listingSource": self.listing_source,
             "status": getattr(self.status, "value", self.status),
         }
+        if self.property_entity_id:
+            card["propertyId"] = self.property_entity_id
+        if self.listing_observation_id:
+            card["listingObsId"] = self.listing_observation_id
+        if self.rent_benchmark_median is not None:
+            card["rentBenchmarkMedian"] = self.rent_benchmark_median
+        if self.rent_benchmark_p25 is not None:
+            card["rentBenchmarkP25"] = self.rent_benchmark_p25
+        if self.rent_benchmark_p75 is not None:
+            card["rentBenchmarkP75"] = self.rent_benchmark_p75
+        if self.rent_benchmark_sample_count is not None:
+            card["rentBenchmarkSampleCount"] = self.rent_benchmark_sample_count
+        if self.rent_benchmark_id:
+            card["rentBenchmarkId"] = self.rent_benchmark_id
+        return card
 
 
 @dataclass(frozen=True)
