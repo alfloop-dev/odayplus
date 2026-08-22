@@ -152,12 +152,25 @@ class ExternalProviderConfigError(RuntimeError):
 
     def __init__(self, result: ProviderValidationResult) -> None:
         self.result = result
-        env_vars = ", ".join(error.env_var for error in result.errors)
-        super().__init__(
-            "External provider startup validation failed "
-            f"(mode={result.mode.value}, correlation_id={result.correlation_id}, "
-            f"missing_or_invalid_env={env_vars})"
-        )
+        # A retired provider is not an unset variable. Reporting it as
+        # missing_or_invalid_env is the exact misdirection the allowlist check
+        # fails closed to avoid: it reads as "go set this", when no value and no
+        # credential can satisfy it.
+        retired = [error for error in result.errors if error.code == "provider_decommissioned"]
+        unset = [error for error in result.errors if error.code != "provider_decommissioned"]
+        detail = f"mode={result.mode.value}, correlation_id={result.correlation_id}"
+        if unset:
+            detail += ", missing_or_invalid_env=" + ", ".join(error.env_var for error in unset)
+        if retired:
+            detail += ", decommissioned_providers=" + ", ".join(
+                sorted(error.provider_id for error in retired)
+            )
+        message = f"External provider startup validation failed ({detail})"
+        if retired:
+            # Each retirement message names the task that retired it and where
+            # the dataset moved, which is the only actionable part of this error.
+            message += " " + " ".join(error.message for error in retired)
+        super().__init__(message)
 
     def to_dict(self) -> dict[str, object]:
         return {

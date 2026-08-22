@@ -177,6 +177,24 @@ def probe_external_provider_connectivity(
             probes=probes,
         )
 
+    if not required_ids:
+        # XR-CUTOVER-001 retired every provider that required a live upstream,
+        # so REQUIRED_PRODUCTION_PROVIDER_IDS is empty. "Every required provider
+        # answered" is vacuously true with none required, and that is the point
+        # of the cutover: readiness no longer depends on any third party.
+        # Falling through would build a zero-worker pool and raise, which the
+        # readiness endpoint reports as an unhealthy service that never recovers.
+        return ProviderConnectivityResult(
+            mode=validation.mode,
+            correlation_id=corr,
+            configuration_valid=True,
+            connectivity_healthy=True,
+            checked_at=started_at,
+            expires_at=expires_at,
+            required_provider_ids=(),
+            probes=(),
+        )
+
     executor = ThreadPoolExecutor(
         max_workers=len(required_ids),
         thread_name_prefix="external-provider-probe",

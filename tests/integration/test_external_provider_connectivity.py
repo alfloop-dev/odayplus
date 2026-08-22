@@ -11,10 +11,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
+import pytest
+
 from modules.external_data.connectors import (
     probe_external_provider_connectivity,
     validate_external_providers,
 )
+from modules.external_data.connectors import provider_connectivity
 
 
 class _DeterministicProviderServer(ThreadingHTTPServer):
@@ -136,15 +139,37 @@ def _deterministic_provider_server(
         thread.join(timeout=2)
 
 
-def _production_env(server: _DeterministicProviderServer) -> dict[str, str]:
+# The probe machinery stays in the readiness path for whenever a provider with
+# a live upstream is added back, so its HTTP behaviour is still exercised here.
+# XR-CUTOVER-001 emptied REQUIRED_PRODUCTION_PROVIDER_IDS, so these cases pin
+# that set explicitly and reuse the retired provider definitions purely as probe
+# fixtures -- the registry still carries their endpoint and auth mapping. What
+# the live tree actually does with an empty required set is asserted separately
+# in ``test_probe_is_inert_once_every_required_provider_is_retired``.
+PROBE_FIXTURE_PROVIDER_IDS = frozenset(
+    {
+        "poi.commercial_api",
+        "geocode.primary_api",
+        "admin_boundary.official_dataset",
+    }
+)
+
+
+@contextmanager
+def _required_providers(monkeypatch: pytest.MonkeyPatch, provider_ids: frozenset[str]):
+    monkeypatch.setattr(
+        provider_connectivity,
+        "REQUIRED_PRODUCTION_PROVIDER_IDS",
+        provider_ids,
+    )
+    yield
+
+
+def _probe_env(server: _DeterministicProviderServer) -> dict[str, str]:
     base_url = f"http://127.0.0.1:{server.server_port}"
     return {
         "ODP_EXTERNAL_PROVIDER_MODE": "live",
-        "ODP_DEPLOY_ENV": "production",
-        "ODP_PRODUCTION_PROVIDER_IDS": (
-            "listing.partner_feed,poi.commercial_api,"
-            "geocode.primary_api,admin_boundary.official_dataset"
-        ),
+        "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION": "manual-attested",
         "ODP_LISTING_PROVIDER_FEED_URL": f"{base_url}/listing",
         "ODP_LISTING_PROVIDER_API_KEY": "listing-probe-secret",
         "ODP_LISTING_PROVIDER_AUTH_STATUS": "active",
@@ -161,18 +186,51 @@ def _production_env(server: _DeterministicProviderServer) -> dict[str, str]:
     }
 
 
-def test_deterministic_http_server_exercises_probe_contract_without_claiming_live_proof() -> None:
+def test_probe_is_inert_once_every_required_provider_is_retired() -> None:
+    """With nothing required, readiness must be healthy and reach no third party.
+
+    XR-CUTOVER-001 emptied ``REQUIRED_PRODUCTION_PROVIDER_IDS``. "Every required
+    provider answered" is vacuously true with none required, which is the whole
+    point of the cutover. Before this was handled the probe built a zero-worker
+    pool and raised, and the readiness endpoint turns any probe exception into a
+    permanently unhealthy service.
+    """
     with _deterministic_provider_server() as server:
-        env = _production_env(server)
+        env = _probe_env(server)
         validation = validate_external_providers(
             env=env,
-            correlation_id="corr-provider-configuration",
+            correlation_id="corr-retired-configuration",
         )
         result = probe_external_provider_connectivity(
             validation=validation,
             env=env,
-            correlation_id="corr-provider-connectivity",
+            correlation_id="corr-retired-connectivity",
         )
+
+        assert validation.ok is True
+        assert result.configuration_valid is True
+        assert result.connectivity_healthy is True
+        assert result.probes == ()
+        assert result.required_provider_ids == ()
+        # No credential in the environment causes an outbound call any more.
+        assert server.requests == []
+
+
+def test_deterministic_http_server_exercises_probe_contract_without_claiming_live_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _deterministic_provider_server() as server:
+        env = _probe_env(server)
+        with _required_providers(monkeypatch, PROBE_FIXTURE_PROVIDER_IDS):
+            validation = validate_external_providers(
+                env=env,
+                correlation_id="corr-provider-configuration",
+            )
+            result = probe_external_provider_connectivity(
+                validation=validation,
+                env=env,
+                correlation_id="corr-provider-connectivity",
+            )
 
     assert validation.ok is True
     assert result.configuration_valid is True
@@ -193,14 +251,17 @@ def test_deterministic_http_server_exercises_probe_contract_without_claiming_liv
     assert by_path["/admin"]["authorization"] == "Bearer admin-probe-secret"
 
 
-def test_configuration_valid_does_not_mask_provider_auth_failure_or_secret() -> None:
+def test_configuration_valid_does_not_mask_provider_auth_failure_or_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with _deterministic_provider_server(failures={"/poi": "unauthorized"}) as server:
-        env = _production_env(server)
-        validation = validate_external_providers(env=env)
-        result = probe_external_provider_connectivity(
-            validation=validation,
-            env=env,
-        )
+        env = _probe_env(server)
+        with _required_providers(monkeypatch, PROBE_FIXTURE_PROVIDER_IDS):
+            validation = validate_external_providers(env=env)
+            result = probe_external_provider_connectivity(
+                validation=validation,
+                env=env,
+            )
 
     evidence = {probe.provider_id: probe for probe in result.probes}["poi.commercial_api"]
     assert validation.ok is True
@@ -213,14 +274,17 @@ def test_configuration_valid_does_not_mask_provider_auth_failure_or_secret() -> 
     assert "listing-probe-secret" not in rendered
 
 
-def test_probe_fails_closed_for_provider_specific_schema_failure() -> None:
+def test_probe_fails_closed_for_provider_specific_schema_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with _deterministic_provider_server(failures={"/geocode": "schema"}) as server:
-        env = _production_env(server)
-        validation = validate_external_providers(env=env)
-        result = probe_external_provider_connectivity(
-            validation=validation,
-            env=env,
-        )
+        env = _probe_env(server)
+        with _required_providers(monkeypatch, PROBE_FIXTURE_PROVIDER_IDS):
+            validation = validate_external_providers(env=env)
+            result = probe_external_provider_connectivity(
+                validation=validation,
+                env=env,
+            )
 
     evidence = {probe.provider_id: probe for probe in result.probes}["geocode.primary_api"]
     assert result.connectivity_healthy is False
@@ -230,14 +294,17 @@ def test_probe_fails_closed_for_provider_specific_schema_failure() -> None:
     assert evidence.reason_code == "schema_invalid"
 
 
-def test_probe_requires_exact_http_200_for_health() -> None:
+def test_probe_requires_exact_http_200_for_health(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with _deterministic_provider_server(failures={"/admin": "unexpected_status"}) as server:
-        env = _production_env(server)
-        validation = validate_external_providers(env=env)
-        result = probe_external_provider_connectivity(
-            validation=validation,
-            env=env,
-        )
+        env = _probe_env(server)
+        with _required_providers(monkeypatch, PROBE_FIXTURE_PROVIDER_IDS):
+            validation = validate_external_providers(env=env)
+            result = probe_external_provider_connectivity(
+                validation=validation,
+                env=env,
+            )
 
     evidence = {probe.provider_id: probe for probe in result.probes}["admin_boundary.official_dataset"]
     assert result.connectivity_healthy is False
@@ -246,17 +313,20 @@ def test_probe_requires_exact_http_200_for_health() -> None:
     assert evidence.reason_code == "unexpected_http_status"
 
 
-def test_probe_timeout_is_bounded_and_provider_specific() -> None:
+def test_probe_timeout_is_bounded_and_provider_specific(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with _deterministic_provider_server(delays={"/admin": 0.2}) as server:
-        env = _production_env(server)
+        env = _probe_env(server)
         env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "0.05"
-        validation = validate_external_providers(env=env)
-        started = time.monotonic()
-        result = probe_external_provider_connectivity(
-            validation=validation,
-            env=env,
-        )
-        elapsed = time.monotonic() - started
+        with _required_providers(monkeypatch, PROBE_FIXTURE_PROVIDER_IDS):
+            validation = validate_external_providers(env=env)
+            started = time.monotonic()
+            result = probe_external_provider_connectivity(
+                validation=validation,
+                env=env,
+            )
+            elapsed = time.monotonic() - started
 
     evidence = {probe.provider_id: probe for probe in result.probes}["admin_boundary.official_dataset"]
     assert elapsed < 0.5

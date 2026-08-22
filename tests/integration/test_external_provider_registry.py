@@ -18,19 +18,45 @@ from modules.external_data.connectors.provider_registry import (
     PRODUCTION_PROVIDER_IDS_ENV_VAR,
 )
 
-REQUIRED_ENV_VARS = {
+# XR-CUTOVER-001 retired the four fetching adapters. Their registry entries
+# stay so lineage, licence history and "where did this dataset go" remain
+# answerable, but odayplus holds no adapter for them: they carry no
+# provider_class, live mode requires none of their secrets or endpoints, and
+# naming one in the production allowlist fails closed.
+DECOMMISSIONED_PROVIDER_IDS = {
+    "listing.partner_feed",
+    "poi.commercial_api",
+    "geocode.primary_api",
+    "admin_boundary.official_dataset",
+}
+LIVE_PROVIDER_IDS = {
+    "competitor.manual_source",
+    "store_opening_authority",
+}
+LIVE_REQUIRED_ENV_VARS = {
+    "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",
+}
+RETIRED_ENV_VARS = {
     "ODP_LISTING_PROVIDER_API_KEY",
     "ODP_POI_PROVIDER_API_KEY",
     "ODP_GEOCODE_PROVIDER_API_KEY",
     "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
-    "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",
 }
-REQUIRED_ENDPOINT_ENV_VARS = {
+REQUIRED_ENV_VARS = LIVE_REQUIRED_ENV_VARS | RETIRED_ENV_VARS
+RETIRED_ENDPOINT_ENV_VARS = {
     "ODP_LISTING_PROVIDER_FEED_URL",
     "ODP_POI_PROVIDER_URL",
     "ODP_GEOCODE_PROVIDER_URL",
     "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
 }
+
+
+def _live_providers():
+    return [provider for provider in provider_registry() if not provider.decommissioned]
+
+
+def _decommissioned_providers():
+    return [provider for provider in provider_registry() if provider.decommissioned]
 
 
 def test_provider_registry_covers_live_external_source_classes() -> None:
@@ -58,7 +84,19 @@ def test_provider_registry_covers_live_external_source_classes() -> None:
     assert all(
         provider.connector_class.startswith("modules.external_data.") for provider in providers
     )
-    assert all(provider.provider_class.startswith("modules.external_data.") for provider in providers)
+    # Only a live provider names an adapter class. A retired entry keeps its
+    # identity and licence for lineage, but declaring a provider_class would
+    # claim odayplus can still fetch from it.
+    assert {provider.provider_id for provider in _live_providers()} == LIVE_PROVIDER_IDS
+    assert {
+        provider.provider_id for provider in _decommissioned_providers()
+    } == DECOMMISSIONED_PROVIDER_IDS
+    assert all(
+        provider.provider_class.startswith("modules.external_data.")
+        for provider in _live_providers()
+    )
+    assert all(not provider.provider_class for provider in _decommissioned_providers())
+    assert all(provider.decommissioned_by for provider in _decommissioned_providers())
     opening_authority = next(
         provider
         for provider in providers
@@ -78,12 +116,20 @@ def test_secret_inventory_contains_names_and_auth_modes_without_values() -> None
         env_var for provider in inventory.values() for env_var in provider["env_vars"]
     }
     assert "super-secret" not in rendered
-    for provider in inventory.values():
+    for provider_id, provider in inventory.items():
         assert provider["auth_modes"]
-        assert provider["provider_class"]
         assert provider["connector_class"]
         assert provider["license"]["attribution"]
         assert "export_allowed" in provider["license"]
+        if provider_id in DECOMMISSIONED_PROVIDER_IDS:
+            # The inventory is what an operator reads to answer "what secret
+            # does this deployment need". A retired provider must answer "none,
+            # and here is who retired it" rather than name an adapter.
+            assert not provider["provider_class"]
+            assert provider["decommissioned_by"]
+        else:
+            assert provider["provider_class"]
+            assert not provider["decommissioned_by"]
 
 
 def test_fixture_mode_validates_without_provider_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,8 +153,12 @@ def test_live_mode_fails_closed_when_required_credentials_are_missing() -> None:
     assert not result.ok
     assert result.mode is ExternalProviderMode.LIVE
     assert result.correlation_id == "corr-live-missing"
-    assert {error.env_var for error in result.errors} == REQUIRED_ENV_VARS
+    # Credential revocation expressed in code: live mode no longer asks a
+    # deployment to hold a secret for a retired provider, so those env vars
+    # cannot appear here.
+    assert {error.env_var for error in result.errors} == LIVE_REQUIRED_ENV_VARS
     assert {error.code for error in result.errors} == {"missing_credential"}
+    assert not (RETIRED_ENV_VARS & {error.env_var for error in result.errors})
 
 
 def test_live_mode_startup_error_includes_correlation_and_no_secret_values(
@@ -125,20 +175,18 @@ def test_live_mode_startup_error_includes_correlation_and_no_secret_values(
     assert exc_info.value.result.correlation_id
     assert "correlation_id=" in message
     assert "missing_or_invalid_env=" in message
-    for env_var in REQUIRED_ENV_VARS:
+    for env_var in LIVE_REQUIRED_ENV_VARS:
         assert env_var in message
+    # A retired provider's secret must not be advertised as something to set.
+    for env_var in RETIRED_ENV_VARS:
+        assert env_var not in message
 
 
 def test_live_mode_flags_expired_or_unauthorized_credentials_with_correlation() -> None:
     env = {
         LIVE_MODE_ENV_VAR: "live",
-        "ODP_LISTING_PROVIDER_API_KEY": "listing-token",
-        "ODP_LISTING_PROVIDER_AUTH_STATUS": "expired",
-        "ODP_POI_PROVIDER_API_KEY": "poi-token",
-        "ODP_GEOCODE_PROVIDER_API_KEY": "geocode-token",
-        "ODP_GEOCODE_PROVIDER_AUTH_STATUS": "unauthorized",
-        "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN": "admin-token",
         "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION": "manual-attested",
+        "ODP_COMPETITOR_MANUAL_SOURCE_STATUS": "expired",
     }
 
     result = validate_external_providers(env=env, correlation_id="corr-auth-bad")
@@ -146,9 +194,32 @@ def test_live_mode_flags_expired_or_unauthorized_credentials_with_correlation() 
     assert not result.ok
     assert result.correlation_id == "corr-auth-bad"
     assert {(error.env_var, error.code) for error in result.errors} == {
-        ("ODP_LISTING_PROVIDER_AUTH_STATUS", "credential_expired"),
-        ("ODP_GEOCODE_PROVIDER_AUTH_STATUS", "credential_unauthorized"),
+        ("ODP_COMPETITOR_MANUAL_SOURCE_STATUS", "credential_expired"),
     }
+    assert "manual-attested" not in repr(result)
+
+
+def test_live_mode_ignores_credential_status_of_a_retired_provider() -> None:
+    """A retired provider's credential state cannot make startup fail or pass.
+
+    Before XR-CUTOVER-001 an expired listing key was a startup error. The
+    adapter is gone, so a stale value left in a deployment's environment is now
+    inert -- it must not be validated, and must not be reported as something to
+    rotate.
+    """
+    env = {
+        LIVE_MODE_ENV_VAR: "live",
+        "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION": "manual-attested",
+        "ODP_LISTING_PROVIDER_API_KEY": "listing-token",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS": "expired",
+        "ODP_GEOCODE_PROVIDER_API_KEY": "geocode-token",
+        "ODP_GEOCODE_PROVIDER_AUTH_STATUS": "unauthorized",
+    }
+
+    result = validate_external_providers(env=env, correlation_id="corr-auth-retired")
+
+    assert result.ok
+    assert result.errors == ()
     assert "listing-token" not in repr(result)
     assert "geocode-token" not in repr(result)
 
@@ -196,14 +267,18 @@ def test_production_live_mode_requires_explicit_provider_allowlist() -> None:
     }
 
 
-def test_production_configuration_requires_all_provider_endpoints() -> None:
+def test_production_allowlist_of_retired_providers_fails_closed() -> None:
+    """Naming a retired provider in production is refused, not repaired.
+
+    This used to assert the four fetching providers each demanded an endpoint.
+    Post-cutover no endpoint or credential can satisfy them, so supplying their
+    secrets must not move the run any closer to starting: the allowlist itself
+    is the error, and no missing_endpoint appears to invite provisioning one.
+    """
     env = {
         LIVE_MODE_ENV_VAR: "live",
         "ODP_DEPLOY_ENV": "production",
-        PRODUCTION_PROVIDER_IDS_ENV_VAR: (
-            "listing.partner_feed,poi.commercial_api,"
-            "geocode.primary_api,admin_boundary.official_dataset"
-        ),
+        PRODUCTION_PROVIDER_IDS_ENV_VAR: ",".join(sorted(DECOMMISSIONED_PROVIDER_IDS)),
         "ODP_LISTING_PROVIDER_API_KEY": "listing-token",
         "ODP_POI_PROVIDER_API_KEY": "poi-token",
         "ODP_GEOCODE_PROVIDER_API_KEY": "geocode-token",
@@ -217,25 +292,26 @@ def test_production_configuration_requires_all_provider_endpoints() -> None:
 
     assert result.ok is False
     assert {
-        error.env_var for error in result.errors if error.code == "missing_endpoint"
-    } == REQUIRED_ENDPOINT_ENV_VARS
+        error.provider_id for error in result.errors if error.code == "provider_decommissioned"
+    } == DECOMMISSIONED_PROVIDER_IDS
+    assert not [error for error in result.errors if error.code == "missing_endpoint"]
+    assert not (
+        RETIRED_ENDPOINT_ENV_VARS & {error.env_var for error in result.errors}
+    )
 
 
 def test_live_mode_validates_only_explicitly_enabled_providers() -> None:
     result = validate_external_providers(
         env={
             LIVE_MODE_ENV_VAR: "live",
-            PRODUCTION_PROVIDER_IDS_ENV_VAR: "listing.partner_feed,geocode.primary_api",
-            "ODP_LISTING_PROVIDER_API_KEY": "listing-token",
-            "ODP_GEOCODE_PROVIDER_API_KEY": "geocode-token",
+            PRODUCTION_PROVIDER_IDS_ENV_VAR: "store_opening_authority",
         },
         correlation_id="corr-selected-providers",
     )
 
     assert result.ok
     assert {provider.provider_id for provider in result.providers} == {
-        "listing.partner_feed",
-        "geocode.primary_api",
+        "store_opening_authority",
     }
 
 
@@ -243,8 +319,7 @@ def test_live_mode_rejects_unknown_provider_allowlist_id() -> None:
     result = validate_external_providers(
         env={
             LIVE_MODE_ENV_VAR: "live",
-            PRODUCTION_PROVIDER_IDS_ENV_VAR: "listing.partner_feed,unknown.provider",
-            "ODP_LISTING_PROVIDER_API_KEY": "listing-token",
+            PRODUCTION_PROVIDER_IDS_ENV_VAR: "store_opening_authority,unknown.provider",
         },
         correlation_id="corr-unknown-provider",
     )
