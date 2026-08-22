@@ -13,23 +13,20 @@ Acceptance criteria:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
 from modules.external_data.application.assisted_intake import (
+    RetrievalResult,
     effective_fields,
     match_listing,
-    normalize_address,
     parse_snapshot,
-    RetrievalResult,
 )
 from modules.external_data.application.market_data_facade import (
     MarketDataAuthorizationError,
     MarketDataFacade,
-    MarketDataNotFoundError,
 )
 from modules.external_data.application.xlsx_import import (
     map_and_validate_rows,
@@ -39,10 +36,9 @@ from modules.external_data.infrastructure.data_platform_client import (
     InMemoryDataPlatformTransport,
 )
 from modules.listing.application.platform_bridge import (
-    AssistedListingPlatformBridge,
     BRIDGE_CONTRACT,
     BRIDGE_VERSION,
-    ObservationEnrichment,
+    AssistedListingPlatformBridge,
 )
 from modules.listing.application.promotion import PromotionService
 from modules.listing.domain.identity_graph import IdentityGraph, SourceIdentity
@@ -68,8 +64,7 @@ from packages.oday_data_product_contracts_client.models.property_observation imp
     RentBenchmark,
 )
 from shared.auth import Principal, Role, Scope
-from shared.domain.models import AddressLocation, CandidateSite, Listing
-
+from shared.domain.models import AddressLocation, Listing
 
 # ---------------------------------------------------------------------------
 # Fixtures & Sample Platform Data

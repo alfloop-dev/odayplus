@@ -23,17 +23,14 @@ Architectural Invariants (ODP-LISTING-001):
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from modules.external_data.application.assisted_intake import (
     normalize_address,
-    normalize_floor,
 )
 from modules.external_data.application.market_data_facade import (
-    MarketDataAuthorizationError,
     MarketDataFacade,
     MarketDataNotFoundError,
 )
@@ -51,7 +48,7 @@ from packages.oday_data_product_contracts_client.models.property_observation imp
     PropertyObservationDocument,
     RentBenchmark,
 )
-from shared.auth import Principal, Role
+from shared.auth import Principal
 
 BRIDGE_CONTRACT = "odayplus.assisted-listing-platform-bridge.v2"
 BRIDGE_VERSION = "2.0.0"
@@ -191,7 +188,7 @@ class AssistedListingPlatformBridge:
                     listing_obs = obs_doc.listing_observations[0]
                 if obs_doc.status_histories:
                     status_hist = obs_doc.status_histories[0]
-        except (MarketDataNotFoundError, MarketDataAuthorizationError, Exception):
+        except MarketDataNotFoundError:
             pass
 
         # 2. If listing observation not found from doc, try explicit lookup
@@ -202,7 +199,7 @@ class AssistedListingPlatformBridge:
                     tenant_id=tenant_id,
                     principal=principal,
                 )
-            except (MarketDataNotFoundError, MarketDataAuthorizationError, Exception):
+            except MarketDataNotFoundError:
                 pass
 
         # 3. If property entity not found from doc, try explicit lookup
@@ -214,7 +211,7 @@ class AssistedListingPlatformBridge:
                     tenant_id=tenant_id,
                     principal=principal,
                 )
-            except (MarketDataNotFoundError, MarketDataAuthorizationError, Exception):
+            except MarketDataNotFoundError:
                 pass
 
         if prop_entity is None and listing_obs is None and obs_doc is None:
