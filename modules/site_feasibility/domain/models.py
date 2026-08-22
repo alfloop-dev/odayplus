@@ -17,6 +17,12 @@ class FeasibilityAssessment:
     recommendation: FeasibilityDecision
     reasons: tuple[str, ...] = field(default_factory=tuple)
 
+    def __post_init__(self) -> None:
+        # Frozen dataclasses do not make nested lists immutable.  Normalize
+        # caller-provided lists at construction so the published assessment is
+        # actually safe to share across consumers.
+        object.__setattr__(self, "reasons", tuple(str(reason) for reason in self.reasons))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "recommendation": self.recommendation.value,

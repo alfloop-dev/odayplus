@@ -310,19 +310,21 @@ def _evaluate_utilities(values: Mapping[str, Any], signals: _Signals) -> None:
             "water_pressure",
         ),
     )
+    power_value = _coerce_float(power)
+    water_value = _coerce_float(water)
 
-    if not power_found or _coerce_float(power) is None or _coerce_float(power) < 0:
+    if not power_found or power_value is None or power_value < 0:
         signals.unknown_reasons.add("Electrical power capacity is missing or invalid")
-    elif _coerce_float(power) < _MINIMUM_POWER_AMPS:
+    elif power_value < _MINIMUM_POWER_AMPS:
         signals.conditional_reasons.add(
-            f"Electrical power capacity requires an upgrade: {_coerce_float(power):g}A"
+            f"Electrical power capacity requires an upgrade: {power_value:g}A"
         )
 
-    if not water_found or _coerce_float(water) is None or _coerce_float(water) < 0:
+    if not water_found or water_value is None or water_value < 0:
         signals.unknown_reasons.add("Water pressure is missing or invalid")
-    elif _coerce_float(water) < _MINIMUM_WATER_PRESSURE_PSI:
+    elif water_value < _MINIMUM_WATER_PRESSURE_PSI:
         signals.conditional_reasons.add(
-            f"Water pressure requires an upgrade: {_coerce_float(water):g} psi"
+            f"Water pressure requires an upgrade: {water_value:g} psi"
         )
 
     for name in (
@@ -438,10 +440,17 @@ def _usable_survey(survey: Mapping[str, Any], site_id: str) -> tuple[bool, str |
         return False, f"Survey {survey.get('survey_id', '<unknown>')} has no independent review status"
     if any(status != "approved" for status in statuses):
         return False, f"Survey {survey.get('survey_id', '<unknown>')} is not approved for decision use"
-    if bool(survey.get("is_retracted", False)):
-        return False, f"Survey {survey.get('survey_id', '<unknown>')} is retracted"
-    if bool(survey.get("is_superseded", False)):
-        return False, f"Survey {survey.get('survey_id', '<unknown>')} is superseded"
+    for flag_name, description in (
+        ("is_retracted", "retracted"),
+        ("is_superseded", "superseded"),
+    ):
+        if flag_name not in survey:
+            continue
+        flag = _coerce_bool(survey[flag_name])
+        if flag is None:
+            return False, f"Survey {survey.get('survey_id', '<unknown>')} has invalid {flag_name} state"
+        if flag:
+            return False, f"Survey {survey.get('survey_id', '<unknown>')} is {description}"
     return True, None
 
 
