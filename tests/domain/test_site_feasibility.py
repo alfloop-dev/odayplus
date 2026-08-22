@@ -5,8 +5,15 @@ Verifies acceptance criteria for ODP-FEASIBILITY-001:
 2. Return feasible, conditional, unknown-requires-survey or infeasible and fail closed before binding recommendation.
 """
 
+import pytest
 
 from modules.site_feasibility.application.service import SiteFeasibilityService
+from modules.site_feasibility.domain.contracts import (
+    CONTRACT_ID,
+    CONTRACT_VERSION,
+    SiteFeasibilityDocument,
+    validate_site_feasibility_document,
+)
 from modules.site_feasibility.domain.models import FeasibilityDecision
 
 
@@ -61,6 +68,7 @@ def test_infeasible_site_due_to_zoning_or_flood():
         "target_entity_id": "SITE-001",
         "target_entity_kind": "SITE",
         "survey_type": "SITE_FEASIBILITY",
+        "review_status": "APPROVED",
         "lifecycle_kind": "INITIAL_SURVEY",
         "submitter_id": "sub1",
         "surveyed_at": "2026-08-22T00:00:00Z",
@@ -111,6 +119,7 @@ def test_conditional_feasibility_due_to_low_power_capacity():
         "target_entity_id": "SITE-001",
         "target_entity_kind": "SITE",
         "survey_type": "SITE_FEASIBILITY",
+        "review_status": "APPROVED",
         "lifecycle_kind": "INITIAL_SURVEY",
         "submitter_id": "sub1",
         "surveyed_at": "2026-08-22T00:00:00Z",
@@ -161,6 +170,7 @@ def test_fully_feasible_site():
         "target_entity_id": "SITE-001",
         "target_entity_kind": "SITE",
         "survey_type": "SITE_FEASIBILITY",
+        "review_status": "APPROVED",
         "lifecycle_kind": "INITIAL_SURVEY",
         "submitter_id": "sub1",
         "surveyed_at": "2026-08-22T00:00:00Z",
@@ -186,3 +196,132 @@ def test_fully_feasible_site():
     
     assert doc.decision.recommendation == FeasibilityDecision.FEASIBLE
 
+
+def _context(zoning: object = "commercial") -> dict[str, object]:
+    return {
+        "context_id": "ctx-001",
+        "identity": {"site_id": "SITE-001", "metadata": {"zoning": zoning}},
+    }
+
+
+def _survey(**attributes: object) -> dict[str, object]:
+    return {
+        "survey_id": "surv-001",
+        "target_entity_id": "SITE-001",
+        "survey_type": "PHYSICAL_FEASIBILITY",
+        "review_status": "APPROVED",
+        "attributes": {
+            "legal_use_restrictions": "NONE",
+            "frontage_meters": 5.0,
+            "utilities_power_capacity_amp": 100,
+            "utilities_water_pressure_psi": 40,
+            "flood_risk_level": "LOW",
+            "loading_zone_available": True,
+            "temporary_stop_allowed": True,
+            **attributes,
+        },
+    }
+
+
+def test_missing_required_evidence_fails_closed_even_when_power_is_present() -> None:
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001",
+        _context(),
+        [_survey(
+            legal_use_restrictions=None,
+            frontage_meters=None,
+            utilities_water_pressure_psi=None,
+            flood_risk_level=None,
+            loading_zone_available=None,
+            temporary_stop_allowed=None,
+        )],
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    reasons = " ".join(doc.decision.reasons).lower()
+    assert "legal use" in reasons
+    assert "flood" in reasons
+
+
+@pytest.mark.parametrize("flag", ["is_retracted", "is_superseded"])
+def test_invalidated_survey_evidence_cannot_produce_feasible(flag: str) -> None:
+    survey = _survey()
+    survey[flag] = True
+
+    doc = SiteFeasibilityService().evaluate_feasibility("SITE-001", _context(), [survey])
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert "survey" in " ".join(doc.decision.reasons).lower()
+
+
+def test_rejected_survey_evidence_cannot_produce_feasible() -> None:
+    survey = _survey()
+    survey["review_status"] = "REJECTED"
+
+    doc = SiteFeasibilityService().evaluate_feasibility("SITE-001", _context(), [survey])
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+
+
+def test_frontage_is_modelled_as_a_non_binding_condition() -> None:
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001", _context(), [_survey(frontage_meters=0)]
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.CONDITIONAL
+    assert "frontage" in " ".join(doc.decision.reasons).lower()
+
+
+def test_unknown_zoning_is_not_assumed_to_be_permitted() -> None:
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001", _context(zoning="unrecognised-zone"), [_survey()]
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert "zoning" in " ".join(doc.decision.reasons).lower()
+
+
+def test_contract_legal_values_are_handled_without_attribute_errors() -> None:
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001",
+        _context(zoning=None),
+        [_survey(legal_use_restrictions=["NONE"])],
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+
+
+def test_multi_survey_aggregation_is_order_independent_and_fail_closed() -> None:
+    low_power = _survey(utilities_power_capacity_amp=30)
+    missing_power = _survey(utilities_power_capacity_amp=None)
+    missing_power["survey_id"] = "surv-002"
+
+    first = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001", _context(), [low_power, missing_power]
+    )
+    second = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001", _context(), [missing_power, low_power]
+    )
+
+    assert first.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert second.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert first.decision.reasons == second.decision.reasons
+
+
+def test_all_acceptance_dimensions_and_contract_validation_are_covered() -> None:
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001",
+        _context(),
+        [_survey(restrictions="NONE")],
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.FEASIBLE
+    assert doc.metadata["binding_recommendation_allowed"] is True
+    validate_site_feasibility_document(doc)
+    wire = doc.to_dict()
+    assert wire["contract_id"] == CONTRACT_ID
+    assert wire["contract_version"] == CONTRACT_VERSION
+    assert SiteFeasibilityDocument.from_dict(wire).to_dict() == wire
+
+    with pytest.raises(ValueError, match="contract_version"):
+        validate_site_feasibility_document({**wire, "contract_version": "2.0.0"})

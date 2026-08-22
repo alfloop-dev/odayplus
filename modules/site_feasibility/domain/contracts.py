@@ -8,10 +8,11 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from modules.site_feasibility.domain.models import FeasibilityAssessment
+from modules.site_feasibility.domain.models import FeasibilityAssessment, FeasibilityDecision
 
 CONTRACT_ID = "odayplus.physical-feasibility.v1"
 CONTRACT_VERSION = "1.0.0"
+CONTRACT_CATEGORY = "decision_product"
 
 @dataclass(frozen=True, slots=True)
 class SiteFeasibilityDocument:
@@ -52,10 +53,32 @@ class SiteFeasibilityDocument:
         )
 
 def validate_site_feasibility_document(doc: SiteFeasibilityDocument | Mapping[str, Any]) -> None:
+    """Validate the wire shape of the physical-feasibility product contract."""
+
     data = doc.to_dict() if isinstance(doc, SiteFeasibilityDocument) else doc
+    if not isinstance(data, Mapping):
+        raise ValueError("physical-feasibility document must be a mapping")
     if data.get("contract_id") != CONTRACT_ID:
         raise ValueError(f"Invalid contract_id: expected '{CONTRACT_ID}', got '{data.get('contract_id')}'")
-    if not data.get("site_id"):
+    if data.get("contract_version") != CONTRACT_VERSION:
+        raise ValueError(
+            f"Invalid contract_version: expected '{CONTRACT_VERSION}', got '{data.get('contract_version')}'"
+        )
+    if not isinstance(data.get("document_id"), str) or not data["document_id"].strip():
+        raise ValueError("document_id is required")
+    if not isinstance(data.get("site_id"), str) or not data["site_id"].strip():
         raise ValueError("site_id is required")
-    if "decision" not in data:
+    if not isinstance(data.get("evaluated_at"), str) or not data["evaluated_at"].strip():
+        raise ValueError("evaluated_at is required")
+    decision = data.get("decision")
+    if not isinstance(decision, Mapping):
         raise ValueError("decision is required")
+    recommendation = decision.get("recommendation")
+    allowed_decisions = {decision.value for decision in FeasibilityDecision}
+    if recommendation not in allowed_decisions:
+        raise ValueError(f"Invalid feasibility recommendation: {recommendation!r}")
+    reasons = decision.get("reasons", [])
+    if not isinstance(reasons, (list, tuple)) or not all(isinstance(reason, str) for reason in reasons):
+        raise ValueError("decision.reasons must be an array of strings")
+    if not isinstance(data.get("metadata", {}), Mapping):
+        raise ValueError("metadata must be an object")

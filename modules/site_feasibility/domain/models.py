@@ -15,17 +15,17 @@ class FeasibilityDecision(StrEnum):
 @dataclass(frozen=True, slots=True)
 class FeasibilityAssessment:
     recommendation: FeasibilityDecision
-    reasons: list[str] = field(default_factory=list)
+    reasons: tuple[str, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "recommendation": self.recommendation.value,
-            "reasons": self.reasons,
+            "reasons": list(self.reasons),
         }
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "FeasibilityAssessment":
         return cls(
             recommendation=FeasibilityDecision(data["recommendation"]),
-            reasons=list(data.get("reasons", [])),
+            reasons=tuple(str(reason) for reason in data.get("reasons", [])),
         )
