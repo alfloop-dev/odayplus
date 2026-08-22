@@ -20765,23 +20765,7 @@
           },
           {
             "in": "query",
-            "name": "min_uncertainty_pct",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Min Uncertainty Pct"
-            }
-          },
-          {
-            "in": "query",
-            "name": "severity",
+            "name": "gap_kind",
             "required": false,
             "schema": {
               "anyOf": [
@@ -20792,7 +20776,23 @@
                   "type": "null"
                 }
               ],
-              "title": "Severity"
+              "title": "Gap Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reason_code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason Code"
             }
           },
           {
