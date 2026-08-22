@@ -153,6 +153,12 @@
       "review",
       "review_approved"
     ],
+    "review_churn": {
+      "enabled": true,
+      "reassign_after_reopens": 2,
+      "eligible_statuses": ["todo", "in_progress"],
+      "require_different_account_pool": true
+    },
     "owner_fallbacks": {
       "Claude": ["Claude2", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
       "Claude2": ["Claude", "Claude3", "Codex", "Codex2", "Codex6", "Antigravity", "Antigravity2", "Antigravity3"],
@@ -509,6 +515,13 @@
       "antigravity": {
         "cli": ".orchestrator/bin/agy",
         "hard_print_timeout": "168h",
+        "model_policy": {
+          "enabled": true,
+          "standard_model": "gemini-3.7-flash-high",
+          "high_risk_model": "gemini-3.1-pro-high",
+          "high_risk_priorities": ["P0", "P1"],
+          "upgrade_after_review_reopens": 1
+        },
         "include_directories": true,
         "env": {
           "GEMINI_CLI_TRUST_WORKSPACE": "true",

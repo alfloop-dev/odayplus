@@ -241,6 +241,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "mark_account_pool_cooldown",
 "mark_provider_dispatch_paused",
 "maybe_reassign_task_after_worker_failure",
+"reassign_tasks_after_review_churn",
 "maybe_trigger_retry_or_fallback",
 "normalized_mapping_values",
 "parse_quota_retry_hint",
@@ -277,6 +278,7 @@ _FAILURE_HELPER_FUNCTIONS = [
 "worker_lease_expiry",
 "worker_lease_is_expired",
 "worker_reassignment_settings",
+"review_churn_settings",
 "worker_retry_settings",
 "worker_runner_succeeded",
 "worker_runtime_metrics_bucket",
@@ -2055,6 +2057,15 @@ def start_worker_for_request(
         model_rotation.WORKER_POOL_KEY: model_rotation.normalize_pool(
             result_metadata.get(model_rotation.WORKER_POOL_KEY)
         ),
+        **{
+            key: result_metadata.get(key)
+            for key in (
+                model_rotation.WORKER_MODEL_KEY,
+                model_rotation.WORKER_MODEL_RISK_TIER_KEY,
+                model_rotation.WORKER_MODEL_REASON_KEY,
+            )
+            if key in result_metadata
+        },
         "notes": result.notes,
         "metadata": result_metadata,
         "request_snapshot": request_snapshot(request),
@@ -2077,6 +2088,15 @@ def start_worker_for_request(
             "task_id": request.task_id,
             "agent_id": agent["id"],
             "provider": request.provider,
+            **{
+                key: result_metadata.get(key)
+                for key in (
+                    model_rotation.WORKER_MODEL_KEY,
+                    model_rotation.WORKER_MODEL_RISK_TIER_KEY,
+                    model_rotation.WORKER_MODEL_REASON_KEY,
+                )
+                if key in result_metadata
+            },
             "lease_expires_at": state["workers"][worker_run_id].get("lease_expires_at"),
         },
         emit_activity=False,
@@ -2091,6 +2111,15 @@ def start_worker_for_request(
             "task_id": request.task_id,
             "target_agent": display_name_for(config, agent["id"]),
             "provider": request.provider,
+            **{
+                key: result_metadata.get(key)
+                for key in (
+                    model_rotation.WORKER_MODEL_KEY,
+                    model_rotation.WORKER_MODEL_RISK_TIER_KEY,
+                    model_rotation.WORKER_MODEL_REASON_KEY,
+                )
+                if key in result_metadata
+            },
             "delivery_mode": result.mode,
             "message": activity_message or f"Worker started via {result.adapter}: {request.reason}",
             "queue_event_id": event_id_for_log,

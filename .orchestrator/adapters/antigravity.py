@@ -125,7 +125,13 @@ class AntigravityAdapter(BaseAdapter):
         # Model rotation: cycle Gemini <-> Claude/GPT per the provider's quota
         # cooldown state (falls back to the static `model` setting when rotation
         # is disabled). '' means let agy use its default (Gemini) model.
-        selection = model_rotation.resolve_active_selection(self.config, provider_id, settings)
+        selection = model_rotation.resolve_active_selection(
+            self.config,
+            provider_id,
+            settings,
+            task=request.metadata.get("task") if isinstance(request.metadata, dict) else None,
+            reason=request.reason,
+        )
         model = str(selection.get("model") or "").strip()
         dispatched_pool = model_rotation.normalize_pool(selection.get("pool"))
         if model:
@@ -174,5 +180,7 @@ class AntigravityAdapter(BaseAdapter):
                 # worker can never cool a pool it never ran on.
                 model_rotation.WORKER_POOL_KEY: dispatched_pool,
                 model_rotation.WORKER_MODEL_KEY: model,
+                model_rotation.WORKER_MODEL_RISK_TIER_KEY: selection.get("risk_tier"),
+                model_rotation.WORKER_MODEL_REASON_KEY: selection.get("selection_reason"),
             },
         )
