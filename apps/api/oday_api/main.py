@@ -128,7 +128,6 @@ else:
         persistence: Any = None,
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
-        external_ingestion_service: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, including the production
@@ -203,8 +202,6 @@ else:
         job_queue = job_queue or bundle.job_queue
         heatzone_store = heatzone_store or bundle.heatzone_store
 
-        from modules.external_data.application.ingestion_service import ExternalIngestionService
-
         heatzone_store_for_tenant = (
             bundle.heatzone_store_for_tenant if bundle.is_durable else None
         )
@@ -213,12 +210,6 @@ else:
         )
         sitescore_decision_store_for_tenant = (
             bundle.sitescore_decision_store_for_tenant if bundle.is_durable else None
-        )
-        ingestion_service = external_ingestion_service or ExternalIngestionService(
-            store=bundle.ingestion_run_store,
-            ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
-            state_store=bundle.external_fetch_state_store,
-            audit_log=audit_log,
         )
         api = FastAPI(title="ODay Plus API", version=API_VERSION)
         provider_probe_lock = threading.Lock()
@@ -329,29 +320,6 @@ else:
                 if isinstance(probe, dict) and not bool(probe.get("connectivity_healthy"))
             )
             return connectivity_healthy, report, probe_errors
-
-        def require_live_external_provider() -> None:
-            if not require_live_data:
-                return
-            provider_ok, provider_report, provider_errors = provider_health()
-            if provider_ok and provider_mode == "live":
-                return
-            raise ApiError(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                "The required production external provider is unavailable; "
-                "fixture providers are disabled.",
-                code="external_provider_unavailable",
-                next_action=("Restore an approved live provider configuration, then retry."),
-                details=[
-                    {
-                        "dependency": "external_provider",
-                        "provider_mode": provider_mode,
-                        "configuration_valid": provider_report["configuration_valid"],
-                        "connectivity_healthy": provider_report["connectivity_healthy"],
-                        "errors": list(provider_errors),
-                    }
-                ],
-            )
 
         def production_persistence_blocking_reasons(*, persistence_reachable: bool) -> list[str]:
             reasons: list[str] = []
@@ -1205,10 +1173,9 @@ else:
         mount_versioned(
             api,
             create_external_data_router(
-                ingestion_service=ingestion_service,
+                ingestion_run_store=bundle.ingestion_run_store,
                 ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
                 audit_log=audit_log,
-                require_provider=require_live_external_provider,
             ),
         )
         mount_versioned(
@@ -1442,7 +1409,6 @@ else:
         api.state.intervention_label_registry = label_registry
         api.state.operator_document_store = operator_document_store
         api.state.operator_live_repository = operator_live_repository
-        api.state.external_ingestion_service = ingestion_service
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         api.state.require_live_data = require_live_data

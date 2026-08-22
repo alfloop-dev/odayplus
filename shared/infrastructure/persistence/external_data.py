@@ -1,7 +1,7 @@
 """Durable, restart-survivable external-data ingestion run store (ODP-FLOW-001).
 
 Drop-in replacement for
-:class:`modules.external_data.application.ingestion_store.InMemoryIngestionRunStore`.
+:class:`modules.external_data.application.ingestion_records.InMemoryIngestionRunStore`.
 Records are persisted through :class:`SqliteDocumentStore` (the same generic
 ``durable_documents`` table the other durable repositories use), so persisted
 ingestion runs — canonical output summary, DQ quarantine, lineage, and
@@ -16,8 +16,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from modules.external_data.application.ingestion_store import IngestionRunRecord
-from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+from modules.external_data.application.ingestion_records import (
+    IngestionRunRecord,
+    SourceFreshnessEvidence,
+)
 from shared.infrastructure.persistence.document_store import SqliteDocumentStore
 
 

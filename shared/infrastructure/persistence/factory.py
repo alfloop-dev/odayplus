@@ -67,7 +67,6 @@ class PersistenceBundle:
     machine_repository: Any
     transaction_repository: Any
     machine_cycle_repository: Any
-    external_fetch_state_store: Any = None
     notification_repository: Any = None
     outbox_repository: Any = None
     operator_intake_repository: Any = None
@@ -126,10 +125,9 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
     from models.shared_ml.artifact_store import InMemoryArtifactStore
     from modules.adlift.infrastructure import InMemoryAdLiftRepository
     from modules.avm.infrastructure import InMemoryAVMRepository
-    from modules.external_data.application.ingestion_store import (
+    from modules.external_data.application.ingestion_records import (
         InMemoryIngestionRunStore,
     )
-    from modules.external_data.workers.scheduled_fetch import InMemoryExternalFetchStateStore
     from modules.forecastops.infrastructure import InMemoryForecastOpsRepository
     from modules.heatzone.infrastructure import HeatZoneResultStore
     from modules.intervention.infrastructure.repositories import (
@@ -187,7 +185,6 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
         machine_repository=InMemoryMachineRepository(),
         transaction_repository=InMemoryTransactionRepository(),
         machine_cycle_repository=InMemoryMachineCycleRepository(),
-        external_fetch_state_store=InMemoryExternalFetchStateStore(),
         notification_repository=InMemoryNotificationRepository(),
         outbox_repository=InMemoryOutboxRepository(),
     )
@@ -196,7 +193,6 @@ def _memory_bundle(worm_sink: AuditWormSink | None = None) -> PersistenceBundle:
 def _durable_bundle(
     db_path: str | Path, *, worm_sink: AuditWormSink | None = None
 ) -> PersistenceBundle:
-    from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -267,7 +263,6 @@ def _durable_bundle(
         machine_repository=DurableMachineRepository(engine),
         transaction_repository=DurableTransactionRepository(engine),
         machine_cycle_repository=DurableMachineCycleRepository(engine),
-        external_fetch_state_store=DurableExternalFetchStateStore(store),
         notification_repository=DurableNotificationRepository(engine),
         outbox_repository=DurableOutboxRepository(engine),
         operator_intake_repository=DurableAssistedIntakeRepository(store),
@@ -280,7 +275,6 @@ def _postgres_bundle(
     *,
     worm_sink: AuditWormSink | None = None,
 ) -> PersistenceBundle:
-    from modules.external_data.workers.scheduled_fetch import DurableExternalFetchStateStore
     from modules.notifications import DurableNotificationRepository
     from modules.opsboard.application.store_ops import DurableStoreOpsRepository
     from modules.opsboard.audit.evidence_store import DurableEvidenceBundleStore
@@ -363,7 +357,6 @@ def _postgres_bundle(
         machine_repository=DurableMachineRepository(engine),
         transaction_repository=DurableTransactionRepository(engine),
         machine_cycle_repository=DurableMachineCycleRepository(engine),
-        external_fetch_state_store=DurableExternalFetchStateStore(store),
         notification_repository=DurableNotificationRepository(engine),
         outbox_repository=DurableOutboxRepository(engine),
         operator_intake_repository=DurableAssistedIntakeRepository(store),

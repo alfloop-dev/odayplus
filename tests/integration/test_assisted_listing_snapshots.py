@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from modules.external_data.application.source_snapshots import (
+from modules.external_data.assisted.source_snapshots import (
     SourcePolicyViolation,
     SourceSnapshotService,
 )

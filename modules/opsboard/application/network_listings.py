@@ -2144,7 +2144,7 @@ class NetworkListingService:
     def _get_snapshot_service(self) -> Any:
         import os
 
-        from modules.external_data.application.source_snapshots import SourceSnapshotService
+        from modules.external_data.assisted.source_snapshots import SourceSnapshotService
         from shared.infrastructure.object_store.client import GcsObjectStore, InMemoryObjectStore
 
         doc_store = None

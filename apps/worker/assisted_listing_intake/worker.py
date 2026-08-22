@@ -407,7 +407,7 @@ def handle_assisted_listing_intake(job: JobRecord, persistence: PersistenceBundl
             import os
 
             from modules.external_data.application.assisted_intake import normalize_url
-            from modules.external_data.application.source_snapshots import (
+            from modules.external_data.assisted.source_snapshots import (
                 build_source_snapshot_service,
             )
             from modules.external_data.security import redact_sensitive_snapshot

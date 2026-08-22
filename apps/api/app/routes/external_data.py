@@ -1,11 +1,25 @@
+"""Read-only external-data provenance routes.
+
+XR-CUTOVER-001 decommissioned odayplus-side external ingestion: the manual
+``POST /external-data/ingestion-runs`` trigger and the ingestion service behind
+it are gone, and the datasets are now produced by ``oday-data-platform`` and
+read through :mod:`modules.external_data.application.market_data_facade`.
+
+What is left here is the operator provenance surface over runs that were
+already persisted: freshness, ingestion-run history and DQ quarantine. Every
+route is a ``GET``; nothing in this module can start a fetch.
+"""
+
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from apps.api.oday_api.runtime_mode import live_data_required
-from modules.external_data.workers import SourceFreshnessEvidence
+from modules.external_data.application.ingestion_records import (
+    InMemoryIngestionRunStore,
+    SourceFreshnessEvidence,
+)
 from shared.audit import InMemoryAuditLog
 
 _FIXTURE_PRODUCT_MODES = frozenset({"poc", "test"})
@@ -24,54 +38,28 @@ def _fixture_freshness_enabled() -> bool:
 
 
 try:
-    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
-    from pydantic import BaseModel
+    from fastapi import APIRouter, Depends, HTTPException, Request, status
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
-    from modules.external_data.application.ingestion_service import ExternalIngestionService
-    from modules.external_data.application.ingestion_store import InMemoryIngestionRunStore
-
-    class IngestionRunPayload(BaseModel):
-        provider_id: str = "listing.partner_feed"
-        schedule_id: str = "manual"
-        window_start: str | None = None
-        window_end: str | None = None
-        idempotency_key: str | None = None
-
-    def _parse_dt(value: str | None) -> datetime | None:
-        if not value:
-            return None
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
     def create_external_data_router(
         *,
-        ingestion_service: ExternalIngestionService | None = None,
+        ingestion_run_store: Any | None = None,
         ingestion_run_store_for_tenant: Any | None = None,
         audit_log: InMemoryAuditLog | None = None,
-        require_provider: Callable[[], None] | None = None,
     ) -> APIRouter:
         from apps.api.app.routes._common import resolve_tenant_id
         from apps.api.oday_api.security.dependencies import build_engine, require_permission
         from shared.auth import Action
 
         active_audit_log = audit_log or InMemoryAuditLog()
-        service = ingestion_service or ExternalIngestionService(
-            store=InMemoryIngestionRunStore(),
-            ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
-            audit_log=active_audit_log,
-        )
-        if ingestion_run_store_for_tenant is not None and getattr(service, "ingestion_run_store_for_tenant", None) is None:
-            service.ingestion_run_store_for_tenant = ingestion_run_store_for_tenant
+        default_store = ingestion_run_store or InMemoryIngestionRunStore()
         authz_engine = build_engine(audit_log=active_audit_log)
 
         router = APIRouter(prefix="/external-data", tags=["external-data"])
 
         view_guard = Depends(require_permission("integration", Action.VIEW, engine=authz_engine))
-        create_guard = Depends(require_permission("integration", Action.CREATE, engine=authz_engine))
-        ingestion_dependencies = [create_guard]
-        if require_provider is not None:
-            ingestion_dependencies.append(Depends(require_provider))
 
         def store_for_request(request: Request) -> Any:
             tid = resolve_tenant_id(request)
@@ -91,9 +79,7 @@ else:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to resolve tenant-scoped ingestion store",
                 )
-            if hasattr(service, "_resolve_store"):
-                return service._resolve_store(tid)
-            return service.store
+            return default_store
 
         @router.get("/freshness", dependencies=[view_guard])
         def list_external_data_freshness(request: Request) -> dict[str, Any]:
@@ -158,47 +144,6 @@ else:
             rows = active_store.quarantine_records(provider_id=provider_id)
             return {"items": rows, "count": len(rows)}
 
-        @router.post(
-            "/ingestion-runs",
-            status_code=status.HTTP_202_ACCEPTED,
-            dependencies=ingestion_dependencies,
-        )
-        def trigger_ingestion_run(
-            body: IngestionRunPayload,
-            request: Request,
-            idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
-        ) -> dict[str, Any]:
-            effective_idempotency_key = body.idempotency_key or idempotency_key
-            tid = resolve_tenant_id(request)
-            try:
-                outcome = service.ingest(
-                    provider_id=body.provider_id,
-                    schedule_id=body.schedule_id,
-                    trigger="manual",
-                    window_start=_parse_dt(body.window_start),
-                    window_end=_parse_dt(body.window_end),
-                    correlation_id=request.state.correlation_id,
-                    api_idempotency_key=effective_idempotency_key,
-                    tenant_id=tid,
-                )
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=str(exc),
-                ) from exc
-            except HTTPException:
-                raise
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"Failed to execute tenant ingestion run: {exc}",
-                ) from exc
-            payload = outcome.record.to_dict()
-            payload["created"] = outcome.created
-            payload["audit_event_id"] = outcome.audit_event_id
-            payload["correlation_id"] = request.state.correlation_id
-            return payload
-
         return router
 
-    __all__ = ["IngestionRunPayload", "create_external_data_router"]
+    __all__ = ["create_external_data_router"]
