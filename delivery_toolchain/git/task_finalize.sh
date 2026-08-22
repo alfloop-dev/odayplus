@@ -94,9 +94,8 @@ if [ "$AHEAD" -eq 0 ]; then
   exit 1
 fi
 
-# Validate every delivery commit, not just HEAD.  A reused branch can otherwise
-# hide an older commit with a different Task-ID beneath a correct-looking tip.
-python3 "$ROOT/delivery_toolchain/git/check_task_delivery_identity.py" \
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$SCRIPT_DIR/check_task_delivery_identity.py" \
   --repo "$ROOT" \
   --task-id "$TASK_ID" \
   --base "$BASE_REF" \
