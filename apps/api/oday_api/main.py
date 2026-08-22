@@ -64,7 +64,6 @@ def release_sha_from_environment() -> str:
     return get_release_identity("local")
 
 
-
 def release_version_payload(*, correlation_id: str) -> dict[str, str]:
     return {
         **health_payload(),
@@ -129,6 +128,10 @@ else:
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
         external_ingestion_service: Any = None,
+        market_intelligence_service: Any = None,
+        market_intelligence_facade: Any = None,
+        market_intelligence_transport: Any = None,
+        market_intelligence_repository: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, including the production
@@ -157,7 +160,11 @@ else:
         production_persistence_supported = persistence_mode in {"postgres", "postgresql"} and bool(
             bundle.is_production
         )
-        if operator_live_repository is None and require_live_data and production_persistence_supported:
+        if (
+            operator_live_repository is None
+            and require_live_data
+            and production_persistence_supported
+        ):
             from modules.opsboard.application.operator_live_repository import (
                 OperatorLiveRepository,
             )
@@ -203,11 +210,52 @@ else:
         job_queue = job_queue or bundle.job_queue
         heatzone_store = heatzone_store or bundle.heatzone_store
 
+        # The BFF is a consumer of the released data-platform read facade.
+        # Resolve it at app composition time so the route never creates an
+        # implicit empty transport. Live deployments must inject the facade or
+        # transport supplied by the platform integration; local app startup may
+        # use an explicit in-memory replay solely to keep the API shell bootable.
+        from modules.external_data.application.market_data_facade import MarketDataFacade
+        from modules.external_data.infrastructure.data_platform_client import (
+            InMemoryDataPlatformTransport,
+        )
+        from modules.market_intelligence_api.application.service import MarketIntelligenceService
+
+        market_intelligence_facade = market_intelligence_facade or getattr(
+            bundle, "market_data_facade", None
+        )
+        market_intelligence_unavailable_reason: str | None = None
+        if market_intelligence_service is None:
+            if market_intelligence_facade is None and market_intelligence_repository is None:
+                if market_intelligence_transport is not None:
+                    market_intelligence_facade = MarketDataFacade(
+                        transport=market_intelligence_transport,
+                    )
+                elif require_live_data:
+                    # Fail closed at request time, not at composition time. A
+                    # missing platform binding must gate only the routes that
+                    # use it (ODP-API-001 readiness/missingness), the same way
+                    # ForecastOps and LearningHub report an unresolved
+                    # production binding without taking down the whole app.
+                    market_intelligence_unavailable_reason = (
+                        "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED"
+                    )
+                else:
+                    market_intelligence_facade = MarketDataFacade(
+                        transport=InMemoryDataPlatformTransport(),
+                    )
+            if market_intelligence_facade is not None:
+                market_intelligence_service = MarketIntelligenceService(
+                    facade=market_intelligence_facade,
+                )
+            elif market_intelligence_repository is not None:
+                market_intelligence_service = MarketIntelligenceService(
+                    repository=market_intelligence_repository,
+                )
+
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
-        heatzone_store_for_tenant = (
-            bundle.heatzone_store_for_tenant if bundle.is_durable else None
-        )
+        heatzone_store_for_tenant = bundle.heatzone_store_for_tenant if bundle.is_durable else None
         ingestion_run_store_for_tenant = (
             bundle.ingestion_run_store_for_tenant if bundle.is_durable else None
         )
@@ -472,6 +520,7 @@ else:
 
         class TelemetryMiddleware:
             """Production HTTP telemetry middleware recording api_request_count, api_error_count, and api_latency_ms."""
+
             pass
 
         # Built on first request: routers are still being mounted at the time
@@ -598,9 +647,15 @@ else:
                         rejected_ms = (time.monotonic() - start_t) * 1000.0
                         emit_telemetry(
                             context.correlation_id,
-                            lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
-                            lambda: telemetry.metrics.increment("api_error_count", labels=count_labels),
-                            lambda: telemetry.metrics.observe("api_latency_ms", rejected_ms, labels=latency_labels),
+                            lambda: telemetry.metrics.increment(
+                                "api_request_count", labels=count_labels
+                            ),
+                            lambda: telemetry.metrics.increment(
+                                "api_error_count", labels=count_labels
+                            ),
+                            lambda: telemetry.metrics.observe(
+                                "api_latency_ms", rejected_ms, labels=latency_labels
+                            ),
                         )
                         return response
                 response = await call_next(request)
@@ -611,7 +666,9 @@ else:
                 is_error = response.status_code >= 400
                 emissions = [
                     lambda: telemetry.metrics.increment("api_request_count", labels=count_labels),
-                    lambda: telemetry.metrics.observe("api_latency_ms", duration_ms, labels=latency_labels),
+                    lambda: telemetry.metrics.observe(
+                        "api_latency_ms", duration_ms, labels=latency_labels
+                    ),
                 ]
                 if is_error:
                     emissions.append(
@@ -778,9 +835,6 @@ else:
                 ) from exc
 
         mount_versioned(api, platform_observability_router)
-
-
-
 
         # Jobs and audit-event reads are product operations, so they are
         # versioned like every domain router rather than declared inline on the
@@ -997,6 +1051,7 @@ else:
             create_assisted_intake_router,
             create_listings_router,
         )
+        from apps.api.app.routes.market_intelligence import create_market_intelligence_router
         from apps.api.app.routes.netplan import create_netplan_router
         from apps.api.app.routes.operator import create_operator_router
         from apps.api.app.routes.operator_modules import create_operator_store_ops_router
@@ -1213,6 +1268,16 @@ else:
         )
         mount_versioned(
             api, create_listings_router(audit_log=audit_log, repository=listing_repository)
+        )
+        mount_versioned(
+            api,
+            create_market_intelligence_router(
+                service=market_intelligence_service,
+                facade=market_intelligence_facade,
+                repository=market_intelligence_repository,
+                audit_log=audit_log,
+                unavailable_reason=market_intelligence_unavailable_reason,
+            ),
         )
         # This router is generated from a separately approved OpenAPI bundle;
         # preserve its per-operation response set instead of adding the generic
@@ -1443,6 +1508,8 @@ else:
         api.state.operator_document_store = operator_document_store
         api.state.operator_live_repository = operator_live_repository
         api.state.external_ingestion_service = ingestion_service
+        api.state.market_intelligence_service = market_intelligence_service
+        api.state.market_intelligence_facade = market_intelligence_facade
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         api.state.require_live_data = require_live_data
