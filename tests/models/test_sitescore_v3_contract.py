@@ -5,9 +5,10 @@ Verifies acceptance criteria for ODP-SITESCORE-V3-001:
 2. Use point-in-time manifests and do not emit binding GO while feasibility/economics are incomplete.
 """
 
-import pytest
 from unittest.mock import MagicMock
 
+from modules.site_economics.domain.models import EconomicsDecision
+from modules.site_feasibility.domain.models import FeasibilityDecision
 from modules.sitescore.v3 import (
     CONTRACT_ID,
     CONTRACT_VERSION,
@@ -17,8 +18,7 @@ from modules.sitescore.v3 import (
     SiteScoreV3Service,
     validate_sitescore_v3_document,
 )
-from modules.site_feasibility.domain.models import FeasibilityAssessment, FeasibilityDecision
-from modules.site_economics.domain.models import EconomicsDecision
+
 
 def test_sitescore_v3_incomplete_feasibility_prevents_binding_go():
     service = SiteScoreV3Service()

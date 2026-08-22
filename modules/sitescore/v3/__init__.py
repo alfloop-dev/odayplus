@@ -6,6 +6,7 @@ Requires contract: odayplus.physical-feasibility.v1
 Requires contract: odayplus.site-economics.v1
 """
 
+from modules.sitescore.v3.application.service import SiteScoreV3Service
 from modules.sitescore.v3.domain.contracts import (
     CONTRACT_ID,
     CONTRACT_VERSION,
@@ -19,7 +20,6 @@ from modules.sitescore.v3.domain.models import (
     SiteScoreComponents,
     SiteScoreDecision,
 )
-from modules.sitescore.v3.application.service import SiteScoreV3Service
 
 __all__ = [
     "CONTRACT_ID",

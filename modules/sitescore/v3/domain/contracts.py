@@ -1,11 +1,8 @@
 """Contracts for SiteScore v3."""
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
-from uuid import uuid4
 
 from modules.sitescore.v3.domain.models import SiteScoreAssessment
 

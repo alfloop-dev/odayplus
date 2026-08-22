@@ -1,8 +1,9 @@
 """SiteScore v3 domain models."""
 
-from enum import StrEnum
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
+
 
 class ScoreAvailability(StrEnum):
     AVAILABLE = "AVAILABLE"

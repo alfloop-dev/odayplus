@@ -3,12 +3,16 @@
 from typing import Any
 from uuid import uuid4
 
-from modules.sitescore.v3.domain.models import (
-    ScoreAvailability, DecisionReadiness, SiteScoreDecision, SiteScoreComponents, SiteScoreAssessment
-)
-from modules.sitescore.v3.domain.contracts import SiteScoreV3Document
-from modules.site_feasibility.domain.models import FeasibilityDecision
 from modules.site_economics.domain.models import EconomicsDecision
+from modules.site_feasibility.domain.models import FeasibilityDecision
+from modules.sitescore.v3.domain.contracts import SiteScoreV3Document
+from modules.sitescore.v3.domain.models import (
+    DecisionReadiness,
+    ScoreAvailability,
+    SiteScoreAssessment,
+    SiteScoreComponents,
+    SiteScoreDecision,
+)
 
 
 class SiteScoreV3Service:
