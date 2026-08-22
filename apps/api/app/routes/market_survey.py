@@ -9,19 +9,15 @@ as unpromoted evidence snapshots, corrections, SLA sweeps, and promotion to cano
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from modules.market_survey.application.survey_service import MarketSurveyService
 from modules.market_survey.domain.models import (
     SURVEY_WORKFLOW_CONTRACT,
     SURVEY_WORKFLOW_VERSION,
-    AssignmentStatus,
-    EvidenceReviewStatus,
-    PromotionStatus,
     SurveyAuthorizationError,
     SurveyDomainError,
-    SurveyErrorCode,
     SurveyNotFoundError,
     SurveyStateConflictError,
     SurveyValidationError,
@@ -33,7 +29,7 @@ from modules.market_survey.infrastructure.repositories import (
 from shared.audit import InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
+    from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]

@@ -16,7 +16,6 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
-import uuid
 
 SURVEY_WORKFLOW_CONTRACT = "odayplus.survey-workflow.v2"
 SURVEY_WORKFLOW_VERSION = "2.0.0"

@@ -14,21 +14,18 @@ Orchestrates:
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import Any
-import uuid
 
 from modules.market_survey.domain.models import (
-    REQUIRED_EVIDENCE_CONTRACT,
-    REQUIRED_FACADE_CONTRACT,
     SURVEY_WORKFLOW_CONTRACT,
     SURVEY_WORKFLOW_VERSION,
     AssignmentStatus,
     EvidenceReviewStatus,
     FieldSurveyEvidence,
     MediaAttachment,
-    MediaKind,
     PromotionRecord,
     PromotionStatus,
     SurveyAssignment,
@@ -37,7 +34,7 @@ from modules.market_survey.domain.models import (
     SurveyLifecycleKind,
     SurveyLocation,
     SurveyNotFoundError,
-    SurveyReviewRecord,
+    SurveyStateConflictError,
     SurveyType,
     SurveyValidationError,
     TargetEntityKind,
@@ -577,7 +574,7 @@ class MarketSurveyService:
 
         dec = EvidenceReviewStatus(decision) if isinstance(decision, str) else decision
 
-        review_rec = SurveyReviewStateMachine.review(
+        SurveyReviewStateMachine.review(
             evidence,
             decision=dec,
             reviewer_id=reviewer_id,

@@ -11,7 +11,7 @@ Acceptance Criteria:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -29,7 +29,6 @@ from modules.market_survey import (
     SURVEY_WORKFLOW_VERSION,
     AssignmentStatus,
     EvidenceReviewStatus,
-    FieldSurveyEvidence,
     InMemorySurveyRepository,
     MarketSurveyService,
     MediaAttachment,
@@ -37,16 +36,11 @@ from modules.market_survey import (
     PlatformSurveyFacadeAdapter,
     PromotionRecord,
     PromotionStatus,
-    SurveyAssignment,
     SurveyAuthorizationError,
     SurveyErrorCode,
     SurveyLifecycleKind,
     SurveyLocation,
     SurveyNotFoundError,
-    SurveyPromotionStateMachine,
-    SurveyRepository,
-    SurveyReviewRecord,
-    SurveyReviewStateMachine,
     SurveyStateConflictError,
     SurveyType,
     SurveyValidationError,
@@ -54,16 +48,23 @@ from modules.market_survey import (
     run_survey_expiry_sweep,
 )
 from packages.oday_data_product_contracts_client.models.field_survey import (
-    FieldSurveyDocument,
     FieldSurveyObservation,
     ReviewStatus,
+)
+from packages.oday_data_product_contracts_client.models.field_survey import (
     SurveyLocation as PlatformSurveyLocation,
+)
+from packages.oday_data_product_contracts_client.models.field_survey import (
     SurveyReview as PlatformSurveyReview,
+)
+from packages.oday_data_product_contracts_client.models.field_survey import (
     SurveyType as PlatformSurveyType,
+)
+from packages.oday_data_product_contracts_client.models.field_survey import (
     TargetEntityKind as PlatformTargetEntityKind,
 )
 from shared.audit import InMemoryAuditLog
-from shared.auth import Principal, Role, Scope
+from shared.auth import Role
 from tests.integration._authz import auth_headers
 
 NOW = datetime(2026, 8, 20, 10, 0, 0, tzinfo=UTC)
@@ -429,6 +430,18 @@ def test_survey_correction_and_lineage(service: MarketSurveyService) -> None:
     original_updated = service.get_survey(initial_evidence.survey_id, tenant_id="tenant-alpha")
     assert original_updated is not None
     assert original_updated.is_superseded is True
+
+    with pytest.raises(SurveyStateConflictError) as superseded_correction:
+        service.correct_survey(
+            initial_evidence.survey_id,
+            corrected_by="surveyor-eva",
+            reason="Second correction against an already superseded survey",
+            delta_attributes={"floor_area_sqm": 120.0},
+            lifecycle_kind=SurveyLifecycleKind.CORRECTION,
+            tenant_id="tenant-alpha",
+            now=NOW + timedelta(days=2),
+        )
+    assert superseded_correction.value.code == SurveyErrorCode.SUPERSEDED_EVIDENCE
 
     with pytest.raises(SurveyStateConflictError) as exc_info:
         service.review_survey(
