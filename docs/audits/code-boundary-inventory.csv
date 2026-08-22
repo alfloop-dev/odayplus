@@ -379,6 +379,11 @@ modules/heatzone/domain/__init__.py,product_system,product_required,true,,engine
 modules/heatzone/domain/scoring.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/heatzone/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/heatzone/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/heatzone/v3/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/heatzone/v3/adapter.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/heatzone/v3/contract.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/heatzone/v3/scoring.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/heatzone/v3/shadow.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/heatzone/workers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/heatzone/workers/scoring_worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/integration/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -820,6 +825,7 @@ tests/integration/test_worker_scheduler_runtime.py,verification,verification_onl
 tests/models/test_dagster_training.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/models/test_evidently_monitor.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/models/test_heatzone_benchmark.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/models/test_heatzone_v3_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/models/test_hyperparameter_search.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/models/test_model_output_contracts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/models/test_model_ready_geo_contracts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.

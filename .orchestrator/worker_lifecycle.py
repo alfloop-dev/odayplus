@@ -482,6 +482,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
         if worker.get("queue_event_id") and worker.get("queue_event_id") not in valid_queue_event_ids:
             if worker.get("status") in {"running", "waiting_approval", "retry_backoff", "manual_pending", "stalled"} and not pid_is_alive(worker.get("pid")):
                 task_status = str(task_map.get(worker.get("task_id"), {}).get("status") or "").lower()
+                # Preserve before the record is dropped, not after: `workers.pop`
+                # is the last moment anything knows where this worker's
+                # workspace was.
+                preserve_dead_worker_worktree(
+                    config,
+                    state,
+                    worker,
+                    task=task_map.get(worker.get("task_id")),
+                    trigger="orphaned_queue_event",
+                )
                 workers.pop(run_id, None)
                 write_activity_log(
                     config,
@@ -554,6 +564,18 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 worker["last_error"] = message
                 queue_status = "failed"
             worker["last_event_at"] = utc_now()
+            # Runs for both outcomes. A worker that reached "incremental
+            # progress" still died holding whatever it had not committed, and
+            # the helper declines cheaply (`nothing_to_preserve`) when the
+            # worktree is clean -- so there is no reason to gamble on which
+            # exits leave work behind.
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                worker,
+                task=current_task,
+                trigger=f"reaped_dead_stalled_worker:{queue_status}",
+            )
             finalize_queue_event_record(
                 config,
                 state,
@@ -752,6 +774,17 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and worker.get("status") in {"fallback", "manual_pending", "retry_backoff", "stalled", "waiting_approval", "suspended_approval"}
             and not worker_matches_current_assignment(config, worker, task_map)
         ):
+            # Same reason as the orphaned-queue-event drop above: the record is
+            # about to be deleted, and it is the only thing that knows where the
+            # workspace is. Reassigning the task does not make whatever this
+            # dead worker had written worth losing.
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                worker,
+                task=task_map.get(str(worker.get("task_id") or "")),
+                trigger="assignment_moved",
+            )
             workers.pop(run_id, None)
             finalize_queue_event_record(
                 config,

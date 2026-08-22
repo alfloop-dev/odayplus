@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
 import contextlib
 import json
 import os
@@ -2163,7 +2164,11 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_fetch_authoritative_task_head",
                     return_value=("a" * 40, "local_only_task_ref"),
                 ),
-                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=False) as reset_worktree,
+                mock.patch.object(
+                    supervisor,
+                    "_quarantine_and_preserve_dirty_worktree",
+                    return_value=supervisor._quarantine_refused("worktree_belongs_to_another_repository"),
+                ) as reset_worktree,
                 mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
@@ -2186,8 +2191,20 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         create_worktree.assert_not_called()
         self.assertEqual(
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
-            ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
+            [
+                "worker_worktree_refreshed",
+                "worker_worktree_quarantine_declined",
+                "dispatch_blocked_worktree_lease",
+            ],
         )
+        # The refusal is now on the record. Before, a lease blocked on dirt and
+        # a lease blocked because quarantine had been pointed at the wrong
+        # repository produced byte-identical logs, so five consecutive blocks on
+        # DPF-SRC-RIS-NLSC-001 read as "still dirty" rather than "the recovery
+        # for this exact status cannot run".
+        declined = write_activity_log.call_args_list[1].args[1]
+        self.assertEqual(declined["reason"], "worktree_belongs_to_another_repository")
+        self.assertEqual(declined["task_id"], request.task_id)
         self.assertEqual(write_activity_log.call_args_list[-1].args[1]["refresh_status"], "skipped_dirty_worktree: 1 dirty change (1 unstaged tracked): services/app.py")
 
     def test_prepare_worker_workspace_recovers_dirty_worktree_lease(self) -> None:
@@ -14367,6 +14384,142 @@ class QuarantineCrossRepositoryTests(unittest.TestCase):
                     owning_repo_root=sibling,
                 )
             )
+
+
+class QuarantineRefusalIsLegibleTests(unittest.TestCase):
+    """Thirteen ways to decline used to be one indistinguishable `False`."""
+
+    def test_refusals_name_themselves_and_stay_falsy(self) -> None:
+        outcome = supervisor._quarantine_refused("branch_mismatch", "wanted task/A")
+        self.assertFalse(outcome)
+        self.assertFalse(bool(outcome))
+        self.assertEqual(outcome.reason, "branch_mismatch")
+        self.assertEqual(outcome.detail, "wanted task/A")
+
+    def test_a_missing_path_and_a_foreign_repo_are_different_answers(self) -> None:
+        """The two refusals a caller most needs to tell apart.
+
+        `no_worktree_path` is routine. `worktree_belongs_to_another_repository`
+        is the misrouting that silently disabled quarantine for every
+        oday-data-platform task until 2026-08-20.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = {"paths": {"status_file": str(Path(tmpdir) / "ai-status.json")}}
+            absent = supervisor._quarantine_and_preserve_dirty_worktree(config, {}, None, "T-1")
+            self.assertFalse(absent)
+            self.assertEqual(absent.reason, "no_worktree_path")
+
+            not_a_worktree = supervisor._quarantine_and_preserve_dirty_worktree(
+                config, {}, Path(tmpdir) / "nowhere", "T-1"
+            )
+            self.assertFalse(not_a_worktree)
+            self.assertEqual(not_a_worktree.reason, "not_a_worktree")
+            self.assertNotEqual(absent.reason, not_a_worktree.reason)
+
+    def test_a_success_is_still_truthy(self) -> None:
+        self.assertTrue(supervisor.QuarantineOutcome(True, "preserved"))
+
+
+
+class PreserveOnWorkerDeathTests(unittest.TestCase):
+    """Uncommitted work is saved when the worker dies, not when the next lease tries.
+
+    The stranded-work loop: a worker dies before committing, so no branch is
+    published; the fail-closed refresh then refuses the lease because the branch
+    is missing from the remote; and the quarantine that would have preserved the
+    work sits behind that refusal. The only worker that could have committed is
+    the one refused entry. Recovering it by hand cost 4459+ lines across four to
+    five occurrences.
+    """
+
+    def _config(self, tmpdir: str) -> dict:
+        return {"paths": {"status_file": str(Path(tmpdir) / "ai-status.json")}}
+
+    def test_it_names_the_dying_worker_so_it_is_not_read_as_a_live_owner(self) -> None:
+        """The dead worker is still in `state` with an active status.
+
+        Without its run id, quarantine sees an active worker holding that path
+        and refuses -- the record of the death would block the response to it.
+        """
+        worker = {
+            "run_id": "run-1",
+            "task_id": "T-1",
+            "status": "running",
+            "workspace_path": "/tmp/does-not-matter",
+        }
+        state = {"workers": {"run-1": worker}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = self._config(tmpdir)
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "_quarantine_and_preserve_dirty_worktree",
+                    return_value=supervisor._quarantine_refused("nothing_to_preserve"),
+                ) as quarantine,
+                mock.patch.object(supervisor, "write_activity_log") as log,
+            ):
+                outcome = supervisor.preserve_dead_worker_worktree(
+                    config, state, worker, task={"id": "T-1"}, trigger="missing_process"
+                )
+        self.assertFalse(outcome)
+        self.assertEqual(quarantine.call_args.kwargs["run_id"], "run-1")
+        self.assertEqual(quarantine.call_args.kwargs["trigger"], "missing_process")
+        self.assertEqual(log.call_args.args[1]["type"], "worker_death_worktree_not_preserved")
+        self.assertEqual(log.call_args.args[1]["reason"], "nothing_to_preserve")
+
+    def test_a_worker_with_no_workspace_is_not_an_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            outcome = supervisor.preserve_dead_worker_worktree(
+                self._config(tmpdir), {"workers": {}}, {"run_id": "r", "task_id": "T"}
+            )
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "worker_had_no_workspace")
+
+    def test_settlement_is_never_blocked_by_a_failure_to_preserve(self) -> None:
+        """A worker must still settle if backing up its scratch space throws."""
+        worker = {"run_id": "r", "task_id": "T", "status": "running", "workspace_path": "/tmp/x"}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(
+                    supervisor,
+                    "_quarantine_and_preserve_dirty_worktree",
+                    side_effect=OSError("disk full"),
+                ),
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                outcome = supervisor.preserve_dead_worker_worktree(
+                    self._config(tmpdir), {"workers": {}}, worker
+                )
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "preserve_raised")
+
+    def test_the_orphan_path_preserves_before_the_record_disappears(self) -> None:
+        """Ordering, checked at the source.
+
+        `workers.pop` is the last moment anything knows where this worker's
+        workspace was, so preservation has to precede it. Nothing at runtime
+        can observe that ordering after the fact, which is why it is pinned
+        here rather than behaviourally.
+        """
+        source = (Path(__file__).resolve().parent / "worker_lifecycle.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        pop_lines, preserve_lines = [], []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "pop" and isinstance(func.value, ast.Name) and func.value.id == "workers":
+                pop_lines.append(node.lineno)
+            if isinstance(func, ast.Name) and func.id == "preserve_dead_worker_worktree":
+                preserve_lines.append(node.lineno)
+        self.assertTrue(pop_lines, "expected the orphan-drop site to still exist")
+        self.assertTrue(preserve_lines, "worker death must preserve the worktree")
+        for pop_line in pop_lines:
+            self.assertTrue(
+                any(0 < pop_line - preserve_line < 15 for preserve_line in preserve_lines),
+                f"workers.pop at line {pop_line} drops a worker record without preserving its worktree first",
+            )
+
 
 
 if __name__ == "__main__":
