@@ -80,10 +80,12 @@ def _canonical_domain_freshness(coverage: Any, domain: str) -> str:
     """Read the canonical per-domain freshness map without inventing a value."""
     values = getattr(coverage, "domain_freshness", None) if coverage is not None else None
     if isinstance(values, Mapping):
-        wanted = set(_CANONICAL_DOMAIN_ALIASES.get(
-            _normalize_domain_name(domain),
-            (_normalize_domain_name(domain),),
-        ))
+        wanted = set(
+            _CANONICAL_DOMAIN_ALIASES.get(
+                _normalize_domain_name(domain),
+                (_normalize_domain_name(domain),),
+            )
+        )
         for key, value in values.items():
             normalized = _normalize_domain_name(key)
             if normalized in wanted:
@@ -118,11 +120,7 @@ def _canonical_support_values(
         }
 
     uncertainty_pct = getattr(support, "uncertainty_pct", None)
-    confidence_pct = (
-        100.0 - uncertainty_pct
-        if isinstance(uncertainty_pct, (int, float))
-        else None
-    )
+    confidence_pct = 100.0 - uncertainty_pct if isinstance(uncertainty_pct, (int, float)) else None
     return {
         "sources": list(getattr(support, "source_dataset_ids", []) or []),
         "observation_count": getattr(support, "observation_count", None),
@@ -372,8 +370,14 @@ class MarketIntelligenceService:
         )
 
         candidates: list[CandidateSiteSummary | CandidateCellSummary] = []
-        scope = CompareScope.SITE if request.site_ids and not request.cell_ids else (
-            CompareScope.MARKET_CELL if request.cell_ids and not request.site_ids else CompareScope.HYBRID
+        scope = (
+            CompareScope.SITE
+            if request.site_ids and not request.cell_ids
+            else (
+                CompareScope.MARKET_CELL
+                if request.cell_ids and not request.site_ids
+                else CompareScope.HYBRID
+            )
         )
 
         # 1. Fetch site contexts
@@ -394,7 +398,16 @@ class MarketIntelligenceService:
                     CandidateSiteSummary(
                         site_id=site_id,
                         overall_readiness="unavailable",
-                        missing_domains=["demand", "competitor", "rent", "poi", "mobility", "traffic", "listing", "event"],
+                        missing_domains=[
+                            "demand",
+                            "competitor",
+                            "rent",
+                            "poi",
+                            "mobility",
+                            "traffic",
+                            "listing",
+                            "event",
+                        ],
                         reasons=[f"Site context not found for site_id={site_id}"],
                         period_grain=request.period_grain,
                         period_key=request.period_key or "",
@@ -420,7 +433,15 @@ class MarketIntelligenceService:
                         h3_index=cell_id,
                         h3_resolution=9,
                         overall_readiness="unavailable",
-                        missing_domains=["demand", "competitor", "rent", "poi", "mobility", "listing", "event"],
+                        missing_domains=[
+                            "demand",
+                            "competitor",
+                            "rent",
+                            "poi",
+                            "mobility",
+                            "listing",
+                            "event",
+                        ],
                         period_grain=request.period_grain,
                         period_key=request.period_key or "",
                     )
@@ -460,7 +481,9 @@ class MarketIntelligenceService:
             best_candidate_id=best_pop_id,
             values_by_candidate=pop_values,
             missing_candidate_ids=pop_missing,
-            summary_text=f"Leader: {best_pop_id} with population {max_pop:.0f}" if best_pop_id else "No demand data available",
+            summary_text=f"Leader: {best_pop_id} with population {max_pop:.0f}"
+            if best_pop_id
+            else "No demand data available",
         )
         best_in_class["demand"] = best_pop_id
 
@@ -487,7 +510,9 @@ class MarketIntelligenceService:
             best_candidate_id=best_comp_id,
             values_by_candidate=comp_values,
             missing_candidate_ids=comp_missing,
-            summary_text=f"Least competitive: {best_comp_id} with {min_comp} competitors" if best_comp_id else "No competitor data available",
+            summary_text=f"Least competitive: {best_comp_id} with {min_comp} competitors"
+            if best_comp_id
+            else "No competitor data available",
         )
         best_in_class["competitor"] = best_comp_id
 
@@ -514,7 +539,9 @@ class MarketIntelligenceService:
             best_candidate_id=best_rent_id,
             values_by_candidate=rent_values,
             missing_candidate_ids=rent_missing,
-            summary_text=f"Lowest rent: {best_rent_id} at {min_rent:.1f}/ping" if best_rent_id else "No rent data available",
+            summary_text=f"Lowest rent: {best_rent_id} at {min_rent:.1f}/ping"
+            if best_rent_id
+            else "No rent data available",
         )
         best_in_class["rent"] = best_rent_id
 
@@ -541,7 +568,9 @@ class MarketIntelligenceService:
             best_candidate_id=best_poi_id,
             values_by_candidate=poi_values,
             missing_candidate_ids=poi_missing,
-            summary_text=f"Highest commercial amenity density: {best_poi_id} with {max_poi} POIs" if best_poi_id else "No POI data available",
+            summary_text=f"Highest commercial amenity density: {best_poi_id} with {max_poi} POIs"
+            if best_poi_id
+            else "No POI data available",
         )
         best_in_class["poi"] = best_poi_id
 
@@ -573,7 +602,9 @@ class MarketIntelligenceService:
             best_candidate_id=best_mob_id,
             values_by_candidate=mob_values,
             missing_candidate_ids=mob_missing,
-            summary_text=f"Highest activity population: {best_mob_id} ({max_mob:.0f})" if best_mob_id else "No activity population data available",
+            summary_text=f"Highest activity population: {best_mob_id} ({max_mob:.0f})"
+            if best_mob_id
+            else "No activity population data available",
         )
         best_in_class["mobility"] = best_mob_id
 
@@ -627,7 +658,10 @@ class MarketIntelligenceService:
                 "demand", ctx.demand.status, ctx.demand.source_support, coverage=ctx.coverage
             ),
             "competitor": _domain_evidence(
-                "competitor", ctx.competitor.status, ctx.competitor.source_support, coverage=ctx.coverage
+                "competitor",
+                ctx.competitor.status,
+                ctx.competitor.source_support,
+                coverage=ctx.coverage,
             ),
             "rent": _domain_evidence(
                 "rent", ctx.rent.status, ctx.rent.source_support, coverage=ctx.coverage
@@ -712,7 +746,8 @@ class MarketIntelligenceService:
             ),
             "mobility": _domain_evidence(
                 "mobility",
-                "available" if any(
+                "available"
+                if any(
                     value is not None
                     for value in (
                         cell.mobility.activity_population,
@@ -720,13 +755,18 @@ class MarketIntelligenceService:
                         cell.mobility.visitor_population,
                         cell.mobility.worker_population,
                     )
-                ) else "unavailable",
+                )
+                else "unavailable",
                 cell.mobility.source_support,
                 coverage=cell.coverage,
             ),
         }
 
-        manifest_refs = [ref.to_dict() for ref in cell.component_manifest_refs] if hasattr(cell, "component_manifest_refs") else []
+        manifest_refs = (
+            [ref.to_dict() for ref in cell.component_manifest_refs]
+            if hasattr(cell, "component_manifest_refs")
+            else []
+        )
 
         return CellEvidenceChain(
             cell_id=cell.cell_id,
@@ -904,7 +944,11 @@ class MarketIntelligenceService:
 
     def check_health(self) -> dict[str, Any]:
         """Check release integrity and return service health."""
-        facade_health = self._repo.facade.check_health() if hasattr(self._repo, "facade") else {"status": "healthy"}
+        facade_health = (
+            self._repo.facade.check_health()
+            if hasattr(self._repo, "facade")
+            else {"status": "healthy"}
+        )
         return {
             "status": "healthy" if facade_health.get("status") == "healthy" else "degraded",
             "service": "market_intelligence_bff",

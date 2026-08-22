@@ -131,7 +131,15 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "total_cells_count": 1,
                     "geom": {
                         "type": "Polygon",
-                        "coordinates": [[[121.5, 25.0], [121.6, 25.0], [121.6, 25.1], [121.5, 25.1], [121.5, 25.0]]],
+                        "coordinates": [
+                            [
+                                [121.5, 25.0],
+                                [121.6, 25.0],
+                                [121.6, 25.1],
+                                [121.5, 25.1],
+                                [121.5, 25.0],
+                            ]
+                        ],
                     },
                 },
                 "demand": {
@@ -211,7 +219,12 @@ def sample_site_context_payload() -> dict[str, Any]:
                 },
                 "coverage": {
                     "overall_readiness": "ready",
-                    "domain_coverage": {"DEMOGRAPHICS": "complete", "RENT": "complete", "POI": "complete", "COMPETITOR": "complete"},
+                    "domain_coverage": {
+                        "DEMOGRAPHICS": "complete",
+                        "RENT": "complete",
+                        "POI": "complete",
+                        "COMPETITOR": "complete",
+                    },
                     "domain_freshness": {
                         "DEMOGRAPHICS": "fresh",
                         "TRANSPORT": "stale",
@@ -264,7 +277,15 @@ def sample_site_context_payload() -> dict[str, Any]:
                     "total_cells_count": 1,
                     "geom": {
                         "type": "Polygon",
-                        "coordinates": [[[121.5, 25.0], [121.6, 25.0], [121.6, 25.1], [121.5, 25.1], [121.5, 25.0]]],
+                        "coordinates": [
+                            [
+                                [121.5, 25.0],
+                                [121.6, 25.0],
+                                [121.6, 25.1],
+                                [121.5, 25.1],
+                                [121.5, 25.0],
+                            ]
+                        ],
                     },
                 },
                 "demand": {
@@ -592,11 +613,19 @@ def test_setup(
     sample_acquisition_plan_payload: dict[str, Any],
 ) -> tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]:
     transport = InMemoryDataPlatformTransport()
-    transport.store_document("emgi.site-market-context.v1", "smc-doc-001", sample_site_context_payload)
-    transport.store_document("emgi.market-cell-profile.v1", "mcp-doc-001", sample_market_cell_payload)
-    transport.store_document("emgi.coverage-surface.v1", "cov-surface-001", sample_coverage_surface_payload)
+    transport.store_document(
+        "emgi.site-market-context.v1", "smc-doc-001", sample_site_context_payload
+    )
+    transport.store_document(
+        "emgi.market-cell-profile.v1", "mcp-doc-001", sample_market_cell_payload
+    )
+    transport.store_document(
+        "emgi.coverage-surface.v1", "cov-surface-001", sample_coverage_surface_payload
+    )
     transport.store_document("emgi.data-gap.v1", "gap-doc-001", sample_data_gap_payload)
-    transport.store_document("emgi.data-acquisition-plan.v1", "plan-acq-001", sample_acquisition_plan_payload)
+    transport.store_document(
+        "emgi.data-acquisition-plan.v1", "plan-acq-001", sample_acquisition_plan_payload
+    )
 
     client = DataPlatformClient(transport=transport)
     auth_engine = AuthorizationEngine()
@@ -614,6 +643,7 @@ def test_setup(
 # ===========================================================================
 # 1. Contract Constants and OpenAPI Verification Tests
 # ===========================================================================
+
 
 def test_contract_metadata_and_invariants() -> None:
     assert CONTRACT_ID == "odayplus.market-intelligence-api.v2"
@@ -653,8 +683,9 @@ def test_openapi_specification_file_validity() -> None:
 # 2. Product Authorization and Tenant Isolation Tests
 # ===========================================================================
 
+
 def test_unauthenticated_request_rejected_with_401(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get("/api/v1/market-intelligence/sites/site-taipei-001/context")
@@ -662,7 +693,7 @@ def test_unauthenticated_request_rejected_with_401(
 
 
 def test_unauthorized_role_rejected_with_403(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -673,7 +704,7 @@ def test_unauthorized_role_rejected_with_403(
 
 
 def test_cross_tenant_access_denied_without_admin(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     headers_beta = {
@@ -689,7 +720,7 @@ def test_cross_tenant_access_denied_without_admin(
 
 
 def test_admin_cross_tenant_access_allowed(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -705,8 +736,9 @@ def test_admin_cross_tenant_access_allowed(
 # 3. Site Market Context Endpoints
 # ===========================================================================
 
+
 def test_get_site_market_context_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -725,7 +757,7 @@ def test_get_site_market_context_success(
 
 
 def test_get_site_market_context_not_found(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -736,7 +768,7 @@ def test_get_site_market_context_not_found(
 
 
 def test_batch_get_site_contexts(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.post(
@@ -754,8 +786,9 @@ def test_batch_get_site_contexts(
 # 4. Market Cell Endpoints
 # ===========================================================================
 
+
 def test_get_market_cell_profile_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -770,7 +803,7 @@ def test_get_market_cell_profile_success(
 
 
 def test_list_market_cells_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -788,8 +821,9 @@ def test_list_market_cells_success(
 # 5. Candidate Compare Endpoints & Explicit Missingness
 # ===========================================================================
 
+
 def test_candidate_compare_post_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.post(
@@ -831,7 +865,7 @@ def test_candidate_compare_post_success(
 
 
 def test_candidate_compare_get_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -845,7 +879,7 @@ def test_candidate_compare_get_success(
 
 
 def test_candidate_compare_market_cell_uses_only_canonical_components(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -864,12 +898,10 @@ def test_candidate_compare_market_cell_uses_only_canonical_components(
 
 
 def test_canonical_mobility_fields_do_not_fallback_to_other_populations(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     _, _, transport = test_setup
-    raw_context = transport.fetch_document(
-        "emgi.site-market-context.v1", document_id="smc-doc-001"
-    )
+    raw_context = transport.fetch_document("emgi.site-market-context.v1", document_id="smc-doc-001")
     assert raw_context is not None
     context = SiteMarketContext.from_dict(raw_context["contexts"][0])
     zero_summary = CandidateSiteSummary.from_site_context(
@@ -902,12 +934,10 @@ def test_canonical_mobility_fields_do_not_fallback_to_other_populations(
 
 
 def test_zero_competitors_remain_an_observed_cell_domain(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     _, _, transport = test_setup
-    raw_cell = transport.fetch_document(
-        "emgi.market-cell-profile.v1", document_id="mcp-doc-001"
-    )
+    raw_cell = transport.fetch_document("emgi.market-cell-profile.v1", document_id="mcp-doc-001")
     assert raw_cell is not None
     cell = MarketCellProfile.from_dict(raw_cell["cells"][0])
     empty_competitor_cell = replace(
@@ -924,8 +954,9 @@ def test_zero_competitors_remain_an_observed_cell_domain(
 # 6. Evidence and Lineage Endpoints
 # ===========================================================================
 
+
 def test_get_site_evidence_chain_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -953,7 +984,7 @@ def test_get_site_evidence_chain_success(
 
 
 def test_get_cell_evidence_chain_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -970,8 +1001,9 @@ def test_get_cell_evidence_chain_success(
 # 7. Coverage Surface and Data Gaps Endpoints
 # ===========================================================================
 
+
 def test_get_coverage_surface_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -987,7 +1019,7 @@ def test_get_coverage_surface_success(
 
 
 def test_list_data_gaps_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -1001,7 +1033,7 @@ def test_list_data_gaps_success(
 
 
 def test_get_data_gap_by_id_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -1018,8 +1050,9 @@ def test_get_data_gap_by_id_success(
 # 8. Data Acquisition Plan Endpoints
 # ===========================================================================
 
+
 def test_list_and_get_acquisition_plans(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -1044,7 +1077,7 @@ def test_list_and_get_acquisition_plans(
 
 
 def test_create_acquisition_plan_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     new_plan_id = f"plan-new-{uuid4()}"
@@ -1088,8 +1121,9 @@ def test_create_acquisition_plan_success(
 # 9. Health & Diagnostics Endpoints
 # ===========================================================================
 
+
 def test_health_and_diagnostics_endpoints(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp_health = client.get("/api/v1/market-intelligence/health")
@@ -1108,7 +1142,7 @@ def test_health_and_diagnostics_endpoints(
 
 
 def test_create_acquisition_plan_with_canonical_experiments_success(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     """Validate that POST acquisition-plans correctly constructs canonical SourceValueExperiment models."""
     client, _, _ = test_setup
@@ -1201,7 +1235,7 @@ def test_create_acquisition_plan_with_canonical_experiments_success(
 
 
 def test_acquisition_plan_tenant_isolation(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     """Verify that locally saved acquisition plans are isolated by tenant and cross-tenant access returns 404."""
     client, _, _ = test_setup
@@ -1252,7 +1286,7 @@ def test_acquisition_plan_tenant_isolation(
 
 
 def test_create_acquisition_plan_invalid_enum_returns_422(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     """Verify that invalid enum values for plan status, experiment scope, and experiment status return HTTP 422."""
     client, _, _ = test_setup
@@ -1272,7 +1306,9 @@ def test_create_acquisition_plan_invalid_enum_returns_422(
     )
     assert resp_invalid_status.status_code == 422
     err_body = resp_invalid_status.json()
-    assert err_body["detail"]["code"] == "market_intelligence_validation_error" or "detail" in err_body
+    assert (
+        err_body["detail"]["code"] == "market_intelligence_validation_error" or "detail" in err_body
+    )
 
     # 2. Invalid experiment scope
     resp_invalid_scope = client.post(
@@ -1359,7 +1395,7 @@ def test_market_intelligence_router_requires_explicit_data_dependency() -> None:
 
 
 def test_list_data_gaps_with_filters(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(
@@ -1372,8 +1408,9 @@ def test_list_data_gaps_with_filters(
     assert data["count"] == 1
     assert data["items"][0]["gap_id"] == "gap-rent-xinyi-01"
 
+
 def test_list_data_gaps_with_no_match_filters(
-    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:
     client, _, _ = test_setup
     resp = client.get(

@@ -61,8 +61,7 @@ class MarketIntelligenceRepository(Protocol):
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> SiteMarketContext:
-        ...
+    ) -> SiteMarketContext: ...
 
     def get_site_context_document(
         self,
@@ -73,8 +72,7 @@ class MarketIntelligenceRepository(Protocol):
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> SiteMarketContextDocument:
-        ...
+    ) -> SiteMarketContextDocument: ...
 
     def get_market_cell_profile(
         self,
@@ -84,8 +82,7 @@ class MarketIntelligenceRepository(Protocol):
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> MarketCellProfile:
-        ...
+    ) -> MarketCellProfile: ...
 
     def get_market_cell_profile_document(
         self,
@@ -96,8 +93,7 @@ class MarketIntelligenceRepository(Protocol):
         period_key: str | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> MarketCellProfileDocument:
-        ...
+    ) -> MarketCellProfileDocument: ...
 
     def get_coverage_surface(
         self,
@@ -106,8 +102,7 @@ class MarketIntelligenceRepository(Protocol):
         filters: CoverageFilter | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> CoverageSurface:
-        ...
+    ) -> CoverageSurface: ...
 
     def list_data_gaps(
         self,
@@ -115,8 +110,7 @@ class MarketIntelligenceRepository(Protocol):
         filters: DataGapFilter | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> list[DataGap]:
-        ...
+    ) -> list[DataGap]: ...
 
     def get_data_gap(
         self,
@@ -124,8 +118,7 @@ class MarketIntelligenceRepository(Protocol):
         *,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> DataGap:
-        ...
+    ) -> DataGap: ...
 
     def list_acquisition_plans(
         self,
@@ -133,8 +126,7 @@ class MarketIntelligenceRepository(Protocol):
         filters: AcquisitionPlanFilter | None = None,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> list[DataAcquisitionPlan]:
-        ...
+    ) -> list[DataAcquisitionPlan]: ...
 
     def get_acquisition_plan(
         self,
@@ -142,8 +134,7 @@ class MarketIntelligenceRepository(Protocol):
         *,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> DataAcquisitionPlan:
-        ...
+    ) -> DataAcquisitionPlan: ...
 
     def save_acquisition_plan(
         self,
@@ -151,8 +142,7 @@ class MarketIntelligenceRepository(Protocol):
         *,
         tenant_id: str | None = None,
         principal: Principal | None = None,
-    ) -> DataAcquisitionPlan:
-        ...
+    ) -> DataAcquisitionPlan: ...
 
 
 class DataPlatformMarketIntelligenceRepository:
@@ -194,7 +184,9 @@ class DataPlatformMarketIntelligenceRepository:
                 principal=principal,
             )
         except MarketDataAuthorizationError as err:
-            raise MarketIntelligenceAuthorizationError(str(err), code=err.code, details=err.details) from err
+            raise MarketIntelligenceAuthorizationError(
+                str(err), code=err.code, details=err.details
+            ) from err
         except MarketDataNotFoundError as err:
             raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
         except MarketDataValidationError as err:
@@ -222,7 +214,9 @@ class DataPlatformMarketIntelligenceRepository:
                 principal=principal,
             )
         except MarketDataAuthorizationError as err:
-            raise MarketIntelligenceAuthorizationError(str(err), code=err.code, details=err.details) from err
+            raise MarketIntelligenceAuthorizationError(
+                str(err), code=err.code, details=err.details
+            ) from err
         except MarketDataNotFoundError as err:
             raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
         except MarketDataValidationError as err:
@@ -248,7 +242,9 @@ class DataPlatformMarketIntelligenceRepository:
                 principal=principal,
             )
         except MarketDataAuthorizationError as err:
-            raise MarketIntelligenceAuthorizationError(str(err), code=err.code, details=err.details) from err
+            raise MarketIntelligenceAuthorizationError(
+                str(err), code=err.code, details=err.details
+            ) from err
         except MarketDataNotFoundError as err:
             raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
         except MarketDataValidationError as err:
@@ -276,7 +272,9 @@ class DataPlatformMarketIntelligenceRepository:
                 principal=principal,
             )
         except MarketDataAuthorizationError as err:
-            raise MarketIntelligenceAuthorizationError(str(err), code=err.code, details=err.details) from err
+            raise MarketIntelligenceAuthorizationError(
+                str(err), code=err.code, details=err.details
+            ) from err
         except MarketDataNotFoundError as err:
             raise MarketIntelligenceNotFoundError(str(err), details=err.details) from err
         except MarketDataValidationError as err:
@@ -348,7 +346,9 @@ class DataPlatformMarketIntelligenceRepository:
                 ) from err
         else:
             # Fallback: check query_records
-            records = self._transport.query_records("emgi.data-gap.v1", filter_params=params if params else None)
+            records = self._transport.query_records(
+                "emgi.data-gap.v1", filter_params=params if params else None
+            )
             for rec in records:
                 try:
                     gaps.append(DataGap.from_dict(rec))
@@ -404,7 +404,9 @@ class DataPlatformMarketIntelligenceRepository:
         if effective_tenant:
             params["tenant_id"] = effective_tenant
 
-        raw = self._transport.fetch_document("emgi.data-acquisition-plan.v1", params=params if params else None)
+        raw = self._transport.fetch_document(
+            "emgi.data-acquisition-plan.v1", params=params if params else None
+        )
         if raw is not None:
             try:
                 plan = DataAcquisitionPlan.from_dict(raw)
@@ -413,7 +415,9 @@ class DataPlatformMarketIntelligenceRepository:
             except Exception:
                 pass
 
-        records = self._transport.query_records("emgi.data-acquisition-plan.v1", filter_params=params if params else None)
+        records = self._transport.query_records(
+            "emgi.data-acquisition-plan.v1", filter_params=params if params else None
+        )
         for rec in records:
             try:
                 p = DataAcquisitionPlan.from_dict(rec)
@@ -424,7 +428,11 @@ class DataPlatformMarketIntelligenceRepository:
 
         if filters:
             if filters.status:
-                plans = [p for p in plans if p.status.value == filters.status or p.status == filters.status]
+                plans = [
+                    p
+                    for p in plans
+                    if p.status.value == filters.status or p.status == filters.status
+                ]
             if filters.site_context_id:
                 plans = [p for p in plans if p.site_context_id == filters.site_context_id]
             if filters.coverage_surface_id:
@@ -452,12 +460,16 @@ class DataPlatformMarketIntelligenceRepository:
         raw = self._transport.fetch_document(
             "emgi.data-acquisition-plan.v1",
             document_id=plan_id,
-            params={"plan_id": plan_id, "tenant_id": effective_tenant} if effective_tenant else {"plan_id": plan_id},
+            params={"plan_id": plan_id, "tenant_id": effective_tenant}
+            if effective_tenant
+            else {"plan_id": plan_id},
         )
         if raw is None:
             raise MarketIntelligenceNotFoundError(
                 f"DataAcquisitionPlan not found: plan_id={plan_id}",
-                details={"plan_id": plan_id, "tenant_id": effective_tenant} if effective_tenant else {"plan_id": plan_id},
+                details={"plan_id": plan_id, "tenant_id": effective_tenant}
+                if effective_tenant
+                else {"plan_id": plan_id},
             )
         try:
             return DataAcquisitionPlan.from_dict(raw)

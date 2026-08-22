@@ -42,6 +42,7 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]
 else:
+
     class ComparePayload(BaseModel):
         site_ids: list[str] = Field(default_factory=list)
         cell_ids: list[str] = Field(default_factory=list)
@@ -166,7 +167,7 @@ else:
                 code = getattr(exc, "code", "market_intelligence_validation_error")
                 details = getattr(exc, "details", {})
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail={"code": code, "message": str(exc), "details": details},
                 )
             if isinstance(exc, HTTPException):
@@ -232,7 +233,9 @@ else:
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
             principal = _get_principal(request)
-            parsed_ids = [cid.strip() for cid in cell_ids.split(",") if cid.strip()] if cell_ids else None
+            parsed_ids = (
+                [cid.strip() for cid in cell_ids.split(",") if cid.strip()] if cell_ids else None
+            )
             try:
                 cells = active_service.list_market_cells(
                     parsed_ids,
@@ -335,8 +338,12 @@ else:
         ) -> dict[str, Any]:
             tid = resolve_tenant_id(request)
             principal = _get_principal(request)
-            parsed_site_ids = [s.strip() for s in site_ids.split(",") if s.strip()] if site_ids else []
-            parsed_cell_ids = [c.strip() for c in cell_ids.split(",") if c.strip()] if cell_ids else []
+            parsed_site_ids = (
+                [s.strip() for s in site_ids.split(",") if s.strip()] if site_ids else []
+            )
+            parsed_cell_ids = (
+                [c.strip() for c in cell_ids.split(",") if c.strip()] if cell_ids else []
+            )
             compare_req = CandidateCompareRequest(
                 site_ids=parsed_site_ids,
                 cell_ids=parsed_cell_ids,
@@ -571,7 +578,9 @@ else:
                         experiment_id=e.experiment_id,
                         source_id=e.source_id,
                         scope=AcquisitionScope(e.scope) if isinstance(e.scope, str) else e.scope,
-                        status=ExperimentStatus(e.status) if isinstance(e.status, str) else e.status,
+                        status=ExperimentStatus(e.status)
+                        if isinstance(e.status, str)
+                        else e.status,
                         sample_size=e.sample_size,
                         hypothesis=e.hypothesis,
                         baseline_uncertainty_pct=e.baseline_uncertainty_pct,

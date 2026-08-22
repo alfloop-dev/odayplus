@@ -174,7 +174,10 @@ def authorize_market_intelligence(
         raise MarketIntelligenceAuthorizationError(
             f"Principal clearance {principal.scope.clearance.name} insufficient for {classification.name} data",
             code="insufficient_clearance",
-            details={"clearance": principal.scope.clearance.value, "required": classification.value},
+            details={
+                "clearance": principal.scope.clearance.value,
+                "required": classification.value,
+            },
         )
 
     # 4. Audit recording for authorized access

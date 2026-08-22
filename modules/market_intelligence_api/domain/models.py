@@ -219,9 +219,13 @@ class CandidateSiteSummary:
             reasons = []
 
         if hasattr(ctx.coverage, "overall_readiness"):
-            overall_readiness = getattr(ctx.coverage.overall_readiness, "value", str(ctx.coverage.overall_readiness))
+            overall_readiness = getattr(
+                ctx.coverage.overall_readiness, "value", str(ctx.coverage.overall_readiness)
+            )
         elif hasattr(ctx.coverage, "readiness"):
-            overall_readiness = getattr(ctx.coverage.readiness, "value", str(ctx.coverage.readiness))
+            overall_readiness = getattr(
+                ctx.coverage.readiness, "value", str(ctx.coverage.readiness)
+            )
         else:
             overall_readiness = "ready"
 
@@ -235,26 +239,58 @@ class CandidateSiteSummary:
             district=ctx.identity.district,
             county=ctx.identity.county,
             demand_status=ctx.demand.status.value,
-            population=ctx.demand.total_population if ctx.demand.status == DomainStatus.available else None,
-            household_count=ctx.demand.household_count if ctx.demand.status == DomainStatus.available else None,
-            daytime_population_ratio=ctx.demand.daytime_population_ratio if ctx.demand.status == DomainStatus.available else None,
+            population=ctx.demand.total_population
+            if ctx.demand.status == DomainStatus.available
+            else None,
+            household_count=ctx.demand.household_count
+            if ctx.demand.status == DomainStatus.available
+            else None,
+            daytime_population_ratio=ctx.demand.daytime_population_ratio
+            if ctx.demand.status == DomainStatus.available
+            else None,
             competitor_status=ctx.competitor.status.value,
-            active_competitors=ctx.competitor.active_competitors if ctx.competitor.status == DomainStatus.available else None,
-            competitor_density_per_sq_km=ctx.competitor.competitor_density_per_sq_km if ctx.competitor.status == DomainStatus.available else None,
-            brands_present=list(ctx.competitor.brands_present) if ctx.competitor.status == DomainStatus.available else [],
+            active_competitors=ctx.competitor.active_competitors
+            if ctx.competitor.status == DomainStatus.available
+            else None,
+            competitor_density_per_sq_km=ctx.competitor.competitor_density_per_sq_km
+            if ctx.competitor.status == DomainStatus.available
+            else None,
+            brands_present=list(ctx.competitor.brands_present)
+            if ctx.competitor.status == DomainStatus.available
+            else [],
             rent_status=ctx.rent.status.value,
-            mean_rent_per_ping=ctx.rent.mean_rent_per_ping if ctx.rent.status == DomainStatus.available else None,
-            median_rent_per_ping=ctx.rent.median_rent_per_ping if ctx.rent.status == DomainStatus.available else None,
-            p25_rent_per_ping=ctx.rent.p25_rent_per_ping if ctx.rent.status == DomainStatus.available else None,
-            p75_rent_per_ping=ctx.rent.p75_rent_per_ping if ctx.rent.status == DomainStatus.available else None,
+            mean_rent_per_ping=ctx.rent.mean_rent_per_ping
+            if ctx.rent.status == DomainStatus.available
+            else None,
+            median_rent_per_ping=ctx.rent.median_rent_per_ping
+            if ctx.rent.status == DomainStatus.available
+            else None,
+            p25_rent_per_ping=ctx.rent.p25_rent_per_ping
+            if ctx.rent.status == DomainStatus.available
+            else None,
+            p75_rent_per_ping=ctx.rent.p75_rent_per_ping
+            if ctx.rent.status == DomainStatus.available
+            else None,
             listing_status=ctx.listing.status.value,
-            active_listings_count=ctx.listing.active_listings_count if ctx.listing.status == DomainStatus.available else None,
-            mean_asking_rent_per_ping=ctx.listing.mean_asking_rent_per_ping if ctx.listing.status == DomainStatus.available else None,
+            active_listings_count=ctx.listing.active_listings_count
+            if ctx.listing.status == DomainStatus.available
+            else None,
+            mean_asking_rent_per_ping=ctx.listing.mean_asking_rent_per_ping
+            if ctx.listing.status == DomainStatus.available
+            else None,
             poi_status=ctx.poi.status.value,
-            total_poi_count=ctx.poi.total_poi_count if ctx.poi.status == DomainStatus.available else None,
-            convenience_stores_count=ctx.poi.convenience_stores_count if ctx.poi.status == DomainStatus.available else None,
-            commercial_centers_count=ctx.poi.commercial_centers_count if ctx.poi.status == DomainStatus.available else None,
-            transit_stations_count=ctx.poi.transit_stations_count if ctx.poi.status == DomainStatus.available else None,
+            total_poi_count=ctx.poi.total_poi_count
+            if ctx.poi.status == DomainStatus.available
+            else None,
+            convenience_stores_count=ctx.poi.convenience_stores_count
+            if ctx.poi.status == DomainStatus.available
+            else None,
+            commercial_centers_count=ctx.poi.commercial_centers_count
+            if ctx.poi.status == DomainStatus.available
+            else None,
+            transit_stations_count=ctx.poi.transit_stations_count
+            if ctx.poi.status == DomainStatus.available
+            else None,
             mobility_status=ctx.mobility.status.value,
             activity_population=(
                 ctx.mobility.activity_population
@@ -288,7 +324,9 @@ class CandidateSiteSummary:
                 else None
             ),
             event_status=ctx.event.status.value,
-            active_events_count=ctx.event.active_events_count if ctx.event.status == DomainStatus.available else None,
+            active_events_count=ctx.event.active_events_count
+            if ctx.event.status == DomainStatus.available
+            else None,
             overall_readiness=overall_readiness,
             missing_domains=missing,
             data_gaps_count=data_gaps_count,
@@ -434,9 +472,13 @@ class CandidateCellSummary:
 
         if cell.coverage:
             if hasattr(cell.coverage, "overall_readiness"):
-                cell_readiness = getattr(cell.coverage.overall_readiness, "value", str(cell.coverage.overall_readiness))
+                cell_readiness = getattr(
+                    cell.coverage.overall_readiness, "value", str(cell.coverage.overall_readiness)
+                )
             elif hasattr(cell.coverage, "readiness"):
-                cell_readiness = getattr(cell.coverage.readiness, "value", str(cell.coverage.readiness))
+                cell_readiness = getattr(
+                    cell.coverage.readiness, "value", str(cell.coverage.readiness)
+                )
             else:
                 cell_readiness = "ready"
         else:
@@ -449,13 +491,17 @@ class CandidateCellSummary:
             admin_code=cell.admin_code,
             county=cell.county,
             district=cell.district,
-            demand_status="available" if cell.demographics and cell.demographics.total_population is not None else "unavailable",
+            demand_status="available"
+            if cell.demographics and cell.demographics.total_population is not None
+            else "unavailable",
             population=cell.demographics.total_population if cell.demographics else None,
             household_count=cell.demographics.household_count if cell.demographics else None,
             competitor_status="available" if cell.competitors else "unavailable",
             active_competitors=cell.competitors.active_competitors if cell.competitors else None,
             total_competitors=cell.competitors.total_competitors if cell.competitors else None,
-            rent_status="available" if cell.rent and cell.rent.mean_rent_per_ping is not None else "unavailable",
+            rent_status="available"
+            if cell.rent and cell.rent.mean_rent_per_ping is not None
+            else "unavailable",
             mean_rent_per_ping=cell.rent.mean_rent_per_ping if cell.rent else None,
             median_rent_per_ping=cell.rent.median_rent_per_ping if cell.rent else None,
             listing_status="unavailable",
@@ -464,7 +510,8 @@ class CandidateCellSummary:
             total_poi_count=None,
             mobility_status=(
                 "available"
-                if cell.mobility and any(
+                if cell.mobility
+                and any(
                     value is not None
                     for value in (
                         cell.mobility.activity_population,
@@ -475,31 +522,11 @@ class CandidateCellSummary:
                 )
                 else "unavailable"
             ),
-            activity_population=(
-                cell.mobility.activity_population
-                if cell.mobility
-                else None
-            ),
-            resident_population=(
-                cell.mobility.resident_population
-                if cell.mobility
-                else None
-            ),
-            visitor_population=(
-                cell.mobility.visitor_population
-                if cell.mobility
-                else None
-            ),
-            worker_population=(
-                cell.mobility.worker_population
-                if cell.mobility
-                else None
-            ),
-            dwell_time_minutes=(
-                cell.mobility.dwell_time_minutes
-                if cell.mobility
-                else None
-            ),
+            activity_population=(cell.mobility.activity_population if cell.mobility else None),
+            resident_population=(cell.mobility.resident_population if cell.mobility else None),
+            visitor_population=(cell.mobility.visitor_population if cell.mobility else None),
+            worker_population=(cell.mobility.worker_population if cell.mobility else None),
+            dwell_time_minutes=(cell.mobility.dwell_time_minutes if cell.mobility else None),
             event_status="unavailable",
             active_events_count=None,
             overall_readiness=cell_readiness,
