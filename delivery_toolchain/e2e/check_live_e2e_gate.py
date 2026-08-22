@@ -79,6 +79,20 @@ FORBIDDEN_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "example.com"})
 # ``modules.external_data.connectors.provider_registry`` owns the canonical set;
 # it is duplicated here (and in validate_cloud_run_live_deployment.py) because a
 # release gate must not import runtime code from the artefact it is judging.
+#
+# XR-CUTOVER-001 emptied the canonical runtime set, and this mirror deliberately
+# does NOT follow it yet. The gate proves "source data is live" by enqueueing an
+# external-fetch job and demanding a persisted ingestion run per snapshot
+# provider; the cutover refuses that enqueue with 410, so the gate already
+# blocks on ``worker:enqueue`` against a cutover deployment — no synthetic
+# blocker is needed and none is added. Emptying the mirror instead would make
+# every source-data assertion quantify over nothing and turn the gate green on a
+# deployment that ingests nothing, which is strictly worse.
+#
+# The set therefore stays pinned at the pre-cutover contract until this gate's
+# acceptance is rebuilt on data-platform readback through MarketDataFacade.
+# ``tests/e2e/test_live_e2e_gate.py`` asserts the divergence explicitly so it
+# cannot be mistaken for drift. See docs/runbooks/emgi-cutover.md §6.3.
 DEFAULT_REQUIRED_PROVIDER_IDS = (
     "admin_boundary.official_dataset",
     "geocode.primary_api",

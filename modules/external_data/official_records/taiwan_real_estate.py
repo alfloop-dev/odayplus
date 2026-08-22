@@ -1,3 +1,19 @@
+"""Official Taiwan real-estate open-data record contract and parser.
+
+Relocated from the decommissioned Taiwan real-estate provider adapter by
+XR-CUTOVER-001, which ended odayplus-side external ingestion. The
+``mof_moi`` domain is now ingested by ``oday-data-platform``, so the
+``OfficialRealEstateDownloader`` — the only part of the old module that opened
+a connection to ``plvr.land.moi.gov.tw`` or ``data.ntpc.gov.tw`` — did not move
+with it. There is no HTTP client and no credential here.
+
+What remains is the record contract odayplus still owns: the approved-source
+registry and its licence binding, the transaction schema, the deterministic
+identity rules, and the bounded parser that turns an artifact this repository
+already holds into a :class:`ParsedOfficialRealEstateBatch`. Callers that need
+an artifact must supply one; nothing in this module can fetch one.
+"""
+
 from __future__ import annotations
 
 import csv
@@ -7,13 +23,11 @@ import json
 import re
 import unicodedata
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
-from email.utils import parsedate_to_datetime
-from typing import Any, BinaryIO
-from urllib.request import Request, urlopen
+from typing import Any
 from uuid import UUID, uuid5
 
 GOVERNMENT_OPEN_DATA_LICENSE_V1 = "government-open-data-license-v1"
@@ -247,74 +261,6 @@ class ParsedOfficialRealEstateBatch:
     @property
     def source_snapshot_id(self) -> str:
         return f"{self.artifact.source.source_id}:sha256:{self.artifact.content_sha256}"
-
-
-ResponseOpener = Callable[[Request, float], Any]
-
-
-class OfficialRealEstateDownloader:
-    def __init__(self, opener: ResponseOpener | None = None) -> None:
-        self._opener = opener or _open_response
-
-    def download(
-        self,
-        source: OfficialSource,
-        *,
-        max_bytes: int = MAX_DOWNLOAD_BYTES,
-        timeout_seconds: float = 30.0,
-        expected_sha256: str | None = None,
-    ) -> DownloadedArtifact:
-        _require_approved_source(source)
-        if not 1 <= max_bytes <= MAX_DOWNLOAD_BYTES:
-            raise OfficialRealEstateBoundExceeded(
-                f"max_bytes must be between 1 and {MAX_DOWNLOAD_BYTES}"
-            )
-        if expected_sha256 is not None:
-            expected_sha256 = expected_sha256.lower()
-            if not _SHA256.fullmatch(expected_sha256):
-                raise OfficialRealEstateSourceError(
-                    "expected_sha256 must be a lowercase SHA-256 digest"
-                )
-        request = Request(
-            source.source_url,
-            headers={
-                "Accept": source.media_type,
-                "User-Agent": "ODayPlus-OfficialOutcomeIngestion/1.0",
-            },
-        )
-        with self._opener(request, timeout_seconds) as response:
-            final_url = str(response.geturl())
-            source.validate_binding(
-                dataset_id=source.dataset_id,
-                license_id=source.license_id,
-                source_url=final_url,
-            )
-            content_type = str(response.headers.get("Content-Type", "")).split(";", 1)[0]
-            if content_type.lower() != source.media_type:
-                raise OfficialRealEstateSourceError(
-                    f"{source.key}: expected {source.media_type}, received {content_type or 'none'}"
-                )
-            declared_length = _optional_positive_int(response.headers.get("Content-Length"))
-            if declared_length is not None and declared_length > max_bytes:
-                raise OfficialRealEstateBoundExceeded(
-                    f"{source.key}: declared download size exceeds {max_bytes} bytes"
-                )
-            content = _read_bounded(response, max_bytes=max_bytes)
-            digest = hashlib.sha256(content).hexdigest()
-            if expected_sha256 is not None and digest != expected_sha256:
-                raise OfficialRealEstateSourceError(
-                    f"{source.key}: downloaded content checksum mismatch"
-                )
-            return DownloadedArtifact(
-                source=source,
-                content=content,
-                content_sha256=digest,
-                content_type=content_type.lower(),
-                fetched_at=datetime.now(UTC),
-                final_url=final_url,
-                etag=_clean(response.headers.get("ETag")),
-                source_published_at=_http_datetime(response.headers.get("Last-Modified")),
-            )
 
 
 def parse_official_real_estate(
@@ -842,34 +788,6 @@ def _optional_positive_int(value: Any) -> int | None:
     return parsed
 
 
-def _http_datetime(value: Any) -> datetime | None:
-    normalized = _clean(value)
-    if normalized is None:
-        return None
-    try:
-        parsed = parsedate_to_datetime(normalized)
-    except (TypeError, ValueError) as exc:
-        raise OfficialRealEstateSourceError("Last-Modified is not a valid HTTP datetime") from exc
-    return parsed.astimezone(UTC)
-
-
-def _read_bounded(stream: BinaryIO, *, max_bytes: int) -> bytes:
-    chunks: list[bytes] = []
-    total = 0
-    while True:
-        chunk = stream.read(min(1024 * 1024, max_bytes - total + 1))
-        if not chunk:
-            return b"".join(chunks)
-        total += len(chunk)
-        if total > max_bytes:
-            raise OfficialRealEstateBoundExceeded(f"download exceeds {max_bytes} bytes")
-        chunks.append(chunk)
-
-
-def _open_response(request: Request, timeout_seconds: float) -> Any:
-    return urlopen(request, timeout=timeout_seconds)
-
-
 __all__ = [
     "GOVERNMENT_OPEN_DATA_LICENSE_V1",
     "MAX_DOWNLOAD_BYTES",
@@ -883,7 +801,6 @@ __all__ = [
     "SOURCES",
     "DownloadedArtifact",
     "OfficialRealEstateBoundExceeded",
-    "OfficialRealEstateDownloader",
     "OfficialRealEstateSchemaDrift",
     "OfficialRealEstateSourceError",
     "OfficialRealEstateTransaction",

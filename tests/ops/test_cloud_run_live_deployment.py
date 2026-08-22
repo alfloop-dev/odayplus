@@ -39,6 +39,23 @@ sys.modules[traffic_spec.name] = traffic_helper
 traffic_spec.loader.exec_module(traffic_helper)
 
 
+# XR-CUTOVER-001 emptied ``REQUIRED_PRODUCT_PROVIDER_IDS``: geocode, POI and
+# admin-boundary were the standing live-required set and their adapters are gone.
+# ``store_opening_authority`` is what a post-cutover deployment can still select
+# — its connector is retained, it has no endpoint and no live-required
+# credential — so it stands in as the allowlist a healthy deploy carries.
+SELECTED_PROVIDER_IDS = frozenset({"store_opening_authority"})
+# The retired adapters, named where a test needs one deliberately.
+DECOMMISSIONED_PROVIDER_IDS = frozenset(
+    {
+        "listing.partner_feed",
+        "poi.commercial_api",
+        "geocode.primary_api",
+        "admin_boundary.official_dataset",
+    }
+)
+
+
 def complete_env() -> dict[str, str]:
     env = {name: f"configured-{name.lower()}" for name in validator.REQUIRED_PUBLIC_CONFIG}
     env.update(
@@ -48,7 +65,7 @@ def complete_env() -> dict[str, str]:
         }
     )
     env.update(validator.REQUIRED_RUNTIME_VALUES)
-    env["ODP_PRODUCTION_PROVIDER_IDS"] = ",".join(sorted(validator.REQUIRED_PRODUCT_PROVIDER_IDS))
+    env["ODP_PRODUCTION_PROVIDER_IDS"] = ",".join(sorted(SELECTED_PROVIDER_IDS))
     env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "8"
     env["ODP_DEPLOY_ENV"] = "dev"
     env["ODAY_RELEASE_SHA"] = EXPECTED_SHA
@@ -57,7 +74,7 @@ def complete_env() -> dict[str, str]:
     env["ODP_SCHEDULED_INGESTION_TENANT_ID"] = "tenant-dev"
     env["ODP_TENANT_ID"] = "tenant-dev"
     for provider in validator._provider_definitions(ROOT):
-        if provider.provider_id not in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
+        if provider.provider_id not in SELECTED_PROVIDER_IDS:
             continue
         if provider.endpoint_env_var:
             env[provider.endpoint_env_var] = f"https://{provider.provider_id}.example.test/snapshot"
@@ -69,7 +86,16 @@ def complete_env() -> dict[str, str]:
     return env
 
 
-def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
+def test_preflight_requires_no_config_for_any_unselected_provider() -> None:
+    """XR-CUTOVER-001: a deploy carries no secret for a provider it cannot call.
+
+    Before the cutover this test made a narrower point — an unselected
+    ``listing.partner_feed`` must not drag its feed URL and API key into the
+    required config, while the standing geocode/POI/admin set still had to be
+    configured. The cutover retired all four adapters, so the standing set is
+    empty and the same rule now covers every one of them: none is selected, so
+    none of their endpoints or secrets may be demanded.
+    """
     env = complete_env()
     for name in (
         "ODP_LISTING_PROVIDER_FEED_URL",
@@ -99,7 +125,7 @@ def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
         "ODP_GEOCODE_PROVIDER_URL",
         "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
     ):
-        assert by_name[f"config:{name}"].ok is True
+        assert f"config:{name}" not in by_name
 
 
 def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
@@ -470,29 +496,52 @@ def test_operator_wiring_check_requires_injected_live_repository() -> None:
     assert by_name["repository:operator_fixture_wiring_blocked"].ok is False
 
 
-def test_preflight_imports_every_registry_provider_adapter() -> None:
-    checks = validator.provider_adapter_checks(ROOT)
+def test_preflight_blocks_every_decommissioned_registry_provider() -> None:
+    """XR-CUTOVER-001: selecting a retired adapter for live production blocks.
+
+    The check used to prove every production-selected ``provider_class``
+    imported. odayplus no longer holds any of those adapters, so the honest
+    preflight answer is not "class missing" — which reads like a packaging bug
+    an operator should fix — but "this provider is decommissioned here", which
+    tells them to drop it from the allowlist and read the dataset from the data
+    platform instead.
+    """
+    checks = validator.provider_adapter_checks(
+        ROOT, production_provider_ids=DECOMMISSIONED_PROVIDER_IDS
+    )
     by_name = {check.name: check for check in checks}
 
-    # Standing live-required set: geocode / poi / admin_boundary.
-    assert by_name["repository:provider_adapter:geocode.primary_api"].ok is True
-    assert by_name["repository:provider_adapter:poi.commercial_api"].ok is True
-    assert (
-        "PoiCommercialApiProvider"
-        in by_name["repository:provider_adapter:poi.commercial_api"].detail
-    )
-    assert by_name["repository:provider_adapter:admin_boundary.official_dataset"].ok is True
-    assert (
-        "AdminBoundaryDatasetProvider"
-        in by_name["repository:provider_adapter:admin_boundary.official_dataset"].detail
-    )
-    # listing.partner_feed is a ready-but-not-required bulk capability; its concrete
-    # adapter must still import when a licensed partner is gated into the allowlist.
+    # The set that used to be live-required: geocode / poi / admin_boundary.
+    for provider_id in (
+        "geocode.primary_api",
+        "poi.commercial_api",
+        "admin_boundary.official_dataset",
+    ):
+        check = by_name[f"repository:provider_adapter:{provider_id}"]
+        assert check.ok is False, provider_id
+        assert "decommissioned by XR-CUTOVER-001" in check.detail
+        assert "ODP_PRODUCTION_PROVIDER_IDS" in check.detail
+
+    # listing.partner_feed was a ready-but-not-required bulk capability; it is
+    # retired on the same terms once gated into the allowlist.
     listing_checks = validator.provider_adapter_checks(
         ROOT, production_provider_ids=frozenset({"listing.partner_feed"})
     )
     listing_by_name = {check.name: check for check in listing_checks}
-    assert listing_by_name["repository:provider_adapter:listing.partner_feed"].ok is True
+    listing_check = listing_by_name["repository:provider_adapter:listing.partner_feed"]
+    assert listing_check.ok is False
+    assert "decommissioned by XR-CUTOVER-001" in listing_check.detail
+
+    # store_opening_authority is not a decommissioned external fetcher: its
+    # connector is retained, so the import check still runs and still passes.
+    retained_checks = validator.provider_adapter_checks(
+        ROOT, production_provider_ids=frozenset({"store_opening_authority"})
+    )
+    retained = {check.name: check for check in retained_checks}
+    retained_check = retained["repository:provider_adapter:store_opening_authority"]
+    assert retained_check.ok is True
+    assert "StoreOpeningAuthorityConnector" in retained_check.detail
+
     assert "repository:provider_adapter:competitor.manual_source" not in by_name
 
 
@@ -513,7 +562,14 @@ def test_preflight_rejects_manual_competitor_in_production_allowlist() -> None:
     assert "repository:provider_adapter:competitor.manual_source" not in by_name
 
 
-def test_preflight_requires_all_product_provider_ids_and_disabled_manual_status() -> None:
+def test_preflight_rejects_decommissioned_provider_ids_and_disabled_manual_status() -> None:
+    """XR-CUTOVER-001 inverted the allowlist rule for the retired adapters.
+
+    Selecting ``listing.partner_feed`` and ``geocode.primary_api`` used to fail
+    only because the rest of the standing required set was absent. Now the
+    selection itself is the blocker: odayplus has no adapter for either, so no
+    credential could make the deploy valid.
+    """
     env = complete_env()
     env["ODP_PRODUCTION_PROVIDER_IDS"] = "listing.partner_feed,geocode.primary_api"
     env["ODP_COMPETITOR_MANUAL_SOURCE_STATUS"] = "active"
@@ -525,9 +581,28 @@ def test_preflight_requires_all_product_provider_ids_and_disabled_manual_status(
     )
     by_name = {check.name: check for check in checks}
 
-    assert by_name["runtime:required_product_providers"].ok is False
-    assert "poi.commercial_api" in by_name["runtime:required_product_providers"].detail
+    decommissioned = by_name["runtime:decommissioned_providers_not_selected"]
+    assert decommissioned.ok is False
+    assert "listing.partner_feed" in decommissioned.detail
+    assert "geocode.primary_api" in decommissioned.detail
+    # The standing required set is empty, so nothing is "missing" any more.
+    assert by_name["runtime:required_product_providers"].ok is True
     assert by_name["runtime:ODP_COMPETITOR_MANUAL_SOURCE_STATUS"].ok is False
+
+
+def test_preflight_accepts_the_post_cutover_allowlist() -> None:
+    """The retained, non-fetching source is still a valid production selection."""
+    checks = validator.preflight_checks(
+        env=complete_env(),
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {check.name: check for check in checks}
+
+    assert by_name["runtime:decommissioned_providers_not_selected"].ok is True
+    assert by_name["runtime:required_product_providers"].ok is True
+    assert by_name["runtime:production_provider_ids_known"].ok is True
 
 
 def test_preflight_rejects_missing_config_memory_and_fixture_modes() -> None:
@@ -557,6 +632,9 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
     operator_origin_kind = "authoritative"
     missing_provider_id = ""
     failed_provider_id = ""
+    # XR-CUTOVER-001: a deployment that still probes a retired adapter is the
+    # regression the smoke has to catch, so it has to be expressible here.
+    decommissioned_provider_id = ""
     probe_age_seconds = 0
 
     @classmethod
@@ -579,7 +657,10 @@ class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
         if self.path == "/platform/health":
             checked_at = datetime.now(UTC) - timedelta(seconds=self.probe_age_seconds)
             expires_at = checked_at + timedelta(seconds=60)
-            required_provider_ids = sorted(validator.REQUIRED_PRODUCT_PROVIDER_IDS)
+            required_provider_ids = sorted(
+                set(validator.REQUIRED_PRODUCT_PROVIDER_IDS)
+                | ({self.decommissioned_provider_id} if self.decommissioned_provider_id else set())
+            )
             probes = [
                 {
                     "provider_id": provider_id,
@@ -732,21 +813,52 @@ def test_deterministic_smoke_contract_requires_fresh_provider_probe_evidence() -
     assert report["secret_values_redacted"] is True
 
 
-def test_deterministic_smoke_rejects_stale_or_incomplete_provider_evidence() -> None:
+def test_deterministic_smoke_rejects_stale_provider_evidence() -> None:
     DeterministicRuntimeHandler.probe_age_seconds = 600
-    DeterministicRuntimeHandler.missing_provider_id = "poi.commercial_api"
     server, url = start_server()
     try:
         checks, _ = run_smoke(url)
     finally:
         server.shutdown()
         DeterministicRuntimeHandler.probe_age_seconds = 0
-        DeterministicRuntimeHandler.missing_provider_id = ""
 
     failed = {check.name for check in checks if not check.ok}
-    assert "smoke:/platform/health:external_providers:completeness" in failed
     assert "smoke:/platform/health:external_providers:freshness" in failed
-    assert "smoke:/platform/health:external_providers:poi.commercial_api" in failed
+
+
+def test_deterministic_smoke_rejects_evidence_from_a_decommissioned_provider() -> None:
+    """XR-CUTOVER-001: a retired adapter must not reappear as live evidence.
+
+    The completeness check compares the reported provider set against the
+    required one, and the cutover emptied that set — so equality alone would
+    accept a deployment that is still probing ``poi.commercial_api``. This is
+    the check that makes the empty required set safe rather than permissive.
+    """
+    DeterministicRuntimeHandler.decommissioned_provider_id = "poi.commercial_api"
+    server, url = start_server()
+    try:
+        checks, _ = run_smoke(url)
+    finally:
+        server.shutdown()
+        DeterministicRuntimeHandler.decommissioned_provider_id = ""
+
+    by_name = {check.name: check for check in checks}
+    decommissioned = by_name["smoke:/platform/health:external_providers:decommissioned"]
+    assert decommissioned.ok is False
+    assert "poi.commercial_api" in decommissioned.detail
+
+
+def test_deterministic_smoke_accepts_a_deployment_with_no_live_providers() -> None:
+    """The post-cutover healthy shape: no external provider evidence at all."""
+    server, url = start_server()
+    try:
+        checks, _ = run_smoke(url)
+    finally:
+        server.shutdown()
+
+    by_name = {check.name: check for check in checks}
+    assert by_name["smoke:/platform/health:external_providers:decommissioned"].ok is True
+    assert by_name["smoke:/platform/health:external_providers:completeness"].ok is True
 
 
 def test_is_safe_protected_redirect_contract() -> None:
@@ -1091,18 +1203,29 @@ def test_smoke_report_never_carries_a_raw_location_header(monkeypatch) -> None:
 
 
 def test_deterministic_smoke_rejects_provider_specific_auth_failure() -> None:
+    """An unauthorized probe still blocks — now via connectivity, not per-provider.
+
+    The per-provider evidence checks are generated from
+    ``REQUIRED_PRODUCT_PROVIDER_IDS``, which XR-CUTOVER-001 emptied, so a
+    failing probe for a retired adapter no longer gets its own named check. It
+    must still block the smoke: the report is unhealthy, and the adapter should
+    not have been probed at all.
+    """
     DeterministicRuntimeHandler.failed_provider_id = "geocode.primary_api"
+    DeterministicRuntimeHandler.decommissioned_provider_id = "geocode.primary_api"
     server, url = start_server()
     try:
         checks, _ = run_smoke(url)
     finally:
         server.shutdown()
         DeterministicRuntimeHandler.failed_provider_id = ""
+        DeterministicRuntimeHandler.decommissioned_provider_id = ""
 
     by_name = {check.name: check for check in checks}
-    provider_check = by_name["smoke:/platform/health:external_providers:geocode.primary_api"]
-    assert provider_check.ok is False
-    assert provider_check.detail == ("provider probe failed: reason_code=unauthorized")
+    assert by_name["smoke:/platform/health:external_providers:connectivity"].ok is False
+    decommissioned = by_name["smoke:/platform/health:external_providers:decommissioned"]
+    assert decommissioned.ok is False
+    assert "geocode.primary_api" in decommissioned.detail
 
 
 def test_migration_compatibility_smoke_only_requires_old_database_compatibility() -> None:

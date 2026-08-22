@@ -52,13 +52,12 @@ MAX_PROVIDER_PROBE_TIMEOUT_SECONDS = 10.0
 # requires a signed licensed-data partner (absent today). Listings are sourced live
 # through the assisted-listing-intake subsystem instead, so the partner feed is not
 # part of the standing live-required set.
-REQUIRED_PRODUCT_PROVIDER_IDS = frozenset(
-    {
-        "poi.commercial_api",
-        "geocode.primary_api",
-        "admin_boundary.official_dataset",
-    }
-)
+# XR-CUTOVER-001 emptied this set, mirroring
+# provider_registry.REQUIRED_PRODUCTION_PROVIDER_IDS. Geocode, POI and
+# admin-boundary adapters were retired from odayplus by the cutover, so a deploy
+# can no longer be gated on them being live-configured. Selecting one for
+# production is now a blocker in its own right (see provider_adapter_checks).
+REQUIRED_PRODUCT_PROVIDER_IDS: frozenset[str] = frozenset()
 MAX_PROVIDER_PROBE_AGE_SECONDS = 300
 POSTGRES_PERSISTENCE_MODES = frozenset({"postgres", "postgresql"})
 OPERATOR_BOOTSTRAP_CHECK = "repository:operator_bootstrap_data_source"
@@ -1191,6 +1190,11 @@ def provider_allowlist_checks(
         for provider_id in selected_ids & by_id.keys()
         if not by_id[provider_id].license.allowed_in_production
     )
+    decommissioned_ids = frozenset(
+        provider_id
+        for provider_id in selected_ids & by_id.keys()
+        if getattr(by_id[provider_id], "decommissioned", False)
+    )
     checks.extend(
         [
             CheckResult(
@@ -1209,6 +1213,21 @@ def provider_allowlist_checks(
                     "all required product providers selected"
                     if not missing_ids
                     else f"missing={','.join(sorted(missing_ids))}"
+                ),
+            ),
+            CheckResult(
+                not decommissioned_ids,
+                "runtime:decommissioned_providers_not_selected",
+                (
+                    "no decommissioned provider is selected for production"
+                    if not decommissioned_ids
+                    else (
+                        "decommissioned="
+                        + ",".join(sorted(decommissioned_ids))
+                        + "; odayplus holds no adapter for these. Read the "
+                        "datasets from oday-data-platform through the market "
+                        "data facade."
+                    )
                 ),
             ),
             CheckResult(
@@ -1260,6 +1279,21 @@ def provider_adapter_checks(
     checks: list[CheckResult] = []
     for provider in providers:
         if provider.provider_id not in production_provider_ids:
+            continue
+        if provider.decommissioned:
+            # The adapter was retired from this repository, so there is nothing
+            # to import and nothing this deployment could run. Selecting the
+            # provider for live production is the blocker, not a missing class.
+            checks.append(
+                CheckResult(
+                    False,
+                    f"repository:provider_adapter:{provider.provider_id}",
+                    f"provider decommissioned by {provider.decommissioned_by}; "
+                    "odayplus holds no adapter for it. Remove it from "
+                    "ODP_PRODUCTION_PROVIDER_IDS and read the dataset from "
+                    "oday-data-platform through the market data facade",
+                )
+            )
             continue
         module_name, separator, class_name = provider.provider_class.rpartition(".")
         if not separator:
@@ -1760,6 +1794,26 @@ def _provider_probe_checks(
         declared_ids == REQUIRED_PRODUCT_PROVIDER_IDS
         and set(probe_by_id) == REQUIRED_PRODUCT_PROVIDER_IDS
     )
+    # XR-CUTOVER-001: a retired adapter must not reappear as live provider
+    # evidence. With the required set empty, `complete` alone would accept a
+    # deployment that still probes geocode/POI/admin-boundary, because the
+    # equality it checks is against nothing.
+    decommissioned_ids = _decommissioned_provider_ids()
+    reported_decommissioned = sorted((declared_ids | set(probe_by_id)) & decommissioned_ids)
+    checks.append(
+        CheckResult(
+            ok=not reported_decommissioned,
+            name="smoke:/platform/health:external_providers:decommissioned",
+            detail=(
+                "no decommissioned provider reports live evidence"
+                if not reported_decommissioned
+                else (
+                    "decommissioned providers still reporting live evidence: "
+                    + ",".join(reported_decommissioned)
+                )
+            ),
+        )
+    )
     checks.append(
         CheckResult(
             ok=complete,
@@ -1834,6 +1888,19 @@ def _provider_probe_checks(
             )
         )
     return checks
+
+
+def _decommissioned_provider_ids() -> frozenset[str]:
+    """Registry provider ids whose concrete adapter was retired from odayplus."""
+    try:
+        providers = _provider_definitions(ROOT)
+    except Exception:  # noqa: BLE001 - the registry import is checked elsewhere
+        return frozenset()
+    return frozenset(
+        provider.provider_id
+        for provider in providers
+        if getattr(provider, "decommissioned", False)
+    )
 
 
 def _parse_utc_timestamp(value: object) -> datetime | None:

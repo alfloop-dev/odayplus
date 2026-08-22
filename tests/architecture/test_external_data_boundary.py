@@ -229,10 +229,23 @@ def test_a_new_file_under_a_frozen_surface_is_rejected(
 def test_retiring_a_frozen_file_without_updating_the_record_is_rejected(
     policy: Mapping[str, Any], repo_files: Sequence[str]
 ) -> None:
-    removed = "modules/external_data/workers/scheduled_fetch.py"
-    remaining = [path for path in repo_files if path != removed]
-    report = evaluate(policy, remaining, make_reader(REPO_ROOT), ("freeze",))
-    assert removed in paths_for(report, "frozen_surface_inventory_stale")
+    """Each frozen surface must catch a retirement the record does not carry.
+
+    The retired path is read back out of the record instead of being named
+    here. A hard-coded path stops testing anything the moment that file is
+    legitimately retired and leaves the inventory -- dropping it from the tree
+    is then no longer a change to the record, so the guard passes vacuously.
+    XR-CUTOVER-001 retired the path this test used to name.
+    """
+    for surface in policy["frozen_surfaces"]:
+        inventory = sorted(surface["inventory"])
+        assert inventory, f"{surface['id']} declares an empty frozen inventory"
+        removed = inventory[0]
+        remaining = [path for path in repo_files if path != removed]
+        report = evaluate(policy, remaining, make_reader(REPO_ROOT), ("freeze",))
+        assert removed in paths_for(report, "frozen_surface_inventory_stale"), (
+            f"{surface['id']} did not flag {removed} as a stale inventory entry"
+        )
 
 
 def test_every_blocked_capability_from_the_acceptance_criteria_exists(

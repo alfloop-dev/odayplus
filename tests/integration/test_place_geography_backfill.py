@@ -22,8 +22,8 @@ from apps.data_platform.geography_backfill import (
     PlaceGeographyBackfill,
     canonical_content_sha256,
 )
+from modules.external_data.geo.geocode_payloads import candidate_from_geocode_payload
 from modules.external_data.geo.pipeline import stable_h3_index
-from modules.external_data.providers.live import _candidate_from_geocode_payload
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -83,7 +83,7 @@ class StubGeocodeProvider:
     def lookup_with_payload(self, normalized_address):
         self.calls += 1
         payload = self.payloads.get(normalized_address.normalized_address, {})
-        candidate = _candidate_from_geocode_payload(
+        candidate = candidate_from_geocode_payload(
             payload, normalized_address, "geocode.primary_api"
         )
         return candidate, payload
@@ -558,7 +558,7 @@ class Rejecting400GeocodeProvider(StubGeocodeProvider):
         self.reject_fragment = reject_fragment
 
     def lookup_with_payload(self, normalized_address):
-        from modules.external_data.providers.live import GeocodeProviderError
+        from modules.external_data.geo.geocode_errors import GeocodeProviderError
 
         if self.reject_fragment in normalized_address.normalized_address:
             self.calls += 1
@@ -600,7 +600,7 @@ class FailAfterFirstCallGeocodeProvider(StubGeocodeProvider):
     """Resolves the first address then dies with a live-shaped HTTP 500."""
 
     def lookup_with_payload(self, normalized_address):
-        from modules.external_data.providers.live import GeocodeProviderError
+        from modules.external_data.geo.geocode_errors import GeocodeProviderError
 
         if self.calls >= 1:
             raise GeocodeProviderError(
@@ -619,7 +619,7 @@ def test_run_row_reflects_full_partition_after_partial_failure_recovery(geograph
     same-day recovery run persisted only its own delta (467/496) in
     ``ingestion_runs`` while the partition actually held 1909 canonical
     rows. The run row must describe the full durable partition."""
-    from modules.external_data.providers.live import GeocodeProviderError
+    from modules.external_data.geo.geocode_errors import GeocodeProviderError
 
     failing = PlaceGeographyBackfill(
         geography_db,
@@ -770,7 +770,7 @@ def test_reissued_snapshot_id_with_drifted_content_fails_closed(geography_db):
     "exc_factory",
     [
         pytest.param(
-            lambda live: live.GeocodeProviderAuthError(
+            lambda errors: errors.GeocodeProviderAuthError(
                 "auth failed",
                 provider_id="geocode.primary_api",
                 correlation_id="test-correlation",
@@ -779,7 +779,7 @@ def test_reissued_snapshot_id_with_drifted_content_fails_closed(geography_db):
             id="auth",
         ),
         pytest.param(
-            lambda live: live.GeocodeProviderError(
+            lambda errors: errors.GeocodeProviderError(
                 "live geocode provider returned HTTP 500",
                 provider_id="geocode.primary_api",
                 correlation_id="test-correlation",
@@ -789,7 +789,7 @@ def test_reissued_snapshot_id_with_drifted_content_fails_closed(geography_db):
             id="http-500",
         ),
         pytest.param(
-            lambda live: live.GeocodeProviderTimeoutError(
+            lambda errors: errors.GeocodeProviderTimeoutError(
                 "timed out",
                 provider_id="geocode.primary_api",
                 correlation_id="test-correlation",
@@ -800,9 +800,9 @@ def test_reissued_snapshot_id_with_drifted_content_fails_closed(geography_db):
     ],
 )
 def test_infrastructure_provider_failures_still_abort_the_run(geography_db, exc_factory):
-    from modules.external_data.providers import live
+    from modules.external_data.geo import geocode_errors
 
-    exc = exc_factory(live)
+    exc = exc_factory(geocode_errors)
 
     class FailingProvider(StubGeocodeProvider):
         def lookup_with_payload(self, normalized_address):

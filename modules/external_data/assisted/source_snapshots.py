@@ -1,7 +1,15 @@
-"""Source snapshot provenance, residency, and SQL/GCS reconciliation service.
+"""Assisted-intake snapshot provenance, residency and reconciliation service.
 
-Handles external source access policy gates, GCS uploads, SQL metadata writes,
-TW_ONLY residency validation, and discrepancy reconciliation.
+Handles source access policy gates, object-store uploads, SQL metadata writes,
+TW_ONLY residency validation, and discrepancy reconciliation for the documents
+an operator submits through assisted listing intake.
+
+Relocated here from ``modules.external_data.application.source_snapshots`` by
+XR-CUTOVER-001. That module path was decommissioned together with the legacy
+external-dataset ingestion loop; this service never belonged to it. Every
+caller is an assisted-intake caller (the intake worker, the opsboard network
+listings service, the retrieval security gate and the release drills), so the
+capability moves with its owner instead of being deleted with the providers.
 """
 
 from __future__ import annotations

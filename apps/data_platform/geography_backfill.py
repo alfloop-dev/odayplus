@@ -629,7 +629,7 @@ class PlaceGeographyBackfill:
         Auth, rate-limit, timeout, and 5xx failures are infrastructure and
         must keep aborting the batch without advancing its checkpoint.
         """
-        from modules.external_data.providers.live import (
+        from modules.external_data.geo.geocode_errors import (
             GeocodeProviderAuthError,
             GeocodeProviderError,
             GeocodeProviderRateLimitError,
@@ -983,15 +983,6 @@ class PlaceGeographyBackfill:
 # -- CLI ---------------------------------------------------------------------
 
 
-def _require_live_mode(env: Mapping[str, str]) -> None:
-    mode = env.get("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower()
-    if mode != "live":
-        raise GeographyBackfillError(
-            "geography backfill only runs against approved live providers; "
-            "set ODP_EXTERNAL_PROVIDER_MODE=live (fixture/mock modes are refused)"
-        )
-
-
 def _validate_dsn(dsn: str) -> dict[str, Any]:
     from urllib.parse import parse_qs, urlparse
 
@@ -1071,25 +1062,21 @@ class _QmarkQueryClient:
 
 
 def _build_engine(args: argparse.Namespace, env: Mapping[str, str]) -> PlaceGeographyBackfill:
-    from modules.external_data.providers.live import (
-        AdminBoundaryDatasetProvider,
-        PoiCommercialApiProvider,
-        PrimaryGeocodeProvider,
-    )
+    """Fail closed: odayplus no longer holds the live provider credentials.
 
-    _require_live_mode(env)
-    connection = _open_connection(env)
-    geocode = PrimaryGeocodeProvider(env=dict(env), mode="live", retry_budget=2)
-    admin = AdminBoundaryDatasetProvider(env=dict(env), mode="live")
-    poi = None if args.skip_poi else PoiCommercialApiProvider(env=dict(env), mode="live")
-    return PlaceGeographyBackfill(
-        connection,
-        geocode_provider=geocode,
-        admin_boundary_provider=admin,
-        poi_provider=poi,
-        rate_limit_per_second=float(env.get("ODP_GEO_BACKFILL_RATE_LIMIT_PER_SECOND", "5")),
-        progress=lambda message: print(message, file=sys.stderr, flush=True),
-        limit=args.limit,
+    ``geocode.primary_api``, ``admin_boundary.official_dataset`` and
+    ``poi.commercial_api`` were decommissioned here by XR-CUTOVER-001; the
+    ``tgos``, ``ris_nlsc`` and ``open_poi`` domains they fed are published by
+    ``oday-data-platform`` and read through the market data facade. The engine
+    class stays injectable so an operator replay against retained snapshots is
+    still possible, but this repository cannot construct a live one.
+    """
+    raise GeographyBackfillError(
+        "live geography backfill is decommissioned in odayplus "
+        "(XR-CUTOVER-001): geocode, admin-boundary and POI datasets are "
+        "produced by oday-data-platform and read through "
+        "modules.external_data.application.market_data_facade; run the "
+        "backfill in the data platform instead"
     )
 
 

@@ -15,6 +15,7 @@ Architectural Invariants:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -66,6 +67,9 @@ from shared.auth.engine import AuthorizationEngine
 
 FACADE_CONTRACT = "odayplus.market-data-facade.v2"
 FACADE_VERSION = "2.0.0"
+FACADE_MODE_ENV = "ODAY_MARKET_DATA_FACADE_MODE"
+KILL_SWITCH_ENV = "ODAY_MARKET_DATA_KILL_SWITCH_ACTIVE"
+ROLLBACK_PROBE_SITE_ID = "cutover-probe-site"
 
 # Roles inherently permitted to read market data products and foundation references
 ALLOWED_MARKET_DATA_ROLES = frozenset({
@@ -610,6 +614,60 @@ class MarketDataFacade:
             }
 
 
+class _RollbackProbeClient:
+    """Read-only platform client used by the subprocess rollback contract.
+
+    The production facade receives a generated ``DataPlatformClient``.  The
+    probe intentionally supplies a tiny client double so it can run without
+    credentials or network access while still exercising the same
+    ``MarketDataFacade`` authorization and read dispatch path.
+    """
+
+    def get_site_market_context(self, site_id: str, **_: Any) -> dict[str, Any]:
+        return {
+            "contract": "emgi.site-market-context.v1",
+            "site_id": site_id,
+            "value": 42,
+        }
+
+
+def rollback_probe() -> dict[str, Any]:
+    """Exercise platform-primary and legacy-fallback read-only routing.
+
+    This test-only hook is consumed by the producer cutover verifier in a
+    subprocess.  It does not instantiate provider code, access credentials,
+    perform network I/O, or write snapshots.  The fallback payload is stable
+    so the verifier can detect corruption across repeated rollback reads.
+    """
+
+    configured_mode = os.environ.get(FACADE_MODE_ENV, "PLATFORM_PRIMARY")
+    kill_switch_active = os.environ.get(KILL_SWITCH_ENV, "false").lower() == "true"
+    mode = "LEGACY_FALLBACK" if kill_switch_active else configured_mode
+
+    if mode == "LEGACY_FALLBACK":
+        source = "legacy"
+        payload = {
+            "contract": "odayplus.market-data-facade.v2",
+            "site_id": ROLLBACK_PROBE_SITE_ID,
+            "source": source,
+            "value": 42,
+        }
+    elif mode == "PLATFORM_PRIMARY":
+        source = "platform"
+        facade = MarketDataFacade(client=_RollbackProbeClient(), enforce_auth=False)
+        payload = facade.get_site_market_context(ROLLBACK_PROBE_SITE_ID)
+        payload = {**payload, "source": source}
+    else:
+        raise ValueError(f"Unsupported facade mode for rollback probe: {mode}")
+
+    return {
+        "mode": mode,
+        "source": source,
+        "payload": payload,
+        "writes": 0,
+    }
+
+
 __all__ = [
     "ALLOWED_MARKET_DATA_ROLES",
     "FACADE_CONTRACT",
@@ -619,4 +677,5 @@ __all__ = [
     "MarketDataFacadeError",
     "MarketDataNotFoundError",
     "MarketDataValidationError",
+    "rollback_probe",
 ]

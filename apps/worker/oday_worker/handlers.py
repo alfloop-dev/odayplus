@@ -15,7 +15,7 @@ package into the process.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from shared.jobs.queue import JobRecord, NonRetryableJobError
 from shared.jobs.registry import JobRegistry
@@ -90,105 +90,28 @@ def handle_forecast(job: JobRecord, persistence: PersistenceBundle) -> None:
 
 
 def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> None:
-    """Run a scheduled external-source fetch and persist its ingestion run.
+    """Dead-letter a legacy external-fetch job (XR-CUTOVER-001).
 
-    The scheduler alone only writes fetch watermark state. Route the worker
-    through the ingestion service so the queryable run and audit evidence are
-    committed by the same execution path.
+    odayplus no longer fetches external sources: the providers, the scheduler
+    and the ingestion service this handler used to drive were decommissioned by
+    the cutover, and the datasets are published by ``oday-data-platform`` and
+    read through ``modules.external_data.application.market_data_facade``.
+
+    The job type stays registered on purpose. A queue drained across the
+    cutover can still hold enqueued ``external-fetch`` jobs, and an unregistered
+    type would retry until it dead-letters with an opaque "unknown job type".
+    Failing here instead dead-letters on the first attempt with the reason an
+    operator needs, and — because no fetch is attempted — guarantees no
+    provider credential is read and no watermark advances.
     """
-    from datetime import timedelta
-
-    from modules.external_data.application.ingestion_service import (
-        SCHEDULED_TENANT_ENV_VAR,
-        ExternalIngestionService,
-    )
-    from modules.external_data.workers.scheduled_fetch import (
-        CONFIGURATION_REASON_CODES,
-        PROVIDER_NOT_SELECTED_REASON_CODE,
-        ExternalFetchJobSpec,
-    )
-
     provider_id = job.payload.get("provider_id", "listing.partner_feed")
     schedule_id = job.payload.get("schedule_id", "hourly-listing")
-    freshness_sla_hours = job.payload.get("freshness_sla_hours", 6)
-    tenant_id = str(job.payload.get("tenant_id") or "").strip()
-    if not tenant_id:
-        # A schedule has no principal to fall back on, so an untenanted payload
-        # is a scheduler misconfiguration that no retry can fix. Dead-letter it
-        # rather than persist canonical data under the unscoped default.
-        raise NonRetryableJobError(
-            "External fetch job payload missing tenant scope for provider "
-            f"'{provider_id}' (schedule '{schedule_id}'): set "
-            f"{SCHEDULED_TENANT_ENV_VAR} on the scheduler deployment so the "
-            "enqueued payload carries tenant_id"
-        )
-
-    service = ExternalIngestionService(
-        store=persistence.ingestion_run_store,
-        ingestion_run_store_for_tenant=_tenant_ingestion_store_resolver(persistence),
-        state_store=persistence.external_fetch_state_store,
-        audit_log=persistence.audit_log,
+    raise NonRetryableJobError(
+        "External fetch is decommissioned (XR-CUTOVER-001): provider "
+        f"'{provider_id}' (schedule '{schedule_id}') is now ingested by "
+        "oday-data-platform and read through the market data facade. Remove "
+        "the schedule that enqueued this job."
     )
-    spec = ExternalFetchJobSpec(
-        provider_id=provider_id,
-        schedule_id=schedule_id,
-        freshness_sla=timedelta(hours=freshness_sla_hours),
-    )
-    outcome = service.run_scheduled(
-        spec,
-        scheduled_at=datetime.now(UTC),
-        correlation_id=job.correlation_id,
-        tenant_id=tenant_id,
-    )
-    record = outcome.record
-    if record.status != "FAILED":
-        return
-
-    reason_code = _external_fetch_reason_code(record)
-    if reason_code == PROVIDER_NOT_SELECTED_REASON_CODE:
-        # ODP_PRODUCTION_PROVIDER_IDS is the operator's explicit statement of
-        # which providers this deployment runs live. A schedule for a provider
-        # left off that list is not applicable here, not broken: the blocked run
-        # and its alert are already persisted for audit, no snapshot was written
-        # and no watermark advanced. Dead-lettering the queue job on top of that
-        # turns a correct operator decision into a permanent deployment blocker,
-        # because the scheduler re-enqueues the same provider every tick.
-        return
-    if reason_code in CONFIGURATION_REASON_CODES:
-        # Fail-closed and fixed for this release + environment: retrying cannot
-        # change the outcome, so dead-letter now while the first attempt still
-        # carries the real reason code.
-        raise NonRetryableJobError(
-            f"External fetch is fail-closed for {provider_id} ({reason_code}): "
-            f"{record.message or 'no provider message'}"
-        )
-    raise RuntimeError(
-        f"External fetch failed for {provider_id}: "
-        f"{record.message or 'no provider message'}"
-    )
-
-
-def _tenant_ingestion_store_resolver(persistence: PersistenceBundle) -> Any | None:
-    """Tenant-scoped ingestion-run store factory, when the backend supports one.
-
-    Mirrors the API wiring (``apps/api/oday_api/main.py``): only a durable
-    bundle can hand out a physically scoped store. On the in-memory bundle the
-    single shared store is used, and isolation is carried by the run record's
-    ``tenant_id`` plus the service's cross-tenant replay guard.
-    """
-    scoped = getattr(persistence, "ingestion_run_store_for_tenant", None)
-    if scoped is None or not getattr(persistence, "is_durable", False):
-        return None
-    return scoped
-
-
-def _external_fetch_reason_code(record: Any) -> str:
-    """Read the reason code the scheduler attached to a blocked fetch run."""
-    for alert in getattr(record, "alerts", ()) or ():
-        code = str(alert.get("reason_code", "") or "").strip()
-        if code:
-            return code
-    return ""
 
 
 def build_default_registry() -> JobRegistry:

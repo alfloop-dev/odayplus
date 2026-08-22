@@ -1,34 +1,56 @@
-"""Queryable, persistable run-state for the external-data ingestion loop.
+"""Retained provenance records for external-data runs (XR-CUTOVER-001).
 
-The scheduled/manual fetch path (``modules.external_data.workers.scheduled_fetch``)
-produces an :class:`ExternalFetchRun` plus a rich provider
-:class:`ListingFeedIngestionResult` (canonical records, DQ quarantine, and the
-per-record lineage envelope). Those live only in-process today. This module
-turns one run into a single durable, queryable aggregate — an
-:class:`IngestionRunRecord` — and defines the in-memory store the API and UI
-read from. A drop-in durable (SQLite) twin lives in
-``shared.infrastructure.persistence.external_data`` and mirrors this surface
-exactly, so the same code path survives a process restart (ODP-FLOW-001:
-"scheduled and manual ingestion persist canonical outputs"; "DQ quarantine
-lineage and freshness are queryable"; "API and UI read persisted run state").
+odayplus no longer ingests external datasets: the providers, scheduler and
+ingestion service that used to produce these records were decommissioned by
+XR-CUTOVER-001 and the datasets are now published by
+``alfloop-dev/oday-data-platform`` and read through
+:mod:`modules.external_data.application.market_data_facade`.
+
+What survives the cutover is the *evidence* surface. Operator provenance,
+freshness and DQ-quarantine views still have to answer questions about runs
+that were ingested before the cutover, and the durable store that holds them
+(:mod:`shared.infrastructure.persistence.external_data`) still has to
+deserialize those rows. This module therefore keeps the record types and the
+in-memory store shape, and nothing else: no provider credentials, no HTTP
+client, no scheduler, no fetch state and no write path that could re-open
+legacy ingestion.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any
-
-from modules.external_data.workers.scheduled_fetch import (
-    ExternalFetchAlert,
-    ExternalFetchRun,
-    SourceFreshnessEvidence,
-    freshness_evidence_from_run,
-)
 
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+@dataclass(frozen=True)
+class SourceFreshnessEvidence:
+    """Freshness evidence recorded for one provider snapshot."""
+
+    provider_id: str
+    source_snapshot_id: str
+    data_status: str
+    provider_observed_at: datetime | None
+    ingested_at: datetime | None
+    freshness_sla_seconds: int
+    correlation_id: str
+    quality_flags: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider_id": self.provider_id,
+            "source_snapshot_id": self.source_snapshot_id,
+            "data_status": self.data_status,
+            "provider_observed_at": _iso(self.provider_observed_at),
+            "ingested_at": _iso(self.ingested_at),
+            "freshness_sla_seconds": self.freshness_sla_seconds,
+            "correlation_id": self.correlation_id,
+            "quality_flags": list(self.quality_flags),
+        }
 
 
 @dataclass(frozen=True)
@@ -161,142 +183,14 @@ class IngestionRunRecord:
             "audit_events": [dict(event) for event in self.audit_events],
         }
 
-    def to_external_fetch_run(self) -> ExternalFetchRun:
-        """Reconstruct the scheduler run used to re-seed watermark/idempotency.
-
-        Alerts/audit events are not needed to restore idempotency or watermark
-        state, so they are dropped here; the fully-detailed copy lives on the
-        record and is what the API/UI read.
-        """
-        return ExternalFetchRun(
-            job_id=self.run_id,
-            provider_id=self.provider_id,
-            schedule_id=self.schedule_id,
-            idempotency_key=self.idempotency_key,
-            status=self.status,
-            data_status=self.data_status,
-            window_start=self.window_start,
-            window_end=self.window_end,
-            started_at=self.started_at,
-            completed_at=self.completed_at,
-            source_snapshot_ids=self.source_snapshot_ids,
-            raw_snapshot_id=self.raw_snapshot_id,
-            canonical_snapshot_id=self.canonical_snapshot_id,
-            source_snapshot_id=self.source_snapshot_id,
-            provider_observed_at=self.provider_observed_at,
-            ingested_at=self.ingested_at,
-            last_success_watermark_before=self.last_success_watermark_before,
-            last_success_watermark_after=self.last_success_watermark_after,
-            correlation_id=self.correlation_id,
-            message=self.message,
-            retry_after=self.retry_after,
-        )
-
-
-def build_ingestion_run_record(
-    *,
-    run: ExternalFetchRun,
-    ingestion_result: Any | None,
-    freshness_sla: timedelta,
-    trigger: str,
-    api_idempotency_key: str | None = None,
-    tenant_id: str = "",
-) -> IngestionRunRecord:
-    """Fold a scheduler run + provider result into one persistable aggregate."""
-
-    quarantine: list[QuarantineRecord] = []
-    lineage: list[LineageRecord] = []
-    accepted_count = 0
-    total_count = 0
-
-    connector_run = None
-    if ingestion_result is not None:
-        connector_run = getattr(ingestion_result, "connector_run", None)
-    if connector_run is not None:
-        accepted_count = connector_run.accepted_count
-        total_count = connector_run.total
-        for record in connector_run.records:
-            lin = record.lineage
-            lineage.append(
-                LineageRecord(
-                    contract_id=lin.contract_id,
-                    source_system=lin.source_system,
-                    source_id=lin.source_id,
-                    source_record_id=lin.source_record_id,
-                    canonical_target=lin.canonical_target,
-                    mapping_id=lin.mapping_id,
-                    schema_version=lin.schema_version,
-                    accepted=record.accepted,
-                    event_time=lin.event_time,
-                    observation_time=lin.observation_time,
-                    ingestion_time=lin.ingestion_time,
-                    quarantine_reasons=tuple(lin.quarantine_reasons),
-                )
-            )
-            if not record.accepted:
-                quarantine.append(
-                    QuarantineRecord(
-                        source_system=lin.source_system,
-                        source_record_id=lin.source_record_id,
-                        canonical_target=lin.canonical_target,
-                        quarantine_reasons=tuple(lin.quarantine_reasons),
-                        issues=tuple(
-                            {
-                                "code": issue.code,
-                                "message": issue.message,
-                                "field": getattr(issue, "field", None),
-                            }
-                            for issue in record.issues
-                        ),
-                    )
-                )
-
-    freshness = freshness_evidence_from_run(run, freshness_sla=freshness_sla)
-    clean_tid = str(tenant_id).strip() if tenant_id else ""
-    record_run_id = f"{run.job_id}:{clean_tid}" if clean_tid else run.job_id
-
-    return IngestionRunRecord(
-        run_id=record_run_id,
-        provider_id=run.provider_id,
-        schedule_id=run.schedule_id,
-        trigger=trigger,
-        idempotency_key=run.idempotency_key,
-        api_idempotency_key=api_idempotency_key,
-        status=run.status,
-        data_status=run.data_status,
-        window_start=run.window_start,
-        window_end=run.window_end,
-        started_at=run.started_at,
-        completed_at=run.completed_at,
-        raw_snapshot_id=run.raw_snapshot_id,
-        canonical_snapshot_id=run.canonical_snapshot_id,
-        source_snapshot_id=run.source_snapshot_id,
-        source_snapshot_ids=tuple(run.source_snapshot_ids),
-        provider_observed_at=run.provider_observed_at,
-        ingested_at=run.ingested_at,
-        last_success_watermark_before=run.last_success_watermark_before,
-        last_success_watermark_after=run.last_success_watermark_after,
-        correlation_id=run.correlation_id,
-        accepted_count=accepted_count,
-        quarantined_count=len(quarantine),
-        total_count=total_count,
-        message=run.message,
-        retry_after=run.retry_after,
-        tenant_id=tenant_id,
-        freshness=freshness,
-        quarantine=tuple(quarantine),
-        lineage=tuple(lineage),
-        alerts=tuple(alert.to_dict() for alert in run.alerts),
-        audit_events=tuple(_alert_to_dict(event) for event in run.audit_events),
-    )
-
-
-def _alert_to_dict(event: ExternalFetchAlert) -> dict[str, Any]:
-    return event.to_dict()
-
 
 class InMemoryIngestionRunStore:
-    """Process-local store; the durable twin keeps the same public surface."""
+    """Process-local store; the durable twin keeps the same public surface.
+
+    Post-cutover this store is read-mostly: ``save`` remains so the durable
+    twin can rehydrate rows and so operator tooling can replay archived runs,
+    but no odayplus code path fetches from a provider to produce new records.
+    """
 
     def __init__(self) -> None:
         self._runs: dict[str, IngestionRunRecord] = {}
@@ -342,9 +236,7 @@ class InMemoryIngestionRunStore:
     def freshness(self) -> list[SourceFreshnessEvidence]:
         return [record.freshness for record in self.latest_per_provider()]
 
-    def quarantine_records(
-        self, *, provider_id: str | None = None
-    ) -> list[dict[str, Any]]:
+    def quarantine_records(self, *, provider_id: str | None = None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for record in self.list_runs(provider_id=provider_id):
             for item in record.quarantine:
@@ -360,5 +252,5 @@ __all__ = [
     "InMemoryIngestionRunStore",
     "LineageRecord",
     "QuarantineRecord",
-    "build_ingestion_run_record",
+    "SourceFreshnessEvidence",
 ]

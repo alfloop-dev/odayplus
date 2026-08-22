@@ -155,11 +155,8 @@ classification:
     - id: legacy_ingestion_runtime
       disposition: frozen_legacy_producer
       include:
-        - "modules/external_data/application/ingestion_service.py"
-        - "modules/external_data/application/ingestion_store.py"
         - "modules/external_data/application/listing_feed_adapter.py"
         - "modules/external_data/application/listing_feed_store.py"
-        - "modules/external_data/application/source_snapshots.py"
       rationale: >-
         Closed-loop ingestion, run state, raw/canonical/quarantine snapshot
         stores, and residency reconciliation. Producer-side by definition.
@@ -373,10 +370,7 @@ frozen_surfaces:
     include: ["modules/external_data/providers/**"]
     inventory:
       - modules/external_data/providers/__init__.py
-      - modules/external_data/providers/live.py
       - modules/external_data/providers/provider_mock.py
-      - modules/external_data/providers/taiwan_real_estate.py
-      - modules/external_data/providers/weather_demographics.py
 
   - id: legacy_source_connectors
     description: >-
@@ -398,24 +392,17 @@ frozen_surfaces:
     inventory:
       - modules/external_data/workers/README.md
       - modules/external_data/workers/__init__.py
-      - modules/external_data/workers/scheduled_fetch.py
 
   - id: legacy_ingestion_runtime
     description: >-
       Ingestion orchestration and raw evidence stores are frozen; canonical
       landing belongs to the data platform.
     include:
-      - "modules/external_data/application/ingestion_service.py"
-      - "modules/external_data/application/ingestion_store.py"
       - "modules/external_data/application/listing_feed_adapter.py"
       - "modules/external_data/application/listing_feed_store.py"
-      - "modules/external_data/application/source_snapshots.py"
     inventory:
-      - modules/external_data/application/ingestion_service.py
-      - modules/external_data/application/ingestion_store.py
       - modules/external_data/application/listing_feed_adapter.py
       - modules/external_data/application/listing_feed_store.py
-      - modules/external_data/application/source_snapshots.py
 
   - id: legacy_provider_gateway_service
     description: >-
@@ -548,10 +535,7 @@ blocked_capabilities:
       - modules/external_data/connectors/provider_registry.py
       - modules/external_data/connectors/store_opening.py
       - modules/external_data/providers/__init__.py
-      - modules/external_data/providers/live.py
       - modules/external_data/providers/provider_mock.py
-      - modules/external_data/providers/taiwan_real_estate.py
-      - modules/external_data/providers/weather_demographics.py
       - services/provider-gateway/Dockerfile
       - services/provider-gateway/WIRING.md
       - services/provider-gateway/admin_boundary_data.json
@@ -582,8 +566,6 @@ blocked_capabilities:
     grandfathered_paths:
       # Declaration and startup validation of the existing provider secrets.
       - modules/external_data/connectors/provider_registry.py
-      - modules/external_data/providers/live.py
-      - modules/external_data/providers/weather_demographics.py
       - product_ops/external_data_backfill.py
       # Deployment plumbing that carries those same secrets to Cloud Run.
       - .github/workflows/deploy-dev.yml
@@ -621,8 +603,6 @@ blocked_capabilities:
       - "TenantScopedExternalFetchStateStore"
     grandfathered_paths:
       - modules/external_data/workers/__init__.py
-      - modules/external_data/workers/scheduled_fetch.py
-      - modules/external_data/application/ingestion_service.py
       # Worker job handler that still dispatches the frozen scheduler.
       - apps/worker/oday_worker/handlers.py
 
@@ -651,7 +631,7 @@ blocked_capabilities:
     grandfathered_paths:
       - modules/external_data/application/listing_feed_adapter.py
       - modules/external_data/application/listing_feed_store.py
-      - modules/external_data/application/source_snapshots.py
+      - modules/external_data/assisted/source_snapshots.py
       - product_ops/external_data_backfill.py
       - apps/data_platform/store_opening.py
 
@@ -721,19 +701,17 @@ blocked_capabilities:
     grandfathered_paths:
       # Frozen producer packages naming each other.
       - modules/external_data/__init__.py
-      - modules/external_data/application/ingestion_service.py
-      - modules/external_data/application/ingestion_store.py
       - modules/external_data/connectors/__init__.py
       - modules/external_data/connectors/provider_connectivity.py
       - modules/external_data/connectors/provider_registry.py
       - modules/external_data/providers/__init__.py
-      - modules/external_data/providers/live.py
       - modules/external_data/workers/__init__.py
-      - modules/external_data/workers/scheduled_fetch.py
       # Provider hosts named inside the frozen adapters and gateway.
-      - modules/external_data/providers/taiwan_real_estate.py
       - services/provider-gateway/WIRING.md
       - services/provider-gateway/app.py
+      # Approved-source registry retained by XR-CUTOVER-001 for licence binding
+      # and record provenance; the downloader that used the hosts is gone.
+      - modules/external_data/official_records/taiwan_real_estate.py
       # Consumer coupling that ODP-LEGACY-FACADE-001 replaces with the read facade.
       - apps/api/app/routes/external_data.py
       - apps/api/oday_api/main.py
@@ -771,8 +749,6 @@ blocked_capabilities:
     grandfathered_paths:
       - modules/external_data/application/listing_feed_adapter.py
       - modules/external_data/connectors/provider_connectivity.py
-      - modules/external_data/providers/live.py
-      - modules/external_data/providers/weather_demographics.py
       - services/provider-gateway/app.py
 
 # ---------------------------------------------------------------------------
@@ -883,12 +859,15 @@ provider_references:
         - data.ntpc.gov.tw
         - plvr.land.moi.gov.tw
       paths:
-        - "modules/external_data/providers/taiwan_real_estate.py"
+        - "modules/external_data/official_records/taiwan_real_estate.py"
         - "infra/db/migrations/000009_official_real_estate_outcomes.sql"
       rationale: >-
-        Taiwan open-data real-estate transaction sources, in the frozen adapter
-        and in the provenance columns of the canonical outcome table. Migrating
-        this source to the data platform retires both together.
+        Taiwan open-data real-estate transaction sources. XR-CUTOVER-001 retired
+        the adapter that fetched them; the hosts that remain are the
+        approved-source registry used for licence binding and the provenance
+        columns of the canonical outcome table. Both record where a held
+        artifact came from — neither path can open a connection, and the
+        mof_moi domain is now ingested by oday-data-platform.
 
     - id: frozen_geocode_gateway_host
       signal: provider_host
@@ -907,9 +886,12 @@ provider_references:
         - weather.partner-data.com
         - demographics.partner-data.com
       paths: ["tests/**"]
+      allow_absent: true
       rationale: >-
-        Placeholder partner hosts used by the weather/demographics provider
-        tests. No live contract exists for either.
+        Placeholder partner hosts that used to appear in the weather and
+        demographics provider tests. XR-CUTOVER-001 removed those providers and
+        their suites, so nothing matches today; the prohibition is kept
+        forward-looking so a reintroduced fixture host is still classified.
 
     - id: v1_policy_prohibited_hosts
       signal: provider_host

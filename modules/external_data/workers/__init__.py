@@ -1,35 +1,11 @@
-"""External data worker entry points."""
+"""Legacy external fetch schedulers were decommissioned by XR-CUTOVER-001.
 
-from modules.external_data.workers.scheduled_fetch import (
-    CONFIGURATION_REASON_CODES,
-    PROVIDER_NOT_SELECTED_REASON_CODE,
-    ExternalFetchAlert,
-    ExternalFetchJobSpec,
-    ExternalFetchProviderConfigurationError,
-    ExternalFetchResiliencePolicy,
-    ExternalFetchRun,
-    ExternalFetchScheduler,
-    InMemoryExternalFetchStateStore,
-    SourceFreshnessEvidence,
-    default_external_fetch_provider_factories,
-    freshness_evidence_from_run,
-    run_external_fetch_backfill,
-    write_external_fetch_lineage_evidence,
-)
+``scheduled_fetch`` — the provider scheduler, its fetch state stores and its
+watermark/circuit-breaker state — is gone. ``SourceFreshnessEvidence`` is
+re-exported from its retained home so operator freshness views over
+pre-cutover runs keep resolving from this package path.
+"""
 
-__all__ = [
-    "CONFIGURATION_REASON_CODES",
-    "PROVIDER_NOT_SELECTED_REASON_CODE",
-    "ExternalFetchAlert",
-    "ExternalFetchJobSpec",
-    "ExternalFetchProviderConfigurationError",
-    "ExternalFetchResiliencePolicy",
-    "ExternalFetchRun",
-    "ExternalFetchScheduler",
-    "InMemoryExternalFetchStateStore",
-    "SourceFreshnessEvidence",
-    "default_external_fetch_provider_factories",
-    "freshness_evidence_from_run",
-    "run_external_fetch_backfill",
-    "write_external_fetch_lineage_evidence",
-]
+from modules.external_data.application.ingestion_records import SourceFreshnessEvidence
+
+__all__ = ["SourceFreshnessEvidence"]

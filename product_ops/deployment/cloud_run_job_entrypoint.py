@@ -184,6 +184,21 @@ def run_scheduler() -> int:
         return EXIT_FAILED
 
     if not tracking_queue.enqueued:
+        if not getattr(scheduler, "RECURRING_JOB_TYPES", ()):
+            # XR-CUTOVER-001 left the scheduler with no recurring job to
+            # enqueue: ``external-fetch`` was the only one and its providers
+            # were decommissioned. An empty tick is the healthy shape, so the
+            # receipt records it as such instead of failing every cron run.
+            # The guard below still applies the moment a recurring job is
+            # declared again.
+            _emit_receipt(
+                "scheduler",
+                "ok",
+                reason="no_scheduled_work",
+                active_jobs_before=before,
+                active_jobs_after=after,
+            )
+            return 0
         _emit_receipt(
             "scheduler",
             "failed",

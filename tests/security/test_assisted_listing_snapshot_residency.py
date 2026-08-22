@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from modules.external_data.application.source_snapshots import SourceSnapshotService
+from modules.external_data.assisted.source_snapshots import SourceSnapshotService
 from shared.infrastructure.object_store.client import InMemoryObjectStore, ResidencyDeniedError
 
 

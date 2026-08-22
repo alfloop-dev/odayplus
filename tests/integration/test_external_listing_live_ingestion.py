@@ -304,11 +304,21 @@ def test_live_adapter_rejects_fixture_replay(tmp_path) -> None:
     bundle.engine.close()
 
 
-def test_backfill_live_mode_uses_durable_canonical_repositories(
+def test_backfill_live_mode_refuses_the_decommissioned_listing_provider(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """XR-CUTOVER-001 retired ``listing.partner_feed``; this run must write nothing.
+
+    This case used to prove the live backfill reached the durable canonical
+    repositories. The cutover removed odayplus' adapter for the only provider
+    this CLI accepts, so the guarantee that matters now is the inverse one: the
+    run fails closed *before* any outbound fetch, and leaves behind no evidence
+    file and no canonical rows. Durable persistence and restart idempotency are
+    still covered directly against the adapter in
+    ``test_live_ingestion_and_idempotency_survive_restart``.
+    """
     from product_ops.external_data_backfill import main
 
     database_path = tmp_path / "backfill.sqlite3"
@@ -340,16 +350,20 @@ def test_backfill_live_mode_uses_durable_canonical_repositories(
                 "cli-live-window-1",
             ],
         )
-        assert main() == 0
+        assert main() == 6
 
-    output = capsys.readouterr().out
-    assert "Ingestion Status:   success" in output
-    assert "document://external_data.listing_feed_snapshots/" in output
-    assert (evidence_dir / "ODP-EXT-002_BACKFILL_EVIDENCE.json").exists()
+    captured = capsys.readouterr()
+    # The refusal has to name the retirement, not an unset variable: an operator
+    # told the credential env var is invalid goes and provisions one.
+    assert "listing.partner_feed" in captured.err
+    assert "decommissioned" in captured.err
+    assert "XR-CUTOVER-001" in captured.err
+    assert "market data facade" in captured.err
 
-    reopened = build_persistence(mode="durable", db_path=database_path)
-    assert len(reopened.listing_repository.list_listings()) == 1
-    reopened.engine.close()
+    # Fails closed ahead of the provider call, the evidence file and the schema.
+    assert state.requests == []
+    assert not evidence_dir.exists()
+    assert not database_path.exists()
 
 
 def test_backfill_production_live_mode_rejects_sqlite(

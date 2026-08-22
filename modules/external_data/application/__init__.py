@@ -1,30 +1,29 @@
 """External data application services.
 
-The ingestion-run symbols are re-exported lazily (PEP 562) rather than at
-package import time. Eagerly importing ``ingestion_service``/``ingestion_store``
-here would pull in ``workers.scheduled_fetch`` →
-``shared.infrastructure.persistence`` at package-init, and that persistence
-package eagerly imports ``modules.heatzone.workers`` (via ``repositories``).
-Because ``modules.heatzone.workers`` imports ``modules.external_data.geo`` (which
-runs *this* package's ``__init__``), the eager version closed an import cycle.
-Deferring the heavy imports keeps ``modules.external_data`` importable from the
-heatzone side while preserving ``from modules.external_data.application import
-ExternalIngestionService`` for direct callers.
+XR-CUTOVER-001 decommissioned the legacy ingestion loop: ``ingestion_service``
+and ``ingestion_store`` are gone, and the datasets they used to fetch are now
+read through :mod:`modules.external_data.application.market_data_facade`. What
+remains here is the retained provenance record surface
+(:mod:`modules.external_data.application.ingestion_records`) plus the operator
+XLSX import path.
+
+The symbols are re-exported lazily (PEP 562) rather than at package import
+time. Eagerly importing them would pull ``shared.infrastructure.persistence``
+in at package-init, and that persistence package eagerly imports
+``modules.heatzone.workers`` (via ``repositories``). Because
+``modules.heatzone.workers`` imports ``modules.external_data.geo`` (which runs
+*this* package's ``__init__``), the eager version closed an import cycle.
 """
 
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from modules.external_data.application.ingestion_service import (
-        ExternalIngestionService,
-        IngestionOutcome,
-    )
-    from modules.external_data.application.ingestion_store import (
+    from modules.external_data.application.ingestion_records import (
         IngestionRunRecord,
         InMemoryIngestionRunStore,
         LineageRecord,
         QuarantineRecord,
-        build_ingestion_run_record,
+        SourceFreshnessEvidence,
     )
     from modules.external_data.application.xlsx_import import (
         XlsxCommitReceipt,
@@ -37,13 +36,11 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
-    "ExternalIngestionService",
-    "IngestionOutcome",
     "IngestionRunRecord",
     "InMemoryIngestionRunStore",
     "LineageRecord",
     "QuarantineRecord",
-    "build_ingestion_run_record",
+    "SourceFreshnessEvidence",
     "XlsxCommitReceipt",
     "XlsxImportError",
     "XlsxPreviewResult",
@@ -53,13 +50,12 @@ __all__ = [
     "preview_xlsx_import",
 ]
 
-_SERVICE_EXPORTS = {"ExternalIngestionService", "IngestionOutcome"}
-_STORE_EXPORTS = {
+_RECORD_EXPORTS = {
     "IngestionRunRecord",
     "InMemoryIngestionRunStore",
     "LineageRecord",
     "QuarantineRecord",
-    "build_ingestion_run_record",
+    "SourceFreshnessEvidence",
 }
 _XLSX_EXPORTS = {
     "XlsxCommitReceipt",
@@ -73,14 +69,10 @@ _XLSX_EXPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    if name in _SERVICE_EXPORTS:
-        from modules.external_data.application import ingestion_service
+    if name in _RECORD_EXPORTS:
+        from modules.external_data.application import ingestion_records
 
-        return getattr(ingestion_service, name)
-    if name in _STORE_EXPORTS:
-        from modules.external_data.application import ingestion_store
-
-        return getattr(ingestion_store, name)
+        return getattr(ingestion_records, name)
     if name in _XLSX_EXPORTS:
         from modules.external_data.application import xlsx_import
 
@@ -90,4 +82,3 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     return sorted(__all__)
-

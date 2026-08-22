@@ -303,7 +303,7 @@ def run_shadow_drill(config: ReleaseConfig, workdir: Path, *, volume: int = 24) 
     production surface.
     """
 
-    from modules.external_data.application.source_snapshots import (
+    from modules.external_data.assisted.source_snapshots import (
         SourcePolicyViolation,
         SourceSnapshotService,
     )
@@ -596,7 +596,7 @@ def run_killswitch_rollback(config: ReleaseConfig, workdir: Path) -> dict[str, A
     """
 
     from delivery_toolchain.release.assisted_listing_intake.gates import build_intake_flag_registry
-    from modules.external_data.application.source_snapshots import SourceSnapshotService
+    from modules.external_data.assisted.source_snapshots import SourceSnapshotService
     from shared.audit.events import AuditEvent
     from shared.auth.feature_flags import FeatureFlagRegistry
     from shared.domain.events import DomainEvent
@@ -1243,7 +1243,7 @@ def run_write_canary(
     (``live_evidence_report`` from ``check_live_runtime_evidence``).
     """
 
-    from modules.external_data.application.source_snapshots import SourceSnapshotService
+    from modules.external_data.assisted.source_snapshots import SourceSnapshotService
     from modules.listing.application.intake_workflow import (
         InMemoryIntakeRepository,
         IntakeWorkflowService,

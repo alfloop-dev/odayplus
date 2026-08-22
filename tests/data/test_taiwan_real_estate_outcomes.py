@@ -11,14 +11,13 @@ from typing import Any
 
 import pytest
 
-from modules.external_data.providers.taiwan_real_estate import (
+from modules.external_data.official_records.taiwan_real_estate import (
     GOVERNMENT_OPEN_DATA_LICENSE_V1,
     MOI_HEADERS,
     NTPC_HEADERS,
     SOURCES,
     DownloadedArtifact,
     OfficialRealEstateBoundExceeded,
-    OfficialRealEstateDownloader,
     OfficialRealEstateSchemaDrift,
     OfficialRealEstateSourceError,
     parse_official_real_estate,
@@ -298,49 +297,6 @@ def test_source_binding_and_checksum_fail_closed() -> None:
     unapproved = replace(_artifact("moi", content), source=unapproved_source)
     with pytest.raises(OfficialRealEstateSourceError, match="approved registry"):
         parse_official_real_estate(unapproved)
-
-
-class _Response(io.BytesIO):
-    def __init__(self, content: bytes, *, url: str, content_type: str) -> None:
-        super().__init__(content)
-        self._url = url
-        self.headers = {
-            "Content-Type": content_type,
-            "Content-Length": str(len(content)),
-            "ETag": '"fixture"',
-            "Last-Modified": "Tue, 21 Jul 2026 07:54:00 GMT",
-        }
-
-    def geturl(self) -> str:
-        return self._url
-
-    def __enter__(self) -> _Response:
-        return self
-
-    def __exit__(self, *_args: Any) -> None:
-        self.close()
-
-
-def test_downloader_checks_url_media_type_size_and_checksum() -> None:
-    content = _moi_zip(_moi_row())
-    source = SOURCES["moi"]
-
-    def opener(_request: Any, _timeout: float) -> _Response:
-        return _Response(content, url=source.source_url, content_type=source.media_type)
-
-    downloader = OfficialRealEstateDownloader(opener)
-    artifact = downloader.download(
-        source,
-        max_bytes=len(content),
-        expected_sha256=hashlib.sha256(content).hexdigest(),
-    )
-    assert artifact.content_sha256 == hashlib.sha256(content).hexdigest()
-    assert artifact.source_published_at == datetime(2026, 7, 21, 7, 54, tzinfo=UTC)
-
-    with pytest.raises(OfficialRealEstateBoundExceeded):
-        downloader.download(source, max_bytes=len(content) - 1)
-    with pytest.raises(OfficialRealEstateSourceError, match="checksum mismatch"):
-        downloader.download(source, expected_sha256="1" * 64)
 
 
 class _OutcomeClient:

@@ -9,14 +9,17 @@ with an audit trail (ODP-AC-SD08-003) that survives a process restart
 
 Flows exercised on a single migrated durable database:
 
-1. Integration/External: the *scheduler* enqueues ``external-fetch``; the
-   *worker* claims and executes it and the durable watermark advances.
+1. Integration/External: XR-CUTOVER-001 decommissioned odayplus-side external
+   ingestion, so a *scheduler* tick enqueues nothing and an ``external-fetch``
+   job that survived the cutover fails permanently on its first claim instead
+   of reaching a provider.
 2. Operations: a ``forecast`` job enqueued through the *core-api* ``/jobs``
    endpoint (crossing the API boundary + writing an audit event) is claimed and
    executed by the *worker* and a forecast is persisted.
 3. Composition: domain jobs dispatch through a modular registry, not a
    monolithic switch; every enqueued ``job_type`` has a registered handler.
-4. Recovery: reopening the database at the same path preserves the watermark.
+4. Recovery: reopening the database at the same path preserves the persisted
+   forecast and its audit trail.
 """
 
 from __future__ import annotations
@@ -28,10 +31,9 @@ import pytest
 from apps.api.server import SERVICE_BOUNDARIES, bootstrap_runtime, build_server, build_worker
 from apps.worker.oday_worker.handlers import build_default_registry
 from apps.worker.oday_worker.main import ODayWorker
-from modules.external_data.workers.scheduled_fetch import TenantScopedExternalFetchStateStore
 from modules.forecastops import ForecastOpsService, StoreDayObservation
 from shared.infrastructure.persistence.factory import _durable_bundle
-from shared.jobs.queue import JobStatus
+from shared.jobs.queue import JobRequest, JobStatus
 from tests.integration._authz import FORECASTOPS_HEADERS
 
 PROVIDER_ID = "listing.partner_feed"
@@ -101,12 +103,23 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypat
         app = build_server(persistence=bundle)
         worker = build_worker(bundle)
 
-        # Flow 1 (Integration/External): the scheduler primed an external-fetch
-        # job but the worker has not run yet, so no watermark exists.
-        scoped_store = TenantScopedExternalFetchStateStore(
-            bundle.external_fetch_state_store, SCHEDULED_TENANT_ID
+        # Flow 1 (Integration/External): the scheduler tick ran during bootstrap
+        # and enqueued nothing, because external ingestion is decommissioned
+        # (XR-CUTOVER-001). A job that predates the cutover still has to fail
+        # safely, so enqueue one directly and prove the worker dead-letters it
+        # rather than reaching a provider.
+        legacy_fetch, _ = bundle.job_queue.enqueue(
+            JobRequest(
+                job_type="external-fetch",
+                payload={
+                    "tenant_id": SCHEDULED_TENANT_ID,
+                    "provider_id": PROVIDER_ID,
+                    "schedule_id": "hourly-listing",
+                },
+                idempotency_key="cross-flow-legacy-fetch-1",
+            ),
+            correlation_id="cross-flow-legacy-fetch",
         )
-        assert scoped_store.last_success_watermark(PROVIDER_ID) is None
 
         # Flow 2 (Operations): enqueue a forecast job through the core-api
         # boundary. This crosses the API service boundary and writes an audit
@@ -133,16 +146,18 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypat
         correlation_id = body["correlation_id"]
         assert body["status"] == JobStatus.QUEUED.value
 
-        # The worker drains BOTH jobs across BOTH flows (external-fetch + forecast).
+        # The worker drains both queued jobs: the forecast succeeds and the
+        # legacy external-fetch fails permanently on its first attempt.
         assert _drain(worker) == 2
+        assert bundle.job_queue.get(legacy_fetch.job_id).status == JobStatus.FAILED
 
         # Job state machine reached the terminal success state for the forecast.
         assert bundle.job_queue.get(forecast_job_id).status == JobStatus.SUCCEEDED
 
-        # Durable side effects: external watermark advanced; a forecast persisted.
-        watermark = scoped_store.last_success_watermark(PROVIDER_ID)
-        assert watermark is not None
+        # Durable side effects: a forecast persisted, and no fetch state was
+        # written for the dead-lettered provider job.
         assert bundle.forecastops_repository.latest_forecasts(TENANT_ID)
+        assert not hasattr(bundle, "external_fetch_state_store")
 
         # Audit trail: the API job enqueue recorded an audit event under the
         # request's correlation id.
@@ -170,14 +185,11 @@ def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypat
         bundle.engine.close()
 
     # --- Recovery: a fresh process (new bundle, same on-disk DB) still sees the
-    # advanced watermark. Backup/recovery of durable runtime state.
+    # persisted forecast and the failed job. Backup/recovery of durable runtime
+    # state.
     reopened = _durable_bundle(db_path)
     try:
-        reopened_scoped = TenantScopedExternalFetchStateStore(
-            reopened.external_fetch_state_store, SCHEDULED_TENANT_ID
-        )
-        persisted = reopened_scoped.last_success_watermark(PROVIDER_ID)
-        assert persisted is not None
-        assert persisted == watermark
+        assert reopened.forecastops_repository.latest_forecasts(TENANT_ID)
+        assert reopened.job_queue.get(legacy_fetch.job_id).status == JobStatus.FAILED
     finally:
         reopened.engine.close()
