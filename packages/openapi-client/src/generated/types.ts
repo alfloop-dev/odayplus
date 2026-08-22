@@ -39,6 +39,23 @@ export type AVMCasePayload = {
   working_capital?: number;
 };
 
+/** AcquisitionGapPayload */
+export type AcquisitionGapPayload = {
+  current_uncertainty_pct?: number;
+  decision_sensitivity?: number;
+  domain: string;
+  estimated_cost_units?: number;
+  estimated_latency_hours?: number;
+  expected_uncertainty_reduction_pct?: number;
+  gap_id: string;
+  measure: string;
+  priority_rank?: number;
+  quota_units?: number;
+  rationale?: string;
+  recommended_source_ids?: string[] | null;
+  survey_effort_hours?: number;
+};
+
 /** ActionPayload */
 export type ActionPayload = {
   action_spec?: Record<string, unknown>;
@@ -200,6 +217,13 @@ export type BatchRowReceipt = {
 /** BatchRowStatus */
 export type BatchRowStatus = "ACCEPTED" | "REJECTED" | "REPLAYED";
 
+/** BatchSiteContextPayload */
+export type BatchSiteContextPayload = {
+  period_grain?: string;
+  period_key?: string | null;
+  site_ids: string[];
+};
+
 /** CandidateDisposition */
 export type CandidateDisposition = "KEEP_HISTORICAL" | "REASSIGN" | "REQUIRE_REVIEW";
 
@@ -217,6 +241,15 @@ export type ClosePayload = {
   follow_up?: boolean;
   follow_up_kind?: string | null;
   reason?: string;
+};
+
+/** ComparePayload */
+export type ComparePayload = {
+  cell_ids?: string[];
+  include_raw_context?: boolean;
+  period_grain?: string;
+  period_key?: string | null;
+  site_ids?: string[];
 };
 
 /** ConflictError */
@@ -258,6 +291,21 @@ export type CorrectionRequest = {
 
 /** CorrectionStatus */
 export type CorrectionStatus = "PROPOSED" | "APPLIED" | "PENDING_REVIEW";
+
+/** CreateAcquisitionPlanPayload */
+export type CreateAcquisitionPlanPayload = {
+  coverage_surface_id: string;
+  effective_as_of?: string | null;
+  experiments?: SourceValueExperimentPayload[];
+  gaps?: AcquisitionGapPayload[];
+  knowledge_as_of?: string | null;
+  metadata?: Record<string, unknown>;
+  plan_id: string;
+  plan_version?: number;
+  policy?: Record<string, unknown>;
+  site_context_id: string;
+  status?: string;
+};
 
 /** POST /operator/growth/actions — create draft body.
 
@@ -1277,6 +1325,26 @@ export type SlaState = "ON_TRACK" | "DUE_SOON" | "OVERDUE" | "BREACHED" | "PAUSE
 /** SourcePolicyState */
 export type SourcePolicyState = "APPROVED_RETRIEVAL" | "ASSISTED_ENTRY_ONLY" | "AUTH_REQUIRED" | "SOURCE_BLOCKED" | "POLICY_UNKNOWN";
 
+/** SourceValueExperimentPayload */
+export type SourceValueExperimentPayload = {
+  baseline_uncertainty_pct?: number;
+  expected_uplift_pct?: number;
+  experiment_id: string;
+  gap_ids?: string[];
+  hypothesis?: string;
+  max_cost_units?: number;
+  max_latency_hours?: number;
+  max_quota_units?: number;
+  paid_source?: boolean;
+  prior_value_evidence?: boolean;
+  sample_size?: number;
+  scope?: string;
+  source_id: string;
+  status?: string;
+  success_criteria?: string[];
+  survey_effort_hours?: number;
+};
+
 /** SplitRequest */
 export type SplitRequest = {
   partitions: IdentityPartition[];
@@ -1621,6 +1689,20 @@ export const API_PATHS = {
   "/api/v1/listings/candidates": ["GET"],
   "/api/v1/listings/import": ["POST"],
   "/api/v1/listings/import-jobs": ["POST"],
+  "/api/v1/market-intelligence/acquisition-plans": ["GET", "POST"],
+  "/api/v1/market-intelligence/acquisition-plans/{plan_id}": ["GET"],
+  "/api/v1/market-intelligence/cells": ["GET"],
+  "/api/v1/market-intelligence/cells/{cell_id}": ["GET"],
+  "/api/v1/market-intelligence/compare": ["GET", "POST"],
+  "/api/v1/market-intelligence/coverage": ["GET"],
+  "/api/v1/market-intelligence/data-gaps": ["GET"],
+  "/api/v1/market-intelligence/data-gaps/{gap_id}": ["GET"],
+  "/api/v1/market-intelligence/diagnostics": ["GET"],
+  "/api/v1/market-intelligence/evidence/cells/{cell_id}": ["GET"],
+  "/api/v1/market-intelligence/evidence/{site_id}": ["GET"],
+  "/api/v1/market-intelligence/health": ["GET"],
+  "/api/v1/market-intelligence/sites/context/batch": ["POST"],
+  "/api/v1/market-intelligence/sites/{site_id}/context": ["GET"],
   "/api/v1/match-cases/{match_case_id}/decisions": ["POST"],
   "/api/v1/netplan/scenarios": ["GET", "POST"],
   "/api/v1/netplan/scenarios/{scenario_id}": ["GET", "PUT"],

@@ -901,11 +901,11 @@
           "knowledge_as_of": {"type": "string"},
           "gaps": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {"$ref": "#/components/schemas/AcquisitionGap"}
           },
           "experiments": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {"$ref": "#/components/schemas/SourceValueExperiment"}
           },
           "policy": {"type": "object"},
           "metadata": {"type": "object"}
@@ -924,14 +924,82 @@
           "knowledge_as_of": {"type": "string", "nullable": true},
           "gaps": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {"$ref": "#/components/schemas/AcquisitionGap"}
           },
           "experiments": {
             "type": "array",
-            "items": {"type": "object"}
+            "items": {"$ref": "#/components/schemas/SourceValueExperiment"}
           },
           "policy": {"type": "object"},
           "metadata": {"type": "object"}
+        }
+      },
+      "AcquisitionGap": {
+        "type": "object",
+        "required": [
+          "gap_id", "domain", "measure", "priority_rank",
+          "current_uncertainty_pct", "expected_uncertainty_reduction_pct",
+          "decision_sensitivity", "estimated_cost_units", "estimated_latency_hours",
+          "survey_effort_hours", "quota_units", "rationale"
+        ],
+        "properties": {
+          "gap_id": {"type": "string"},
+          "domain": {"type": "string"},
+          "measure": {"type": "string"},
+          "priority_rank": {"type": "integer"},
+          "current_uncertainty_pct": {"type": "number"},
+          "expected_uncertainty_reduction_pct": {"type": "number"},
+          "decision_sensitivity": {"type": "number"},
+          "estimated_cost_units": {"type": "number"},
+          "estimated_latency_hours": {"type": "number"},
+          "survey_effort_hours": {"type": "number"},
+          "quota_units": {"type": "number"},
+          "rationale": {"type": "string"},
+          "recommended_source_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "nullable": true
+          }
+        }
+      },
+      "SourceValueExperiment": {
+        "type": "object",
+        "required": [
+          "experiment_id", "source_id", "scope", "status",
+          "sample_size", "hypothesis", "baseline_uncertainty_pct",
+          "expected_uplift_pct", "max_cost_units", "max_latency_hours",
+          "max_quota_units", "survey_effort_hours", "paid_source",
+          "prior_value_evidence", "gap_ids", "success_criteria"
+        ],
+        "properties": {
+          "experiment_id": {"type": "string"},
+          "source_id": {"type": "string"},
+          "scope": {
+            "type": "string",
+            "enum": ["site", "market_cell", "catchment", "region", "nationwide"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["planned", "running", "evaluated", "stopped"]
+          },
+          "sample_size": {"type": "integer"},
+          "hypothesis": {"type": "string"},
+          "baseline_uncertainty_pct": {"type": "number"},
+          "expected_uplift_pct": {"type": "number"},
+          "max_cost_units": {"type": "number"},
+          "max_latency_hours": {"type": "number"},
+          "max_quota_units": {"type": "number"},
+          "survey_effort_hours": {"type": "number"},
+          "paid_source": {"type": "boolean"},
+          "prior_value_evidence": {"type": "boolean"},
+          "gap_ids": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "success_criteria": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
         }
       },
       "ApiError": {

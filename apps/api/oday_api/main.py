@@ -129,6 +129,9 @@ else:
         external_provider_validation: Any = None,
         external_provider_connectivity_probe: Any = None,
         external_ingestion_service: Any = None,
+        market_intelligence_service: Any = None,
+        market_intelligence_facade: Any = None,
+        market_intelligence_repository: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
         # Defaults come from the persistence factory, including the production
@@ -997,6 +1000,7 @@ else:
             create_assisted_intake_router,
             create_listings_router,
         )
+        from apps.api.app.routes.market_intelligence import create_market_intelligence_router
         from apps.api.app.routes.netplan import create_netplan_router
         from apps.api.app.routes.operator import create_operator_router
         from apps.api.app.routes.operator_modules import create_operator_store_ops_router
@@ -1213,6 +1217,15 @@ else:
         )
         mount_versioned(
             api, create_listings_router(audit_log=audit_log, repository=listing_repository)
+        )
+        mount_versioned(
+            api,
+            create_market_intelligence_router(
+                service=market_intelligence_service,
+                facade=market_intelligence_facade,
+                repository=market_intelligence_repository,
+                audit_log=audit_log,
+            ),
         )
         # This router is generated from a separately approved OpenAPI bundle;
         # preserve its per-operation response set instead of adding the generic
@@ -1443,6 +1456,7 @@ else:
         api.state.operator_document_store = operator_document_store
         api.state.operator_live_repository = operator_live_repository
         api.state.external_ingestion_service = ingestion_service
+        api.state.market_intelligence_service = market_intelligence_service
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         api.state.require_live_data = require_live_data
