@@ -12,8 +12,8 @@
 | **Parent Owner / Reviewer** | `Claude` / `Antigravity4` |
 | **Target / Parent Branch** | `dev` / `task/ODP-LISTING-001-SIDECAR-BLOCKED-TASK-DIAGNOSTICS` |
 | **Parent Task Status** | `blocked` |
-| **Declared Blocked Reason** | Waiting for dependency: `ODP-LEGACY-FACADE-001` (`ODP-XR-PRODUCT-CLIENT-001` merged via PR #958; `ODP-LEGACY-FACADE-001` actively in progress) |
-| **Diagnostic Timestamp** | `2026-08-22` |
+| **Declared Blocked Reason** | Waiting for dependency: `ODP-LEGACY-FACADE-001` (`ODP-XR-PRODUCT-CLIENT-001` merged via PR #958; `ODP-LEGACY-FACADE-001` in review with PR #962 awaiting merge into `dev`) |
+| **Diagnostic Timestamp** | `2026-08-22` (Updated: PR #962 submitted) |
 | **Scope Boundary** | Support artifact under `support/sidecars/ODP-LISTING-001/` only. Strictly zero mutation of L1 canonical platform documents, core contracts, runtime tables, or governance policies. |
 
 ---
@@ -27,15 +27,15 @@ In the EMGI v0.4.1 target architecture, market observations, scraping, and platf
 
 Parent task `ODP-LISTING-001` is the critical domain bridge in `odayplus` that:
 1. Integrates platform property observations into the human-assisted intake and listing evaluation workflows without creating a competing or split listing authority.
-2. Bridges `emgi.property-observation.v1` models (delivered via `ODP-XR-PRODUCT-CLIENT-001`) through the unified `MarketDataFacade` (to be delivered via `ODP-LEGACY-FACADE-001`).
+2. Bridges `emgi.property-observation.v1` models (delivered via `ODP-XR-PRODUCT-CLIENT-001`) through the unified `MarketDataFacade` (delivered via `ODP-LEGACY-FACADE-001` in PR #962).
 3. Preserves all assisted intake domain rules (`modules/external_data/application/assisted_intake.py`), governed spreadsheet import (`modules/external_data/application/xlsx_import.py`), and candidate promotion state machines (`modules/listing/application/promotion.py`).
 4. Provides the `odayplus.assisted-listing-platform-bridge.v2` contract to downstream review and candidate generation routes.
 
 ### Diagnostic Finding Summary
 - **Upstream Domain Contract Satisfied (`XR-CONTRACTS-PRODUCT-001` in `oday-data-platform`)**: Released and published `emgi.property-observation.v1` (along with `emgi.site-market-context.v1`, `emgi.market-cell-profile.v1`, `emgi.catchment-profile.v1`).
 - **Product Contract Client Satisfied (`ODP-XR-PRODUCT-CLIENT-001` in `odayplus`)**: Merged into `dev` via PR #958 (commit `47a876bd`). Delivered `packages/oday_data_product_contracts_client/models/property_observation.py` with 40/40 passing contract pin tests.
-- **Direct Active Root Blocker (`ODP-LEGACY-FACADE-001` in `odayplus`)**: Currently **in progress** (owned by `Antigravity5`). `ODP-LEGACY-FACADE-001` is implementing `modules/external_data/infrastructure/data_platform_client.py` and `modules/external_data/application/market_data_facade.py` to provide `odayplus.market-data-facade.v2`.
-- **Root Blocker Diagnosis**: While the property observation models are now compiled and pinned in `packages/oday_data_product_contracts_client`, `ODP-LISTING-001` cannot establish its platform observation bridge without the read facade `MarketDataFacade` provided by `ODP-LEGACY-FACADE-001`. Attempting to read platform observations directly from raw sockets, mock endpoints, or unpublished internal client instances violates fail-closed contract governance. `ODP-LISTING-001` must remain in `blocked` status until `ODP-LEGACY-FACADE-001` completes and merges into `dev`.
+- **Direct Active Root Blocker (`ODP-LEGACY-FACADE-001` in `odayplus`)**: Currently **in review** (owned by `Antigravity5`, reviewed by `Claude`, PR #962, remote commit SHA `3dfbe9d9b55b683946afddf1b2140f2216fd9959`). `ODP-LEGACY-FACADE-001` delivers `modules/external_data/infrastructure/data_platform_client.py` and `modules/external_data/application/market_data_facade.py` providing contract `odayplus.market-data-facade.v2`.
+- **Root Blocker Diagnosis**: While `ODP-LEGACY-FACADE-001` has completed its implementation and opened PR #962, the read facade `MarketDataFacade` has not yet merged into `dev`. `ODP-LISTING-001` cannot begin implementation on `dev` without `MarketDataFacade` being merged. Attempting to read platform observations directly from raw sockets, mock endpoints, or unpublished internal client instances violates fail-closed contract governance. `ODP-LISTING-001` must remain in `blocked` status until `ODP-LEGACY-FACADE-001` (PR #962) is approved and merged into `dev`.
 
 ---
 
@@ -91,9 +91,9 @@ Parent task `ODP-LISTING-001` owns the following implementation paths:
 │ ODP-XR-PRODUCT-CLIENT-001│ alfloop-dev/odayplus  │ DONE       │ Satisfied locally. Generated     │
 │                          │                       │ (PR #958)  │ client models available in repo. │
 ├──────────────────────────┼───────────────────────┼────────────┼──────────────────────────────────┤
-│ ODP-LEGACY-FACADE-001    │ alfloop-dev/odayplus  │ IN PROGRESS│ TRUE ACTIVE ROOT BLOCKER.        │
-│                          │                       │            │ MarketDataFacade read facade not │
-│                          │                       │            │ yet merged into dev.             │
+│ ODP-LEGACY-FACADE-001    │ alfloop-dev/odayplus  │ IN REVIEW  │ ACTIVE ROOT BLOCKER (PR #962).   │
+│                          │                       │ (PR #962)  │ MarketDataFacade read facade PR  │
+│                          │                       │            │ open; awaiting dev merge.        │
 └──────────────────────────┴───────────────────────┴────────────┴──────────────────────────────────┘
 ```
 
@@ -110,15 +110,16 @@ Parent task `ODP-LISTING-001` owns the following implementation paths:
   - 40 contract pin tests passing in `tests/contract/test_oday_data_product_contract_pin.py`.
 
 #### 3. `ODP-LEGACY-FACADE-001` (Market Data Read Facade) — Direct Root Blocker
-- **Status**: **IN PROGRESS / UNDELIVERED**
-- **Pending Deliverables**:
+- **Status**: **IN REVIEW (PR #962)** (remote SHA `3dfbe9d9b55b683946afddf1b2140f2216fd9959`)
+- **Delivered Deliverables in PR #962**:
   - `modules/external_data/infrastructure/data_platform_client.py`
   - `modules/external_data/application/market_data_facade.py` (`odayplus.market-data-facade.v2`)
   - `tests/integration/test_market_data_facade.py`
-- **Root Cause & Diagnosis**:
+- **Root Cause & Current Block State**:
+  - `ODP-LEGACY-FACADE-001` has completed its implementation and opened PR #962 (`https://github.com/alfloop-dev/odayplus/pull/962`).
   - `ODP-LISTING-001` requires `MarketDataFacade` to query observations via standard interfaces (`get_property_observation`, `get_listing_observation`, `get_site_market_context`).
-  - Without `MarketDataFacade`, `ODP-LISTING-001` cannot instantiate its bridge without directly coupling to unfinished low-level infrastructure adapters.
-  - Therefore, `ODP-LEGACY-FACADE-001` is the true, direct root blocker holding `ODP-LISTING-001` in `blocked` state.
+  - Until PR #962 is approved by reviewer `Claude` and merged into `dev`, `ODP-LISTING-001` cannot branch off `dev` with the required facade symbols.
+  - Therefore, `ODP-LEGACY-FACADE-001` remains the direct root blocker awaiting merge completion.
 
 ---
 
@@ -150,7 +151,7 @@ flowchart TD
     end
 
     subgraph ODayPlus_Facade ["alfloop-dev/odayplus (Facade Layer)"]
-        FACADE["ODP-LEGACY-FACADE-001<br/>(Market Data Read Facade)<br/>[IN PROGRESS - DIRECT ROOT BLOCKER]"]
+        FACADE["ODP-LEGACY-FACADE-001<br/>(Market Data Read Facade)<br/>[IN REVIEW - PR #962]"]
     end
 
     subgraph ODayPlus_Listing ["alfloop-dev/odayplus (Listing & Intake Domain)"]
@@ -181,10 +182,10 @@ flowchart TD
 
     classDef done fill:#d4edda,stroke:#28a745,stroke-width:2px;
     classDef blocked fill:#f8d7da,stroke:#dc3545,stroke-width:2px;
-    classDef inprogress fill:#fff3cd,stroke:#ffc107,stroke-width:2px;
+    classDef inreview fill:#cce5ff,stroke:#004085,stroke-width:2px;
 
     class UP_XR_PROD,XR_PROD_CLIENT,XR_CLIENT done;
-    class FACADE inprogress;
+    class FACADE inreview;
     class LISTING,SURVEY,API,UI blocked;
 ```
 
@@ -192,7 +193,7 @@ flowchart TD
 
 ## 7. Implementation Blueprint & Unblocking Protocol
 
-When `ODP-LEGACY-FACADE-001` is completed and merged into `dev`, parent task owner `Claude` should execute the following 5-phase implementation plan:
+When `ODP-LEGACY-FACADE-001` PR #962 is approved and merged into `dev`, parent task owner `Claude` should execute the following 5-phase implementation plan:
 
 ### Phase 1: Dependency & Model Ingestion
 1. Verify that `MarketDataFacade` is available in `modules/external_data/application/market_data_facade.py`.
@@ -246,16 +247,16 @@ To confirm the current repository state, contract integrity, and boundary compli
 - **Result**:
   ```text
   contract: odayplus.legacy-external-data-disposition.v2
-  tracked files: 2599
-    classified: 2599
+  tracked files: 2600
+    classified: 2600
     unclassified: 0
-    by_disposition: {"archived": 75, "assisted_intake_workflow": 58, "delivery_and_governance": 78, "development_platform": 224, "documentation_and_evidence": 946, "frozen_legacy_producer": 32, "migrating_to_platform_client": 46, "product_consumer_owned": 657, "product_review_workflow": 146, "repository_metadata": 17, "shared_platform_support": 61, "verification_only": 259}
+    by_disposition: {"archived": 75, "assisted_intake_workflow": 58, "delivery_and_governance": 78, "development_platform": 225, "documentation_and_evidence": 946, "frozen_legacy_producer": 32, "migrating_to_platform_client": 46, "product_consumer_owned": 657, "product_review_workflow": 146, "repository_metadata": 17, "shared_platform_support": 61, "verification_only": 259}
     frozen_files: 32
     capability_detections: 68
     provider_reference_hits: 218
   external-data boundary: OK
   ```
-- **Finding**: 100% classification coverage across 2,599 tracked files with zero unclassified paths.
+- **Finding**: 100% classification coverage across 2,600 tracked files with zero unclassified paths.
 
 ### Verification Run 3: Whole-Repository Code Boundary Conformance
 - **Command**: `python3 delivery_toolchain/governance/check_code_boundaries.py`
@@ -276,6 +277,6 @@ To confirm the current repository state, contract integrity, and boundary compli
 
 ## 9. Actionable Recommendations for Parent Task Owner & Reviewer
 
-1. **Maintain Blocked Status**: Keep `ODP-LISTING-001` in `blocked` status with reason `"waiting for dependencies: ODP-LEGACY-FACADE-001"`.
+1. **Maintain Blocked Status**: Keep `ODP-LISTING-001` in `blocked` status with reason `"waiting for dependencies: ODP-LEGACY-FACADE-001 (PR #962 in review)"`.
 2. **Do Not Bypass Read Facade**: Avoid creating direct adapters or ad-hoc parsers in `modules/listing/` that bypass `MarketDataFacade`.
-3. **Execute Upon Facade Merge**: As soon as `ODP-LEGACY-FACADE-001` lands in `dev`, parent task owner `Claude` can proceed with the 5-phase blueprint.
+3. **Execute Upon PR #962 Merge**: As soon as `ODP-LEGACY-FACADE-001` PR #962 merges into `dev`, parent task owner `Claude` can proceed with the 5-phase blueprint.
