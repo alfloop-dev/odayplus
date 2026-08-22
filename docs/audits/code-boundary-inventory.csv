@@ -339,6 +339,7 @@ modules/external_data/application/ingestion_service.py,product_system,product_re
 modules/external_data/application/ingestion_store.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/listing_feed_adapter.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/listing_feed_store.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/external_data/application/market_data_facade.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/source_snapshots.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/application/xlsx_import.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/connectors/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -348,6 +349,7 @@ modules/external_data/connectors/provider_registry.py,product_system,product_req
 modules/external_data/connectors/store_opening.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/geo/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/geo/pipeline.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/external_data/infrastructure/data_platform_client.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/providers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/providers/live.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/external_data/providers/provider_mock.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -789,6 +791,7 @@ tests/integration/test_listing_pipeline.py,verification,verification_only,false,
 tests/integration/test_live_geocode_provider_adapter.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_live_listing_provider_adapter.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_live_snapshot_providers.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_market_data_facade.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_ready_geo_views.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_ready_materialization.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_registry_artifacts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
