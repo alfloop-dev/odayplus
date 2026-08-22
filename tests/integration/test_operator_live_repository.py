@@ -501,7 +501,7 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
             )
         )
 
-        from modules.external_data.application.ingestion_store import IngestionRunRecord
+        from modules.external_data.application.ingestion_records import IngestionRunRecord
         from modules.heatzone.domain import HeatZoneScoreResult
         from modules.heatzone.workers import HeatZoneBatchScoreResult
         from modules.listing.domain.models import ListingDedupKey
@@ -540,7 +540,7 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         assert decision_store_a is not None
         decision_store_a.save_decision(decision_a)
 
-        from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+        from modules.external_data.application.ingestion_records import SourceFreshnessEvidence
 
         now = datetime.now(UTC)
         ingestion_a = IngestionRunRecord(
@@ -853,8 +853,10 @@ def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
         )
         bundle1.heatzone_store.put(unscoped_hz)
 
-        from modules.external_data.application.ingestion_store import IngestionRunRecord
-        from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+        from modules.external_data.application.ingestion_records import (
+            IngestionRunRecord,
+            SourceFreshnessEvidence,
+        )
         unscoped_ing = IngestionRunRecord(
             run_id="run-unscoped",
             provider_id="prov-unscoped",

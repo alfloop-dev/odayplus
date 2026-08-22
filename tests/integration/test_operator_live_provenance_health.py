@@ -363,8 +363,10 @@ def test_durable_tenant_scoped_ingestion_runs_latest_per_provider_deduplication(
     """
     from datetime import UTC, datetime, timedelta
 
-    from modules.external_data.application.ingestion_store import IngestionRunRecord
-    from modules.external_data.workers.scheduled_fetch import SourceFreshnessEvidence
+    from modules.external_data.application.ingestion_records import (
+        IngestionRunRecord,
+        SourceFreshnessEvidence,
+    )
 
     db_path = tmp_path / "durable_ingestion.sqlite3"
     bundle = build_persistence(mode="durable", db_path=str(db_path))

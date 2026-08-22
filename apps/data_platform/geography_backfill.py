@@ -629,7 +629,7 @@ class PlaceGeographyBackfill:
         Auth, rate-limit, timeout, and 5xx failures are infrastructure and
         must keep aborting the batch without advancing its checkpoint.
         """
-        from modules.external_data.geo.provider_errors import (
+        from modules.external_data.geo.geocode_errors import (
             GeocodeProviderAuthError,
             GeocodeProviderError,
             GeocodeProviderRateLimitError,

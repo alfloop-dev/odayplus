@@ -1,7 +1,7 @@
 """Official Taiwan real-estate open-data record contract and parser.
 
-Relocated from ``modules.external_data.providers.taiwan_real_estate`` by
-XR-CUTOVER-001, which decommissioned odayplus-side external ingestion. The
+Relocated from the decommissioned Taiwan real-estate provider adapter by
+XR-CUTOVER-001, which ended odayplus-side external ingestion. The
 ``mof_moi`` domain is now ingested by ``oday-data-platform``, so the
 ``OfficialRealEstateDownloader`` — the only part of the old module that opened
 a connection to ``plvr.land.moi.gov.tw`` or ``data.ntpc.gov.tw`` — did not move
@@ -23,9 +23,9 @@ import json
 import re
 import unicodedata
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from uuid import UUID, uuid5

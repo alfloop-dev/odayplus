@@ -120,12 +120,11 @@ def schedulable_required_provider_ids() -> tuple[str, ...]:
     """
 
     from modules.external_data.connectors.provider_registry import provider_registry
-    from modules.external_data.workers.scheduled_fetch import _SCHEDULABLE_CATEGORIES
 
     schedulable = {
         provider.provider_id
         for provider in provider_registry()
-        if provider.category in _SCHEDULABLE_CATEGORIES
+        if provider.category.value in gate.SNAPSHOT_SCHEDULABLE_CATEGORIES
     }
     return tuple(
         provider_id
@@ -1611,13 +1610,9 @@ def test_forecastops_not_active_blocks_even_with_all_governed_disabled_ok() -> N
 def test_pinned_provider_categories_match_the_runtime_registry() -> None:
     """The gate's registry mirror must not drift from provider_registry()."""
     from modules.external_data.connectors.provider_registry import provider_registry
-    from modules.external_data.workers.scheduled_fetch import _SCHEDULABLE_CATEGORIES
 
     assert gate.PROVIDER_CATEGORIES == {
         provider.provider_id: provider.category.value for provider in provider_registry()
-    }
-    assert gate.SNAPSHOT_SCHEDULABLE_CATEGORIES == {
-        category.value for category in _SCHEDULABLE_CATEGORIES
     }
 
 
@@ -1629,22 +1624,22 @@ def test_required_provider_ids_match_the_runtime_live_required_set() -> None:
     assert set(gate.DEFAULT_REQUIRED_PROVIDER_IDS) == set(REQUIRED_PRODUCTION_PROVIDER_IDS)
 
 
-def test_ingestion_run_requirement_is_bound_to_scheduler_schedulability() -> None:
-    """The set the gate demands runs for == the set a scheduler would accept.
+def test_ingestion_run_requirement_is_bound_to_snapshot_schedulability() -> None:
+    """The set the gate demands runs for == the snapshot-schedulable set.
 
     This is the binding the previous revision lacked: the gate required a
     persisted SUCCEEDED ingestion run for every required provider, including
-    ``geocode.primary_api``, which ``ExternalFetchScheduler`` refuses with
-    ``provider_not_schedulable``. The requirement is now derived from the same
-    category rule the scheduler enforces.
+    ``geocode.primary_api``, which the fetch scheduler refused with
+    ``provider_not_schedulable``. XR-CUTOVER-001 retired that scheduler, so the
+    category rule is now pinned on the gate itself and bound here to the frozen
+    provider registry.
     """
     from modules.external_data.connectors.provider_registry import provider_registry
-    from modules.external_data.workers.scheduled_fetch import _SCHEDULABLE_CATEGORIES
 
     schedulable = {
         provider.provider_id
         for provider in provider_registry()
-        if provider.category in _SCHEDULABLE_CATEGORIES
+        if provider.category.value in gate.SNAPSHOT_SCHEDULABLE_CATEGORIES
     }
     cfg = config()
 
@@ -1653,23 +1648,6 @@ def test_ingestion_run_requirement_is_bound_to_scheduler_schedulability() -> Non
     )
     assert set(cfg.enrichment_provider_ids).isdisjoint(schedulable)
     assert cfg.probe_provider_id in schedulable
-
-
-def test_scheduler_really_refuses_every_enrichment_provider_the_gate_exempts() -> None:
-    """Behavioural proof, not a restatement of the category constants."""
-    from modules.external_data.workers.scheduled_fetch import (
-        ExternalFetchProviderConfigurationError,
-        ExternalFetchScheduler,
-    )
-
-    scheduler = ExternalFetchScheduler(env={})
-    for provider_id in config().enrichment_provider_ids:
-        with pytest.raises(ExternalFetchProviderConfigurationError) as excinfo:
-            scheduler._assert_provider_schedulable_and_selected(provider_id)
-        assert excinfo.value.code == "provider_not_schedulable"
-
-    for provider_id in config().snapshot_provider_ids:
-        scheduler._assert_provider_schedulable_and_selected(provider_id)
 
 
 def _live_readiness_details_from_the_real_app(*, healthy: bool) -> dict[str, Any]:

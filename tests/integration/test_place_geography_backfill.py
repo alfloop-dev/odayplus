@@ -22,8 +22,8 @@ from apps.data_platform.geography_backfill import (
     PlaceGeographyBackfill,
     canonical_content_sha256,
 )
+from modules.external_data.geo.geocode_payloads import candidate_from_geocode_payload
 from modules.external_data.geo.pipeline import stable_h3_index
-from modules.external_data.geo.provider_payloads import candidate_from_geocode_payload
 
 pytestmark = pytest.mark.requires_live_env
 
@@ -558,7 +558,7 @@ class Rejecting400GeocodeProvider(StubGeocodeProvider):
         self.reject_fragment = reject_fragment
 
     def lookup_with_payload(self, normalized_address):
-        from modules.external_data.geo.provider_errors import GeocodeProviderError
+        from modules.external_data.geo.geocode_errors import GeocodeProviderError
 
         if self.reject_fragment in normalized_address.normalized_address:
             self.calls += 1
@@ -600,7 +600,7 @@ class FailAfterFirstCallGeocodeProvider(StubGeocodeProvider):
     """Resolves the first address then dies with a live-shaped HTTP 500."""
 
     def lookup_with_payload(self, normalized_address):
-        from modules.external_data.geo.provider_errors import GeocodeProviderError
+        from modules.external_data.geo.geocode_errors import GeocodeProviderError
 
         if self.calls >= 1:
             raise GeocodeProviderError(
@@ -619,7 +619,7 @@ def test_run_row_reflects_full_partition_after_partial_failure_recovery(geograph
     same-day recovery run persisted only its own delta (467/496) in
     ``ingestion_runs`` while the partition actually held 1909 canonical
     rows. The run row must describe the full durable partition."""
-    from modules.external_data.geo.provider_errors import GeocodeProviderError
+    from modules.external_data.geo.geocode_errors import GeocodeProviderError
 
     failing = PlaceGeographyBackfill(
         geography_db,
@@ -800,9 +800,9 @@ def test_reissued_snapshot_id_with_drifted_content_fails_closed(geography_db):
     ],
 )
 def test_infrastructure_provider_failures_still_abort_the_run(geography_db, exc_factory):
-    from modules.external_data.geo import provider_errors
+    from modules.external_data.geo import geocode_errors
 
-    exc = exc_factory(provider_errors)
+    exc = exc_factory(geocode_errors)
 
     class FailingProvider(StubGeocodeProvider):
         def lookup_with_payload(self, normalized_address):

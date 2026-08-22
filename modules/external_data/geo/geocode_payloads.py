@@ -3,8 +3,8 @@
 Turning a provider's response body into a :class:`GeocodeCandidate` is a pure
 mapping: it reads a payload this repository already holds and never opens a
 connection. The live geocode client that used to own it was decommissioned
-with the rest of odayplus-side external ingestion, so the mapper moves here,
-next to the geo pipeline it feeds, and becomes public API.
+with the rest of odayplus-side external ingestion by XR-CUTOVER-001, so the
+mapper moves here, next to the geo pipeline it feeds, and becomes public API.
 
 The mapper is deliberately total. A payload missing or misspelling its
 coordinates yields a candidate flagged ``malformed_provider_response`` at

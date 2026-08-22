@@ -1,8 +1,8 @@
 """Geocode provider error contract retained after XR-CUTOVER-001.
 
-The live geocode client that used to raise these lived in
-``modules.external_data.providers.live`` and was decommissioned with the rest
-of odayplus-side external ingestion. The *error taxonomy* has to outlive it:
+The live geocode client that used to raise these was decommissioned with the
+rest of odayplus-side external ingestion by XR-CUTOVER-001. The *error
+taxonomy* has to outlive it:
 :class:`~apps.data_platform.geography_backfill.PlaceGeographyBackfill` takes
 its geocode provider by injection and still has to tell a per-address
 rejection (HTTP 400 for one address — skip it and keep going) apart from an
