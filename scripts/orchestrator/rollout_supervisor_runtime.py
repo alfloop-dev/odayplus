@@ -13,8 +13,10 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import signal
 import stat
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -74,13 +76,15 @@ def restore_file(path: Path, snapshot: FileSnapshot) -> None:
         path.unlink(missing_ok=True)
 
 
-def status_launcher(runtime_link: Path) -> bytes:
+def status_launcher(runtime_link: Path, config_path: Path) -> bytes:
     runtime_writer = runtime_link / "scripts" / "ai_status.py"
     return (
         "#!/bin/bash\n"
         "set -euo pipefail\n"
         'status_root="$(cd "$(dirname "$0")/.." && pwd)"\n'
         'export PANTHEON_STATUS_ROOT="${PANTHEON_STATUS_ROOT:-$status_root}"\n'
+        f'export ORCH_CONFIG_PATH={shlex.quote(str(config_path))}\n'
+        f'export PANTHEON_CONFIG_PATH={shlex.quote(str(config_path))}\n'
         f'exec python3 {shlex.quote(str(runtime_writer))} "$@"\n'
     ).encode()
 
@@ -90,6 +94,62 @@ def restore_link(link: Path, previous: Path | None) -> None:
         link.unlink(missing_ok=True)
     else:
         point_link(link, previous)
+
+
+def read_pid(path: Path) -> int | None:
+    try:
+        return int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
+
+
+def pid_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def restart_with_watchdog(
+    previous_pid: int | None,
+    runtime_link: Path,
+    status_root: Path,
+    config_path: Path,
+) -> bool:
+    """Replace only the supervisor; worker processes remain outside its lifetime.
+
+    The watchdog is the sole process manager on cron-based installations.  It
+    starts from the stable runtime link and reads/writes state in the canonical
+    status root, so a rollout does not introduce a systemd service alongside it.
+    """
+    if previous_pid and pid_alive(previous_pid):
+        os.kill(previous_pid, signal.SIGTERM)
+        deadline = time.monotonic() + 20.0
+        while time.monotonic() < deadline and pid_alive(previous_pid):
+            time.sleep(0.1)
+        if pid_alive(previous_pid):
+            return False
+    env = os.environ.copy()
+    env["PANTHEON_STATUS_ROOT"] = str(status_root)
+    env["ORCH_CONFIG_PATH"] = str(config_path)
+    env["PANTHEON_CONFIG_PATH"] = str(config_path)
+    result = subprocess.run(
+        [
+            "bash",
+            str(runtime_link / "scripts" / "run-supervisor-watchdog.sh"),
+            "--config",
+            str(config_path),
+            "--restart",
+        ],
+        cwd=runtime_link,
+        env=env,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,7 +163,18 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="canonical state root whose scripts/ai-status.sh must use this runtime",
     )
-    parser.add_argument("--service", required=True, help="systemd user service name")
+    parser.add_argument(
+        "--config-path",
+        type=Path,
+        help="authoritative live config (default: STATUS_ROOT/.orchestrator/config.json)",
+    )
+    restart_group = parser.add_mutually_exclusive_group(required=True)
+    restart_group.add_argument("--service", help="systemd user service name")
+    restart_group.add_argument(
+        "--watchdog-pid-file",
+        type=Path,
+        help="cron/watchdog installation: canonical supervisor.pid to replace",
+    )
     parser.add_argument("--tracking-ref", default="origin/dev")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args(argv)
@@ -114,6 +185,11 @@ def main(argv: list[str] | None = None) -> int:
     link = args.runtime_link.expanduser()
     parent = args.runtime_parent.resolve()
     status_root = args.status_root.expanduser().resolve()
+    live_config = (
+        args.config_path.expanduser().resolve()
+        if args.config_path
+        else status_root / ".orchestrator" / "config.json"
+    )
     launcher = status_root / "scripts" / "ai-status.sh"
     if not source.is_dir() or not (source / ".git").exists():
         raise SystemExit(f"source root is not a git checkout: {source}")
@@ -121,6 +197,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"runtime parent does not exist: {parent}")
     if not launcher.parent.is_dir():
         raise SystemExit(f"status root scripts directory does not exist: {launcher.parent}")
+    if not live_config.is_file():
+        raise SystemExit(f"live config does not exist: {live_config}")
     if link.exists() and not link.is_symlink():
         raise SystemExit(f"runtime link exists but is not a symlink: {link}")
     if not clean(source):
@@ -140,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     target = parent / f"oday-plus-supervisor-runtime-{short}"
     branch = f"runtime-live-{short}"
     previous = link.resolve() if link.is_symlink() else None
+    previous_pid = read_pid(args.watchdog_pid_file.expanduser().resolve()) if args.watchdog_pid_file else None
     print(f"target={target} sha={target_sha} branch={branch}")
     print(f"previous={previous if previous else 'none'}")
     print(f"status_launcher={launcher} writer={link / 'scripts' / 'ai_status.py'}")
@@ -164,21 +243,29 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Install the stable entry point before changing the runtime symlink so
         # every status writer immediately follows the same code plane.
-        replace_file(launcher, status_launcher(link), 0o755)
+        replace_file(launcher, status_launcher(link, live_config), 0o755)
         point_link(link, target)
     except Exception:
         restore_file(launcher, launcher_before)
         restore_link(link, previous)
         raise
 
-    restart = subprocess.run(["systemctl", "--user", "restart", args.service], text=True, check=False)
-    if restart.returncode == 0:
+    if args.service:
+        restarted = subprocess.run(
+            ["systemctl", "--user", "restart", args.service], text=True, check=False
+        ).returncode == 0
+    else:
+        restarted = restart_with_watchdog(previous_pid, link, status_root, live_config)
+    if restarted:
         print(f"rollout complete: {link} -> {target}")
         return 0
 
     restore_link(link, previous)
     restore_file(launcher, launcher_before)
-    subprocess.run(["systemctl", "--user", "restart", args.service], text=True, check=False)
+    if args.service:
+        subprocess.run(["systemctl", "--user", "restart", args.service], text=True, check=False)
+    else:
+        restart_with_watchdog(None, link, status_root, live_config)
     raise SystemExit("supervisor restart failed; restored previous runtime and status launcher")
 
 
