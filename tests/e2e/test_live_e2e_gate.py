@@ -1616,12 +1616,30 @@ def test_pinned_provider_categories_match_the_runtime_registry() -> None:
     }
 
 
-def test_required_provider_ids_match_the_runtime_live_required_set() -> None:
+def test_required_provider_ids_deliberately_diverge_from_the_runtime_set() -> None:
+    """XR-CUTOVER-001: the mirror is pinned, and that is the safe direction.
+
+    This used to assert the gate's provider list mirrors the runtime's
+    live-required set. The cutover emptied the runtime set, and following it
+    here would make every source-data assertion quantify over nothing — the gate
+    would go green on a deployment that ingests nothing, which is the exact
+    failure mode a release gate exists to prevent.
+
+    Nothing is lost by pinning: the gate's worker probe enqueues
+    ``external-fetch``, which the cutover refuses with 410, so the gate already
+    blocks on a cutover deployment. The pin holds until this gate's acceptance is
+    rebuilt on data-platform readback (docs/runbooks/emgi-cutover.md §6.3).
+    """
     from modules.external_data.connectors.provider_registry import (
         REQUIRED_PRODUCTION_PROVIDER_IDS,
     )
 
-    assert set(gate.DEFAULT_REQUIRED_PROVIDER_IDS) == set(REQUIRED_PRODUCTION_PROVIDER_IDS)
+    assert REQUIRED_PRODUCTION_PROVIDER_IDS == frozenset()
+    assert set(gate.DEFAULT_REQUIRED_PROVIDER_IDS) == {
+        "admin_boundary.official_dataset",
+        "geocode.primary_api",
+        "poi.commercial_api",
+    }
 
 
 def test_ingestion_run_requirement_is_bound_to_snapshot_schedulability() -> None:
@@ -1878,22 +1896,23 @@ def test_worker_probe_job_type_is_registered_by_the_deployed_worker() -> None:
     assert "registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)" in handlers
 
 
-def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back() -> None:
-    """The two halves of the gate's data assertion must meet in one store.
+def test_the_worker_probe_can_no_longer_write_the_run_the_gate_reads_back() -> None:
+    """XR-CUTOVER-001 severed the gate's data assertion at its source.
 
-    This is the binding the previous revision lacked. ``handle_external_fetch``
-    drove ``ExternalFetchScheduler`` directly, which writes only
-    ``external_data.fetch_runs``; ``GET /external-data/ingestion-runs`` serves
-    ``IngestionRunRecord``s from ``PersistenceBundle.ingestion_run_store``. So
-    the gate's own worker probe could never produce the ingestion run the gate
-    then demanded, and ``data:*:run_exists`` was red on every deployment where
-    nobody had manually POSTed one.
+    This test used to pin the binding the gate needed: ``handle_external_fetch``
+    had to persist an ``IngestionRunRecord`` into the same store
+    ``GET /external-data/ingestion-runs`` serves, or ``data:*:run_exists`` was
+    red on every deployment where nobody had manually POSTed one.
 
-    Nothing here is stubbed at the seam under test: the real handler runs
-    against a real bundle, and the assertion is made on the real HTTP surface
-    the gate calls. The provider is unconfigured so the fetch fails -- which is
-    the stricter case, because it proves the run is persisted by the ingestion
-    service rather than as a side effect of a successful fetch.
+    The cutover removed the write half. The handler attempts no fetch and
+    persists nothing, so the readback is empty by construction. Pinning that
+    here is what stops the gate's source-data acceptance from being quietly
+    rebuilt on a store nothing writes to any more; see
+    docs/runbooks/emgi-cutover.md §6.3 for the rework this blocks on.
+
+    Nothing is stubbed at the seam under test: the real handler runs against a
+    real bundle, and the assertion is made on the real HTTP surface the gate
+    calls.
     """
     from fastapi.testclient import TestClient
 
@@ -1915,8 +1934,11 @@ def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back() -> None
         correlation_id="corr-live-e2e-ingestion",
     )
 
-    with pytest.raises(RuntimeError):
+    from shared.jobs.queue import NonRetryableJobError
+
+    with pytest.raises(NonRetryableJobError) as excinfo:
         handle_external_fetch(job, bundle)
+    assert "XR-CUTOVER-001" in str(excinfo.value)
 
     client = TestClient(create_app(persistence=bundle))
     body = client.get(
@@ -1933,10 +1955,7 @@ def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back() -> None
     )
 
     assert body.status_code == 200, body.text
-    runs = body.json()["items"]
-    assert [run["provider_id"] for run in runs] == [provider_id], runs
-    assert runs[0]["schedule_id"] == "live-e2e-gate"
-    assert runs[0]["trigger"] == "scheduled"
+    assert body.json() == {"items": [], "count": 0}
 
 
 def test_audit_receipt_integrity_envelope_matches_the_runtime_serializer() -> None:
