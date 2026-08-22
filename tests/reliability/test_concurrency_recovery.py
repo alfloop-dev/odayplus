@@ -14,11 +14,6 @@ from typing import Any
 
 import pytest
 
-from modules.external_data.geo.pipeline import NormalizedAddress
-from modules.external_data.providers import (
-    GeocodeQuarantineError,
-    PrimaryGeocodeProvider,
-)
 from shared.infrastructure.persistence.factory import _durable_bundle
 from shared.jobs.queue import JobRequest, JobStatus
 from shared.observability import default_registry
@@ -93,78 +88,6 @@ def test_queue_retry_and_worker_crash_idempotency(reliability_db_path) -> None:
     assert final_job.status == JobStatus.FAILED
 
     bundle.engine.close()
-
-
-# --- AC3: Provider chaos, latency timeout, malformed quota, outage chaos ----
-
-class MockGeocodeClient:
-    def __init__(self) -> None:
-        self.state = "healthy"
-        self.call_count = 0
-
-    def geocode(
-        self,
-        *,
-        provider: Any,
-        credential: Any,
-        normalized_address: Any,
-        correlation_id: str,
-        retry_budget: int,
-    ) -> Mapping[str, Any]:
-        self.call_count += 1
-        if self.state == "timeout":
-            raise TimeoutError("Provider latency timeout")
-        elif self.state == "quota_exceeded":
-            # In live.py, HttpGeocodeClient raises GeocodeProviderRateLimitError for 429
-            from modules.external_data.providers import GeocodeProviderRateLimitError
-            raise GeocodeProviderRateLimitError("429 Rate Limit Exceeded", provider_id="test", correlation_id=correlation_id, code="rate_limited")
-        elif self.state == "malformed":
-            # Raises ValueError to simulate JSON/HTTP decode error which gets quarantined
-            raise ValueError("JSON decode error")
-        elif self.state == "outage":
-            # In live.py, HttpGeocodeClient raises GeocodeProviderError for 500/503
-            from modules.external_data.providers import GeocodeProviderError
-            raise GeocodeProviderError("503 Service Unavailable", provider_id="test", correlation_id=correlation_id, code="http_error")
-        return {"result": {"latitude": 37.7749, "longitude": -122.4194, "confidence": 1.0}}
-
-
-def test_provider_chaos_retry_and_quarantine() -> None:
-    """Proves bounded retry, quarantine, and recovery during provider chaos using PrimaryGeocodeProvider."""
-    metrics = default_registry()
-    client = MockGeocodeClient()
-    provider = PrimaryGeocodeProvider(client=client, mode="fixture", retry_budget=2, metrics=metrics)
-
-    # A. Test Outage Chaos -> Bounded Retry & Quarantine
-    client.state = "outage"
-    with pytest.raises(GeocodeQuarantineError, match="Quarantined"):
-        provider.lookup(NormalizedAddress(normalized_address="123 Main St", raw_address="123 Main St"))
-    assert client.call_count == 3  # Initial + 2 retries
-    assert metrics.snapshot()["external_connector_failure_count"][0]["value"] == 1.0
-
-    # B. Test Quota Chaos
-    client.state = "quota_exceeded"
-    client.call_count = 0
-    provider_quota = PrimaryGeocodeProvider(client=client, mode="fixture", retry_budget=1, metrics=metrics)
-    with pytest.raises(GeocodeQuarantineError, match="Quarantined"):
-        provider_quota.lookup(NormalizedAddress(normalized_address="123 Main St", raw_address="123 Main St"))
-    assert client.call_count == 2  # Initial + 1 retry
-
-    # C. Test Malformed Response Chaos
-    client.state = "malformed"
-    client.call_count = 0
-    provider_malformed = PrimaryGeocodeProvider(client=client, mode="fixture", retry_budget=1, metrics=metrics)
-    with pytest.raises(GeocodeQuarantineError, match="Quarantined"):
-        provider_malformed.lookup(NormalizedAddress(normalized_address="123 Main St", raw_address="123 Main St"))
-
-    # D. Test Recovery once provider is healthy again
-    client.state = "healthy"
-    client.call_count = 0
-    provider_healthy = PrimaryGeocodeProvider(client=client, mode="fixture", retry_budget=2, metrics=metrics)
-    res = provider_healthy.lookup(NormalizedAddress(normalized_address="123 Main St", raw_address="123 Main St"))
-    assert res is not None
-    assert res.latitude == 37.7749
-    assert client.call_count == 1
-
 
 
 # --- AC4: Database failover, multi-instance concurrency, and restart safety --

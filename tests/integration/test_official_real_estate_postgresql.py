@@ -12,7 +12,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy.engine import URL
 
-from modules.external_data.providers.taiwan_real_estate import (
+from modules.external_data.official_records.taiwan_real_estate import (
     NTPC_HEADERS,
     SOURCES,
     DownloadedArtifact,

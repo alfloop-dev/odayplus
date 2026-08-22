@@ -4,11 +4,9 @@ import logging
 import os
 import time
 from collections.abc import Mapping
-from datetime import UTC, datetime
 from typing import Any
 
 from shared.infrastructure.persistence.factory import PersistenceBundle, build_persistence
-from shared.jobs.queue import JobRequest
 from shared.observability import (
     ProductionMetricsExporter,
     SpanKind,
@@ -78,15 +76,25 @@ class ODayScheduler:
             "Scheduled ingestion has no configured tenant scope: set "
             f"{SCHEDULED_TENANT_ENV_VAR} (or {FALLBACK_TENANT_ENV_VAR}) on the "
             "oday-scheduler deployment, or construct ODayScheduler(tenant_id=...). "
-            "No external-fetch job was enqueued "
+            "The tick was skipped "
             f"(code={MISSING_TENANT_REASON_CODE})"
         )
 
     def run_once(self) -> None:
-        """Orchestrate and enqueue the scheduled tasks.
+        """Tick without enqueueing external ingestion (XR-CUTOVER-001).
 
-        Raises :class:`SchedulerTenantConfigurationError` when no tenant is
-        configured; nothing is enqueued in that case.
+        ``external-fetch`` was the only recurring job this scheduler owned, and
+        the cutover removed the providers, the fetch state and the ingestion
+        service it drove: those datasets are produced by oday-data-platform and
+        read through the market data facade. The deployment unit stays — health
+        and metrics still report, and a future recurring job registers here —
+        but a tick no longer enqueues anything, so no provider credential can be
+        reached on a schedule.
+
+        The tenant guard is kept and still runs first. A deployment that lost
+        its scheduled-ingestion tenant is misconfigured whether or not there is
+        work to enqueue, and ``loop`` already surfaces that as a loud, non-fatal
+        tick error.
         """
         correlation_id = new_correlation_id()
         context = TraceContext(
@@ -100,42 +108,16 @@ class ODayScheduler:
                 actor="scheduler",
                 resource="scheduler/tick",
             )
-            tenant_id = self._require_tenant_id()
-            try:
-                self.job_queue.enqueue(
-                    JobRequest(
-                        job_type="external-fetch",
-                        payload={
-                            "tenant_id": tenant_id,
-                            "provider_id": "listing.partner_feed",
-                            "schedule_id": "hourly-listing",
-                            "freshness_sla_hours": 6,
-                        },
-                        # The tenant belongs in the key: two tenants sharing one
-                        # window must not collapse into a single queued job.
-                        idempotency_key=(
-                            f"scheduled-fetch:{tenant_id}:"
-                            f"{datetime.now(UTC).strftime('%Y%m%d%H%M')}"
-                        ),
-                    ),
-                    correlation_id=correlation_id,
-                )
-                self.telemetry.logger.info(
-                    "Scheduler enqueued external-fetch job",
-                    correlation_id=correlation_id,
-                    actor="scheduler",
-                    resource="job/external-fetch",
-                    action="enqueue",
-                    result="ok",
-                )
-            except Exception as exc:
-                self.telemetry.logger.error(
-                    f"Failed to enqueue scheduled job: {exc}",
-                    correlation_id=correlation_id,
-                    actor="scheduler",
-                    resource="scheduler/tick",
-                    error_code=type(exc).__name__,
-                )
+            self._require_tenant_id()
+            self.telemetry.logger.info(
+                "Scheduler tick enqueued no jobs: external ingestion is "
+                "decommissioned (XR-CUTOVER-001)",
+                correlation_id=correlation_id,
+                actor="scheduler",
+                resource="scheduler/tick",
+                action="skip",
+                result="ok",
+            )
 
     def export_metrics(self) -> dict[str, Any] | None:
         """Export scheduler metrics snapshot via ProductionMetricsExporter if exact 40-char release SHA is present in environment."""

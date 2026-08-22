@@ -791,53 +791,26 @@ else:
                 )
             return active_tenant_id
 
-        def external_fetch_job_tenant(request: Request) -> str:
-            """Resolve the tenant that owns an ``external-fetch`` enqueue.
+        def reject_decommissioned_external_fetch() -> None:
+            """Refuse an ``external-fetch`` enqueue (XR-CUTOVER-001).
 
-            Canonical ingestion is persisted into a *renamed*, tenant-scoped
-            collection, so whatever tenant rides on the job payload decides
-            which partition the worker writes to. Trusting the caller for that
-            value let any ``integration:create`` principal direct canonical
-            ingestion into a partition it cannot read back, and the live E2E
-            gate was the first caller to trip over it: its probes enqueued
-            under the deployment's placeholder tenant, the worker persisted
-            there and reported success, and the gate's readback -- scoped to
-            the smoke principal's own tenant -- reported ``runs=0`` seconds
-            later (ODP-P10-LIVE-EXTDATA-DIAG-001 §3). The authenticated
-            principal is now the only source of the ingestion tenant, which is
-            the same rule ``forecast`` already follows.
+            odayplus no longer fetches external sources; the providers, the
+            scheduler and the ingestion service behind this job type were
+            decommissioned by the cutover and the datasets are published by
+            oday-data-platform. Rejecting at the API boundary keeps the queue
+            clean instead of admitting jobs the worker can only dead-letter.
             """
-            from apps.api.oday_api.security.dependencies import principal_from_headers
-            from shared.auth import Action, rbac_allows
-
-            principal = principal_from_headers(request.headers)
-            if not principal.authenticated:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail={
-                        "code": "AUTHENTICATION_REQUIRED",
-                        "message": "External fetch jobs require an authenticated principal",
-                    },
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            if not rbac_allows(principal, "integration", Action.CREATE):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
-                        "code": "EXTERNAL_FETCH_CREATE_FORBIDDEN",
-                        "message": "Principal cannot enqueue external-data ingestion jobs",
-                    },
-                )
-            active_tenant_id = str(principal.tenant_id or "").strip()
-            if not active_tenant_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
-                        "code": "TENANT_SCOPE_REQUIRED",
-                        "message": "External fetch jobs require an authenticated tenant scope",
-                    },
-                )
-            return active_tenant_id
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail={
+                    "code": "EXTERNAL_FETCH_DECOMMISSIONED",
+                    "message": (
+                        "External-data ingestion moved to oday-data-platform "
+                        "(XR-CUTOVER-001); read published datasets through the "
+                        "market data facade instead of enqueueing a fetch."
+                    ),
+                },
+            )
 
         @platform_router.post("/jobs", status_code=status.HTTP_202_ACCEPTED, tags=["jobs"])
         def enqueue_job(
@@ -865,22 +838,7 @@ else:
                 idempotency_tenant_id = active_tenant_id
                 idempotency_scope = "forecast:v1"
             elif body.job_type == "external-fetch":
-                active_tenant_id = external_fetch_job_tenant(request)
-                supplied_tenant_id = str(payload.get("tenant_id") or "").strip()
-                if supplied_tenant_id and supplied_tenant_id != active_tenant_id:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail={
-                            "code": "TENANT_SCOPE_MISMATCH",
-                            "message": (
-                                "External fetch job tenant does not match the "
-                                "authenticated tenant scope"
-                            ),
-                        },
-                    )
-                payload = {**payload, "tenant_id": active_tenant_id}
-                idempotency_tenant_id = active_tenant_id
-                idempotency_scope = "external-fetch:v1"
+                reject_decommissioned_external_fetch()
 
             effective_idempotency_key = body.idempotency_key or idempotency_key
             queue_idempotency_key = effective_idempotency_key

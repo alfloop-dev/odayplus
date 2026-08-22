@@ -12,14 +12,13 @@ from models.model_ready.contracts import (
     ModelTrainingConfigurationError,
     require_production_database_url,
 )
-from modules.external_data.providers.taiwan_real_estate import (
+from modules.external_data.official_records.taiwan_real_estate import (
     GOVERNMENT_OPEN_DATA_LICENSE_V1,
     MAX_DOWNLOAD_BYTES,
     MAX_EXPANDED_BYTES,
     MAX_ROWS,
     PARSER_VERSION,
     SOURCES,
-    OfficialRealEstateDownloader,
     OfficialRealEstateSourceError,
     OfficialRealEstateTransaction,
     ParsedOfficialRealEstateBatch,
@@ -611,8 +610,17 @@ def main(
     argv: list[str] | None = None,
     *,
     client: OutcomeDatabase | None = None,
-    downloader: OfficialRealEstateDownloader | None = None,
+    downloader: Any | None = None,
 ) -> int:
+    """Project official real-estate outcomes from a supplied artifact.
+
+    ``backfill`` no longer downloads. XR-CUTOVER-001 decommissioned
+    odayplus-side external ingestion, so the ``mof_moi`` source is fetched by
+    ``oday-data-platform``; this entry point keeps the parse-and-upsert
+    projection and requires the caller to hand it a downloader that yields an
+    artifact this deployment already holds. Called without one, ``backfill``
+    fails closed rather than opening a connection to the source authority.
+    """
     args = _parser().parse_args(argv)
     owned_client = None
     try:
@@ -658,7 +666,14 @@ def main(
             dataset_id=args.expected_dataset_id,
             license_id=args.expected_license_id,
         )
-        artifact = (downloader or OfficialRealEstateDownloader()).download(
+        if downloader is None:
+            raise OfficialRealEstateSourceError(
+                "official real-estate download is decommissioned in odayplus "
+                "(XR-CUTOVER-001): the mof_moi source is ingested by "
+                "oday-data-platform. Supply a downloader over an artifact this "
+                "deployment already holds to run the projection."
+            )
+        artifact = downloader.download(
             source,
             max_bytes=args.max_download_bytes,
             timeout_seconds=args.timeout_seconds,
