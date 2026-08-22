@@ -6,8 +6,10 @@ it are gone, and the datasets are now produced by ``oday-data-platform`` and
 read through :mod:`modules.external_data.application.market_data_facade`.
 
 What is left here is the operator provenance surface over runs that were
-already persisted: freshness, ingestion-run history and DQ quarantine. Every
-route is a ``GET``; nothing in this module can start a fetch.
+already persisted: freshness, ingestion-run history and DQ quarantine. Nothing
+in this module can start a fetch. The trigger's route is kept only to answer
+``410 Gone`` with a code an operator can branch on, because a bare ``405 Method
+Not Allowed`` reads like a routing bug rather than a decision.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from modules.external_data.application.ingestion_records import (
     InMemoryIngestionRunStore,
     SourceFreshnessEvidence,
 )
+from shared.api.errors import ApiError
 from shared.audit import InMemoryAuditLog
 
 _FIXTURE_PRODUCT_MODES = frozenset({"poc", "test"})
@@ -143,6 +146,26 @@ else:
             active_store = store_for_request(request)
             rows = active_store.quarantine_records(provider_id=provider_id)
             return {"items": rows, "count": len(rows)}
+
+        @router.post("/ingestion-runs", status_code=status.HTTP_410_GONE)
+        def trigger_ingestion_run() -> dict[str, Any]:
+            """Refuse the retired manual ingestion trigger (XR-CUTOVER-001).
+
+            No authorization dependency: there is nothing to authorize. The
+            answer is the same for every caller and reveals nothing beyond the
+            fact that a route this repository once served is gone.
+            """
+            raise ApiError(
+                status.HTTP_410_GONE,
+                "Manual external-data ingestion was decommissioned by "
+                "XR-CUTOVER-001; this deployment cannot fetch external sources.",
+                code="external_fetch_decommissioned",
+                next_action=(
+                    "Read the published dataset through the market data facade. "
+                    "The GET routes on this prefix still serve the provenance of "
+                    "runs ingested before the cutover."
+                ),
+            )
 
         return router
 

@@ -441,7 +441,11 @@ def test_production_routes_gate_only_the_dependency_they_use(
                 headers=EXTERNAL_DATA_HEADERS,
                 json={"provider_id": "listing.partner_feed"},
             )
-            assert provider_route.status_code == 405
+            assert provider_route.status_code == 410
+            assert (
+                provider_route.json()["error"]["code"]
+                == "external_fetch_decommissioned"
+            )
 
             enqueue_fetch = client.post(
                 "/api/v1/jobs",
@@ -482,7 +486,8 @@ def test_non_production_fixture_ingestion_trigger_is_gone(monkeypatch: Any) -> N
             headers=EXTERNAL_DATA_HEADERS,
         )
 
-    assert response.status_code == 405
+    assert response.status_code == 410
+    assert response.json()["error"]["code"] == "external_fetch_decommissioned"
     # The read side still answers, and it answers empty: nothing ingested.
     assert history.status_code == 200
     assert history.json() == {"items": [], "count": 0}
