@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
 import { OperatorConsole } from "../../../features/operator";
+import {
+  MarketIntelligencePanel,
+  shouldShowMarketIntelligence,
+} from "../../features/market-intelligence";
 
 export const metadata: Metadata = {
   title: "Operator Console | Oday Plus",
@@ -11,5 +15,14 @@ type PageProps = {
 };
 
 export default async function OperatorPage({ searchParams }: PageProps) {
-  return <OperatorConsole searchParams={await searchParams} />;
+  const params = (await searchParams) ?? {};
+
+  return (
+    <>
+      <OperatorConsole searchParams={params} />
+      {shouldShowMarketIntelligence(params) ? (
+        <MarketIntelligencePanel searchParams={params} />
+      ) : null}
+    </>
+  );
 }

@@ -1,3 +1,7 @@
-export { MarketExplorer } from './MarketExplorer';
-export { SiteDossier } from './SiteDossier';
-export { CandidateCompare } from './CandidateCompare';
+export { CandidateCompare } from "./CandidateCompare";
+export { MarketExplorer } from "./MarketExplorer";
+export {
+  MarketIntelligencePanel,
+  shouldShowMarketIntelligence,
+} from "./MarketIntelligencePanel";
+export { SiteDossier } from "./SiteDossier";
