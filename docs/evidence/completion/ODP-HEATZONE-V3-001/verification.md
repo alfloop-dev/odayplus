@@ -6,8 +6,9 @@ uv run pytest tests/models/test_heatzone_v3_contract.py -q
 ```
 
 ## Results
-- **Status**: PASSED (19 / 19 tests)
-- **Execution Time**: 0.22s
+- **Status**: PASSED (22 / 22 tests)
+- **Execution Time**: 0.61s
+- **Linter Status**: PASSED (ruff check 0 errors)
 
 ### Test Cases Covered
 1. `test_heatzone_v3_contract_identity_and_version`: Validated contract ID `odayplus.heatzone-v3.v1`, contract version `1.0.0`, model version `heatzone-v3-shadow`.
@@ -29,6 +30,9 @@ uv run pytest tests/models/test_heatzone_v3_contract.py -q
 17. `test_heatzone_v3_score_result_round_trips`: Wire dict and GeoJSON feature round-trip serialization.
 18. `test_heatzone_v3_batch_result_round_trips`: Full batch document serialization.
 19. `test_heatzone_v3_deterministic_ranking_order`: Deterministic ranking descending by score with abstained items at the end.
+20. `test_heatzone_v3_abstains_when_critical_domain_empty_even_if_ready_and_no_gaps`: Acceptance B2 fail-closed verification.
+21. `test_heatzone_v3_rent_feasibility_monotonic_without_rent_data`: C1 monotonic rent feasibility verification.
+22. `test_heatzone_v3_saturated_state_when_competitor_saturated_and_zero_own_stores`: C3 competitor saturated state verification.
 
 ## Code Boundary Governance
 ```bash

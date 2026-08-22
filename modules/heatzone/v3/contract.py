@@ -154,7 +154,7 @@ class HeatZoneV3ScoreResult:
     is_shadow: bool = True
     execution_mode: ExecutionMode = ExecutionMode.SHADOW
     model_version: str = MODEL_VERSION
-    contract_version: str = CONTRACT_ID
+    contract_version: str = CONTRACT_VERSION
     reasons: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     input_dimensions: dict[str, Any] = field(default_factory=dict)
@@ -256,7 +256,7 @@ class HeatZoneV3ScoreResult:
             is_shadow=bool(data.get("is_shadow", True)),
             execution_mode=ExecutionMode(data.get("execution_mode", ExecutionMode.SHADOW)),
             model_version=str(data.get("model_version", MODEL_VERSION)),
-            contract_version=str(data.get("contract_version", CONTRACT_ID)),
+            contract_version=str(data.get("contract_version", CONTRACT_VERSION)),
             reasons=tuple(str(r) for r in data.get("reasons", ())),
             warnings=tuple(str(w) for w in data.get("warnings", ())),
             input_dimensions=dict(data.get("input_dimensions", {})),
@@ -333,7 +333,7 @@ class HeatZoneV3BatchResult:
     scores: tuple[HeatZoneV3ScoreResult, ...]
     comparisons: tuple[HeatZoneV3ShadowComparison, ...]
     shadow_metrics: dict[str, Any]
-    contract_version: str = CONTRACT_ID
+    contract_version: str = CONTRACT_VERSION
     execution_mode: ExecutionMode = ExecutionMode.SHADOW
     is_shadow: bool = True
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
@@ -372,7 +372,7 @@ class HeatZoneV3BatchResult:
 
         return cls(
             document_id=str(data["document_id"]),
-            contract_version=str(data.get("contract_version", CONTRACT_ID)),
+            contract_version=str(data.get("contract_version", CONTRACT_VERSION)),
             execution_mode=ExecutionMode(data.get("execution_mode", ExecutionMode.SHADOW)),
             is_shadow=bool(data.get("is_shadow", True)),
             total_evaluated=int(data.get("total_evaluated", 0)),

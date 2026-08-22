@@ -1,10 +1,29 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
+from modules.heatzone.domain.scoring import (
+    HeatZoneFeatureInput,
+    HeatZoneScoreResult,
+    score_heatzones,
+)
+from modules.heatzone.v3.adapter import (
+    from_catchment_profile,
+    from_market_cell_profile,
+)
+from modules.heatzone.v3.contract import (
+    CONTRACT_VERSION,
+    MODEL_VERSION,
+    ExecutionMode,
+    HeatZoneV3BatchResult,
+    HeatZoneV3Input,
+    HeatZoneV3ScoreResult,
+    HeatZoneV3ShadowComparison,
+)
+from modules.heatzone.v3.scoring import HeatZoneV3ScoringWeights, score_heatzones_v3
 from packages.oday_data_contracts_client.models.machine_capacity import MachineCapacityRecord
 from packages.oday_data_contracts_client.models.manifests import ManifestDocument
 from packages.oday_data_contracts_client.models.store_coverage import StoreDayCoverage
@@ -14,28 +33,6 @@ from packages.oday_data_product_contracts_client.models.catchment_profile import
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellProfileDocument,
 )
-
-from modules.heatzone.domain.scoring import (
-    HeatZoneFeatureInput,
-    HeatZoneScoreResult,
-    score_heatzones,
-)
-from modules.heatzone.v3.adapter import (
-    from_catchment_profile,
-    from_legacy_feature_input,
-    from_market_cell_profile,
-)
-from modules.heatzone.v3.contract import (
-    CONTRACT_ID,
-    ExecutionMode,
-    HeatZoneV3BatchResult,
-    HeatZoneV3Input,
-    HeatZoneV3ScoreResult,
-    HeatZoneV3ShadowComparison,
-    HeatZoneV3State,
-    MODEL_VERSION,
-)
-from modules.heatzone.v3.scoring import HeatZoneV3ScoringWeights, score_heatzones_v3
 
 
 class HeatZoneV3ShadowRunner:
@@ -208,7 +205,7 @@ class HeatZoneV3ShadowRunner:
 
         return HeatZoneV3BatchResult(
             document_id=document_id,
-            contract_version=CONTRACT_ID,
+            contract_version=CONTRACT_VERSION,
             execution_mode=self.execution_mode,
             is_shadow=self.execution_mode is ExecutionMode.SHADOW,
             total_evaluated=len(v3_scores),

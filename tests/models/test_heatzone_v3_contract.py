@@ -1,26 +1,37 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import Any
-
-import pytest
-
+from modules.heatzone.domain.scoring import HeatZoneFeatureInput
+from modules.heatzone.v3 import (
+    CONTRACT_ID,
+    CONTRACT_VERSION,
+    MODEL_VERSION,
+    AbstainReasonCode,
+    ExecutionMode,
+    HeatZoneV3BatchResult,
+    HeatZoneV3Input,
+    HeatZoneV3ScoreResult,
+    HeatZoneV3ShadowRunner,
+    HeatZoneV3State,
+    from_legacy_feature_input,
+    score_heatzone_v3_feature,
+    score_heatzones_v3,
+)
 from packages.oday_data_contracts_client.models.machine_capacity import (
     CapacityEvidenceKind,
-    CoverageState as MachineCoverageState,
     MachineCapacityRecord,
     MachineClass,
     TimeContract,
 )
+from packages.oday_data_contracts_client.models.machine_capacity import (
+    CoverageState as MachineCoverageState,
+)
 from packages.oday_data_contracts_client.models.manifests import (
     ManifestDocument,
-    ManifestStatus,
-    ProductComponentKind,
-    ProductComponentRef as ManifestComponentRef,
-    ProductManifest,
 )
 from packages.oday_data_contracts_client.models.store_coverage import (
     CoverageState as StoreCoverageState,
+)
+from packages.oday_data_contracts_client.models.store_coverage import (
     EntityPartitionCoverage,
     StoreDayCoverage,
 )
@@ -36,9 +47,13 @@ from packages.oday_data_product_contracts_client.models.catchment_profile import
     CatchmentRent,
     CatchmentTrafficAccess,
     DomainStatus,
-    PeriodGrain as CatchmentPeriodGrain,
-    ReadinessLevel as CatchmentReadinessLevel,
     TravelMode,
+)
+from packages.oday_data_product_contracts_client.models.catchment_profile import (
+    PeriodGrain as CatchmentPeriodGrain,
+)
+from packages.oday_data_product_contracts_client.models.catchment_profile import (
+    ReadinessLevel as CatchmentReadinessLevel,
 )
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellCompetitors,
@@ -48,31 +63,11 @@ from packages.oday_data_product_contracts_client.models.market_cell_profile impo
     MarketCellProfile,
     MarketCellProfileDocument,
     MarketCellRent,
-    PeriodGrain as MarketCellPeriodGrain,
-    ProductComponentRef,
     ReadinessLevel,
     SourceSupportSummary,
 )
-
-from modules.heatzone.domain.scoring import HeatZoneFeatureInput, HeatZoneState
-from modules.heatzone.v3 import (
-    CONTRACT_ID,
-    CONTRACT_VERSION,
-    MODEL_VERSION,
-    AbstainReasonCode,
-    ExecutionMode,
-    HeatZoneV3BatchResult,
-    HeatZoneV3Input,
-    HeatZoneV3ScoreResult,
-    HeatZoneV3ShadowComparison,
-    HeatZoneV3ShadowRunner,
-    HeatZoneV3State,
-    check_support_and_abstention,
-    from_catchment_profile,
-    from_legacy_feature_input,
-    from_market_cell_profile,
-    score_heatzone_v3_feature,
-    score_heatzones_v3,
+from packages.oday_data_product_contracts_client.models.market_cell_profile import (
+    PeriodGrain as MarketCellPeriodGrain,
 )
 
 
@@ -252,7 +247,7 @@ def test_heatzone_v3_scores_all_nine_required_dimensions() -> None:
     assert res.is_shadow is True
     assert res.execution_mode is ExecutionMode.SHADOW
     assert res.model_version == MODEL_VERSION
-    assert res.contract_version == CONTRACT_ID
+    assert res.contract_version == CONTRACT_VERSION
 
     # Check that all sub-dimension scores are populated and within [0, 1]
     assert 0.0 <= res.demographic_vitality_score <= 1.0
@@ -630,7 +625,7 @@ def test_manifest_document_linkage() -> None:
     batch = runner.evaluate_inputs([inp], manifest_document=manifest)
 
     assert batch.manifest_id == "manifest-product-emgi-v0.4.1"
-    assert batch.contract_version == CONTRACT_ID
+    assert batch.contract_version == CONTRACT_VERSION
 
 
 # -----------------------------------------------------------------------------
@@ -673,6 +668,7 @@ def test_shadow_runner_generates_side_by_side_comparison_with_baseline() -> None
     comp2 = next(c for c in batch_result.comparisons if c.h3_index == "884a1072b1fffff")
 
     assert comp1.v3_score is not None
+    assert comp2.v3_score is not None
     assert comp1.baseline_score is not None
     assert comp1.score_delta is not None
     assert comp1.rank_delta is not None
@@ -734,7 +730,7 @@ def test_heatzone_v3_batch_result_round_trips() -> None:
     assert restored.total_evaluated == batch.total_evaluated
     assert restored.scored_count == batch.scored_count
     assert restored.abstained_count == batch.abstained_count
-    assert restored.contract_version == CONTRACT_ID
+    assert restored.contract_version == CONTRACT_VERSION
     assert restored.is_shadow is True
 
 
@@ -770,3 +766,51 @@ def test_heatzone_v3_deterministic_ranking_order() -> None:
     assert results[3].priority_rank == 4
     assert results[3].abstained is True
     assert results[3].score is None
+
+
+def test_heatzone_v3_abstains_when_critical_domain_empty_even_if_ready_and_no_gaps() -> None:
+    """Acceptance B2: critical domain empty/missing/unobserved must fail closed and abstain."""
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=5000.0,
+        overall_readiness=ReadinessLevel.ready,
+        has_coverage_gaps=False,
+        domain_coverage={"DEMOGRAPHICS": "empty", "COMPETITOR": "complete", "RENT": "complete"},
+    )
+    res = score_heatzone_v3_feature(inp)
+    assert res.abstained is True
+    assert res.score is None
+    assert any("MISSING_REQUIRED_DOMAINS:demographics_empty" in r for r in res.abstain_reasons)
+
+
+def test_heatzone_v3_rent_feasibility_monotonic_without_rent_data() -> None:
+    """C1: rent_feasibility must be monotonic when effective_rent <= 0 (0 listings=0.0 <= 1 listing=0.08 <= 5 listings=0.40)."""
+    inp_0 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=0)
+    inp_1 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=1)
+    inp_5 = HeatZoneV3Input(h3_index="884a1072b7fffff", population=5000.0, median_rent_per_ping=0.0, active_listing_count=5)
+
+    res_0 = score_heatzone_v3_feature(inp_0)
+    res_1 = score_heatzone_v3_feature(inp_1)
+    res_5 = score_heatzone_v3_feature(inp_5)
+
+    assert res_0.rent_feasibility_score == 0.0
+    assert res_1.rent_feasibility_score == 0.08
+    assert res_5.rent_feasibility_score == 0.40
+    assert res_0.rent_feasibility_score <= res_1.rent_feasibility_score <= res_5.rent_feasibility_score
+
+
+def test_heatzone_v3_saturated_state_when_competitor_saturated_and_zero_own_stores() -> None:
+    """C3: SATURATED is reached when competitor capacity is saturated even if own_store_count == 0."""
+    inp = HeatZoneV3Input(
+        h3_index="884a1072b7fffff",
+        population=4000.0,
+        household_count=1500.0,
+        poi_count=5,
+        active_competitor_count=8,
+        competitor_capacity=60.0,
+        own_store_count=0,
+        own_store_machine_capacity=0.0,
+    )
+    res = score_heatzone_v3_feature(inp)
+    assert res.state is HeatZoneV3State.SATURATED
+    assert res.unmet_demand_score < 0.25

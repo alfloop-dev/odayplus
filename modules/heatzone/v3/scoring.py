@@ -3,15 +3,14 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 
 from modules.heatzone.v3.contract import (
+    MODEL_VERSION,
     AbstainReasonCode,
     ExecutionMode,
     HeatZoneV3Input,
     HeatZoneV3ScoreResult,
     HeatZoneV3State,
-    MODEL_VERSION,
 )
 
 
@@ -64,8 +63,7 @@ def check_support_and_abstention(feature: HeatZoneV3Input) -> tuple[bool, tuple[
         if cov_state_str in {"quarantined", "withheld"}:
             reasons.append(f"{AbstainReasonCode.MISSING_REQUIRED_DOMAINS.value}:{domain.lower()}_{cov_state_str}")
         elif cov_state_str in {"empty", "missing", "unobserved"} and domain.upper() in {"DEMOGRAPHICS", "COMPETITOR", "GEOGRAPHY"}:
-            if feature.has_coverage_gaps or readiness_str != "ready":
-                reasons.append(f"{AbstainReasonCode.MISSING_REQUIRED_DOMAINS.value}:{domain.lower()}_{cov_state_str}")
+            reasons.append(f"{AbstainReasonCode.MISSING_REQUIRED_DOMAINS.value}:{domain.lower()}_{cov_state_str}")
 
     # 6. Unacceptable confidence / quality floor
     if feature.confidence < 0.25:
@@ -116,7 +114,7 @@ def score_heatzone_v3_feature(
     # Dimension 6: Rent Feasibility
     effective_rent = feature.median_rent_per_ping if feature.median_rent_per_ping > 0 else feature.mean_rent_per_ping
     if effective_rent <= 0:
-        rent_feasibility = 0.40 * min(1.0, feature.active_listing_count / 5.0) if feature.active_listing_count > 0 else 0.35
+        rent_feasibility = 0.40 * min(1.0, max(0.0, float(feature.active_listing_count)) / 5.0)
     else:
         affordability = max(0.0, 1.0 - min(1.0, max(0.0, (effective_rent - 1200.0) / 4000.0)))
         rent_feasibility = min(1.0, affordability * 0.80 + min(1.0, feature.active_listing_count / 8.0) * 0.20)
@@ -280,10 +278,10 @@ def _state_for_v3(
 ) -> HeatZoneV3State:
     if confidence < 0.35:
         return HeatZoneV3State.SUPPRESSED_LOW_CONFIDENCE
-    if feature.own_store_count == 0 and feature.own_store_machine_capacity == 0:
-        return HeatZoneV3State.UNTOUCHED
     if cannibalization_risk >= 0.75 or unmet_demand < 0.25:
         return HeatZoneV3State.SATURATED
+    if feature.own_store_count == 0 and feature.own_store_machine_capacity == 0:
+        return HeatZoneV3State.UNTOUCHED
     if unmet_demand >= 0.55:
         return HeatZoneV3State.STILL_EXPANDABLE
     return HeatZoneV3State.PARTIALLY_ABSORBED

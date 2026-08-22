@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
 from typing import Any
 
+from modules.heatzone.domain.scoring import HeatZoneFeatureInput
+from modules.heatzone.v3.contract import HeatZoneV3Input
 from packages.oday_data_contracts_client.models.machine_capacity import MachineCapacityRecord
-from packages.oday_data_contracts_client.models.manifests import ManifestDocument
 from packages.oday_data_contracts_client.models.store_coverage import StoreDayCoverage
 from packages.oday_data_product_contracts_client.models.catchment_profile import (
     CatchmentProfile,
@@ -13,12 +13,8 @@ from packages.oday_data_product_contracts_client.models.catchment_profile import
 )
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellProfile,
-    ProductComponentRef,
     ReadinessLevel,
 )
-
-from modules.heatzone.domain.scoring import HeatZoneFeatureInput
-from modules.heatzone.v3.contract import HeatZoneV3Input
 
 
 def from_market_cell_profile(
