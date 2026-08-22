@@ -306,6 +306,8 @@ class SiteEconomicsService:
     def _generate_scenarios(self, base_input: SimulationInput) -> dict[str, ScenarioSummary]:
         scenarios: dict[str, ScenarioSummary] = {}
 
+        base_rent = base_input.custom_rent_amount or base_input.operating_params.monthly_base_rent
+
         # 1. Base Case
         base_res = self.simulator.simulate(base_input)
         scenarios["base"] = ScenarioSummary(
@@ -313,7 +315,7 @@ class SiteEconomicsService:
             description="Standard baseline projection using current market context.",
             demand_multiplier=base_input.demand_multiplier,
             competitor_discount=base_input.competitor_discount,
-            monthly_rent=base_input.operating_params.monthly_base_rent,
+            monthly_rent=base_rent,
             levered_npv=base_res.metrics.levered_npv,
             unlevered_npv=base_res.metrics.unlevered_npv,
             levered_irr=base_res.metrics.levered_irr,
@@ -331,7 +333,10 @@ class SiteEconomicsService:
             annual_discount_rate=base_input.annual_discount_rate,
             demand_multiplier=base_input.demand_multiplier * 1.15,
             competitor_discount=max(0.0, base_input.competitor_discount * 0.7),
-            custom_rent_amount=base_input.operating_params.monthly_base_rent * 0.90,
+            cannibalization_discount=base_input.cannibalization_discount,
+            custom_equipment_capex=base_input.custom_equipment_capex,
+            custom_fitout_capex=base_input.custom_fitout_capex,
+            custom_rent_amount=base_rent * 0.90,
             custom_debt_ratio=base_input.custom_debt_ratio,
             custom_interest_rate=base_input.custom_interest_rate,
         )
@@ -359,7 +364,10 @@ class SiteEconomicsService:
             annual_discount_rate=base_input.annual_discount_rate,
             demand_multiplier=base_input.demand_multiplier * 0.80,
             competitor_discount=min(0.50, base_input.competitor_discount + 0.15),
-            custom_rent_amount=base_input.operating_params.monthly_base_rent,
+            cannibalization_discount=base_input.cannibalization_discount,
+            custom_equipment_capex=base_input.custom_equipment_capex,
+            custom_fitout_capex=base_input.custom_fitout_capex,
+            custom_rent_amount=base_rent,
             custom_debt_ratio=base_input.custom_debt_ratio,
             custom_interest_rate=base_input.custom_interest_rate,
         )
@@ -369,7 +377,7 @@ class SiteEconomicsService:
             description="Adverse local conditions with -20% demand volume and aggressive competitor opening.",
             demand_multiplier=pess_input.demand_multiplier,
             competitor_discount=pess_input.competitor_discount,
-            monthly_rent=pess_input.operating_params.monthly_base_rent,
+            monthly_rent=pess_input.custom_rent_amount or 0.0,
             levered_npv=pess_res.metrics.levered_npv,
             unlevered_npv=pess_res.metrics.unlevered_npv,
             levered_irr=pess_res.metrics.levered_irr,
@@ -387,7 +395,10 @@ class SiteEconomicsService:
             annual_discount_rate=base_input.annual_discount_rate,
             demand_multiplier=base_input.demand_multiplier * 0.70,
             competitor_discount=min(0.60, base_input.competitor_discount + 0.20),
-            custom_rent_amount=base_input.operating_params.monthly_base_rent * 1.15,
+            cannibalization_discount=base_input.cannibalization_discount,
+            custom_equipment_capex=base_input.custom_equipment_capex,
+            custom_fitout_capex=base_input.custom_fitout_capex,
+            custom_rent_amount=base_rent * 1.15,
             custom_debt_ratio=base_input.custom_debt_ratio,
             custom_interest_rate=(
                 (

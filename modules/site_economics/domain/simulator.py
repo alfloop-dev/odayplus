@@ -233,7 +233,8 @@ def compute_payback(
 
     cum = initial_cf
     prev_cum = cum
-    for t in range(1, len(cash_flows)):
+    max_periods = min(len(cash_flows) - 1, horizon_months)
+    for t in range(1, max_periods + 1):
         cf = cash_flows[t]
         disc_cf = cf / ((1.0 + monthly_rate) ** t) if monthly_rate > 0 else cf
         cum += disc_cf
@@ -301,7 +302,7 @@ class SiteEconomicsSimulator:
             if sim_input.custom_interest_rate is not None
             else format_spec.financing_spec.annual_interest_rate
         )
-        loan_term = min(horizon, format_spec.financing_spec.loan_term_months)
+        loan_term = format_spec.financing_spec.loan_term_months
         monthly_pmt = compute_pmt(debt_financed, interest_rate, loan_term)
         monthly_interest_rate = interest_rate / 12.0
         remaining_loan = debt_financed
@@ -672,7 +673,11 @@ class SiteEconomicsSimulator:
         risk_flags: list[str] = []
 
         is_payback_censored = metrics.simple_payback.is_censored
-        payback_months = metrics.simple_payback.payback_months or 999.0
+        payback_months = (
+            metrics.simple_payback.payback_months
+            if metrics.simple_payback.payback_months is not None
+            else 999.0
+        )
 
         if is_payback_censored:
             risk_flags.append(

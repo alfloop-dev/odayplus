@@ -27,6 +27,7 @@ from modules.site_economics import (
     ResidualValueSpec,
     SeasonalitySpec,
     SimulationInput,
+    SimulationOverrides,
     SiteEconomicsDocument,
     SiteEconomicsService,
     SiteEconomicsSimulator,
@@ -571,3 +572,96 @@ def test_document_validation_errors() -> None:
         validate_site_economics_document(
             {"contract_id": CONTRACT_ID, "site_id": "S1", "format_code": ""}
         )
+
+
+def test_payback_search_bounded_by_horizon() -> None:
+    # 84-month series: initial outlay -720, then +10 each month
+    # Breakeven happens exactly at month 72
+    cfs = [-720.0] + [10.0] * 84
+
+    # Horizon 60 months: must be RIGHT_CENSORED and not search beyond month 60
+    res_60 = compute_payback(cfs, horizon_months=60)
+    assert res_60.is_censored is True
+    assert res_60.censoring_type == CensoringType.RIGHT_CENSORED
+    assert res_60.payback_months is None
+    assert res_60.horizon_months == 60
+
+    # Horizon 84 months: must find payback at month 72.0
+    res_84 = compute_payback(cfs, horizon_months=84)
+    assert res_84.is_censored is False
+    assert res_84.censoring_type == CensoringType.NOT_CENSORED
+    assert res_84.payback_months == 72.0
+    assert res_84.horizon_months == 84
+
+
+def test_zero_month_payback_decision_evaluation() -> None:
+    simulator = SiteEconomicsSimulator()
+    g2 = build_default_g2_standard_v1()
+    operating = SiteOperatingParameters(monthly_base_rent=50_000.0, area_ping=25.0)
+
+    # 100% debt financing -> zero equity outlay -> 0.0 payback months
+    sim_input = SimulationInput(
+        format_spec=g2,
+        operating_params=operating,
+        custom_debt_ratio=1.0,
+    )
+    res = simulator.simulate(sim_input)
+    assert res.metrics.simple_payback.payback_months == 0.0
+    assert res.metrics.simple_payback.is_censored is False
+    # Decision must NOT be REJECT due to falsy 0.0 evaluating to 999.0
+    assert res.decision.recommendation in (
+        EconomicsDecision.GO,
+        EconomicsDecision.CONDITIONAL_GO,
+    )
+
+
+def test_untruncated_loan_term_when_horizon_less_than_loan_term() -> None:
+    simulator = SiteEconomicsSimulator()
+    g2 = build_default_g2_standard_v1()
+    operating = SiteOperatingParameters(monthly_base_rent=50_000.0, area_ping=25.0)
+
+    # Horizon = 36 months, Loan term = 60 months
+    sim_input = SimulationInput(
+        format_spec=g2,
+        operating_params=operating,
+        horizon_months=36,
+    )
+    res = simulator.simulate(sim_input)
+    # Monthly debt service should use the full 60 months loan term
+    expected_loan_term = g2.financing_spec.loan_term_months
+    assert expected_loan_term == 60
+    debt_financed = res.metrics.debt_financed
+    expected_pmt = compute_pmt(
+        debt_financed, g2.financing_spec.annual_interest_rate, expected_loan_term
+    )
+    m1 = res.monthly_schedule[0]
+    assert m1.total_debt_service == pytest.approx(expected_pmt, rel=1e-3)
+
+
+def test_sensitivity_scenarios_preserve_capex_and_cannibalization_overrides() -> None:
+    service = SiteEconomicsService()
+    overrides = SimulationOverrides(
+        cannibalization_discount=0.15,
+        custom_equipment_capex=1_500_000.0,
+        custom_fitout_capex=800_000.0,
+    )
+    doc = service.evaluate_site(
+        site_id="SITE-OVERRIDE-001",
+        area_ping=25.0,
+        monthly_rent=60_000.0,
+        overrides=overrides,
+    )
+
+    assert doc.assumptions.cannibalization_discount == 0.15
+    assert doc.assumptions.total_equipment_capex == 1_500_000.0
+    assert doc.assumptions.total_fitout_capex == 800_000.0
+
+    base_scen = doc.scenarios["base"]
+    stress_scen = doc.scenarios["stress_test"]
+    pess_scen = doc.scenarios["pessimistic"]
+    opt_scen = doc.scenarios["optimistic"]
+
+    # Stress test must have worse NPV than base case when capex/cannibalization are preserved
+    assert stress_scen.levered_npv < base_scen.levered_npv
+    assert pess_scen.levered_npv < base_scen.levered_npv
+    assert opt_scen.levered_npv > base_scen.levered_npv
