@@ -21,9 +21,8 @@ def _git(cwd: Path, *args: str) -> None:
     )
 
 
-class RestartRefusalTests(unittest.TestCase):
-    """Restarting from a tree nobody has reconciled is the failure this script
-    exists to prevent, so it has to refuse rather than proceed."""
+class RestartRetirementTests(unittest.TestCase):
+    """The retired shortcut must never mutate a developer checkout."""
 
     def _repo_pair(self, tmp: Path) -> Path:
         origin = tmp / "origin.git"
@@ -50,7 +49,7 @@ class RestartRefusalTests(unittest.TestCase):
             env={**os.environ, "PANTHEON_ROOT": str(root), "RESTART_WAIT_SECONDS": "5"},
         )
 
-    def test_a_diverged_tree_is_refused_and_nothing_is_stopped(self) -> None:
+    def test_a_diverged_tree_is_refused_without_touching_head(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             tmp = Path(raw)
             work = self._repo_pair(tmp)
@@ -79,16 +78,15 @@ class RestartRefusalTests(unittest.TestCase):
             result = self._run(work)
 
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("refusing to restart", result.stderr)
+            self.assertIn("is retired", result.stderr)
+            self.assertIn("will not fetch, merge, reset", result.stderr)
             head_after = subprocess.run(
                 ["git", "rev-parse", "HEAD"], cwd=work,
                 capture_output=True, text=True, check=True,
             ).stdout.strip()
             self.assertEqual(head_before, head_after)
 
-    def test_the_tree_is_advanced_before_anything_is_stopped(self) -> None:
-        """Order is the whole point: stopping first gives the cron watchdog a
-        60-second window to respawn from the old tree."""
+    def test_remote_advance_is_not_merged_by_the_retired_shortcut(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             tmp = Path(raw)
             work = self._repo_pair(tmp)
@@ -103,18 +101,20 @@ class RestartRefusalTests(unittest.TestCase):
             _git(clone, "commit", "-m", "remote change")
             _git(clone, "push", "origin", "dev")
 
-            (work / ".orchestrator").mkdir(parents=True, exist_ok=True)
+            before = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=work,
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
 
             result = self._run(work)
 
-            # No watchdog exists in the fixture, so it exits non-zero waiting
-            # for a respawn - but only after the tree has already advanced.
-            self.assertIn("no supervisor came back", result.stderr)
-            merged = subprocess.run(
-                ["git", "log", "--oneline"], cwd=work,
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("rollout_supervisor_runtime.py", result.stderr)
+            after = subprocess.run(
+                ["git", "rev-parse", "HEAD"], cwd=work,
                 capture_output=True, text=True, check=True,
-            ).stdout
-            self.assertIn("remote change", merged)
+            ).stdout.strip()
+            self.assertEqual(before, after)
 
 
 if __name__ == "__main__":

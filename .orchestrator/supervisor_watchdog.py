@@ -18,9 +18,11 @@ if str(THIS_DIR) not in sys.path:
 
 from common import (
     append_jsonl,
+    authoritative_status_root,
     config_path,
     isoformat_utc,
     load_config,
+    load_config_for_status_root,
     load_json,
     parse_utc_timestamp,
     pid_is_supervisor_process,
@@ -467,7 +469,11 @@ def run_watchdog(config: dict[str, Any], *, restart: bool = False, dry_run: bool
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Probe and optionally restart the the orchestrator supervisor safely.")
-    parser.add_argument("--config", default=".orchestrator/config.json")
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="authoritative config path (defaults to ORCH_CONFIG_PATH, then repository config)",
+    )
     parser.add_argument("--restart", action="store_true", help="Restart unhealthy supervisor when resource and budget gates allow it.")
     parser.add_argument("--dry-run", action="store_true", help="Report the restart decision without launching a process.")
     parser.add_argument("--json", action="store_true", help="Print machine-readable result.")
@@ -476,7 +482,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    config = load_config(args.config)
+    status_root = authoritative_status_root()
+    config = (
+        load_config_for_status_root(status_root)
+        if status_root is not None
+        else load_config(args.config)
+    )
     result = run_watchdog(config, restart=args.restart, dry_run=args.dry_run)
     if args.json:
         import json

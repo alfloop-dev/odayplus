@@ -1118,26 +1118,8 @@
     "worker_worktrees": {
       "type": "object",
       "properties": {
-        "base_ref": {
-          "type": "string"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "execution_reasons": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "git_network_timeout_seconds": {
           "type": "integer"
-        },
-        "recover_clean_diverged_worktrees": {
-          "type": "boolean"
-        },
-        "reuse_existing": {
-          "type": "boolean"
         },
         "root": {
           "type": "string"

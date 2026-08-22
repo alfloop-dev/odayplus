@@ -36,7 +36,7 @@ DEFAULT_REPOSITORIES: dict[str, dict[str, Any]] = {
 
         "repo": None,
         "local_path": ".",
-        "default_branch": "master",
+        "default_branch": "dev",
         "coordination_dir": ".coordination",
         "requests_dir": ".coordination/requests",
         "responses_dir": ".coordination/responses",
@@ -292,6 +292,10 @@ class RepositoryBinding:
     root: Path | None
     source: str
     error: str | None = None
+    # This belongs to the registry, rather than worker_worktrees.  A worktree
+    # is an implementation detail of a repository binding; letting it choose a
+    # second base ref made cross-repository tasks silently use the wrong branch.
+    default_branch: str = ""
 
     @property
     def resolved(self) -> bool:
@@ -321,6 +325,7 @@ def resolve_repository_binding(
             None,
             "unresolved",
             f"repository_checkout_unavailable: no local checkout for {slug or repo_id}",
+            str(repo.get("default_branch") or "").strip(),
         )
 
     resolved_root = root.resolve()
@@ -336,8 +341,15 @@ def resolve_repository_binding(
                     f"repository_checkout_mismatch: {resolved_root} points at "
                     f"{actual}, expected {slug or expected_slug}"
                 ),
+                str(repo.get("default_branch") or "").strip(),
             )
-    return RepositoryBinding(repo_id, slug, resolved_root, f"repository:{repo_id}")
+    return RepositoryBinding(
+        repo_id,
+        slug,
+        resolved_root,
+        f"repository:{repo_id}",
+        default_branch=str(repo.get("default_branch") or "").strip(),
+    )
 
 
 def resolve_task_repository(config: dict[str, Any], task: dict[str, Any] | None) -> RepositoryBinding:
@@ -415,6 +427,38 @@ def repository_local_path(config: dict[str, Any], repo_id: str | None) -> Path |
     repo = resolve_repository(config, repo_id)
     path = repo.get("resolved_local_path")
     return path if isinstance(path, Path) else None
+
+
+def canonical_repository_id_for_root(
+    config: dict[str, Any],
+    root: Path,
+    *,
+    fallback: str,
+) -> str:
+    """Return the registry's stable id for a checkout shared by several ids.
+
+    ``pantheon`` and ``odayplus`` intentionally resolve to the same checkout in
+    a live fleet.  Worktree paths must not depend on which alias happened to be
+    written into an individual task record, otherwise a single repository
+    acquires two parallel directory namespaces and lease discovery becomes
+    accidental.  ``iter_local_repositories`` already defines the canonical
+    first-registered-id rule used everywhere else that walks local checkouts.
+    """
+    try:
+        target = root.resolve()
+    except OSError:
+        target = root
+    for repo in iter_local_repositories(config):
+        candidate = repo.get("resolved_local_path")
+        if not isinstance(candidate, Path):
+            continue
+        try:
+            if candidate.resolve() == target:
+                return str(repo.get("id") or fallback)
+        except OSError:
+            if candidate == target:
+                return str(repo.get("id") or fallback)
+    return fallback
 
 
 def _normalized_artifact_path(value: str | Path | None) -> str:

@@ -97,19 +97,8 @@
     "auto_restore_enabled": false
   },
   "worker_worktrees": {
-    "enabled": true,
     "root": "/tmp/pantheon-worker-worktrees",
-    "base_ref": "origin/dev",
-    "reuse_existing": true,
-    "recover_clean_diverged_worktrees": true,
-    "git_network_timeout_seconds": 30,
-    "execution_reasons": [
-      "owned_ready_dispatch",
-      "owned_in_progress_dispatch",
-      "owned_finalize_dispatch",
-      "review_ready_dispatch",
-      "helper_claim_dispatch"
-    ]
+    "git_network_timeout_seconds": 30
   },
   "worker_retry": {
     "enabled": true,
@@ -219,7 +208,7 @@
       "pantheon": {
         "repo": null,
         "local_path": ".",
-        "default_branch": "main"
+        "default_branch": "dev"
       },
       "front_ai_trading_system": {
         "repo": "your-org/front-ai-trading-system",
@@ -270,7 +259,7 @@
     "remote_ref_snapshot_max_stale_seconds": 300,
     "poll_interval_seconds": 30,
     "repo": null,
-    "default_branch": "main",
+    "default_branch": "dev",
     "offline_backoff_seconds": 300,
     "archive_housekeeping_auto_merge": true,
     "close_resolved_issues": true,

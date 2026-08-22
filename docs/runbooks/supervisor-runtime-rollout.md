@@ -13,7 +13,7 @@ owner: "Platform/Ops"
 
 - `.orchestrator/config.schema.json` 是唯一欄位與型別 contract；固定 object 拒絕未知鍵，worker、provider、account pool 等具名 map 才允許動態 id。
 - `config.example.json` 只供 `make bootstrap` 建立開發用、gitignored 的 `config.json`，runtime 缺檔時不會 fallback 到 example。
-- 正式服務必須用 `--config /absolute/path/to/runtime.json`；Supervisor 會以 `PANTHEON_CONFIG_PATH` 把同一路徑傳給 worker、permission broker 與 `ai_status.py`。
+- 正式服務必須用 `--config /absolute/path/to/runtime.json`；若 config 位於 canonical status root，runtime launcher 也必須設定 `PANTHEON_STATUS_ROOT`，讓相對 state/repository path 固定錨在該 root，而不是每次 rollout 的 code worktree。Supervisor 會以 `PANTHEON_CONFIG_PATH` 把同一路徑傳給 worker、permission broker 與 `ai_status.py`。
 - 只有預設的 `.orchestrator/config.json` 會自動套用同目錄 `config.local.json`；外部正式 config 預設為 self-contained。
 - rollout 前依序執行 `check_orchestrator_config.py` 與 `check_config_wiring.py`，並用 `check_orchestrator_config.py --config <runtime.json>` 驗證正式檔。缺檔、非標準 JSON、未知鍵與錯誤型別一律 fail closed。
 - schema 中的固定設定必須有 production code 讀取；不再使用 dead-key allowlist。
@@ -138,6 +138,19 @@ $ uv run pytest .orchestrator/ -q
 `rollout_supervisor_runtime.py` 建立乾淨、具名分支的新 worktree，預檢 HEAD、距離與
 tracked working tree 後，才原子切換 `runtime-current` symlink：
 
+在首次部署 registry-base worktree 版本前，先檢查 live config；它會移除已失效的
+`worker_worktrees.enabled`、`base_ref`、`reuse_existing`、`execution_reasons` 與 clean-divergence
+reset 開關。先 dry-run，再明確指定同一個 live config 寫入：
+
+```bash
+python3 scripts/orchestrator/migrate_worker_worktree_config.py \
+  --config /absolute/status-root/.orchestrator/config.json
+python3 scripts/orchestrator/migrate_worker_worktree_config.py \
+  --config /absolute/status-root/.orchestrator/config.json --write
+```
+
+這只遷移設定；不會 fetch、reset 或更新任何開發者 checkout 的本地 branch。
+
 ```bash
 python3 scripts/orchestrator/rollout_supervisor_runtime.py \
   --source-root /path/to/clean-origin-dev-worktree \
@@ -147,11 +160,28 @@ python3 scripts/orchestrator/rollout_supervisor_runtime.py \
   --service pantheon-supervisor.service
 ```
 
+若現場唯一的 process manager 是既有 watchdog cron（沒有 supervisor systemd unit），
+不要再安裝一套重疊 service；改讓同一個 rollout primitive 只替換 supervisor PID，
+並由 stable runtime link 立即執行 watchdog：
+
+```bash
+python3 scripts/orchestrator/rollout_supervisor_runtime.py \
+  --source-root /path/to/clean-origin-dev-worktree \
+  --runtime-link /home/lupin/oday-plus-supervisor-runtime-current \
+  --runtime-parent /home/lupin \
+  --status-root /home/lupin/odayplus \
+  --watchdog-pid-file /home/lupin/odayplus/.orchestrator/supervisor.pid
+```
+
 此指令拒絕 dirty source、非 `origin/dev` 的 source HEAD、dirty target、detached target
 與落後目標 ref。它也會原子更新 canonical status root 的 `scripts/ai-status.sh`，使所有
 supervisor、worker 與人工狀態命令都由 `runtime-current/scripts/ai_status.py` 執行，避免
 舊 checkout 的 writer 把已修正狀態寫回舊格式。重啟失敗時會把 runtime symlink 與
 status launcher 一起回復，再重新啟動前一版服務。
+
+watchdog 的 systemd/cron 安裝根目錄同樣必須是 `runtime-current`（或由 service 直接
+執行該 symlink 內的 watchdog），絕不可指向開發者的 `dev` checkout；watchdog 只負責
+liveness/restart，不負責 fetch、merge 或任何 Git promotion。`restart-supervisor.sh` 已退役。
 
 以下是舊版的人工流程，僅保留作為歷史與回復說明：
 
