@@ -1800,3 +1800,81 @@ def test_list_data_gaps_with_no_match_filters(
     assert resp.status_code == 200
     data = resp.json()
     assert data["count"] == 0
+
+
+def test_unavailable_router_reports_readiness_and_missingness_explicitly() -> None:
+    """An unbacked BFF must declare its own missingness instead of serving empty data."""
+    router = create_market_intelligence_router(
+        unavailable_reason="MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED",
+    )
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1")
+
+    with TestClient(app) as client:
+        health = client.get("/api/v1/market-intelligence/health")
+        assert health.status_code == 200
+        body = health.json()
+        assert body["ready"] is False
+        assert body["available"] is False
+        assert body["status"] == "unavailable"
+        assert body["contract"] == CONTRACT_ID
+        assert body["reasonCode"] == "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED"
+        assert body["missing"] == ["data_platform_binding"]
+
+        for path in (
+            "/api/v1/market-intelligence/cells",
+            "/api/v1/market-intelligence/coverage",
+            "/api/v1/market-intelligence/data-gaps",
+            "/api/v1/market-intelligence/acquisition-plans",
+            "/api/v1/market-intelligence/evidence/site-001",
+            "/api/v1/market-intelligence/sites/site-001/context",
+        ):
+            response = client.get(path, headers=HEADERS_EXPANSION_ALPHA)
+            assert response.status_code == 503, (path, response.text)
+            assert "BINDING_REQUIRED" in response.text, path
+
+        # Writes must fail closed too; an unbacked BFF accepts no plans.
+        write = client.post(
+            "/api/v1/market-intelligence/acquisition-plans",
+            headers=HEADERS_EXPANSION_ALPHA,
+            json={"plan_id": "plan-1", "site_context_id": "s", "coverage_surface_id": "c"},
+        )
+        assert write.status_code == 503, write.text
+
+
+def test_production_create_app_gates_only_market_intelligence_without_binding(
+    monkeypatch: Any,
+    tmp_path: Path,
+) -> None:
+    """A missing platform binding must not take down production app composition."""
+    from types import SimpleNamespace
+
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.factory import _durable_bundle
+
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+
+    durable = _durable_bundle(tmp_path / "market-intelligence-gate.sqlite3")
+    durable.engine.is_production = True
+    bundle = replace(durable, mode="postgresql", assisted_intake_store=SimpleNamespace())
+
+    try:
+        # Composition succeeds: the binding gates only the routes that consume it.
+        app = create_app(persistence=bundle)
+        assert app.state.market_intelligence_service is None
+
+        with TestClient(app) as client:
+            health = client.get("/api/v1/market-intelligence/health")
+            assert health.status_code == 200
+            assert health.json()["ready"] is False
+            assert health.json()["reasonCode"] == "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED"
+
+            cells = client.get(
+                "/api/v1/market-intelligence/cells",
+                headers=HEADERS_EXPANSION_ALPHA,
+            )
+            assert cells.status_code == 503, cells.text
+            assert "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED" in cells.text
+    finally:
+        bundle.engine.close()

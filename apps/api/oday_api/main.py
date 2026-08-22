@@ -224,6 +224,7 @@ else:
         market_intelligence_facade = market_intelligence_facade or getattr(
             bundle, "market_data_facade", None
         )
+        market_intelligence_unavailable_reason: str | None = None
         if market_intelligence_service is None:
             if market_intelligence_facade is None and market_intelligence_repository is None:
                 if market_intelligence_transport is not None:
@@ -231,9 +232,13 @@ else:
                         transport=market_intelligence_transport,
                     )
                 elif require_live_data:
-                    raise RuntimeError(
-                        "Production Market Intelligence BFF requires an injected "
-                        "MarketDataFacade, repository, or DataPlatformTransport."
+                    # Fail closed at request time, not at composition time. A
+                    # missing platform binding must gate only the routes that
+                    # use it (ODP-API-001 readiness/missingness), the same way
+                    # ForecastOps and LearningHub report an unresolved
+                    # production binding without taking down the whole app.
+                    market_intelligence_unavailable_reason = (
+                        "MARKET_INTELLIGENCE_PRODUCTION_BINDING_REQUIRED"
                     )
                 else:
                     market_intelligence_facade = MarketDataFacade(
@@ -1271,6 +1276,7 @@ else:
                 facade=market_intelligence_facade,
                 repository=market_intelligence_repository,
                 audit_log=audit_log,
+                unavailable_reason=market_intelligence_unavailable_reason,
             ),
         )
         # This router is generated from a separately approved OpenAPI bundle;

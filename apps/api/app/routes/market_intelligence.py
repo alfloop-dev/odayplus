@@ -101,6 +101,53 @@ else:
         policy: dict[str, Any] = Field(default_factory=dict)
         metadata: dict[str, Any] = Field(default_factory=dict)
 
+    def _create_unavailable_router(reason_code: str) -> APIRouter:
+        """Mount the BFF surface in an explicitly unready, fail-closed state.
+
+        Composition stays successful so a missing platform binding gates only
+        the routes that depend on it. Readiness and missingness are reported
+        explicitly: `/health` answers 200 with `ready=false`, and every data
+        route answers 503 with the binding reason code.
+        """
+        from modules.market_intelligence_api.domain.contracts import CONTRACT_ID
+
+        router = APIRouter(prefix="/market-intelligence", tags=["market-intelligence"])
+
+        def _missingness() -> dict[str, Any]:
+            return {
+                "status": "unavailable",
+                "ready": False,
+                "available": False,
+                "service": "market_intelligence_bff",
+                "contract": CONTRACT_ID,
+                "reasonCode": reason_code,
+                "missing": ["data_platform_binding"],
+            }
+
+        @router.get("/health")
+        def health_check() -> dict[str, Any]:
+            return _missingness()
+
+        @router.api_route(
+            "/{resource_path:path}",
+            methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            include_in_schema=False,
+        )
+        def unavailable(resource_path: str) -> None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "code": reason_code,
+                    "message": (
+                        "Market Intelligence BFF has no data-platform binding; "
+                        "refusing to serve unbacked market intelligence."
+                    ),
+                    "details": _missingness(),
+                },
+            )
+
+        return router
+
     def create_market_intelligence_router(
         *,
         service: MarketIntelligenceService | None = None,
@@ -108,8 +155,15 @@ else:
         repository: MarketIntelligenceRepository | None = None,
         audit_log: InMemoryAuditLog | None = None,
         enforce_auth: bool = True,
+        unavailable_reason: str | None = None,
     ) -> APIRouter:
-        """Create and configure the Market Intelligence BFF APIRouter."""
+        """Create and configure the Market Intelligence BFF APIRouter.
+
+        When no data dependency can be resolved, the caller must say so
+        explicitly via ``unavailable_reason``. The router then mounts a
+        fail-closed surface that reports its own missingness instead of
+        serving an empty data-platform transport as if it were real data.
+        """
         from apps.api.app.routes._common import resolve_tenant_id
         from apps.api.oday_api.security.dependencies import (
             build_engine,
@@ -133,6 +187,8 @@ else:
                 auth_engine=authz_engine,
                 enforce_auth=enforce_auth,
             )
+        elif unavailable_reason is not None:
+            return _create_unavailable_router(unavailable_reason)
         else:
             raise RuntimeError(
                 "Market Intelligence BFF requires an injected MarketIntelligenceService, "
