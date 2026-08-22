@@ -169,6 +169,12 @@ def _context_for_site(market_context: Any, site_id: str) -> Mapping[str, Any]:
         # Falling back to an unmatched child would let another site's zoning
         # decide this site's binding recommendation.
         return {}
+    # A single context object is still site-scoped.  Do not let a valid
+    # context for another site supply zoning or other decision inputs when
+    # the caller is evaluating this site.
+    identity = _as_mapping(context.get("identity"))
+    if identity.get("site_id") != site_id:
+        return {}
     return context
 
 

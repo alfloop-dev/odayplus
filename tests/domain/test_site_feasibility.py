@@ -307,6 +307,22 @@ def test_context_for_different_site_cannot_drive_the_feasibility_gate(
     assert "zoning" in " ".join(doc.decision.reasons).lower()
 
 
+def test_single_context_for_different_site_cannot_drive_the_feasibility_gate() -> None:
+    context_for_other_site = _context()
+    context_for_other_site["identity"] = {
+        "site_id": "SITE-999",
+        "metadata": {"zoning": "commercial"},
+    }
+
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001", context_for_other_site, [_survey()]
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert doc.metadata["binding_recommendation_allowed"] is False
+    assert "zoning" in " ".join(doc.decision.reasons).lower()
+
+
 def test_contract_legal_values_are_handled_without_attribute_errors() -> None:
     doc = SiteFeasibilityService().evaluate_feasibility(
         "SITE-001",
