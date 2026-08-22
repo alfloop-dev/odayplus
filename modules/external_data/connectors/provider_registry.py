@@ -80,6 +80,17 @@ class ExternalProviderDefinition:
     endpoint_env_var: str | None = None
     enabled_in_fixture: bool = True
     metadata: Mapping[str, str] = field(default_factory=dict)
+    #: Task id that retired this provider's concrete adapter from odayplus.
+    #: The declaration itself stays — ``modules/external_data/connectors/**`` is
+    #: frozen legacy producer surface, and deleting an entry would silently drop
+    #: the record of a credential this deployment once held. What it means is
+    #: that ``provider_class`` no longer resolves and the deployment preflight
+    #: must refuse to select this provider for live production.
+    decommissioned_by: str = ""
+
+    @property
+    def decommissioned(self) -> bool:
+        return bool(self.decommissioned_by)
 
     @property
     def required_env_vars(self) -> tuple[str, ...]:
@@ -126,6 +137,7 @@ class ProviderValidationResult:
                 "source_contract_id": provider.source_contract_id,
                 "connector_class": provider.connector_class,
                 "provider_class": provider.provider_class,
+                "decommissioned_by": provider.decommissioned_by,
                 "auth_modes": [mode.value for mode in provider.auth_modes],
                 "env_vars": list(provider.required_env_vars),
                 "endpoint_env_var": provider.endpoint_env_var,
@@ -158,27 +170,23 @@ class ExternalProviderConfigError(RuntimeError):
 LIVE_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
 PRODUCTION_PROVIDER_IDS_ENV_VAR = "ODP_PRODUCTION_PROVIDER_IDS"
 # Providers that MUST be live-configured before the External Data Platform may
-# run in production live mode. These are the enrichment/reference sources that
-# have a live upstream today (geocode, POI, admin boundary).
+# run in production live mode.
 #
-# ``listing.partner_feed`` is intentionally NOT required here. The product sources
-# listings through two channels: (1) the assisted-listing-intake subsystem - a
-# human submits one URL and, for sources whose ToS forbid server retrieval
-# (591/rakuya/housefun), manually enters the fields under its own governance gates;
-# and (2) this bulk partner feed, which is fully implemented and tested but requires
-# a signed licensed-data partner (a real feed endpoint + credentials) that does not
-# exist yet. Requiring a live endpoint for an uncontracted partner would block live
-# mode on a business dependency, so the feed stays a defined, ready capability that
-# is gated in only when a licensed partner is configured - it is not part of the
-# standing live-required set.
+# The set used to hold the enrichment/reference sources with a live upstream:
+# geocode, POI and admin boundary. ``listing.partner_feed`` was deliberately
+# excluded, because it needs a signed licensed-data partner that does not exist
+# yet and requiring it would have blocked live mode on a business dependency.
 # See docs/design/EXTERNAL_PROVIDER_LIVE_REQUIRED_RECONCILIATION.md.
-REQUIRED_PRODUCTION_PROVIDER_IDS = frozenset(
-    {
-        "poi.commercial_api",
-        "geocode.primary_api",
-        "admin_boundary.official_dataset",
-    }
-)
+#
+# XR-CUTOVER-001 emptied it. Geocode, POI and admin-boundary are exactly
+# the adapters the cutover retired from odayplus: the ``tgos``, ``open_poi`` and
+# ``ris_nlsc`` domains they fed are ingested by oday-data-platform and read
+# through the market data facade. Requiring a live endpoint and credential for a
+# provider this repository can no longer call would make every production deploy
+# demand secrets that nothing here can use — the opposite of decommissioning
+# them. The set stays as a named, non-empty-able contract rather than being
+# deleted, so a future live-required provider has one place to be declared.
+REQUIRED_PRODUCTION_PROVIDER_IDS: frozenset[str] = frozenset()
 INVALID_AUTH_STATUSES = {"expired", "unauthorized", "revoked", "invalid"}
 PLACEHOLDER_VALUES = {"", "changeme", "change-me", "todo", "placeholder", "dummy", "example"}
 
@@ -189,7 +197,8 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
         category=ProviderCategory.LISTING,
         source_contract_id="listing_raw_snapshot",
         connector_class="modules.external_data.connectors.external.ListingConnector",
-        provider_class="modules.external_data.providers.live.ListingPartnerFeedProvider",
+        provider_class="",
+        decommissioned_by="XR-CUTOVER-001",
         credentials=(
             ProviderCredential(
                 env_var="ODP_LISTING_PROVIDER_API_KEY",
@@ -209,7 +218,8 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
         category=ProviderCategory.POI,
         source_contract_id="poi_snapshot",
         connector_class="modules.external_data.connectors.external.PoiConnector",
-        provider_class="modules.external_data.providers.live.PoiCommercialApiProvider",
+        provider_class="",
+        decommissioned_by="XR-CUTOVER-001",
         credentials=(
             ProviderCredential(
                 env_var="ODP_POI_PROVIDER_API_KEY",
@@ -229,7 +239,8 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
         category=ProviderCategory.GEOCODE,
         source_contract_id="geocode_result_snapshot",
         connector_class="modules.external_data.connectors.external.GeocodeConnector",
-        provider_class="modules.external_data.providers.live.PrimaryGeocodeProvider",
+        provider_class="",
+        decommissioned_by="XR-CUTOVER-001",
         credentials=(
             ProviderCredential(
                 env_var="ODP_GEOCODE_PROVIDER_API_KEY",
@@ -249,7 +260,8 @@ PROVIDER_REGISTRY: tuple[ExternalProviderDefinition, ...] = (
         category=ProviderCategory.ADMIN_BOUNDARY,
         source_contract_id="admin_boundary_snapshot",
         connector_class="modules.external_data.connectors.external.AdminBoundaryConnector",
-        provider_class="modules.external_data.providers.live.AdminBoundaryDatasetProvider",
+        provider_class="",
+        decommissioned_by="XR-CUTOVER-001",
         credentials=(
             ProviderCredential(
                 env_var="ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
@@ -391,6 +403,28 @@ def validate_external_providers(
                 for provider in PROVIDER_REGISTRY
                 if provider.provider_id in selected_provider_ids
             )
+            for provider in providers:
+                if not provider.decommissioned:
+                    continue
+                # The allowlist is the operator's statement of what this
+                # deployment runs live. Naming a retired adapter there cannot be
+                # satisfied by any credential, so it fails closed here rather
+                # than surfacing later as a missing-secret error that invites
+                # someone to provision one.
+                errors.append(
+                    ProviderValidationError(
+                        provider_id=provider.provider_id,
+                        category=provider.category,
+                        env_var=PRODUCTION_PROVIDER_IDS_ENV_VAR,
+                        code="provider_decommissioned",
+                        message=(
+                            f"{provider.provider_id} was decommissioned by "
+                            f"{provider.decommissioned_by}; odayplus holds no "
+                            "adapter for it. Read the dataset from "
+                            "oday-data-platform through the market data facade."
+                        ),
+                    )
+                )
         if production_like and selected_provider_ids:
             missing_required_ids = REQUIRED_PRODUCTION_PROVIDER_IDS - selected_provider_ids
             for provider_id in sorted(missing_required_ids):
@@ -408,6 +442,13 @@ def validate_external_providers(
                 )
 
         for provider in providers:
+            if provider.decommissioned:
+                # Credential revocation, expressed in code: nothing in this
+                # repository can call a retired adapter, so live mode must not
+                # ask a deployment to hold its endpoint or secret. Selecting one
+                # explicitly is already an error above; reaching it implicitly
+                # (live mode with no allowlist) simply requires nothing.
+                continue
             if production_like and not provider.license.allowed_in_production:
                 errors.append(
                     ProviderValidationError(

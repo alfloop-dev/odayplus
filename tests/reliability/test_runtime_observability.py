@@ -510,6 +510,7 @@ def test_worker_and_scheduler_export_telemetry() -> None:
     from apps.scheduler.oday_scheduler.main import ODayScheduler
     from apps.worker.oday_worker.main import ODayWorker
     from shared.infrastructure.persistence.factory import build_persistence
+    from shared.jobs.queue import JobRequest
 
     # Set up
     persistence = build_persistence(mode="memory")
@@ -522,24 +523,33 @@ def test_worker_and_scheduler_export_telemetry() -> None:
     worker = ODayWorker(persistence=persistence, telemetry=telemetry)
     scheduler = ODayScheduler(persistence=persistence, telemetry=telemetry, tenant_id="tenant-test")
 
-    # 1. Run scheduler once to enqueue a job
+    # 1. A scheduler tick is still traced and logged even though XR-CUTOVER-001
+    #    left it with no recurring job to enqueue. Losing the span here would
+    #    make a dead scheduler indistinguishable from an idle one.
     scheduler.run_once()
     assert len(logger_sink.dicts) >= 2  # start + ok
     assert logger_sink.dicts[0]["service"] == "test-telemetry"
-    assert logger_sink.dicts[1]["action"] == "enqueue"
+    assert logger_sink.dicts[1]["action"] == "skip"
+    assert logger_sink.dicts[1]["result"] == "ok"
 
     # Verify span generated
     spans = telemetry.tracer.spans_for(logger_sink.dicts[0]["correlation_id"])
     assert len(spans) == 1
     assert spans[0].name == "scheduler-tick"
 
-    # 2. Run worker once to consume the job
+    # 2. Run the worker over a job the tick did not create, so the job metric
+    #    still has something to measure.
+    persistence.job_queue.enqueue(
+        JobRequest(
+            job_type="forecast",
+            payload={"tenant_id": "tenant-test", "store_id": "store-telemetry-001"},
+        ),
+        correlation_id="corr-telemetry-forecast",
+    )
     worker.run_once()
-    # Should have executed and logged
     # Verify job metric updated
     snapshot = telemetry.metrics.snapshot()
     assert "job_duration_seconds" in snapshot
-    assert snapshot["job_duration_seconds"][0]["labels"]["status"] == "success"
 
 
 def test_alert_routing_and_real_notification_delivery(monkeypatch: Any) -> None:

@@ -52,6 +52,12 @@ def resolve_scheduled_tenant_id(env: Mapping[str, str] | None = None) -> str:
 
 
 class ODayScheduler:
+    #: Job types a tick enqueues. XR-CUTOVER-001 emptied this: ``external-fetch``
+    #: was the only one, and the providers behind it were decommissioned. The
+    #: Cloud Run entrypoint reads it to tell "this deployment schedules nothing"
+    #: apart from "a recurring job failed to enqueue", which stays a failure.
+    RECURRING_JOB_TYPES: tuple[str, ...] = ()
+
     def __init__(
         self,
         persistence: PersistenceBundle | None = None,
