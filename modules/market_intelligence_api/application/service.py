@@ -72,14 +72,34 @@ from shared.auth import Action, DataClassification, Principal
 from shared.auth.engine import AuthorizationEngine
 
 
+_CANONICAL_DOMAIN_ALIASES: dict[str, tuple[str, ...]] = {
+    "demand": ("demographics", "demand"),
+    "competitor": ("competitor", "competition"),
+    "rent": ("rent",),
+    "poi": ("poi",),
+    "mobility": ("mobility", "transport"),
+    "traffic": ("transport", "traffic"),
+    "listing": ("property", "listing"),
+    "event": ("events", "event"),
+}
+
+
+def _normalize_domain_name(value: Any) -> str:
+    candidate = getattr(value, "value", value)
+    return str(candidate).casefold().replace("-", "_").replace(" ", "_")
+
+
 def _canonical_domain_freshness(coverage: Any, domain: str) -> str:
     """Read the canonical per-domain freshness map without inventing a value."""
     values = getattr(coverage, "domain_freshness", None) if coverage is not None else None
     if isinstance(values, Mapping):
-        wanted = domain.casefold().replace("-", "_")
+        wanted = set(_CANONICAL_DOMAIN_ALIASES.get(
+            _normalize_domain_name(domain),
+            (_normalize_domain_name(domain),),
+        ))
         for key, value in values.items():
-            normalized = str(key).casefold().replace("-", "_")
-            if normalized == wanted:
+            normalized = _normalize_domain_name(key)
+            if normalized in wanted:
                 return getattr(value, "value", str(value))
     # `unknown` is a canonical freshness state and explicitly means that the
     # producer did not publish a freshness verdict for this domain.
@@ -546,7 +566,11 @@ class MarketIntelligenceService:
 
         for c in candidates:
             cand_id = c.site_id if isinstance(c, CandidateSiteSummary) else c.cell_id
-            val = c.unique_visitors_daily if isinstance(c, CandidateSiteSummary) else c.total_foot_traffic
+            # `activity_population` is the only common canonical mobility
+            # measure published by both product contracts. Resident and
+            # visitor populations are distinct measures and must not be
+            # substituted for it when it is absent (especially when it is 0).
+            val = c.activity_population
             if val is not None and c.mobility_status == "available":
                 mob_values[cand_id] = val
                 if val > max_mob:
@@ -558,11 +582,11 @@ class MarketIntelligenceService:
 
         domain_comparisons["mobility"] = DomainComparisonDelta(
             domain="mobility",
-            metric_name="visitors_or_traffic",
+            metric_name="activity_population",
             best_candidate_id=best_mob_id,
             values_by_candidate=mob_values,
             missing_candidate_ids=mob_missing,
-            summary_text=f"Highest mobility: {best_mob_id} ({max_mob:.0f})" if best_mob_id else "No mobility data available",
+            summary_text=f"Highest activity population: {best_mob_id} ({max_mob:.0f})" if best_mob_id else "No activity population data available",
         )
         best_in_class["mobility"] = best_mob_id
 

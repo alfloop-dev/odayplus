@@ -110,10 +110,14 @@ class CandidateSiteSummary:
     convenience_stores_count: int | None = None
     commercial_centers_count: int | None = None
     transit_stations_count: int | None = None
-    # Mobility & Traffic
+    # Mobility & Traffic. Keep the canonical product names intact; these
+    # values are not interchangeable visitor or foot-traffic measures.
     mobility_status: str = "unavailable"
-    unique_visitors_daily: float | None = None
-    stay_duration_minutes_mean: float | None = None
+    activity_population: float | None = None
+    resident_population: float | None = None
+    visitor_population: float | None = None
+    worker_population: float | None = None
+    dwell_time_minutes: float | None = None
     traffic_status: str = "unavailable"
     hourly_volume_vph: int | None = None
     # Events
@@ -172,8 +176,11 @@ class CandidateSiteSummary:
             },
             "mobility": {
                 "status": self.mobility_status,
-                "unique_visitors_daily": self.unique_visitors_daily,
-                "stay_duration_minutes_mean": self.stay_duration_minutes_mean,
+                "activity_population": self.activity_population,
+                "resident_population": self.resident_population,
+                "visitor_population": self.visitor_population,
+                "worker_population": self.worker_population,
+                "dwell_time_minutes": self.dwell_time_minutes,
             },
             "traffic": {
                 "status": self.traffic_status,
@@ -266,16 +273,31 @@ class CandidateSiteSummary:
             commercial_centers_count=ctx.poi.commercial_centers_count if ctx.poi.status == DomainStatus.available else None,
             transit_stations_count=ctx.poi.transit_stations_count if ctx.poi.status == DomainStatus.available else None,
             mobility_status=ctx.mobility.status.value,
-            unique_visitors_daily=(
-                getattr(ctx.mobility, "activity_population", None)
-                or getattr(ctx.mobility, "resident_population", None)
-                or getattr(ctx.mobility, "visitor_population", None)
-                or getattr(ctx.mobility, "unique_visitors_daily", None)
-            ) if ctx.mobility.status == DomainStatus.available else None,
-            stay_duration_minutes_mean=(
-                getattr(ctx.mobility, "dwell_time_minutes", None)
-                or getattr(ctx.mobility, "stay_duration_minutes_mean", None)
-            ) if ctx.mobility.status == DomainStatus.available else None,
+            activity_population=(
+                ctx.mobility.activity_population
+                if ctx.mobility.status == DomainStatus.available
+                else None
+            ),
+            resident_population=(
+                ctx.mobility.resident_population
+                if ctx.mobility.status == DomainStatus.available
+                else None
+            ),
+            visitor_population=(
+                ctx.mobility.visitor_population
+                if ctx.mobility.status == DomainStatus.available
+                else None
+            ),
+            worker_population=(
+                ctx.mobility.worker_population
+                if ctx.mobility.status == DomainStatus.available
+                else None
+            ),
+            dwell_time_minutes=(
+                ctx.mobility.dwell_time_minutes
+                if ctx.mobility.status == DomainStatus.available
+                else None
+            ),
             traffic_status=ctx.traffic.status.value,
             hourly_volume_vph=(
                 ctx.traffic.hourly_volume_vph
@@ -323,9 +345,13 @@ class CandidateCellSummary:
     # POI
     poi_status: str = "unavailable"
     total_poi_count: int | None = None
-    # Mobility
+    # Mobility. These are the canonical market-cell mobility measures.
     mobility_status: str = "unavailable"
-    total_foot_traffic: float | None = None
+    activity_population: float | None = None
+    resident_population: float | None = None
+    visitor_population: float | None = None
+    worker_population: float | None = None
+    dwell_time_minutes: float | None = None
     # Events
     event_status: str = "unavailable"
     active_events_count: int | None = None
@@ -371,7 +397,11 @@ class CandidateCellSummary:
             },
             "mobility": {
                 "status": self.mobility_status,
-                "total_foot_traffic": self.total_foot_traffic,
+                "activity_population": self.activity_population,
+                "resident_population": self.resident_population,
+                "visitor_population": self.visitor_population,
+                "worker_population": self.worker_population,
+                "dwell_time_minutes": self.dwell_time_minutes,
             },
             "event": {
                 "status": self.event_status,
@@ -462,8 +492,28 @@ class CandidateCellSummary:
                 )
                 else "unavailable"
             ),
-            total_foot_traffic=(
+            activity_population=(
                 cell.mobility.activity_population
+                if cell.mobility
+                else None
+            ),
+            resident_population=(
+                cell.mobility.resident_population
+                if cell.mobility
+                else None
+            ),
+            visitor_population=(
+                cell.mobility.visitor_population
+                if cell.mobility
+                else None
+            ),
+            worker_population=(
+                cell.mobility.worker_population
+                if cell.mobility
+                else None
+            ),
+            dwell_time_minutes=(
+                cell.mobility.dwell_time_minutes
                 if cell.mobility
                 else None
             ),

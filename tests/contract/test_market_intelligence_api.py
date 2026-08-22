@@ -45,6 +45,9 @@ from modules.market_intelligence_api import (
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellProfile,
 )
+from packages.oday_data_product_contracts_client.models.site_market_context import (
+    SiteMarketContext,
+)
 from shared.auth import (
     ANONYMOUS,
     DataClassification,
@@ -219,6 +222,11 @@ def sample_site_context_payload() -> dict[str, Any]:
                 "coverage": {
                     "overall_readiness": "ready",
                     "domain_coverage": {"DEMOGRAPHICS": "complete", "RENT": "complete", "POI": "complete", "COMPETITOR": "complete"},
+                    "domain_freshness": {
+                        "DEMOGRAPHICS": "fresh",
+                        "TRANSPORT": "stale",
+                        "EVENTS": "unknown",
+                    },
                     "has_gaps": False,
                     "readiness_reasons": [],
                 },
@@ -332,6 +340,11 @@ def sample_site_context_payload() -> dict[str, Any]:
                 "coverage": {
                     "overall_readiness": "usable_with_gaps",
                     "domain_coverage": {"DEMOGRAPHICS": "complete", "RENT": "missing"},
+                    "domain_freshness": {
+                        "DEMOGRAPHICS": "fresh",
+                        "TRANSPORT": "fresh",
+                        "EVENTS": "stale",
+                    },
                     "has_gaps": True,
                     "readiness_reasons": [
                         {
@@ -421,6 +434,11 @@ def sample_market_cell_payload() -> dict[str, Any]:
                 "coverage": {
                     "overall_readiness": "ready",
                     "domain_coverage": {"GEOGRAPHY": "complete"},
+                    "domain_freshness": {
+                        "DEMOGRAPHICS": "fresh",
+                        "TRANSPORT": "stale",
+                        "EVENTS": "unknown",
+                    },
                     "has_gaps": False,
                     "readiness_reasons": [],
                 },
@@ -817,6 +835,9 @@ def test_candidate_compare_post_success(
     first_candidate = next(c for c in data["candidates"] if c["site_id"] == "site-taipei-001")
     assert first_candidate["traffic"]["hourly_volume_vph"] == 1200
     assert "daily_traffic_volume" not in first_candidate["traffic"]
+    assert first_candidate["mobility"]["activity_population"] == 15000
+    assert first_candidate["mobility"]["resident_population"] is None
+    assert "unique_visitors_daily" not in first_candidate["mobility"]
 
 
 def test_candidate_compare_get_success(
@@ -848,6 +869,46 @@ def test_candidate_compare_market_cell_uses_only_canonical_components(
     assert "poi" in candidate["missing_domains"]
     assert "listing" in candidate["missing_domains"]
     assert "event" in candidate["missing_domains"]
+    assert candidate["mobility"]["activity_population"] == 3000
+    assert "total_foot_traffic" not in candidate["mobility"]
+
+
+def test_canonical_mobility_fields_do_not_fallback_to_other_populations(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport]
+) -> None:
+    _, _, transport = test_setup
+    raw_context = transport.fetch_document(
+        "emgi.site-market-context.v1", document_id="smc-doc-001"
+    )
+    assert raw_context is not None
+    context = SiteMarketContext.from_dict(raw_context["contexts"][0])
+    zero_summary = CandidateSiteSummary.from_site_context(
+        replace(
+            context,
+            mobility=replace(
+                context.mobility,
+                activity_population=0.0,
+                resident_population=111.0,
+                visitor_population=222.0,
+            ),
+        )
+    )
+    assert zero_summary.activity_population == 0.0
+
+    summary = CandidateSiteSummary.from_site_context(
+        replace(
+            context,
+            mobility=replace(
+                context.mobility,
+                activity_population=None,
+                resident_population=111.0,
+                visitor_population=222.0,
+            ),
+        )
+    )
+    assert summary.activity_population is None
+    assert summary.resident_population == 111.0
+    assert summary.visitor_population == 222.0
 
 
 def test_zero_competitors_remain_an_observed_cell_domain(
@@ -888,13 +949,15 @@ def test_get_site_evidence_chain_success(
     assert "demand" in data["domains"]
     assert data["domains"]["demand"]["observation_count"] == 50000
     assert data["domains"]["demand"]["sources"] == ["ds-demand"]
-    assert data["domains"]["demand"]["freshness_state"] == "unknown"
+    assert data["domains"]["demand"]["freshness_state"] == "fresh"
     assert data["domains"]["demand"]["confidence_pct"] == 95.0
     assert "age_seconds" not in data["domains"]["demand"]
     assert "competitor" in data["domains"]
     assert data["domains"]["competitor"]["sources"] == ["ds-competitor"]
     assert data["domains"]["competitor"]["negative_evidence_valid"] is None
     assert data["domains"]["event"]["negative_evidence_valid"] is None
+    assert data["domains"]["traffic"]["freshness_state"] == "stale"
+    assert data["domains"]["event"]["freshness_state"] == "unknown"
     assert data["overall_confidence_pct"] is None
     assert len(data["component_manifest_refs"]) >= 1
 
@@ -1281,6 +1344,28 @@ def test_production_create_app_mounts_market_intelligence_router() -> None:
         assert resp_alias.status_code == 200
         assert resp_alias.headers.get("Deprecation") == "true"
         assert resp_alias.json()["status"] == "healthy"
+
+
+def test_create_app_wires_injected_market_data_facade() -> None:
+    """App composition must pass an injected platform facade into the BFF."""
+    from apps.api.oday_api.main import create_app
+
+    facade = MarketDataFacade(
+        transport=InMemoryDataPlatformTransport(),
+    )
+    app = create_app(market_intelligence_facade=facade)
+
+    assert app.state.market_intelligence_facade is facade
+    assert app.state.market_intelligence_service is not None
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/v1/market-intelligence/health")
+    assert response.status_code == 200
+    assert response.json()["contract"] == CONTRACT_ID
+
+
+def test_market_intelligence_router_requires_explicit_data_dependency() -> None:
+    with pytest.raises(RuntimeError, match="requires an injected"):
+        create_market_intelligence_router()
 
 
 def test_list_data_gaps_with_filters(

@@ -29,10 +29,6 @@ from modules.market_intelligence_api.domain.models import (
     CoverageFilter,
     DataGapFilter,
 )
-from modules.external_data.infrastructure.data_platform_client import (
-    DataPlatformClient,
-    InMemoryDataPlatformTransport,
-)
 from modules.market_intelligence_api.infrastructure.repositories import (
     MarketIntelligenceRepository,
 )
@@ -146,17 +142,9 @@ else:
                 enforce_auth=enforce_auth,
             )
         else:
-            default_transport = InMemoryDataPlatformTransport()
-            default_client = DataPlatformClient(transport=default_transport)
-            default_facade = MarketDataFacade(
-                client=default_client,
-                auth_engine=authz_engine,
-                enforce_auth=enforce_auth,
-            )
-            active_service = MarketIntelligenceService(
-                facade=default_facade,
-                auth_engine=authz_engine,
-                enforce_auth=enforce_auth,
+            raise RuntimeError(
+                "Market Intelligence BFF requires an injected MarketIntelligenceService, "
+                "MarketDataFacade, or repository; refusing an empty data-platform transport."
             )
 
         router = APIRouter(prefix="/market-intelligence", tags=["market-intelligence"])

@@ -131,6 +131,7 @@ else:
         external_ingestion_service: Any = None,
         market_intelligence_service: Any = None,
         market_intelligence_facade: Any = None,
+        market_intelligence_transport: Any = None,
         market_intelligence_repository: Any = None,
         telemetry: Any = None,
     ) -> FastAPI:
@@ -205,6 +206,47 @@ else:
         evidence_store = evidence_store or bundle.evidence_store
         job_queue = job_queue or bundle.job_queue
         heatzone_store = heatzone_store or bundle.heatzone_store
+
+        # The BFF is a consumer of the released data-platform read facade.
+        # Resolve it at app composition time so the route never creates an
+        # implicit empty transport. Live deployments must inject the facade or
+        # transport supplied by the platform integration; local app startup may
+        # use an explicit in-memory replay solely to keep the API shell bootable.
+        from modules.external_data.application.market_data_facade import MarketDataFacade
+        from modules.external_data.infrastructure.data_platform_client import (
+            InMemoryDataPlatformTransport,
+        )
+        from modules.market_intelligence_api.application.service import MarketIntelligenceService
+
+        market_intelligence_facade = market_intelligence_facade or getattr(
+            bundle, "market_data_facade", None
+        )
+        if market_intelligence_service is None:
+            if (
+                market_intelligence_facade is None
+                and market_intelligence_repository is None
+            ):
+                if market_intelligence_transport is not None:
+                    market_intelligence_facade = MarketDataFacade(
+                        transport=market_intelligence_transport,
+                    )
+                elif require_live_data:
+                    raise RuntimeError(
+                        "Production Market Intelligence BFF requires an injected "
+                        "MarketDataFacade, repository, or DataPlatformTransport."
+                    )
+                else:
+                    market_intelligence_facade = MarketDataFacade(
+                        transport=InMemoryDataPlatformTransport(),
+                    )
+            if market_intelligence_facade is not None:
+                market_intelligence_service = MarketIntelligenceService(
+                    facade=market_intelligence_facade,
+                )
+            elif market_intelligence_repository is not None:
+                market_intelligence_service = MarketIntelligenceService(
+                    repository=market_intelligence_repository,
+                )
 
         from modules.external_data.application.ingestion_service import ExternalIngestionService
 
@@ -1457,6 +1499,7 @@ else:
         api.state.operator_live_repository = operator_live_repository
         api.state.external_ingestion_service = ingestion_service
         api.state.market_intelligence_service = market_intelligence_service
+        api.state.market_intelligence_facade = market_intelligence_facade
         api.state.persistence = bundle
         api.state.external_provider_validation = provider_validation
         api.state.require_live_data = require_live_data
