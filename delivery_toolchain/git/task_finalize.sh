@@ -55,10 +55,6 @@ done
 
 if [ -z "$TASK_ID" ] || [ -z "$BASE_BRANCH" ]; then usage; exit 2; fi
 
-# The toolchain lives next to this script, not inside the repository being
-# finalized.  Resolve helpers through TOOLCHAIN_DIR: $ROOT is the target
-# repository and does not have to carry a copy of delivery_toolchain/.
-TOOLCHAIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
@@ -98,9 +94,8 @@ if [ "$AHEAD" -eq 0 ]; then
   exit 1
 fi
 
-# Validate every delivery commit, not just HEAD.  A reused branch can otherwise
-# hide an older commit with a different Task-ID beneath a correct-looking tip.
-python3 "$TOOLCHAIN_DIR/check_task_delivery_identity.py" \
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python3 "$SCRIPT_DIR/check_task_delivery_identity.py" \
   --repo "$ROOT" \
   --task-id "$TASK_ID" \
   --base "$BASE_REF" \
