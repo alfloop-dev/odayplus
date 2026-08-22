@@ -709,6 +709,18 @@ def test_unauthorized_role_rejected_with_403(
     assert resp.status_code == 403
 
 
+def test_diagnostics_requires_market_intelligence_authorization(
+    test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
+) -> None:
+    client, _, _ = test_setup
+    resp = client.get(
+        "/api/v1/market-intelligence/diagnostics",
+        headers=HEADERS_UNAUTHORIZED_ROLE,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "role_unauthorized"
+
+
 def test_cross_tenant_access_denied_without_admin(
     test_setup: tuple[TestClient, MarketIntelligenceService, InMemoryDataPlatformTransport],
 ) -> None:

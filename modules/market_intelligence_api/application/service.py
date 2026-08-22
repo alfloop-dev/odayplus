@@ -931,8 +931,21 @@ class MarketIntelligenceService:
     # Health & Diagnostics
     # -----------------------------------------------------------------------
 
-    def get_diagnostics(self) -> dict[str, Any]:
-        """Return runtime diagnostics for the Market Intelligence BFF service."""
+    def get_diagnostics(
+        self,
+        *,
+        tenant_id: str | None = None,
+        principal: Principal | None = None,
+    ) -> dict[str, Any]:
+        """Return authorized runtime diagnostics for the Market Intelligence BFF."""
+        authorize_market_intelligence(
+            "market_intelligence_diagnostics",
+            action=Action.VIEW,
+            tenant_id=tenant_id,
+            principal=principal,
+            auth_engine=self._auth_engine,
+            enforce_auth=self._enforce_auth,
+        )
         facade_diag = self._repo.facade.get_diagnostics() if hasattr(self._repo, "facade") else {}
         return {
             "contract": self.contract,

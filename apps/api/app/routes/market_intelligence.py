@@ -243,14 +243,13 @@ else:
 
         @router.get("/diagnostics")
         def get_diagnostics(request: Request) -> dict[str, Any]:
-            _ = resolve_tenant_id(request)
+            tid = resolve_tenant_id(request)
             principal = _get_principal(request)
-            if not principal or not principal.authenticated:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required for diagnostics",
-                )
-            return active_service.get_diagnostics()
+            try:
+                return active_service.get_diagnostics(tenant_id=tid, principal=principal)
+            except Exception as exc:
+                _handle_error(exc)
+                raise
 
         # -------------------------------------------------------------------
         # Market Cells
