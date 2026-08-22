@@ -54,7 +54,6 @@ def _entrypoint(func):
 def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     raw = config.get("worker_worktrees")
     settings = raw if isinstance(raw, dict) else {}
-    branch_workflow = config.get("branch_workflow") if isinstance(config.get("branch_workflow"), dict) else {}
     try:
         git_network_timeout_seconds = max(
             1.0,
@@ -68,17 +67,97 @@ def worker_worktree_settings(config: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         git_network_timeout_seconds = 30.0
     return {
-        "enabled": bool(settings.get("enabled", False)),
-        # Fallback only, for a checkout with no configured root. A live fleet
-        # sets this explicitly and must keep whatever it already set: the path
+        # The default is only diagnostic; leasing and pruning fail closed until
+        # a fleet names its root explicitly. A live fleet must keep that path:
         # is baked into every `git worktree` registration on disk, so changing
         # it would orphan them all at once -- 127 of them on this host.
-        "root": str(settings.get("root") or "/tmp/orchestrator-worker-worktrees"),
-        "base_ref": str(settings.get("base_ref") or f"origin/{branch_workflow.get('dev_branch') or 'dev'}"),
-        "reuse_existing": bool(settings.get("reuse_existing", True)),
-        "execution_reasons": list(settings.get("execution_reasons") or WORKER_WORKTREE_EXECUTION_REASONS),
+        "root": str(settings.get("root") or "/tmp/pantheon-worker-worktrees"),
+        # Housekeeping is destructive (it removes already-merged worktrees),
+        # so unlike allocation it may never act on an inherited /tmp default.
+        # A deployed fleet must name the root that contains its own leases.
+        "root_configured": bool(str(settings.get("root") or "").strip()),
         "git_network_timeout_seconds": git_network_timeout_seconds,
     }
+
+
+class WorkerBaseResolution(NamedTuple):
+    """The immutable remote base one supervisor cycle leases to one repo."""
+
+    repository_id: str
+    default_branch: str
+    sha: str
+    remote_ref: str
+
+
+@_entrypoint
+def _worker_base_cache_key(repo_root: Path, repository_id: str, default_branch: str) -> str:
+    common_rc, common_dir = _git_output(repo_root, "rev-parse", "--git-common-dir")
+    if common_rc == 0 and common_dir.strip():
+        try:
+            common = (repo_root / common_dir.strip()).resolve()
+        except OSError:
+            common = repo_root.resolve()
+    else:
+        common = repo_root.resolve()
+    return f"{common}|{repository_id}|{default_branch}"
+
+
+@_entrypoint
+def resolve_worker_base(
+    repo_root: Path,
+    *,
+    repository_id: str,
+    default_branch: str,
+    base_cache: dict[str, WorkerBaseResolution | str] | None,
+    network_timeout_seconds: float | None,
+) -> tuple[WorkerBaseResolution | None, str | None]:
+    """Fetch a registry default branch once, then return its immutable SHA.
+
+    The cache is deliberately supplied by ``run_once`` rather than persisted in
+    runtime state.  It is a scheduling optimisation and provenance record for a
+    single dispatch cycle, not another source of truth or a second state
+    machine.  A failed first fetch is cached too, so a burst of tasks cannot
+    turn one unavailable remote into an unbounded retry storm.
+    """
+    branch = str(default_branch or "").strip()
+    if not branch_name_is_usable(branch):
+        return None, f"invalid_registry_default_branch:{branch or 'missing'}"
+    key = _worker_base_cache_key(repo_root, repository_id, branch)
+    cache = base_cache if base_cache is not None else {}
+    cached = cache.get(key)
+    if isinstance(cached, WorkerBaseResolution):
+        return cached, None
+    if isinstance(cached, str):
+        return None, cached
+
+    has_origin = "origin" in _git_output(repo_root, "remote")[1].splitlines()
+    if not has_origin:
+        error = "missing_origin_remote"
+        cache[key] = error
+        return None, error
+    fetch_proc, network_error = _run_git_network_command(
+        repo_root,
+        ["fetch", "origin", "--quiet", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+        timeout_seconds=network_timeout_seconds,
+    )
+    if network_error or fetch_proc is None:
+        error = f"base_fetch_timed_out:{network_error or 'unknown network failure'}"
+        cache[key] = error
+        return None, error
+    if fetch_proc.returncode != 0:
+        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
+        error = f"base_fetch_failed:{details or branch}"
+        cache[key] = error
+        return None, error
+    remote_ref = f"refs/remotes/origin/{branch}"
+    sha = _git_commit_oid(repo_root, remote_ref)
+    if not sha:
+        error = f"base_sha_missing:{remote_ref}"
+        cache[key] = error
+        return None, error
+    resolved = WorkerBaseResolution(repository_id, branch, sha, f"origin/{branch}")
+    cache[key] = resolved
+    return resolved, None
 
 @_entrypoint
 def _task_id_slug(task_id: str | None) -> str:
@@ -154,18 +233,19 @@ def worker_task_repo_root(config: dict[str, Any], task: dict[str, Any] | None) -
     and the fail-closed refresh policy then reports that branch as missing from
     a remote that never had it -- a dispatch deadlock no retry can clear.
     """
+    binding = worker_task_repository_binding(config, task)
+    if binding.resolved:
+        return binding.root, binding.source
+    return None, binding.error or "unresolved repository"
+
+
+@_entrypoint
+def worker_task_repository_binding(config: dict[str, Any], task: dict[str, Any] | None):
+    """Resolve the registry binding used for both worktree and base authority."""
     # Lazy import mirrors source_document_router: avoids a common.py cycle.
     from multi_repo_registry import resolve_task_repository
 
-    binding = resolve_task_repository(config, task)
-    if binding.resolved:
-        return binding.root, binding.source
-    if not str((task or {}).get("repository") or "").strip():
-        # No repository was ever declared for this task, and inference found no
-        # usable checkout. The supervisor's own root is the historical default
-        # and is correct for single-repo fleets.
-        return config_path(config, "status_file").parents[0].resolve(), "supervisor_repo"
-    return None, binding.error or "unresolved repository"
+    return resolve_task_repository(config, task)
 
 
 @_entrypoint
@@ -174,19 +254,12 @@ def worker_task_worktree_path(
     task_id: str | None,
     settings: dict[str, Any] | None = None,
     repo_root: Path | None = None,
+    repository_id: str | None = None,
 ) -> Path:
     active_settings = settings or worker_worktree_settings(config)
     root = repo_root or config_path(config, "status_file").parents[0]
-    repo_slug = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-") or "repo"
+    repo_slug = re.sub(r"[^a-z0-9]+", "-", str(repository_id or root.name).lower()).strip("-") or "repo"
     return _worker_worktree_base_root(config, active_settings) / repo_slug / _task_id_slug(task_id)
-
-@_entrypoint
-def worker_worktree_reason_enabled(reason: str | None, settings: dict[str, Any]) -> bool:
-    normalized_reason = str(reason or "")
-    for pattern in settings.get("execution_reasons", []):
-        if fnmatch.fnmatchcase(normalized_reason, str(pattern)):
-            return True
-    return False
 
 @_entrypoint
 def _git_worktree_records(repo_root: Path) -> list[dict[str, str]]:
@@ -297,7 +370,13 @@ def _existing_worktree_for_branch(repo_root: Path, branch: str, *, exclude_root:
     return None
 
 @_entrypoint
-def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: str) -> tuple[bool, str | None]:
+def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_sha: str) -> tuple[bool, str | None]:
+    """Create a registered task worktree from an immutable base commit.
+
+    This is the only creation primitive.  In particular, it must not fall back
+    to ``git clone``: a clone has its own common-dir and turns one registry
+    repository into a second, competing source authority.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         if not path.is_dir():
@@ -305,10 +384,7 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
         if any(path.iterdir()) and (
             not (path / ".git").exists() or not _worktree_matches_repo_common_dir(repo_root, path)
         ):
-            try:
-                shutil.rmtree(path)
-            except OSError as exc:
-                return False, f"Failed to clean stale worker worktree {path}: {exc}"
+            return False, f"Worker worktree path is not a registered worktree: {path}"
         elif any(path.iterdir()) and (path / ".git").exists():
             return False, f"Worker worktree path already exists and is not empty: {path}"
 
@@ -318,7 +394,9 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     elif _git_ref_exists(repo_root, remote_ref):
         command = ["git", "worktree", "add", "-b", branch, str(path), f"origin/{branch}"]
     else:
-        command = ["git", "worktree", "add", "-b", branch, str(path), base_ref]
+        if not _git_commit_oid(repo_root, base_sha):
+            return False, f"Worker base SHA is unavailable in repository: {base_sha}"
+        command = ["git", "worktree", "add", "-b", branch, str(path), base_sha]
 
     proc = subprocess.run(
         command,
@@ -329,84 +407,8 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_ref: 
     )
     if proc.returncode != 0:
         details = (proc.stderr or proc.stdout or "").strip()
-        # If the live supervisor repository is readonly, `git worktree add` cannot
-        # write refs under `.git`. Fall back to cloning into an isolated checkout.
-        fallback = _create_worker_worktree_fallback(repo_root, path, branch, base_ref)
-        if fallback:
-            return True, None
         return False, f"Failed to create worker worktree {path} for {branch}: {details}"
     return True, None
-
-
-@_entrypoint
-def _create_worker_worktree_fallback(repo_root: Path, path: Path, branch: str, base_ref: str) -> bool:
-    if path.exists():
-        return False
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    clone_proc = subprocess.run(
-        ["git", "clone", "--no-checkout", str(repo_root), str(path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if clone_proc.returncode != 0:
-        return False
-
-    # A clone of a local checkout inherits `origin = <local path>`. Left that
-    # way the workspace looks healthy while every push lands in the supervisor's
-    # own repo instead of the real remote, and every later ref verification asks
-    # a remote nobody publishes to -- which is how a task branch ends up
-    # "missing" from an origin that never had it.
-    upstream_rc, upstream_url = _git_output(repo_root, "remote", "get-url", "origin")
-    if upstream_rc == 0 and upstream_url.strip():
-        subprocess.run(
-            ["git", "remote", "set-url", "origin", upstream_url.strip()],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    if _git_ref_exists(path, f"refs/heads/{branch}"):
-        checkout_proc = subprocess.run(
-            ["git", "checkout", "-q", branch],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    elif _git_ref_exists(path, f"refs/remotes/origin/{branch}"):
-        checkout_proc = subprocess.run(
-            ["git", "checkout", "-q", "-b", branch, f"origin/{branch}"],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    else:
-        base_branch = base_ref
-        if base_branch.startswith("origin/"):
-            base_branch = base_branch.split("/", 1)[1]
-        if _git_ref_exists(path, f"refs/remotes/{base_ref}"):
-            checkout_source = base_ref
-        elif _git_ref_exists(path, f"refs/heads/{base_branch}"):
-            checkout_source = base_branch
-        else:
-            return False
-        checkout_proc = subprocess.run(
-            ["git", "checkout", "-q", "-b", branch, checkout_source],
-            cwd=path,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    if checkout_proc.returncode != 0:
-        return False
-
-    if _git_output(path, "symbolic-ref", "--short", "HEAD")[0] != 0:
-        return False
-    return True
 
 @_entrypoint
 def _parse_porcelain_entries(porcelain_status: str | bytes) -> list[tuple[str, str]]:
@@ -624,131 +626,6 @@ def _git_commit_oid(cwd: Path, ref: str) -> str | None:
     return oid if returncode == 0 and re.fullmatch(r"[0-9a-fA-F]{40,64}", oid) else None
 
 @_entrypoint
-def _clear_remote_head_snapshot_cache() -> None:
-    """Clear cached remote ref heads for supervisor operations."""
-    _REMOTE_HEAD_SNAPSHOTS.clear()
-
-@_entrypoint
-def _get_remote_heads_snapshot(
-    cwd: Path,
-    remote: str = "origin",
-    *,
-    network_timeout_seconds: float | None = None,
-    force_refresh: bool = False,
-) -> tuple[dict[str, str] | None, str]:
-    """Fetch remote branch heads snapshot (mapping branch_name -> commit_sha).
-
-    Returns (heads_dict, status_prefix).
-    On success: (heads_dict, "ok").
-    On failure: (None, "fetch_timed_out: ..." or "fetch_failed: ...").
-    """
-    now = time.monotonic()
-    remotes_rc, remote_url = _git_output(cwd, "remote", "get-url", remote)
-    cache_key = (remote_url.strip() if remotes_rc == 0 else str(cwd.resolve()), remote)
-
-    cached = _REMOTE_HEAD_SNAPSHOTS.get(cache_key)
-    ttl = 30.0
-    max_stale = 300.0
-
-    if not force_refresh and cached and now < cached[0]:
-        return cached[1], "ok"
-
-    remote_query, network_error = _run_git_network_command(
-        cwd,
-        ["ls-remote", "--heads", remote],
-        timeout_seconds=network_timeout_seconds,
-    )
-    if network_error:
-        last_success = cached[2] if cached else float("-inf")
-        if cached and now - last_success < max_stale:
-            return cached[1], "ok"
-        return None, f"fetch_timed_out: {network_error}"
-
-    if remote_query is None or remote_query.returncode != 0:
-        last_success = cached[2] if cached else float("-inf")
-        if cached and now - last_success < max_stale:
-            return cached[1], "ok"
-        details = (
-            (remote_query.stderr or remote_query.stdout or "").strip()
-            if remote_query
-            else "unknown network failure"
-        )
-        return None, f"fetch_failed: {details}"
-
-    heads: dict[str, str] = {}
-    for line in (remote_query.stdout or "").splitlines():
-        parts = line.split(maxsplit=1)
-        if len(parts) != 2:
-            continue
-        sha, ref = parts[0].strip(), parts[1].strip()
-        if ref.startswith("refs/heads/") and sha:
-            heads[ref.removeprefix("refs/heads/")] = sha
-
-    _REMOTE_HEAD_SNAPSHOTS[cache_key] = (now + ttl, heads, now)
-    return heads, "ok"
-
-@_entrypoint
-def _fetch_authoritative_task_head(
-    repo_root: Path,
-    worktree_path: Path,
-    branch: str,
-    *,
-    network_timeout_seconds: float | None = None,
-) -> tuple[str | None, str]:
-    """Resolve the immutable commit used for dirty-worktree lease recovery.
-
-    Repositories with an ``origin`` must resolve the exact remote task ref after
-    fetching it.  A mutable local branch (or the dirty worktree's HEAD) is never
-    allowed to win over the published task ref.  Local-only repositories retain
-    the existing branch-ref behavior for tests and offline development.
-    """
-    remotes_rc, remotes = _git_output(worktree_path, "remote")
-    has_origin = remotes_rc == 0 and "origin" in remotes.splitlines()
-    if not has_origin:
-        local_head = _git_commit_oid(repo_root, f"refs/heads/{branch}")
-        if local_head:
-            return local_head, "local_only_task_ref"
-        return None, "unverifiable_refs: missing local task branch"
-
-    heads_snapshot, snapshot_status = _get_remote_heads_snapshot(
-        worktree_path,
-        "origin",
-        network_timeout_seconds=network_timeout_seconds,
-    )
-    if heads_snapshot is None:
-        return None, snapshot_status
-
-    if branch not in heads_snapshot:
-        return None, "unverifiable_refs: remote task branch is missing"
-
-    advertised_head = heads_snapshot[branch]
-    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", advertised_head):
-        return None, "unverifiable_refs: invalid advertised remote task HEAD"
-
-    fetch_proc, network_error = _run_git_network_command(
-        worktree_path,
-        [
-            "fetch",
-            "origin",
-            "--quiet",
-            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
-        ],
-        timeout_seconds=network_timeout_seconds,
-    )
-    if network_error or fetch_proc is None:
-        return None, f"fetch_timed_out: {network_error or 'unknown network failure'}"
-    if fetch_proc.returncode != 0:
-        details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
-        return None, f"fetch_failed: {details}"
-    fetched_head = _git_commit_oid(repo_root, f"refs/remotes/origin/{branch}")
-    if not fetched_head or fetched_head.lower() != advertised_head.lower():
-        return None, (
-            "unverifiable_refs: fetched remote task HEAD does not match "
-            f"advertised HEAD ({fetched_head or 'none'} != {advertised_head})"
-        )
-    return fetched_head, "remote_exact_task_ref"
-
-@_entrypoint
 def _git_operation_in_progress(worktree_path: Path) -> bool:
     # REBASE_HEAD records the commit currently being replayed, but Git may
     # retain it after a successful rebase has finished.  The authoritative
@@ -860,172 +737,6 @@ def _clear_worktree_lease_block(state: dict[str, Any], task_id: str) -> None:
     if isinstance(bucket, dict):
         bucket.pop(normalize_agent_id(task_id) or task_id, None)
 
-@_entrypoint
-def _publish_unpublished_task_branch(
-    worktree_path: Path,
-    expected_branch: str,
-) -> tuple[bool, str]:
-    """Fast-forward-publish a clean task branch whose commits were never pushed.
-
-    The fail-closed refresh policy calls a branch dispatchable only when its
-    local HEAD exactly matches the remote task HEAD. A worker that commits but
-    exits before pushing leaves a state that can never reach that condition on
-    its own: leasing is what would run the worker that would push, and leasing
-    is exactly what the policy refuses. On 2026-08-05 eight tasks sat in that
-    deadlock for ~8h, each re-reported ~300 times, while the fleet ran no work
-    at all.
-
-    Publishing does not weaken the policy -- it satisfies it, by turning an
-    unverifiable local state into the exact local==remote state the policy
-    already accepts. It is therefore allowed only where that equivalence holds
-    and nothing can be lost:
-
-    * the worktree must be clean, so no unreviewed working-tree state is
-      published as a side effect of dispatch;
-    * the push must be a genuine fast-forward -- either the remote branch does
-      not exist yet, or its HEAD is an ancestor of the local HEAD.
-
-    A genuinely diverged branch (ahead *and* behind) is never published here.
-    That needs a rebase decision only the task owner can make, and the caller
-    escalates it instead.
-
-    Returns (published, detail).
-    """
-
-    dirty_rc, dirty_out = _git_output(worktree_path, "status", "--porcelain")
-    if dirty_rc != 0:
-        return False, "cannot read worktree status"
-    if dirty_out.strip():
-        return False, "worktree is not clean"
-
-    local_head = _git_commit_oid(worktree_path, "HEAD")
-    if not local_head:
-        return False, "missing local HEAD"
-
-    remote_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
-    if remote_head:
-        if remote_head == local_head:
-            return False, "already published"
-        ancestor_rc, _ = _git_output(
-            worktree_path, "merge-base", "--is-ancestor", remote_head, local_head
-        )
-        if ancestor_rc != 0:
-            # Remote holds commits the local branch does not: a real divergence.
-            return False, f"diverged from remote ({remote_head[:12]})"
-
-    push_proc = subprocess.run(
-        ["git", "push", "origin", f"refs/heads/{expected_branch}:refs/heads/{expected_branch}"],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if push_proc.returncode != 0:
-        details = (push_proc.stderr or push_proc.stdout or "").strip().splitlines()
-        return False, f"push failed: {details[0] if details else 'unknown'}"
-    _clear_remote_head_snapshot_cache()
-    return True, f"published {local_head[:12]}"
-
-@_entrypoint
-def _preserve_and_reset_clean_diverged_worktree(
-    config: dict[str, Any],
-    state: dict[str, Any],
-    worktree_path: Path,
-    task_id: str | None,
-    expected_branch: str,
-) -> tuple[bool, str]:
-    """Recover a clean diverged task branch without losing its local history.
-
-    A clean branch that is both ahead of and behind its remote cannot be
-    fast-forwarded or safely pushed.  Keeping it in place permanently blocks
-    the task.  When explicitly enabled, retain the complete local tip under an
-    immutable timestamped preservation ref, then reset the leased branch to
-    the remotely published task head.  The operator can recover the preserved
-    commits later, while dispatch proceeds only from the reviewed remote head.
-    """
-    active_statuses = active_worker_statuses(config)
-    for worker in (state.get("workers", {}) or {}).values():
-        if str(worker.get("status") or "") not in active_statuses:
-            continue
-        if str(worker.get("task_id") or "") == str(task_id or ""):
-            return False, "active worker still owns this task"
-
-    dirty_rc, dirty_out = _git_output(worktree_path, "status", "--porcelain")
-    if dirty_rc != 0 or dirty_out.strip():
-        return False, "worktree is no longer clean"
-    local_head = _git_commit_oid(worktree_path, "HEAD")
-    remote_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
-    if not local_head or not remote_head or local_head == remote_head:
-        return False, "missing or unchanged task heads"
-    remote_contains_local_rc, _ = _git_output(
-        worktree_path, "merge-base", "--is-ancestor", local_head, remote_head
-    )
-    local_contains_remote_rc, _ = _git_output(
-        worktree_path, "merge-base", "--is-ancestor", remote_head, local_head
-    )
-    # Never reset an ahead-only branch: its unpublished commits can be
-    # fast-forward published safely by the caller.  Recovery is only safe for
-    # a real fork, where neither tip is an ancestor of the other.
-    if remote_contains_local_rc != 1 or local_contains_remote_rc != 1:
-        return False, "branch is not a genuine local/remote divergence"
-
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    preserved_ref = f"supervisor-preserved/{_task_id_slug(task_id)}-{stamp}-{uuid.uuid4().hex[:8]}"
-    preserve_proc = subprocess.run(
-        ["git", "branch", preserved_ref, local_head],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if preserve_proc.returncode != 0:
-        details = (preserve_proc.stderr or preserve_proc.stdout or "").strip()
-        return False, f"failed to create preservation ref: {details}"
-    reset_proc = subprocess.run(
-        ["git", "reset", "--hard", remote_head],
-        cwd=worktree_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if reset_proc.returncode != 0 or _git_commit_oid(worktree_path, "HEAD") != remote_head:
-        details = (reset_proc.stderr or reset_proc.stdout or "").strip()
-        return False, f"preserved {preserved_ref}, but reset verification failed: {details}"
-    write_activity_log(
-        config,
-        {
-            "type": "worker_worktree_clean_divergence_recovered",
-            "task_id": task_id,
-            "workspace_path": str(worktree_path),
-            "workspace_branch": expected_branch,
-            "preserved_ref": preserved_ref,
-            "previous_head": local_head,
-            "remote_head": remote_head,
-            "message": "Clean diverged worktree reset to remote task head after preserving local history.",
-        },
-    )
-    return True, f"clean_divergence_recovered:{preserved_ref}"
-
-def _fresh_lease_path(worktree_path: Path, stamp: str) -> Path:
-    """Name the replacement worktree from the ORIGINAL task name.
-
-    Deriving it from the current name instead meant recovering a path that was
-    itself a recovery lease appended a second suffix, so repeated recoveries
-    built `name.lease_A.lease_B.lease_C...` - observed 60 characters deep on a
-    single task - until the directory name outgrew what the filesystem accepts.
-    """
-    base_name = worktree_path.name.split(".lease_", 1)[0]
-    return worktree_path.parent / f"{base_name}.lease_{stamp}"
-
-
-# Fail-closed refresh statuses that a fresh lease can recover from without any
-# operator decision: the reusable worktree is left untouched and the worker
-# starts again from the published task head.
-LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE = frozenset({
-    "skipped_dirty_worktree",
-    "unresolved_git_operation",
-})
-
 # Refresh status token for a reused worktree denied by real dirt. The refresh returns
 # "<token>: <what git actually reported>" so an operator reads the offending paths
 # instead of a fixed guess; callers must therefore compare on the token, not the
@@ -1059,24 +770,21 @@ def _dirty_worktree_detail(refresh_status: str | None) -> str:
 def _refresh_reused_worker_worktree(
     repo_root: Path,
     worktree_path: Path,
-    base_ref: str,
+    base_sha: str,
     expected_branch: str,
     *,
     network_timeout_seconds: float | None = None,
     materialized_paths=None,
 ) -> tuple[bool, str]:
-    """Lease a clean reused worktree using a fail-closed three-way policy.
+    """Lease a clean reused worktree against one immutable cycle base.
 
-    A branch behind the current base may be fast-forwarded. A clean local task
-    branch behind its freshly fetched remote task branch may also be
-    fast-forwarded to that authoritative published HEAD. A branch already
-    containing the base is left untouched. A genuinely diverged branch is
-    dispatchable only when its local HEAD exactly matches the remote task HEAD;
-    the owner then receives an explicit rebase-required prompt. Every
-    unverifiable or mutable condition blocks without resetting, cleaning,
-    rebasing, or otherwise discarding worker state.
+    This is intentionally local after ``resolve_worker_base`` fetched the
+    registry's default branch.  Fetching or fast-forwarding a task branch here
+    would create a second source authority and make one cycle observe several
+    moving branch heads.  A clean branch behind the base is fast-forwarded only
+    to the supplied SHA; a branch containing or diverging from that base stays
+    untouched and the relation is returned for the worker/review workflow.
     """
-    base = base_ref.split("/", 1)[1] if base_ref.startswith("origin/") else base_ref
     worktree_path = worktree_path.resolve()
     repo_root = repo_root.resolve()
 
@@ -1114,19 +822,6 @@ def _refresh_reused_worker_worktree(
     if _git_operation_in_progress(worktree_path):
         return False, "unresolved_git_operation"
 
-    has_remote_origin = "origin" in _git_output(worktree_path, "remote")[1].splitlines()
-    if has_remote_origin:
-        fetch_proc, network_error = _run_git_network_command(
-            worktree_path,
-            ["fetch", "origin", base, "--quiet"],
-            timeout_seconds=network_timeout_seconds,
-        )
-        if network_error or fetch_proc is None:
-            return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
-        if fetch_proc.returncode != 0:
-            details = (fetch_proc.stderr or fetch_proc.stdout or "").strip()
-            return False, f"fetch_failed: {details}"
-
     status_proc = subprocess.run(
         ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree_path,
@@ -1154,86 +849,20 @@ def _refresh_reused_worker_worktree(
             return False, f"{_SKIPPED_DIRTY_WORKTREE}: {detail}"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
-    if has_remote_origin:
-        base_head = _git_commit_oid(worktree_path, f"origin/{base}")
-    else:
-        base_head = (
-            _git_commit_oid(worktree_path, f"refs/heads/{base}")
-            or _git_commit_oid(worktree_path, base)
-            or _git_commit_oid(repo_root, base)
-        )
+    # Production passes the SHA resolved once at the beginning of this cycle.
+    # Symbolic refs remain accepted only for direct diagnostic/test callers.
+    base_head = _git_commit_oid(worktree_path, base_sha)
     if not local_head or not base_head:
-        return False, "unverifiable_refs: missing local HEAD or fetched base"
-
-    remote_task_head: str | None = None
-    if has_remote_origin:
-        heads_snapshot, snapshot_status = _get_remote_heads_snapshot(
-            worktree_path,
-            "origin",
-            network_timeout_seconds=network_timeout_seconds,
-        )
-        if heads_snapshot is None:
-            return False, snapshot_status
-        remote_task_exists = expected_branch in heads_snapshot
-        if remote_task_exists:
-            advertised_task_head = heads_snapshot[expected_branch]
-            fetch_task_proc, network_error = _run_git_network_command(
-                worktree_path,
-                [
-                    "fetch",
-                    "origin",
-                    "--quiet",
-                    f"+refs/heads/{expected_branch}:refs/remotes/origin/{expected_branch}",
-                ],
-                timeout_seconds=network_timeout_seconds,
-            )
-            if network_error or fetch_task_proc is None:
-                return False, f"fetch_timed_out: {network_error or 'unknown network failure'}"
-            if fetch_task_proc.returncode != 0:
-                details = (fetch_task_proc.stderr or fetch_task_proc.stdout or "").strip()
-                return False, f"fetch_failed: {details}"
-            remote_task_head = _git_commit_oid(worktree_path, f"origin/{expected_branch}")
-            if not remote_task_head:
-                return False, "unverifiable_refs: missing fetched remote task HEAD"
-            if remote_task_head.lower() != advertised_task_head.lower():
-                return False, (
-                    "unverifiable_refs: fetched remote task HEAD does not match "
-                    f"advertised HEAD ({remote_task_head} != {advertised_task_head})"
-                )
-            if local_head != remote_task_head:
-                remote_contains_local_rc, _ = _git_output(
-                    worktree_path,
-                    "merge-base",
-                    "--is-ancestor",
-                    local_head,
-                    remote_task_head,
-                )
-                if remote_contains_local_rc not in {0, 1}:
-                    return False, "unverifiable_refs: cannot compare local and remote task HEADs"
-                if remote_contains_local_rc != 0:
-                    return False, f"task_head_mismatch: local={local_head} remote={remote_task_head}"
-                task_ff_proc = subprocess.run(
-                    ["git", "merge", "--ff-only", f"origin/{expected_branch}"],
-                    cwd=worktree_path,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                if task_ff_proc.returncode != 0:
-                    details = (task_ff_proc.stderr or task_ff_proc.stdout or "").strip().splitlines()
-                    return False, f"task_fast_forward_failed: {details[0] if details else 'unknown'}"
-                local_head = _git_commit_oid(worktree_path, "HEAD")
-                if local_head != remote_task_head:
-                    return False, "task_fast_forward_failed: resulting HEAD did not match remote task HEAD"
+        return False, "unverifiable_refs: missing local HEAD or immutable base"
 
     base_contains_rc, _ = _git_output(
         worktree_path, "merge-base", "--is-ancestor", local_head, base_head
     )
     if base_contains_rc not in {0, 1}:
-        return False, "unverifiable_refs: cannot compare local HEAD with fetched base"
+        return False, "unverifiable_refs: cannot compare local HEAD with immutable base"
     if base_contains_rc == 0:
         merge_proc = subprocess.run(
-            ["git", "merge", "--ff-only", f"origin/{base}"],
+            ["git", "merge", "--ff-only", base_head],
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -1248,11 +877,9 @@ def _refresh_reused_worker_worktree(
         worktree_path, "merge-base", "--is-ancestor", base_head, local_head
     )
     if task_contains_rc not in {0, 1}:
-        return False, "unverifiable_refs: cannot compare fetched base with local HEAD"
+        return False, "unverifiable_refs: cannot compare immutable base with local HEAD"
     if task_contains_rc == 0:
         return True, f"base_present_at_{local_head[:12]}"
-    if not remote_task_head:
-        return False, "unverifiable_refs: diverged task branch has no fetched remote task HEAD"
     return True, f"base_advance_rebase_required:local={local_head},base={base_head}"
 
 @_entrypoint
@@ -1758,17 +1385,14 @@ def prepare_worker_workspace(
     *,
     queue_event_id: str | None,
     target_agent: str | None,
+    base_cache: dict[str, WorkerBaseResolution | str] | None = None,
 ) -> tuple[bool, str | None]:
     settings = worker_worktree_settings(config)
-    if not settings.get("enabled"):
-        return True, None
-    if not worker_worktree_reason_enabled(request.reason, settings):
-        return True, None
+    if not settings.get("root_configured", False):
+        return False, "Cannot lease isolated worker worktree: worker_worktrees.root is not configured."
     workspace_task_id = worker_workspace_task_id(request)
     if not workspace_task_id:
-        return True, None
-    if request.metadata.get("workspace_path"):
-        return True, None
+        return False, "Cannot lease isolated worker worktree: execution request has no task id."
 
     # The dispatch event carries a progress snapshot, not the task record: it
     # has no `branch` and no `repository`, so resolving either from it silently
@@ -1780,7 +1404,9 @@ def prepare_worker_workspace(
         workspace_task_id,
         task_metadata if isinstance(task_metadata, dict) else None,
     )
-    repo_root, repo_root_source = worker_task_repo_root(config, task_record)
+    binding = worker_task_repository_binding(config, task_record)
+    repo_root = binding.root
+    repo_root_source = binding.source if binding.resolved else (binding.error or binding.source)
     if repo_root is None:
         message = (
             f"Cannot lease isolated worker worktree for {workspace_task_id}: "
@@ -1801,293 +1427,148 @@ def prepare_worker_workspace(
         )
         return False, message
 
+    # Use the registry's first id for this checkout.  Alias ids such as
+    # `pantheon` and `odayplus` may name the same root, but must share a single
+    # worktree namespace and a single base snapshot.
+    from multi_repo_registry import canonical_repository_id_for_root
+
+    repository_id = canonical_repository_id_for_root(
+        config,
+        repo_root,
+        fallback=binding.repo_id or "pantheon",
+    )
+    base, base_error = resolve_worker_base(
+        repo_root,
+        repository_id=repository_id,
+        default_branch=binding.default_branch,
+        base_cache=base_cache,
+        network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+    )
+    if base is None:
+        message = (
+            f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+            f"failed to resolve fresh registry base ({base_error or 'unknown error'})."
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "dispatch_blocked_worktree_base",
+                "task_id": request.task_id,
+                "workspace_task_id": workspace_task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "repository_id": repository_id,
+                "default_branch": binding.default_branch,
+                "message": message,
+            },
+        )
+        return False, message
+
     branch = worker_task_branch(config, workspace_task_id, task_record)
-    worktree_path = worker_task_worktree_path(config, workspace_task_id, settings, repo_root)
+    worktree_path = worker_task_worktree_path(
+        config,
+        workspace_task_id,
+        settings,
+        repo_root,
+        repository_id=repository_id,
+    )
     reused = False
+    base_relation = "created_from_exact_base"
     materialized_paths = _orchestrator_materialized_paths(state, request, workspace_task_id)
 
-    if settings.get("reuse_existing", True):
-        existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
-        if existing:
-            worktree_path = existing
-            reused = True
-            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                repo_root,
-                worktree_path,
-                str(settings.get("base_ref") or "origin/dev"),
-                branch,
-                network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
-                materialized_paths=materialized_paths,
+    # A task branch has exactly one registered lease.  `reuse_existing=false`
+    # never had a safe meaning for a single branch (Git cannot check it out in
+    # two worktrees), so always discover and validate the existing binding.
+    existing = _existing_worktree_for_branch(repo_root, branch, exclude_root=True)
+    if existing:
+        worktree_path = existing
+        reused = True
+        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+            repo_root,
+            worktree_path,
+            base.sha,
+            branch,
+            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+            materialized_paths=materialized_paths,
+        )
+        write_activity_log(
+            config,
+            {
+                "type": "worker_worktree_refreshed",
+                "task_id": request.task_id,
+                "target_agent": target_agent,
+                "queue_event_id": queue_event_id,
+                "workspace_branch": branch,
+                "workspace_path": str(worktree_path),
+                "base_sha": base.sha,
+                "base_ref": base.remote_ref,
+                "refresh_ok": refresh_ok,
+                "refresh_status": refresh_status,
+            },
+        )
+        if not refresh_ok:
+            if _is_skipped_dirty_worktree(refresh_status):
+                reason = (
+                    f"has {_dirty_worktree_detail(refresh_status)}. Preserve and commit "
+                    "the task-owned work before dispatch."
+                )
+            else:
+                reason = f"failed the fail-closed refresh policy ({refresh_status})."
+            message = (
+                f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                f"reused worktree {worktree_path} {reason}"
             )
             write_activity_log(
                 config,
                 {
-                    "type": "worker_worktree_refreshed",
+                    "type": "dispatch_blocked_worktree_lease",
                     "task_id": request.task_id,
+                    "workspace_task_id": workspace_task_id,
                     "target_agent": target_agent,
                     "queue_event_id": queue_event_id,
+                    "message": message,
                     "workspace_branch": branch,
                     "workspace_path": str(worktree_path),
-                    "refresh_ok": refresh_ok,
                     "refresh_status": refresh_status,
                 },
             )
-            if not refresh_ok:
-                if _lease_status_kind(refresh_status) in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
-                    task_sha, task_sha_source = _fetch_authoritative_task_head(
-                        repo_root,
-                        worktree_path,
-                        branch,
-                        network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
-                    )
-                    if refresh_status == "unresolved_git_operation":
-                        # An interrupted merge/rebase is not preserved by the
-                        # quarantine helper - it refuses a worktree with an
-                        # operation in progress, because a half-applied index
-                        # cannot be inventoried as a diff. It does not need to
-                        # be: nothing here modifies the jammed worktree, so the
-                        # conflict state stays on disk exactly as it is, and the
-                        # fresh lease starts from the published task head. Left
-                        # unrecovered this was a permanent stall, not a delay -
-                        # leasing is what would run the worker that could finish
-                        # the merge, and leasing is what the policy refuses.
-                        recovered = bool(task_sha)
-                    else:
-                        quarantine = (
-                            _quarantine_and_preserve_dirty_worktree(
-                                config,
-                                state,
-                                worktree_path,
-                                workspace_task_id,
-                                expected_branch=branch,
-                                run_id=None,
-                                trigger="lease_recovery",
-                                owning_repo_root=repo_root,
-                            )
-                            if task_sha
-                            else _quarantine_refused("no_authoritative_task_sha", task_sha_source)
-                        )
-                        recovered = bool(quarantine)
-                        if not recovered:
-                            # `getattr`, not attribute access: the test doubles
-                            # for this helper predate the reason and still hand
-                            # back a plain bool. A missing reason is worth less
-                            # than a crash here is expensive.
-                            declined_reason = getattr(quarantine, "reason", "") or "unspecified"
-                            write_activity_log(
-                                config,
-                                {
-                                    "type": "worker_worktree_quarantine_declined",
-                                    "task_id": request.task_id,
-                                    "target_agent": target_agent,
-                                    "queue_event_id": queue_event_id,
-                                    "workspace_branch": branch,
-                                    "workspace_path": str(worktree_path),
-                                    "refresh_status": refresh_status,
-                                    "reason": declined_reason,
-                                    "detail": getattr(quarantine, "detail", ""),
-                                    "message": (
-                                        f"Declined to preserve dirty worktree for {request.task_id}: "
-                                        f"{declined_reason}."
-                                    ),
-                                },
-                            )
-                    if not task_sha:
-                        refresh_status = task_sha_source
-                    if recovered:
-                        original_worktree_path = worktree_path
-                        q_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"_{uuid.uuid4().hex[:8]}"
-                        fresh_path = _fresh_lease_path(worktree_path, q_stamp)
-                        if task_sha:
-                            fresh_path.parent.mkdir(parents=True, exist_ok=True)
-                            create_proc = subprocess.run(
-                                ["git", "worktree", "add", "--detach", str(fresh_path), task_sha],
-                                cwd=repo_root,
-                                capture_output=True,
-                                text=True,
-                                check=False,
-                            )
-                            if create_proc.returncode != 0 and not (repo_root / ".git").exists():
-                                fresh_path.mkdir(parents=True, exist_ok=True)
-                                create_ok = True
-                            else:
-                                create_ok = create_proc.returncode == 0
-
-                            if create_ok:
-                                worktree_path = fresh_path
-                                fresh_head = _git_commit_oid(fresh_path, "HEAD") or task_sha
-                                if fresh_head and fresh_head == task_sha:
-                                    refresh_ok = True
-                                    refresh_status = f"lease_recovered_exact_task_sha:{task_sha[:12]}"
-                                    materialize_worker_context_files(config, request, worktree_path)
-                                    write_activity_log(
-                                        config,
-                                        {
-                                            "type": "worker_worktree_lease_recovered",
-                                            "task_id": request.task_id,
-                                            "target_agent": target_agent,
-                                            "queue_event_id": queue_event_id,
-                                            "workspace_branch": branch,
-                                            "workspace_path": str(worktree_path),
-                                            "quarantined_worktree_path": str(original_worktree_path),
-                                            "task_sha": task_sha,
-                                            "task_sha_source": task_sha_source,
-                                            "leased_remote_exact": task_sha_source == "remote_exact_task_ref",
-                                            "refresh_ok": refresh_ok,
-                                            "refresh_status": refresh_status,
-                                        },
-                                    )
-                                else:
-                                    refresh_ok = False
-                                    refresh_status = (
-                                        f"recovered_task_sha_mismatch:expected={task_sha},found={fresh_head}"
-                                    )
-                if (
-                    not refresh_ok
-                    and refresh_status.startswith("task_head_mismatch:")
-                    and bool(settings.get("recover_clean_diverged_worktrees", False))
-                ):
-                    recovered, recovery_detail = _preserve_and_reset_clean_diverged_worktree(
-                        config,
-                        state,
-                        worktree_path,
-                        workspace_task_id,
-                        branch,
-                    )
-                    if recovered:
-                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                            repo_root,
-                            worktree_path,
-                            str(settings.get("base_ref") or "origin/dev"),
-                            branch,
-                            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
-                            materialized_paths=materialized_paths,
-                        )
-                        write_activity_log(
-                            config,
-                            {
-                                "type": "worker_worktree_clean_divergence_recovery_verified",
-                                "task_id": request.task_id,
-                                "target_agent": target_agent,
-                                "queue_event_id": queue_event_id,
-                                "workspace_branch": branch,
-                                "workspace_path": str(worktree_path),
-                                "recovery_detail": recovery_detail,
-                                "refresh_ok": refresh_ok,
-                                "refresh_status": refresh_status,
-                            },
-                        )
-                    else:
-                        write_activity_log(
-                            config,
-                            {
-                                "type": "worker_worktree_clean_divergence_recovery_blocked",
-                                "task_id": request.task_id,
-                                "target_agent": target_agent,
-                                "queue_event_id": queue_event_id,
-                                "workspace_branch": branch,
-                                "workspace_path": str(worktree_path),
-                                "recovery_detail": recovery_detail,
-                                "refresh_status": refresh_status,
-                            },
-                        )
-                if not refresh_ok and _lease_status_kind(refresh_status) not in LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE:
-                    # The clean-but-unpublished deadlock. Publishing is only
-                    # attempted for fast-forwards on a clean worktree; anything
-                    # genuinely diverged falls through to the escalation below.
-                    published, publish_detail = _publish_unpublished_task_branch(worktree_path, branch)
-                    if published:
-                        refresh_ok, refresh_status = _refresh_reused_worker_worktree(
-                            repo_root,
-                            worktree_path,
-                            str(settings.get("base_ref") or "origin/dev"),
-                            branch,
-                            network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
-                            materialized_paths=materialized_paths,
-                        )
-                        write_activity_log(
-                            config,
-                            {
-                                "type": "worker_worktree_branch_published",
-                                "task_id": request.task_id,
-                                "target_agent": target_agent,
-                                "queue_event_id": queue_event_id,
-                                "workspace_branch": branch,
-                                "workspace_path": str(worktree_path),
-                                "publish_detail": publish_detail,
-                                "refresh_ok": refresh_ok,
-                                "refresh_status": refresh_status,
-                            },
-                        )
-                        console_log(
-                            f"worktree branch published: task={request.task_id} branch={branch} "
-                            f"{publish_detail} refresh_ok={refresh_ok}",
-                            quiet=SUPERVISOR_LOG_QUIET,
-                        )
-
-                if not refresh_ok:
-                    if _is_skipped_dirty_worktree(refresh_status):
-                        reason = (
-                            f"has {_dirty_worktree_detail(refresh_status)}. Preserve and commit "
-                            "the task-owned work before dispatch."
-                        )
-                    else:
-                        reason = f"failed the fail-closed refresh policy ({refresh_status})."
-                    message = (
-                        f"Cannot lease isolated worker worktree for {workspace_task_id}: "
-                        f"reused worktree {worktree_path} {reason}"
-                    )
-                    write_activity_log(
-                        config,
-                        {
-                            "type": "dispatch_blocked_worktree_lease",
-                            "task_id": request.task_id,
-                            "workspace_task_id": workspace_task_id,
-                            "target_agent": target_agent,
-                            "queue_event_id": queue_event_id,
-                            "message": message,
-                            "workspace_branch": branch,
-                            "workspace_path": str(worktree_path),
-                            "refresh_status": refresh_status,
-                        },
-                    )
-                    _record_worktree_lease_block(
-                        config,
-                        state,
-                        task_id=str(request.task_id or workspace_task_id),
-                        refresh_status=refresh_status,
-                        message=message,
-                    )
-                    return False, message
-                _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
-            if refresh_status.startswith("base_advance_rebase_required:"):
-                if str(request.reason or "").strip() == "owned_finalize_dispatch":
-                    # The reviewer approved an exact immutable head. A finalize
-                    # worker may observe that dev advanced, but must never compose
-                    # the base into the approved branch and invalidate the review.
-                    request.metadata.update(
-                        {
-                            "approved_head_immutable": True,
-                            "base_advance_deferred_to_merge_queue": True,
-                            "worktree_refresh_status": refresh_status,
-                        }
-                    )
-                else:
-                    base_advance_prompt = (
-                        "BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF: this clean local task "
-                        f"HEAD exactly matches origin/{branch}, but {branch} diverges from "
-                        f"{settings.get('base_ref') or 'origin/dev'}. The task owner must fetch "
-                        "and rebase/compose the current base in this task worktree, resolve and "
-                        "verify it, then push normally. Do not reset, discard, or overwrite task "
-                        "history.\n\n"
-                    )
-                    request.message = base_advance_prompt + request.message
-                    request.metadata.update(
-                        {
-                            "base_advance_required": True,
-                            "worktree_refresh_status": refresh_status,
-                        }
-                    )
+            _record_worktree_lease_block(
+                config,
+                state,
+                task_id=str(request.task_id or workspace_task_id),
+                refresh_status=refresh_status,
+                message=message,
+            )
+            return False, message
+        _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
+        if refresh_status.startswith("ff_to_"):
+            base_relation = "fast_forwarded"
+        elif refresh_status.startswith("base_present_at_"):
+            base_relation = "contains_base"
+        elif refresh_status.startswith("base_advance_rebase_required:"):
+            base_relation = "diverged"
+            if str(request.reason or "").strip() == "owned_finalize_dispatch":
+                request.metadata.update(
+                    {
+                        "approved_head_immutable": True,
+                        "base_advance_deferred_to_merge_queue": True,
+                        "worktree_refresh_status": refresh_status,
+                    }
+                )
+            else:
+                base_advance_prompt = (
+                    "BASE ADVANCE REQUIRED BEFORE REVIEW OR MERGE: this task branch "
+                    f"diverges from {base.remote_ref} ({base.sha[:12]}). Compose the current "
+                    "base through the normal task workflow, resolve and verify it, then push "
+                    "normally. Do not reset, discard, or overwrite task history.\n\n"
+                )
+                request.message = base_advance_prompt + request.message
+                request.metadata.update(
+                    {
+                        "base_advance_required": True,
+                        "worktree_refresh_status": refresh_status,
+                    }
+                )
 
     if not reused:
         if _branch_checked_out_in_root(repo_root, branch):
@@ -2110,7 +1591,11 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
-        created, error = _create_worker_worktree(repo_root, worktree_path, branch, str(settings.get("base_ref") or "origin/dev"))
+        branch_preexisted = (
+            _git_ref_exists(repo_root, f"refs/heads/{branch}")
+            or _git_ref_exists(repo_root, f"refs/remotes/origin/{branch}")
+        )
+        created, error = _create_worker_worktree(repo_root, worktree_path, branch, base.sha)
         if not created:
             message = error or f"Failed to create worker worktree for {workspace_task_id}."
             write_activity_log(
@@ -2127,6 +1612,43 @@ def prepare_worker_workspace(
                 },
             )
             return False, message
+        if branch_preexisted:
+            # A branch without a currently registered checkout is still an
+            # existing task branch, not a new task.  Apply the same exact-SHA
+            # relation check before handing it to a worker.
+            refresh_ok, refresh_status = _refresh_reused_worker_worktree(
+                repo_root,
+                worktree_path,
+                base.sha,
+                branch,
+                network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
+                materialized_paths=materialized_paths,
+            )
+            if not refresh_ok:
+                message = (
+                    f"Cannot lease isolated worker worktree for {workspace_task_id}: "
+                    f"attached task branch failed the fail-closed refresh policy ({refresh_status})."
+                )
+                _record_worktree_lease_block(
+                    config,
+                    state,
+                    task_id=str(request.task_id or workspace_task_id),
+                    refresh_status=refresh_status,
+                    message=message,
+                )
+                return False, message
+            if refresh_status.startswith("ff_to_"):
+                base_relation = "fast_forwarded"
+            elif refresh_status.startswith("base_present_at_"):
+                base_relation = "contains_base"
+            elif refresh_status.startswith("base_advance_rebase_required:"):
+                base_relation = "diverged"
+                request.metadata.update(
+                    {
+                        "base_advance_required": True,
+                        "worktree_refresh_status": refresh_status,
+                    }
+                )
 
     # The workspace is the task's own repository; the status root is not. It
     # names the fleet that owns ai-status.json, the approval queue and the
@@ -2142,6 +1664,10 @@ def prepare_worker_workspace(
             "workspace_path": str(worktree_path),
             "workspace_branch": branch,
             "status_root": str(fleet_root),
+            "repository_id": repository_id,
+            "base_ref": base.remote_ref,
+            "base_sha": base.sha,
+            "base_relation": base_relation,
         }
     )
     materialized_context_files = materialize_worker_context_files(config, request, worktree_path)
@@ -2153,6 +1679,10 @@ def prepare_worker_workspace(
         "path": str(worktree_path),
         "status_root": str(fleet_root),
         "repo_root_source": repo_root_source,
+        "repository_id": repository_id,
+        "base_ref": base.remote_ref,
+        "base_sha": base.sha,
+        "base_relation": base_relation,
         "last_queue_event_id": queue_event_id,
         "last_target_agent": target_agent,
         "last_used_at": utc_now(),
@@ -2171,6 +1701,10 @@ def prepare_worker_workspace(
             "workspace_branch": branch,
             "workspace_path": str(worktree_path),
             "status_root": str(fleet_root),
+            "repository_id": repository_id,
+            "base_ref": base.remote_ref,
+            "base_sha": base.sha,
+            "base_relation": base_relation,
         },
     )
     return True, None
@@ -2313,7 +1847,6 @@ def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, A
     return {
         "enabled": bool(settings.get("enabled", True)),
         "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
-        "base_branches": [str(b).strip() for b in (settings.get("base_branches") or ["dev", "master", "main"]) if str(b).strip()],
         "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
     }
 
@@ -2351,7 +1884,12 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
     return referenced
 
 @_entrypoint
-def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> bool:
+def prune_orphan_worktrees(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    base_cache: dict[str, WorkerBaseResolution | str] | None = None,
+) -> bool:
     """Remove finished worker worktrees whose branches are merged and tree is clean."""
     settings = worker_worktree_housekeeping_settings(config)
     if not settings["enabled"]:
@@ -2368,12 +1906,11 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
     bucket["last_run_at"] = utc_now()
 
     worktree_settings = worker_worktree_settings(config)
-    if not worktree_settings.get("enabled", False):
+    if not worktree_settings.get("root_configured", False):
         return False
     base_root = _worker_worktree_base_root(config, worktree_settings)
     if not base_root.exists():
         return False
-    repo_root = config_path(config, "status_file").parents[0]
 
     # Only a worker that can still USE its workspace holds a claim on it.
     #
@@ -2404,78 +1941,84 @@ def prune_orphan_worktrees(config: dict[str, Any], state: dict[str, Any]) -> boo
 
     live_paths = _scan_process_paths_in_root(base_root)
 
-    merged_branches: set[str] = set()
-    base_refs: list[str] = []
-    for ref in settings["base_branches"]:
-        for candidate in (f"origin/{ref}", ref):
-            if not _git_ref_exists(repo_root, candidate):
+    max_removals = max(0, settings["max_removals_per_tick"])
+    base_root_str = str(base_root)
+    removed: list[str] = []
+    # Pruning has the same authority boundary as leasing: each distinct local
+    # checkout contributes its registry default branch and freshly fetched
+    # immutable remote SHA.  Never use a developer's local dev/master/main as
+    # evidence that task work is merged.
+    from multi_repo_registry import iter_local_repositories
+
+    active_base_cache = base_cache if base_cache is not None else {}
+    for repo in iter_local_repositories(config):
+        if len(removed) >= max_removals:
+            break
+        repo_root = repo.get("resolved_local_path")
+        repo_id = str(repo.get("id") or "").strip()
+        default_branch = str(repo.get("default_branch") or "").strip()
+        if not isinstance(repo_root, Path) or not repo_id:
+            continue
+        base, _base_error = resolve_worker_base(
+            repo_root,
+            repository_id=repo_id,
+            default_branch=default_branch,
+            base_cache=active_base_cache,
+            network_timeout_seconds=float(worktree_settings["git_network_timeout_seconds"]),
+        )
+        if base is None:
+            continue
+        base_refs = [base.sha]
+        merged_branches: set[str] = set()
+        merged_proc = subprocess.run(
+            ["git", "branch", "--merged", base.sha, "--list", "task/*"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if merged_proc.returncode == 0:
+            for line in merged_proc.stdout.splitlines():
+                name = line.strip().lstrip("*").strip()
+                if name:
+                    merged_branches.add(name)
+
+        for record in _git_worktree_records(repo_root):
+            if len(removed) >= max_removals:
+                break
+            wt_value = record.get("worktree")
+            if not wt_value or not wt_value.startswith(base_root_str):
                 continue
-            base_refs.append(candidate)
-            proc = subprocess.run(
-                ["git", "branch", "--merged", candidate, "--list", "task/*"],
-                cwd=repo_root,
+            try:
+                wt_path = Path(wt_value).resolve()
+            except OSError:
+                continue
+            if wt_path in claimed_paths:
+                continue
+            if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+                continue
+            branch = _worktree_record_branch(record)
+            if branch:
+                if branch not in merged_branches:
+                    continue
+            elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
+                continue
+            status_proc = subprocess.run(
+                ["git", "-C", str(wt_path), "status", "--porcelain"],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-            if proc.returncode != 0:
+            if status_proc.returncode != 0 or status_proc.stdout.strip():
                 continue
-            for line in proc.stdout.splitlines():
-                name = line.strip().lstrip("*").strip()
-                if name:
-                    merged_branches.add(name)
-    # Without a single resolvable base there is nothing to prove "already merged"
-    # against, for either a branch or a detached HEAD, so nothing may be removed.
-    # A base that exists but has no merged task branch is NOT such a case: a
-    # detached recovery worktree can still be an ancestor of it.
-    if not base_refs:
-        return False
-
-    max_removals = max(0, settings["max_removals_per_tick"])
-    base_root_str = str(base_root)
-    removed: list[str] = []
-    for record in _git_worktree_records(repo_root):
-        if len(removed) >= max_removals:
-            break
-        wt_value = record.get("worktree")
-        if not wt_value or not wt_value.startswith(base_root_str):
-            continue
-        try:
-            wt_path = Path(wt_value).resolve()
-        except OSError:
-            continue
-        if wt_path in claimed_paths:
-            continue
-        if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
-            continue
-        branch = _worktree_record_branch(record)
-        if branch:
-            if branch not in merged_branches:
-                continue
-        elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
-            # A lease-recovery worktree is created with `git worktree add --detach`
-            # (see _fresh_lease_path), so it carries no branch at all and the
-            # branch-membership test above could never admit it -- every one of
-            # them was structurally unprunable for its whole life. Ask the same
-            # question ancestry can answer instead: is this HEAD already contained
-            # in a base? Same guarantee, expressed for a worktree that has no name.
-            continue
-        status_proc = subprocess.run(
-            ["git", "-C", str(wt_path), "status", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if status_proc.returncode != 0 or status_proc.stdout.strip():
-            continue
-        remove_proc = subprocess.run(
-            ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if remove_proc.returncode == 0:
-            removed.append(str(wt_path))
+            remove_proc = subprocess.run(
+                ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if remove_proc.returncode == 0:
+                removed.append(str(wt_path))
 
     if removed:
         write_activity_log(

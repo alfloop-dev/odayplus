@@ -57,6 +57,7 @@ def process_queue(
     *,
     agent_ids_override: list[str] | None = None,
     agent_override: str | None = None,
+    base_cache: dict | None = None,
 ) -> bool:
     allowed_agent_ids: set[str] | None = None
     if agent_ids_override is not None or agent_override is not None:
@@ -213,7 +214,7 @@ def process_queue(
                     "type": "wake_skipped",
                     "task_id": event.get("task_id"),
                     "target_agent": event.get("target_display_name") or event.get("target_agent"),
-                    "provider": request.provider,
+                    "provider": str(getattr(request, "provider", event.get("provider") or "")),
                     "message": record["error"],
                     "queue_event_id": event_id,
                 },
@@ -228,13 +229,27 @@ def process_queue(
             continue
         if dispatch_agent_id != request_agent_id:
             request = build_request(config, event, agent_id_override=dispatch_agent_id)
+        # Queue records carry enough identity to log a failed preflight even
+        # when an adapter/test double returned only a request-like object.
+        # Normal production requests always provide these attributes.
+        request_provider = str(getattr(request, "provider", event.get("provider") or ""))
+        request_agent_id = str(getattr(request, "agent_id", event.get("target_agent") or ""))
+        request_task_id = str(getattr(request, "task_id", event.get("task_id") or ""))
+        request_metadata = getattr(request, "metadata", {})
+        if not isinstance(request_metadata, dict):
+            request_metadata = {}
         try:
+            workspace_kwargs = {
+                "queue_event_id": str(event_id or ""),
+                "target_agent": str(event.get("target_display_name") or event.get("target_agent") or ""),
+            }
+            if base_cache is not None:
+                workspace_kwargs["base_cache"] = base_cache
             workspace_ok, workspace_message = prepare_worker_workspace(
                 config,
                 state,
                 request,
-                queue_event_id=str(event_id or ""),
-                target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
+                **workspace_kwargs,
             )
         except Exception as exc:
             record["status"] = "failed"
@@ -246,7 +261,7 @@ def process_queue(
                     "type": "wake_failed",
                     "task_id": event.get("task_id"),
                     "target_agent": event.get("target_display_name") or event.get("target_agent"),
-                    "provider": request.provider,
+                    "provider": request_provider,
                     "message": record["error"],
                     "queue_event_id": event_id,
                 },
@@ -282,14 +297,13 @@ def process_queue(
                     "type": "dispatch_preflight_blocked",
                     "task_id": event.get("task_id"),
                     "target_agent": event.get("target_display_name") or event.get("target_agent"),
-                    "provider": request.provider,
+                    "provider": request_provider,
                     "queue_event_id": event_id,
                     "message": record["error"],
                 },
             )
             changed = True
             continue
-        request_metadata = getattr(request, "metadata", {}) if hasattr(request, "metadata") else {}
         workspace_path = request_metadata.get("workspace_path") if isinstance(request_metadata, dict) else None
         guard_ok, guard_message = check_worker_tree_clean(
             config,
@@ -318,17 +332,17 @@ def process_queue(
         )
         if not ok:
             failure_worker = {
-                "provider": request.provider,
-                "agent_id": request.agent_id,
-                "logical_agent_id": (request.metadata or {}).get("logical_agent_id"),
-                "task_id": request.task_id,
+                "provider": request_provider,
+                "agent_id": request_agent_id,
+                "logical_agent_id": request_metadata.get("logical_agent_id"),
+                "task_id": request_task_id,
                 "queue_event_id": event_id,
                 "run_id": record.get("run_id"),
                 "retry_count": max(0, int(record.get("attempt_count", 0)) - 1),
             }
             failure_reason = str(outcome or "")
             failure = classify_worker_failure(config, failure_worker, failure_reason)
-            failure_summary = summarize_failure_reason(failure_reason, request.provider)
+            failure_summary = summarize_failure_reason(failure_reason, request_provider)
             raw_ref = write_failure_evidence(
                 config,
                 worker=failure_worker,
@@ -346,9 +360,9 @@ def process_queue(
                 mark_provider_dispatch_paused(
                     config,
                     state,
-                    request.provider,
+                    request_provider,
                     failure_reason,
-                    task_id=str(request.task_id or ""),
+                    task_id=request_task_id,
                     failure_kind=str(failure.get("kind") or ""),
                     pause_kind=failure_kind,
                     raw_ref=raw_ref,
@@ -357,22 +371,22 @@ def process_queue(
             if is_terminal_quota_failure_kind(failure_kind):
                 fence_account_pool_workers(config, state, failure_worker, failure_reason)
             if is_retryable_capacity_failure_kind(failure_kind):
-                retry = worker_retry_settings(config, request.provider)
+                retry = worker_retry_settings(config, request_provider)
                 retry_count = int(record.get("retry_count", 0))
                 max_attempts = int(retry.get("max_attempts", 5))
                 if retry_count < max_attempts:
                     schedule_queue_event_retry(
                         config,
                         record,
-                        provider=request.provider,
+                        provider=request_provider,
                         reason=failure_summary.get("summary") or failure_reason,
                     )
                     write_activity_log(
                         config,
                         {
                             "type": "dispatch_retry_scheduled",
-                            "provider": request.provider,
-                            "task_id": request.task_id,
+                            "provider": request_provider,
+                            "task_id": request_task_id,
                             "queue_event_id": event_id,
                             "message": (
                                 f"Transient dispatch failure detected ({failure.get('label')}); "
@@ -387,7 +401,7 @@ def process_queue(
                     continue
             preserve_owner_for_pool_fallback = (
                 is_terminal_quota_failure_kind(failure_kind)
-                and antigravity_pool_fallback_available(config, request.provider)
+                and antigravity_pool_fallback_available(config, request_provider)
             )
             reassigned_to = None
             if not preserve_owner_for_pool_fallback:

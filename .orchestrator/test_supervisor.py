@@ -33,7 +33,6 @@ os.environ["PANTHEON_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 
 import ai_status
-import dispatch_policy
 import runtime_state
 import supervisor
 import worker_failure_policy
@@ -554,7 +553,7 @@ class AccountPoolSchedulingTests(unittest.TestCase):
         reassign.assert_called_once()
 
 
-class CleanDivergedWorktreeRecoveryTests(unittest.TestCase):
+class WorkerWorkspaceNetworkTests(unittest.TestCase):
     def test_git_network_timeout_is_bounded_and_reported(self) -> None:
         with mock.patch.object(
             supervisor.subprocess,
@@ -568,76 +567,6 @@ class CleanDivergedWorktreeRecoveryTests(unittest.TestCase):
             )
         self.assertIsNone(result)
         self.assertEqual(error, "git network command timed out after 7s")
-
-    def test_ahead_only_branch_is_never_reset_by_divergence_recovery(self) -> None:
-        config = {"ready_dispatcher": {"active_worker_statuses": ["running"]}}
-        with (
-            mock.patch.object(supervisor, "_git_commit_oid", side_effect=["local-head", "remote-head"]),
-            mock.patch.object(
-                supervisor,
-                "_git_output",
-                side_effect=[(0, ""), (1, ""), (0, "")],
-            ) as git_output,
-        ):
-            recovered, detail = supervisor._preserve_and_reset_clean_diverged_worktree(
-                config,
-                {"workers": {}},
-                Path("/nonexistent-worktree"),
-                "TASK-1",
-                "task/TASK-1",
-            )
-        self.assertFalse(recovered)
-        self.assertEqual(detail, "branch is not a genuine local/remote divergence")
-        self.assertEqual(git_output.call_count, 3)
-
-    def test_preserves_local_tip_before_resetting_to_remote_task_head(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            remote = root / "remote.git"
-            repo = root / "repo"
-            peer = root / "peer"
-            subprocess.run(["git", "init", "--bare", str(remote)], capture_output=True, check=True)
-            subprocess.run(["git", "clone", str(remote), str(repo)], capture_output=True, check=True)
-            for directory in (repo,):
-                subprocess.run(["git", "config", "user.name", "Test User"], cwd=directory, check=True)
-                subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=directory, check=True)
-            subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo, capture_output=True, check=True)
-            (repo / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
-            subprocess.run(["git", "commit", "-m", "base"], cwd=repo, capture_output=True, check=True)
-            subprocess.run(["git", "push", "origin", "dev"], cwd=repo, capture_output=True, check=True)
-            branch = "task/CLEAN-DIVERGED-001"
-            subprocess.run(["git", "checkout", "-b", branch], cwd=repo, capture_output=True, check=True)
-            subprocess.run(["git", "push", "origin", branch], cwd=repo, capture_output=True, check=True)
-            (repo / "local.txt").write_text("preserve me\n", encoding="utf-8")
-            subprocess.run(["git", "add", "local.txt"], cwd=repo, check=True)
-            subprocess.run(["git", "commit", "-m", "local only"], cwd=repo, capture_output=True, check=True)
-            local_head = supervisor._git_commit_oid(repo, "HEAD")
-
-            subprocess.run(["git", "clone", str(remote), str(peer)], capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.name", "Peer"], cwd=peer, check=True)
-            subprocess.run(["git", "config", "user.email", "peer@example.com"], cwd=peer, check=True)
-            subprocess.run(["git", "checkout", branch], cwd=peer, capture_output=True, check=True)
-            (peer / "remote.txt").write_text("published\n", encoding="utf-8")
-            subprocess.run(["git", "add", "remote.txt"], cwd=peer, check=True)
-            subprocess.run(["git", "commit", "-m", "remote only"], cwd=peer, capture_output=True, check=True)
-            subprocess.run(["git", "push", "origin", branch], cwd=peer, capture_output=True, check=True)
-            subprocess.run(["git", "fetch", "origin", branch], cwd=repo, capture_output=True, check=True)
-            remote_head = supervisor._git_commit_oid(repo, f"origin/{branch}")
-
-            config = {
-                "paths": {"status_file": str(repo / "ai-status.json"), "activity_log": str(repo / "activity.jsonl")},
-                "ready_dispatcher": {"active_worker_statuses": ["running"]},
-            }
-            recovered, detail = supervisor._preserve_and_reset_clean_diverged_worktree(
-                config, {}, repo, "CLEAN-DIVERGED-001", branch
-            )
-
-            self.assertTrue(recovered, detail)
-            self.assertEqual(supervisor._git_commit_oid(repo, "HEAD"), remote_head)
-            preserved_ref = detail.split(":", 1)[1]
-            self.assertEqual(supervisor._git_commit_oid(repo, preserved_ref), local_head)
-
 
 class DetectWorkerFailureTests(unittest.TestCase):
     def _worker_for_log(self, content: str) -> dict[str, str]:
@@ -1545,6 +1474,16 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             },
         }
         self.provider_report: dict[str, object] = {}
+        # These tests exercise queue/lease guards, not network discovery. Keep
+        # their synthetic repositories offline while still making the base an
+        # explicit immutable SHA rather than restoring a mutable base_ref.
+        self._base_patcher = mock.patch.object(
+            supervisor,
+            "resolve_worker_base",
+            return_value=(mock.Mock(sha="a" * 40, remote_ref="origin/dev"), None),
+        )
+        self._base_patcher.start()
+        self.addCleanup(self._base_patcher.stop)
 
     def test_worker_tree_guard_warns_without_blocking(self) -> None:
         config = {
@@ -1690,7 +1629,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(request.metadata["workspace_branch"], "task/OPS-WORKTREE-001")
         self.assertEqual(request.metadata["status_root"], str(repo_root.resolve()))
         self.assertEqual(state["worker_worktrees"]["leases"]["OPS-WORKTREE-001"]["path"], str(expected_path))
-        create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
+        create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "a" * 40)
         self.assertEqual(write_activity_log.call_args.args[1]["type"], "worker_worktree_allocated")
 
     @staticmethod
@@ -1771,7 +1710,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     target_agent="Codex",
                 )
 
-        expected_path = worktree_root / "oday-data-platform-supervisor" / "dpf-krn-meas-001"
+        expected_path = worktree_root / "oday-data-platform" / "dpf-krn-meas-001"
         self.assertTrue(ok, message)
         self.assertIsNone(message)
         self.assertEqual(request.metadata["workspace_path"], str(expected_path))
@@ -1789,7 +1728,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(lease["status_root"], str(fleet_root))
         self.assertEqual(lease["repo_root_source"], "repository:oday_data_platform")
         create_worktree.assert_called_once_with(
-            data_platform_root.resolve(), expected_path, "task/DPF-KRN-MEAS-001", "origin/dev"
+            data_platform_root.resolve(), expected_path, "task/DPF-KRN-MEAS-001", "a" * 40
         )
 
     def test_prepare_worker_workspace_blocks_when_external_checkout_is_missing(self) -> None:
@@ -1873,7 +1812,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertEqual(fallback, repo_root.resolve())
         self.assertEqual(fallback_source, "repository:pantheon")
 
-    def test_create_worker_worktree_cleans_stale_foreign_path(self) -> None:
+    def test_create_worker_worktree_refuses_to_delete_stale_foreign_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "repo"
             foreign_root = Path(tmpdir) / "foreign"
@@ -1899,53 +1838,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             shutil.copytree(foreign_root, stale_path)
 
             ok, error = supervisor._create_worker_worktree(repo_root.resolve(), stale_path, "task/OPS-WORKTREE-001", "dev")
-            self.assertTrue(ok, error)
-            self.assertIsNone(error)
-            proc = subprocess.run(
-                ["git", "symbolic-ref", "--short", "HEAD"],
-                cwd=stale_path,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            self.assertEqual(proc.stdout.strip(), "task/OPS-WORKTREE-001")
+            self.assertFalse(ok)
+            self.assertIn("not a registered worktree", error or "")
+            self.assertTrue((stale_path / "README.md").exists())
 
-    def test_worktree_clone_fallback_keeps_the_real_upstream_origin(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo_root = Path(tmpdir) / "repo"
-            clone_path = Path(tmpdir) / "workers" / "task-clone"
-            repo_root.mkdir()
-            subprocess.run(["git", "init", str(repo_root)], capture_output=True, check=True)
-            subprocess.run(["git", "config", "user.name", "Supervisor Test"], cwd=repo_root, check=True)
-            subprocess.run(["git", "config", "user.email", "test@supervisor.invalid"], cwd=repo_root, check=True)
-            subprocess.run(
-                ["git", "remote", "add", "origin", "https://github.com/alfloop-dev/oday-data-platform.git"],
-                cwd=repo_root,
-                check=True,
-            )
-            (repo_root / "README.md").write_text("base\n", encoding="utf-8")
-            subprocess.run(["git", "add", "README.md"], cwd=repo_root, check=True)
-            subprocess.run(["git", "commit", "-m", "base"], cwd=repo_root, check=True)
-            subprocess.run(["git", "checkout", "-q", "-b", "dev"], cwd=repo_root, check=True)
-
-            created = supervisor._create_worker_worktree_fallback(
-                repo_root.resolve(), clone_path, "task/DPF-KRN-MEAS-001", "dev"
-            )
-            self.assertTrue(created)
-
-            proc = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
-                cwd=clone_path,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-
-        # Never the local supervisor checkout: a push there would silently
-        # never reach GitHub.
-        self.assertEqual(
-            proc.stdout.strip(), "https://github.com/alfloop-dev/oday-data-platform.git"
-        )
+    def test_worktree_clone_fallback_is_removed(self) -> None:
+        self.assertFalse(hasattr(supervisor, "_create_worker_worktree_fallback"))
 
     def test_prepare_worker_workspace_skips_reused_worktree_with_mismatched_git_common_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2014,7 +1912,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertIsNone(message)
         self.assertEqual(request.metadata["workspace_mode"], "isolated_worktree")
         self.assertEqual(request.metadata["workspace_path"], str(expected_path))
-        create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "origin/dev")
+        create_worktree.assert_called_once_with(repo_root.resolve(), expected_path, "task/OPS-WORKTREE-001", "a" * 40)
 
     def test_review_dispatch_uses_task_branch_not_mainline_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2070,7 +1968,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             repo_root.resolve(),
             expected_path,
             "task/ODP-PLAN-REVIEW-001",
-            "origin/dev",
+            "a" * 40,
         )
 
 
@@ -2159,16 +2057,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "skipped_dirty_worktree: 1 dirty change (1 unstaged tracked): services/app.py"),
                 ) as refresh_worktree,
-                mock.patch.object(
-                    supervisor,
-                    "_fetch_authoritative_task_head",
-                    return_value=("a" * 40, "local_only_task_ref"),
-                ),
-                mock.patch.object(
-                    supervisor,
-                    "_quarantine_and_preserve_dirty_worktree",
-                    return_value=supervisor._quarantine_refused("worktree_belongs_to_another_repository"),
-                ) as reset_worktree,
                 mock.patch.object(supervisor, "_create_worker_worktree") as create_worktree,
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
@@ -2187,27 +2075,14 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertNotIn("workspace_path", request.metadata)
         self.assertNotIn("worker_worktrees", state)
         refresh_worktree.assert_called_once()
-        reset_worktree.assert_called_once()
         create_worktree.assert_not_called()
         self.assertEqual(
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
-            [
-                "worker_worktree_refreshed",
-                "worker_worktree_quarantine_declined",
-                "dispatch_blocked_worktree_lease",
-            ],
+            ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
         )
-        # The refusal is now on the record. Before, a lease blocked on dirt and
-        # a lease blocked because quarantine had been pointed at the wrong
-        # repository produced byte-identical logs, so five consecutive blocks on
-        # DPF-SRC-RIS-NLSC-001 read as "still dirty" rather than "the recovery
-        # for this exact status cannot run".
-        declined = write_activity_log.call_args_list[1].args[1]
-        self.assertEqual(declined["reason"], "worktree_belongs_to_another_repository")
-        self.assertEqual(declined["task_id"], request.task_id)
         self.assertEqual(write_activity_log.call_args_list[-1].args[1]["refresh_status"], "skipped_dirty_worktree: 1 dirty change (1 unstaged tracked): services/app.py")
 
-    def test_prepare_worker_workspace_recovers_dirty_worktree_lease(self) -> None:
+    def test_prepare_worker_workspace_preserves_dirty_worktree_and_blocks_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
             repo_root.mkdir()
@@ -2240,13 +2115,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "skipped_dirty_worktree"),
                 ) as refresh_worktree,
-                mock.patch.object(
-                    supervisor,
-                    "_fetch_authoritative_task_head",
-                    return_value=("a" * 40, "local_only_task_ref"),
-                ),
-                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree", return_value=True) as reset_worktree,
-                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
                 ok, message = supervisor.prepare_worker_workspace(
@@ -2257,26 +2125,16 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     target_agent="Codex",
                 )
 
-        self.assertTrue(ok)
-        self.assertIsNone(message)
+        self.assertFalse(ok)
+        self.assertIn("Preserve and commit", message or "")
         self.assertEqual(refresh_worktree.call_count, 1)
-        reset_worktree.assert_called_once()
         self.assertEqual(
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
-            ["worker_worktree_refreshed", "worker_worktree_lease_recovered", "worker_worktree_reused"],
+            ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
         )
 
 
-    def test_prepare_worker_workspace_recovers_worktree_jammed_by_interrupted_merge(self) -> None:
-        """An interrupted merge used to jam a worktree permanently.
-
-        The quarantine helper refuses a worktree with a git operation in
-        progress, so `unresolved_git_operation` had no recovery path at all -
-        and leasing is what would have run the worker that could finish the
-        merge. On 2026-08-17 four worktrees jammed exactly this way. Recover by
-        leasing a fresh worktree at the published task head and leaving the
-        jammed one untouched on disk.
-        """
+    def test_prepare_worker_workspace_blocks_interrupted_merge_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
             repo_root.mkdir()
@@ -2309,13 +2167,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     "_refresh_reused_worker_worktree",
                     return_value=(False, "unresolved_git_operation"),
                 ) as refresh_worktree,
-                mock.patch.object(
-                    supervisor,
-                    "_fetch_authoritative_task_head",
-                    return_value=("a" * 40, "remote_exact_task_ref"),
-                ),
-                mock.patch.object(supervisor, "_quarantine_and_preserve_dirty_worktree") as quarantine,
-                mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),
                 mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
             ):
                 ok, message = supervisor.prepare_worker_workspace(
@@ -2326,18 +2177,13 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                     target_agent="Codex",
                 )
 
-        self.assertTrue(ok)
-        self.assertIsNone(message)
+        self.assertFalse(ok)
+        self.assertIn("unresolved_git_operation", message or "")
         self.assertEqual(refresh_worktree.call_count, 1)
-        # Nothing modifies the jammed worktree, so there is nothing to preserve.
-        quarantine.assert_not_called()
         self.assertEqual(
             [call.args[1]["type"] for call in write_activity_log.call_args_list],
-            ["worker_worktree_refreshed", "worker_worktree_lease_recovered", "worker_worktree_reused"],
+            ["worker_worktree_refreshed", "dispatch_blocked_worktree_lease"],
         )
-        recovered = write_activity_log.call_args_list[1].args[1]
-        self.assertEqual(recovered["quarantined_worktree_path"], str(worktree_path))
-        self.assertNotEqual(recovered["workspace_path"], str(worktree_path))
 
     def test_prepare_worker_workspace_blocks_every_other_unsafe_refresh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2434,8 +2280,8 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self.assertIsNone(message)
         self.assertTrue(request.metadata["base_advance_required"])
         self.assertEqual(request.metadata["worktree_refresh_status"], refresh_status)
-        self.assertIn("BASE ADVANCE REQUIRED BEFORE EDITING OR HANDOFF", request.message)
-        self.assertIn("must fetch and rebase/compose", request.message)
+        self.assertIn("BASE ADVANCE REQUIRED BEFORE REVIEW OR MERGE", request.message)
+        self.assertIn("Compose the current base", request.message)
         self.assertTrue(request.message.endswith("original owner dispatch"))
 
     def test_prepare_finalize_workspace_never_prompts_to_mutate_approved_head(self) -> None:
@@ -3025,6 +2871,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
             mock.patch.object(supervisor, "build_request", return_value=request) as build_request,
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
             mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", delivery)) as start_worker,
             mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True) as sync_dispatched_task_status,
         ):
@@ -3070,6 +2917,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
             mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
             mock.patch.object(supervisor, "start_worker_for_request", return_value=(False, "CLI auth unavailable", None)),
             mock.patch.object(supervisor, "classify_worker_failure", return_value={"kind": "auth", "label": "authentication"}),
             mock.patch.object(supervisor, "summarize_failure_reason", return_value={"summary": "CLI auth unavailable", "kind": "auth"}),
@@ -3225,6 +3073,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_event_queue", return_value=[queue_payload]),
             mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
             mock.patch.object(supervisor, "build_request", return_value=request),
+            mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
             mock.patch.object(supervisor, "start_worker_for_request", return_value=(False, "status: 429 RESOURCE_EXHAUSTED", None)),
             mock.patch.object(
                 supervisor,
@@ -6532,16 +6381,6 @@ class DirtDescriptionTests(unittest.TestCase):
         )
         self.assertEqual(supervisor._dirty_worktree_detail("skipped_dirty_worktree"), "dirty changes")
 
-    def test_detailed_status_still_reaches_the_fresh_lease_recovery_set(self) -> None:
-        import worker_workspace
-
-        status = "skipped_dirty_worktree: 1 dirty change (1 untracked): new.py"
-        self.assertIn(
-            supervisor._lease_status_kind(status),
-            worker_workspace.LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE,
-        )
-
-
 class UnversionedOrchestratorWorkspaceLeaseTests(unittest.TestCase):
     """Regression for OPS-MATERIALIZED-CONTEXT-DIRT-001.
 
@@ -6746,47 +6585,19 @@ class UnversionedOrchestratorWorkspaceLeaseTests(unittest.TestCase):
         )
 
 
-class EveryDispatchReasonGetsAnIsolatedWorktreeTests(unittest.TestCase):
-    """A worker without a worktree runs in the repository root.
+class IsolatedWorktreePolicyTests(unittest.TestCase):
+    def test_settings_expose_only_storage_and_network_controls(self) -> None:
+        settings = supervisor.worker_worktree_settings({"worker_worktrees": {"root": "/tmp/worktrees"}})
+        self.assertEqual(settings["root"], "/tmp/worktrees")
+        self.assertNotIn("enabled", settings)
+        self.assertNotIn("base_ref", settings)
+        self.assertNotIn("reuse_existing", settings)
+        self.assertNotIn("execution_reasons", settings)
 
-    ``helper_claim_dispatch`` was missing from the execution-reason allowlist,
-    so ``prepare_worker_workspace`` returned early and the worker checked the
-    task branch out in the shared root, committed there and left it. Every
-    later lease for that branch then failed with "currently checked out in
-    repository root" until a human moved the root back to dev -- 19.3 hours of
-    blocked dispatch across 12 tasks in one 22-hour window.
-    """
-
-    def _settings(self) -> dict:
-        return supervisor.worker_worktree_settings({"worker_worktrees": {"enabled": True}})
-
-    def test_every_dispatch_reason_is_worktree_enabled(self) -> None:
-        reasons = {
-            value
-            for name, value in vars(dispatch_policy).items()
-            if name.startswith("REASON_") and isinstance(value, str)
-        }
-        self.assertTrue(reasons, "dispatch_policy exposes no REASON_* constants")
-        settings = self._settings()
-        for reason in sorted(reasons):
-            with self.subTest(reason=reason):
-                self.assertTrue(
-                    supervisor.worker_worktree_reason_enabled(reason, settings),
-                    f"{reason} dispatches a worker with no isolated worktree, so it "
-                    "would run in the repository root",
-                )
-
-    def test_helper_claim_is_worktree_enabled(self) -> None:
-        self.assertTrue(
-            supervisor.worker_worktree_reason_enabled(dispatch_policy.REASON_HELPER_CLAIM, self._settings())
-        )
-
-    def test_shipped_config_matches_the_code_default(self) -> None:
+    def test_shipped_config_has_no_shared_checkout_fallback_switches(self) -> None:
         shipped = json.loads((Path(supervisor.__file__).parent / "config.example.json").read_text(encoding="utf-8"))
-        configured = shipped.get("worker_worktrees", {}).get("execution_reasons")
-        if configured is None:
-            self.skipTest("config.example.json does not pin execution_reasons")
-        self.assertEqual(sorted(configured), sorted(supervisor.WORKER_WORKTREE_EXECUTION_REASONS))
+        configured = shipped["worker_worktrees"]
+        self.assertEqual(set(configured), {"root", "git_network_timeout_seconds"})
 
 
 class WorktreeLeaseBlockEscalationTests(unittest.TestCase):
@@ -7044,101 +6855,17 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertIn(".orchestrator/config.json", status)
         self.assertEqual(scratch.read_text(encoding="utf-8"), "owner annotation\n")
 
-    def _origin_task_head(self) -> str:
-        result = self._git(self.origin, "rev-parse", self.task_branch, check=False)
-        return result.stdout.strip() if result.returncode == 0 else ""
-
-    def test_publishing_an_unpublished_commit_makes_the_lease_verifiable(self) -> None:
-        """The 2026-08-05 deadlock: a committed-but-unpushed anchor blocks its own task.
-
-        Leasing is what would run the worker that would push, and leasing is
-        exactly what the fail-closed policy refuses. Publishing breaks the cycle
-        by producing the local==remote state the policy already accepts.
-        """
-
-        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
-        self._git(self.worktree, "add", "local-only.txt")
-        self._git(self.worktree, "commit", "-m", "anchor commit that was never pushed")
-        local_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
-
-        # Precondition: the policy blocks this, which is what stalls the fleet.
-        blocked_ok, blocked_status = self._refresh()
-        self.assertFalse(blocked_ok)
-        self.assertTrue(blocked_status.startswith("task_head_mismatch:"), blocked_status)
-
-        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
-
-        self.assertTrue(published, detail)
-        self.assertEqual(self._origin_task_head(), local_head)
-        # And the same policy now passes, without its rules having been relaxed.
-        self.assertTrue(self._refresh()[0])
-
-    def test_publishing_creates_a_task_branch_that_was_never_pushed_at_all(self) -> None:
-        self._git(self.origin, "update-ref", "-d", f"refs/heads/{self.task_branch}")
-        self._git(self.worktree, "fetch", "--prune", "origin", check=False)
-        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
-        self._git(self.worktree, "add", "local-only.txt")
-        self._git(self.worktree, "commit", "-m", "anchor on an unpublished branch")
-        local_head = self._git(self.worktree, "rev-parse", "HEAD").stdout.strip()
-
-        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
-
-        self.assertTrue(published, detail)
-        self.assertEqual(self._origin_task_head(), local_head)
-
-    def test_dirty_worktree_is_never_published(self) -> None:
-        """Dispatch must not publish working-tree state nobody committed."""
-
-        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
-        self._git(self.worktree, "add", "local-only.txt")
-        self._git(self.worktree, "commit", "-m", "anchor commit")
-        (self.worktree / "scratch.txt").write_text("uncommitted owner note\n", encoding="utf-8")
-        self._git(self.worktree, "add", "scratch.txt")
-        before = self._origin_task_head()
-
-        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
-
-        self.assertFalse(published)
-        self.assertIn("not clean", detail)
-        self.assertEqual(self._origin_task_head(), before)
-
-    def test_genuinely_diverged_branch_is_never_published(self) -> None:
-        """Ahead *and* behind needs a rebase decision, not a push."""
-
-        # Someone else advances the published task branch.
-        sibling = Path(self.tmp.name) / "sibling"
-        self._git(Path(self.tmp.name), "clone", "--branch", self.task_branch, str(self.origin), str(sibling))
-        self._git(sibling, "config", "user.name", "Other Worker")
-        self._git(sibling, "config", "user.email", "other@example.invalid")
-        (sibling / "remote-only.txt").write_text("remote\n", encoding="utf-8")
-        self._git(sibling, "add", "remote-only.txt")
-        self._git(sibling, "commit", "-m", "remote side commit")
-        self._git(sibling, "push", "origin", self.task_branch)
-        remote_head = self._origin_task_head()
-
-        # Meanwhile this worktree commits its own work.
-        (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
-        self._git(self.worktree, "add", "local-only.txt")
-        self._git(self.worktree, "commit", "-m", "local side commit")
-        self._git(self.worktree, "fetch", "origin", self.task_branch)
-
-        published, detail = supervisor._publish_unpublished_task_branch(self.worktree, self.task_branch)
-
-        self.assertFalse(published)
-        self.assertIn("diverged", detail)
-        self.assertEqual(self._origin_task_head(), remote_head)
-
-    def test_local_and_remote_task_head_mismatch_blocks(self) -> None:
+    def test_local_task_head_is_not_compared_to_moving_remote_task_ref(self) -> None:
         (self.worktree / "local-only.txt").write_text("local\n", encoding="utf-8")
         self._git(self.worktree, "add", "local-only.txt")
         self._git(self.worktree, "commit", "-m", "local only")
 
         ok, status = self._refresh()
 
-        self.assertFalse(ok)
-        self.assertTrue(status.startswith("task_head_mismatch:"), status)
+        self.assertTrue(ok, status)
+        self.assertFalse(status.startswith("task_head_mismatch:"), status)
 
-    def test_clean_local_task_behind_remote_fast_forwards_to_published_head(self) -> None:
+    def test_local_task_branch_behind_remote_is_left_untouched_without_remote_refresh(self) -> None:
         self._git(self.repo_root, "fetch", "origin", self.task_branch)
         self._git(self.repo_root, "switch", "--detach", f"origin/{self.task_branch}")
         self._git(self.repo_root, "config", "user.name", "Supervisor Test")
@@ -7152,8 +6879,8 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         ok, status = self._refresh()
 
         self.assertTrue(ok, status)
-        self.assertTrue(status.startswith("base_advance_rebase_required:"), status)
-        self.assertEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), published_head)
+        self.assertFalse(status.startswith("task_head_mismatch:"), status)
+        self.assertNotEqual(self._git(self.worktree, "rev-parse", "HEAD").stdout.strip(), published_head)
 
     def test_wrong_branch_blocks(self) -> None:
         self._git(self.worktree, "switch", "-c", "task/WRONG-BRANCH")
@@ -7177,13 +6904,13 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertTrue(status.startswith("wrong_worktree:"), status)
 
-    def test_fetch_failure_blocks(self) -> None:
+    def test_task_remote_failure_does_not_affect_local_exact_base_relation(self) -> None:
         self._git(self.worktree, "remote", "set-url", "origin", str(Path(self.tmp.name) / "missing.git"))
 
         ok, status = self._refresh()
 
-        self.assertFalse(ok)
-        self.assertTrue(status.startswith("fetch_failed:"), status)
+        self.assertTrue(ok, status)
+        self.assertFalse(status.startswith("fetch_failed:"), status)
 
     def test_unresolved_git_operation_blocks(self) -> None:
         marker = Path(self._git(self.worktree, "rev-parse", "--git-path", "MERGE_HEAD").stdout.strip())
@@ -7238,80 +6965,6 @@ class ReusedWorkerWorktreeBaseAdvanceTests(unittest.TestCase):
 
         self.assertFalse(ok)
         self.assertTrue(status.startswith("unverifiable_refs:"), status)
-
-
-class BatchSupervisorRemoteRefSnapshotTests(unittest.TestCase):
-    def setUp(self) -> None:
-        supervisor._clear_remote_head_snapshot_cache()
-        self.tmp = tempfile.TemporaryDirectory()
-        root = Path(self.tmp.name)
-        self.origin = root / "origin.git"
-        seed = root / "seed"
-        self.repo_root = root / "supervisor"
-        self.worktree = root / "worker"
-
-        subprocess.run(["git", "init", "--bare", str(self.origin)], check=True, capture_output=True)
-        subprocess.run(["git", "init", "-b", "dev", str(seed)], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(seed), "config", "user.name", "Supervisor Test"], check=True)
-        subprocess.run(["git", "-C", str(seed), "config", "user.email", "test@example.invalid"], check=True)
-        (seed / "file.txt").write_text("hello\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(seed), "add", "file.txt"], check=True)
-        subprocess.run(["git", "-C", str(seed), "commit", "-m", "init"], check=True)
-        subprocess.run(["git", "-C", str(seed), "remote", "add", "origin", str(self.origin)], check=True)
-        subprocess.run(["git", "-C", str(seed), "push", "-u", "origin", "dev"], check=True)
-
-        self.task_branch = "task/ODP-BATCH-TEST-001"
-        subprocess.run(["git", "-C", str(seed), "checkout", "-b", self.task_branch], check=True, capture_output=True)
-        (seed / "task.txt").write_text("task\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(seed), "add", "task.txt"], check=True)
-        subprocess.run(["git", "-C", str(seed), "commit", "-m", "task commit"], check=True)
-        subprocess.run(["git", "-C", str(seed), "push", "-u", "origin", self.task_branch], check=True)
-        self.task_head = subprocess.run(["git", "-C", str(seed), "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
-
-        subprocess.run(["git", "clone", "--branch", "dev", str(self.origin), str(self.repo_root)], check=True, capture_output=True)
-        subprocess.run(["git", "-C", str(self.repo_root), "worktree", "add", "-b", self.task_branch, str(self.worktree)], check=True, capture_output=True)
-
-    def tearDown(self) -> None:
-        supervisor._clear_remote_head_snapshot_cache()
-        self.tmp.cleanup()
-
-    def test_remote_head_snapshot_batches_probes(self) -> None:
-        supervisor._clear_remote_head_snapshot_cache()
-        real_run_cmd = supervisor._run_git_network_command
-        ls_remote_calls = []
-
-        def spy_run_cmd(cwd, args, **kwargs):
-            if "ls-remote" in args and "--heads" in args:
-                ls_remote_calls.append(args)
-            return real_run_cmd(cwd, args, **kwargs)
-
-        with mock.patch.object(supervisor, "_run_git_network_command", side_effect=spy_run_cmd):
-            head1, source1 = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, self.task_branch)
-            head2, source2 = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, self.task_branch)
-            ok, status = supervisor._refresh_reused_worker_worktree(self.repo_root, self.worktree, "origin/dev", self.task_branch)
-
-        self.assertEqual(head1, self.task_head)
-        self.assertEqual(head2, self.task_head)
-        self.assertTrue(ok)
-        self.assertEqual(len(ls_remote_calls), 1)
-
-    def test_missing_remote_task_branch_via_snapshot(self) -> None:
-        supervisor._clear_remote_head_snapshot_cache()
-        head, source = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, "task/NON-EXISTENT-BRANCH-999")
-        self.assertIsNone(head)
-        self.assertEqual(source, "unverifiable_refs: remote task branch is missing")
-
-    def test_advertised_head_mismatch_fails_closed(self) -> None:
-        supervisor._clear_remote_head_snapshot_cache()
-        fake_heads = {self.task_branch: "0" * 40}
-        with mock.patch.object(supervisor, "_get_remote_heads_snapshot", return_value=(fake_heads, "ok")):
-            head, source = supervisor._fetch_authoritative_task_head(self.repo_root, self.worktree, self.task_branch)
-            self.assertIsNone(head)
-            self.assertIn("fetched remote task HEAD does not match advertised HEAD", source)
-
-            ok, status = supervisor._refresh_reused_worker_worktree(self.repo_root, self.worktree, "origin/dev", self.task_branch)
-            self.assertFalse(ok)
-            self.assertIn("fetched remote task HEAD does not match advertised HEAD", status)
 
 
 class WorkerReassignmentTests(unittest.TestCase):
@@ -8987,6 +8640,29 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
 
 
 class PruneOrphanWorktreesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # Pruning receives its merge authority solely from the registry base
+        # resolver.  These tests isolate the cleanup policy from network I/O.
+        self._registry_patcher = mock.patch(
+            "multi_repo_registry.iter_local_repositories",
+            return_value=[
+                {
+                    "id": "pantheon",
+                    "resolved_local_path": Path("/repo"),
+                    "default_branch": "dev",
+                }
+            ],
+        )
+        self._base_patcher = mock.patch.object(
+            supervisor,
+            "resolve_worker_base",
+            return_value=(mock.Mock(sha="a" * 40, remote_ref="origin/dev"), None),
+        )
+        self._registry_patcher.start()
+        self._base_patcher.start()
+        self.addCleanup(self._registry_patcher.stop)
+        self.addCleanup(self._base_patcher.stop)
+
     def _stub_subprocess_run(self, results):
         def fake_run(cmd, *args, **kwargs):
             cmd_tuple = tuple(str(c) for c in cmd)
@@ -9016,12 +8692,17 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
         state: dict = {}
         with (
-            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root": "/tmp/wt"}),
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root": "/tmp/wt", "root_configured": True, "git_network_timeout_seconds": 30}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=Path("/tmp/wt")),
             mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
             mock.patch.object(supervisor, "_git_ref_exists", return_value=False),
             mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(
+                supervisor.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),
+            ),
         ):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
@@ -9044,7 +8725,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
         state: dict = {}
         with (
-            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
             mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
@@ -9070,7 +8751,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
         state: dict = {}
         with (
-            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
             mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
@@ -9101,7 +8782,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
         state: dict = {}
         ctx = [
-            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
             mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
@@ -9179,7 +8860,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
         state = {"workers": {"r-1": {**worker, "workspace_path": record_path}}}
         ctx = [
-            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
             mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
@@ -9237,7 +8918,7 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         # claims" from "an active worker claims", which is how the gap survived.
         state = {"workers": {"r-1": {"status": "running", "workspace_path": record_path}}}
         with (
-            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True}),
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
             mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
             mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
             mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
@@ -12229,6 +11910,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
 
 
 
+    @unittest.skip("dirty worktrees now block dispatch; the fresh recovery lease was intentionally removed")
     def test_prepare_worker_workspace_recovers_dirty_worktree_lease_with_real_bare_remote(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_p = Path(tmpdir)
@@ -12334,6 +12016,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertTrue(backups_dir.exists())
             self.assertGreater(len(list(backups_dir.glob("task-remote-bare-001-*"))), 0)
 
+    @unittest.skip("dirty worktrees now block dispatch; the fresh recovery lease was intentionally removed")
     def test_rejected_push_has_no_head_mismatch_and_no_unknown_publication(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_p = Path(tmpdir)
@@ -12466,6 +12149,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertTrue(unknown_user_file.exists())
             self.assertEqual(unknown_user_file.read_text(encoding="utf-8"), "custom user notes\n")
 
+    @unittest.skip("dirty worktrees now block dispatch; the fresh recovery lease was intentionally removed")
     def test_original_worktree_byte_branch_gitdir_identity_on_lease_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_p = Path(tmpdir)
@@ -12547,6 +12231,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertEqual("", st_leased.stdout.strip())
             self.assertEqual(supervisor._git_commit_oid(leased_path, "HEAD"), supervisor._git_commit_oid(repo_root, branch_name))
 
+    @unittest.skip("dirty worktrees now block dispatch; the fresh recovery lease was intentionally removed")
     def test_dirty_lease_recovery_preserves_exact_task_sha_without_dev_merge(self) -> None:
         """B1 regression test: lease recovery preserves exact task SHA without merging origin/dev base."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -12656,6 +12341,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             st_proc = subprocess.run(["git", "status", "--porcelain=v1"], cwd=wt_path, capture_output=True, text=True, check=True)
             self.assertNotIn("AI_COLLABORATION_GUIDE.md", st_proc.stdout)
 
+    @unittest.skip("dirty worktrees now block dispatch; the fresh recovery lease was intentionally removed")
     def test_tracked_owner_content_classified_real_dirt_and_preserved(self) -> None:
         """B3 regression test: modified tracked context files classified as real dirt, quarantined, and recovered cleanly."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -12894,6 +12580,7 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             )
             self.assertEqual(diff.returncode, 0, diff.stdout.decode(errors="replace"))
 
+    @unittest.skip("dirty worktrees now block dispatch; the fresh recovery lease was intentionally removed")
     def test_prepare_worker_workspace_recovers_dirty_worktree_lease_with_untracked_symlink(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_p = Path(tmpdir)
@@ -13912,25 +13599,6 @@ class FleetDispatchLivelockTests(unittest.TestCase):
         with unittest.mock.patch("github_bus.run_gh", return_value=proc):
             self.assertEqual(dispatch_engine._pr_changed_paths(461), [])
 
-    def test_a_recovery_lease_does_not_nest_its_suffix(self) -> None:
-        """Repeated recoveries used to build `name.lease_A.lease_B.lease_C...`
-        because the replacement name was derived from the current path."""
-        once = supervisor._fresh_lease_path(Path("/w/odp-conc-001"), "S1")
-        twice = supervisor._fresh_lease_path(once, "S2")
-
-        self.assertEqual(once.name, "odp-conc-001.lease_S1")
-        self.assertEqual(twice.name, "odp-conc-001.lease_S2")
-        self.assertEqual(twice.parent, once.parent)
-
-    def test_interrupted_merge_is_a_recoverable_lease_status(self) -> None:
-        import worker_workspace
-
-        self.assertIn(
-            "unresolved_git_operation",
-            worker_workspace.LEASE_STATUSES_RECOVERABLE_BY_FRESH_WORKTREE,
-        )
-
-
 class WorkerTaskBranchFromRecordTests(unittest.TestCase):
     """A worker must check out the branch the task record names.
 
@@ -14105,10 +13773,7 @@ class CrossRepositoryWorkerStartupTests(unittest.TestCase):
                 "paths": {"status_file": str(fleet_root / "ai-status.json")},
                 "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
                 "worker_worktrees": {
-                    "enabled": True,
                     "root": str(Path(tmpdir) / "workers"),
-                    "base_ref": "origin/dev",
-                    "reuse_existing": True,
                 },
             }
             state: dict = {}
@@ -14122,7 +13787,22 @@ class CrossRepositoryWorkerStartupTests(unittest.TestCase):
             )
 
             with (
-                mock.patch.object(supervisor, "worker_task_repo_root", return_value=(other_repo, "repository:oday_data_platform")),
+                mock.patch.object(
+                    supervisor,
+                    "worker_task_repository_binding",
+                    return_value=mock.Mock(
+                        resolved=True,
+                        root=other_repo,
+                        source="repository:oday_data_platform",
+                        repo_id="oday_data_platform",
+                        default_branch="dev",
+                    ),
+                ),
+                mock.patch.object(
+                    supervisor,
+                    "resolve_worker_base",
+                    return_value=(mock.Mock(sha="a" * 40, remote_ref="origin/dev"), None),
+                ),
                 mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=None),
                 mock.patch.object(supervisor, "_create_worker_worktree", return_value=(True, None)),
                 mock.patch.object(supervisor, "materialize_worker_context_files", return_value=[]),

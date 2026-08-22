@@ -74,6 +74,7 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_task_reality.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_watch_events.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_worker_settlement_paths.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_worktree_authority.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/watch_events.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/wave_guards.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/worker_failure_policy.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
@@ -617,6 +618,7 @@ scripts/orchestrator/backfill_task_archive_snapshots.py,development_platform_sys
 scripts/orchestrator/check_runtime_freshness.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/check_task_dependency_resolvability.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/finalize_lane_doctor.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+scripts/orchestrator/migrate_worker_worktree_config.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/register_emgi_v041_catalog.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/rollout_supervisor_runtime.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 scripts/orchestrator/test_backfill_task_archive_snapshots.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
