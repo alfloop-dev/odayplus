@@ -24,6 +24,8 @@ def prepare_rollout(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
     link.symlink_to(previous)
     status_root = tmp_path / "status"
     (status_root / "scripts").mkdir(parents=True)
+    (status_root / ".orchestrator").mkdir()
+    (status_root / ".orchestrator" / "config.json").write_text("{}\n")
     return source, parent, target, previous, link, status_root
 
 
@@ -51,6 +53,21 @@ def rollout_args(source: Path, parent: Path, link: Path, status_root: Path) -> l
         str(status_root),
         "--service",
         "pantheon-supervisor.service",
+    ]
+
+
+def watchdog_rollout_args(source: Path, parent: Path, link: Path, status_root: Path) -> list[str]:
+    return [
+        "--source-root",
+        str(source),
+        "--runtime-link",
+        str(link),
+        "--runtime-parent",
+        str(parent),
+        "--status-root",
+        str(status_root),
+        "--watchdog-pid-file",
+        str(status_root / ".orchestrator" / "supervisor.pid"),
     ]
 
 
@@ -94,3 +111,27 @@ def test_failed_restart_restores_runtime_and_launcher(
     assert link.resolve() == previous.resolve()
     assert launcher.read_text() == "old writer\n"
     assert launcher.stat().st_mode & 0o777 == 0o744
+
+
+def test_watchdog_restart_is_used_without_adding_a_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, parent, target, _previous, link, status_root = prepare_rollout(tmp_path)
+    (status_root / ".orchestrator" / "supervisor.pid").write_text("123\n")
+    monkeypatch.setattr(rollout, "git", fake_git)
+    monkeypatch.setattr(rollout, "clean", lambda _repo: True)
+    observed: list[tuple[int | None, Path, Path, Path]] = []
+
+    def fake_restart(
+        pid: int | None, runtime_link: Path, canonical_root: Path, config_path: Path
+    ) -> bool:
+        observed.append((pid, runtime_link, canonical_root, config_path))
+        return True
+
+    monkeypatch.setattr(rollout, "restart_with_watchdog", fake_restart)
+
+    assert rollout.main(watchdog_rollout_args(source, parent, link, status_root)) == 0
+    assert link.resolve() == target.resolve()
+    assert observed == [
+        (123, link, status_root.resolve(), status_root.resolve() / ".orchestrator" / "config.json")
+    ]

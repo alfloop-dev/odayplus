@@ -15,15 +15,16 @@ What this script does:
      that are untracked in the main worktree, plus a modified
      ``ai-task-archive/index.json``.
   2. If trigger conditions are met (>= MIN_FILES pending OR oldest file
-     >= MIN_AGE_SECONDS old), opens a per-task PR via the same flow as
-     delivery_toolchain/git/task_start.sh + worker_commit.py + task_finalize.sh.
+     >= MIN_AGE_SECONDS old), commits in a worktree already leased by the
+     supervisor's Worker Manager, then opens a PR with task_finalize.sh.
   3. Skips if an OPS-ARCHIVE-AUTO-COMMIT-* PR is already open (avoid
      duplicate PRs while one is mid-merge).
   4. Holds .orchestrator/auto_commit_archive.lock during execution;
      stale lock (>1h) is broken automatically.
 
 Invocation:
-  * Manual:  python3 .orchestrator/auto_commit_archive.py [--dry-run]
+  * Supervisor: the only mutating mode; it passes --workspace + --task-id
+  * Manual:     python3 .orchestrator/auto_commit_archive.py --dry-run
   * Supervisor periodic hook (see auto_commit_archive_settings in
     supervisor.py).
 
@@ -195,27 +196,16 @@ def _build_commit_message(task_id: str, pending: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tuple[bool, str]:
+def run_backfill_pr(
+    pending: dict[str, object],
+    *,
+    workspace_path: Path | None,
+    task_id: str | None,
+    dry_run: bool = False,
+) -> tuple[bool, str]:
     """Open the per-task PR. Returns (success, message)."""
     if open_pr_exists():
         return True, "skip: existing OPS-ARCHIVE-AUTO-COMMIT-* PR is open"
-
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    task_id = f"{TASK_ID_PREFIX}-{timestamp}"
-    kebab = task_id.lower()
-    # This script runs standalone and cannot read the orchestrator config, so it
-    # takes the root from the environment the supervisor already exports and
-    # falls back to the same default worker_worktree_settings uses. Hardcoding
-    # it meant this one path stayed on the old name after every other caller
-    # moved, and the two would have diverged silently.
-    worktree_root = (
-        os.environ.get("ORCH_WORKTREE_ROOT")
-        or os.environ.get("PANTHEON_WORKTREE_ROOT")
-        or "/tmp/orchestrator-worker-worktrees"
-    )
-    worktree_path = Path(worktree_root) / "pantheon" / kebab
-    msg_path = Path(f"/tmp/{task_id}-msg.txt")
-    index_file = Path(f"/tmp/git-index-task-{task_id}")
 
     files: list[str] = []
     files.extend(str(b) for b in pending["briefs"])  # type: ignore[arg-type]
@@ -226,17 +216,15 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
         return True, "skip: no files to commit"
 
     if dry_run:
-        return True, f"dry-run: would open {task_id} with {len(files)} files"
+        return True, f"dry-run: would open {task_id or TASK_ID_PREFIX + '-DRY-RUN'} with {len(files)} files"
+    if not task_id or not workspace_path:
+        return False, "mutating archive runs require a supervisor-leased --workspace and --task-id"
+    worktree_path = workspace_path.resolve()
+    msg_path = Path(f"/tmp/{task_id}-msg.txt")
+    index_file = Path(f"/tmp/git-index-task-{task_id}")
 
     cleanup_paths: list[Path] = []
-    pr_opened = False
     try:
-        _run(["git", "-C", str(ROOT), "fetch", "origin", "dev", "--quiet"], check=False)
-        _run(
-            ["git", "-C", str(ROOT), "worktree", "add", "-b", f"task/{task_id}", str(worktree_path), "origin/dev"],
-        )
-        cleanup_paths.append(worktree_path)
-
         for f in files:
             src = ROOT / f
             dst = worktree_path / f
@@ -261,15 +249,12 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
         _run(cmd, cwd=worktree_path)
         cleanup_paths.append(index_file)
 
-        _run(["git", "-C", str(worktree_path), "reset", "--mixed", "HEAD", "--quiet"], check=False)
         # This is supervisor housekeeping, not a canonical board task.  It has
         # no owner/reviewer row to transition, so opt out explicitly; every
         # normal worker task must use task_finalize's atomic review submission.
         _run(["bash", "delivery_toolchain/git/task_finalize.sh", task_id, "--no-status-submit"], cwd=worktree_path)
-        pr_opened = True
         return True, f"opened PR for {task_id} ({len(files)} files)"
     except subprocess.CalledProcessError as exc:
-        pr_opened = False
         return False, f"command failed: {' '.join(exc.cmd)}\nstderr: {(exc.stderr or '')[:400]}"
     finally:
         # Always clean tmp message + index.
@@ -280,19 +265,17 @@ def run_backfill_pr(pending: dict[str, object], *, dry_run: bool = False) -> tup
                 p.unlink()
             except FileNotFoundError:
                 pass
-        # On failure (PR not opened), also tear down the half-built worktree +
-        # branch so the next run starts clean. On success, leave them in place;
-        # task_finalize.sh has already pushed the branch and the worktree is
-        # safe to prune via the orphan-worktree housekeeping pass after merge.
-        if not pr_opened and worktree_path.exists():
-            _run(["git", "-C", str(ROOT), "worktree", "remove", "--force", str(worktree_path)], check=False)
-            _run(["git", "-C", str(ROOT), "branch", "-D", f"task/{task_id}"], check=False)
+        # The Worker Manager owns branch and worktree lifecycle.  On failure it
+        # intentionally leaves the registered lease in place for inspection or
+        # a normal retry; this archive script never deletes or recreates it.
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="Detect but do not open PR.")
     parser.add_argument("--quiet", action="store_true", help="Suppress 'nothing to do' output.")
+    parser.add_argument("--workspace", help="Worker-Manager leased worktree (supervisor only).")
+    parser.add_argument("--task-id", help="Task id bound to --workspace (supervisor only).")
     args = parser.parse_args(argv)
 
     if not acquire_lock():
@@ -307,7 +290,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"auto_commit_archive: no trigger ({reason})")
             return 0
         print(f"auto_commit_archive: trigger ({reason})", flush=True)
-        ok, message = run_backfill_pr(pending, dry_run=args.dry_run)
+        workspace = Path(args.workspace).resolve() if args.workspace else None
+        ok, message = run_backfill_pr(
+            pending,
+            workspace_path=workspace,
+            task_id=args.task_id,
+            dry_run=args.dry_run,
+        )
         print(f"auto_commit_archive: {message}", flush=True)
         return 0 if ok else 2
     finally:
