@@ -615,6 +615,7 @@ class MonthlyCashFlowItem:
     terminal_salvage_inflow: float = 0.0
     terminal_deposit_return: float = 0.0
     terminal_decommissioning_outflow: float = 0.0
+    terminal_loan_payoff: float = 0.0
     net_unlevered_cash_flow: float = 0.0
     net_levered_cash_flow: float = 0.0
     cumulative_unlevered_cash_flow: float = 0.0
@@ -656,6 +657,7 @@ class MonthlyCashFlowItem:
             terminal_decommissioning_outflow=float(
                 data.get("terminal_decommissioning_outflow", 0.0)
             ),
+            terminal_loan_payoff=float(data.get("terminal_loan_payoff", 0.0)),
             net_unlevered_cash_flow=float(data.get("net_unlevered_cash_flow", 0.0)),
             net_levered_cash_flow=float(data.get("net_levered_cash_flow", 0.0)),
             cumulative_unlevered_cash_flow=float(data.get("cumulative_unlevered_cash_flow", 0.0)),
@@ -699,6 +701,7 @@ class MonthlyCashFlowItem:
             "terminal_salvage_inflow": self.terminal_salvage_inflow,
             "terminal_deposit_return": self.terminal_deposit_return,
             "terminal_decommissioning_outflow": self.terminal_decommissioning_outflow,
+            "terminal_loan_payoff": self.terminal_loan_payoff,
             "net_unlevered_cash_flow": self.net_unlevered_cash_flow,
             "net_levered_cash_flow": self.net_levered_cash_flow,
             "cumulative_unlevered_cash_flow": self.cumulative_unlevered_cash_flow,

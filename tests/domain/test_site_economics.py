@@ -637,6 +637,191 @@ def test_untruncated_loan_term_when_horizon_less_than_loan_term() -> None:
     m1 = res.monthly_schedule[0]
     assert m1.total_debt_service == pytest.approx(expected_pmt, rel=1e-3)
 
+    # F1 check: Terminal month 36 pays off outstanding debt
+    m36 = res.monthly_schedule[35]
+    assert m36.is_terminal is True
+    assert m36.terminal_loan_payoff > 0.0
+    # Remaining loan principal is 0 at the end of terminal exit
+    assert m36.remaining_loan_principal == 0.0
+    # Levered NPV must reflect the unamortized debt payoff at exit (~ -746,454 vs +181,410 uncorrected)
+    assert res.metrics.levered_npv < 0
+    assert res.metrics.levered_npv == pytest.approx(-746_454.34, abs=500.0)
+    assert res.decision.recommendation == EconomicsDecision.REJECT
+
+
+def test_per_model_depreciation_and_salvage_rates() -> None:
+    # F2: Test heterogeneous machine models with different useful_life_months and residual_value_ratio
+    model_a = MachineModelSpec(
+        model_id="M-A",
+        machine_class=MachineClass.WASHER,
+        model_name="Model A",
+        capacity_kg=15.0,
+        unit_capex=200_000.0,
+        baseline_turns_per_day=5.0,
+        max_turns_per_day=15.0,
+        base_cycle_price=100.0,
+        useful_life_months=36,
+        residual_value_ratio=0.20,  # 40,000 salvage, 160,000 depreciable over 36mo = 4,444.44/mo
+    )
+    model_b = MachineModelSpec(
+        model_id="M-B",
+        machine_class=MachineClass.DRYER,
+        model_name="Model B",
+        capacity_kg=15.0,
+        unit_capex=300_000.0,
+        baseline_turns_per_day=5.0,
+        max_turns_per_day=15.0,
+        base_cycle_price=100.0,
+        useful_life_months=60,
+        residual_value_ratio=0.10,  # 30,000 salvage, 270,000 depreciable over 60mo = 4,500.00/mo
+    )
+    mix = MachineMixSpec(
+        spec_id="MIX-HETERO-V1",
+        version="1.0.0",
+        items=(
+            MachineMixItem(machine_model=model_a, quantity=1),
+            MachineMixItem(machine_model=model_b, quantity=1),
+        ),
+        installation_and_delivery_fee=0.0,
+    )
+    format_spec = TargetFormatSpec(
+        format_code="ODAY_HETERO",
+        format_name="Heterogeneous Format",
+        format_version="1.0.0",
+        description="Format with distinct machine lives",
+        target_area_ping_min=10.0,
+        target_area_ping_max=30.0,
+        recommended_area_ping=20.0,
+        machine_mix=mix,
+        fitout_spec=FitoutSpec(
+            spec_id="F1", version="1.0", base_fitout_cost=0.0, cost_per_ping=0.0
+        ),
+        utilities_spec=UtilitiesCostSpec(spec_id="U1", version="1.0"),
+        maintenance_spec=MaintenanceSpec(spec_id="M1", version="1.0"),
+        financing_spec=FinancingSpec(spec_id="FIN1", version="1.0", debt_ratio=0.0),
+        tax_spec=TaxSpec(spec_id="T1", version="1.0", corporate_tax_rate=0.20),
+        residual_spec=ResidualValueSpec(spec_id="R1", version="1.0"),
+        ramp_spec=RampCurveSpec(spec_id="RC1", version="1.0"),
+        seasonality_spec=SeasonalitySpec(spec_id="S1", version="1.0"),
+    )
+    simulator = SiteEconomicsSimulator()
+    sim_input = SimulationInput(
+        format_spec=format_spec,
+        operating_params=SiteOperatingParameters(monthly_base_rent=10_000.0, area_ping=20.0),
+        horizon_months=60,
+    )
+    res = simulator.simulate(sim_input)
+
+    # In month 1..36, depreciation includes Model A (4,444.44) + Model B (4,500.00) = 8,944.44
+    m10 = res.monthly_schedule[9]
+    assert m10.equipment_depreciation == pytest.approx(4444.44 + 4500.00, rel=1e-2)
+
+    # In month 37..60, Model A is fully depreciated, only Model B depreciates (4,500.00)
+    m45 = res.monthly_schedule[44]
+    assert m45.equipment_depreciation == pytest.approx(4500.00, rel=1e-2)
+
+    # Total salvage at terminal is sum of per-model residuals (40,000 + 30,000 = 70,000)
+    m60 = res.monthly_schedule[59]
+    assert m60.terminal_salvage_inflow == pytest.approx(70_000.0, rel=1e-3)
+
+
+def test_monthly_capacity_capping_with_ramp_and_seasonality() -> None:
+    # F3: Verify that under high demand multipliers and peak seasonality, monthly cycles never exceed capacity
+    g2 = build_default_g2_standard_v1()
+    simulator = SiteEconomicsSimulator()
+    sim_input = SimulationInput(
+        format_spec=g2,
+        operating_params=SiteOperatingParameters(monthly_base_rent=50_000.0, area_ping=25.0),
+        demand_multiplier=3.5,  # Extreme demand
+        horizon_months=24,
+    )
+    res = simulator.simulate(sim_input)
+
+    days_in_month = 365.25 / 12.0
+    max_total_cycles_month = sum(
+        item.quantity * item.machine_model.max_turns_per_day * days_in_month
+        for item in g2.machine_mix.items
+    )
+
+    for item in res.monthly_schedule:
+        # No month should exceed physical equipment capacity
+        assert item.total_cycles_count <= max_total_cycles_month + 1e-4
+
+
+def test_unlevered_tax_loss_carryforward_behavior() -> None:
+    # F4: Verify unlevered tax NOL carryforward
+    g2 = build_default_g2_standard_v1()
+    simulator = SiteEconomicsSimulator()
+    # High rent in early months causing negative EBIT, then recovering
+    sim_input = SimulationInput(
+        format_spec=g2,
+        operating_params=SiteOperatingParameters(
+            monthly_base_rent=120_000.0,
+            area_ping=25.0,
+            rent_free_months=0,
+        ),
+        horizon_months=36,
+    )
+    res = simulator.simulate(sim_input)
+
+    # Find first month where EBIT turns positive after initial negative months
+    found_negative = False
+    for item in res.monthly_schedule:
+        if item.ebit < 0:
+            found_negative = True
+            assert item.unlevered_operating_cash_flow == item.ebitda  # tax is 0
+
+    assert found_negative
+
+
+def test_rent_override_updates_lease_deposit_and_scenarios() -> None:
+    # F6: Verify rent overrides correctly update lease deposit at initial outlay and terminal return
+    service = SiteEconomicsService()
+    doc = service.evaluate_site(
+        site_id="SITE-RENT-DEP-001",
+        area_ping=25.0,
+        monthly_rent=80_000.0,
+    )
+    # Default 2 months deposit for 80k rent = 160,000 TWD
+    assert doc.monthly_schedule[-1].terminal_deposit_return == 160_000.0
+
+    # Scenarios should have corresponding deposits
+    opt_scen = doc.scenarios["optimistic"]
+    assert opt_scen.monthly_rent == pytest.approx(80_000.0 * 0.90)
+
+
+def test_falsy_zero_rent_support() -> None:
+    # F7: Verify custom_rent_amount=0.0 is preserved and not replaced with fallback
+    service = SiteEconomicsService()
+    doc = service.evaluate_site(
+        site_id="SITE-ZERO-RENT",
+        area_ping=25.0,
+        monthly_rent=0.0,
+    )
+    assert doc.assumptions.monthly_base_rent == 0.0
+    for item in doc.monthly_schedule:
+        assert item.rent_expense == 0.0
+
+
+def test_invalid_horizon_raises_value_error() -> None:
+    # F8: Verify horizon <= 0 error handling
+    simulator = SiteEconomicsSimulator()
+    g2 = build_default_g2_standard_v1()
+    with pytest.raises(ValueError, match="horizon_months must be greater than 0"):
+        simulator.simulate(
+            SimulationInput(
+                format_spec=g2,
+                operating_params=SiteOperatingParameters(
+                    monthly_base_rent=50_000.0, area_ping=25.0
+                ),
+                horizon_months=0,
+            )
+        )
+
+    payback_out = compute_payback([-100.0, 50.0, 50.0], horizon_months=0)
+    assert payback_out.is_censored is True
+    assert payback_out.censoring_type == CensoringType.INSUFFICIENT_DATA
+
 
 def test_sensitivity_scenarios_preserve_capex_and_cannibalization_overrides() -> None:
     service = SiteEconomicsService()

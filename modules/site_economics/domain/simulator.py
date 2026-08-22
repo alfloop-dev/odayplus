@@ -196,12 +196,16 @@ def compute_payback(
     horizon_months: int = 60,
 ) -> PaybackOutcome:
     """Compute simple or discounted payback period with exact right-censoring detection."""
-    if not cash_flows or len(cash_flows) < 2:
+    if horizon_months <= 0 or not cash_flows or len(cash_flows) < 2:
         return PaybackOutcome(
             payback_months=None,
             is_censored=True,
             censoring_type=CensoringType.INSUFFICIENT_DATA,
-            censored_reason="Cash flow series is empty or has fewer than 2 periods.",
+            censored_reason=(
+                "Horizon months must be greater than 0."
+                if horizon_months <= 0
+                else "Cash flow series is empty or has fewer than 2 periods."
+            ),
             horizon_months=horizon_months,
         )
 
@@ -266,6 +270,11 @@ class SiteEconomicsSimulator:
     """Deterministic financial simulator for ODayPlus laundromat stores."""
 
     def simulate(self, sim_input: SimulationInput) -> SimulationResult:
+        if sim_input.horizon_months <= 0:
+            raise ValueError(
+                f"horizon_months must be greater than 0, got {sim_input.horizon_months}"
+            )
+
         format_spec = sim_input.format_spec
         params = sim_input.operating_params
         horizon = sim_input.horizon_months
@@ -283,7 +292,13 @@ class SiteEconomicsSimulator:
             else format_spec.fitout_spec.compute_total_fitout(params.area_ping)
         )
         total_initial_capex = equipment_capex + fitout_capex
-        deposit_amount = params.lease_deposit_amount
+
+        base_rent = (
+            sim_input.custom_rent_amount
+            if sim_input.custom_rent_amount is not None
+            else params.monthly_base_rent
+        )
+        deposit_amount = base_rent * params.lease_deposit_months
         pre_opening = params.pre_opening_working_capital
         total_initial_cash_outlay = total_initial_capex + deposit_amount + pre_opening
 
@@ -307,18 +322,40 @@ class SiteEconomicsSimulator:
         monthly_interest_rate = interest_rate / 12.0
         remaining_loan = debt_financed
 
-        # 3. Depreciation & Amortization
-        equipment_residual_rate = format_spec.residual_spec.equipment_salvage_ratio
-        equipment_residual_value = equipment_capex * equipment_residual_rate
-        depreciable_equipment = max(0.0, equipment_capex - equipment_residual_value)
-        useful_life = (
-            format_spec.machine_mix.items[0].machine_model.useful_life_months
-            if format_spec.machine_mix.items
-            else 84
+        # 3. Depreciation & Amortization (Per-model useful life and residual value)
+        total_catalog_mix_capex = format_spec.machine_mix.total_equipment_capex
+        mix_scale = (
+            equipment_capex / total_catalog_mix_capex if total_catalog_mix_capex > 0 else 1.0
         )
-        monthly_equipment_depreciation = (
-            depreciable_equipment / useful_life if useful_life > 0 else 0.0
-        )
+
+        item_depr_specs: list[tuple[float, int]] = []
+        if format_spec.machine_mix.items:
+            for item in format_spec.machine_mix.items:
+                item_capex = item.total_capex * mix_scale
+                item_residual = item.total_residual_value * mix_scale
+                item_depreciable = max(0.0, item_capex - item_residual)
+                item_life = max(1, item.machine_model.useful_life_months)
+                item_monthly_depr = item_depreciable / item_life
+                item_depr_specs.append((item_monthly_depr, item_life))
+
+            install_fee = format_spec.machine_mix.installation_and_delivery_fee * mix_scale
+            install_life = max(
+                (item.machine_model.useful_life_months for item in format_spec.machine_mix.items),
+                default=84,
+            )
+            install_life = max(1, install_life)
+            install_monthly_depr = install_fee / install_life
+            item_depr_specs.append((install_monthly_depr, install_life))
+
+            total_equipment_salvage = sum(
+                item.total_residual_value * mix_scale for item in format_spec.machine_mix.items
+            )
+        else:
+            salvage_ratio = format_spec.residual_spec.equipment_salvage_ratio
+            total_equipment_salvage = equipment_capex * salvage_ratio
+            depreciable = max(0.0, equipment_capex - total_equipment_salvage)
+            item_depr_specs.append((depreciable / 84.0, 84))
+
         fitout_amort_months = min(
             params.lease_term_months, format_spec.fitout_spec.fitout_useful_life_months
         )
@@ -326,7 +363,7 @@ class SiteEconomicsSimulator:
             fitout_capex / fitout_amort_months if fitout_amort_months > 0 else 0.0
         )
 
-        # 4. Mature Base Monthly Revenue and Variable Unit Costs
+        # 4. Month-by-month Schedule Simulation
         demand_mult = max(0.0, sim_input.demand_multiplier)
         comp_discount = max(0.0, min(0.95, sim_input.competitor_discount))
         cannib_discount = max(0.0, min(0.95, sim_input.cannibalization_discount))
@@ -334,51 +371,6 @@ class SiteEconomicsSimulator:
 
         days_in_month = 365.25 / 12.0
 
-        base_monthly_cycles = 0.0
-        base_mature_gross_revenue = 0.0
-        base_variable_water_cost = 0.0
-        base_variable_elec_cost = 0.0
-        base_variable_gas_cost = 0.0
-        base_variable_detergent_cost = 0.0
-        base_monthly_machine_maint = 0.0
-
-        for item in format_spec.machine_mix.items:
-            turns_day = min(
-                item.machine_model.max_turns_per_day,
-                item.effective_turns_per_day * net_demand_factor,
-            )
-            cycles_month = turns_day * item.quantity * days_in_month
-            base_monthly_cycles += cycles_month
-            base_mature_gross_revenue += cycles_month * item.effective_price_per_cycle
-            base_variable_water_cost += (
-                cycles_month
-                * item.machine_model.water_liters_per_cycle
-                * format_spec.utilities_spec.water_rate_per_liter
-            )
-            base_variable_elec_cost += (
-                cycles_month
-                * item.machine_model.electricity_kwh_per_cycle
-                * format_spec.utilities_spec.electricity_rate_per_kwh
-            )
-            base_variable_gas_cost += (
-                cycles_month
-                * item.machine_model.gas_kg_per_cycle
-                * format_spec.utilities_spec.gas_rate_per_kg
-            )
-            base_variable_detergent_cost += (
-                cycles_month * item.machine_model.detergent_cost_per_cycle
-            )
-            base_monthly_machine_maint += (
-                item.quantity * item.machine_model.monthly_maintenance_per_unit
-            )
-
-        base_rent = (
-            sim_input.custom_rent_amount
-            if sim_input.custom_rent_amount is not None
-            else params.monthly_base_rent
-        )
-
-        # 5. Month-by-month Schedule Simulation
         schedule: list[MonthlyCashFlowItem] = []
         unlevered_cfs: list[float] = [-total_initial_cash_outlay]
         levered_cfs: list[float] = [-equity_investment]
@@ -390,6 +382,7 @@ class SiteEconomicsSimulator:
         monthly_disc_rate = (1.0 + discount_rate) ** (1.0 / 12.0) - 1.0
 
         tax_loss_carryforward = 0.0
+        unlevered_tax_loss_carryforward = 0.0
         dscr_values: list[float] = []
 
         for m in range(1, horizon + 1):
@@ -400,9 +393,44 @@ class SiteEconomicsSimulator:
             ramp_factor = format_spec.ramp_spec.get_ramp_for_month(m)
             seas_factor = format_spec.seasonality_spec.get_factor_for_calendar_month(cal_month)
             composite_scale = ramp_factor * seas_factor
+            effective_demand_m = net_demand_factor * composite_scale
 
-            cycles_count = base_monthly_cycles * composite_scale
-            gross_revenue = base_mature_gross_revenue * composite_scale
+            # Capacity cap applied per item in month m
+            cycles_count = 0.0
+            gross_revenue = 0.0
+            util_water = 0.0
+            util_elec = 0.0
+            util_gas = 0.0
+            detergent_cogs = 0.0
+            base_monthly_machine_maint = 0.0
+
+            for item in format_spec.machine_mix.items:
+                turns_day_m = min(
+                    item.machine_model.max_turns_per_day,
+                    item.effective_turns_per_day * effective_demand_m,
+                )
+                cycles_item_m = turns_day_m * item.quantity * days_in_month
+                cycles_count += cycles_item_m
+                gross_revenue += cycles_item_m * item.effective_price_per_cycle
+                util_water += (
+                    cycles_item_m
+                    * item.machine_model.water_liters_per_cycle
+                    * format_spec.utilities_spec.water_rate_per_liter
+                )
+                util_elec += (
+                    cycles_item_m
+                    * item.machine_model.electricity_kwh_per_cycle
+                    * format_spec.utilities_spec.electricity_rate_per_kwh
+                )
+                util_gas += (
+                    cycles_item_m
+                    * item.machine_model.gas_kg_per_cycle
+                    * format_spec.utilities_spec.gas_rate_per_kg
+                )
+                detergent_cogs += cycles_item_m * item.machine_model.detergent_cost_per_cycle
+                base_monthly_machine_maint += (
+                    item.quantity * item.machine_model.monthly_maintenance_per_unit
+                )
 
             if m <= params.rent_free_months:
                 rent_expense = 0.0
@@ -412,9 +440,6 @@ class SiteEconomicsSimulator:
                     (1.0 + params.annual_rent_escalation_pct) ** escalation_periods
                 )
 
-            util_water = base_variable_water_cost * composite_scale
-            util_elec = base_variable_elec_cost * composite_scale
-            util_gas = base_variable_gas_cost * composite_scale
             util_fixed = format_spec.utilities_spec.base_monthly_meter_and_telecom
             utilities_expense = util_water + util_elec + util_gas + util_fixed
 
@@ -429,7 +454,6 @@ class SiteEconomicsSimulator:
             insurance_monthly = params.insurance_annual_cost / 12.0
             cleaning_expense = params.cleaning_monthly_cost
             iot_expense = params.telemetry_iot_monthly_fee
-            detergent_cogs = base_variable_detergent_cost * composite_scale
             store_ops_expense = (
                 royalty_expense
                 + insurance_monthly
@@ -441,7 +465,7 @@ class SiteEconomicsSimulator:
             total_opex = rent_expense + utilities_expense + maintenance_expense + store_ops_expense
             ebitda = gross_revenue - total_opex
 
-            equip_depr = monthly_equipment_depreciation if m <= useful_life else 0.0
+            equip_depr = sum(monthly_d for monthly_d, life in item_depr_specs if m <= life)
             fitout_amort = monthly_fitout_amortization if m <= fitout_amort_months else 0.0
             ebit = ebitda - (equip_depr + fitout_amort)
 
@@ -459,6 +483,7 @@ class SiteEconomicsSimulator:
                 dscr_m = ebitda / debt_service if debt_service > 0 else 0.0
                 dscr_values.append(dscr_m)
 
+            # Levered Tax with NOL
             taxable_income = ebit - interest_payment
             if taxable_income < 0.0:
                 tax_loss_carryforward += abs(taxable_income)
@@ -476,22 +501,44 @@ class SiteEconomicsSimulator:
 
             net_income = taxable_income - tax_expense
 
-            unlevered_tax = max(0.0, ebit * format_spec.tax_spec.corporate_tax_rate)
+            # Unlevered Tax with NOL
+            if ebit < 0.0:
+                unlevered_tax_loss_carryforward += abs(ebit)
+                unlevered_tax = 0.0
+            else:
+                if unlevered_tax_loss_carryforward > 0.0:
+                    unlevered_offset = min(ebit, unlevered_tax_loss_carryforward)
+                    unlevered_ebit_after_offset = ebit - unlevered_offset
+                    unlevered_tax_loss_carryforward -= unlevered_offset
+                else:
+                    unlevered_ebit_after_offset = ebit
+                unlevered_tax = max(
+                    0.0, unlevered_ebit_after_offset * format_spec.tax_spec.corporate_tax_rate
+                )
+
             unlevered_op_cf = ebitda - unlevered_tax
             levered_op_cf = ebitda - tax_expense - debt_service
 
+            # Terminal Exit Cash Flows (salvage + deposit - decommissioning - remaining loan payoff)
             terminal_salvage = 0.0
             terminal_deposit = 0.0
             terminal_decomm = 0.0
+            terminal_loan_payoff = 0.0
             if is_terminal:
-                terminal_salvage = equipment_residual_value
+                terminal_salvage = total_equipment_salvage
                 if format_spec.residual_spec.recover_lease_deposit:
                     terminal_deposit = deposit_amount
                 terminal_decomm = format_spec.residual_spec.decommissioning_and_reinstatement_cost
+                if remaining_loan > 0.0:
+                    terminal_loan_payoff = remaining_loan
+                    remaining_loan = 0.0
 
-            terminal_net = terminal_salvage + terminal_deposit - terminal_decomm
-            net_unlevered = unlevered_op_cf + terminal_net
-            net_levered = levered_op_cf + terminal_net
+            terminal_net_unlevered = terminal_salvage + terminal_deposit - terminal_decomm
+            terminal_net_levered = (
+                terminal_salvage + terminal_deposit - terminal_decomm - terminal_loan_payoff
+            )
+            net_unlevered = unlevered_op_cf + terminal_net_unlevered
+            net_levered = levered_op_cf + terminal_net_levered
 
             cum_unlevered += net_unlevered
             cum_levered += net_levered
@@ -533,6 +580,7 @@ class SiteEconomicsSimulator:
                 terminal_salvage_inflow=round(terminal_salvage, 2),
                 terminal_deposit_return=round(terminal_deposit, 2),
                 terminal_decommissioning_outflow=round(terminal_decomm, 2),
+                terminal_loan_payoff=round(terminal_loan_payoff, 2),
                 net_unlevered_cash_flow=round(net_unlevered, 2),
                 net_levered_cash_flow=round(net_levered, 2),
                 cumulative_unlevered_cash_flow=round(cum_unlevered, 2),
@@ -542,7 +590,7 @@ class SiteEconomicsSimulator:
             )
             schedule.append(item)
 
-        # 6. Valuation & Returns Metrics
+        # 5. Valuation & Returns Metrics
         unlevered_npv = compute_npv(unlevered_cfs, discount_rate)
         levered_npv = compute_npv(levered_cfs, discount_rate)
         unlevered_irr = compute_irr(unlevered_cfs)
@@ -555,13 +603,51 @@ class SiteEconomicsSimulator:
             levered_cfs, annual_discount_rate=discount_rate, horizon_months=horizon
         )
 
-        avg_revenue = sum(it.gross_revenue for it in schedule) / horizon
-        avg_ebitda = sum(it.ebitda for it in schedule) / horizon
+        avg_revenue = sum(it.gross_revenue for it in schedule) / max(1, horizon)
+        avg_ebitda = sum(it.ebitda for it in schedule) / max(1, horizon)
         avg_ebitda_margin = avg_ebitda / avg_revenue if avg_revenue > 0 else 0.0
-        avg_net_income = sum(it.net_income for it in schedule) / horizon
+        avg_net_income = sum(it.net_income for it in schedule) / max(1, horizon)
         avg_net_margin = avg_net_income / avg_revenue if avg_revenue > 0 else 0.0
 
-        # Breakeven Analysis (Mature month)
+        # Breakeven Analysis (Mature baseline month at net_demand_factor)
+        base_monthly_cycles = 0.0
+        base_mature_gross_revenue = 0.0
+        base_variable_water_cost = 0.0
+        base_variable_elec_cost = 0.0
+        base_variable_gas_cost = 0.0
+        base_variable_detergent_cost = 0.0
+        base_monthly_machine_maint = 0.0
+
+        for item in format_spec.machine_mix.items:
+            turns_day = min(
+                item.machine_model.max_turns_per_day,
+                item.effective_turns_per_day * net_demand_factor,
+            )
+            cycles_month = turns_day * item.quantity * days_in_month
+            base_monthly_cycles += cycles_month
+            base_mature_gross_revenue += cycles_month * item.effective_price_per_cycle
+            base_variable_water_cost += (
+                cycles_month
+                * item.machine_model.water_liters_per_cycle
+                * format_spec.utilities_spec.water_rate_per_liter
+            )
+            base_variable_elec_cost += (
+                cycles_month
+                * item.machine_model.electricity_kwh_per_cycle
+                * format_spec.utilities_spec.electricity_rate_per_kwh
+            )
+            base_variable_gas_cost += (
+                cycles_month
+                * item.machine_model.gas_kg_per_cycle
+                * format_spec.utilities_spec.gas_rate_per_kg
+            )
+            base_variable_detergent_cost += (
+                cycles_month * item.machine_model.detergent_cost_per_cycle
+            )
+            base_monthly_machine_maint += (
+                item.quantity * item.machine_model.monthly_maintenance_per_unit
+            )
+
         fixed_opex = (
             base_rent
             + format_spec.utilities_spec.base_monthly_meter_and_telecom
@@ -613,7 +699,7 @@ class SiteEconomicsSimulator:
         min_dscr = min(dscr_values) if dscr_values else None
         avg_dscr = sum(dscr_values) / len(dscr_values) if dscr_values else None
 
-        avg_annual_ebit = (sum(it.ebit for it in schedule) / horizon) * 12.0
+        avg_annual_ebit = (sum(it.ebit for it in schedule) / max(1, horizon)) * 12.0
         tax_rate = format_spec.tax_spec.corporate_tax_rate
         roic = (
             (avg_annual_ebit * (1.0 - tax_rate)) / total_initial_cash_outlay
@@ -621,7 +707,9 @@ class SiteEconomicsSimulator:
             else 0.0
         )
 
-        avg_annual_levered_cf = (sum(it.net_levered_cash_flow for it in schedule) / horizon) * 12.0
+        avg_annual_levered_cf = (
+            sum(it.net_levered_cash_flow for it in schedule) / max(1, horizon)
+        ) * 12.0
         cash_on_cash = avg_annual_levered_cf / equity_investment if equity_investment > 0 else 0.0
         profitability_index = (
             (levered_npv + equity_investment) / equity_investment if equity_investment > 0 else 0.0

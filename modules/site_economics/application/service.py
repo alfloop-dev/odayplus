@@ -24,6 +24,7 @@ from modules.site_economics.domain.models import (
 )
 from modules.site_economics.domain.simulator import (
     SimulationInput,
+    SimulationResult,
     SiteEconomicsSimulator,
 )
 
@@ -143,7 +144,7 @@ class SiteEconomicsService:
         )
 
         base_res = self.simulator.simulate(sim_input)
-        scenarios = self._generate_scenarios(sim_input)
+        scenarios = self._generate_scenarios(sim_input, base_res=base_res)
 
         assumptions = self._build_assumptions_snapshot(sim_input, base_res.metrics)
 
@@ -277,7 +278,7 @@ class SiteEconomicsService:
         )
 
         base_res = self.simulator.simulate(sim_input)
-        scenarios = self._generate_scenarios(sim_input)
+        scenarios = self._generate_scenarios(sim_input, base_res=base_res)
 
         assumptions = self._build_assumptions_snapshot(sim_input, base_res.metrics)
 
@@ -303,13 +304,21 @@ class SiteEconomicsService:
             },
         )
 
-    def _generate_scenarios(self, base_input: SimulationInput) -> dict[str, ScenarioSummary]:
+    def _generate_scenarios(
+        self, base_input: SimulationInput, base_res: SimulationResult | None = None
+    ) -> dict[str, ScenarioSummary]:
         scenarios: dict[str, ScenarioSummary] = {}
 
-        base_rent = base_input.custom_rent_amount or base_input.operating_params.monthly_base_rent
+        base_rent = (
+            base_input.custom_rent_amount
+            if base_input.custom_rent_amount is not None
+            else base_input.operating_params.monthly_base_rent
+        )
 
         # 1. Base Case
-        base_res = self.simulator.simulate(base_input)
+        if base_res is None:
+            base_res = self.simulator.simulate(base_input)
+
         scenarios["base"] = ScenarioSummary(
             scenario_name="Base Case",
             description="Standard baseline projection using current market context.",
@@ -326,6 +335,7 @@ class SiteEconomicsService:
         )
 
         # 2. Optimistic Case (+15% demand, -10% rent)
+        opt_rent = base_rent * 0.90
         opt_input = SimulationInput(
             format_spec=base_input.format_spec,
             operating_params=base_input.operating_params,
@@ -336,7 +346,7 @@ class SiteEconomicsService:
             cannibalization_discount=base_input.cannibalization_discount,
             custom_equipment_capex=base_input.custom_equipment_capex,
             custom_fitout_capex=base_input.custom_fitout_capex,
-            custom_rent_amount=base_rent * 0.90,
+            custom_rent_amount=opt_rent,
             custom_debt_ratio=base_input.custom_debt_ratio,
             custom_interest_rate=base_input.custom_interest_rate,
         )
@@ -346,7 +356,7 @@ class SiteEconomicsService:
             description="Favorable location with +15% demand uplift and successful rent negotiation (-10%).",
             demand_multiplier=opt_input.demand_multiplier,
             competitor_discount=opt_input.competitor_discount,
-            monthly_rent=opt_input.custom_rent_amount or 0.0,
+            monthly_rent=opt_rent,
             levered_npv=opt_res.metrics.levered_npv,
             unlevered_npv=opt_res.metrics.unlevered_npv,
             levered_irr=opt_res.metrics.levered_irr,
@@ -377,7 +387,7 @@ class SiteEconomicsService:
             description="Adverse local conditions with -20% demand volume and aggressive competitor opening.",
             demand_multiplier=pess_input.demand_multiplier,
             competitor_discount=pess_input.competitor_discount,
-            monthly_rent=pess_input.custom_rent_amount or 0.0,
+            monthly_rent=base_rent,
             levered_npv=pess_res.metrics.levered_npv,
             unlevered_npv=pess_res.metrics.unlevered_npv,
             levered_irr=pess_res.metrics.levered_irr,
@@ -388,6 +398,12 @@ class SiteEconomicsService:
         )
 
         # 4. Stress Test (-30% demand, +15% rent, +1.5% interest rate)
+        stress_rent = base_rent * 1.15
+        stress_interest_rate = (
+            base_input.custom_interest_rate
+            if base_input.custom_interest_rate is not None
+            else base_input.format_spec.financing_spec.annual_interest_rate
+        ) + 0.015
         stress_input = SimulationInput(
             format_spec=base_input.format_spec,
             operating_params=base_input.operating_params,
@@ -398,15 +414,9 @@ class SiteEconomicsService:
             cannibalization_discount=base_input.cannibalization_discount,
             custom_equipment_capex=base_input.custom_equipment_capex,
             custom_fitout_capex=base_input.custom_fitout_capex,
-            custom_rent_amount=base_rent * 1.15,
+            custom_rent_amount=stress_rent,
             custom_debt_ratio=base_input.custom_debt_ratio,
-            custom_interest_rate=(
-                (
-                    base_input.custom_interest_rate
-                    or base_input.format_spec.financing_spec.annual_interest_rate
-                )
-                + 0.015
-            ),
+            custom_interest_rate=stress_interest_rate,
         )
         stress_res = self.simulator.simulate(stress_input)
         scenarios["stress_test"] = ScenarioSummary(
@@ -414,7 +424,7 @@ class SiteEconomicsService:
             description="Severe stagflation: -30% demand, +15% rent increase, and +150bps rate shock.",
             demand_multiplier=stress_input.demand_multiplier,
             competitor_discount=stress_input.competitor_discount,
-            monthly_rent=stress_input.custom_rent_amount or 0.0,
+            monthly_rent=stress_rent,
             levered_npv=stress_res.metrics.levered_npv,
             unlevered_npv=stress_res.metrics.unlevered_npv,
             levered_irr=stress_res.metrics.levered_irr,
@@ -434,7 +444,11 @@ class SiteEconomicsService:
         return SimulationAssumptionsSnapshot(
             format_code=format_spec.format_code,
             format_version=format_spec.format_version,
-            monthly_base_rent=sim_input.custom_rent_amount or params.monthly_base_rent,
+            monthly_base_rent=(
+                sim_input.custom_rent_amount
+                if sim_input.custom_rent_amount is not None
+                else params.monthly_base_rent
+            ),
             area_ping=params.area_ping,
             total_equipment_capex=(
                 sim_input.custom_equipment_capex
