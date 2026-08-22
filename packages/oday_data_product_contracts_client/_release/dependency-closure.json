@@ -1,0 +1,87 @@
+{
+  "closure_complete": true,
+  "closure_id": "oday-data-product-contracts.v0.4.1.dependency-closure",
+  "owner_task_id": "XR-CONTRACTS-PRODUCT-001",
+  "release_id": "oday-data-product-contracts.v0.4.1",
+  "required_contracts": [
+    "oday-data-foundation-contracts.v0.4.1",
+    "emgi.field-survey.v1",
+    "emgi.property-observation.v1",
+    "emgi.coverage-surface.v1",
+    "emgi.market-cell-profile.v1",
+    "emgi.catchment-profile.v1",
+    "emgi.site-market-context.v1",
+    "emgi.data-acquisition-plan.v1"
+  ],
+  "resolved_contracts": [
+    {
+      "contract_id": "oday-data-foundation-contracts.v0.4.1",
+      "kind": "upstream_release",
+      "pinned_digest": "22d71f4460db75dc8fb1f5bfe8cf253427af11954c8d68915935dfb47ffd87f6",
+      "producer_task_id": "XR-CONTRACTS-001",
+      "resolution": "RESOLVED"
+    },
+    {
+      "contract_id": "emgi.field-survey.v1",
+      "kind": "product_contract",
+      "pinned_digest": "b9ac0d8e09a29d4f040f225b4f53ac4bc06c317d8b95ca9d97016da8bb938f4c",
+      "producer_task_id": "DPF-SRC-SURVEY-001",
+      "resolution": "RESOLVED"
+    },
+    {
+      "contract_id": "emgi.property-observation.v1",
+      "kind": "product_contract",
+      "pinned_digest": "86bf3a958fb14135f49eae66044188cac1322dbcd5d7f76b6ce9ba2d5527f1c1",
+      "producer_task_id": "DPF-DOM-PROPERTY-001",
+      "resolution": "RESOLVED"
+    },
+    {
+      "contract_id": "emgi.coverage-surface.v1",
+      "kind": "product_contract",
+      "pinned_digest": "d127f9dc57b38a70fbba9d55132bb561ad5127ae30eeeb8e31ae1408ae09896c",
+      "producer_task_id": "DPF-DP-COVERAGE-001",
+      "resolution": "RESOLVED"
+    },
+    {
+      "contract_id": "emgi.market-cell-profile.v1",
+      "kind": "product_contract",
+      "pinned_digest": "d239e2aa294cd0a8382b5d653147b653b367cc4d3e695a5c9a7a76c38b91f103",
+      "producer_task_id": "DPF-DP-MARKET-CELL-001",
+      "resolution": "RESOLVED"
+    },
+    {
+      "contract_id": "emgi.catchment-profile.v1",
+      "kind": "product_contract",
+      "pinned_digest": "a4e20c9d01a7db4680d3363f78e302bae2955aec1a63c45e486a5de310b04aee",
+      "producer_task_id": "DPF-DP-CATCHMENT-001",
+      "resolution": "RESOLVED"
+    },
+    {
+      "contract_id": "emgi.site-market-context.v1",
+      "kind": "product_contract",
+      "pinned_digest": "4b433cf747c0f89d423e42a2ba3bd53119e2af1cacc2b2e83045214aab5c0300",
+      "producer_task_id": "DPF-DP-SITE-CONTEXT-001",
+      "resolution": "RESOLVED"
+    },
+    {
+      "contract_id": "emgi.data-acquisition-plan.v1",
+      "kind": "product_contract",
+      "pinned_digest": "751cc0373a10624234865afdd22b9ce608032bbf3ad242699ff731d7e935f487",
+      "producer_task_id": "DPF-DP-ACQUISITION-001",
+      "resolution": "RESOLVED"
+    }
+  ],
+  "semantic_version": "0.4.1",
+  "unresolved_contracts": [],
+  "upstream_releases": [
+    {
+      "content_digest": "22d71f4460db75dc8fb1f5bfe8cf253427af11954c8d68915935dfb47ffd87f6",
+      "contract_id": "oday-data-foundation-contracts.v0.4.1",
+      "owner_task_id": "XR-CONTRACTS-001",
+      "release_type": "foundation",
+      "resolution": "RESOLVED",
+      "semantic_version": "0.4.1",
+      "status": "PUBLISHED"
+    }
+  ]
+}
