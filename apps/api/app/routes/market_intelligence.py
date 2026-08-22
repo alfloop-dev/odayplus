@@ -11,17 +11,11 @@ from typing import Any
 from modules.external_data.application.market_data_facade import MarketDataFacade
 from modules.market_intelligence_api.application.auth import (
     MarketIntelligenceAuthorizationError,
-    MarketIntelligenceError,
     MarketIntelligenceNotFoundError,
     MarketIntelligenceValidationError,
 )
 from modules.market_intelligence_api.application.service import (
     MarketIntelligenceService,
-)
-from modules.market_intelligence_api.domain.contracts import (
-    CONTRACT_CATEGORY,
-    CONTRACT_ID,
-    CONTRACT_VERSION,
 )
 from modules.market_intelligence_api.domain.models import (
     AcquisitionPlanFilter,
@@ -40,13 +34,10 @@ from packages.oday_data_product_contracts_client.models.data_acquisition_plan im
     PlanStatus,
     SourceValueExperiment,
 )
-from packages.oday_data_product_contracts_client.models.site_market_context import (
-    PeriodGrain,
-)
 from shared.audit import InMemoryAuditLog
 
 try:
-    from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+    from fastapi import APIRouter, Header, HTTPException, Request, status
     from pydantic import BaseModel, Field
 except ModuleNotFoundError:  # pragma: no cover - optional API dependency
     APIRouter = None  # type: ignore[assignment]

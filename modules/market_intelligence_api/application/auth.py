@@ -11,7 +11,6 @@ from typing import Any
 
 from modules.market_intelligence_api.domain.contracts import (
     ALLOWED_MARKET_INTELLIGENCE_ROLES,
-    CONTRACT_ID,
 )
 from shared.audit.policy import build_security_event, requires_audit
 from shared.auth import (

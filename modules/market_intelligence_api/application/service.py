@@ -13,17 +13,13 @@ from uuid import uuid4
 
 from modules.external_data.application.market_data_facade import (
     MarketDataFacade,
-    MarketDataFacadeError,
 )
 from modules.market_intelligence_api.application.auth import (
-    MarketIntelligenceAuthorizationError,
     MarketIntelligenceError,
     MarketIntelligenceNotFoundError,
-    MarketIntelligenceValidationError,
     authorize_market_intelligence,
 )
 from modules.market_intelligence_api.domain.contracts import (
-    CONTRACT_CATEGORY,
     CONTRACT_ID,
     CONTRACT_VERSION,
     REQUIRED_CONTRACTS,
@@ -51,26 +47,17 @@ from packages.oday_data_product_contracts_client.models.coverage_surface import 
     DataGap,
 )
 from packages.oday_data_product_contracts_client.models.data_acquisition_plan import (
-    AcquisitionGap,
     DataAcquisitionPlan,
-    ExperimentStatus,
-    PlanStatus,
-    SourceValueExperiment,
 )
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellProfile,
-    MarketCellProfileDocument,
 )
 from packages.oday_data_product_contracts_client.models.site_market_context import (
-    DomainStatus,
     PeriodGrain,
-    ReadinessLevel,
     SiteMarketContext,
-    SiteMarketContextDocument,
 )
-from shared.auth import Action, DataClassification, Principal
+from shared.auth import Action, Principal
 from shared.auth.engine import AuthorizationEngine
-
 
 _CANONICAL_DOMAIN_ALIASES: dict[str, tuple[str, ...]] = {
     "demand": ("demographics", "demand"),

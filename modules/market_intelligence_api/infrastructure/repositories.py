@@ -6,8 +6,6 @@ Task ID: `ODP-API-001`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from modules.external_data.application.market_data_facade import (
@@ -18,12 +16,7 @@ from modules.external_data.application.market_data_facade import (
     MarketDataValidationError,
 )
 from modules.external_data.infrastructure.data_platform_client import (
-    DataPlatformClient,
-    DataPlatformClientError,
-    DataPlatformDocumentNotFoundError,
     DataPlatformTransport,
-    DataPlatformValidationError,
-    InMemoryDataPlatformTransport,
 )
 from modules.market_intelligence_api.application.auth import (
     MarketIntelligenceAuthorizationError,
@@ -37,17 +30,12 @@ from modules.market_intelligence_api.domain.models import (
     DataGapFilter,
 )
 from packages.oday_data_product_contracts_client.models.coverage_surface import (
-    CoverageCell,
     CoverageSurface,
     DataGap,
     DataGapDocument,
 )
 from packages.oday_data_product_contracts_client.models.data_acquisition_plan import (
-    AcquisitionGap,
     DataAcquisitionPlan,
-    ExperimentStatus,
-    PlanStatus,
-    SourceValueExperiment,
 )
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellProfile,
@@ -457,7 +445,7 @@ class DataPlatformMarketIntelligenceRepository:
         if (effective_tenant, plan_id) in self._local_plans:
             return self._local_plans[(effective_tenant, plan_id)]
         if effective_tenant is None:
-            for (t_id, p_id), p in self._local_plans.items():
+            for (_t_id, p_id), p in self._local_plans.items():
                 if p_id == plan_id:
                     return p
 

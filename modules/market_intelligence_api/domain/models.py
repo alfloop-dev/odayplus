@@ -8,31 +8,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
-from uuid import uuid4
 
-from packages.oday_data_product_contracts_client.models.coverage_surface import (
-    CoverageCell,
-    CoverageSurface,
-    DataGap,
-    ReadinessReason,
-)
-from packages.oday_data_product_contracts_client.models.data_acquisition_plan import (
-    AcquisitionGap,
-    DataAcquisitionPlan,
-    ExperimentStatus,
-    PlanStatus,
-    SourceValueExperiment,
-)
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellProfile,
 )
 from packages.oday_data_product_contracts_client.models.site_market_context import (
     DomainStatus,
-    PeriodGrain,
-    ReadinessLevel,
     SiteMarketContext,
 )
 

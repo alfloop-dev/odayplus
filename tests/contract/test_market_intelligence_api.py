@@ -31,16 +31,10 @@ from modules.market_intelligence_api import (
     CONTRACT_CATEGORY,
     CONTRACT_ID,
     CONTRACT_VERSION,
-    PROVIDED_CONTRACTS,
-    CandidateCellSummary,
     REQUIRED_CONTRACTS,
-    CandidateCompareRequest,
-    CandidateCompareResult,
+    CandidateCellSummary,
     CandidateSiteSummary,
-    MarketIntelligenceAuthorizationError,
-    MarketIntelligenceNotFoundError,
     MarketIntelligenceService,
-    SiteEvidenceChain,
 )
 from packages.oday_data_product_contracts_client.models.market_cell_profile import (
     MarketCellProfile,
@@ -49,11 +43,7 @@ from packages.oday_data_product_contracts_client.models.site_market_context impo
     SiteMarketContext,
 )
 from shared.auth import (
-    ANONYMOUS,
-    DataClassification,
-    Principal,
     Role,
-    Scope,
 )
 from shared.auth.engine import AuthorizationEngine
 
