@@ -281,6 +281,32 @@ def test_unknown_zoning_is_not_assumed_to_be_permitted() -> None:
     assert "zoning" in " ".join(doc.decision.reasons).lower()
 
 
+@pytest.mark.parametrize("wrong_site_zoning", ["commercial", "residential_strictly_no_commercial"])
+def test_context_for_different_site_cannot_drive_the_feasibility_gate(
+    wrong_site_zoning: str,
+) -> None:
+    context_document = {
+        "document_id": "ctx-doc-001",
+        "contexts": [
+            {
+                "context_id": "ctx-wrong-site",
+                "identity": {
+                    "site_id": "SITE-999",
+                    "metadata": {"zoning": wrong_site_zoning},
+                },
+            }
+        ],
+    }
+
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001", context_document, [_survey()]
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert doc.metadata["binding_recommendation_allowed"] is False
+    assert "zoning" in " ".join(doc.decision.reasons).lower()
+
+
 def test_contract_legal_values_are_handled_without_attribute_errors() -> None:
     doc = SiteFeasibilityService().evaluate_feasibility(
         "SITE-001",
@@ -306,6 +332,18 @@ def test_multi_survey_aggregation_is_order_independent_and_fail_closed() -> None
     assert first.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
     assert second.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
     assert first.decision.reasons == second.decision.reasons
+
+
+def test_object_shaped_site_restrictions_fail_closed() -> None:
+    doc = SiteFeasibilityService().evaluate_feasibility(
+        "SITE-001",
+        _context(),
+        [_survey(site_restrictions={"commercial_operation": "prohibited"})],
+    )
+
+    assert doc.decision.recommendation == FeasibilityDecision.UNKNOWN_REQUIRES_SURVEY
+    assert doc.metadata["binding_recommendation_allowed"] is False
+    assert "restriction" in " ".join(doc.decision.reasons).lower()
 
 
 def test_all_acceptance_dimensions_and_contract_validation_are_covered() -> None:

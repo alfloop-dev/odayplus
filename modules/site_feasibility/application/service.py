@@ -165,8 +165,10 @@ def _context_for_site(market_context: Any, site_id: str) -> Mapping[str, Any]:
         ]
         if matching:
             return matching[0]
-        if len(candidates) == 1:
-            return candidates[0]
+        # A context document is not interchangeable with its sole child.
+        # Falling back to an unmatched child would let another site's zoning
+        # decide this site's binding recommendation.
+        return {}
     return context
 
 
@@ -389,6 +391,9 @@ def _evaluate_other_restrictions(values: Mapping[str, Any], signals: _Signals) -
         ("site_restrictions", "operational_restrictions", "access_restrictions", "restrictions"),
     )
     if not found or value is None:
+        return
+    if isinstance(value, Mapping):
+        signals.unknown_reasons.add("Site restrictions have an unsupported shape")
         return
     tokens = _tokens(value)
     for token in tokens:
