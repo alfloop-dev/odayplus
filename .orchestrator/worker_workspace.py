@@ -1532,6 +1532,59 @@ def prepare_worker_workspace(
                     "refresh_status": refresh_status,
                 },
             )
+            if _is_skipped_dirty_worktree(refresh_status):
+                # Preserve here too, not only at worker death.
+                #
+                # `preserve_dead_worker_worktree` runs from the four paths that
+                # declare a worker dead. This refusal fires for dirt none of them
+                # ever saw: a worker that exited cleanly without committing, or
+                # dirt that predates the current lease entirely. Measured on
+                # 2026-08-23, four worktrees sat blocked between four and seven
+                # hours holding 3608, 336, 44 and 22 uncommitted files, and
+                # `.orchestrator/worktree-dirt-backups/` had an entry for none of
+                # them -- every one had to be copied out by hand before anything
+                # could touch the worktree.
+                #
+                # This does not change the refusal, and the helper leaves the
+                # worktree wholly untouched, so the dirt stays visible exactly as
+                # 2026-08-21 intended. It only means the copy exists before
+                # someone decides to clear it.
+                #
+                # Once per distinct dirt-state rather than once per retry: the
+                # block entry resets precisely when `refresh_status` changes, so
+                # reuse that as the "this is new dirt" signal.
+                lease_task_id = str(request.task_id or workspace_task_id)
+                bucket = state.get("worker_worktree_lease_blocks") or {}
+                prior = bucket.get(normalize_agent_id(lease_task_id) or lease_task_id)
+                if not (isinstance(prior, dict) and prior.get("refresh_status") == refresh_status):
+                    try:
+                        _quarantine_and_preserve_dirty_worktree(
+                            config,
+                            state,
+                            worktree_path,
+                            lease_task_id,
+                            expected_branch=branch,
+                            trigger="lease_refused_dirty_worktree",
+                            owning_repo_root=repo_root,
+                        )
+                    except Exception as error:  # never let preservation break the refusal
+                        # The reporting must not be able to raise either: this
+                        # runs on a path whose whole job is to refuse cleanly,
+                        # and a config without an activity-log path would
+                        # otherwise turn a best-effort backup into a crash.
+                        try:
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "worker_worktree_lease_preserve_failed",
+                                    "task_id": lease_task_id,
+                                    "workspace_path": str(worktree_path),
+                                    "refresh_status": refresh_status,
+                                    "message": f"Could not preserve dirty worktree at lease refusal: {error}",
+                                },
+                            )
+                        except Exception:
+                            pass
             _record_worktree_lease_block(
                 config,
                 state,
