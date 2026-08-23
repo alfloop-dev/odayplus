@@ -5,7 +5,7 @@
 - **任務 ID**: `ODP-XR-CUTOVER-ACTIVATE-002`
 - **標題**: 將 ODayPlus 更新為讀取平台快照，外部 acquisition 保持關閉
 - **基準分支**: `origin/dev`
-- **任務負責人 (Owner)**: `Claude2`
+- **任務負責人 (Owner)**: `Codex`
 - **審查人 (Reviewer)**: `Antigravity`
 
 ---
@@ -56,7 +56,7 @@
 |-------------------|---------|------|
 | 完整持續整合閘門 | `PYTEST_ADDOPTS='-n auto -q' make ci` | **Exit 0；Python 全套、smoke、security/audit、前端 44 個檔案／361 項測試、Next.js production build、bundle budget 與 953-file code-boundary 全部通過** |
 | EMGI Consumer 邊界檢查 | `node delivery_toolchain/governance/validate_emgi_consumer_boundary.mjs --base-sha origin/dev --head-sha HEAD` | **0 違規，通過 (PASSED)** |
-| 全庫 External Data 邊界分類 | `python3 scripts/validate_external_data_boundary.py` | **2697/2697 分類完整，32 凍結檔案完整，通過 (PASSED)** |
+| 全庫 External Data 邊界分類 | `python3 scripts/validate_external_data_boundary.py` | **2699/2699 分類完整，32 凍結檔案完整，通過 (PASSED)** |
 | 切換與回滾整合測試套件 | `uv run pytest tests/integration/test_external_data_cutover_prep.py -q` | **60/60 全部通過 (PASSED)** |
 | 資料與 E2E 測試套件 | `uv run pytest tests/data tests/e2e -q` | **288/288 全部通過 (PASSED)** |
 | 程式邊界規則檢查 | `uv run python delivery_toolchain/governance/check_code_boundaries.py` | **953/953 通過 (PASSED)** |
