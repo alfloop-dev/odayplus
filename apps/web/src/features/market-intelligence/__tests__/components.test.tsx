@@ -1,12 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { MarketIntelligenceClient } from "../../../api/generated/market-intelligence/client";
+import { MarketIntelligenceClient } from "../api";
 import { CandidateCompare } from "../CandidateCompare";
 import { MarketExplorer } from "../MarketExplorer";
 import { SiteDossier } from "../SiteDossier";
 
-vi.mock('../../../api/generated/market-intelligence/client', () => ({
+vi.mock('../api', () => ({
   MarketIntelligenceClient: {
     getCoverageSurface: vi.fn(),
     getSiteEvidence: vi.fn(),
