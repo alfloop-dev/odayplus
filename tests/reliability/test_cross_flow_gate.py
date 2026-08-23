@@ -28,6 +28,10 @@ import pytest
 from apps.api.server import SERVICE_BOUNDARIES, bootstrap_runtime, build_server, build_worker
 from apps.worker.oday_worker.handlers import build_default_registry
 from apps.worker.oday_worker.main import ODayWorker
+from modules.external_data.application.market_data_facade import (
+    CUTOVER_MODE_LEGACY_ONLY,
+    FACADE_MODE_ENV,
+)
 from modules.external_data.workers.scheduled_fetch import TenantScopedExternalFetchStateStore
 from modules.forecastops import ForecastOpsService, StoreDayObservation
 from shared.infrastructure.persistence.factory import _durable_bundle
@@ -90,6 +94,10 @@ def test_service_boundaries_declare_runtime_units() -> None:
 def test_cross_flow_gate_migrations_seed_api_worker_scheduler(db_path, monkeypatch) -> None:
     """Acceptance 2-4: migrations + seed + api + worker + scheduler run together."""
     monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", SCHEDULED_TENANT_ID)
+    # Flow 1 below is the legacy external-fetch flow. The post-cutover default
+    # primes no such job, which would silently reduce this capstone to the
+    # forecast flow alone.
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
     fastapi = pytest.importorskip("fastapi")  # noqa: F841
     from fastapi.testclient import TestClient
 

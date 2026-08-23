@@ -145,6 +145,15 @@ def test_job_lookup_and_openapi_contract() -> None:
 def test_external_data_freshness_api_exposes_lineage_and_correlation(
     monkeypatch,
 ) -> None:
+    """The default deployment reports platform provenance, not its own.
+
+    ODP-XR-CUTOVER-ACTIVATE-002 made ``PLATFORM_PRIMARY`` the default, so this
+    contract now describes what a consumer that fetches nothing can honestly
+    say: one row per pinned release arm, naming the published snapshot it
+    reads, with the caller's correlation id carried through. The legacy
+    ``listing.partner_feed`` provenance is asserted where the legacy arm is
+    exercised explicitly (``tests/integration/test_external_ingestion_persistence.py``).
+    """
     monkeypatch.setenv("ODP_PRODUCT_MODE", "poc")
     client = TestClient(create_app())
 
@@ -156,10 +165,23 @@ def test_external_data_freshness_api_exposes_lineage_and_correlation(
     assert response.status_code == 200
     body = response.json()
     assert body["correlation_id"] == "corr-fresh-api"
-    freshness = body["freshness"][0]
-    assert freshness["provider_id"] == "listing.partner_feed"
-    assert freshness["data_status"] == "FRESH"
-    assert freshness["source_snapshot_id"] == "snap-expansion-20260628-0100"
-    assert freshness["provider_observed_at"] == "2026-06-28T09:00:00+00:00"
-    assert freshness["ingested_at"] == "2026-06-28T09:12:00+00:00"
-    assert freshness["correlation_id"] == "corr-fresh-api"
+    assert body["cutover"]["mode"] == "PLATFORM_PRIMARY"
+    assert body["cutover"]["legacy_external_fetch_enabled"] is False
+    assert body["availability"] == {
+        "status": "AVAILABLE",
+        "reason_code": None,
+        "source": "data_platform",
+    }
+
+    rows = {row["provider_id"]: row for row in body["freshness"]}
+    assert sorted(rows) == ["data_platform.foundation", "data_platform.product"]
+
+    foundation = rows["data_platform.foundation"]
+    assert foundation["source_snapshot_id"] == "oday-data-foundation-contracts.v0.4.1"
+    assert foundation["data_status"] == "FRESH"
+    assert foundation["correlation_id"] == "corr-fresh-api"
+
+    product = rows["data_platform.product"]
+    assert product["source_snapshot_id"] == "oday-data-product-contracts.v0.4.1"
+    assert product["data_status"] == "FRESH"
+    assert product["correlation_id"] == "corr-fresh-api"

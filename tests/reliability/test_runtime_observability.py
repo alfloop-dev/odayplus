@@ -506,10 +506,19 @@ def test_slo_defines_recovery_objectives() -> None:
         assert "rpo" in recovery[system] and "rto" in recovery[system]
 
 
-def test_worker_and_scheduler_export_telemetry() -> None:
+def test_worker_and_scheduler_export_telemetry(monkeypatch: Any) -> None:
     from apps.scheduler.oday_scheduler.main import ODayScheduler
     from apps.worker.oday_worker.main import ODayWorker
+    from modules.external_data.application.market_data_facade import (
+        CUTOVER_MODE_LEGACY_ONLY,
+        FACADE_MODE_ENV,
+    )
     from shared.infrastructure.persistence.factory import build_persistence
+
+    # The telemetry asserted below is the enqueue/execute telemetry of the
+    # legacy external-fetch job. Under the post-cutover default the tick logs
+    # a skip instead, so the mode is named rather than inherited.
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
 
     # Set up
     persistence = build_persistence(mode="memory")

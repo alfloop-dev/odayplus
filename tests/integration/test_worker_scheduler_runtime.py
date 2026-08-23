@@ -50,6 +50,18 @@ def db_path(tmp_path) -> str:
     return str(tmp_path / "durable.sqlite3")
 
 
+@pytest.fixture
+def legacy_fetch_mode(monkeypatch):
+    """Name the cutover arm the external-fetch cases below run in.
+
+    ODP-XR-CUTOVER-ACTIVATE-002 made ``PLATFORM_PRIMARY`` the deployment
+    default, so a scheduler tick no longer enqueues ``external-fetch`` and the
+    worker no longer executes it. The forecastops cases in this module are
+    unaffected, so the mode is requested per test rather than made autouse.
+    """
+    monkeypatch.setenv("ODAY_MARKET_DATA_FACADE_MODE", "LEGACY_ONLY")
+
+
 def _queued_of_type(bundle, job_type: str) -> list:
     return [rec for rec in bundle.job_queue._jobs.values() if rec.job_type == job_type]
 
@@ -70,7 +82,7 @@ def _seed_forecast_series(bundle, store_id: str) -> None:
     )
 
 
-def test_scheduler_enqueue_then_worker_claim_execute_success() -> None:
+def test_scheduler_enqueue_then_worker_claim_execute_success(legacy_fetch_mode) -> None:
     """Scheduler enqueues external-fetch; worker claims, runs it, marks SUCCEEDED."""
     bundle = build_persistence()  # in-memory
     scheduler = ODayScheduler(persistence=bundle, tenant_id=TENANT_ID)
@@ -236,7 +248,7 @@ def test_worker_retries_three_times_then_dead_letters() -> None:
     assert worker.run_once() is False
 
 
-def test_scheduler_enqueue_is_idempotent_within_window() -> None:
+def test_scheduler_enqueue_is_idempotent_within_window(legacy_fetch_mode) -> None:
     """Two scheduler ticks in the same window produce a single external-fetch job."""
     bundle = build_persistence()
     scheduler = ODayScheduler(persistence=bundle, tenant_id=TENANT_ID)
@@ -265,7 +277,7 @@ def test_queue_enqueue_is_idempotent_by_key() -> None:
     assert len(_queued_of_type(bundle, "external-fetch")) == 1
 
 
-def test_durable_watermark_persists_across_restart(db_path) -> None:
+def test_durable_watermark_persists_across_restart(db_path, legacy_fetch_mode) -> None:
     """Success watermark written through the worker survives a process restart."""
     bundle = _durable_bundle(db_path)
     try:

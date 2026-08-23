@@ -17,6 +17,10 @@ from apps.api.oday_api.security.dependencies import (
     OPERATOR_CONSOLE_RESOURCE,
     require_operator_permission,
 )
+from modules.external_data.application.market_data_facade import (
+    CUTOVER_MODE_LEGACY_ONLY,
+    FACADE_MODE_ENV,
+)
 from modules.forecastops.domain.forecasting import Alert, AlertLevel
 from modules.listing.domain.models import ListingDedupKey
 from modules.opsboard.application.operator_live_repository import (
@@ -659,7 +663,10 @@ def test_two_tenant_isolation_prevents_foreign_record_leakage_and_false_complete
         bundle.engine.close()
 
 
-def test_canonical_writer_restart_provenance(tmp_path: Path) -> None:
+def test_canonical_writer_restart_provenance(tmp_path: Path, monkeypatch: Any) -> None:
+    # Step 3 below writes its canonical record through the legacy manual
+    # ingestion trigger, which the post-cutover default answers with 410.
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
     db_path = tmp_path / "test_canonical_writer_restart.sqlite3"
     bundle1 = _durable_bundle(db_path)
     try:

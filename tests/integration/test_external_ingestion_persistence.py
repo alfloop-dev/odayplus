@@ -39,6 +39,21 @@ _DUP_FIXTURE = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _legacy_fetch_mode(monkeypatch):
+    """Pin this module to the arm it asserts on.
+
+    Every case below drives the legacy ingestion surface -- the manual
+    ``POST /external-data/ingestion-runs`` trigger, its persisted run state and
+    the freshness it derives from that state. ODP-XR-CUTOVER-ACTIVATE-002 moved
+    the deployment default to ``PLATFORM_PRIMARY``, where that trigger is 410
+    and freshness is served from the platform snapshot instead. The legacy arm
+    is still reachable (kill switch / explicit mode), so it still needs
+    coverage; it just has to name the mode it exercises rather than inherit it.
+    """
+    monkeypatch.setenv("ODAY_MARKET_DATA_FACADE_MODE", "LEGACY_ONLY")
+
+
 def _run_payload(**overrides):
     body = {
         "provider_id": "listing.partner_feed",

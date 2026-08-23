@@ -4,6 +4,10 @@ import json
 from dataclasses import replace
 from types import SimpleNamespace
 
+from modules.external_data.application.market_data_facade import (
+    CUTOVER_MODE_LEGACY_ONLY,
+    FACADE_MODE_ENV,
+)
 from product_ops.deployment import cloud_run_job_entrypoint as entrypoint
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs.queue import InMemoryJobQueue, JobRequest, JobStatus
@@ -78,6 +82,9 @@ def test_scheduler_requires_persisted_enqueue_receipt(monkeypatch) -> None:
     bundle = build_persistence()
     monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
     monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", "tenant-ops")
+    # The receipt this asserts on is the legacy enqueue receipt; under the
+    # post-cutover default the tick deliberately enqueues nothing.
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
 
     assert entrypoint.run_scheduler() == 0
     assert bundle.job_queue.count_active_jobs() == 1
@@ -159,6 +166,11 @@ LIVE_DEV_WORKER_ENV = {
     "ODP_PRODUCTION_PROVIDER_IDS": (
         "poi.commercial_api,geocode.primary_api,admin_boundary.official_dataset"
     ),
+    # The reproduction is of a deployment that still owned external fetch.
+    # ODP-XR-CUTOVER-ACTIVATE-002 made ``PLATFORM_PRIMARY`` the default, where
+    # the handler refuses the job outright -- which would retire the regression
+    # rather than keep it pinned.
+    FACADE_MODE_ENV: CUTOVER_MODE_LEGACY_ONLY,
 }
 
 SCHEDULED_FETCH_PAYLOAD = {
