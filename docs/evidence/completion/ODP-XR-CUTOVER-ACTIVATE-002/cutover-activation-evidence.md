@@ -5,9 +5,8 @@
 - **任務 ID**: `ODP-XR-CUTOVER-ACTIVATE-002`
 - **標題**: 將 ODayPlus 更新為讀取平台快照，外部 acquisition 保持關閉
 - **基準分支**: `origin/dev`
-- **Worker 身分**: `Antigravity3`
-- **任務負責人 (Owner)**: `Claude2`
-- **審查人 (Reviewer)**: `Antigravity5`
+- **任務負責人 (Owner)**: `Codex`
+- **審查人 (Reviewer)**: `Claude2`
 
 ---
 
