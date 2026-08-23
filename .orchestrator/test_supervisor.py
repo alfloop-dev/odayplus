@@ -12665,6 +12665,49 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertTrue(leased_path.exists())
             self.assertFalse(os.path.islink(leased_path / "ai-status.json"))
             self.assertEqual((leased_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"canonical"}')
+
+    def test_a_clean_worktree_is_reported_as_clean_not_unreadable(self) -> None:
+        """`git status` succeeding with no output means nothing to preserve.
+
+        That took the same branch as `git status` failing, and both reported
+        `status_unreadable`. The one time the event fired, two sessions read
+        "No uncommitted work preserved ... status_unreadable" as lost work and
+        reported it as such. The routine outcome has to be distinguishable
+        from the failure it is not.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-CLEAN-001")
+
+            status = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                cwd=wt_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(status.stdout.strip(), "", "the fixture worktree must start clean")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+
+            outcome = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                {},
+                wt_path,
+                "TASK-CLEAN-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+
+            self.assertFalse(outcome, "a clean worktree preserves nothing")
+            self.assertEqual(getattr(outcome, "reason", ""), "worktree_clean")
 class BlockedTaskRoleReassignmentTests(unittest.TestCase):
     """A blocked owner strands a task the same way a blocked reviewer does.
 
@@ -14321,87 +14364,6 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
             self.assertTrue(
                 any(0 < pop_line - preserve_line < 15 for preserve_line in preserve_lines),
                 f"workers.pop at line {pop_line} drops a worker record without preserving its worktree first",
-            )
-
-
-
-class CleanIsNotUnreadableTests(unittest.TestCase):
-    """A clean worktree and an unreadable one must not share a reason.
-
-    `git status --porcelain` exiting 0 with no output is the ordinary answer for
-    a clean worktree. Folding that into `status_unreadable` alongside a non-zero
-    exit meant the first production firing of the death-preservation path
-    reported a git fault for ODP-API-001 that did not exist -- its worktree was
-    simply clean. A wrong reason costs more than no reason, because someone acts
-    on it.
-    """
-
-    def _worktree(self, tmpdir: str) -> tuple[Path, Path]:
-        """A real linked worktree, because the helper compares git identities."""
-        repo = Path(tmpdir) / "repo"
-        repo.mkdir()
-        for args in (
-            ["init", "-q", "-b", "dev"],
-            ["config", "user.email", "t@example.com"],
-            ["config", "user.name", "t"],
-        ):
-            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
-        (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
-        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-qm", "seed"], cwd=repo, check=True, capture_output=True)
-        worktree = Path(tmpdir) / "wt"
-        subprocess.run(
-            ["git", "worktree", "add", "-q", "-b", "task/T-1", str(worktree)],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-        return repo, worktree
-
-    def test_a_clean_worktree_says_nothing_to_preserve(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo, worktree = self._worktree(tmpdir)
-            config = {"paths": {"status_file": str(Path(tmpdir) / "ai-status.json")}}
-            outcome = supervisor._quarantine_and_preserve_dirty_worktree(
-                config,
-                {"workers": {}},
-                worktree,
-                "T-1",
-                expected_branch="task/T-1",
-                owning_repo_root=repo,
-            )
-        self.assertFalse(outcome)
-        self.assertEqual(outcome.reason, "nothing_to_preserve")
-        self.assertNotEqual(outcome.reason, "status_unreadable")
-
-    def test_dirt_in_the_same_worktree_is_preserved(self) -> None:
-        """The other half of the pair: the clean answer must not swallow real dirt."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            repo, worktree = self._worktree(tmpdir)
-            (worktree / "unsaved.txt").write_text("work nobody committed\n", encoding="utf-8")
-            config = {"paths": {"status_file": str(Path(tmpdir) / "ai-status.json")}}
-            with mock.patch.object(supervisor, "write_activity_log"):
-                outcome = supervisor._quarantine_and_preserve_dirty_worktree(
-                    config,
-                    {"workers": {}},
-                    worktree,
-                    "T-1",
-                    expected_branch="task/T-1",
-                    owning_repo_root=repo,
-                )
-            self.assertTrue(
-                outcome, f"expected preservation, got {getattr(outcome, 'reason', outcome)}"
-            )
-            # Checked inside the temp dir's lifetime: asserting after it is
-            # removed passes the wrong thing, which is how this assertion first
-            # "failed" against correct code.
-            self.assertTrue(
-                (worktree / "unsaved.txt").exists(),
-                "preservation must copy, never clean: the dirt is the last guard against the pruner",
-            )
-            self.assertEqual(
-                (worktree / "unsaved.txt").read_text(encoding="utf-8"),
-                "work nobody committed\n",
             )
 
 
