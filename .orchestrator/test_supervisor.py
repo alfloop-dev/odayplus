@@ -13903,6 +13903,198 @@ class FleetDispatchLivelockTests(unittest.TestCase):
         with unittest.mock.patch("github_bus.run_gh", return_value=proc):
             self.assertEqual(dispatch_engine._pr_changed_paths(461), [])
 
+class WorktreeLeaseBlockTests(unittest.TestCase):
+    """Lease blocks must invalidate when the task branch head changes.
+
+    On 2026-08-23 a worktree was cleaned and a new commit pushed, but the
+    dispatch signature did not include the branch head. The old lease block's
+    signature still matched, so the task sat blocked for the full debounce
+    window (30 min / 1 h escalated) instead of recovering immediately.
+
+    Fix: ``ready_dispatch_signature`` includes ``branch_head`` so that any
+    push to the task branch produces a different signature and invalidates
+    the old block instantly.
+    """
+
+    TASK_ID = "ODP-LEASE-HEAD-001"
+    OLD_HEAD = "a" * 40
+    NEW_HEAD = "b" * 40
+
+    def _task(self):
+        return {
+            "id": self.TASK_ID,
+            "status": "in_progress",
+            "owner": "Antigravity2",
+            "reviewer": "Claude",
+            "depends_on": [],
+        }
+
+    def _blocked_state(self, task, *, blocked_at, head_sha, reason="owned_in_progress_dispatch"):
+        """Build a state with a lease block whose signature was computed under ``head_sha``."""
+        import dispatch_engine
+
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=head_sha,
+        ):
+            signature = dispatch_engine.ready_dispatch_signature(
+                task, reason, {task["id"]: task},
+            )
+        return {
+            "worker_worktree_lease_blocks": {
+                supervisor.normalize_agent_id(task["id"]): {
+                    "dispatch_signature": signature,
+                    "last_at": blocked_at,
+                    "refresh_status": "skipped_dirty_worktree: M .orchestrator/state.json",
+                    "count": 3,
+                }
+            }
+        }
+
+    def test_block_invalidates_when_branch_head_changes(self) -> None:
+        """A new push to the task branch must clear the block immediately."""
+        import dispatch_engine
+
+        task = self._task()
+        recent = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        # Block was recorded with OLD_HEAD
+        state = self._blocked_state(task, blocked_at=recent, head_sha=self.OLD_HEAD)
+
+        # Now the head has changed to NEW_HEAD — block must not match
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=self.NEW_HEAD,
+        ):
+            self.assertFalse(
+                dispatch_engine.worktree_block_still_matches_dispatch(
+                    state,
+                    task,
+                    "owned_in_progress_dispatch",
+                    {task["id"]: task},
+                    retry_after_seconds=1800.0,
+                )
+            )
+
+    def test_block_remains_when_head_unchanged(self) -> None:
+        """When the head has not changed, the debounce window still applies."""
+        import dispatch_engine
+
+        task = self._task()
+        recent = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=recent, head_sha=self.OLD_HEAD)
+
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=self.OLD_HEAD,
+        ):
+            self.assertTrue(
+                dispatch_engine.worktree_block_still_matches_dispatch(
+                    state,
+                    task,
+                    "owned_in_progress_dispatch",
+                    {task["id"]: task},
+                    retry_after_seconds=1800.0,
+                )
+            )
+
+    def test_escalated_block_invalidates_on_head_change(self) -> None:
+        """Even an escalated block must yield to a new branch head."""
+        import dispatch_engine
+
+        task = self._task()
+        recent = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=recent, head_sha=self.OLD_HEAD)
+        entry = state["worker_worktree_lease_blocks"][supervisor.normalize_agent_id(task["id"])]
+        entry.update({"escalated": True, "count": 12})
+
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=self.NEW_HEAD,
+        ):
+            self.assertFalse(
+                dispatch_engine.worktree_block_still_matches_dispatch(
+                    state,
+                    task,
+                    "owned_in_progress_dispatch",
+                    {task["id"]: task},
+                    retry_after_seconds=1800.0,
+                )
+            )
+
+    def test_unresolvable_head_matches_unresolvable_head(self) -> None:
+        """When git is unreachable, both block and check get None — block holds."""
+        import dispatch_engine
+
+        task = self._task()
+        recent = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=recent, head_sha=None)
+
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=None,
+        ):
+            self.assertTrue(
+                dispatch_engine.worktree_block_still_matches_dispatch(
+                    state,
+                    task,
+                    "owned_in_progress_dispatch",
+                    {task["id"]: task},
+                    retry_after_seconds=1800.0,
+                )
+            )
+
+    def test_head_becoming_resolvable_invalidates_block(self) -> None:
+        """Block recorded while git was down; git comes back with a head."""
+        import dispatch_engine
+
+        task = self._task()
+        recent = (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=recent, head_sha=None)
+
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=self.NEW_HEAD,
+        ):
+            self.assertFalse(
+                dispatch_engine.worktree_block_still_matches_dispatch(
+                    state,
+                    task,
+                    "owned_in_progress_dispatch",
+                    {task["id"]: task},
+                    retry_after_seconds=1800.0,
+                )
+            )
+
+    def test_signature_includes_branch_head(self) -> None:
+        """The dispatch signature JSON must contain a ``branch_head`` key."""
+        import dispatch_engine
+
+        task = self._task()
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=self.OLD_HEAD,
+        ):
+            sig = dispatch_engine.ready_dispatch_signature(
+                task, "owned_in_progress_dispatch", {task["id"]: task},
+            )
+        import json
+        parsed = json.loads(sig)
+        self.assertIn("branch_head", parsed)
+        self.assertEqual(parsed["branch_head"], self.OLD_HEAD)
+
+    def test_different_heads_produce_different_signatures(self) -> None:
+        """Two heads must produce different signatures for the same task."""
+        import dispatch_engine
+
+        task = self._task()
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=self.OLD_HEAD,
+        ):
+            sig_old = dispatch_engine.ready_dispatch_signature(
+                task, "owned_in_progress_dispatch", {task["id"]: task},
+            )
+        with mock.patch.object(
+            supervisor, "resolve_task_progress_head", return_value=self.NEW_HEAD,
+        ):
+            sig_new = dispatch_engine.ready_dispatch_signature(
+                task, "owned_in_progress_dispatch", {task["id"]: task},
+            )
+        self.assertNotEqual(sig_old, sig_new)
+
+
 class WorkerTaskBranchFromRecordTests(unittest.TestCase):
     """A worker must check out the branch the task record names.
 
