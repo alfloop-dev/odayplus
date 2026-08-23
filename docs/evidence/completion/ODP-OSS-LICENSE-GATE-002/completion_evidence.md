@@ -34,7 +34,7 @@ Implements a lock-bound, cross-repo OSS license and release gate with CycloneDX 
      - Stale NOTICE
      - Partial installs
      - Hash drift in attestation evidence
-     - Wrong/unapproved scope
+     - Wrong scope (transitive dev packages must not be marked required)
      - Denied licenses (GPL, AGPL, SSPL, BUSL)
      - Unknown / missing licenses
      - Expired exemptions
@@ -55,5 +55,7 @@ $ uv run python delivery_toolchain/security/generate_sbom.py --check
 SBOM at docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json is valid and up to date.
 
 $ uv run python delivery_toolchain/security/attestation.py --check
-Attestation contract at docs/evidence/completion/ODP-OSS-LICENSE-GATE-002/license_gate_attestation.json verified successfully.
+Attestation verification FAILED at docs/evidence/completion/ODP-OSS-LICENSE-GATE-002/license_gate_attestation.json:
+  - Attestation has review_required components: 8
+  - Attestation gate decision is not PASS: FAIL
 ```

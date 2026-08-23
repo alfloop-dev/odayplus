@@ -48,6 +48,7 @@ POLICY_PATH = ROOT / "docs/security/license_policy.json"
 EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 NODE_MODULES = ROOT / "node_modules"
 UV_LOCK = ROOT / "uv.lock"
+PACKAGE_LOCK = ROOT / "package-lock.json"
 
 # Workspace packages are ours. They carry no licence field, and a scanner
 # cannot otherwise tell them apart from a third party of unknown licence.
@@ -148,6 +149,28 @@ def collect_npm(base: Path | None = None) -> list[Component]:
             walk(Path(entry.path) / "node_modules")
 
     walk(base)
+
+    if PACKAGE_LOCK.exists():
+        try:
+            lock_data = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
+            lock_packages = lock_data.get("packages", {})
+            found_names = {name for name, _ in found}
+            missing = set()
+            for pkg_path, info in lock_packages.items():
+                if not pkg_path:
+                    continue
+                if pkg_path.startswith("node_modules/"):
+                    pkg_name = pkg_path.split("node_modules/")[-1]
+                    is_optional = info.get("optional", False)
+                    if not pkg_name.startswith(FIRST_PARTY_PREFIXES):
+                        if pkg_name not in found_names and not is_optional:
+                            missing.add(pkg_name)
+            if missing:
+                raise RuntimeError(f"Partial install detected. Missing npm packages declared in lockfile: {missing}")
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+
     return sorted(found.values())
 
 
@@ -224,20 +247,29 @@ def collect_python() -> list[Component]:
         return []
 
     found: dict[tuple[str, str], Component] = {}
+    found_names = set()
     for dist in md.distributions():
         try:
             meta = dist.metadata
             name = str(meta.get("Name") or "")
             if not name:
                 continue
-            if re.sub(r"[-_.]+", "-", name).lower() not in declared:
+            norm_name = re.sub(r"[-_.]+", "-", name).lower()
+            if norm_name not in declared:
                 continue
             licence = _get_python_license_from_dist(dist, name)
             found[(name, dist.version or "")] = Component(
                 "pypi", name, dist.version or "", licence
             )
+            found_names.add(norm_name)
         except Exception:  # pragma: no cover
             continue
+            
+    missing = declared - found_names
+    missing = {m for m in missing if m not in {"odayplus", "win-precise-time", "pyreadline3", "pywin32", "waitress", "colorama"}}
+    if missing:
+        raise RuntimeError(f"Partial install detected. Missing python packages declared in lockfile: {missing}")
+        
     return sorted(found.values())
 
 

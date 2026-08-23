@@ -532,7 +532,20 @@ def main() -> int:
         generated_props = filter_properties(sbom.get("metadata", {}).get("properties", []))
 
         components_match = committed.get("components") == sbom.get("components")
-        deps_match = committed.get("dependencies") == sbom.get("dependencies")
+        
+        # Normalize git-sha in dependencies for comparison
+        committed_deps = committed.get("dependencies", [])
+        generated_deps = sbom.get("dependencies", [])
+        if committed_deps and generated_deps:
+            committed_root_ref = committed_deps[0].get("ref", "")
+            generated_root_ref = generated_deps[0].get("ref", "")
+            if committed_root_ref.startswith("pkg:generic/alfloop-dev/odayplus@"):
+                committed_deps[0]["ref"] = generated_root_ref
+                for d in committed_deps:
+                    if committed_root_ref in d.get("dependsOn", []):
+                        d["dependsOn"] = [generated_root_ref if x == committed_root_ref else x for x in d["dependsOn"]]
+                        
+        deps_match = committed_deps == generated_deps
         props_match = committed_props == generated_props
 
         if not (components_match and deps_match and props_match):

@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:sha256-56f1eb43c6bff92d8094e01a06588a9f",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-23T08:51:49.440330+00:00",
+    "timestamp": "2026-08-23T08:56:57.144113+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,13 +16,13 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@9d382f677db29d1402d9d8e750797ceb3ada0e8f",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@9d382f677db29d1402d9d8e750797ceb3ada0e8f"
+      "purl": "pkg:generic/alfloop-dev/odayplus@ca110ef7095f97dc7c588dbd838d8bd54c95bb57",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@ca110ef7095f97dc7c588dbd838d8bd54c95bb57"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "9d382f677db29d1402d9d8e750797ceb3ada0e8f"
+        "value": "ca110ef7095f97dc7c588dbd838d8bd54c95bb57"
       },
       {
         "name": "sbom-hash",
@@ -30,7 +30,7 @@
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:7938071854f918898eaed9c46f943ab631f1ac22894626d949e13b558f5bfcb4"
+        "value": "sha256:5cd0998d53146260f454581434cd4afc9bea5d1ded468c38528e706ddaf9fec5"
       },
       {
         "name": "container-base-images",
@@ -38,7 +38,7 @@
       },
       {
         "name": "repository-release-digests",
-        "value": "{\"alfloop-dev/odayplus\": \"9d382f677db29d1402d9d8e750797ceb3ada0e8f\", \"alfloop-dev/pantheon\": \"9d382f677db29d1402d9d8e750797ceb3ada0e8f\"}"
+        "value": "{\"alfloop-dev/odayplus\": \"ca110ef7095f97dc7c588dbd838d8bd54c95bb57\", \"alfloop-dev/pantheon\": \"ca110ef7095f97dc7c588dbd838d8bd54c95bb57\"}"
       }
     ]
   },
@@ -18796,7 +18796,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@9d382f677db29d1402d9d8e750797ceb3ada0e8f",
+      "ref": "pkg:generic/alfloop-dev/odayplus@ca110ef7095f97dc7c588dbd838d8bd54c95bb57",
       "dependsOn": [
         "pkg:pypi/catboost@1.2.10",
         "pkg:pypi/cryptography@48.0.1",
