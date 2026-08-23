@@ -1188,6 +1188,20 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
     # generated-view synchronization may update that timestamp after a wake is
     # queued without changing who may execute the task. Role/status/dependency
     # changes below remain part of the key and still invalidate stale wakes.
+    #
+    # `branch_head` is included so that a worktree lease block recorded against
+    # an old branch head invalidates the moment the head changes (new push,
+    # worktree cleanup). Without it, the block's dispatch_signature matched
+    # forever — even after the underlying problem was fixed — and the task sat
+    # blocked for the full debounce window (30 min / 1 h escalated) instead of
+    # recovering immediately. `resolve_task_progress_head` is cached per-tick
+    # and fails open (returns None), so the cost is one `git ls-remote` per
+    # task per supervisor cycle, not per signature call.
+    task_id = str(task.get("id") or "")
+    try:
+        branch_head = resolve_task_progress_head(task_id) if task_id else None
+    except Exception:
+        branch_head = None
     return json.dumps(
         {
             "task_id": task.get("id"),
@@ -1197,6 +1211,7 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
             "reviewer": task.get("reviewer"),
             "depends_on": list(task.get("depends_on", []) or []),
             "dependency_signature": task_dependency_signature(task, task_map),
+            "branch_head": branch_head,
         },
         sort_keys=True,
         ensure_ascii=True,
