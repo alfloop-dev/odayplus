@@ -63,6 +63,7 @@ if str(DELIVERY_GIT_DIR) not in sys.path:
 import common as orchestrator_common
 from check_task_delivery_identity import validate_delivery_identity
 from multi_repo_registry import (
+    cross_repo_delivery_requirements,
     repository_local_path,
     repository_slug,
     resolve_repository,
@@ -70,7 +71,7 @@ from multi_repo_registry import (
     task_artifact_repository_ids,
     task_repository_id,
 )
-from runtime_state import load_runtime_state
+from runtime_state import enqueue_event, load_runtime_state
 from task_archive import (
     ARCHIVE_TASKS_DIR,
     TaskResolver,
@@ -1161,6 +1162,409 @@ def prune_archived_active_tasks(state: dict[str, Any]) -> list[str]:
     state["handoffs"] = [handoff for handoff in state.get("handoffs", []) if handoff.get("task_id") not in pruned]
     state["blockers"] = [blocker for blocker in state.get("blockers", []) if blocker.get("task_id") not in pruned]
     return pruned_ids
+
+
+class CrossRepoDeliveryBlocked(SystemExit):
+    """A terminal transition was rejected by a required child delivery."""
+
+
+CROSS_REPO_PR_JSON_FIELDS = (
+    "number,state,mergeStateStatus,mergedAt,mergeCommit,headRefOid,headRefName,"
+    "baseRefName,statusCheckRollup,url"
+)
+
+
+def _cross_repo_child_task(state: dict[str, Any], task_id: str) -> dict[str, Any] | None:
+    """Resolve a declared child task from the active board or immutable archive."""
+    if not task_id:
+        return None
+    active = get_task(state, task_id)
+    if active is not None:
+        return active
+    snapshot = load_archived_snapshot(task_id)
+    archived = snapshot.get("task") if isinstance(snapshot, dict) else None
+    return archived if isinstance(archived, dict) else None
+
+
+def _cross_repo_requirement_with_child(
+    state: dict[str, Any], requirement: dict[str, Any]
+) -> dict[str, Any]:
+    """Fill only explicitly named child-task facts into a delivery record."""
+    item = deepcopy(requirement)
+    child = _cross_repo_child_task(state, str(item.get("task_id") or "").strip())
+    if child is None:
+        return item
+
+    config = status_runtime_config()
+    if not item.get("repository") and child.get("repository"):
+        binding = resolve_task_repository(config, child)
+        if binding.slug:
+            item["repository"] = binding.slug
+            item["repository_id"] = binding.repo_id
+    if not item.get("pr_number") and child.get("pr_number"):
+        try:
+            item["pr_number"] = int(child["pr_number"])
+        except (TypeError, ValueError):
+            pass
+    if not item.get("approved_head") and child.get("approved_head"):
+        item["approved_head"] = str(child["approved_head"]).strip()
+    if not item.get("head_branch"):
+        branch = task_branch_name(child, str(child.get("id") or ""))
+        if branch:
+            item["head_branch"] = branch
+    if not item.get("base_branch"):
+        item["base_branch"] = str(child.get("base_branch") or "dev").strip()
+
+    # The registry records the original declaration error for auditability, but
+    # an explicit child task can supply the missing PR/head fields.  Recompute
+    # only the structural errors that remain after that named lookup.
+    errors: list[str] = []
+    if not item.get("repository"):
+        errors.append("repository is required")
+    if not item.get("pr_number"):
+        errors.append("pr_number or child task_id is required")
+    if errors:
+        item["error"] = "; ".join(errors)
+    else:
+        item.pop("error", None)
+    return item
+
+
+def _cross_repo_ci_issue(pr_status: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Return ``(code, detail)`` for a required PR's latest CI rollup."""
+    raw_rollup = pr_status.get("statusCheckRollup")
+    if not isinstance(raw_rollup, list) or not raw_rollup:
+        return "ci_unresolved", "no verifiable CI status checks"
+
+    latest, _superseded = latest_status_check_runs(raw_rollup)
+    failures: list[str] = []
+    pending: list[str] = []
+    unknown: list[str] = []
+    for index, raw_check in enumerate(latest, start=1):
+        if not isinstance(raw_check, dict):
+            unknown.append(f"check-{index}")
+            continue
+        name = str(raw_check.get("name") or raw_check.get("context") or f"check-{index}").strip()
+        check_type = str(raw_check.get("__typename") or "").strip()
+        conclusion = str(raw_check.get("conclusion") or "").upper()
+        status = str(raw_check.get("status") or "").upper()
+        state = str(raw_check.get("state") or "").upper()
+        if check_type == "CheckRun" or conclusion or status:
+            if status and status != "COMPLETED":
+                pending.append(name)
+            elif not conclusion:
+                unknown.append(name)
+            elif conclusion not in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
+                failures.append(name)
+        elif check_type == "StatusContext" or state:
+            if state in {"PENDING", "EXPECTED", ""}:
+                pending.append(name)
+            elif state != "SUCCESS":
+                failures.append(name)
+        else:
+            unknown.append(name)
+
+    if failures:
+        return "ci_failure", f"red checks: {', '.join(failures)}"
+    if pending:
+        return "ci_pending", f"pending checks: {', '.join(pending)}"
+    if unknown:
+        return "ci_unresolved", f"unverifiable checks: {', '.join(unknown)}"
+    return None, None
+
+
+def evaluate_cross_repo_delivery_gate(
+    task: dict[str, Any],
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Evaluate every explicitly required delivery PR for terminal closeout.
+
+    The producer task's own PR is intentionally absent from this function.  A
+    task only acquires extra gates by declaring them in one of the registry's
+    required-delivery fields.  Every required record must prove the exact
+    repository, PR, base, approved head, merge state and green latest checks.
+    """
+    state = state or {"tasks": []}
+    config = status_runtime_config()
+    declarations = cross_repo_delivery_requirements(config, task)
+    requirements = [
+        _cross_repo_requirement_with_child(state, item) for item in declarations
+    ]
+    required = [item for item in requirements if item.get("required", True)]
+    if not required:
+        return {
+            "status": "not_required",
+            "requirements": requirements,
+            "blockers": [],
+            "evaluated_at": iso_now(),
+        }
+
+    blockers: list[dict[str, Any]] = []
+    for requirement in required:
+        requirement_id = str(requirement.get("id") or "delivery").strip()
+        repository = str(requirement.get("repository") or "").strip()
+        pr_number = requirement.get("pr_number")
+        approved_head = str(requirement.get("approved_head") or "").strip()
+        base_branch = str(requirement.get("base_branch") or "dev").strip()
+        head_branch = str(requirement.get("head_branch") or "").strip()
+        prefix = f"required delivery {requirement_id}"
+
+        def add_blocker(
+            code: str,
+            detail: str,
+            *,
+            requirement_id: str = requirement_id,
+            repository: str = repository,
+            pr_number: Any = pr_number,
+            requirement: dict[str, Any] = requirement,
+            prefix: str = prefix,
+        ) -> None:
+            blockers.append(
+                {
+                    "id": requirement_id,
+                    "kind": "cross_repo_delivery",
+                    "code": code,
+                    "repository": repository or None,
+                    "pr_number": pr_number,
+                    "task_id": requirement.get("task_id"),
+                    "message": f"{prefix}: {detail}",
+                    "status": "open",
+                }
+            )
+
+        if requirement.get("error"):
+            add_blocker("invalid_declaration", str(requirement["error"]))
+            continue
+        if not repository or not isinstance(pr_number, int) or pr_number <= 0:
+            add_blocker("invalid_declaration", "repository and positive pr_number are required")
+            continue
+
+        repository_id = str(requirement.get("repository_id") or "").strip()
+        repository_root = repository_local_path(config, repository_id) or ROOT
+        pr_status = run_gh_json_command(
+            [
+                "pr",
+                "view",
+                str(pr_number),
+                "--repo",
+                repository,
+                "--json",
+                CROSS_REPO_PR_JSON_FIELDS,
+            ],
+            cwd=repository_root,
+        )
+        if not isinstance(pr_status, dict):
+            add_blocker("pr_unresolved", f"PR #{pr_number} in {repository} could not be verified")
+            continue
+
+        actual_head = str(pr_status.get("headRefOid") or "").strip()
+        actual_branch = str(pr_status.get("headRefName") or "").strip()
+        actual_base = str(pr_status.get("baseRefName") or "").strip()
+        pr_state = str(pr_status.get("state") or "").upper().strip()
+        merge_state = str(pr_status.get("mergeStateStatus") or "").upper().strip()
+
+        if approved_head and actual_head != approved_head:
+            add_blocker(
+                "unapproved_head",
+                f"PR #{pr_number} points at head {actual_head[:12] or 'unknown'}, "
+                f"not approved head {approved_head[:12]}",
+            )
+            continue
+        if not approved_head and pr_state == "MERGED":
+            add_blocker(
+                "unapproved_head",
+                f"PR #{pr_number} has no declared approved head to prove immutable delivery",
+            )
+            continue
+        if head_branch and actual_branch != head_branch:
+            add_blocker(
+                "head_branch_mismatch",
+                f"PR #{pr_number} head branch is {actual_branch or 'unknown'}, expected {head_branch}",
+            )
+            continue
+        if base_branch and actual_base and actual_base != base_branch:
+            add_blocker(
+                "base_branch_mismatch",
+                f"PR #{pr_number} targets {actual_base}, expected {base_branch}",
+            )
+            continue
+        if merge_state in {"DIRTY", "CONFLICTING"}:
+            add_blocker("conflicting", f"PR #{pr_number} is conflicting ({merge_state.lower()})")
+            continue
+
+        ci_code, ci_detail = _cross_repo_ci_issue(pr_status)
+        if ci_code:
+            add_blocker(ci_code, f"PR #{pr_number} {ci_detail}")
+            continue
+        if pr_state != "MERGED":
+            state_detail = pr_state.lower() if pr_state else "unknown"
+            if pr_state == "OPEN" and merge_state in {"CLEAN", "HAS_HOOKS", "UNSTABLE"}:
+                add_blocker(
+                    "mergeable",
+                    f"PR #{pr_number} is mergeable but still open; required delivery is not merged",
+                )
+                continue
+            add_blocker(
+                "open" if pr_state == "OPEN" else "unmerged",
+                f"PR #{pr_number} is {state_detail}; required delivery is not merged",
+            )
+            continue
+        merged_at = str(pr_status.get("mergedAt") or "").strip()
+        merge_commit = pr_status.get("mergeCommit")
+        merge_oid = (
+            str(merge_commit.get("oid") or "").strip()
+            if isinstance(merge_commit, dict)
+            else str(merge_commit or "").strip()
+        )
+        if not merged_at or not merge_oid:
+            add_blocker(
+                "merge_unresolved",
+                f"PR #{pr_number} reports merged without verifiable merge provenance",
+            )
+
+    return {
+        "status": "ready" if not blockers else "blocked",
+        "requirements": requirements,
+        "blockers": blockers,
+        "evaluated_at": iso_now(),
+    }
+
+
+def _cross_repo_blocker_key(task_id: str, requirement_id: str) -> str:
+    return f"cross-repo-delivery:{task_id}:{requirement_id}"
+
+
+def request_supervisor_wakeup(
+    state: dict[str, Any],
+    task: dict[str, Any],
+    gate: dict[str, Any],
+) -> dict[str, Any]:
+    """Record and, when enabled, enqueue a wake for a newly-ready owner lane."""
+    task_id = str(task.get("id") or "").strip()
+    owner = str(task.get("owner") or "").strip()
+    timestamp = iso_now()
+    wake = {
+        "task_id": task_id,
+        "reason": "cross_repo_delivery_ready",
+        "target_agent": owner,
+        "created_at": timestamp,
+        "delivery_status": gate.get("status"),
+    }
+    state.setdefault("supervisor_wakeups", []).append(wake)
+    state["supervisor_wakeups"] = state["supervisor_wakeups"][-50:]
+
+    config = status_runtime_config()
+    if config.get("events", {}).get("enqueue_runtime_events", False) and owner:
+        try:
+            enqueue_event(
+                config,
+                {
+                    "task_id": task_id,
+                    "target_agent": owner,
+                    "provider": owner,
+                    "reason": "owned_finalize_dispatch",
+                    "message": (
+                        f"Required cross-repo deliveries for {task_id} are mergeable/merged; "
+                        "supervisor should re-evaluate finalize readiness."
+                    ),
+                    "metadata": {"cross_repo_delivery_gate": gate},
+                },
+            )
+            wake["queued"] = True
+        except (OSError, TypeError, ValueError):
+            # The status file remains the canonical wake signal. A disabled or
+            # unavailable runtime queue must not turn a successful gate check
+            # into a false terminal blocker.
+            wake["queued"] = False
+    return wake
+
+
+def refresh_cross_repo_delivery_gate(
+    state: dict[str, Any],
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist the latest gate result and expose blockers/resolution to operators."""
+    previous = task.get("cross_repo_delivery_gate")
+    previous_status = str(previous.get("status") or "").lower() if isinstance(previous, dict) else ""
+    previous_codes = {
+        str(item.get("code") or "").lower()
+        for item in (previous.get("blockers") or [])
+        if isinstance(item, dict)
+    } if isinstance(previous, dict) else set()
+    gate = evaluate_cross_repo_delivery_gate(task, state)
+    task["cross_repo_delivery_gate"] = gate
+    task_id = str(task.get("id") or "").strip()
+
+    existing = {
+        str(item.get("id") or _cross_repo_blocker_key(task_id, str(item.get("requirement_id") or ""))): item
+        for item in state.get("blockers", [])
+        if item.get("task_id") == task_id and item.get("kind") == "cross_repo_delivery"
+    }
+    current_codes = {
+        str(item.get("code") or "").lower()
+        for item in (gate.get("blockers") or [])
+        if isinstance(item, dict)
+    }
+    if gate["status"] == "blocked":
+        task["delivery_blockers"] = deepcopy(gate["blockers"])
+        task["next"] = "Blocked by required cross-repo delivery: " + "; ".join(
+            str(item.get("message") or "unresolved") for item in gate["blockers"]
+        )
+        for item in gate["blockers"]:
+            requirement_id = str(item.get("id") or "delivery")
+            key = _cross_repo_blocker_key(task_id, requirement_id)
+            blocker = existing.get(key)
+            if blocker is None:
+                blocker = {
+                    "id": key,
+                    "task_id": task_id,
+                    "owner": task.get("owner"),
+                    "waiting_for": "Orchestrator",
+                    "created_at": gate.get("evaluated_at") or iso_now(),
+                }
+                state.setdefault("blockers", []).append(blocker)
+            blocker.update(
+                {
+                    "kind": "cross_repo_delivery",
+                    "requirement_id": requirement_id,
+                    "repository": item.get("repository"),
+                    "pr_number": item.get("pr_number"),
+                    "message": item.get("message"),
+                    "status": "open",
+                    "last_checked_at": gate.get("evaluated_at"),
+                }
+            )
+        if previous_status == "blocked" and "mergeable" in current_codes and "mergeable" not in previous_codes:
+            request_supervisor_wakeup(state, task, gate)
+    else:
+        task.pop("delivery_blockers", None)
+        became_mergeable = "mergeable" in current_codes and "mergeable" not in previous_codes
+        if previous_status == "blocked" and (gate.get("status") == "ready" or became_mergeable):
+            request_supervisor_wakeup(state, task, gate)
+        for blocker in state.get("blockers", []):
+            if blocker.get("task_id") != task_id or blocker.get("kind") != "cross_repo_delivery":
+                continue
+            if blocker.get("status") == "open":
+                blocker["status"] = "resolved"
+                blocker["resolved_at"] = gate.get("evaluated_at") or iso_now()
+                blocker["resolution"] = "required delivery is now mergeable/merged"
+    return gate
+
+
+def guard_cross_repo_delivery_gate(
+    state: dict[str, Any],
+    task: dict[str, Any],
+) -> dict[str, Any]:
+    gate = refresh_cross_repo_delivery_gate(state, task)
+    if gate.get("status") == "blocked":
+        task_id = str(task.get("id") or "").strip()
+        message = str(task.get("next") or "required cross-repo delivery remains unresolved")
+        raise CrossRepoDeliveryBlocked(
+            f"Cannot finalize task {task_id}: {message}. "
+            "The unresolved child delivery is recorded as an active blocker; "
+            "create a follow-up task for any already archived record."
+        )
+    return gate
 
 
 def maybe_rotate_activity_log(path: Path | None = None) -> Path | None:
@@ -5929,6 +6333,10 @@ def command_done(state: dict[str, Any], args: list[str]) -> None:
             f"attest the exact reviewed commit, or `re_review {task_id} <reason>` for a "
             "fresh review. No finalization was recorded."
         )
+    # The parent PR is necessary but not sufficient for a cross-repository
+    # delivery. Evaluate all explicitly declared child/consumer PRs before any
+    # closeout metadata or terminal mutation is recorded.
+    guard_cross_repo_delivery_gate(state, task)
     timestamp = iso_now()
     delivery = collect_done_delivery_metadata(task, actor, approved_head=approved_head)
     # The task branch is ephemeral and GitHub may delete its remote ref as soon
@@ -5998,6 +6406,9 @@ def command_supersede(state: dict[str, Any], args: list[str]) -> None:
     reviewer = canonical_agent_name(task.get("reviewer"))
     if actor not in {owner, reviewer}:
         raise SystemExit(f"Only the owner ({owner}) or reviewer ({reviewer}) can supersede {task_id}")
+    # Supersede also archives a terminal record, so it cannot erase a declared
+    # required-delivery obligation.
+    guard_cross_repo_delivery_gate(state, task)
     timestamp = iso_now()
     task["status"] = "done"
     task["terminal_outcome"] = TASK_TERMINAL_SUPERSEDED
@@ -6121,13 +6532,23 @@ def command_approve(state: dict[str, Any], args: list[str]) -> None:
 
 
 def command_sync(state: dict[str, Any], _args: list[str]) -> None:
-    return None
+    # A child PR can change on GitHub without changing the board. Refreshing
+    # declarations is therefore the explicit polling path; a blocked -> ready
+    # transition records a supervisor wake for the owner finalize lane.
+    for task in state.get("tasks", []):
+        if cross_repo_delivery_requirements(status_runtime_config(), task):
+            refresh_cross_repo_delivery_gate(state, task)
 
 
 
 def command_archive_migrate(state: dict[str, Any], _args: list[str]) -> None:
     actor = current_actor_validated()
     archived_at = iso_now()
+    # Evaluate all candidates before archiving any one of them, preserving
+    # batch atomicity when a required consumer delivery is still unresolved.
+    for task in list(state.get("tasks", [])):
+        if is_terminal_task(task) and cross_repo_delivery_requirements(status_runtime_config(), task):
+            guard_cross_repo_delivery_gate(state, task)
     archived_ids = archive_terminal_tasks_in_state(state, archived_at=archived_at)
     append_log(
         {
@@ -6770,7 +7191,14 @@ def main(argv: list[str]) -> int:
         # on a pre-lock snapshot.
         state = load_state()
         state_before = deepcopy(state)
-        commands[command](state, args)
+        try:
+            commands[command](state, args)
+        except CrossRepoDeliveryBlocked:
+            # A rejected terminal transition still has to persist the active
+            # child-delivery blocker and the supervisor wake metadata.  Other
+            # command failures retain the historical all-or-nothing behavior.
+            sync_all(state)
+            raise
         sync_all(state)
         try:
             reconcile_status_check_outbox(state)

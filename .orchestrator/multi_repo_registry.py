@@ -157,6 +157,197 @@ WORKER_ALIASES = {
 }
 
 
+# A task's own ``repository`` and ``pr_number`` describe the delivery being
+# reviewed.  They do not describe any consumer (or other repository) that must
+# land alongside it.  Those additional deliveries therefore have to be
+# declared under one of these explicit fields.  Keeping the accepted aliases
+# here makes the record portable across the catalog, status writer and older
+# task imports without ever falling back to the producer PR as evidence.
+REQUIRED_DELIVERY_FIELDS = (
+    "required_cross_repo_deliveries",
+    "cross_repo_delivery_requirements",
+    "cross_repo_deliveries",
+    "cross_repo_delivery",
+    "delivery_requirements",
+    "required_deliveries",
+    "required_delivery_prs",
+    "required_cross_repo_prs",
+)
+
+
+def _raw_required_deliveries(task: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return explicitly declared delivery records, preserving bad records.
+
+    A malformed declaration is evidence that the gate cannot answer, not a
+    reason to silently drop the requirement.  The caller therefore receives a
+    small record with an ``error`` field and can fail closed while retaining the
+    original declaration for operator diagnosis.
+    """
+    task = task or {}
+    for field in REQUIRED_DELIVERY_FIELDS:
+        if field not in task:
+            continue
+        raw = task.get(field)
+        if raw is None:
+            return []
+        if isinstance(raw, list):
+            return [item if isinstance(item, dict) else {"declaration": item} for item in raw]
+        if isinstance(raw, dict):
+            # A single record is the canonical shape.  Also accept a wrapper
+            # used by early catalog imports without treating its keys as PRs.
+            for wrapper in ("requirements", "deliveries", "items"):
+                wrapped = raw.get(wrapper)
+                if isinstance(wrapped, list):
+                    return [item if isinstance(item, dict) else {"declaration": item} for item in wrapped]
+            if not any(
+                key in raw
+                for key in (
+                    "repository",
+                    "repository_slug",
+                    "repo",
+                    "pr_number",
+                    "pull_request",
+                    "task_id",
+                )
+            ):
+                mapped: list[dict[str, Any]] = []
+                for repository, declaration in raw.items():
+                    if isinstance(declaration, dict):
+                        item = deepcopy(declaration)
+                        item.setdefault("repository", repository)
+                    else:
+                        item = {"repository": repository, "pr_number": declaration}
+                    mapped.append(item)
+                return mapped
+            return [raw]
+        return [{"declaration": raw}]
+    return []
+
+
+def _first_delivery_value(record: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = record.get(key)
+        if value is not None and str(value).strip() != "":
+            return value
+    return None
+
+
+def task_delivery_requirements(
+    config: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Normalize a task's explicitly required delivery PR declarations.
+
+    The returned shape is deliberately JSON-compatible because it is stored in
+    status evidence and blockers.  A record is *not* inferred from the task's
+    own PR, repository, artifacts or dependencies.  A required cross-repo
+    delivery without an explicit repository is invalid and stays in the list
+    with ``error`` so a terminal gate can reject it visibly.
+    """
+    normalized: list[dict[str, Any]] = []
+    for index, raw in enumerate(_raw_required_deliveries(task)):
+        record = deepcopy(raw)
+        repository_value = _first_delivery_value(
+            record, "repository", "repository_slug", "repo", "repo_slug"
+        )
+        url_value = _first_delivery_value(
+            record, "pr_url", "pull_request_url", "url", "source_doc"
+        )
+        if not repository_value and isinstance(url_value, str):
+            url_match = re.search(r"github\.com/([^/]+/[^/#?]+)", url_value)
+            if url_match:
+                repository_value = url_match.group(1).removesuffix(".git")
+        repository = str(repository_value or "").strip()
+        repo_id = matching_repo_id(config, repository) if repository else None
+        slug = repository_slug(config, repo_id) if repo_id else None
+
+        pr_value = _first_delivery_value(
+            record, "pr_number", "pull_request", "pr", "pr_url", "pull_request_url", "url", "source_doc"
+        )
+        pr_number: int | None = None
+        if isinstance(pr_value, dict):
+            pr_value = _first_delivery_value(pr_value, "number", "pr_number")
+        if isinstance(pr_value, str) and not pr_value.strip().lstrip("#").isdigit():
+            url_match = re.search(r"/pull/(\d+)(?:$|[/#?])", pr_value)
+            pr_value = url_match.group(1) if url_match else pr_value
+        try:
+            if pr_value is not None and str(pr_value).strip():
+                pr_number = int(str(pr_value).strip().lstrip("#"))
+                if pr_number <= 0:
+                    raise ValueError
+        except (TypeError, ValueError):
+            pr_number = None
+
+        task_id = str(
+            _first_delivery_value(record, "task_id", "child_task_id", "delivery_task_id")
+            or ""
+        ).strip()
+        approved_head = str(
+            _first_delivery_value(
+                record,
+                "approved_head",
+                "approved_head_sha",
+                "head_sha",
+                "expected_head",
+                "expected_head_sha",
+            )
+            or ""
+        ).strip()
+        head_branch = str(
+            _first_delivery_value(record, "head_branch", "branch", "headRefName") or ""
+        ).strip()
+        base_branch = str(
+            _first_delivery_value(
+                record, "base_branch", "target_branch", "baseRefName"
+            )
+            or (resolve_repository(config, repo_id).get("default_branch") if repo_id else "")
+            or "dev"
+        ).strip()
+        required_value = record.get("required", True)
+        required = not (
+            isinstance(required_value, str)
+            and required_value.strip().lower() in {"0", "false", "no", "off"}
+        ) and bool(required_value)
+
+        errors: list[str] = []
+        if not repository:
+            errors.append("repository is required")
+        elif not repo_id or not slug:
+            errors.append(f"repository is not registered: {repository}")
+        if pr_number is None and not task_id:
+            errors.append("pr_number or child task_id is required")
+        requirement_id = str(
+            _first_delivery_value(record, "id", "delivery_id", "requirement_id") or ""
+        ).strip()
+        if not requirement_id:
+            requirement_id = (
+                f"{slug}#{pr_number}" if slug and pr_number is not None
+                else task_id or f"delivery-{index + 1}"
+            )
+
+        item: dict[str, Any] = {
+            "id": requirement_id,
+            "required": required,
+            "repository": slug or repository or None,
+            "repository_id": repo_id,
+            "pr_number": pr_number,
+            "task_id": task_id or None,
+            "head_branch": head_branch or None,
+            "base_branch": base_branch or None,
+            "approved_head": approved_head or None,
+            "declaration": record,
+        }
+        if errors:
+            item["error"] = "; ".join(errors)
+        normalized.append(item)
+    return normalized
+
+
+# This spelling reads naturally at call sites that only deal with the
+# cross-repository subset and is kept as a public alias for task/test tooling.
+cross_repo_delivery_requirements = task_delivery_requirements
+
+
 def coordination_enabled(config: dict[str, Any]) -> bool:
     coord_cfg = config.get("coordination")
     if coord_cfg is None:
