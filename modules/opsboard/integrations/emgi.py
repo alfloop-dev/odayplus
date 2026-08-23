@@ -39,6 +39,7 @@ from modules.netplan.integrations.emgi import (
 from modules.netplan.integrations.emgi import (
     CandidateAdmission,
     NetPlanEmgiDocument,
+    netplan_emgi_document_digest,
     validate_netplan_emgi_document,
 )
 from shared.auth import Principal, Role
@@ -270,11 +271,9 @@ class OpsBoardEmgiApprovalService:
         # operator a plan whose provenance was never checked.
         validate_netplan_emgi_document(document)
         data = document.to_dict() if isinstance(document, NetPlanEmgiDocument) else dict(document)
-        digest = (
-            document.digest
-            if isinstance(document, NetPlanEmgiDocument)
-            else _text(data.get("digest")) or ""
-        )
+        # Pin the packet to the exact bytes reviewed, whether the caller handed
+        # us a live document or a stored payload.
+        digest = netplan_emgi_document_digest(data)
         actor = self._as_actor(requested_by)
         now = self._clock().isoformat()
         packet_id = f"netplan-emgi-approval-{self._id_factory()}"
@@ -347,6 +346,11 @@ class OpsBoardEmgiApprovalService:
             raise OpsBoardEmgiApprovalPolicyError(f"Unknown approval action: {action!r}") from error
 
         approver = self._as_actor(actor)
+        if not approver.authenticated:
+            raise OpsBoardEmgiApprovalPolicyError(
+                "The final NetPlan decision must be recorded by an authenticated human "
+                f"operator; '{approver.subject_id}' is not authenticated"
+            )
         if not approver.is_human:
             raise OpsBoardEmgiApprovalPolicyError(
                 "The final NetPlan decision must be recorded by an authenticated human "

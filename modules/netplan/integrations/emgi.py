@@ -64,12 +64,16 @@ from modules.sitescore.v3.domain.models import (
     ScoreAvailability,
     SiteScoreDecision,
 )
+from packages.oday_data_product_contracts_client.models.site_market_context import (
+    CONTRACT_ID as MARKET_CONTEXT_CONTRACT_ID,
+)
+from packages.oday_data_product_contracts_client.models.site_market_context import (
+    CONTRACT_VERSION as MARKET_CONTEXT_CONTRACT_VERSION,
+)
 
 CONTRACT_ID = "odayplus.netplan-emgi.v1"
 CONTRACT_VERSION = "1.0.0"
 CONTRACT_CATEGORY = "decision_product"
-
-MARKET_CONTEXT_CONTRACT_ID = "emgi.site-market-context.v1"
 
 #: Bumped whenever the admission rules or the economics -> solver mapping
 #: changes.  It is persisted on every emitted document so a past plan stays
@@ -185,7 +189,13 @@ def _context_for_site(market_context: Any, site_id: str) -> Mapping[str, Any]:
 
 
 def _manifest_ids(value: Any) -> set[str]:
-    """Collect every manifest reference a market context can carry."""
+    """Collect the manifest references one context or document level declares.
+
+    Sibling ``contexts`` are deliberately *not* traversed: a manifest that only
+    another site's context carries must not vouch for this candidate's
+    point-in-time inputs.  Callers union the site-scoped context with the
+    document root, which is the only level whose refs are legitimately shared.
+    """
 
     manifest_ids: set[str] = set()
 
@@ -201,11 +211,10 @@ def _manifest_ids(value: Any) -> set[str]:
             candidate = _text(mapping.get(name))
             if candidate is not None:
                 manifest_ids.add(candidate)
-        for name in ("component_manifest_refs", "contexts"):
-            children = mapping.get(name)
-            if isinstance(children, Sequence) and not isinstance(children, (str, bytes)):
-                for child in children:
-                    collect(child)
+        children = mapping.get("component_manifest_refs")
+        if isinstance(children, Sequence) and not isinstance(children, (str, bytes)):
+            for child in children:
+                collect(child)
         metadata = mapping.get("metadata")
         if metadata is not None:
             metadata_mapping = _as_mapping(metadata)
@@ -249,7 +258,14 @@ def _market_context_id(context: Mapping[str, Any], document: Any) -> str | None:
     )
 
 
-def _market_context_sha256(context: Mapping[str, Any], document: Any) -> str | None:
+def _market_context_digest(context: Mapping[str, Any], document: Any) -> str | None:
+    """Return the market context hash the decision chain is pinned to.
+
+    A producer-declared ``sha256``/``digest`` wins; otherwise the canonical
+    content hash of the site-scoped context is used, so the evidence still
+    identifies the exact payload the plan was derived from.
+    """
+
     for source in (context, _as_mapping(document)):
         for name in ("sha256", "digest"):
             candidate = _text(source.get(name))
@@ -260,7 +276,7 @@ def _market_context_sha256(context: Mapping[str, Any], document: Any) -> str | N
             candidate = _text(metadata.get(name))
             if candidate is not None:
                 return candidate
-    return None
+    return _digest(context) or _digest(document)
 
 
 def _source_market_context_id(document: Any) -> str | None:
@@ -424,7 +440,7 @@ class NetPlanEmgiDocument:
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(_canonical_json(self.to_dict()).encode("utf-8")).hexdigest()
+        return netplan_emgi_document_digest(self)
 
     @property
     def admitted_candidates(self) -> tuple[NetPlanCandidateDecision, ...]:
@@ -456,6 +472,17 @@ class NetPlanEmgiDocument:
 
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.to_dict(), indent=indent, default=str)
+
+
+def netplan_emgi_document_digest(doc: NetPlanEmgiDocument | Mapping[str, Any]) -> str:
+    """Canonical SHA256 of a netplan-emgi document, in object or wire form.
+
+    OpsBoard pins an approval to this digest, so it must be computable from a
+    stored payload and not only from a live document object.
+    """
+
+    data = doc.to_dict() if isinstance(doc, NetPlanEmgiDocument) else dict(doc)
+    return hashlib.sha256(_canonical_json(data).encode("utf-8")).hexdigest()
 
 
 def validate_netplan_emgi_document(doc: NetPlanEmgiDocument | Mapping[str, Any]) -> None:
@@ -506,17 +533,13 @@ def validate_netplan_emgi_document(doc: NetPlanEmgiDocument | Mapping[str, Any])
             raise NetPlanEmgiContractError("candidate evidence must persist document refs")
         if admission == CandidateAdmission.ADMITTED.value:
             if candidate.get("candidate_input") is None:
-                raise NetPlanEmgiContractError(
-                    "an admitted candidate must carry solver inputs"
-                )
+                raise NetPlanEmgiContractError("an admitted candidate must carry solver inputs")
             if _text(evidence.get("manifest_id")) is None:
                 raise NetPlanEmgiContractError(
                     "an admitted candidate must carry its point-in-time manifest"
                 )
         elif candidate.get("candidate_input") is not None:
-            raise NetPlanEmgiContractError(
-                "a withheld candidate must not carry solver inputs"
-            )
+            raise NetPlanEmgiContractError("a withheld candidate must not carry solver inputs")
 
 
 class _Verdict:
@@ -583,7 +606,7 @@ class NetPlanEmgiIntegrationService:
                 f"Market context does not declare {MARKET_CONTEXT_CONTRACT_ID}.",
             )
 
-        context_manifest_ids = _manifest_ids(market_context) | _manifest_ids(context)
+        context_manifest_ids = _manifest_ids(context) | _manifest_ids(market_context)
         if expected_manifest_id is not None and expected_manifest_id not in context_manifest_ids:
             verdict.downgrade(
                 CandidateAdmission.WITHHELD_PROVENANCE,
@@ -887,13 +910,14 @@ class NetPlanEmgiIntegrationService:
         if product_version is not None:
             policy_versions.append(("market_context_product", product_version))
 
+        market_context_digest = _market_context_digest(context, market_context)
         refs = (
             EvidenceRef(
                 label="market_context",
                 contract_id=MARKET_CONTEXT_CONTRACT_ID,
-                contract_version=_text(_field(market_context, "product_version")) or "unknown",
+                contract_version=MARKET_CONTEXT_CONTRACT_VERSION,
                 document_id=market_context_id,
-                sha256=_market_context_sha256(context, market_context),
+                sha256=market_context_digest,
             ),
             self._evidence_ref("sitescore_v3", sitescore_doc, SITESCORE_CONTRACT_ID),
             self._evidence_ref("feasibility", feasibility_doc, FEASIBILITY_CONTRACT_ID),
@@ -902,7 +926,7 @@ class NetPlanEmgiIntegrationService:
         return DecisionEvidence(
             manifest_id=manifest_id,
             market_context_id=market_context_id,
-            market_context_sha256=_market_context_sha256(context, market_context),
+            market_context_sha256=market_context_digest,
             policy_versions=tuple(policy_versions),
             refs=refs,
         )
@@ -954,15 +978,21 @@ class NetPlanEmgiIntegrationService:
                 CandidateAdmission.WITHHELD_INCOMPLETE,
                 "Economics decision is missing a confidence score.",
             )
+        elif not 0.0 <= confidence <= 1.0:
+            # Out of range is corrupt input; clamping it would quietly turn a
+            # nonsense confidence into a zero-risk candidate.
+            verdict.downgrade(
+                CandidateAdmission.WITHHELD_INCOMPLETE,
+                f"Economics confidence score is out of range: {confidence}.",
+            )
+            confidence = None
         if monthly_ebitda is None or open_cost is None or confidence is None:
             return None
 
         risk_flags = _field(decision, "risk_flags") or ()
         if isinstance(risk_flags, (str, bytes)) or not isinstance(risk_flags, Sequence):
             risk_flags = ()
-        risk_score = _clamp(
-            _clamp(1.0 - confidence) + self.policy.risk_per_flag * len(risk_flags)
-        )
+        risk_score = _clamp(_clamp(1.0 - confidence) + self.policy.risk_per_flag * len(risk_flags))
 
         return CandidateSiteInput(
             candidate_site_id=site_id,
@@ -972,9 +1002,7 @@ class NetPlanEmgiIntegrationService:
             open_cost=round(open_cost, 4),
             risk_score=round(risk_score, 6),
             capacity_delta=(
-                capacity_delta
-                if capacity_delta is not None
-                else self.policy.default_capacity_delta
+                capacity_delta if capacity_delta is not None else self.policy.default_capacity_delta
             ),
             # The solver keeps these on the chosen action, so the executed plan
             # can be traced back to the exact documents that justified it.
@@ -989,6 +1017,7 @@ __all__ = [
     "DEFAULT_POLICY",
     "INTEGRATION_POLICY_VERSION",
     "MARKET_CONTEXT_CONTRACT_ID",
+    "MARKET_CONTEXT_CONTRACT_VERSION",
     "CandidateAdmission",
     "CandidateDecisionRequest",
     "DecisionEvidence",
@@ -998,5 +1027,6 @@ __all__ = [
     "NetPlanEmgiDocument",
     "NetPlanEmgiIntegrationService",
     "NetPlanEmgiPolicy",
+    "netplan_emgi_document_digest",
     "validate_netplan_emgi_document",
 ]
