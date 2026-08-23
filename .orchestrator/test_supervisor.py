@@ -14325,5 +14325,86 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
 
 
 
+class CleanIsNotUnreadableTests(unittest.TestCase):
+    """A clean worktree and an unreadable one must not share a reason.
+
+    `git status --porcelain` exiting 0 with no output is the ordinary answer for
+    a clean worktree. Folding that into `status_unreadable` alongside a non-zero
+    exit meant the first production firing of the death-preservation path
+    reported a git fault for ODP-API-001 that did not exist -- its worktree was
+    simply clean. A wrong reason costs more than no reason, because someone acts
+    on it.
+    """
+
+    def _worktree(self, tmpdir: str) -> tuple[Path, Path]:
+        """A real linked worktree, because the helper compares git identities."""
+        repo = Path(tmpdir) / "repo"
+        repo.mkdir()
+        for args in (
+            ["init", "-q", "-b", "dev"],
+            ["config", "user.email", "t@example.com"],
+            ["config", "user.name", "t"],
+        ):
+            subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+        (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-qm", "seed"], cwd=repo, check=True, capture_output=True)
+        worktree = Path(tmpdir) / "wt"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "task/T-1", str(worktree)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        return repo, worktree
+
+    def test_a_clean_worktree_says_nothing_to_preserve(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, worktree = self._worktree(tmpdir)
+            config = {"paths": {"status_file": str(Path(tmpdir) / "ai-status.json")}}
+            outcome = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                {"workers": {}},
+                worktree,
+                "T-1",
+                expected_branch="task/T-1",
+                owning_repo_root=repo,
+            )
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "nothing_to_preserve")
+        self.assertNotEqual(outcome.reason, "status_unreadable")
+
+    def test_dirt_in_the_same_worktree_is_preserved(self) -> None:
+        """The other half of the pair: the clean answer must not swallow real dirt."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo, worktree = self._worktree(tmpdir)
+            (worktree / "unsaved.txt").write_text("work nobody committed\n", encoding="utf-8")
+            config = {"paths": {"status_file": str(Path(tmpdir) / "ai-status.json")}}
+            with mock.patch.object(supervisor, "write_activity_log"):
+                outcome = supervisor._quarantine_and_preserve_dirty_worktree(
+                    config,
+                    {"workers": {}},
+                    worktree,
+                    "T-1",
+                    expected_branch="task/T-1",
+                    owning_repo_root=repo,
+                )
+            self.assertTrue(
+                outcome, f"expected preservation, got {getattr(outcome, 'reason', outcome)}"
+            )
+            # Checked inside the temp dir's lifetime: asserting after it is
+            # removed passes the wrong thing, which is how this assertion first
+            # "failed" against correct code.
+            self.assertTrue(
+                (worktree / "unsaved.txt").exists(),
+                "preservation must copy, never clean: the dirt is the last guard against the pruner",
+            )
+            self.assertEqual(
+                (worktree / "unsaved.txt").read_text(encoding="utf-8"),
+                "work nobody committed\n",
+            )
+
+
+
 if __name__ == "__main__":
     unittest.main()

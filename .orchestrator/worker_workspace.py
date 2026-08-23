@@ -2242,8 +2242,18 @@ def _quarantine_and_preserve_dirty_worktree(
         capture_output=True,
         check=False,
     )
-    if status_proc.returncode != 0 or not status_proc.stdout:
-        return _quarantine_refused("status_unreadable")
+    if status_proc.returncode != 0:
+        return _quarantine_refused(
+            "status_unreadable",
+            (status_proc.stderr or b"").decode("utf-8", errors="replace").strip()[:200],
+        )
+    if not status_proc.stdout:
+        # rc==0 with no output is the ordinary answer for a clean worktree, not
+        # a failure to read it. Folding the two into `status_unreadable` sent an
+        # operator looking for a git fault that was not there: the first
+        # production firing of this helper reported exactly that for
+        # ODP-API-001, whose worktree was simply clean.
+        return _quarantine_refused("nothing_to_preserve")
 
     raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
     if not raw_entries:
