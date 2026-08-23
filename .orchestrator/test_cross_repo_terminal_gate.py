@@ -16,7 +16,6 @@ import ai_status
 import multi_repo_registry
 import task_archive
 
-
 PARENT_HEAD = "a" * 40
 CHILD_HEAD = "c" * 40
 MERGE_COMMIT = "d" * 40

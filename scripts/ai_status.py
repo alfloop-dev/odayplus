@@ -1309,7 +1309,16 @@ def evaluate_cross_repo_delivery_gate(
         head_branch = str(requirement.get("head_branch") or "").strip()
         prefix = f"required delivery {requirement_id}"
 
-        def add_blocker(code: str, detail: str) -> None:
+        def add_blocker(
+            code: str,
+            detail: str,
+            *,
+            requirement_id: str = requirement_id,
+            repository: str = repository,
+            pr_number: Any = pr_number,
+            requirement: dict[str, Any] = requirement,
+            prefix: str = prefix,
+        ) -> None:
             blockers.append(
                 {
                     "id": requirement_id,
