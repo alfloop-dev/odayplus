@@ -470,6 +470,7 @@ modules/netplan/domain/__init__.py,product_system,product_required,true,,enginee
 modules/netplan/domain/planning.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/netplan/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/netplan/infrastructure/repositories.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/netplan/integrations/emgi.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/netplan/tests/test_netplan_production_execution.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 modules/netplan/workers/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/netplan/workers/solver_worker.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -514,6 +515,7 @@ modules/opsboard/domain/__init__.py,product_system,product_required,true,,engine
 modules/opsboard/domain/r4_dtos.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/infrastructure/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/infrastructure/seed_data.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
+modules/opsboard/integrations/emgi.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/opsboard/persistence/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/priceops/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 modules/priceops/application/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -853,6 +855,7 @@ tests/integration/test_model_ready_geo_views.py,verification,verification_only,f
 tests/integration/test_model_ready_materialization.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_registry_artifacts.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_model_training_release.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/integration/test_netplan_emgi.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_netplan_solver.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_official_real_estate_postgresql.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/integration/test_operator_canonical_wiring.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
