@@ -1366,6 +1366,91 @@ class SidecarTaskTests(unittest.TestCase):
         self.assertEqual(title, "[Sidecar] [Auto] [Parent APP-001] Prepare APP-001 BFF handoff packet")
 
 
+class AssignmentSourceDocumentTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.state = {
+            "agents": [
+                {"name": "Codex", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+                {"name": "Claude", "capability_lane": [], "status": "idle", "current_task_ids": [], "branch": "", "next": "", "last_update": None},
+            ],
+            "tasks": [],
+            "handoffs": [],
+            "blockers": [],
+            "workload": {},
+            "workload_summary": {},
+        }
+
+    def _assign_with_source_docs(self, source_docs: object) -> None:
+        env = {
+            "AI_NAME": "Codex",
+            "TASK_METADATA_JSON": json.dumps({"source_docs": source_docs}),
+        }
+        with (
+            mock.patch.dict(os.environ, env, clear=False),
+            mock.patch.object(ai_status, "configured_agent_names", return_value={"Codex", "Claude"}),
+            mock.patch.object(
+                ai_status,
+                "status_runtime_config",
+                return_value={
+                    "paths": {"status_file": str(ai_status.STATUS_ROOT / "ai-status.json")}
+                },
+            ),
+        ):
+            ai_status.command_assign(self.state, ["ODP-SOURCE-DOC-001", "Codex", "Claude"])
+
+    def test_invalid_source_doc_is_rejected_before_task_is_created(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            self._assign_with_source_docs(["docs/missing.md"])
+
+        self.assertIn("missing source document", str(ctx.exception))
+        self.assertEqual(self.state["tasks"], [])
+
+    def test_mutable_http_source_doc_is_rejected_before_task_is_created(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            self._assign_with_source_docs(["https://github.com/alfloop-dev/odayplus/pull/123/files"])
+
+        self.assertIn("mutable HTTP/PR", str(ctx.exception))
+        self.assertEqual(self.state["tasks"], [])
+
+    def test_directory_without_inventory_is_rejected_before_task_is_created(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            (status_root / "docs").mkdir()
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(
+                    ai_status,
+                    "status_runtime_config",
+                    return_value={"paths": {"status_file": str(status_root / "ai-status.json")}},
+                ),
+            ):
+                with self.assertRaises(SystemExit) as ctx:
+                    self._assign_with_source_docs(["docs"])
+
+            self.assertIn("directory without inventory manifest", str(ctx.exception))
+            self.assertEqual(self.state["tasks"], [])
+
+    def test_legacy_local_source_doc_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root = Path(tmpdir)
+            source = status_root / "docs" / "source.md"
+            source.parent.mkdir()
+            source.write_text("# source\n", encoding="utf-8")
+            with (
+                mock.patch.object(ai_status, "STATUS_ROOT", status_root),
+                mock.patch.object(
+                    ai_status,
+                    "status_runtime_config",
+                    return_value={"paths": {"status_file": str(status_root / "ai-status.json")}},
+                ),
+            ):
+                self._assign_with_source_docs(["docs/source.md"])
+
+            task = ai_status.get_task(self.state, "ODP-SOURCE-DOC-001")
+            self.assertIsNotNone(task)
+            self.assertEqual(task["source_docs"], ["docs/source.md"])
+
+
 class HumanOpsAgentTests(unittest.TestCase):
     def test_human_gate_can_belong_to_human_ops_without_blocking_worker(self) -> None:
         state = {

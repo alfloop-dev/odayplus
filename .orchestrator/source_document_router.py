@@ -17,6 +17,11 @@ _GITHUB_REF_RE = re.compile(
     r"^github://(?P<repository>[^@\s]+)@(?P<ref>[0-9a-fA-F]{40})/(?P<path>.+)$"
 )
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+_MUTABLE_HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+_GITHUB_PR_URL_RE = re.compile(
+    r"^(?:www\.)?github\.com/[^/\s]+/[^/\s]+/(?:pull|issues)/\d+(?:/|$)",
+    re.IGNORECASE,
+)
 
 
 class SourceDocumentRoutingError(ValueError):
@@ -102,6 +107,11 @@ def _parse_reference(
     task: dict[str, Any] | None,
 ) -> tuple[str | None, str | None, str, bool]:
     raw = str(reference or "").strip().replace("\\", "/")
+    if _MUTABLE_HTTP_URL_RE.match(raw) or _GITHUB_PR_URL_RE.match(raw):
+        raise SourceDocumentRoutingError(
+            "mutable HTTP/PR source document URL rejected; use a pinned "
+            "github://<repo>@<40-hex-sha>/<path> reference"
+        )
     match = _GITHUB_REF_RE.match(raw)
     if match:
         return (
