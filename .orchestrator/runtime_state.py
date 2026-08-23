@@ -49,6 +49,10 @@ def default_state() -> dict[str, Any]:
         "workers": {},
         "worker_worktrees": {
             "leases": {},
+            # A rejected owner handoff is durable recovery state: it permits
+            # only the same owner to resume the exact dirty checkout and
+            # close it out before a reviewer may see the task.
+            "handoff_blocks": {},
         },
         # Consecutive worktree-lease block counts per task. This has to be
         # durable: the escalation it feeds only fires after several *consecutive*
@@ -181,6 +185,12 @@ def migrate_state(raw: dict[str, Any] | None) -> dict[str, Any]:
     state.setdefault("workers", {})
     state.setdefault("worker_worktrees", {})
     state["worker_worktrees"].setdefault("leases", {})
+    handoff_blocks = state["worker_worktrees"].get("handoff_blocks")
+    state["worker_worktrees"]["handoff_blocks"] = (
+        {key: entry for key, entry in handoff_blocks.items() if isinstance(entry, dict)}
+        if isinstance(handoff_blocks, dict)
+        else {}
+    )
     lease_blocks = state.get("worker_worktree_lease_blocks")
     state["worker_worktree_lease_blocks"] = (
         {key: entry for key, entry in lease_blocks.items() if isinstance(entry, dict)}

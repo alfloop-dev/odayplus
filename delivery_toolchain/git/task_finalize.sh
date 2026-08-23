@@ -68,10 +68,23 @@ if [ "$CURRENT" != "$BRANCH" ]; then
   exit 1
 fi
 
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  echo "task_finalize: refusing to open a PR with uncommitted tracked changes:" >&2
-  git status --short --untracked-files=no >&2
-  echo "task_finalize: commit them via delivery_toolchain/git/worker_commit.py first." >&2
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLCHAIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# This is the same classifier used by workspace leasing and the final owner
+# handoff seal.  It deliberately rejects every owner-owned untracked file,
+# not only a hand-maintained list of scratch-script names.  Supervisor-seeded
+# context remains allowlisted through ORCH_MATERIALIZED_CONTEXT_PATHS.
+cleanliness_tool="$TOOLCHAIN_ROOT/.orchestrator/worktree_cleanliness.py"
+if [ ! -f "$cleanliness_tool" ]; then
+  echo "task_finalize: shared worktree cleanliness policy is unavailable: $cleanliness_tool" >&2
+  exit 1
+fi
+if ! cleanliness_out="$(python3 "$cleanliness_tool" --repo "$ROOT" 2>&1)"; then
+  echo "task_finalize: refusing to publish -- worktree handoff is not clean:" >&2
+  printf '%s\n' "$cleanliness_out" | sed 's/^/  /' >&2
+  echo "task_finalize: commit deliverables, delete scratch, or move temporary files to" >&2
+  echo "  \$ORCH_SCRATCH_DIR before opening the reviewer handoff." >&2
   exit 1
 fi
 
@@ -94,7 +107,6 @@ if [ "$AHEAD" -eq 0 ]; then
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python3 "$SCRIPT_DIR/check_task_delivery_identity.py" \
   --repo "$ROOT" \
   --task-id "$TASK_ID" \
@@ -116,7 +128,6 @@ python3 "$SCRIPT_DIR/check_task_delivery_identity.py" \
 # environment: these checks ship with this script, and the repository being
 # finalized is not required to carry a virtualenv of its own. Ruff still reads
 # the target repo's own config, because it is invoked with cwd = $ROOT.
-TOOLCHAIN_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 resolve_py() {
   if [ -x "$TOOLCHAIN_ROOT/.venv/bin/python" ]; then echo "$TOOLCHAIN_ROOT/.venv/bin/python"; return 0; fi
   if [ -x "$ROOT/.venv/bin/python" ]; then echo "$ROOT/.venv/bin/python"; return 0; fi
@@ -171,37 +182,6 @@ if [ -n "$lint_targets" ]; then
         exit 1 ;;
     esac
   fi
-fi
-
-# 3. One-shot patch scripts left at the repository root.
-#
-#    Workers routinely edit tracked files by writing a small script that reads
-#    the file, string-replaces, and writes it back -- then leave the script
-#    behind. It is untracked, so it never reaches a PR and no reviewer sees it;
-#    but it does make the worktree dirty, and the next lease refuses to reuse a
-#    dirty worktree. The task then stops dispatching until someone clears it by
-#    hand. Observed twice on 2026-08-23: DPF-EMGI-DEPLOY-CONTROL-001 (3 files,
-#    blocking a reviewer dispatch) and DPF-LIVE-OFFICIAL-SOURCES-001 (22).
-#
-#    Refusing here puts the cleanup on the worker that created the mess, while
-#    it still has the context to know whether each file was scratch or work.
-#    Deciding that later, from the outside, means guessing.
-#
-#    Deliberately narrow: untracked, repository root only, and only these
-#    prefixes. Neither repository has a tracked file matching this at any depth,
-#    so it costs nothing today; a `scripts/fix_foo.py` is a plausible real tool
-#    and is left alone.
-scratch_patchers="$(git ls-files --others --exclude-standard \
-  ':(glob)fix_*.py' ':(glob)patch_*.py' ':(glob)tmp_*.py' ':(glob)scratch_*.py' ':(glob)debug_*.py' \
-  2>/dev/null | grep -v '/' || true)"
-if [ -n "$scratch_patchers" ]; then
-  count="$(printf '%s\n' "$scratch_patchers" | wc -l | tr -d ' ')"
-  echo "task_finalize: refusing to publish -- $count untracked one-shot script(s) left at the repository root:" >&2
-  printf '%s\n' "$scratch_patchers" | sed 's/^/  /' >&2
-  echo "task_finalize: these never reach the PR, but they keep the worktree dirty and the" >&2
-  echo "  next worker lease refuses a dirty worktree, so the task stops dispatching." >&2
-  echo "task_finalize: delete them if they were scratch, or commit them if they are deliverables." >&2
-  exit 1
 fi
 
 # gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:

@@ -5,7 +5,6 @@ from __future__ import annotations
 """Worker lifecycle logic extracted from legacy supervisor."""
 
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from common import (
@@ -304,21 +303,6 @@ def process_queue(
             )
             changed = True
             continue
-        workspace_path = request_metadata.get("workspace_path") if isinstance(request_metadata, dict) else None
-        guard_ok, guard_message = check_worker_tree_clean(
-            config,
-            run_id=str(event_id or ""),
-            task_id=str(event.get("task_id") or ""),
-            target_agent=str(event.get("target_display_name") or event.get("target_agent") or ""),
-            queue_event_id=str(event_id or ""),
-            cwd=Path(str(workspace_path)) if workspace_path else None,
-        )
-        if not guard_ok:
-            record["status"] = "pending"
-            record["last_wait_reason"] = guard_message
-            record["dirty_tree_guard_at"] = utc_now()
-            changed = True
-            continue
         record["attempt_count"] = int(record.get("attempt_count", 0)) + 1
         record["last_attempt_at"] = utc_now()
         ok, outcome, delivery = start_worker_for_request(
@@ -458,7 +442,8 @@ def process_queue(
 def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report: dict[str, Any] | None = None) -> bool:
     changed = False
     approval_state = load_approval_state(config)
-    task_map = task_index_from_status(config, load_status(config))
+    status_snapshot = load_status(config)
+    task_map = task_index_from_status(config, status_snapshot)
     valid_queue_event_ids = set(state.get("queue", {}).get("events", {}))
     redispatch_statuses = redispatch_candidate_statuses(config)
     active_statuses = active_worker_statuses(config)
@@ -1198,6 +1183,76 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 terminal_statuses=terminal_statuses,
             )
             if success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
+                request_snapshot = worker.get("request_snapshot")
+                raw_dispatch_reason = (
+                    request_snapshot.get("reason")
+                    if isinstance(request_snapshot, dict)
+                    else worker.get("reason")
+                )
+                dispatch_reason = str(raw_dispatch_reason or "").strip()
+                # This is the owner-to-reviewer boundary, not a generic worker
+                # exit hook.  Reviewers, helper claims, and coordination runs
+                # must never create a continuation record for the task owner.
+                needs_owner_handoff_seal = dispatch_reason in {
+                    REASON_OWNED_READY,
+                    REASON_OWNED_IN_PROGRESS,
+                }
+                handoff_seal = (
+                    seal_worker_handoff(config, state, worker, current_task)
+                    if needs_owner_handoff_seal
+                    else None
+                )
+                if handoff_seal is not None and not handoff_seal.accepted:
+                    # The owner is already gone, so this must settle the run and
+                    # release capacity.  For a submitted review, atomically
+                    # revoke the reviewer handoff before dispatch can see it.
+                    if str(current_task.get("status") or "").lower() == "review":
+                        if not status_transition.reject_unsealed_worker_handoff(
+                            config,
+                            status_snapshot,
+                            current_task,
+                            worker_run_id=str(worker.get("run_id") or "") or None,
+                            reason=handoff_seal.reason,
+                            detail=handoff_seal.detail,
+                        ):
+                            worker["status"] = "failed"
+                            worker["last_event_at"] = utc_now()
+                            worker["last_error"] = "Worker handoff seal could not atomically revoke review dispatch."
+                            finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                            write_activity_log(
+                                config,
+                                {
+                                    "type": "worker_failed",
+                                    "provider": worker.get("provider"),
+                                    "task_id": worker.get("task_id"),
+                                    "message": worker["last_error"],
+                                    "worker_run_id": worker.get("run_id"),
+                                },
+                            )
+                            changed = True
+                            continue
+                    record_unsealed_worker_handoff(config, state, worker, current_task, handoff_seal)
+                    worker["status"] = "completed"
+                    worker["last_event_at"] = utc_now()
+                    worker["progress_outcome"] = "handoff_seal_rejected"
+                    worker["last_error"] = f"Handoff seal rejected: {handoff_seal.reason}: {handoff_seal.detail}"
+                    finalize_queue_event_record(config, state, worker, "completed", worker["last_error"])
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_handoff_rejected",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": worker["last_error"],
+                            "worker_run_id": worker.get("run_id"),
+                            "handoff_reason": handoff_seal.reason,
+                            "handoff_detail": handoff_seal.detail,
+                        },
+                    )
+                    changed = True
+                    continue
+                if handoff_seal is not None:
+                    clear_unsealed_worker_handoff(state, worker.get("task_id"))
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 worker["progress_outcome"] = success_outcome

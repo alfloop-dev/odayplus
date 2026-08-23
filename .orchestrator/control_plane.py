@@ -9,8 +9,8 @@ never committed to any branch, took effect for anyone running `done` from that
 tree, and sat there for roughly eighteen hours while the fleet ran normally.
 Nothing noticed, because nothing was looking.
 
-`worker_tree_guard` does not cover this. It inspects a worker's own worktree
-before dispatch; the shared checkout is a different tree entirely.
+The worker handoff seal does not cover this. It inspects each isolated worker
+worktree at owner exit; the shared checkout is a different tree entirely.
 
 This module answers a narrower question: are the files that decide what is
 allowed currently modified and uncommitted where the supervisor runs? An

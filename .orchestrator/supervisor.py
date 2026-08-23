@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import atexit
 import fcntl
-import fnmatch
 import hashlib
 import json
 import os
@@ -143,7 +142,6 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_generated_collaboration_guide",
 "_generated_worker_task_brief",
 "_git_commit_oid",
-"_git_dirty_entries",
 "_git_operation_in_progress",
 "_git_output",
 "_git_worktree_records",
@@ -155,26 +153,28 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "_normalize_materialized_paths",
 "_orchestrator_materialized_paths",
 "_parse_porcelain_entries",
-"_path_matches_any_glob",
 "_prune_worktree_lease_blocks",
 "_quarantine_and_preserve_dirty_worktree",
 "_quarantine_refused",
 "QuarantineOutcome",
-"_record_worktree_lease_block",
-"_refresh_reused_worker_worktree",
-"_restore_reusable_scratch",
-"_run_git_network_command",
+    "_record_worktree_lease_block",
+    "_refresh_reused_worker_worktree",
+    "_run_git_network_command",
 "_scan_process_paths_in_root",
 "_task_brief_context_candidates",
 "_task_id_slug",
 "_worker_worktree_base_root",
 "_worker_base_cache_key",
 "_worktree_record_branch",
-"check_worker_tree_clean",
 "materialize_worker_context_files",
-"prepare_worker_workspace",
-"prune_orphan_worktrees",
-"preserve_dead_worker_worktree",
+    "prepare_worker_workspace",
+    "prune_orphan_worktrees",
+    "preserve_dead_worker_worktree",
+    "WorkerHandoffSeal",
+    "seal_worker_handoff",
+    "record_unsealed_worker_handoff",
+    "clear_unsealed_worker_handoff",
+    "sealed_owner_continuation_allowed",
 "branch_name_is_usable",
 "canonical_task_record",
 "resolve_worker_base",
@@ -182,7 +182,6 @@ _WORKSPACE_HELPER_FUNCTIONS = [
 "worker_task_repository_binding",
 "worker_task_repo_root",
 "worker_task_worktree_path",
-"worker_tree_guard_settings",
 "worker_worktree_housekeeping_settings",
 "worker_worktree_settings",
 ]
@@ -1796,78 +1795,6 @@ def _git_ref_exists(repo_root: Path, ref: str) -> bool:
 
 
 
-
-# Orchestrator-managed per-task scratch and context files that a worker routinely
-# dirties or seeds inside its worktree. The supervisor regenerates or seeds these on
-# dispatch, so a reused worktree whose ONLY dirt is here is safe to restore-and-reuse.
-# Ephemeral context must not block dispatch or cause permanent lease failure.
-_REUSABLE_DIRTY_PREFIXES = (
-    ".orchestrator/task-briefs/",
-    ".orchestrator/reviews/",
-    # Orchestrator-owned reference material. `worker_tree_guard.blocking_globs`
-    # already forbids a worker from modifying `.orchestrator/skills/**`, so an
-    # untracked copy of it is never deliverable work. A repository that does not
-    # track these files gets one per worker that follows its brief, and treating
-    # them as real dirt blocked the lease permanently: DPF-GOV-001 was refused on
-    # a worktree already sitting at its exact reviewer-approved head.
-    ".orchestrator/skills/",
-)
-_REUSABLE_CONTEXT_FILES = (
-    "AI_COLLABORATION_GUIDE.md",
-    "ai-status.json",
-    "current-work.md",
-    "ai-activity-log.jsonl",
-)
-
-
-def _is_safe_context_destination(workspace_path: Path, rel_value: str) -> bool:
-    """Validate that rel_value destination inside workspace_path is safe to write or read context.
-
-    Returns False if:
-    - rel_value is empty, absolute, or contains path traversal ('..')
-    - destination or any parent directory within workspace_path is a symlink (os.path.islink)
-    - destination or any parent within workspace_path exists and is a non-regular file/dir
-    - destination or any parent resolves outside workspace_path
-    """
-    rel_clean = str(rel_value or "").replace("\\", "/").strip()
-    if not rel_clean or Path(rel_clean).is_absolute() or ".." in rel_clean.split("/"):
-        return False
-
-    try:
-        workspace_resolved = workspace_path.resolve()
-        curr = workspace_path
-        parts = Path(rel_clean).parts
-
-        for part in parts[:-1]:
-            curr = curr / part
-            if os.path.islink(curr):
-                return False
-            if curr.exists():
-                if not curr.is_dir():
-                    return False
-                try:
-                    curr_resolved = curr.resolve()
-                    if curr_resolved != workspace_resolved and workspace_resolved not in curr_resolved.parents:
-                        return False
-                except (OSError, RuntimeError, ValueError):
-                    return False
-
-        destination = workspace_path / rel_clean
-        if os.path.islink(destination):
-            return False
-        if destination.exists():
-            if not destination.is_file():
-                return False
-            try:
-                dest_resolved = destination.resolve()
-                if dest_resolved != workspace_resolved and workspace_resolved not in dest_resolved.parents:
-                    return False
-            except (OSError, RuntimeError, ValueError):
-                return False
-
-        return True
-    except Exception:
-        return False
 
 
 

@@ -76,12 +76,14 @@ path,boundary,retention_class,is_product_runtime,verified_scope,artifact_profile
 .orchestrator/test_watch_events.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_worker_settlement_paths.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/test_worktree_authority.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
+.orchestrator/test_worktree_cleanliness.py,verification,verification_only,false,development_platform_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 .orchestrator/watch_events.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/wave_guards.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/worker_failure_policy.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/worker_lifecycle.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/worker_runner.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 .orchestrator/worker_workspace.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
+.orchestrator/worktree_cleanliness.py,development_platform_system,development_only,false,,engineering,true,The internal development platform is retired or moved to its own repository.
 apps/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 apps/api/app/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.

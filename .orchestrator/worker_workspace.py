@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 """Workspace lifecycle helpers extracted from legacy supervisor."""
-# ruff: noqa: F821
+# ruff: noqa: F401,F821,I001
 
 import re
 import shutil
@@ -9,6 +9,19 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from runtime_state import ACTIVE_WORKER_STATUSES
+
+# Compatibility aliases remain exports while Supervisor callers migrate to the
+# shared policy module. The runtime's scope injector resolves these names.
+from worktree_cleanliness import (
+    WorktreeInspection,
+    blocking_dirt_entries as _blocking_dirt_entries,
+    describe_dirt_entries as _describe_dirt_entries,
+    inspect_porcelain as _inspect_porcelain,
+    inspect_worktree,
+    is_reusable_dirt_entry as _is_reusable_dirt_entry,
+    normalize_materialized_paths as _normalize_materialized_paths,
+    parse_porcelain_entries as _parse_porcelain_entries,
+)
 
 
 def _supervisor_module():
@@ -410,168 +423,26 @@ def _create_worker_worktree(repo_root: Path, path: Path, branch: str, base_sha: 
         return False, f"Failed to create worker worktree {path} for {branch}: {details}"
     return True, None
 
-@_entrypoint
-def _parse_porcelain_entries(porcelain_status: str | bytes) -> list[tuple[str, str]]:
-    """Parse `git status --porcelain=v1` output (text, or NUL-separated bytes).
-
-    Returns (status_code, path) pairs with rename/copy sources dropped so the
-    reported path is always the destination inside the worktree.
-    """
-    entries: list[tuple[str, str]] = []
-    if isinstance(porcelain_status, bytes):
-        raw_entries = [e for e in porcelain_status.split(b"\0") if e]
-        i = 0
-        while i < len(raw_entries):
-            item = raw_entries[i]
-            code = item[:2].decode("utf-8", errors="replace")
-            path_bytes = item[3:] if len(item) > 3 else b""
-            i += 1
-            if len(code) >= 2 and (code[0] in ("R", "C") or code[1] in ("R", "C")):
-                if i < len(raw_entries):
-                    i += 1
-            rel_p = os.fsdecode(path_bytes).strip()
-            if rel_p:
-                entries.append((code, rel_p))
-        return entries
-
-    for ln in porcelain_status.splitlines():
-        if not ln.strip():
-            continue
-        code = ln[:2]
-        body = ln[3:] if len(ln) > 3 else ln.strip()
-        path = body.split(" -> ")[-1].strip().strip('"')
-        if path:
-            entries.append((code, path))
-    return entries
-
-
-@_entrypoint
-def _normalize_materialized_paths(paths) -> frozenset[str]:
-    """Normalize orchestrator-materialized context paths for dirt-allowlist matching."""
-    normalized: set[str] = set()
-    for raw in paths or ():
-        value = str(raw or "").replace("\\", "/").strip().strip("/")
-        if not value or value.startswith("/") or ".." in value.split("/"):
-            continue
-        normalized.add(value)
-    return frozenset(normalized)
-
-
-@_entrypoint
-def _is_reusable_dirt_entry(
-    code: str,
-    path: str,
-    worktree_path: Path | None,
-    allowlist: frozenset[str],
-) -> bool:
-    """True when a status entry is orchestrator-owned scratch rather than owner dirt."""
-    if code.strip() not in ("??", "!!"):
-        return False
-    norm = path.replace("\\", "/").strip()
-    trimmed = norm.strip("/")
-    reusable = (
-        norm.startswith(_REUSABLE_DIRTY_PREFIXES)
-        or norm in _REUSABLE_CONTEXT_FILES
-        or trimmed in allowlist
-        or any(trimmed.startswith(f"{entry}/") for entry in allowlist)
-    )
-    if not reusable:
-        return False
-    if worktree_path and not _is_safe_context_destination(worktree_path, path):
-        return False
-    return True
-
-
-@_entrypoint
-def _blocking_dirt_entries(
-    entries: list[tuple[str, str]],
-    worktree_path: Path | None = None,
-    materialized_paths=None,
-) -> list[tuple[str, str]]:
-    """The subset of status entries that actually deny the lease."""
-    allowlist = _normalize_materialized_paths(materialized_paths)
-    return [
-        (code, path)
-        for code, path in entries
-        if not _is_reusable_dirt_entry(code, path, worktree_path, allowlist)
-    ]
-
-
-@_entrypoint
-def _describe_dirt_entries(entries: list[tuple[str, str]], limit: int = 5) -> str:
-    """Describe what `git status` actually reported, so a block message is not a guess."""
-    staged = 0
-    unstaged = 0
-    untracked = 0
-    names: list[str] = []
-    for code, path in entries:
-        padded = (code + "  ")[:2]
-        if padded.strip() == "??":
-            untracked += 1
-        elif padded.strip() == "!!":
-            continue
-        elif padded[0] not in (" ", "?", "!"):
-            staged += 1
-        else:
-            unstaged += 1
-        names.append(path)
-
-    total = len(names)
-    if not total:
-        return "no reportable changes"
-    parts = []
-    if staged:
-        parts.append(f"{staged} staged")
-    if unstaged:
-        parts.append(f"{unstaged} unstaged tracked")
-    if untracked:
-        parts.append(f"{untracked} untracked")
-    shown = ", ".join(sorted(names)[:limit])
-    if total > limit:
-        shown += f", +{total - limit} more"
-    noun = "change" if total == 1 else "changes"
-    return f"{total} dirty {noun} ({', '.join(parts)}): {shown}"
-
-
-@_entrypoint
 def _classify_worktree_dirt(
     porcelain_status: str | bytes,
     worktree_path: Path | None = None,
     materialized_paths=None,
 ) -> tuple[str, list[str]]:
-    """Classify reused-worktree dirtiness from `git status --porcelain` output.
+    """Compatibility view over the shared handoff-cleanliness policy.
 
-    Returns (classification, paths):
-      'clean'        - no changes; paths is []
-      'scratch_only' - every change is an untracked or ignored ephemeral seed
-                       (see _REUSABLE_DIRTY_PREFIXES / _REUSABLE_CONTEXT_FILES), or a file
-                       the orchestrator itself materialized into this workspace
-                       (materialized_paths); paths lists them
-      'real'         - at least one change is tracked/staged or outside scratch -> must block reuse
-
-    materialized_paths exists because the supervisor seeds the worker's context files
-    into the workspace itself. A repository that version-controls those paths never sees
-    them here, but a repository that does not (any cross-repository workspace) sees them
-    as untracked, and without this allowlist the orchestrator's own writes deny every
-    later lease of the workspace it just seeded.
+    The legacy labels remain only for call sites/tests while the policy itself
+    lives in ``worktree_cleanliness`` and is also used by task_finalize.sh.
     """
-    entries = _parse_porcelain_entries(porcelain_status)
-    if not entries:
+    inspection = _inspect_porcelain(
+        porcelain_status,
+        worktree_path=worktree_path,
+        materialized_paths=materialized_paths,
+    )
+    if inspection.kind == "clean":
         return "clean", []
-
-    allowlist = _normalize_materialized_paths(materialized_paths)
-    scratch_paths: list[str] = []
-    for code, path in entries:
-        if not _is_reusable_dirt_entry(code, path, worktree_path, allowlist):
-            return "real", []
-        scratch_paths.append(path)
-
-    return "scratch_only", scratch_paths
-
-@_entrypoint
-def _restore_reusable_scratch(worktree_path: Path, paths: list[str]) -> None:
-    """Never checkout or destroy owner-modified content. Untracked scratch is kept untouched."""
-    pass
+    if inspection.kind == "orchestrator_seed_only":
+        return "scratch_only", [path for _code, path in inspection.entries]
+    return "real", []
 
 @_entrypoint
 def _git_output(cwd: Path, *args: str) -> tuple[int, str]:
@@ -831,22 +702,13 @@ def _refresh_reused_worker_worktree(
     if status_proc.returncode != 0:
         return False, "status_failed"
     if status_proc.stdout:
-        classification, scratch_paths = _classify_worktree_dirt(
+        inspection = _inspect_porcelain(
             status_proc.stdout,
             worktree_path=worktree_path,
             materialized_paths=materialized_paths,
         )
-        if classification == "scratch_only":
-            _restore_reusable_scratch(worktree_path, scratch_paths)
-        else:
-            all_entries = _parse_porcelain_entries(status_proc.stdout)
-            blocking = _blocking_dirt_entries(
-                all_entries,
-                worktree_path=worktree_path,
-                materialized_paths=materialized_paths,
-            )
-            detail = _describe_dirt_entries(blocking or all_entries)
-            return False, f"{_SKIPPED_DIRTY_WORKTREE}: {detail}"
+        if not inspection.handoff_clean:
+            return False, f"{_SKIPPED_DIRTY_WORKTREE}: {inspection.detail}"
 
     local_head = _git_commit_oid(worktree_path, "HEAD")
     # Production passes the SHA resolved once at the beginning of this cycle.
@@ -881,6 +743,185 @@ def _refresh_reused_worker_worktree(
     if task_contains_rc == 0:
         return True, f"base_present_at_{local_head[:12]}"
     return True, f"base_advance_rebase_required:local={local_head},base={base_head}"
+
+
+class WorkerHandoffSeal(NamedTuple):
+    """Result of the one closeout gate between an owner and a reviewer."""
+
+    accepted: bool
+    reason: str
+    detail: str
+    head_sha: str | None
+    dirt_fingerprint: str | None
+
+
+@_entrypoint
+def _worker_materialized_context_paths(state: dict[str, Any], worker: dict[str, Any]) -> list[str]:
+    """Recover the Supervisor-owned context allowlist for a settled worker."""
+    paths: list[str] = []
+    request = worker.get("request_snapshot")
+    metadata = request.get("metadata") if isinstance(request, dict) else None
+    if isinstance(metadata, dict):
+        for raw in metadata.get("materialized_context_files", []) or []:
+            paths.append(str(raw))
+        workspace_task_id = str(metadata.get("workspace_task_id") or worker.get("task_id") or "")
+    else:
+        workspace_task_id = str(worker.get("task_id") or "")
+    lease = ((state.get("worker_worktrees") or {}).get("leases") or {}).get(workspace_task_id)
+    if isinstance(lease, dict):
+        for raw in lease.get("materialized_context_files", []) or []:
+            paths.append(str(raw))
+    return paths
+
+
+@_entrypoint
+def seal_worker_handoff(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+) -> WorkerHandoffSeal:
+    """Verify that an owner can safely release its workspace to another role.
+
+    A review status is not enough: task_finalize can submit it while the owner
+    CLI is still flushing output.  This gate runs only after that process exits,
+    so no reviewer or helper inherits a path that the owner changed afterwards.
+    """
+    if str(worker.get("workspace_mode") or "") != "isolated_worktree":
+        # Legacy/manual workers have no Supervisor-owned task checkout to seal.
+        return WorkerHandoffSeal(True, "not_isolated_worktree", "no isolated worker worktree", None, None)
+    raw_path = str(worker.get("workspace_path") or "").strip()
+    if not raw_path:
+        return WorkerHandoffSeal(False, "workspace_missing", "isolated worker has no workspace path", None, None)
+    try:
+        workspace_path = Path(raw_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return WorkerHandoffSeal(False, "workspace_unreadable", raw_path, None, None)
+
+    expected_branch = str(worker.get("workspace_branch") or "").strip()
+    if not expected_branch and isinstance(task, dict):
+        expected_branch = worker_task_branch(config, str(worker.get("task_id") or ""), task)
+    branch_rc, current_branch = _git_output(workspace_path, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if branch_rc != 0 or not current_branch or (expected_branch and current_branch != expected_branch):
+        return WorkerHandoffSeal(
+            False,
+            "branch_mismatch",
+            f"expected {expected_branch or 'a task branch'}, found {current_branch or 'detached HEAD'}",
+            None,
+            None,
+        )
+    if _git_operation_in_progress(workspace_path):
+        return WorkerHandoffSeal(False, "git_operation_in_progress", "Git operation remains in progress", None, None)
+
+    inspection: WorktreeInspection = inspect_worktree(
+        workspace_path,
+        materialized_paths=_worker_materialized_context_paths(state, worker),
+    )
+    if not inspection.handoff_clean:
+        return WorkerHandoffSeal(
+            False,
+            inspection.kind,
+            inspection.detail,
+            _git_commit_oid(workspace_path, "HEAD"),
+            inspection.fingerprint or None,
+        )
+
+    head_sha = _git_commit_oid(workspace_path, "HEAD")
+    if not head_sha:
+        return WorkerHandoffSeal(False, "head_unreadable", "cannot resolve workspace HEAD", None, inspection.fingerprint)
+    submission = task.get("review_submission") if isinstance(task, dict) else None
+    expected_head = str(submission.get("remote_sha") or "") if isinstance(submission, dict) else ""
+    if str((task or {}).get("status") or "").lower() == "review" and expected_head and head_sha != expected_head:
+        return WorkerHandoffSeal(
+            False,
+            "review_head_mismatch",
+            f"workspace HEAD {head_sha[:12]} differs from submitted review head {expected_head[:12]}",
+            head_sha,
+            inspection.fingerprint,
+        )
+    return WorkerHandoffSeal(True, inspection.kind, inspection.detail, head_sha, inspection.fingerprint)
+
+
+@_entrypoint
+def record_unsealed_worker_handoff(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    worker: dict[str, Any],
+    task: dict[str, Any] | None,
+    seal: WorkerHandoffSeal,
+) -> None:
+    """Record immutable enough provenance for a same-owner cleanup continuation."""
+    task_id = str(worker.get("task_id") or "")
+    if not task_id or seal.accepted:
+        return
+    schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
+    owner = str((task or {}).get(schema.get("assignee_field", "owner")) or "")
+    bucket = state.setdefault("worker_worktrees", {}).setdefault("handoff_blocks", {})
+    bucket[task_id] = {
+        "task_id": task_id,
+        "owner": owner,
+        "workspace_path": str(worker.get("workspace_path") or ""),
+        "workspace_branch": str(worker.get("workspace_branch") or ""),
+        "head_sha": seal.head_sha,
+        "dirt_fingerprint": seal.dirt_fingerprint,
+        "reason": seal.reason,
+        "detail": seal.detail,
+        "source_run_id": worker.get("run_id"),
+        "sealed_at": utc_now(),
+    }
+
+
+@_entrypoint
+def clear_unsealed_worker_handoff(state: dict[str, Any], task_id: str | None) -> None:
+    bucket = (state.get("worker_worktrees") or {}).get("handoff_blocks")
+    if isinstance(bucket, dict):
+        bucket.pop(str(task_id or ""), None)
+
+
+@_entrypoint
+def sealed_owner_continuation_allowed(
+    config: dict[str, Any],
+    state: dict[str, Any],
+    request: DeliveryRequest,
+    task: dict[str, Any] | None,
+    *,
+    target_agent: str | None,
+    worktree_path: Path,
+    branch: str,
+    materialized_paths=None,
+) -> tuple[bool, str]:
+    """Permit only the owner to finish an exactly sealed dirty workspace.
+
+    This is not the retired fresh-worktree recovery path.  It resumes the same
+    task, branch and checkout only after the prior owner exited and the exact
+    dirt fingerprint was recorded.  Reviewers and helper claims always remain
+    fail-closed.
+    """
+    if str(request.reason or "") != "owned_in_progress_dispatch":
+        return False, "not_owner_execution"
+    task_id = str(request.task_id or "")
+    record = ((state.get("worker_worktrees") or {}).get("handoff_blocks") or {}).get(task_id)
+    if not isinstance(record, dict):
+        return False, "no_handoff_block"
+    schema = config.get("schema") if isinstance(config.get("schema"), dict) else {}
+    owner = str((task or {}).get(schema.get("assignee_field", "owner")) or "")
+    if not owner or normalize_agent_id(owner) != normalize_agent_id(str(target_agent or "")):
+        return False, "not_same_owner"
+    if str(record.get("owner") or "") != owner:
+        return False, "owner_changed"
+    try:
+        recorded_path = Path(str(record.get("workspace_path") or "")).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False, "recorded_path_invalid"
+    if recorded_path != worktree_path.resolve() or str(record.get("workspace_branch") or "") != branch:
+        return False, "workspace_changed"
+    inspection = inspect_worktree(worktree_path, materialized_paths=materialized_paths)
+    if inspection.kind != "owner_dirty" or inspection.fingerprint != record.get("dirt_fingerprint"):
+        return False, "dirt_changed"
+    head_sha = _git_commit_oid(worktree_path, "HEAD")
+    if not head_sha or head_sha != record.get("head_sha"):
+        return False, "head_changed"
+    return True, str(record.get("detail") or "owner worktree requires closeout")
 
 @_entrypoint
 def _task_brief_context_candidates(task_id: str | None, rel_context_path: str) -> list[str]:
@@ -1053,6 +1094,8 @@ def _generated_collaboration_guide(config: dict[str, Any]) -> str:
             "## Commit discipline (critical — uncommitted work jams the fleet)",
             "- Commit AND push your work before you finish. A worktree left dirty blocks",
             "  the next dispatch and can deadlock the whole fleet.",
+            "- Put one-shot patchers, probes and temporary test scripts in $ORCH_SCRATCH_DIR,",
+            "  never at the repository root. The handoff gate rejects unknown untracked files.",
             "- Anchor-commit intermediate states per .orchestrator/skills/worker-anchor-commit.md.",
             "- Commit subject must include the Task ID; body needs LLM-Agent / Task-ID / Reviewer.",
             "- No interactive git (`git add -p/-i`, `git commit --interactive`, `git rebase -i`).",
@@ -1080,9 +1123,9 @@ def materialize_worker_context_files(
     NOT contain them. Without them the worker — notably the Antigravity/`agy` CLI —
     burns its whole session hunting for files it was instructed to read and never
     reaches the commit/closeout step, leaving uncommitted dirt that then jams the
-    reuse lease. Seeding them as untracked copies is safe: the reuse-dirt guard runs
-    `git status --porcelain --untracked-files=no`, so untracked seeds never block
-    re-dispatch, and we never overwrite a file the branch already tracks.
+    reuse lease. Seeding them as untracked copies is safe because the one shared
+    cleanliness policy recognizes only the Supervisor-proven seed allowlist; we
+    still never overwrite a file the branch already tracks.
     """
     if not request.context_files:
         return []
@@ -1367,7 +1410,7 @@ def _orchestrator_materialized_paths(
     sees them as untracked, so without this allowlist the orchestrator's own writes deny
     the next lease and the task can never be dispatched into that workspace again.
     """
-    paths: list[str] = [str(value) for value in (getattr(request, "context_files", None) or [])]
+    paths: list[str] = []
     leases = (state.get("worker_worktrees") or {}).get("leases", {}) or {}
     lease = leases.get(workspace_task_id)
     if isinstance(lease, dict):
@@ -1483,6 +1526,7 @@ def prepare_worker_workspace(
     if existing:
         worktree_path = existing
         reused = True
+        owner_continuation = False
         refresh_ok, refresh_status = _refresh_reused_worker_worktree(
             repo_root,
             worktree_path,
@@ -1491,6 +1535,30 @@ def prepare_worker_workspace(
             network_timeout_seconds=float(settings["git_network_timeout_seconds"]),
             materialized_paths=materialized_paths,
         )
+        if not refresh_ok and _is_skipped_dirty_worktree(refresh_status):
+            allowed, continuation_detail = sealed_owner_continuation_allowed(
+                config,
+                state,
+                request,
+                task_record,
+                target_agent=target_agent,
+                worktree_path=worktree_path,
+                branch=branch,
+                materialized_paths=materialized_paths,
+            )
+            if allowed:
+                owner_continuation = True
+                refresh_ok = True
+                refresh_status = "sealed_owner_continuation"
+                base_relation = "sealed_owner_continuation"
+                request.metadata["worktree_continuation"] = "sealed_owner_dirt"
+                request.message = (
+                    "CLOSEOUT CONTINUATION: your prior worker exited after leaving the exact "
+                    f"task worktree dirty ({continuation_detail}). You alone may finish this "
+                    "same checkout. Commit deliverables, delete scratch, or move temporary "
+                    "files to $ORCH_SCRATCH_DIR; do not hand this worktree to a reviewer.\n\n"
+                    + request.message
+                )
         write_activity_log(
             config,
             {
@@ -1594,6 +1662,8 @@ def prepare_worker_workspace(
             )
             return False, message
         _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
+        if not owner_continuation:
+            clear_unsealed_worker_handoff(state, str(request.task_id or workspace_task_id))
         if refresh_status.startswith("ff_to_"):
             base_relation = "fast_forwarded"
         elif refresh_status.startswith("base_present_at_"):
@@ -1761,137 +1831,6 @@ def prepare_worker_workspace(
         },
     )
     return True, None
-
-@_entrypoint
-def worker_tree_guard_settings(config: dict[str, Any]) -> dict[str, Any]:
-    raw = config.get("worker_tree_guard")
-    settings = raw if isinstance(raw, dict) else {}
-    blocking_globs = settings.get("blocking_globs")
-    auto_restore_globs = settings.get("auto_restore_globs")
-    return {
-        "enabled": bool(settings.get("enabled", False)),
-        "mode": str(settings.get("mode") or "warn").strip().lower(),
-        "blocking_globs": list(blocking_globs)
-        if isinstance(blocking_globs, list)
-        else [
-            ".orchestrator/supervisor.py",
-            "supervisor.py",
-            ".orchestrator/skills/**",
-            "branch-strategy.md",
-            "docs/conventions/GIT_WORKFLOW.md",
-            "config*.json",
-            ".orchestrator/config*.json",
-            "docs/**",
-        ],
-        "auto_restore_globs": list(auto_restore_globs)
-        if isinstance(auto_restore_globs, list)
-        else [
-            "ai-activity-log.jsonl",
-            "ai-status.json",
-            "current-work.md",
-            "dashboard-bundle.json",
-            "docs-site/**",
-        ],
-        "auto_restore_enabled": bool(settings.get("auto_restore_enabled", False)),
-    }
-
-@_entrypoint
-def _git_dirty_entries(cwd: Path | None = None) -> list[dict[str, str]]:
-    proc = subprocess.run(
-        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
-        cwd=cwd or THIS_DIR.parent,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return []
-    entries: list[dict[str, str]] = []
-    parts = proc.stdout.split("\0")
-    index = 0
-    while index < len(parts):
-        raw = parts[index]
-        index += 1
-        if not raw:
-            continue
-        status = raw[:2]
-        path = raw[3:] if len(raw) > 3 else ""
-        if not path:
-            continue
-        entries.append({"status": status, "path": path.replace("\\", "/")})
-        if status[:1] in {"R", "C"} and index < len(parts):
-            index += 1
-    return entries
-
-@_entrypoint
-def _path_matches_any_glob(path: str, patterns: list[Any]) -> bool:
-    normalized = path.replace("\\", "/")
-    basename = Path(normalized).name
-    for raw_pattern in patterns:
-        pattern = str(raw_pattern or "").strip().replace("\\", "/")
-        if not pattern:
-            continue
-        if fnmatch.fnmatchcase(normalized, pattern):
-            return True
-        if "/" not in pattern and fnmatch.fnmatchcase(basename, pattern):
-            return True
-    return False
-
-@_entrypoint
-def check_worker_tree_clean(
-    config: dict[str, Any],
-    *,
-    run_id: str | None,
-    task_id: str | None,
-    target_agent: str | None,
-    queue_event_id: str | None,
-    cwd: Path | None = None,
-) -> tuple[bool, str | None]:
-    settings = worker_tree_guard_settings(config)
-    if not settings.get("enabled"):
-        return True, None
-    mode = str(settings.get("mode") or "warn").lower()
-    if mode in {"off", "disabled", "false"}:
-        return True, None
-
-    dirty_entries = _git_dirty_entries(cwd)
-    if not dirty_entries:
-        return True, None
-
-    blocking_globs = settings.get("blocking_globs") or []
-    blocking_entries = [
-        entry
-        for entry in dirty_entries
-        if _path_matches_any_glob(entry["path"], blocking_globs)
-    ]
-    if not blocking_entries:
-        return True, None
-
-    display_entries = [f"{entry['status']} {entry['path']}" for entry in blocking_entries[:20]]
-    remaining = max(0, len(blocking_entries) - len(display_entries))
-    suffix = f" (+{remaining} more)" if remaining else ""
-    message = (
-        "Worker tree guard found dirty high-fragility files before dispatch; "
-        "anchor or close out the existing task-owned diff before yielding: "
-        + "; ".join(display_entries)
-        + suffix
-    )
-    activity_type = "dispatch_blocked_dirty_tree" if mode == "block" else "dispatch_dirty_tree_warning"
-    write_activity_log(
-        config,
-        {
-            "type": activity_type,
-            "task_id": task_id,
-            "target_agent": target_agent,
-            "message": message,
-            "queue_event_id": queue_event_id,
-            "worker_run_id": run_id,
-            "blocking_paths": [entry["path"] for entry in blocking_entries],
-            "mode": mode,
-            "workspace_path": str(cwd) if cwd else None,
-        },
-    )
-    return mode != "block", message
 
 @_entrypoint
 def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, Any]:

@@ -246,6 +246,18 @@ class ConfigError(RuntimeError):
     """The orchestrator configuration is missing, malformed or outside its contract."""
 
 
+# These settings belonged to retired control paths. Strip them before schema
+# validation so a deployed, gitignored config.json from the prior release does
+# not prevent the Supervisor from starting; their behavior is not retained.
+RETIRED_CONFIG_KEYS: frozenset[str] = frozenset({"worker_tree_guard"})
+
+
+def retire_config_keys(config: Any) -> Any:
+    if not isinstance(config, dict):
+        return config
+    return {key: value for key, value in config.items() if key not in RETIRED_CONFIG_KEYS}
+
+
 @lru_cache(maxsize=1)
 def config_validator() -> Draft202012Validator:
     try:
@@ -291,7 +303,7 @@ def load_config_document(path: Path) -> dict[str, Any]:
         raise
     except (OSError, json.JSONDecodeError) as exc:
         raise ConfigError(f"Unable to parse orchestrator config {path}: {exc}") from exc
-    return validate_config(payload, source=path)
+    return validate_config(retire_config_keys(payload), source=path)
 
 
 def resolve_path(value: str | Path | None) -> Path | None:
@@ -489,6 +501,14 @@ def delivery_runtime_env(config: dict[str, Any], metadata: dict[str, Any] | None
     ).strip()
     if config_path:
         result[CONFIG_PATH_ENV_VAR] = config_path
+    materialized_context = (metadata or {}).get("materialized_context_files")
+    if isinstance(materialized_context, list):
+        # task_finalize.sh invokes the shared policy in a separate process, so
+        # carry only Supervisor-originated paths explicitly rather than giving
+        # it a second path classifier or a broad repository allowlist.
+        result["ORCH_MATERIALIZED_CONTEXT_PATHS"] = json.dumps(
+            [str(path) for path in materialized_context], ensure_ascii=False
+        )
     actor_name = str((metadata or {}).get("target_display_name") or "").strip()
     if actor_name:
         # The live Supervisor has already authorized this dispatch target from

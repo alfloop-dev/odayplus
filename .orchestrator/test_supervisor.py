@@ -1485,102 +1485,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         self._base_patcher.start()
         self.addCleanup(self._base_patcher.stop)
 
-    def test_worker_tree_guard_warns_without_blocking(self) -> None:
-        config = {
-            **self.config,
-            "worker_tree_guard": {
-                "enabled": True,
-                "mode": "warn",
-                "blocking_globs": [".orchestrator/skills/**"],
-            },
-        }
-
-        with (
-            mock.patch.object(
-                supervisor,
-                "_git_dirty_entries",
-                return_value=[{"status": " M", "path": ".orchestrator/skills/worker-anchor-commit.md"}],
-            ),
-            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
-        ):
-            ok, message = supervisor.check_worker_tree_clean(
-                config,
-                run_id="evt-1",
-                task_id="OPS-WORKER-ANCHOR-001",
-                target_agent="Codex",
-                queue_event_id="evt-1",
-            )
-
-        self.assertTrue(ok)
-        self.assertIn("anchor or close out", message or "")
-        write_activity_log.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_dirty_tree_warning")
-
-    def test_worker_tree_guard_blocks_in_block_mode(self) -> None:
-        config = {
-            **self.config,
-            "worker_tree_guard": {
-                "enabled": True,
-                "mode": "block",
-                "blocking_globs": ["docs/**"],
-            },
-        }
-
-        with (
-            mock.patch.object(
-                supervisor,
-                "_git_dirty_entries",
-                return_value=[{"status": " M", "path": "docs/conventions/GIT_WORKFLOW.md"}],
-            ),
-            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
-        ):
-            ok, message = supervisor.check_worker_tree_clean(
-                config,
-                run_id="evt-1",
-                task_id="OPS-WORKER-ANCHOR-001",
-                target_agent="Codex",
-                queue_event_id="evt-1",
-            )
-
-        self.assertFalse(ok)
-        self.assertIn("docs/conventions/GIT_WORKFLOW.md", message or "")
-        write_activity_log.assert_called_once()
-        self.assertEqual(write_activity_log.call_args.args[1]["type"], "dispatch_blocked_dirty_tree")
-
-    def test_worker_tree_guard_ignores_runtime_state_only(self) -> None:
-        config = {
-            **self.config,
-            "worker_tree_guard": {
-                "enabled": True,
-                "mode": "block",
-                "blocking_globs": [".orchestrator/skills/**"],
-                "auto_restore_globs": ["ai-status.json", "docs-site/**"],
-            },
-        }
-
-        with (
-            mock.patch.object(
-                supervisor,
-                "_git_dirty_entries",
-                return_value=[
-                    {"status": " M", "path": "ai-status.json"},
-                    {"status": " M", "path": "docs-site/current-work.md"},
-                ],
-            ),
-            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
-        ):
-            ok, message = supervisor.check_worker_tree_clean(
-                config,
-                run_id="evt-1",
-                task_id="OPS-WORKER-ANCHOR-001",
-                target_agent="Codex",
-                queue_event_id="evt-1",
-            )
-
-        self.assertTrue(ok)
-        self.assertIsNone(message)
-        write_activity_log.assert_not_called()
-
     def test_prepare_worker_workspace_allocates_task_worktree_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
@@ -2470,14 +2374,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                 mock.patch.object(supervisor, "load_status", return_value={"tasks": [current_task]}),
                 mock.patch.object(supervisor, "build_request", return_value=request),
                 mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
-                mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)) as guard,
                 mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-123", {"manual_confirmation_required": False, "auto_delivered": True})),
                 mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
             ):
                 changed = supervisor.process_queue(config, state, self.provider_report)
 
         self.assertTrue(changed)
-        self.assertEqual(guard.call_args.kwargs["cwd"], workspace)
 
     def test_process_queue_isolates_workspace_exception_and_starts_next_event(self) -> None:
         tasks = [
@@ -2515,7 +2417,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
             mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
             mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
-            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
             mock.patch.object(
                 supervisor,
                 "start_worker_for_request",
@@ -2567,7 +2468,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}),
             mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
             mock.patch.object(supervisor, "prepare_worker_workspace", side_effect=prepare_workspace),
-            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
             mock.patch.object(
                 supervisor,
                 "start_worker_for_request",
@@ -2625,7 +2525,6 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             mock.patch.object(supervisor, "build_request", side_effect=build_request),
             mock.patch.object(supervisor, "select_dispatch_agent_id", return_value="codex"),
             mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, None)),
-            mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, None)),
             mock.patch.object(
                 supervisor,
                 "start_worker_for_request",
@@ -6327,13 +6226,19 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
         self.assertEqual(supervisor._classify_worktree_dirt(""), ("clean", []))
         self.assertEqual(supervisor._classify_worktree_dirt("\n  \n"), ("clean", []))
 
-    def test_scratch_only_is_reusable(self) -> None:
-        # Untracked scratch/context paths are classified as scratch_only.
+    def test_recorded_seed_paths_are_reusable(self) -> None:
+        # Only Supervisor-recorded context paths are classified as scratch_only.
         status = (
             "?? .orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md\n"
             "?? .orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md\n"
         )
-        kind, paths = supervisor._classify_worktree_dirt(status)
+        kind, paths = supervisor._classify_worktree_dirt(
+            status,
+            materialized_paths=[
+                ".orchestrator/task-briefs/mgmt_ai_persist_p1_attach_007.md",
+                ".orchestrator/reviews/mgmt_ai_persist_p1_attach_007_review.md",
+            ],
+        )
         self.assertEqual(kind, "scratch_only")
         self.assertEqual(
             set(paths),
@@ -6375,7 +6280,14 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             "?? .orchestrator/skills/task-closeout-finalization.md\n"
             "?? .orchestrator/task-briefs/dpf_gov_001.md\n"
         )
-        kind, paths = supervisor._classify_worktree_dirt(status)
+        kind, paths = supervisor._classify_worktree_dirt(
+            status,
+            materialized_paths=[
+                ".orchestrator/skills/worker-anchor-commit.md",
+                ".orchestrator/skills/task-closeout-finalization.md",
+                ".orchestrator/task-briefs/dpf_gov_001.md",
+            ],
+        )
         self.assertEqual(kind, "scratch_only")
         self.assertEqual(len(paths), 3)
 
@@ -6423,7 +6335,10 @@ class WorktreeDirtClassificationTests(unittest.TestCase):
             "?? .orchestrator/skills/worker-anchor-commit.md\n"
             "?? owner_notes.md\n"
         )
-        blocking = supervisor._blocking_dirt_entries(entries)
+        blocking = supervisor._blocking_dirt_entries(
+            entries,
+            materialized_paths=[".orchestrator/skills/worker-anchor-commit.md"],
+        )
         self.assertEqual(blocking, [("??", "owner_notes.md")])
 
 
@@ -10648,9 +10563,49 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
             "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
             "workers": {worker["run_id"]: worker},
         }
-        self.assertTrue(self._poll(state, current_task, current_head="a" * 40))
+        with mock.patch.object(supervisor, "seal_worker_handoff") as seal_worker_handoff:
+            self.assertTrue(self._poll(state, current_task, current_head="a" * 40))
         self.assertEqual(worker["status"], "completed")
         self.assertEqual(worker["progress_outcome"], "review_decided")
+        seal_worker_handoff.assert_not_called()
+
+    def test_owner_review_handoff_is_revoked_when_the_exit_seal_rejects_it(self) -> None:
+        task = self._task(status="review", next_step="Independent review required")
+        worker = self._worker(task, reason="owned_ready_dispatch")
+        worker.update(
+            {
+                "workspace_mode": "isolated_worktree",
+                "workspace_path": "/tmp/owner-worktree",
+                "workspace_branch": "task/ODP-POSTCONDITION-001",
+            }
+        )
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+        rejected = supervisor.WorkerHandoffSeal(
+            False,
+            "owner_dirty",
+            "1 dirty change (1 untracked): fix_probe.py",
+            "a" * 40,
+            "dirt-fingerprint",
+        )
+        with (
+            mock.patch.object(supervisor, "seal_worker_handoff", return_value=rejected),
+            mock.patch.object(
+                supervisor.status_transition,
+                "reject_unsealed_worker_handoff",
+                return_value=True,
+            ) as reject_handoff,
+            mock.patch.object(supervisor, "record_unsealed_worker_handoff") as record_handoff,
+        ):
+            self.assertTrue(self._poll(state, task, current_head="a" * 40))
+
+        self.assertEqual(worker["status"], "completed")
+        self.assertEqual(worker["progress_outcome"], "handoff_seal_rejected")
+        self.assertEqual(state["queue"]["events"][worker["queue_event_id"]]["status"], "completed")
+        reject_handoff.assert_called_once()
+        record_handoff.assert_called_once()
 
     def test_poll_never_recounts_historical_terminal_run_after_reopen(self) -> None:
         task = self._task(status="review", next_step="Fresh exact-head review required")
@@ -11131,7 +11086,6 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
             with (
                 mock.patch.object(supervisor, "load_status", return_value=status_in_prog),
                 mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "isolated")),
-                mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, "isolated")),
                 mock.patch.object(supervisor, "start_worker_for_request") as start_worker,
                 mock.patch.object(supervisor, "sync_dispatched_task_status", return_value=True),
                 mock.patch.object(supervisor, "write_activity_log"),
@@ -11703,7 +11657,6 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
              mock.patch.object(supervisor, "current_provider_dispatch_pause", return_value=None), \
              mock.patch.object(supervisor, "agent_auto_dispatch_block_reason", return_value=None), \
              mock.patch.object(supervisor, "prepare_worker_workspace", return_value=(True, "ok")), \
-             mock.patch.object(supervisor, "check_worker_tree_clean", return_value=(True, "ok")), \
              mock.patch.object(supervisor, "start_worker_for_request", return_value=(True, "run-codex6-1", {})) as start_worker, \
              mock.patch.object(supervisor, "write_activity_log"):
             changed = supervisor.process_queue(
@@ -12227,15 +12180,15 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
 
             # Confirm dirt classification treats context files as clean or scratch_only
             st_proc = subprocess.run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=wt_path, capture_output=True, check=True)
-            classification, paths = supervisor._classify_worktree_dirt(st_proc.stdout)
+            classification, _paths = supervisor._classify_worktree_dirt(st_proc.stdout)
             self.assertIn(classification, ("clean", "scratch_only"))
 
             # Add an unknown user file in task-briefs directory
             unknown_user_file = wt_path / ".orchestrator" / "task-briefs" / "my_custom_notes.txt"
             unknown_user_file.write_text("custom user notes\n", encoding="utf-8")
 
-            # Confirm _restore_reusable_scratch does NOT delete unknown user file
-            supervisor._restore_reusable_scratch(wt_path, paths)
+            # The shared policy is observational: it must never delete an
+            # unknown owner file while classifying a reusable workspace.
             self.assertTrue(unknown_user_file.exists())
             self.assertEqual(unknown_user_file.read_text(encoding="utf-8"), "custom user notes\n")
 
@@ -13847,11 +13800,9 @@ class WorkerTaskBranchFromRecordTests(unittest.TestCase):
 class OrchestratorSkillsAreScratchTests(unittest.TestCase):
     """Orchestrator-owned reference material must not block a lease.
 
-    `worker_tree_guard.blocking_globs` already forbids a worker from modifying
-    `.orchestrator/skills/**`, so an untracked copy of it is never deliverable
-    work. A repository that does not track those files gets one per worker that
-    follows its brief; counting them as real dirt refused DPF-GOV-001 a lease on
-    a worktree already at its exact reviewer-approved head.
+    The Supervisor materializes these files into each isolated worktree. They
+    are not worker deliverables, so counting them as owner dirt would refuse a
+    lease on a worktree already at its exact reviewer-approved head.
     """
 
     def test_seeded_skill_files_classify_as_scratch(self) -> None:
@@ -13860,7 +13811,13 @@ class OrchestratorSkillsAreScratchTests(unittest.TestCase):
             b"?? .orchestrator/skills/worker-anchor-commit.md\0"
         )
 
-        classification, paths = supervisor._classify_worktree_dirt(status)
+        classification, paths = supervisor._classify_worktree_dirt(
+            status,
+            materialized_paths=[
+                ".orchestrator/skills/task-closeout-finalization.md",
+                ".orchestrator/skills/worker-anchor-commit.md",
+            ],
+        )
 
         self.assertEqual(classification, "scratch_only")
         self.assertEqual(len(paths), 2)
@@ -13872,7 +13829,14 @@ class OrchestratorSkillsAreScratchTests(unittest.TestCase):
             b"?? ai-status.json\0"
         )
 
-        classification, _paths = supervisor._classify_worktree_dirt(status)
+        classification, _paths = supervisor._classify_worktree_dirt(
+            status,
+            materialized_paths=[
+                ".orchestrator/skills/worker-anchor-commit.md",
+                ".orchestrator/task-briefs/T-1.md",
+                "ai-status.json",
+            ],
+        )
 
         self.assertEqual(classification, "scratch_only")
 
