@@ -8,7 +8,7 @@ Implements a lock-bound, cross-repo OSS license and release gate with CycloneDX 
    - Parses `package-lock.json` and `uv.lock` alongside installed distribution metadata.
    - Populates per-component `licenses`, `purl`, `supplier`/`author`, `hashes` (SHA-512 for npm integrity, SHA-256 for python wheels/sdist), and `scope` (`required` vs `optional`).
    - Emits CycloneDX dependency graph linking root and component purls.
-   - Binds metadata properties: `git-sha`, `sbom-content-digest`, `container-base-images` (`python:3.12-slim`, `node:22-slim`), and `repository-release-digests` (`alfloop-dev/odayplus`, `alfloop-dev/pantheon`).
+   - Binds metadata properties: `git-sha`, `sbom-content-digest`, `container-base-images` (`python:3.12-slim`, `node:22-slim`), and pinned `repository-release-digests` for `alfloop-dev/odayplus` and `alfloop-dev/oday-data-platform` from `docs/security/release_bindings.json`.
    - Supports `--check` and `--output` CLI flags.
 
 2. **NOTICE Reconciliation and Gate Policy Evaluator (`delivery_toolchain/security/generate_oss_notice.py`)**:
@@ -25,11 +25,11 @@ Implements a lock-bound, cross-repo OSS license and release gate with CycloneDX 
    - Updated caniuse-lite `current_state` to reflect attribution present in `NOTICE-THIRD-PARTY.md`.
 
 4. **Attestation Contract (`delivery_toolchain/security/attestation.py`, `docs/evidence/completion/ODP-OSS-LICENSE-GATE-002/license_gate_attestation.json`)**:
-   - Binds release SHA, repository release digests, container base images, source/lock hashes (`pyproject.toml`, `uv.lock`, `package.json`, `package-lock.json`, `license_policy.json`, `license_exemptions.json`, `NOTICE-THIRD-PARTY.md`, `sbom.json`), gate summary, and content integrity hash.
+   - Binds the pinned release SHA, both repository release digests, container base images, source/lock hashes (`pyproject.toml`, `uv.lock`, `package.json`, `package-lock.json`, `license_policy.json`, `license_exemptions.json`, `release_bindings.json`, `NOTICE-THIRD-PARTY.md`, `sbom.json`), gate summary, and content integrity hash.
    - Provides readback verification with `--check`.
 
 5. **Test Suites (`tests/security/test_oss_license_gate.py`, `tests/security/test_oss_notice.py`)**:
-   - 22 tests in `test_oss_license_gate.py` + 6 tests in `test_oss_notice.py`.
+   - 23 tests in `test_oss_license_gate.py` + 6 tests in `test_oss_notice.py`.
    - Negative tests reject:
      - Stale NOTICE
      - Partial installs
@@ -45,8 +45,8 @@ Implements a lock-bound, cross-repo OSS license and release gate with CycloneDX 
 
 ```bash
 $ uv run pytest tests/security/test_oss_license_gate.py tests/security/test_oss_notice.py -q
-............................                                             [100%]
-28 passed in 20.61s
+.............................                                            [100%]
+29 passed
 
 $ uv run python delivery_toolchain/security/generate_oss_notice.py --check
 NOTICE-THIRD-PARTY.md matches the installed dependency trees.

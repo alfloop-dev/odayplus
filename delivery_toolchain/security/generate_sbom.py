@@ -19,6 +19,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001"
 EVIDENCE_TASK_DIR = ROOT / "docs/evidence/completion/ODP-OSS-LICENSE-GATE-002"
+RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NODE_MODULES = ROOT / "node_modules"
 UV_LOCK = ROOT / "uv.lock"
 PACKAGE_LOCK = ROOT / "package-lock.json"
@@ -55,26 +56,74 @@ PYTHON_KNOWN_FALLBACKS = {
 }
 
 SPDX_STANDARDS = {
-    "0BSD", "AFL-2.1", "Apache-2.0", "BlueOak-1.0.0", "BSD-2-Clause", "BSD-3-Clause",
-    "CC0-1.0", "CC-BY-4.0", "ISC", "LGPL-2.1-or-later", "LGPL-3.0-only", "LGPL-3.0-or-later",
-    "MIT", "MIT-0", "MIT-CMU", "MPL-2.0", "PSF-2.0", "Python-2.0", "Zlib", "ZPL-2.1"
+    "0BSD",
+    "AFL-2.1",
+    "Apache-2.0",
+    "BlueOak-1.0.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "CC-BY-4.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "LGPL-3.0-only",
+    "LGPL-3.0-or-later",
+    "MIT",
+    "MIT-0",
+    "MIT-CMU",
+    "MPL-2.0",
+    "PSF-2.0",
+    "Python-2.0",
+    "Zlib",
+    "ZPL-2.1",
 }
 
 
 def get_git_sha() -> str:
     try:
-        res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, cwd=ROOT)
+        res = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True, cwd=ROOT
+        )
         return res.stdout.strip()
     except Exception:
         return "unknown"
 
 
-def get_repo_release_digests() -> dict[str, str]:
-    git_sha = get_git_sha()
-    return {
-        "alfloop-dev/odayplus": git_sha,
-        "alfloop-dev/pantheon": git_sha,
-    }
+def get_repo_release_digests(root: Path = ROOT) -> dict[str, str]:
+    """Load independently resolved release pins for both source repositories.
+
+    A task checkout's HEAD is not a release digest: every task commit would
+    invalidate a committed SBOM, and it says nothing about the companion
+    repository. The manifest records the exact ref and SHA returned by each
+    repository's release source, so both the generator and checker use the
+    same auditable, stable inputs.
+    """
+    path = root / "docs/security/release_bindings.json"
+    try:
+        bindings = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Unable to read release bindings: {path}") from exc
+
+    repositories = bindings.get("repositories")
+    expected = {"alfloop-dev/odayplus", "alfloop-dev/oday-data-platform"}
+    if not isinstance(repositories, dict) or set(repositories) != expected:
+        raise RuntimeError(
+            "Release bindings must contain exactly the ODayPlus and ODay Data Platform repositories"
+        )
+
+    digests: dict[str, str] = {}
+    for repository, record in repositories.items():
+        if not isinstance(record, dict):
+            raise RuntimeError(f"Invalid release binding for {repository}")
+        digest = str(record.get("digest") or "").strip().lower()
+        ref = str(record.get("ref") or "").strip()
+        source = str(record.get("source") or "").strip()
+        if not re.fullmatch(r"[0-9a-f]{40}", digest):
+            raise RuntimeError(f"Invalid release digest for {repository}: {digest!r}")
+        if not ref or not source.startswith("https://github.com/"):
+            raise RuntimeError(f"Release binding for {repository} lacks ref/source")
+        digests[repository] = digest
+    return digests
 
 
 def normalize_spdx_license(raw_license: str) -> list[dict[str, Any]]:
@@ -144,9 +193,14 @@ def _get_python_license(dist: md.Distribution, name: str) -> str:
         if lic in ("MIT License", "MIT license", "MIT"):
             return "MIT"
         if lic in (
-            "Apache 2.0", "Apache License 2.0", "Apache License, Version 2.0",
-            "Apache 2", "Apache v2", "Apache License Version 2.0",
-            "Apache Software License", "Apache Software License 2.0"
+            "Apache 2.0",
+            "Apache License 2.0",
+            "Apache License, Version 2.0",
+            "Apache 2",
+            "Apache v2",
+            "Apache License Version 2.0",
+            "Apache Software License",
+            "Apache Software License 2.0",
         ):
             return "Apache-2.0"
         if lic in ("BSD License", "3-Clause BSD License", "BSD 3-Clause"):
@@ -238,7 +292,9 @@ def generate_sbom() -> dict[str, Any]:
                 npm_deps_raw[purl] = pkg_info.get("dependencies", {})
 
                 # License extraction
-                lic_str = _normalise_npm_license(pkg_info.get("license") or pkg_info.get("licenses"))
+                lic_str = _normalise_npm_license(
+                    pkg_info.get("license") or pkg_info.get("licenses")
+                )
                 if not lic_str and pkg_path in installed_npm_meta:
                     inst = installed_npm_meta[pkg_path]
                     lic_str = _normalise_npm_license(inst.get("license") or inst.get("licenses"))
@@ -248,7 +304,9 @@ def generate_sbom() -> dict[str, Any]:
                 integrity = pkg_info.get("integrity")
                 if integrity:
                     if integrity.startswith("sha512-"):
-                        hashes.append({"alg": "SHA-512", "content": integrity.replace("sha512-", "")})
+                        hashes.append(
+                            {"alg": "SHA-512", "content": integrity.replace("sha512-", "")}
+                        )
                     elif integrity.startswith("sha1-"):
                         hashes.append({"alg": "SHA-1", "content": integrity.replace("sha1-", "")})
 
@@ -370,7 +428,11 @@ def generate_sbom() -> dict[str, Any]:
                 if norm_name in installed_dists:
                     dist = installed_dists[norm_name]
                     lic_str = _get_python_license(dist, name)
-                    author = dist.metadata.get("Author") or dist.metadata.get("Author-email") or dist.metadata.get("Maintainer")
+                    author = (
+                        dist.metadata.get("Author")
+                        or dist.metadata.get("Author-email")
+                        or dist.metadata.get("Maintainer")
+                    )
                     if author:
                         supplier = {"name": author.strip()}
 
@@ -400,10 +462,12 @@ def generate_sbom() -> dict[str, Any]:
 
     # 3. Build dependency graph
     # Root dependency node
-    dependency_graph.append({
-        "ref": root_purl,
-        "dependsOn": sorted(root_depends_on),
-    })
+    dependency_graph.append(
+        {
+            "ref": root_purl,
+            "dependsOn": sorted(root_depends_on),
+        }
+    )
 
     # Individual component dependency nodes
     for purl, child_deps in npm_deps_raw.items():
@@ -414,10 +478,12 @@ def generate_sbom() -> dict[str, Any]:
                     depends_on.append(p_url)
                     break
         if depends_on:
-            dependency_graph.append({
-                "ref": purl,
-                "dependsOn": sorted(set(depends_on)),
-            })
+            dependency_graph.append(
+                {
+                    "ref": purl,
+                    "dependsOn": sorted(set(depends_on)),
+                }
+            )
 
     for norm_name, pkg in python_packages_by_norm_name.items():
         purl = python_purls_by_name[norm_name]
@@ -429,10 +495,12 @@ def generate_sbom() -> dict[str, Any]:
             if d_norm in python_purls_by_name:
                 depends_on.append(python_purls_by_name[d_norm])
         if depends_on:
-            dependency_graph.append({
-                "ref": purl,
-                "dependsOn": sorted(set(depends_on)),
-            })
+            dependency_graph.append(
+                {
+                    "ref": purl,
+                    "dependsOn": sorted(set(depends_on)),
+                }
+            )
 
     # Deduplicate components by (name, version, purl)
     unique_components: list[dict[str, Any]] = []
@@ -524,7 +592,9 @@ def main() -> int:
             return 1
 
         def filter_properties(props):
-            # Ignore volatile properties like timestamp, git-sha, sbom-hash
+            # Ignore only properties derived from this task checkout. The
+            # repository-release-digests property is a pinned cross-repo input
+            # and must remain part of the comparison.
             ignore_keys = {"git-sha", "sbom-hash", "sbom-content-digest"}
             return [p for p in props if p.get("name") not in ignore_keys]
 
@@ -532,7 +602,7 @@ def main() -> int:
         generated_props = filter_properties(sbom.get("metadata", {}).get("properties", []))
 
         components_match = committed.get("components") == sbom.get("components")
-        
+
         # Normalize git-sha in dependencies for comparison
         committed_deps = committed.get("dependencies", [])
         generated_deps = sbom.get("dependencies", [])
@@ -543,8 +613,11 @@ def main() -> int:
                 committed_deps[0]["ref"] = generated_root_ref
                 for d in committed_deps:
                     if committed_root_ref in d.get("dependsOn", []):
-                        d["dependsOn"] = [generated_root_ref if x == committed_root_ref else x for x in d["dependsOn"]]
-                        
+                        d["dependsOn"] = [
+                            generated_root_ref if x == committed_root_ref else x
+                            for x in d["dependsOn"]
+                        ]
+
         deps_match = committed_deps == generated_deps
         props_match = committed_props == generated_props
 
@@ -575,4 +648,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:sha256-56f1eb43c6bff92d8094e01a06588a9f",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-23T08:56:57.144113+00:00",
+    "timestamp": "2026-08-23T09:18:23.300652+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,13 +16,13 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@ca110ef7095f97dc7c588dbd838d8bd54c95bb57",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@ca110ef7095f97dc7c588dbd838d8bd54c95bb57"
+      "purl": "pkg:generic/alfloop-dev/odayplus@c08b28452b4221e09c8cac2fb7d48232c9410811",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@c08b28452b4221e09c8cac2fb7d48232c9410811"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "ca110ef7095f97dc7c588dbd838d8bd54c95bb57"
+        "value": "c08b28452b4221e09c8cac2fb7d48232c9410811"
       },
       {
         "name": "sbom-hash",
@@ -30,7 +30,7 @@
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:5cd0998d53146260f454581434cd4afc9bea5d1ded468c38528e706ddaf9fec5"
+        "value": "sha256:9c1166370c52c20e00de377eb9fd4eaf0ff8617b9417863794de34dbc79196f2"
       },
       {
         "name": "container-base-images",
@@ -38,7 +38,7 @@
       },
       {
         "name": "repository-release-digests",
-        "value": "{\"alfloop-dev/odayplus\": \"ca110ef7095f97dc7c588dbd838d8bd54c95bb57\", \"alfloop-dev/pantheon\": \"ca110ef7095f97dc7c588dbd838d8bd54c95bb57\"}"
+        "value": "{\"alfloop-dev/odayplus\": \"a4d81f0524fe72e73c4c46773da86f11edfe8ad2\", \"alfloop-dev/oday-data-platform\": \"dab67b505c60a83b3b16fa7f7fa201ecb6538934\"}"
       }
     ]
   },
@@ -18796,7 +18796,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@ca110ef7095f97dc7c588dbd838d8bd54c95bb57",
+      "ref": "pkg:generic/alfloop-dev/odayplus@c08b28452b4221e09c8cac2fb7d48232c9410811",
       "dependsOn": [
         "pkg:pypi/catboost@1.2.10",
         "pkg:pypi/cryptography@48.0.1",

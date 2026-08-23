@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
-from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -22,10 +22,11 @@ from delivery_toolchain.security.generate_oss_notice import (
     collect_python,
     evaluate_policy,
 )
-from delivery_toolchain.security.generate_sbom import generate_sbom
+from delivery_toolchain.security.generate_sbom import generate_sbom, get_repo_release_digests
 
 POLICY_PATH = ROOT / "docs/security/license_policy.json"
 EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
+RELEASE_BINDINGS_PATH = ROOT / "docs/security/release_bindings.json"
 NOTICE_PATH = ROOT / "NOTICE-THIRD-PARTY.md"
 SBOM_PATH = ROOT / "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json"
 
@@ -50,8 +51,12 @@ def test_sbom_licenses_purls_suppliers_hashes_populated() -> None:
     for comp in components:
         assert "name" in comp and comp["name"], "Component missing name"
         assert "version" in comp and comp["version"], "Component missing version"
-        assert "purl" in comp and comp["purl"].startswith("pkg:"), f"Invalid purl: {comp.get('purl')}"
-        assert "licenses" in comp and len(comp["licenses"]) > 0, f"Component missing licenses: {comp['name']}"
+        assert "purl" in comp and comp["purl"].startswith("pkg:"), (
+            f"Invalid purl: {comp.get('purl')}"
+        )
+        assert "licenses" in comp and len(comp["licenses"]) > 0, (
+            f"Component missing licenses: {comp['name']}"
+        )
         assert comp.get("scope") in ("required", "optional"), f"Invalid scope: {comp.get('scope')}"
         # Most components have hashes from package-lock.json or uv.lock
         if "hashes" in comp:
@@ -81,7 +86,20 @@ def test_sbom_container_and_repository_release_digests() -> None:
     assert "repository-release-digests" in props
     repo_digests = json.loads(props["repository-release-digests"])
     assert "alfloop-dev/odayplus" in repo_digests
-    assert "alfloop-dev/pantheon" in repo_digests
+    assert repo_digests == get_repo_release_digests()
+    assert "alfloop-dev/oday-data-platform" in repo_digests
+
+
+def test_release_bindings_are_explicit_and_resolvable() -> None:
+    bindings = json.loads(RELEASE_BINDINGS_PATH.read_text(encoding="utf-8"))
+    assert set(bindings["repositories"]) == {
+        "alfloop-dev/odayplus",
+        "alfloop-dev/oday-data-platform",
+    }
+    for record in bindings["repositories"].values():
+        assert record["ref"].startswith("refs/")
+        assert record["source"].startswith("https://github.com/")
+        assert len(record["digest"]) == 40
 
 
 def test_sbom_check_cli_passes() -> None:
@@ -134,7 +152,9 @@ def test_notice_check_cli_passes() -> None:
         capture_output=True,
         text=True,
     )
-    assert res.returncode == 0, f"generate_oss_notice.py --check failed:\n{res.stdout}\n{res.stderr}"
+    assert res.returncode == 0, (
+        f"generate_oss_notice.py --check failed:\n{res.stdout}\n{res.stderr}"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -179,7 +199,9 @@ def test_no_false_claim_of_prior_human_ops_approval() -> None:
 def test_attestation_contract_valid_and_integrity_readback() -> None:
     attestation = generate_attestation(ROOT)
     valid, errors = verify_attestation(attestation, ROOT)
-    assert not valid, "Attestation readback should fail because of unadjudicated review_required components"
+    assert not valid, (
+        "Attestation readback should fail because of unadjudicated review_required components"
+    )
     assert attestation["task_id"] == "ODP-OSS-LICENSE-GATE-002"
     assert attestation["status"] == "proposed"
     assert attestation["gate_summary"]["gate_decision"] == "FAIL"
@@ -192,7 +214,9 @@ def test_attestation_check_cli_fails() -> None:
         capture_output=True,
         text=True,
     )
-    assert res.returncode == 1, "attestation.py --check should fail due to unadjudicated review_required cases"
+    assert res.returncode == 1, (
+        "attestation.py --check should fail due to unadjudicated review_required cases"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -206,9 +230,15 @@ def test_negative_stale_notice_rejected(tmp_path: Path) -> None:
     original_content = NOTICE_PATH.read_text(encoding="utf-8")
     try:
         # Write modified notice
-        NOTICE_PATH.write_text(original_content + "\n- `tampered-extra-package` 1.0.0 (npm)\n", encoding="utf-8")
-        res = subprocess.run([sys.executable, str(script), "--check"], cwd=ROOT, capture_output=True, text=True)
-        assert res.returncode != 0, "generate_oss_notice.py --check should fail on stale/tampered NOTICE"
+        NOTICE_PATH.write_text(
+            original_content + "\n- `tampered-extra-package` 1.0.0 (npm)\n", encoding="utf-8"
+        )
+        res = subprocess.run(
+            [sys.executable, str(script), "--check"], cwd=ROOT, capture_output=True, text=True
+        )
+        assert res.returncode != 0, (
+            "generate_oss_notice.py --check should fail on stale/tampered NOTICE"
+        )
     finally:
         NOTICE_PATH.write_text(original_content, encoding="utf-8")
 
@@ -218,10 +248,10 @@ def test_negative_partial_install_rejected(tmp_path: Path) -> None:
     import pytest
 
     from delivery_toolchain.security.generate_oss_notice import collect_npm
-    
+
     empty_node_modules = tmp_path / "node_modules"
     empty_node_modules.mkdir()
-    
+
     with pytest.raises(RuntimeError, match="Partial install detected. Missing npm packages"):
         collect_npm(empty_node_modules)
 
@@ -230,10 +260,14 @@ def test_negative_hash_drift_rejected() -> None:
     """Tampered file hash in attestation evidence must fail readback."""
     attestation = generate_attestation(ROOT)
     # Tamper with uv_lock_sha256
-    attestation["evidence_hashes"]["uv_lock_sha256"] = "0000000000000000000000000000000000000000000000000000000000000000"
+    attestation["evidence_hashes"]["uv_lock_sha256"] = (
+        "0000000000000000000000000000000000000000000000000000000000000000"
+    )
     # Recompute content hash to isolate the file hash check
     payload_copy = {k: v for k, v in attestation.items() if k != "integrity"}
-    attestation["integrity"]["content_sha256"] = json.dumps(payload_copy, sort_keys=True)
+    attestation["integrity"]["content_sha256"] = hashlib.sha256(
+        json.dumps(payload_copy, sort_keys=True).encode()
+    ).hexdigest()
     # verify_attestation must detect the hash drift
     valid, errors = verify_attestation(attestation, ROOT)
     assert not valid, "Attestation must fail when an evidence hash drifts"
@@ -243,24 +277,25 @@ def test_negative_hash_drift_rejected() -> None:
 def test_negative_wrong_scope_rejected() -> None:
     """Transitive dev-only components must not be marked as required scope."""
     from delivery_toolchain.security.generate_sbom import generate_sbom
+
     sbom = generate_sbom()
-    
-    # Verify that a known transitive dev dependency (e.g., inpy) is not required
-    # Or just verify that something that is only in dev dependencies has scope "optional"
-    # For a general assertion:
-    dev_deps = [c for c in sbom["components"] if c["scope"] == "optional"]
-    assert len(dev_deps) > 0, "SBOM should have optional components for dev-only packages"
-    
-    # We could also assert that some specific package is required
-    prod_deps = [c for c in sbom["components"] if c["scope"] == "required"]
-    assert len(prod_deps) > 0, "SBOM should have required components"
+
+    scopes = {component["name"]: component["scope"] for component in sbom["components"]}
+    assert scopes["eslint"] == "optional", "dev-only eslint must not be required"
+    assert scopes["next"] == "required", "production next must remain required"
 
 
 def test_negative_denied_license_rejected() -> None:
     """Components carrying GPL, AGPL, SSPL, or BUSL must be rejected."""
     denied_licenses = [
-        "GPL-2.0-only", "GPL-2.0-or-later", "GPL-3.0-only", "GPL-3.0-or-later",
-        "AGPL-3.0-only", "AGPL-3.0-or-later", "SSPL-1.0", "BUSL-1.1"
+        "GPL-2.0-only",
+        "GPL-2.0-or-later",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "AGPL-3.0-only",
+        "AGPL-3.0-or-later",
+        "SSPL-1.0",
+        "BUSL-1.1",
     ]
     for lic in denied_licenses:
         comp = Component(ecosystem="pypi", name=f"test-denied-{lic}", version="1.0.0", license=lic)
@@ -271,36 +306,44 @@ def test_negative_denied_license_rejected() -> None:
 
 def test_negative_unknown_license_rejected() -> None:
     """Components with UNKNOWN or empty license must fail closed."""
-    unknown_comp = Component(ecosystem="npm", name="test-unknown-pkg", version="1.0.0", license="UNKNOWN")
+    unknown_comp = Component(
+        ecosystem="npm", name="test-unknown-pkg", version="1.0.0", license="UNKNOWN"
+    )
     eval_result = evaluate_policy(components=[unknown_comp])
     assert eval_result["status"] == "FAIL", "UNKNOWN license must cause FAIL"
     assert any("Unknown" in v["reason"] for v in eval_result["violations"])
 
 
-def test_negative_expired_exemption_rejected() -> None:
+def test_negative_expired_exemption_rejected(tmp_path: Path) -> None:
     """Exemptions with expired timestamp must be rejected."""
     expired_exemption = {
         "exemption_id": "EX-001",
         "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
-        "package": "bad-pkg",
-        "purl": "pkg:npm/bad-pkg@1.0.0",
-        "license_or_finding": "GPL-3.0-only",
+        "package": "psycopg",
+        "purl": "pkg:pypi/psycopg@3.3.4",
+        "license_or_finding": "LGPL-3.0-only",
         "scope": "prod",
+        "applicable_releases": ["a4d81f0524fe72e73c4c46773da86f11edfe8ad2"],
+        "rationale": "test only",
         "issued_at": "2026-01-01T00:00:00Z",
         "expires_at": "2026-06-01T00:00:00Z",  # in the past
         "approved_by": {
             "principal_id": "legal-user-123",
             "display_name": "Alice Legal",
-            "role": "Legal Counsel"
-        }
+            "role": "Legal Counsel",
+        },
     }
-    # Validate expiration logic
-    expires_at = datetime.fromisoformat(expired_exemption["expires_at"].replace("Z", "+00:00"))
-    is_expired = expires_at < datetime.now(UTC)
-    assert is_expired is True, "Expired exemption must be detected as expired"
+    exemption_path = tmp_path / "expired-exemptions.json"
+    exemption_path.write_text(json.dumps({"exemptions": [expired_exemption]}), encoding="utf-8")
+    result = evaluate_policy(
+        components=[Component("pypi", "psycopg", "3.3.4", "LGPL-3.0-only")],
+        exemptions_path=exemption_path,
+    )
+    assert result["status"] == "FAIL"
+    assert result["review_required"]
 
 
-def test_negative_local_or_ai_approval_rejected() -> None:
+def test_negative_local_or_ai_approval_rejected(tmp_path: Path) -> None:
     """Exemptions approving with AI agent names or role-only strings must be rejected."""
     invalid_approvers = [
         {"principal_id": "ai-agent", "display_name": "Antigravity3", "role": "AI Agent"},
@@ -311,20 +354,37 @@ def test_negative_local_or_ai_approval_rejected() -> None:
         {"principal_id": "sample", "display_name": "Jane Doe", "role": "Tester"},
     ]
 
-    invalid_names = {"Antigravity", "Antigravity2", "Antigravity3", "Claude", "Claude2", "Codex", "Gemini", "Copilot", "Human/Ops", "Legal", "Jane Doe", "John Doe"}
-
-    for approver in invalid_approvers:
-        name = approver["display_name"]
-        principal = approver["principal_id"]
-        is_invalid = (name in invalid_names) or (not principal) or ("AI" in approver["role"])
-        assert is_invalid is True, f"Approver {approver} should be rejected as invalid"
+    for index, approver in enumerate(invalid_approvers):
+        exemption = {
+            "exemption_id": f"EX-AI-{index}",
+            "task_id": "ODP-PLAN-OSS-LEGAL-POLICY-001",
+            "package": "psycopg",
+            "purl": "pkg:pypi/psycopg@3.3.4",
+            "license_or_finding": "LGPL-3.0-only",
+            "scope": "prod",
+            "applicable_releases": ["a4d81f0524fe72e73c4c46773da86f11edfe8ad2"],
+            "rationale": "test only",
+            "issued_at": "2026-01-01T00:00:00Z",
+            "expires_at": "2030-01-01T00:00:00Z",
+            "approved_by": approver,
+        }
+        exemption_path = tmp_path / f"invalid-{index}.json"
+        exemption_path.write_text(json.dumps({"exemptions": [exemption]}), encoding="utf-8")
+        result = evaluate_policy(
+            components=[Component("pypi", "psycopg", "3.3.4", "LGPL-3.0-only")],
+            exemptions_path=exemption_path,
+        )
+        assert result["status"] == "FAIL"
+        assert result["review_required"], f"Approver {approver} must be rejected"
 
 
 def test_negative_tampered_integrity_rejected() -> None:
     """Mismatched content_sha256 must fail attestation integrity check."""
     attestation = generate_attestation(ROOT)
     # Corrupt the integrity content_sha256
-    attestation["integrity"]["content_sha256"] = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    attestation["integrity"]["content_sha256"] = (
+        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    )
     valid, errors = verify_attestation(attestation, ROOT)
     assert not valid, "Tampered content_sha256 must fail integrity check"
     assert any("Integrity check failed" in err for err in errors)

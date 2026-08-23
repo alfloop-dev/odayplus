@@ -4,11 +4,12 @@
   "policy_name": "ODP-OSS-License-Gate-Policy-v1",
   "policy_version": "1.0.0",
   "status": "proposed",
-  "issued_at": "2026-08-23T08:56:04.430920+00:00",
+  "issued_at": "2026-08-23T09:18:29.442543+00:00",
   "repository": "alfloop-dev/odayplus",
-  "release_sha": "ca110ef7095f97dc7c588dbd838d8bd54c95bb57",
+  "release_sha": "a4d81f0524fe72e73c4c46773da86f11edfe8ad2",
   "cross_repo_release_digests": {
-    "alfloop-dev/odayplus": "ca110ef7095f97dc7c588dbd838d8bd54c95bb57"
+    "alfloop-dev/odayplus": "a4d81f0524fe72e73c4c46773da86f11edfe8ad2",
+    "alfloop-dev/oday-data-platform": "dab67b505c60a83b3b16fa7f7fa201ecb6538934"
   },
   "container_base_images": [
     "python:3.12-slim",
@@ -22,8 +23,9 @@
     "license_policy_sha256": "690f28e78c149096bbb5ea2d5517b80ea56c2eab0e0e6041489b9911d02d96a4",
     "license_exemptions_sha256": "f7c1fb4b4c0536387e7c50d101d4ea1ae755c7d2341aeeb04b31204351c89c3c",
     "license_inventory_sha256": "4c84c829d23158948beb945fe6e474dc8fa483867c0627529ad85415847c430e",
+    "release_bindings_sha256": "07a5ab4ddeb622e4e11daf30b378ee65b73b5c13d076532bd89ade5299ffe8fb",
     "notice_sha256": "2f48893897eef055b25d8ec65241ed0cc9e9f28ca2894589d56277778d76069b",
-    "sbom_sha256": "f6e688ec691ae0aa2009f4d9f74e5dde6557ec4b6e42522e3b56573ccc8719c7"
+    "sbom_sha256": "f5349a9c7140fe06f06b160043e3a4a248691cf0f020077ef8cb081223363234"
   },
   "gate_summary": {
     "total_components": 687,
@@ -36,6 +38,6 @@
   },
   "integrity": {
     "algorithm": "SHA-256",
-    "content_sha256": "ff622cb52cbb155b8c69807dfb2ab8b26489ee137220f050ffc8286ad7e95281"
+    "content_sha256": "3201bf86d436658c11a22f157576f01b3e6f270c1b380c6bc8d31de55eafc6bb"
   }
 }
