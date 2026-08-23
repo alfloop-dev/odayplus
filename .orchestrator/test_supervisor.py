@@ -11725,6 +11725,49 @@ class ProcessQueueAgentOverrideTests(unittest.TestCase):
             self.assertNotIn("Cannot verify branch HEAD", task_item.get("next", ""))
 class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
 
+    def test_git_stderr_reaches_the_refusal_detail(self) -> None:
+        """`status_unreadable` without git's message says a read failed, not why.
+
+        The reason alone is one step better than the bare `False` it replaced
+        and one step short of actionable: an operator still has to reproduce the
+        failure by hand to learn whether the worktree was locked, corrupt, or
+        gone.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(
+                Path(tmpdir), "TASK-UNREADABLE-001"
+            )
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+            real_run = subprocess.run
+
+            def fail_status(cmd, *args, **kwargs):
+                if list(cmd)[:2] == ["git", "status"]:
+                    return subprocess.CompletedProcess(
+                        cmd, 128, b"", b"fatal: index file corrupt"
+                    )
+                return real_run(cmd, *args, **kwargs)
+
+            with mock.patch.object(supervisor.subprocess, "run", side_effect=fail_status):
+                outcome = supervisor._quarantine_and_preserve_dirty_worktree(
+                    config,
+                    {},
+                    wt_path,
+                    "TASK-UNREADABLE-001",
+                    expected_branch=branch_name,
+                    run_id=None,
+                    trigger="unit_test",
+                )
+
+        self.assertFalse(outcome)
+        self.assertEqual(outcome.reason, "status_unreadable")
+        self.assertIn("index file corrupt", outcome.detail)
+
     def _create_git_repo_and_worktree(self, tmpdir_path: Path, task_id: str = "TASK-001") -> tuple[Path, Path, str]:
         repo_root = tmpdir_path / "main_repo"
         repo_root.mkdir()
