@@ -2024,6 +2024,91 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             self.assertEqual(copied_brief.read_text(encoding="utf-8"), "# Source brief\n")
             self.assertEqual(request.metadata["materialized_context_files"], [".orchestrator/task-briefs/ops_brief_001.md"])
 
+    def test_refused_dirty_lease_writes_a_backup_once(self) -> None:
+        """A refused lease must leave a backup, and only one per dirt-state.
+
+        Preservation otherwise runs only from the paths that declare a worker
+        dead, so dirt from a worker that exited cleanly -- or that predates the
+        lease entirely -- was never backed up at all. On 2026-08-23 four
+        worktrees sat blocked for four to seven hours holding 3608, 336, 44 and
+        22 uncommitted files, and `worktree-dirt-backups/` had an entry for none
+        of them.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root = tmp_p / "pantheon"
+            repo_root.mkdir()
+            (repo_root / "ai-status.json").write_text("{}", encoding="utf-8")
+            for cmd in (
+                ["git", "init", "-b", "dev"],
+                ["git", "config", "user.name", "TestUser"],
+                ["git", "config", "user.email", "test@example.com"],
+            ):
+                subprocess.run(cmd, cwd=repo_root, capture_output=True, check=True)
+            (repo_root / "README.md").write_text("main\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo_root, capture_output=True, check=True)
+            subprocess.run(["git", "commit", "-m", "initial"], cwd=repo_root, capture_output=True, check=True)
+            subprocess.run(["git", "branch", "task/OPS-WORKTREE-001"], cwd=repo_root, capture_output=True, check=True)
+
+            worktree_path = tmp_p / "workers" / "pantheon" / "ops-worktree-001"
+            worktree_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "worktree", "add", str(worktree_path), "task/OPS-WORKTREE-001"],
+                cwd=repo_root, capture_output=True, check=True,
+            )
+            (worktree_path / "unfinished.py").write_text("half a feature\n", encoding="utf-8")
+
+            config = {
+                **self.config,
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+                "worker_worktrees": {
+                    "enabled": True,
+                    "root": str(tmp_p / "workers"),
+                    "base_ref": "origin/dev",
+                    "reuse_existing": True,
+                },
+            }
+            state: dict[str, object] = {}
+            dirty = "skipped_dirty_worktree: 1 dirty change (1 untracked): unfinished.py"
+            backups_dir = repo_root / ".orchestrator" / "worktree-dirt-backups"
+
+            def lease():
+                request = supervisor.DeliveryRequest(
+                    agent_id="codex",
+                    provider="codex",
+                    delivery_mode="codex",
+                    message="wake",
+                    task_id="OPS-WORKTREE-001",
+                    reason="owned_in_progress_dispatch",
+                )
+                with (
+                    mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=worktree_path),
+                    mock.patch.object(supervisor, "_refresh_reused_worker_worktree", return_value=(False, dirty)),
+                ):
+                    return supervisor.prepare_worker_workspace(
+                        config, state, request, queue_event_id="evt-dirty", target_agent="Codex",
+                    )
+
+            ok, _ = lease()
+            self.assertFalse(ok)
+            self.assertEqual(
+                1, len(list(backups_dir.glob("ops-worktree-001-*"))),
+                "a refused dirty lease must leave exactly one backup",
+            )
+            # The dirt itself stays put, as it does at worker death.
+            self.assertTrue((worktree_path / "unfinished.py").exists())
+
+            ok_again, _ = lease()
+            self.assertFalse(ok_again)
+            self.assertEqual(
+                1, len(list(backups_dir.glob("ops-worktree-001-*"))),
+                "an unchanged dirt-state must not be backed up again on every retry",
+            )
+
     def test_prepare_worker_workspace_blocks_dirty_reused_worktree(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_root = Path(tmpdir) / "pantheon"
