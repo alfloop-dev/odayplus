@@ -86,6 +86,10 @@ DEFAULT_COLUMN_MAPPING: dict[str, str] = {
     "型態": "listing_type",
     "type": "listing_type",
     "listing_type": "listing_type",
+    "property_id": "platform_property_id",
+    "propertyId": "platform_property_id",
+    "platform_property_id": "platform_property_id",
+    "物件編號": "platform_property_id",
 }
 
 FORMULA_PREFIXES = ("=", "@", "+", "-")
@@ -581,6 +585,7 @@ def mask_sensitive_value(val: Any) -> Any:
 def map_and_validate_rows(
     raw_rows: list[dict[str, Any]],
     custom_mapping: dict[str, str] | None = None,
+    property_resolver: Callable[[str], tuple[str | None, float]] | None = None,
 ) -> tuple[dict[str, str], list[dict[str, Any]], list[XlsxRowError]]:
     """Map raw XLSX columns to domain target schema and perform domain validation."""
 
@@ -630,7 +635,16 @@ def map_and_validate_rows(
             )
             has_error = True
         else:
-            mapped_row["normalized_address"] = normalize_address(address_raw)
+            norm_addr = normalize_address(address_raw)
+            mapped_row["normalized_address"] = norm_addr
+            if property_resolver and not mapped_row.get("platform_property_id"):
+                try:
+                    prop_id, conf = property_resolver(norm_addr)
+                    if prop_id and conf >= 0.85:
+                        mapped_row["platform_property_id"] = prop_id
+                        mapped_row["property_match_confidence"] = conf
+                except Exception:
+                    pass
 
         # Rule 2: Numeric rent_amount validation
         rent_val = mapped_row.get("rent_amount")

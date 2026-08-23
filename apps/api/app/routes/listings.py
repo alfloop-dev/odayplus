@@ -931,6 +931,21 @@ else:
                 "confidence": listing.confidence,
                 "snapshot_id": listing.snapshot_id,
             }
+            for attr in (
+                "property_id",
+                "listing_obs_id",
+                "rent_benchmark",
+                "rent_benchmark_median",
+                "rent_benchmark_p25",
+                "rent_benchmark_p75",
+                "rent_benchmark_sample_count",
+                "rent_benchmark_id",
+                "platform_property_id",
+                "platform_observation_id",
+            ):
+                val = getattr(listing, attr, None)
+                if val is not None:
+                    d[attr] = val
             if address:
                 d.update({
                     "address": address.raw_address or address.normalized_address or "",

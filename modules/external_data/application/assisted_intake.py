@@ -638,57 +638,69 @@ def parse_snapshot(retrieval: RetrievalResult) -> dict[str, Any]:
 
     Every field carries its source value beside its normalized value so a
     reviewer can tell parsed from normalized from corrected (design §5.3).
+    Strict field precedence: Manual Correction > Normalized Intake > Platform Observation Raw.
     """
 
     raw = retrieval.raw
     confidence = _as_float(raw.get("confidence")) or 0.0
+
+    source_listing_id = raw.get("source_listing_id") or raw.get("listing_obs_id") or raw.get("source_entity_id") or ""
+    address_raw = raw.get("address_raw") or raw.get("normalized_address") or raw.get("address") or ""
+    rent_amount = raw.get("rent_amount") if raw.get("rent_amount") is not None else raw.get("monthly_rent")
+    rent_text = raw.get("rent_text") or (f"NT${rent_amount}" if rent_amount is not None else "")
+    area_ping = raw.get("area_ping") if raw.get("area_ping") is not None else raw.get("floor_area_ping")
+    area_text = raw.get("area_text") or (f"{area_ping} 坪" if area_ping is not None else "")
+    floor = raw.get("floor") or raw.get("target_floor") or ""
+    listing_type = raw.get("listing_type") or raw.get("primary_use") or raw.get("listing_kind") or ""
+    listing_status = raw.get("listing_status") or "active"
+
     fields = {
         "providerListingId": _field(
             key="providerListingId",
             label="提供者物件 ID",
-            source_value=str(raw.get("source_listing_id", "")),
-            normalized_value=str(raw.get("source_listing_id", "")).strip(),
+            source_value=str(source_listing_id),
+            normalized_value=str(source_listing_id).strip(),
             identity=True,
         ),
         "address": _field(
             key="address",
             label="地址",
-            source_value=str(raw.get("address_raw", "")),
-            normalized_value=normalize_address(str(raw.get("address_raw", ""))),
+            source_value=str(address_raw),
+            normalized_value=normalize_address(str(address_raw)),
             identity=True,
             low_confidence=confidence < 0.80,
         ),
         "rent": _field(
             key="rent",
             label="租金",
-            source_value=str(raw.get("rent_text", "")),
-            normalized_value=_as_float(raw.get("rent_amount")),
+            source_value=str(rent_text),
+            normalized_value=_as_float(rent_amount),
             identity=True,
         ),
         "areaPing": _field(
             key="areaPing",
             label="坪數",
-            source_value=str(raw.get("area_text", "")),
-            normalized_value=_as_float(raw.get("area_ping")),
+            source_value=str(area_text),
+            normalized_value=_as_float(area_ping),
             identity=True,
         ),
         "floor": _field(
             key="floor",
             label="樓層",
-            source_value=str(raw.get("floor", "")),
-            normalized_value=normalize_floor(str(raw.get("floor", ""))),
+            source_value=str(floor),
+            normalized_value=normalize_floor(str(floor)),
         ),
         "listingType": _field(
             key="listingType",
             label="型態／用途",
-            source_value=str(raw.get("listing_type", "")),
-            normalized_value=str(raw.get("listing_type", "")).strip(),
+            source_value=str(listing_type),
+            normalized_value=str(listing_type).strip(),
         ),
         "listingStatus": _field(
             key="listingStatus",
             label="來源狀態",
-            source_value=str(raw.get("listing_status", "")),
-            normalized_value=str(raw.get("listing_status", "")).strip(),
+            source_value=str(listing_status),
+            normalized_value=str(listing_status).strip(),
         ),
     }
     if raw.get("contact_phone") is not None:
@@ -697,6 +709,14 @@ def parse_snapshot(retrieval: RetrievalResult) -> dict[str, Any]:
             label="聯絡電話",
             source_value=str(raw.get("contact_phone", "")),
             normalized_value=str(raw.get("contact_phone", "")).strip(),
+        )
+    if raw.get("property_id") is not None:
+        fields["propertyId"] = _field(
+            key="propertyId",
+            label="平台物件實體 ID",
+            source_value=str(raw.get("property_id", "")),
+            normalized_value=str(raw.get("property_id", "")).strip(),
+            identity=False,
         )
     return fields
 
