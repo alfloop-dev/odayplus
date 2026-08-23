@@ -5599,6 +5599,22 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(state["workers"]["helper-run-1"]["status"], "running")
         terminate_worker_pid.assert_not_called()
 
+    def test_expired_same_generation_claim_retained_on_task_does_not_kill_live_worker(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        current_claim = {
+            "claimed_by": "Codex",
+            "generation": 7,
+            "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        }
+        config, state, status = self._helper_lease_fixture(current_claim=current_claim)
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        worker = state["workers"]["helper-run-1"]
+        self.assertEqual(worker["status"], "running")
+        self.assertNotIn("supersede_deferred_since", worker)
+        terminate_worker_pid.assert_not_called()
+
     def test_changed_helper_claim_generation_still_uses_bounded_supersede(self) -> None:
         now = datetime.now(UTC).replace(microsecond=0)
         current_claim = {
@@ -5618,6 +5634,30 @@ class PollWorkersRecoveryTests(unittest.TestCase):
         self.assertEqual(worker["status"], "superseded")
         self.assertEqual(state["queue"]["events"]["evt-helper-1"]["status"], "completed")
         terminate_worker_pid.assert_called_once_with(4321)
+
+    def test_owner_or_reviewer_change_still_uses_bounded_supersede(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        current_claim = {
+            "claimed_by": "Codex",
+            "generation": 7,
+            "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        }
+        deferred_since = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+
+        for changed_field, changed_identity in (("owner", "Gemini"), ("reviewer", "Claude")):
+            with self.subTest(changed_field=changed_field):
+                config, state, status = self._helper_lease_fixture(
+                    current_claim=current_claim,
+                    supersede_deferred_since=deferred_since,
+                )
+                status["tasks"][0][changed_field] = changed_identity
+
+                terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+                worker = state["workers"]["helper-run-1"]
+                self.assertEqual(worker["status"], "superseded")
+                self.assertEqual(state["queue"]["events"]["evt-helper-1"]["status"], "completed")
+                terminate_worker_pid.assert_called_once_with(4321)
 
     def test_lower_priority_worker_is_superseded_when_finalize_backlog_exists(self) -> None:
         config = {
