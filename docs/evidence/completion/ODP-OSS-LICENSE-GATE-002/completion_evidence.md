@@ -16,7 +16,9 @@ Implements a lock-bound, cross-repo OSS license and release gate with CycloneDX 
    - Eliminates UNKNOWN classifications for declared Python packages by resolving PEP 639 `License-Expression`, clean `License`, `Classifiers`, and documented mappings.
    - Discharges standing obligations (Apache-2.0, CC-BY-4.0, MPL-2.0, LGPL disclosures).
    - Removed false claim that Human/Ops already approved LGPL handling; notes policy is proposed pending external authoritative receipt.
-   - Implements fail-closed `evaluate_policy()` supporting compound expressions (OR / AND rules) and precedence order (`deny > review_required > allow_with_obligations > allow`).
+   - Implements fail-closed `evaluate_policy()` with a parenthesis-aware SPDX expression parser, OR / AND rules, and precedence order (`deny > review_required > unknown > allow_with_obligations > allow`).
+   - Resolves ambiguous `BSD` metadata for `antlr4-python3-runtime` and `pyasn1-modules` through package-specific SPDX fallbacks; the policy contains no bare non-SPDX `BSD` allow entry.
+   - Rejects corrupt `package-lock.json` input instead of swallowing parse errors during partial-install detection.
    - Supports `--check` and `--reconcile` CLI flags.
 
 3. **License Policy and Proposal Boundary (`docs/security/license_policy.json`, `docs/security/license_exemptions.json`)**:
@@ -29,10 +31,12 @@ Implements a lock-bound, cross-repo OSS license and release gate with CycloneDX 
    - Provides readback verification with `--check`.
 
 5. **Test Suites (`tests/security/test_oss_license_gate.py`, `tests/security/test_oss_notice.py`)**:
-   - 23 tests in `test_oss_license_gate.py` + 6 tests in `test_oss_notice.py`.
+   - 26 tests in `test_oss_license_gate.py` + 6 tests in `test_oss_notice.py`.
    - Negative tests reject:
      - Stale NOTICE
      - Partial installs
+     - Corrupt package-lock files
+     - Parenthesized compound expressions that mix deny/obligation terms
      - Hash drift in attestation evidence
      - Wrong scope (transitive dev packages must not be marked required)
      - Denied licenses (GPL, AGPL, SSPL, BUSL)

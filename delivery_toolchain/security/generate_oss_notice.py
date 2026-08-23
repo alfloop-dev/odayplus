@@ -86,10 +86,15 @@ PYTHON_CLASSIFIER_MAP = {
 }
 
 PYTHON_KNOWN_FALLBACKS = {
+    # These distributions publish only the ambiguous BSD label. Resolve the
+    # package-specific licence here rather than weakening the policy with a
+    # non-SPDX `BSD` allow-list entry.
+    "antlr4-python3-runtime": "BSD-3-Clause",
     "google-crc32c": "Apache-2.0",
     "graphemeu": "Python-2.0",
     "huey": "MIT",
     "pgserver": "MIT",
+    "pyasn1-modules": "BSD-2-Clause",
     "rich-click": "MIT",
     "skops": "BSD-3-Clause",
     "universal-pathlib": "MIT",
@@ -154,23 +159,33 @@ def collect_npm(base: Path | None = None) -> list[Component]:
     if PACKAGE_LOCK.exists():
         try:
             lock_data = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
-            lock_packages = lock_data.get("packages", {})
-            found_names = {name for name, _ in found}
-            missing = set()
-            for pkg_path, info in lock_packages.items():
-                if not pkg_path:
-                    continue
-                if pkg_path.startswith("node_modules/"):
-                    pkg_name = pkg_path.split("node_modules/")[-1]
-                    is_optional = info.get("optional", False)
-                    if not pkg_name.startswith(FIRST_PARTY_PREFIXES):
-                        if pkg_name not in found_names and not is_optional:
-                            missing.add(pkg_name)
-            if missing:
-                raise RuntimeError(f"Partial install detected. Missing npm packages declared in lockfile: {missing}")
-        except Exception as e:
-            if isinstance(e, RuntimeError):
-                raise
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(
+                "Unable to read package-lock.json for install completeness check"
+            ) from exc
+
+        lock_packages = lock_data.get("packages")
+        if not isinstance(lock_packages, dict):
+            raise RuntimeError("package-lock.json has no valid packages map")
+
+        found_names = {name for name, _ in found}
+        missing = set()
+        for pkg_path, info in lock_packages.items():
+            if not pkg_path:
+                continue
+            if not isinstance(info, dict):
+                raise RuntimeError(f"package-lock.json has invalid package entry: {pkg_path}")
+            if pkg_path.startswith("node_modules/"):
+                pkg_name = pkg_path.split("node_modules/")[-1]
+                is_optional = info.get("optional", False)
+                if not pkg_name.startswith(FIRST_PARTY_PREFIXES):
+                    if pkg_name not in found_names and not is_optional:
+                        missing.add(pkg_name)
+        if missing:
+            raise RuntimeError(
+                "Partial install detected. Missing npm packages declared in lockfile: "
+                f"{missing}"
+            )
 
     return sorted(found.values())
 
@@ -196,6 +211,14 @@ def _get_python_license_from_dist(dist: md.Distribution, name: str) -> str:
         lic_expr = meta.json.get("license_expression")
     if lic_expr and lic_expr.strip():
         return lic_expr.strip()
+
+    # Some packages publish only the ambiguous `BSD` label. Prefer a
+    # package-specific, SPDX-qualified fallback for those known cases before
+    # generic classifiers can collapse it to the wrong BSD variant.
+    known_fallback = PYTHON_KNOWN_FALLBACKS.get(norm_name)
+    raw_license = str(meta.get("License") or "").strip()
+    if known_fallback and (not raw_license or raw_license.upper() in {"BSD", "UNKNOWN"}):
+        return known_fallback
 
     # 2. Short License header
     lic = str(meta.get("License") or "").strip()
@@ -295,6 +318,83 @@ def _classify_single_term(
     return "unknown"
 
 
+def _combine_or(classes: list[str]) -> str:
+    """Apply the policy's any-allowed-disjunct rule to an OR expression."""
+    if "allow" in classes:
+        return "allow"
+    if "allow_with_obligations" in classes:
+        return "allow_with_obligations"
+    if "deny" in classes:
+        return "deny"
+    if "review_required" in classes:
+        return "review_required"
+    if "unknown" in classes:
+        return "unknown"
+    return "deny"
+
+
+def _combine_and(classes: list[str]) -> str:
+    """Apply the policy's most-restrictive-conjunct rule to an AND expression."""
+    precedence = {
+        "allow": 0,
+        "allow_with_obligations": 1,
+        "unknown": 2,
+        "review_required": 3,
+        "deny": 4,
+    }
+    return max(classes, key=precedence.__getitem__)
+
+
+class _SpdxExpressionParser:
+    """Small fail-closed parser for the AND/OR/parenthesis subset we use."""
+
+    def __init__(self, expression: str, classify: Any) -> None:
+        self.tokens = re.findall(r"\(|\)|\bAND\b|\bOR\b|[^()\s]+", expression)
+        self.position = 0
+        self.classify = classify
+
+    def parse(self) -> str:
+        if not self.tokens:
+            raise ValueError("empty expression")
+        result = self._parse_or()
+        if self.position != len(self.tokens):
+            raise ValueError("trailing tokens")
+        return result
+
+    def _accept(self, token: str) -> bool:
+        if self.position < len(self.tokens) and self.tokens[self.position] == token:
+            self.position += 1
+            return True
+        return False
+
+    def _parse_or(self) -> str:
+        classes = [self._parse_and()]
+        while self._accept("OR"):
+            classes.append(self._parse_and())
+        return _combine_or(classes) if len(classes) > 1 else classes[0]
+
+    def _parse_and(self) -> str:
+        classes = [self._parse_primary()]
+        while self._accept("AND"):
+            classes.append(self._parse_primary())
+        return _combine_and(classes) if len(classes) > 1 else classes[0]
+
+    def _parse_primary(self) -> str:
+        if self._accept("("):
+            result = self._parse_or()
+            if not self._accept(")"):
+                raise ValueError("unclosed parenthesis")
+            return result
+
+        if self.position >= len(self.tokens):
+            raise ValueError("missing term")
+        token = self.tokens[self.position]
+        if token in {"AND", "OR", ")"}:
+            raise ValueError("unexpected operator")
+        self.position += 1
+        return self.classify(token)
+
+
 def evaluate_compound_expression(
     lic: str,
     allowed_ids: set[str],
@@ -304,40 +404,26 @@ def evaluate_compound_expression(
 ) -> str:
     """Evaluate compound SPDX expression using policy precedence order."""
     lic = lic.strip()
-    if " OR " in lic:
-        terms = [t.strip().strip("()") for t in lic.split(" OR ")]
-        classes = [
-            _classify_single_term(t, allowed_ids, allowed_with_obligations_ids, review_case_licenses, deny_ids)
-            for t in terms
-        ]
-        if "allow" in classes:
-            return "allow"
-        if "allow_with_obligations" in classes:
-            return "allow_with_obligations"
-        if "review_required" in classes:
-            return "review_required"
-        if all(c == "deny" for c in classes):
-            return "deny"
+
+    def classify(term: str) -> str:
+        return _classify_single_term(
+            term,
+            allowed_ids,
+            allowed_with_obligations_ids,
+            review_case_licenses,
+            deny_ids,
+        )
+
+    # Preserve non-SPDX descriptive labels such as "LGPL with exceptions" as
+    # one policy term. Compound expressions use the parser so parentheses are
+    # never discarded before classification.
+    if not re.search(r"\b(?:AND|OR)\b|[()]", lic):
+        return classify(lic)
+
+    try:
+        return _SpdxExpressionParser(lic, classify).parse()
+    except ValueError:
         return "unknown"
-
-    if " AND " in lic:
-        terms = [t.strip().strip("()") for t in lic.split(" AND ")]
-        classes = [
-            _classify_single_term(t, allowed_ids, allowed_with_obligations_ids, review_case_licenses, deny_ids)
-            for t in terms
-        ]
-        # Most restrictive term governs: deny > review_required > unknown > allow_with_obligations > allow
-        if "deny" in classes:
-            return "deny"
-        if "review_required" in classes:
-            return "review_required"
-        if "unknown" in classes:
-            return "unknown"
-        if "allow_with_obligations" in classes:
-            return "allow_with_obligations"
-        return "allow"
-
-    return _classify_single_term(lic, allowed_ids, allowed_with_obligations_ids, review_case_licenses, deny_ids)
 
 
 def evaluate_policy(
@@ -540,4 +626,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

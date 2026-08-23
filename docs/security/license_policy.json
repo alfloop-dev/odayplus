@@ -98,9 +98,6 @@
         "id": "AFL-2.1",
         "observed": 1,
         "example": "simplejson"
-      },
-      {
-        "id": "BSD"
       }
     ]
   },

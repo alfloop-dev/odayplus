@@ -269,12 +269,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `cryptography` 48.0.1 (pypi)
 - `python-dateutil` 2.9.0.post0 (pypi)
 
-### BSD (2)
-
-- `antlr4-python3-runtime` 4.13.2 (pypi)
-- `pyasn1_modules` 0.4.2 (pypi)
-
-### BSD-2-Clause (16)
+### BSD-2-Clause (17)
 
 - `@mapbox/tiny-sdf` 2.2.0 (npm)
 - `@mapbox/unitbezier` 0.0.1 (npm)
@@ -291,9 +286,10 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `lazy-object-proxy` 1.12.0 (pypi)
 - `patsy` 1.0.2 (pypi)
 - `pyasn1` 0.6.4 (pypi)
+- `pyasn1_modules` 0.4.2 (pypi)
 - `wrapt` 2.2.2 (pypi)
 
-### BSD-3-Clause (47)
+### BSD-3-Clause (48)
 
 - `@humanwhocodes/object-schema` 2.0.3 (npm)
 - `@mapbox/vector-tile` 2.0.5 (npm)
@@ -308,6 +304,7 @@ File-level copyleft: source of any modified MPL file must be offered.
 - `MarkupSafe` 3.0.3 (pypi)
 - `Werkzeug` 3.1.8 (pypi)
 - `altair` 6.2.2 (pypi)
+- `antlr4-python3-runtime` 4.13.2 (pypi)
 - `click` 8.4.2 (pypi)
 - `cloudpickle` 3.1.2 (pypi)
 - `cma` 4.4.4 (pypi)

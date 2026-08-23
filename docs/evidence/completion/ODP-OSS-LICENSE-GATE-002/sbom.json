@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-56f1eb43c6bff92d8094e01a06588a9f",
+  "serialNumber": "urn:uuid:sha256-4635727c66e9956390d972d875d54731",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-23T09:18:23.300652+00:00",
+    "timestamp": "2026-08-23T09:40:08.242845+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@c08b28452b4221e09c8cac2fb7d48232c9410811",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@c08b28452b4221e09c8cac2fb7d48232c9410811"
+      "purl": "pkg:generic/alfloop-dev/odayplus@ca7b3c205d4cf4e12e167b654d677784ec4653f4",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@ca7b3c205d4cf4e12e167b654d677784ec4653f4"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "c08b28452b4221e09c8cac2fb7d48232c9410811"
+        "value": "ca7b3c205d4cf4e12e167b654d677784ec4653f4"
       },
       {
         "name": "sbom-hash",
-        "value": "56f1eb43c6bff92d8094e01a06588a9fef3d963e9796acc54eaab963b217c0a3"
+        "value": "4635727c66e9956390d972d875d5473132836af3a7b890a070341a51e4711006"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:9c1166370c52c20e00de377eb9fd4eaf0ff8617b9417863794de34dbc79196f2"
+        "value": "sha256:c7900906e79b5b758332a74d9f4c02235fda28734bdd156c727701e9671e0c14"
       },
       {
         "name": "container-base-images",
@@ -4510,7 +4510,7 @@
       "licenses": [
         {
           "license": {
-            "name": "BSD"
+            "id": "BSD-3-Clause"
           }
         }
       ],
@@ -14520,7 +14520,7 @@
       "licenses": [
         {
           "license": {
-            "name": "BSD"
+            "id": "BSD-2-Clause"
           }
         }
       ],
@@ -18796,7 +18796,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@c08b28452b4221e09c8cac2fb7d48232c9410811",
+      "ref": "pkg:generic/alfloop-dev/odayplus@ca7b3c205d4cf4e12e167b654d677784ec4653f4",
       "dependsOn": [
         "pkg:pypi/catboost@1.2.10",
         "pkg:pypi/cryptography@48.0.1",

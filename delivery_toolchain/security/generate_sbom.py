@@ -46,10 +46,14 @@ PYTHON_CLASSIFIER_MAP = {
 }
 
 PYTHON_KNOWN_FALLBACKS = {
+    # These distributions publish only the ambiguous BSD label. Keep the
+    # package-specific SPDX resolution in the extractor, not in policy.
+    "antlr4-python3-runtime": "BSD-3-Clause",
     "google-crc32c": "Apache-2.0",
     "graphemeu": "Python-2.0",
     "huey": "MIT",
     "pgserver": "MIT",
+    "pyasn1-modules": "BSD-2-Clause",
     "rich-click": "MIT",
     "skops": "BSD-3-Clause",
     "universal-pathlib": "MIT",
@@ -186,6 +190,13 @@ def _get_python_license(dist: md.Distribution, name: str) -> str:
         lic_expr = meta.json.get("license_expression")
     if lic_expr and lic_expr.strip():
         return lic_expr.strip()
+
+    # Resolve known packages whose metadata reports only ambiguous `BSD`
+    # before generic classifiers can assign the wrong BSD variant.
+    known_fallback = PYTHON_KNOWN_FALLBACKS.get(norm_name)
+    raw_license = str(meta.get("License") or "").strip()
+    if known_fallback and (not raw_license or raw_license.upper() in {"BSD", "UNKNOWN"}):
+        return known_fallback
 
     # 2. Short License header
     lic = str(meta.get("License") or "").strip()

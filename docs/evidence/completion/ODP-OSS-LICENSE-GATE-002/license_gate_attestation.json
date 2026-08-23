@@ -4,7 +4,7 @@
   "policy_name": "ODP-OSS-License-Gate-Policy-v1",
   "policy_version": "1.0.0",
   "status": "proposed",
-  "issued_at": "2026-08-23T09:18:29.442543+00:00",
+  "issued_at": "2026-08-23T09:41:06.892660+00:00",
   "repository": "alfloop-dev/odayplus",
   "release_sha": "a4d81f0524fe72e73c4c46773da86f11edfe8ad2",
   "cross_repo_release_digests": {
@@ -20,17 +20,17 @@
     "uv_lock_sha256": "4e1d3c424a052092698ea0985a5197d2079f85236600e878cacfe264e5004146",
     "package_json_sha256": "3499bfad4164938539bf245ba30f1d7fdde7909e4cd63bb2c328a0990bb6ec3c",
     "package_lock_json_sha256": "ec65a5368937d9fdd4ad3f5e31bfc246b5bb0996b0a95a527025df7cca92094a",
-    "license_policy_sha256": "690f28e78c149096bbb5ea2d5517b80ea56c2eab0e0e6041489b9911d02d96a4",
+    "license_policy_sha256": "2287cd0e8ca3ce206b92683c48415c2b8dc62219c78db14ef755c383f3386199",
     "license_exemptions_sha256": "f7c1fb4b4c0536387e7c50d101d4ea1ae755c7d2341aeeb04b31204351c89c3c",
     "license_inventory_sha256": "4c84c829d23158948beb945fe6e474dc8fa483867c0627529ad85415847c430e",
     "release_bindings_sha256": "07a5ab4ddeb622e4e11daf30b378ee65b73b5c13d076532bd89ade5299ffe8fb",
-    "notice_sha256": "2f48893897eef055b25d8ec65241ed0cc9e9f28ca2894589d56277778d76069b",
-    "sbom_sha256": "f5349a9c7140fe06f06b160043e3a4a248691cf0f020077ef8cb081223363234"
+    "notice_sha256": "f93fa7c2a0f1402c29d314af3b7a4a5fa71e21da8517a1bc0105f006e3de5c7c",
+    "sbom_sha256": "553563236268b837f623ed780485a49e517b067c28b51ef63f96673c0925f1a4"
   },
   "gate_summary": {
     "total_components": 687,
-    "allowed_count": 671,
-    "allowed_with_obligations_count": 8,
+    "allowed_count": 670,
+    "allowed_with_obligations_count": 9,
     "review_required_count": 8,
     "denied_count": 0,
     "unknown_count": 0,
@@ -38,6 +38,6 @@
   },
   "integrity": {
     "algorithm": "SHA-256",
-    "content_sha256": "3201bf86d436658c11a22f157576f01b3e6f270c1b380c6bc8d31de55eafc6bb"
+    "content_sha256": "9486f51909defb9612567df39d7219f92f6ff5cbb8d914e46dbd170a44255d81"
   }
 }

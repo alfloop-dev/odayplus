@@ -20,6 +20,7 @@ from delivery_toolchain.security.generate_oss_notice import (
     Component,
     collect_npm,
     collect_python,
+    evaluate_compound_expression,
     evaluate_policy,
 )
 from delivery_toolchain.security.generate_sbom import generate_sbom, get_repo_release_digests
@@ -145,6 +146,48 @@ def test_license_policy_evaluation_fails_on_unadjudicated_cases() -> None:
     assert len(eval_result["review_required"]) > 0, "Should have review_required components"
 
 
+def test_compound_expression_respects_parentheses_and_obligations() -> None:
+    """Nested SPDX expressions must not let an inner OR hide an outer AND."""
+    denied = evaluate_policy(
+        components=[
+            Component(
+                "pypi",
+                "test-gpl-compound",
+                "1.0.0",
+                "GPL-3.0-only AND (Apache-2.0 OR MIT)",
+            )
+        ]
+    )
+    assert denied["status"] == "FAIL"
+    assert denied["violations"]
+    assert "Denied license" in denied["violations"][0]["reason"]
+
+    orjson = evaluate_policy(
+        components=[
+            Component(
+                "pypi",
+                "orjson",
+                "3.11.9",
+                "MPL-2.0 AND (Apache-2.0 OR MIT)",
+            )
+        ]
+    )
+    assert orjson["status"] == "PASS"
+    assert [c.name for c in orjson["allowed_with_obligations"]] == ["orjson"]
+    assert not orjson["allowed"]
+
+    assert (
+        evaluate_compound_expression(
+            "GPL-3.0-only AND (Apache-2.0 OR MIT)",
+            {"MIT", "Apache-2.0"},
+            {"MPL-2.0"},
+            set(),
+            {"GPL-3.0-only"},
+        )
+        == "deny"
+    )
+
+
 def test_notice_check_cli_passes() -> None:
     res = subprocess.run(
         [sys.executable, "delivery_toolchain/security/generate_oss_notice.py", "--check"],
@@ -254,6 +297,43 @@ def test_negative_partial_install_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Partial install detected. Missing npm packages"):
         collect_npm(empty_node_modules)
+
+
+def test_negative_corrupt_package_lock_rejected(tmp_path: Path, monkeypatch) -> None:
+    """A corrupt lockfile must not skip the npm completeness check."""
+    import pytest
+
+    import delivery_toolchain.security.generate_oss_notice as notice_module
+
+    corrupt_lock = tmp_path / "package-lock.json"
+    corrupt_lock.write_text("{not-json", encoding="utf-8")
+    monkeypatch.setattr(notice_module, "PACKAGE_LOCK", corrupt_lock)
+
+    with pytest.raises(RuntimeError, match="package-lock.json"):
+        notice_module.collect_npm(tmp_path / "node_modules")
+
+
+def test_ambiguous_python_bsd_is_resolved_to_spdx() -> None:
+    """Known generic BSD metadata must resolve without a policy escape hatch."""
+    python_components = {
+        component.name: component
+        for component in collect_python()
+        if component.name in {"antlr4-python3-runtime", "pyasn1_modules"}
+    }
+    assert python_components["antlr4-python3-runtime"].license == "BSD-3-Clause"
+    assert python_components["pyasn1_modules"].license == "BSD-2-Clause"
+
+    sbom_components = {
+        component["name"]: component
+        for component in generate_sbom()["components"]
+        if component["name"] in {"antlr4-python3-runtime", "pyasn1-modules"}
+    }
+    assert sbom_components["antlr4-python3-runtime"]["licenses"] == [
+        {"license": {"id": "BSD-3-Clause"}}
+    ]
+    assert sbom_components["pyasn1-modules"]["licenses"] == [
+        {"license": {"id": "BSD-2-Clause"}}
+    ]
 
 
 def test_negative_hash_drift_rejected() -> None:
