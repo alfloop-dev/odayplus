@@ -195,6 +195,26 @@ def test_sitescore_v3_conditional_feasibility_is_not_binding_go():
     assert "Feasibility is conditional and requires resolution." in result.assessment.reasons
 
 
+def test_sitescore_v3_unrecognized_feasibility_is_fail_closed():
+    service = SiteScoreV3Service()
+    feasibility_doc = _decision_doc("mf-014", "UNEXPECTED")
+    economics_doc = _decision_doc("mf-014", EconomicsDecision.GO)
+
+    result = service.evaluate(
+        site_id="SITE-014",
+        manifest_id="mf-014",
+        market_context=_market_context("mf-014", with_scores=True),
+        feasibility_doc=feasibility_doc,
+        economics_doc=economics_doc,
+    )
+
+    assert result.assessment.readiness == DecisionReadiness.INCOMPLETE_FEASIBILITY
+    assert result.assessment.availability == ScoreAvailability.UNAVAILABLE_MISSING_INPUT
+    assert result.assessment.decision == SiteScoreDecision.INCOMPLETE
+    assert result.assessment.components is None
+    assert "Feasibility decision is unrecognized: UNEXPECTED." in result.assessment.reasons
+
+
 @pytest.mark.parametrize(
     "economics_recommendation",
     [

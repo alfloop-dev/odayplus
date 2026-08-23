@@ -157,6 +157,9 @@ class SiteScoreV3Service:
             reasons.append("Feasibility is conditional and requires resolution.")
         elif feasibility_decision == FeasibilityDecision.INFEASIBLE.value:
             reasons.append("Site is physically infeasible.")
+        elif feasibility_decision != FeasibilityDecision.FEASIBLE.value:
+            readiness = _set_incomplete(readiness, DecisionReadiness.INCOMPLETE_FEASIBILITY)
+            reasons.append(f"Feasibility decision is unrecognized: {feasibility_decision}.")
 
         if economics_decision is None or economics_decision in {"UNKNOWN", "MISSING"}:
             readiness = _set_incomplete(readiness, DecisionReadiness.INCOMPLETE_ECONOMICS)
