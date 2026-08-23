@@ -1,5 +1,6 @@
 """Service for SiteScore v3."""
 
+import math
 from collections.abc import Mapping
 from typing import Any
 from uuid import uuid4
@@ -177,23 +178,53 @@ class SiteScoreV3Service:
             availability = ScoreAvailability.UNAVAILABLE_MISSING_INPUT
             components = None
         else:
-            availability = ScoreAvailability.AVAILABLE
-            components = SiteScoreComponents(
-                demand_score=float(market_context_values.get("demand_score", 0.0)),
-                format_score=float(market_context_values.get("format_score", 0.0)),
-                ramp_score=float(market_context_values.get("ramp_score", 0.0)),
-                cannibalization_score=float(
-                    market_context_values.get("cannibalization_score", 0.0)
-                ),
-                economics_score=float(market_context_values.get("economics_score", 0.0)),
-                policy_score=float(market_context_values.get("policy_score", 0.0)),
-            )
+            fields = [
+                "demand_score",
+                "format_score",
+                "ramp_score",
+                "cannibalization_score",
+                "economics_score",
+                "policy_score",
+            ]
+            scores = {}
+            missing_fields = []
+            for f in fields:
+                val = market_context_values.get(f)
+                if val is None:
+                    missing_fields.append(f)
+                else:
+                    try:
+                        f_val = float(val)
+                        
+                        if not math.isfinite(f_val):
+                            missing_fields.append(f)
+                        else:
+                            scores[f] = f_val
+                    except (ValueError, TypeError):
+                        missing_fields.append(f)
+
+            if missing_fields:
+                availability = ScoreAvailability.UNAVAILABLE_MISSING_INPUT
+                components = None
+                reasons.append(f"Missing or invalid component scores: {', '.join(missing_fields)}.")
+            else:
+                availability = ScoreAvailability.AVAILABLE
+                components = SiteScoreComponents(
+                    demand_score=scores["demand_score"],
+                    format_score=scores["format_score"],
+                    ramp_score=scores["ramp_score"],
+                    cannibalization_score=scores["cannibalization_score"],
+                    economics_score=scores["economics_score"],
+                    policy_score=scores["policy_score"],
+                )
 
             if (
                 feasibility_decision == FeasibilityDecision.INFEASIBLE.value
                 or economics_decision == EconomicsDecision.REJECT.value
             ):
                 decision = SiteScoreDecision.NO_GO
+            elif missing_fields:
+                decision = SiteScoreDecision.INCOMPLETE
             else:
                 decision = SiteScoreDecision.GO
 

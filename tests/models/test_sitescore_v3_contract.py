@@ -229,7 +229,7 @@ def test_sitescore_v3_known_infeasible_emits_no_go():
     result = service.evaluate(
         site_id="SITE-005",
         manifest_id="mf-005",
-        market_context=_market_context("mf-005"),
+        market_context=_market_context("mf-005", with_scores=True),
         feasibility_doc=feasibility_doc,
         economics_doc=economics_doc,
     )
@@ -238,3 +238,71 @@ def test_sitescore_v3_known_infeasible_emits_no_go():
     assert result.assessment.availability == ScoreAvailability.AVAILABLE
     assert result.assessment.decision == SiteScoreDecision.NO_GO
     assert "Site is physically infeasible." in result.assessment.reasons
+
+
+def test_sitescore_v3_missing_scores_prevent_binding_go():
+    service = SiteScoreV3Service()
+    feasibility_doc = _decision_doc("mf-011", FeasibilityDecision.FEASIBLE)
+    economics_doc = _decision_doc("mf-011", EconomicsDecision.GO)
+
+    result = service.evaluate(
+        site_id="SITE-011",
+        manifest_id="mf-011",
+        market_context=_market_context("mf-011", with_scores=False),
+        feasibility_doc=feasibility_doc,
+        economics_doc=economics_doc,
+    )
+
+    assert result.assessment.readiness == DecisionReadiness.READY
+    assert result.assessment.availability == ScoreAvailability.UNAVAILABLE_MISSING_INPUT
+    assert result.assessment.decision == SiteScoreDecision.INCOMPLETE
+    assert result.assessment.components is None
+    assert any(
+        "Missing or invalid component scores:" in reason for reason in result.assessment.reasons
+    )
+
+
+def test_sitescore_v3_invalid_scores_prevent_binding_go():
+    service = SiteScoreV3Service()
+    feasibility_doc = _decision_doc("mf-012", FeasibilityDecision.FEASIBLE)
+    economics_doc = _decision_doc("mf-012", EconomicsDecision.GO)
+
+    market_context = _market_context("mf-012", with_scores=True)
+    market_context["demand_score"] = float("nan")
+
+    result = service.evaluate(
+        site_id="SITE-012",
+        manifest_id="mf-012",
+        market_context=market_context,
+        feasibility_doc=feasibility_doc,
+        economics_doc=economics_doc,
+    )
+
+    assert result.assessment.readiness == DecisionReadiness.READY
+    assert result.assessment.availability == ScoreAvailability.UNAVAILABLE_MISSING_INPUT
+    assert result.assessment.decision == SiteScoreDecision.INCOMPLETE
+    assert result.assessment.components is None
+    assert any("demand_score" in reason for reason in result.assessment.reasons)
+
+
+def test_sitescore_v3_legitimate_zero_scores_emit_binding_go():
+    service = SiteScoreV3Service()
+    feasibility_doc = _decision_doc("mf-013", FeasibilityDecision.FEASIBLE)
+    economics_doc = _decision_doc("mf-013", EconomicsDecision.GO)
+
+    market_context = _market_context("mf-013", with_scores=True)
+    market_context["demand_score"] = 0.0
+
+    result = service.evaluate(
+        site_id="SITE-013",
+        manifest_id="mf-013",
+        market_context=market_context,
+        feasibility_doc=feasibility_doc,
+        economics_doc=economics_doc,
+    )
+
+    assert result.assessment.readiness == DecisionReadiness.READY
+    assert result.assessment.availability == ScoreAvailability.AVAILABLE
+    assert result.assessment.decision == SiteScoreDecision.GO
+    assert result.assessment.components is not None
+    assert result.assessment.components.demand_score == 0.0
