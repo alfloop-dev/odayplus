@@ -15,6 +15,7 @@ Architectural Invariants:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -67,6 +68,61 @@ from shared.auth.engine import AuthorizationEngine
 FACADE_CONTRACT = "odayplus.market-data-facade.v2"
 FACADE_VERSION = "2.0.0"
 
+# ---------------------------------------------------------------------------
+# Reversible consumer cutover switch (ODP-XR-CUTOVER-PREP-002)
+# ---------------------------------------------------------------------------
+# One env-driven switch decides, for every consumer of legacy external
+# ingestion, whether odayplus still fetches (`LEGACY_ONLY`), fetches while the
+# platform read path is exercised alongside it (`DUAL_RUN`), or has handed the
+# datasets over entirely (`PLATFORM_PRIMARY`).
+#
+# It lives here rather than in each consumer because the API trigger, the
+# scheduler tick and the worker handler have to agree on the answer. A
+# scheduler that still enqueues while the worker dead-letters produces nothing
+# but dead letters, so three independent readings of the environment is the one
+# failure mode a cutover switch may not have.
+#
+# The default is `LEGACY_ONLY`: this task prepares the cutover and must not
+# perform it. Nothing is disabled until an operator sets the mode, and a later
+# activation task authorizes that.
+
+FACADE_MODE_ENV = "ODAY_MARKET_DATA_FACADE_MODE"
+KILL_SWITCH_ENV = "ODAY_MARKET_DATA_KILL_SWITCH_ACTIVE"
+
+CUTOVER_MODE_LEGACY_ONLY = "LEGACY_ONLY"
+CUTOVER_MODE_DUAL_RUN = "DUAL_RUN"
+CUTOVER_MODE_PLATFORM_PRIMARY = "PLATFORM_PRIMARY"
+
+CUTOVER_MODES = (
+    CUTOVER_MODE_LEGACY_ONLY,
+    CUTOVER_MODE_DUAL_RUN,
+    CUTOVER_MODE_PLATFORM_PRIMARY,
+)
+DEFAULT_CUTOVER_MODE = CUTOVER_MODE_LEGACY_ONLY
+
+#: PR #970 named the rolled-back state `LEGACY_FALLBACK`. It describes the same
+#: consumer behaviour as `LEGACY_ONLY`, so it resolves to it instead of
+#: becoming a fourth mode nobody can tell apart from the third.
+_CUTOVER_MODE_ALIASES = {"LEGACY_FALLBACK": CUTOVER_MODE_LEGACY_ONLY}
+
+#: Modes in which odayplus still owns external fetch: the manual API trigger,
+#: the scheduler tick and the worker handler all stay live.
+_LEGACY_FETCH_MODES = frozenset({CUTOVER_MODE_LEGACY_ONLY, CUTOVER_MODE_DUAL_RUN})
+
+#: Modes in which the data-platform snapshot read path is consulted. `DUAL_RUN`
+#: reads it for comparison only; `PLATFORM_PRIMARY` serves it.
+_PLATFORM_READ_MODES = frozenset({CUTOVER_MODE_DUAL_RUN, CUTOVER_MODE_PLATFORM_PRIMARY})
+
+ROLLBACK_PROBE_SITE_ID = "cutover-probe-site"
+
+#: Freshness SLA reported for a platform-sourced snapshot row. The published
+#: release carries no per-source SLA of its own, so the consumer states the one
+#: it holds the platform to rather than inventing a number per request.
+DEFAULT_SNAPSHOT_FRESHNESS_SLA_SECONDS = 24 * 60 * 60
+
+#: Release arms the pinned client verifies, each reported as one snapshot row.
+PLATFORM_SNAPSHOT_ARMS = ("foundation", "product")
+
 # Roles inherently permitted to read market data products and foundation references
 ALLOWED_MARKET_DATA_ROLES = frozenset({
     Role.PLATFORM_ADMIN,
@@ -118,6 +174,85 @@ class MarketDataValidationError(MarketDataFacadeError, ValueError):
 
     def __init__(self, message: str, *, details: Mapping[str, Any] | None = None) -> None:
         super().__init__(message, code="market_data_validation_error", details=details)
+
+
+def _env_source(env: Mapping[str, str] | None) -> Mapping[str, str]:
+    return os.environ if env is None else env
+
+
+def kill_switch_active(env: Mapping[str, str] | None = None) -> bool:
+    """True when the operator has pulled the rollback lever."""
+    raw = str(_env_source(env).get(KILL_SWITCH_ENV, "") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def resolve_cutover_mode(env: Mapping[str, str] | None = None) -> str:
+    """Return the effective cutover mode for this process, right now.
+
+    Callers must resolve per request / per tick rather than caching at start-up:
+    the point of the switch is that an operator can move a running deployment
+    back to legacy without a redeploy.
+
+    The kill switch is evaluated before the configured mode is validated. It is
+    the emergency lever, so a rollback must not be blocked by a typo in the very
+    variable the operator is rolling back from.
+
+    Raises:
+        MarketDataValidationError: the configured mode is not one this
+            deployment knows. Refusing beats guessing: silently continuing to
+            fetch while an operator believes they cut over is the failure this
+            switch exists to prevent.
+    """
+    source = _env_source(env)
+    if kill_switch_active(source):
+        return CUTOVER_MODE_LEGACY_ONLY
+
+    raw = str(source.get(FACADE_MODE_ENV, "") or "").strip()
+    if not raw:
+        return DEFAULT_CUTOVER_MODE
+    normalized = raw.upper()
+    normalized = _CUTOVER_MODE_ALIASES.get(normalized, normalized)
+    if normalized not in CUTOVER_MODES:
+        raise MarketDataValidationError(
+            f"Unsupported {FACADE_MODE_ENV}={raw!r}: expected one of "
+            + ", ".join(CUTOVER_MODES),
+            details={
+                "env_var": FACADE_MODE_ENV,
+                "value": raw,
+                "supported": list(CUTOVER_MODES),
+            },
+        )
+    return normalized
+
+
+def legacy_external_fetch_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """True while odayplus still owns external fetch (manual, scheduled, worker)."""
+    return resolve_cutover_mode(env) in _LEGACY_FETCH_MODES
+
+
+def platform_read_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """True when the data-platform snapshot read path should be consulted."""
+    return resolve_cutover_mode(env) in _PLATFORM_READ_MODES
+
+
+def cutover_state(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Operator-facing description of the switch, for responses and logs.
+
+    Reports both the configured and the effective mode so a pulled kill switch
+    is visible as a rollback rather than as someone having edited the config.
+    """
+    source = _env_source(env)
+    killed = kill_switch_active(source)
+    effective = resolve_cutover_mode(source)
+    configured = str(source.get(FACADE_MODE_ENV, "") or "").strip().upper()
+    configured = _CUTOVER_MODE_ALIASES.get(configured, configured) or DEFAULT_CUTOVER_MODE
+    return {
+        "mode": effective,
+        "configured_mode": configured,
+        "kill_switch_active": killed,
+        "legacy_external_fetch_enabled": effective in _LEGACY_FETCH_MODES,
+        "platform_read_enabled": effective in _PLATFORM_READ_MODES,
+    }
 
 
 class MarketDataFacade:
@@ -591,6 +726,64 @@ class MarketDataFacade:
             "client_diagnostics": self._client.get_diagnostics(),
         }
 
+    # -----------------------------------------------------------------------
+    # Reversible Data-Platform Snapshot Read Path (ODP-XR-CUTOVER-PREP-002)
+    # -----------------------------------------------------------------------
+
+    def get_platform_snapshot(
+        self,
+        *,
+        correlation_id: str = "",
+        freshness_sla_seconds: int = DEFAULT_SNAPSHOT_FRESHNESS_SLA_SECONDS,
+        env: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Describe the published platform snapshot this consumer reads.
+
+        This is the read path the cutover moves ``/external-data/freshness``
+        onto: instead of the provenance of a run odayplus performed itself, it
+        reports the provenance of the release odayplus consumes. Each verified
+        release arm becomes one freshness row in the same wire shape the legacy
+        route already serves, so a dual run compares like with like and the
+        cutover is a change of source rather than a change of contract.
+
+        Like :meth:`check_health` and :meth:`get_diagnostics` this reads release
+        identity only -- no tenant-scoped or subject data -- so it takes no
+        principal. Callers that expose it over HTTP gate it with their own
+        product authorization, which is what the API route does.
+
+        No credentials, no fetch, no writes; ``writes`` is reported as ``0`` so
+        the read-only claim is asserted in the payload a verifier reads back,
+        not only in this docstring.
+        """
+        state = cutover_state(env)
+        try:
+            integrity = self._client.verify_integrity()
+            status = "healthy"
+            error: str | None = None
+        except DataPlatformIntegrityError as err:
+            integrity = {}
+            status = "degraded"
+            error = str(err)
+
+        snapshot: dict[str, Any] = {
+            "contract": self.contract,
+            "version": self.version,
+            "source": "data_platform",
+            "status": status,
+            "mode": state["mode"],
+            "kill_switch_active": state["kill_switch_active"],
+            "release": integrity,
+            "freshness": _platform_freshness_rows(
+                integrity,
+                correlation_id=correlation_id,
+                freshness_sla_seconds=freshness_sla_seconds,
+            ),
+            "writes": 0,
+        }
+        if error is not None:
+            snapshot["error"] = error
+        return snapshot
+
     def check_health(self) -> dict[str, Any]:
         """Check release integrity and return facade health status."""
         try:
@@ -610,13 +803,154 @@ class MarketDataFacade:
             }
 
 
+def _platform_freshness_rows(
+    integrity: Mapping[str, Any],
+    *,
+    correlation_id: str,
+    freshness_sla_seconds: int,
+) -> list[dict[str, Any]]:
+    """Map a verified release report onto legacy-shaped freshness rows.
+
+    A row is emitted only for an arm that reported a release id. An arm the
+    client could not verify has no snapshot to describe, and inventing a row
+    for it would report the cutover as healthier than it is.
+
+    ``provider_observed_at`` / ``ingested_at`` stay ``None`` on purpose: those
+    are timestamps of a fetch odayplus performed, and after the cutover it
+    performs none. The release id is the provenance the consumer actually holds.
+    """
+    rows: list[dict[str, Any]] = []
+    for arm in PLATFORM_SNAPSHOT_ARMS:
+        report = integrity.get(arm) or {}
+        release_id = str(report.get("release_id") or "").strip()
+        if not release_id:
+            continue
+        compatible = bool(report.get("compatible"))
+        rows.append(
+            {
+                "provider_id": f"data_platform.{arm}",
+                "source_snapshot_id": release_id,
+                "data_status": "FRESH" if compatible else "STALE",
+                "provider_observed_at": None,
+                "ingested_at": None,
+                "freshness_sla_seconds": freshness_sla_seconds,
+                "correlation_id": correlation_id,
+                "quality_flags": [] if compatible else ["release_incompatible"],
+            }
+        )
+    return rows
+
+
+class _RollbackProbeClient:
+    """Read-only platform client double used by the subprocess rollback contract.
+
+    The production facade receives a generated ``DataPlatformClient``. The probe
+    intentionally supplies a tiny client double so it can run without
+    credentials or network access while still exercising the same
+    ``MarketDataFacade`` authorization and read dispatch path.
+    """
+
+    def get_site_market_context(self, site_id: str, **_: Any) -> dict[str, Any]:
+        return {
+            "contract": "emgi.site-market-context.v1",
+            "site_id": site_id,
+            "value": 42,
+        }
+
+    def verify_integrity(self) -> dict[str, Any]:
+        return {
+            "status": "healthy",
+            "foundation": {
+                "compatible": True,
+                "release_id": "rollback-probe-foundation",
+                "semantic_version": "0.0.0",
+                "contracts_checked": 0,
+            },
+            "product": {
+                "compatible": True,
+                "release_id": "rollback-probe-product",
+                "semantic_version": "0.0.0",
+                "contracts_checked": 0,
+            },
+        }
+
+
+def rollback_probe(env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    """Exercise platform-primary, dual-run and legacy-fallback read-only routing.
+
+    This test-only hook is consumed by the producer cutover verifier in a
+    subprocess. It does not instantiate provider code, access credentials,
+    perform network I/O, or write snapshots. The legacy payload is stable so the
+    verifier can detect corruption across repeated rollback reads.
+
+    ``LEGACY_ONLY`` (and its ``LEGACY_FALLBACK`` alias) is the default, so an
+    unconfigured deployment probes as rolled back rather than as cut over.
+    """
+    mode = resolve_cutover_mode(env)
+    legacy_payload = {
+        "contract": FACADE_CONTRACT,
+        "site_id": ROLLBACK_PROBE_SITE_ID,
+        "source": "legacy",
+        "value": 42,
+    }
+
+    if mode == CUTOVER_MODE_LEGACY_ONLY:
+        return {
+            "mode": mode,
+            "source": "legacy",
+            "payload": legacy_payload,
+            "writes": 0,
+        }
+
+    facade = MarketDataFacade(client=_RollbackProbeClient(), enforce_auth=False)
+    platform_payload = {
+        **facade.get_site_market_context(ROLLBACK_PROBE_SITE_ID),
+        "source": "platform",
+    }
+    if mode == CUTOVER_MODE_PLATFORM_PRIMARY:
+        return {
+            "mode": mode,
+            "source": "platform",
+            "payload": platform_payload,
+            "writes": 0,
+        }
+
+    # DUAL_RUN: both arms are read and returned side by side. The verifier
+    # compares them; neither one is authoritative yet, which is the whole point
+    # of running the cutover in this mode before selecting PLATFORM_PRIMARY.
+    return {
+        "mode": mode,
+        "source": "legacy",
+        "payload": legacy_payload,
+        "platform_payload": platform_payload,
+        "snapshot": facade.get_platform_snapshot(env=env),
+        "writes": 0,
+    }
+
+
 __all__ = [
     "ALLOWED_MARKET_DATA_ROLES",
+    "CUTOVER_MODES",
+    "CUTOVER_MODE_DUAL_RUN",
+    "CUTOVER_MODE_LEGACY_ONLY",
+    "CUTOVER_MODE_PLATFORM_PRIMARY",
+    "DEFAULT_CUTOVER_MODE",
+    "DEFAULT_SNAPSHOT_FRESHNESS_SLA_SECONDS",
     "FACADE_CONTRACT",
+    "FACADE_MODE_ENV",
     "FACADE_VERSION",
+    "KILL_SWITCH_ENV",
     "MarketDataAuthorizationError",
     "MarketDataFacade",
     "MarketDataFacadeError",
     "MarketDataNotFoundError",
     "MarketDataValidationError",
+    "PLATFORM_SNAPSHOT_ARMS",
+    "ROLLBACK_PROBE_SITE_ID",
+    "cutover_state",
+    "kill_switch_active",
+    "legacy_external_fetch_enabled",
+    "platform_read_enabled",
+    "resolve_cutover_mode",
+    "rollback_probe",
 ]
