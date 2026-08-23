@@ -5477,6 +5477,188 @@ class DeferredApprovalCorrelationTests(unittest.TestCase):
 
 class PollWorkersRecoveryTests(unittest.TestCase):
 
+    @staticmethod
+    def _helper_lease_fixture(
+        *,
+        current_claim: dict[str, Any] | None = None,
+        fresh_heartbeat: bool = True,
+        fresh_process_activity: bool = False,
+        supersede_deferred_since: str | None = None,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        now = datetime.now(UTC).replace(microsecond=0)
+        now_text = now.isoformat().replace("+00:00", "Z")
+        expired_claim = {
+            "claimed_by": "Codex",
+            "generation": 7,
+            "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        }
+        dispatched_task = {
+            "id": "HELPER-LEASE-001",
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "helper_execution_lease": expired_claim,
+        }
+        worker = {
+            "run_id": "helper-run-1",
+            "task_id": dispatched_task["id"],
+            "provider": "codex",
+            "agent_id": "codex",
+            "logical_agent_id": "codex",
+            "status": "running",
+            "queue_event_id": "evt-helper-1",
+            "pid": 4321,
+            "last_event_at": now_text,
+            "last_heartbeat_at": now_text if fresh_heartbeat else None,
+            "last_process_activity_at": now_text if fresh_process_activity else None,
+            "lease_expires_at": (now + timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+            "request_snapshot": {
+                "reason": "helper_claim_dispatch",
+                "metadata": {
+                    "logical_agent_id": "codex",
+                    "task": dispatched_task,
+                },
+            },
+        }
+        if supersede_deferred_since is not None:
+            worker["supersede_deferred_since"] = supersede_deferred_since
+        task = {
+            "id": dispatched_task["id"],
+            "status": "todo",
+            "owner": "Claude",
+            "reviewer": "Gemini",
+            "depends_on": [],
+        }
+        if current_claim is not None:
+            task["helper_execution_lease"] = current_claim
+        config = {
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "worker_runtime": {
+                "worker_lease_seconds": 1800,
+                "heartbeat_stale_seconds": 300,
+                "heartbeat_grace_seconds": 60,
+                "supersede_grace_seconds": 120,
+            },
+            "ready_dispatcher": {
+                "owned_statuses": ["todo", "in_progress"],
+                "active_worker_statuses": ["running", "waiting_approval", "manual_pending", "stalled"],
+            },
+            "providers": {},
+            "agents": {
+                "codex": {"id": "codex", "display_name": "Codex"},
+                "claude": {"id": "claude", "display_name": "Claude"},
+                "gemini": {"id": "gemini", "display_name": "Gemini"},
+            },
+        }
+        state = {
+            "queue": {"events": {"evt-helper-1": {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+        }
+        return config, state, {"tasks": [task]}
+
+    @staticmethod
+    def _poll_helper_worker(config: dict[str, Any], state: dict[str, Any], status: dict[str, Any]) -> mock.Mock:
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "higher_priority_ready_task_exists", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", return_value=None),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.poll_workers(config, state)
+        return terminate_worker_pid
+
+    def test_expired_helper_claim_does_not_kill_live_worker_with_fresh_heartbeat(self) -> None:
+        config, state, status = self._helper_lease_fixture()
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        worker = state["workers"]["helper-run-1"]
+        self.assertEqual(worker["status"], "running")
+        self.assertNotIn("supersede_deferred_since", worker)
+        terminate_worker_pid.assert_not_called()
+
+    def test_expired_helper_claim_accepts_fresh_process_activity_without_heartbeat(self) -> None:
+        config, state, status = self._helper_lease_fixture(
+            fresh_heartbeat=False,
+            fresh_process_activity=True,
+        )
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        self.assertEqual(state["workers"]["helper-run-1"]["status"], "running")
+        terminate_worker_pid.assert_not_called()
+
+    def test_expired_same_generation_claim_retained_on_task_does_not_kill_live_worker(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        current_claim = {
+            "claimed_by": "Codex",
+            "generation": 7,
+            "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        }
+        config, state, status = self._helper_lease_fixture(current_claim=current_claim)
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        worker = state["workers"]["helper-run-1"]
+        self.assertEqual(worker["status"], "running")
+        self.assertNotIn("supersede_deferred_since", worker)
+        terminate_worker_pid.assert_not_called()
+
+    def test_changed_helper_claim_generation_still_uses_bounded_supersede(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        current_claim = {
+            "claimed_by": "Gemini",
+            "generation": 8,
+            "lease_expires_at": (now + timedelta(minutes=30)).isoformat().replace("+00:00", "Z"),
+        }
+        deferred_since = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+        config, state, status = self._helper_lease_fixture(
+            current_claim=current_claim,
+            supersede_deferred_since=deferred_since,
+        )
+
+        terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+        worker = state["workers"]["helper-run-1"]
+        self.assertEqual(worker["status"], "superseded")
+        self.assertEqual(state["queue"]["events"]["evt-helper-1"]["status"], "completed")
+        terminate_worker_pid.assert_called_once_with(4321)
+
+    def test_owner_or_reviewer_change_still_uses_bounded_supersede(self) -> None:
+        now = datetime.now(UTC).replace(microsecond=0)
+        current_claim = {
+            "claimed_by": "Codex",
+            "generation": 7,
+            "lease_expires_at": (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z"),
+        }
+        deferred_since = (now - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+
+        for changed_field, changed_identity in (("owner", "Gemini"), ("reviewer", "Claude")):
+            with self.subTest(changed_field=changed_field):
+                config, state, status = self._helper_lease_fixture(
+                    current_claim=current_claim,
+                    supersede_deferred_since=deferred_since,
+                )
+                status["tasks"][0][changed_field] = changed_identity
+
+                terminate_worker_pid = self._poll_helper_worker(config, state, status)
+
+                worker = state["workers"]["helper-run-1"]
+                self.assertEqual(worker["status"], "superseded")
+                self.assertEqual(state["queue"]["events"]["evt-helper-1"]["status"], "completed")
+                terminate_worker_pid.assert_called_once_with(4321)
+
     def test_lower_priority_worker_is_superseded_when_finalize_backlog_exists(self) -> None:
         config = {
             "schema": {
