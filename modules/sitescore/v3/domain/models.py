@@ -9,15 +9,18 @@ class ScoreAvailability(StrEnum):
     AVAILABLE = "AVAILABLE"
     UNAVAILABLE_MISSING_INPUT = "UNAVAILABLE_MISSING_INPUT"
 
+
 class DecisionReadiness(StrEnum):
     READY = "READY"
     INCOMPLETE_FEASIBILITY = "INCOMPLETE_FEASIBILITY"
     INCOMPLETE_ECONOMICS = "INCOMPLETE_ECONOMICS"
 
+
 class SiteScoreDecision(StrEnum):
     GO = "GO"
     NO_GO = "NO_GO"
     INCOMPLETE = "INCOMPLETE"
+
 
 @dataclass(frozen=True, slots=True)
 class SiteScoreComponents:
@@ -27,6 +30,7 @@ class SiteScoreComponents:
     cannibalization_score: float
     economics_score: float
     policy_score: float
+
 
 @dataclass(frozen=True, slots=True)
 class SiteScoreAssessment:
@@ -48,7 +52,9 @@ class SiteScoreAssessment:
                 "cannibalization_score": self.components.cannibalization_score,
                 "economics_score": self.components.economics_score,
                 "policy_score": self.components.policy_score,
-            } if self.components else None,
+            }
+            if self.components
+            else None,
             "reasons": list(self.reasons),
         }
 

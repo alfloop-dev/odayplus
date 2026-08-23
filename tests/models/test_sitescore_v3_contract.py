@@ -4,7 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from modules.site_economics import SimulationOverrides, SiteEconomicsService
 from modules.site_economics.domain.models import EconomicsDecision
+from modules.site_feasibility import SiteFeasibilityService
 from modules.site_feasibility.domain.models import FeasibilityDecision
 from modules.sitescore.v3 import (
     CONTRACT_ID,
@@ -103,6 +105,86 @@ def test_sitescore_v3_complete_inputs_emit_binding_go():
     assert result.manifest_id == "mf-003"
     assert result.contract_id == CONTRACT_ID
     assert result.contract_version == CONTRACT_VERSION
+
+
+def test_sitescore_v3_real_decision_producers_preserve_market_context_provenance():
+    market_context = {
+        "context_id": "ctx-real-001",
+        "component_manifest_refs": [
+            {
+                "component_id": "component-real-001",
+                "component_kind": "CUSTOM",
+                "contract_id": "emgi.site-market-context.v1",
+                "sha256": "a" * 64,
+                "feature_manifest_id": "mf-real-001",
+            }
+        ],
+        "identity": {
+            "site_id": "SITE-REAL-001",
+            "metadata": {"zoning": "commercial"},
+        },
+        "listing": {
+            "average_area_ping": 28.0,
+            "median_asking_rent_per_ping": 2_400.0,
+        },
+        "demand": {
+            "total_population": 22_000.0,
+            "density_per_sq_km": 14_000.0,
+        },
+        "competitor": {
+            "active_competitors": 2,
+            "competitor_density_per_sq_km": 1.5,
+        },
+        "rent": {"median_rent_per_ping": 2_400.0},
+        "catchment": {"catchment_id": "catchment-real-001"},
+        "demand_score": 0.8,
+        "format_score": 0.9,
+        "ramp_score": 0.85,
+        "cannibalization_score": 0.1,
+        "economics_score": 0.95,
+        "policy_score": 1.0,
+    }
+    survey = {
+        "survey_id": "survey-real-001",
+        "target_entity_id": "SITE-REAL-001",
+        "survey_type": "PHYSICAL_FEASIBILITY",
+        "review_status": "APPROVED",
+        "attributes": {
+            "legal_use_restrictions": "NONE",
+            "frontage_meters": 5.0,
+            "utilities_power_capacity_amp": 100,
+            "utilities_water_pressure_psi": 40,
+            "flood_risk_level": "LOW",
+            "loading_zone_available": True,
+            "temporary_stop_allowed": True,
+        },
+    }
+
+    feasibility_doc = SiteFeasibilityService().evaluate_feasibility(
+        site_id="SITE-REAL-001",
+        market_context=market_context,
+        surveys=[survey],
+    )
+    economics_doc = SiteEconomicsService().evaluate_site_market_context(
+        market_context=market_context,
+        tenant_id="tenant-real-001",
+        overrides=SimulationOverrides(demand_multiplier=1.8, monthly_rent=40_000.0),
+    )
+
+    assert feasibility_doc.decision.recommendation == FeasibilityDecision.FEASIBLE
+    assert economics_doc.decision.recommendation == EconomicsDecision.GO
+
+    result = SiteScoreV3Service().evaluate(
+        site_id="SITE-REAL-001",
+        manifest_id="mf-real-001",
+        market_context=market_context,
+        feasibility_doc=feasibility_doc,
+        economics_doc=economics_doc,
+    )
+
+    assert result.assessment.readiness == DecisionReadiness.READY
+    assert result.assessment.availability == ScoreAvailability.AVAILABLE
+    assert result.assessment.decision == SiteScoreDecision.GO
 
 
 def test_sitescore_v3_missing_market_manifest_prevents_binding_go():

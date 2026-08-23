@@ -9,6 +9,7 @@ from modules.sitescore.v3.domain.models import SiteScoreAssessment
 CONTRACT_ID = "odayplus.sitescore-v3.v1"
 CONTRACT_VERSION = "1.0.0"
 
+
 @dataclass(frozen=True, slots=True)
 class SiteScoreV3Document:
     document_id: str
@@ -29,6 +30,7 @@ class SiteScoreV3Document:
             "evaluated_at": self.evaluated_at,
             "assessment": self.assessment.to_dict(),
         }
+
 
 def validate_sitescore_v3_document(doc: Any) -> bool:
     return isinstance(doc, SiteScoreV3Document) and doc.contract_id == CONTRACT_ID
