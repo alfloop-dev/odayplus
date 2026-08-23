@@ -3,7 +3,7 @@ import React from "react";
 import {
   MarketIntelligenceClient,
   type CoverageQuery,
-} from "../../api/generated/market-intelligence/client";
+} from "./api";
 import { asRecord, displayValue } from "./presentation";
 
 export async function MarketExplorer({ filters = {} }: { filters?: CoverageQuery }) {
@@ -26,10 +26,10 @@ export async function MarketExplorer({ filters = {} }: { filters?: CoverageQuery
             const key = displayValue(identity) === "Missing" ? `cell-${index}` : String(identity);
             return (
               <li key={key} data-testid={`cell-${key}`}>
-                <span data-testid="cell-identity">{displayValue(identity)}</span>{" "}
-                <span data-testid="readiness">{displayValue(cell.readiness)}</span>{" "}
-                <span data-testid="coverage-state">{displayValue(cell.state)}</span>{" "}
-                <span data-testid="observed-count">{displayValue(cell.observed_count)}</span>
+                <span data-testid={`cell-identity-${key}`}>{displayValue(identity)}</span>{" "}
+                <span data-testid={`readiness-${key}`}>{displayValue(cell.readiness)}</span>{" "}
+                <span data-testid={`coverage-state-${key}`}>{displayValue(cell.state)}</span>{" "}
+                <span data-testid={`observed-count-${key}`}>{displayValue(cell.observed_count)}</span>
               </li>
             );
           })}

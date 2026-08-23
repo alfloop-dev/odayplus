@@ -1,6 +1,6 @@
 import React from "react";
 
-import { MarketIntelligenceClient } from "../../api/generated/market-intelligence/client";
+import { MarketIntelligenceClient } from "./api";
 import { asRecord, displayValue, stringList } from "./presentation";
 
 export async function CandidateCompare({ siteIds }: { siteIds: string[] }) {
@@ -26,9 +26,9 @@ export async function CandidateCompare({ siteIds }: { siteIds: string[] }) {
             return (
               <li key={id} data-testid={`cand-${id}`}>
                 <strong>{id}</strong>{" "}
-                <span data-testid="readiness">{displayValue(readiness[id])}</span>{" "}
-                <span data-testid="uncertainty">{displayValue(candidate?.uncertainty_pct)}</span>{" "}
-                <span data-testid="missing-domains">
+                <span data-testid={`readiness-${id}`}>{displayValue(readiness[id])}</span>{" "}
+                <span data-testid={`uncertainty-${id}`}>{displayValue(candidate?.uncertainty_pct)}</span>{" "}
+                <span data-testid={`missing-domains-${id}`}>
                   {missing === null ? "Missing" : missing.length ? missing.join(", ") : "None"}
                 </span>
               </li>

@@ -1,6 +1,6 @@
 import React from "react";
 
-import { MarketIntelligenceClient } from "../../api/generated/market-intelligence/client";
+import { MarketIntelligenceClient } from "./api";
 import { displayValue } from "./presentation";
 
 export async function SiteDossier({ siteId }: { siteId: string }) {

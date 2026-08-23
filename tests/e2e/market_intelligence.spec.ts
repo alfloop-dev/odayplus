@@ -13,13 +13,13 @@ test.describe("Market Intelligence Features", () => {
     // Since the backend might not have mocked data for these endpoints,
     // the components might show "No cells found" or "No evidence" or throw errors.
     // We just verify they are mounted and not completely crashing the app.
-    const marketExplorer = page.getByTestId("market-explorer").or(page.getByTestId("market-explorer-empty")).or(page.getByTestId("market-explorer-error"));
+    const marketExplorer = page.getByTestId("market-explorer").or(page.getByTestId("market-explorer-empty"));
     await expect(marketExplorer).toBeVisible();
 
-    const siteDossier = page.getByTestId("site-dossier").or(page.getByTestId("site-dossier-empty")).or(page.getByTestId("site-dossier-error"));
+    const siteDossier = page.getByTestId("site-dossier").or(page.getByTestId("site-dossier-empty"));
     await expect(siteDossier).toBeVisible();
 
-    const candidateCompare = page.getByTestId("candidate-compare").or(page.getByTestId("candidate-compare-empty")).or(page.getByTestId("candidate-compare-error"));
+    const candidateCompare = page.getByTestId("candidate-compare").or(page.getByTestId("candidate-compare-empty"));
     await expect(candidateCompare).toBeVisible();
   });
 });
