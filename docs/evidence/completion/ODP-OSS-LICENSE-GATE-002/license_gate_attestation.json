@@ -4,12 +4,11 @@
   "policy_name": "ODP-OSS-License-Gate-Policy-v1",
   "policy_version": "1.0.0",
   "status": "proposed",
-  "issued_at": "2026-08-23T07:58:10.292541+00:00",
+  "issued_at": "2026-08-23T08:52:56.203769+00:00",
   "repository": "alfloop-dev/odayplus",
-  "release_sha": "aa1a0d09d175727aa7307e58b7776109240bb48a",
+  "release_sha": "9d382f677db29d1402d9d8e750797ceb3ada0e8f",
   "cross_repo_release_digests": {
-    "alfloop-dev/odayplus": "aa1a0d09d175727aa7307e58b7776109240bb48a",
-    "alfloop-dev/pantheon": "aa1a0d09d175727aa7307e58b7776109240bb48a"
+    "alfloop-dev/odayplus": "9d382f677db29d1402d9d8e750797ceb3ada0e8f"
   },
   "container_base_images": [
     "python:3.12-slim",
@@ -20,11 +19,11 @@
     "uv_lock_sha256": "4e1d3c424a052092698ea0985a5197d2079f85236600e878cacfe264e5004146",
     "package_json_sha256": "3499bfad4164938539bf245ba30f1d7fdde7909e4cd63bb2c328a0990bb6ec3c",
     "package_lock_json_sha256": "ec65a5368937d9fdd4ad3f5e31bfc246b5bb0996b0a95a527025df7cca92094a",
-    "license_policy_sha256": "e20d5d0becc2695137f78eb1b4d8fa10f2998ddd3b0b2b01a53342aab7baaff6",
+    "license_policy_sha256": "690f28e78c149096bbb5ea2d5517b80ea56c2eab0e0e6041489b9911d02d96a4",
     "license_exemptions_sha256": "f7c1fb4b4c0536387e7c50d101d4ea1ae755c7d2341aeeb04b31204351c89c3c",
     "license_inventory_sha256": "4c84c829d23158948beb945fe6e474dc8fa483867c0627529ad85415847c430e",
     "notice_sha256": "2f48893897eef055b25d8ec65241ed0cc9e9f28ca2894589d56277778d76069b",
-    "sbom_sha256": "1aa05d062f3baa1d06e0b43532502afedef1e74428724dc9c1df55a12aa8b96a"
+    "sbom_sha256": "b8a64fb4fba76036ac95b9858bdd167e34ba19fe0b3f47c3c6153665c17f0cad"
   },
   "gate_summary": {
     "total_components": 687,
@@ -33,10 +32,10 @@
     "review_required_count": 8,
     "denied_count": 0,
     "unknown_count": 0,
-    "gate_decision": "PASS"
+    "gate_decision": "FAIL"
   },
   "integrity": {
     "algorithm": "SHA-256",
-    "content_sha256": "b59f416a1f6cfbced295bedbbabb1fc7561822208f386ef61e2dfc3557cbfce3"
+    "content_sha256": "51cc96e7aec31e57b06856f54e0362f072d27bd3bd36271dbe9dfd91a2b4d7e9"
   }
 }

@@ -48,7 +48,6 @@ def get_cross_repo_digests(root: Path = ROOT) -> dict[str, str]:
     git_sha = get_git_sha(root)
     return {
         "alfloop-dev/odayplus": git_sha,
-        "alfloop-dev/pantheon": git_sha,
     }
 
 
@@ -150,6 +149,16 @@ def verify_attestation(
             f"Integrity check failed: recorded {recorded_sha} != actual {actual_sha}"
         )
 
+    live_git_sha = get_git_sha(root)
+    recorded_git_sha = attestation.get("release_sha")
+    if recorded_git_sha != live_git_sha:
+        errors.append(f"Release SHA drift: expected {recorded_git_sha}, got {live_git_sha}")
+        
+    recorded_cross_repo = attestation.get("cross_repo_release_digests", {})
+    live_cross_repo = get_cross_repo_digests(root)
+    if recorded_cross_repo != live_cross_repo:
+        errors.append(f"Cross-repo digests drift: expected {recorded_cross_repo}, got {live_cross_repo}")
+
     # Verify live file hashes
     evidence = attestation.get("evidence_hashes", {})
     expected_files = {
@@ -159,6 +168,7 @@ def verify_attestation(
         "package_lock_json_sha256": root / "package-lock.json",
         "license_policy_sha256": root / "docs/security/license_policy.json",
         "license_exemptions_sha256": root / "docs/security/license_exemptions.json",
+        "license_inventory_sha256": root / "docs/evidence/oss-legal-policy/LICENSE_INVENTORY_2026-08-08.md",
         "notice_sha256": root / "NOTICE-THIRD-PARTY.md",
     }
 
@@ -173,12 +183,24 @@ def verify_attestation(
                 f"Hash drift on {path.relative_to(root)}: expected {expected_hash}, got {actual_file_hash}"
             )
 
+    expected_sbom = evidence.get("sbom_sha256")
+    if expected_sbom:
+        from delivery_toolchain.security.generate_sbom import generate_sbom
+        sbom = generate_sbom()
+        actual_sbom = hashlib.sha256(json.dumps(sbom, indent=2, sort_keys=True).encode("utf-8")).hexdigest()
+        if actual_sbom != expected_sbom:
+            errors.append(f"Hash drift on sbom_sha256: expected {expected_sbom}, got {actual_sbom}")
+    else:
+        errors.append("Missing evidence hash for sbom_sha256")
+
     # Verify gate summary
     gate_summary = attestation.get("gate_summary", {})
     if gate_summary.get("denied_count", 0) > 0:
         errors.append(f"Attestation has denied components: {gate_summary['denied_count']}")
     if gate_summary.get("unknown_count", 0) > 0:
         errors.append(f"Attestation has unknown components: {gate_summary['unknown_count']}")
+    if gate_summary.get("review_required_count", 0) > 0:
+        errors.append(f"Attestation has review_required components: {gate_summary['review_required_count']}")
     if gate_summary.get("gate_decision") != "PASS":
         errors.append(f"Attestation gate decision is not PASS: {gate_summary.get('gate_decision')}")
 

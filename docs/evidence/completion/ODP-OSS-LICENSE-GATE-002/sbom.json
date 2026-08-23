@@ -1,10 +1,10 @@
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:sha256-63fb03a293ab8b87d906b38d97acdcfc",
+  "serialNumber": "urn:uuid:sha256-56f1eb43c6bff92d8094e01a06588a9f",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-23T07:55:46.992027+00:00",
+    "timestamp": "2026-08-23T08:51:49.440330+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,21 +16,21 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@aa1a0d09d175727aa7307e58b7776109240bb48a",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@aa1a0d09d175727aa7307e58b7776109240bb48a"
+      "purl": "pkg:generic/alfloop-dev/odayplus@9d382f677db29d1402d9d8e750797ceb3ada0e8f",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@9d382f677db29d1402d9d8e750797ceb3ada0e8f"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "aa1a0d09d175727aa7307e58b7776109240bb48a"
+        "value": "9d382f677db29d1402d9d8e750797ceb3ada0e8f"
       },
       {
         "name": "sbom-hash",
-        "value": "63fb03a293ab8b87d906b38d97acdcfc64b482ac5bfd039e6481f3e242c49868"
+        "value": "56f1eb43c6bff92d8094e01a06588a9fef3d963e9796acc54eaab963b217c0a3"
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:984cac8b0d1ae8ae947b1e77c004581ded4f6fc1638d45aa40fe1dbaafcd8e4c"
+        "value": "sha256:7938071854f918898eaed9c46f943ab631f1ac22894626d949e13b558f5bfcb4"
       },
       {
         "name": "container-base-images",
@@ -38,7 +38,7 @@
       },
       {
         "name": "repository-release-digests",
-        "value": "{\"alfloop-dev/odayplus\": \"aa1a0d09d175727aa7307e58b7776109240bb48a\", \"alfloop-dev/pantheon\": \"aa1a0d09d175727aa7307e58b7776109240bb48a\"}"
+        "value": "{\"alfloop-dev/odayplus\": \"9d382f677db29d1402d9d8e750797ceb3ada0e8f\", \"alfloop-dev/pantheon\": \"9d382f677db29d1402d9d8e750797ceb3ada0e8f\"}"
       }
     ]
   },
@@ -7559,7 +7559,7 @@
       "type": "library",
       "purl": "pkg:pypi/execnet@2.1.2",
       "bom-ref": "pkg:pypi/execnet@2.1.2",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -7760,7 +7760,7 @@
       "type": "library",
       "purl": "pkg:pypi/fasteners@0.20",
       "bom-ref": "pkg:pypi/fasteners@0.20",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -9552,7 +9552,7 @@
       "type": "library",
       "purl": "pkg:pypi/httptools@0.8.0",
       "bom-ref": "pkg:pypi/httptools@0.8.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -9917,7 +9917,7 @@
       "type": "library",
       "purl": "pkg:pypi/iniconfig@2.3.0",
       "bom-ref": "pkg:pypi/iniconfig@2.3.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -11036,7 +11036,7 @@
       "type": "library",
       "purl": "pkg:pypi/jsonpath-ng@1.8.0",
       "bom-ref": "pkg:pypi/jsonpath-ng@1.8.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -11064,7 +11064,7 @@
       "type": "library",
       "purl": "pkg:pypi/jsonschema@4.26.0",
       "bom-ref": "pkg:pypi/jsonschema@4.26.0",
-      "scope": "optional",
+      "scope": "required",
       "licenses": [
         {
           "license": {
@@ -11092,7 +11092,7 @@
       "type": "library",
       "purl": "pkg:pypi/jsonschema-path@0.5.0",
       "bom-ref": "pkg:pypi/jsonschema-path@0.5.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -11293,7 +11293,7 @@
       "type": "library",
       "purl": "pkg:pypi/lazy-object-proxy@1.12.0",
       "bom-ref": "pkg:pypi/lazy-object-proxy@1.12.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -12944,7 +12944,7 @@
       "type": "library",
       "purl": "pkg:pypi/odayplus@0.1.0",
       "bom-ref": "pkg:pypi/odayplus@0.1.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -12998,7 +12998,7 @@
       "type": "library",
       "purl": "pkg:pypi/openapi-schema-validator@0.9.0",
       "bom-ref": "pkg:pypi/openapi-schema-validator@0.9.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -13539,7 +13539,7 @@
       "type": "library",
       "purl": "pkg:pypi/pathable@0.6.0",
       "bom-ref": "pkg:pypi/pathable@0.6.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -14359,7 +14359,7 @@
       "type": "library",
       "purl": "pkg:pypi/psycopg-binary@3.3.4",
       "bom-ref": "pkg:pypi/psycopg-binary@3.3.4",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -14383,7 +14383,7 @@
       "type": "library",
       "purl": "pkg:pypi/psycopg-pool@3.3.1",
       "bom-ref": "pkg:pypi/psycopg-pool@3.3.1",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -14411,7 +14411,7 @@
       "type": "library",
       "purl": "pkg:pypi/psycopg2-binary@2.9.12",
       "bom-ref": "pkg:pypi/psycopg2-binary@2.9.12",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -14628,7 +14628,7 @@
       "type": "library",
       "purl": "pkg:pypi/pydantic-settings@2.14.2",
       "bom-ref": "pkg:pypi/pydantic-settings@2.14.2",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -15442,7 +15442,7 @@
       "type": "library",
       "purl": "pkg:pypi/rfc3339-validator@0.1.4",
       "bom-ref": "pkg:pypi/rfc3339-validator@0.1.4",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -18173,7 +18173,7 @@
       "type": "library",
       "purl": "pkg:pypi/uvloop@0.22.1",
       "bom-ref": "pkg:pypi/uvloop@0.22.1",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -18302,7 +18302,7 @@
       "type": "library",
       "purl": "pkg:pypi/watchfiles@1.2.0",
       "bom-ref": "pkg:pypi/watchfiles@1.2.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -18373,7 +18373,7 @@
       "type": "library",
       "purl": "pkg:pypi/websockets@16.0",
       "bom-ref": "pkg:pypi/websockets@16.0",
-      "scope": "required",
+      "scope": "optional",
       "licenses": [
         {
           "license": {
@@ -18796,7 +18796,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@aa1a0d09d175727aa7307e58b7776109240bb48a",
+      "ref": "pkg:generic/alfloop-dev/odayplus@9d382f677db29d1402d9d8e750797ceb3ada0e8f",
       "dependsOn": [
         "pkg:pypi/catboost@1.2.10",
         "pkg:pypi/cryptography@48.0.1",

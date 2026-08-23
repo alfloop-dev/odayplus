@@ -307,6 +307,33 @@ def generate_sbom() -> dict[str, Any]:
             with open(UV_LOCK, "rb") as f:
                 uv_data = tomllib.load(f)
             packages = uv_data.get("package", [])
+            # First pass: map packages and build dependency graph for closure
+            uv_deps_map = {}
+            for pkg in packages:
+                name = pkg.get("name")
+                if not name:
+                    continue
+                norm_name = re.sub(r"[-_.]+", "-", name).lower()
+                deps = pkg.get("dependencies", [])
+                dep_names = []
+                for d in deps:
+                    d_name = d.get("name") if isinstance(d, dict) else str(d)
+                    dep_names.append(re.sub(r"[-_.]+", "-", d_name).lower())
+                uv_deps_map[norm_name] = dep_names
+
+            def get_closure(roots):
+                closure = set()
+                queue = list(roots)
+                while queue:
+                    curr = queue.pop(0)
+                    if curr not in closure:
+                        closure.add(curr)
+                        if curr in uv_deps_map:
+                            queue.extend(uv_deps_map[curr])
+                return closure
+
+            prod_closure = get_closure(prod_roots)
+
             for pkg in packages:
                 name = pkg.get("name")
                 version = pkg.get("version")
@@ -348,7 +375,7 @@ def generate_sbom() -> dict[str, Any]:
                         supplier = {"name": author.strip()}
 
                 # Scope computation (prod vs dev)
-                scope = "required" if (norm_name in prod_roots or not dev_roots or norm_name not in dev_roots) else "optional"
+                scope = "required" if norm_name in prod_closure else "optional"
 
                 comp = {
                     "name": name,
@@ -496,7 +523,19 @@ def main() -> int:
             print(f"Failed to read committed SBOM at {target_path}: {e}", file=sys.stderr)
             return 1
 
-        if committed.get("components") != sbom.get("components"):
+        def filter_properties(props):
+            # Ignore volatile properties like timestamp, git-sha, sbom-hash
+            ignore_keys = {"git-sha", "sbom-hash", "sbom-content-digest"}
+            return [p for p in props if p.get("name") not in ignore_keys]
+
+        committed_props = filter_properties(committed.get("metadata", {}).get("properties", []))
+        generated_props = filter_properties(sbom.get("metadata", {}).get("properties", []))
+
+        components_match = committed.get("components") == sbom.get("components")
+        deps_match = committed.get("dependencies") == sbom.get("dependencies")
+        props_match = committed_props == generated_props
+
+        if not (components_match and deps_match and props_match):
             print(
                 f"Committed SBOM at {target_path.relative_to(ROOT)} is stale; "
                 "run delivery_toolchain/security/generate_sbom.py to regenerate.",

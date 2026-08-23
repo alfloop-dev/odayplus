@@ -257,7 +257,7 @@ def _classify_single_term(
         return "review_required"
     if t in allowed_with_obligations_ids:
         return "allow_with_obligations"
-    if t in allowed_ids or t == "BSD":
+    if t in allowed_ids:
         return "allow"
     return "unknown"
 
@@ -338,6 +338,42 @@ def evaluate_policy(
         "allowed_with_obligations": [],
     }
 
+    exemptions_file = exemptions_path or (ROOT / "docs" / "security" / "license_exemptions.json")
+    exemptions = []
+    if exemptions_file.exists():
+        try:
+            ex_data = json.loads(exemptions_file.read_text(encoding="utf-8"))
+            exemptions = ex_data.get("exemptions", [])
+        except Exception:
+            pass
+
+    def is_valid_exemption(ex: dict[str, Any], comp_name: str, lic: str) -> bool:
+        from datetime import datetime, timezone
+        required = ["package", "purl", "license_or_finding", "scope", "applicable_releases", "rationale"]
+        if not all(k in ex for k in required):
+            return False
+        if ex.get("package") != comp_name:
+            return False
+        if ex.get("license_or_finding") != lic:
+            return False
+        expires_str = ex.get("expires_at")
+        if not expires_str:
+            return False
+        try:
+            expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if expires_at < datetime.now(timezone.utc):
+            return False
+        approver = ex.get("approved_by", {})
+        principal = approver.get("principal_id")
+        name = approver.get("display_name", "")
+        role = approver.get("role", "")
+        invalid_names = {"Antigravity", "Antigravity2", "Antigravity3", "Claude", "Claude2", "Codex", "Gemini", "Copilot", "Human/Ops", "Legal", "Jane Doe", "John Doe"}
+        if not principal or name in invalid_names or "AI" in role:
+            return False
+        return True
+
     for comp in components:
         lic = comp.license.strip()
         classification = evaluate_compound_expression(
@@ -355,9 +391,14 @@ def evaluate_policy(
             )
             results["status"] = "FAIL"
         elif classification == "review_required":
-            results["review_required"].append(
-                {"component": comp, "reason": f"Review required license: {lic}"}
-            )
+            valid_ex = any(is_valid_exemption(ex, comp.name, lic) for ex in exemptions)
+            if valid_ex:
+                results["allowed_with_obligations"].append(comp)
+            else:
+                results["review_required"].append(
+                    {"component": comp, "reason": f"Review required license: {lic}"}
+                )
+                results["status"] = "FAIL"
         elif classification == "allow_with_obligations":
             results["allowed_with_obligations"].append(comp)
         elif classification == "allow":
