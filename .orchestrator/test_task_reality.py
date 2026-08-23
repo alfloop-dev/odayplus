@@ -75,6 +75,38 @@ class BranchDriftTests(unittest.TestCase):
 
         self.assertEqual(findings, [])
 
+    def test_a_todo_branch_without_pr_or_delivery_evidence_is_pre_materialization(self) -> None:
+        task = _task(status="todo")
+        task.pop("pr_number")
+
+        findings = task_reality.task_reality_findings(
+            task, pull_request=None, branch_exists=False
+        )
+
+        self.assertEqual(findings, [])
+
+    def test_a_todo_branch_with_pr_evidence_stays_fail_closed(self) -> None:
+        task = _task(status="todo", pr_number=812)
+
+        findings = task_reality.task_reality_findings(
+            task, pull_request=None, branch_exists=False
+        )
+
+        self.assertEqual([finding["kind"] for finding in findings], ["branch_missing"])
+        self.assertFalse(findings[0]["repairable"])
+
+    def test_a_todo_branch_with_delivery_evidence_stays_fail_closed(self) -> None:
+        task = _task(status="todo")
+        task.pop("pr_number")
+        task["delivery"] = {"verified_head": HEAD}
+
+        findings = task_reality.task_reality_findings(
+            task, pull_request=None, branch_exists=False
+        )
+
+        self.assertEqual([finding["kind"] for finding in findings], ["branch_missing"])
+        self.assertFalse(findings[0]["repairable"])
+
     def test_a_closed_pr_does_not_supply_a_branch(self) -> None:
         """A closed PR's head ref is usually deleted too, so adopting it would
         replace one dead name with another."""

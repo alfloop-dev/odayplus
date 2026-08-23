@@ -3277,7 +3277,50 @@ def task_metadata_from_env() -> dict[str, Any]:
         if parsed is not None:
             metadata[field_name] = parsed
 
+    if "TASK_SOURCE_DOCS" in os.environ:
+        metadata["source_docs"] = parse_csv_env("TASK_SOURCE_DOCS")
+
     return metadata
+
+
+def validate_assignment_source_docs(
+    task_id: str,
+    task: dict[str, Any] | None,
+    metadata: dict[str, Any],
+) -> None:
+    """Validate newly supplied source documents before assignment can mutate state."""
+
+    if "source_docs" not in metadata:
+        return
+    source_docs = metadata.get("source_docs")
+    if not isinstance(source_docs, list):
+        raise SystemExit(
+            f"Cannot assign {task_id}: source_docs must be a JSON array of repository-relative "
+            "paths or pinned github:// references."
+        )
+
+    validation_task = deepcopy(task) if isinstance(task, dict) else {}
+    validation_task.update(metadata)
+    config = status_runtime_config()
+    for index, reference in enumerate(source_docs):
+        if not isinstance(reference, str) or not reference.strip():
+            raise SystemExit(
+                f"Cannot assign {task_id}: source_docs[{index}] must be a non-empty string."
+            )
+        valid, _context_path, error = orchestrator_common.validate_source_doc_path(
+            reference,
+            STATUS_ROOT,
+            task=validation_task,
+            config=config,
+        )
+        if valid:
+            continue
+        detail = error or "source document could not be resolved"
+        raise SystemExit(
+            f"Cannot assign {task_id}: source_docs[{index}] {reference!r} is invalid: {detail}. "
+            "Use an existing repository-local file/directory with an inventory manifest, "
+            "or a pinned github://<repo>@<40-hex-sha>/<path> reference."
+        )
 
 
 def dependency_is_satisfied(resolver: TaskResolver, dep_id: str) -> bool:
@@ -5415,6 +5458,10 @@ def command_assign(state: dict[str, Any], args: list[str]) -> None:
     summary_zh = os.environ.get("TASK_SUMMARY_ZH")
     metadata = task_metadata_from_env()
     task = get_task(state, task_id)
+    # Do this before priority checks, timestamping, or any task/agent mutation.
+    # An invalid source document must fail at assignment time rather than leave
+    # a board record that the dispatcher can only reject repeatedly later.
+    validate_assignment_source_docs(task_id, task, metadata)
     if task is None:
         priority = str(metadata.get("priority") or "P2").strip().upper()
         if priority not in {"P0", "P1", "P2", "P3"}:
