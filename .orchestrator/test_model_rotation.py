@@ -17,7 +17,7 @@ CFG = {
                 "model_rotation": {
                     "enabled": True,
                     "primary_model": "",
-                    "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                    "fallback_model": "claude-sonnet-4-6",
                 }
             }
         },
@@ -42,14 +42,14 @@ def test_rotation_disabled_preserves_static_model(tmp_path):
     assert mr.resolve_active_model(CFG, "antigravity_legacy") == "StaticModel"
 
 
-def test_p0_and_sensitive_scope_use_pro(tmp_path):
+def test_p0_and_sensitive_scope_use_high_risk_model(tmp_path):
     _isolate(tmp_path)
     p0 = mr.resolve_active_selection(
         CFG,
         "antigravity5",
         task={"id": "ODP-CORE-1", "priority": "P0", "artifacts": ["app/service.py"]},
     )
-    assert p0["model"] == "gemini-3.1-pro-high"
+    assert p0["model"] == "claude-opus-4-6-thinking"
     assert p0["risk_tier"] == "high"
     assert p0["selection_reason"] == "business_priority_P0"
 
@@ -58,18 +58,18 @@ def test_p0_and_sensitive_scope_use_pro(tmp_path):
         "antigravity5",
         task={"id": "ODP-DATA-1", "priority": "P2", "artifacts": ["src/domain/ledger.py"]},
     )
-    assert sensitive["model"] == "gemini-3.1-pro-high"
+    assert sensitive["model"] == "claude-opus-4-6-thinking"
     assert sensitive["selection_reason"].startswith("sensitive_scope:")
 
 
-def test_first_review_reopen_forces_pro(tmp_path):
+def test_first_review_reopen_forces_high_risk_model(tmp_path):
     _isolate(tmp_path)
     selection = mr.resolve_active_selection(
         CFG,
         "antigravity5",
         task={"id": "ODP-REOPEN-1", "priority": "P2", "review_reopen_count": 1},
     )
-    assert selection["model"] == "gemini-3.1-pro-high"
+    assert selection["model"] == "claude-opus-4-6-thinking"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "review_reopened_1_time(s)"
 
@@ -102,11 +102,11 @@ def test_sidecar_and_finalize_stay_on_flash_high(tmp_path):
             "review_reopen_count": 1,
         },
     )
-    assert reopened_docs["model"] == "gemini-3.1-pro-high"
+    assert reopened_docs["model"] == "claude-opus-4-6-thinking"
     assert reopened_docs["selection_reason"] == "review_reopened_1_time(s)"
 
 
-def test_quota_rotation_overrides_gemini_risk_model_but_keeps_audit_reason(tmp_path):
+def test_quota_rotation_overrides_risk_model_but_keeps_audit_reason(tmp_path):
     _isolate(tmp_path)
     mr.record_exhaustion(CFG, "antigravity5", 900, pool="gemini")
     selection = mr.resolve_active_selection(
@@ -115,7 +115,7 @@ def test_quota_rotation_overrides_gemini_risk_model_but_keeps_audit_reason(tmp_p
         task={"id": "ODP-P0-1", "priority": "P0"},
     )
     assert selection["pool"] == "claude"
-    assert selection["model"] == "Claude Sonnet 4.6 (Thinking)"
+    assert selection["model"] == "claude-sonnet-4-6"
     assert selection["risk_tier"] == "high"
     assert selection["selection_reason"] == "quota_pool_fallback:business_priority_P0"
 
@@ -127,7 +127,7 @@ def test_gemini_exhaustion_rotates_to_claude(tmp_path):
     assert r["exhausted_pool"] == "gemini"
     assert r["next_pool"] == "claude"
     assert r["both_exhausted"] is False
-    assert mr.resolve_active_model(CFG, "antigravity5", now=now) == "Claude Sonnet 4.6 (Thinking)"
+    assert mr.resolve_active_model(CFG, "antigravity5", now=now) == "claude-sonnet-4-6"
 
 
 def test_both_pools_exhausted_signals_pause(tmp_path):
@@ -211,7 +211,7 @@ def test_full_chain_rotates_instead_of_pausing(tmp_path):
     assert paused is False  # rotated, not hard-paused
     assert not (state.get("provider_guardrails", {}).get("dispatch_pauses") or {})
     settings = cfg["providers"]["antigravity5"]["antigravity"]
-    assert mr.resolve_active_model(cfg, "antigravity5", settings) == "Claude Sonnet 4.6 (Thinking)"
+    assert mr.resolve_active_model(cfg, "antigravity5", settings) == "claude-sonnet-4-6"
     assert sv.antigravity_pool_fallback_available(cfg, "antigravity5") is True
     entry = mr.status("antigravity5")["antigravity5"]
     until = datetime.fromisoformat(entry["gemini_until"].replace("Z", "+00:00"))
@@ -295,7 +295,7 @@ def test_selection_reports_pool_and_model(tmp_path):
     mr.record_exhaustion(CFG, "antigravity5", 900, pool="gemini", now=now)
     rotated = mr.resolve_active_selection(CFG, "antigravity5", now=now)
     assert rotated["pool"] == "claude"
-    assert rotated["model"] == "Claude Sonnet 4.6 (Thinking)"
+    assert rotated["model"] == "claude-sonnet-4-6"
     # After cooldown the provider returns to the primary policy (agy default).
     back = mr.resolve_active_selection(CFG, "antigravity5", now=now + timedelta(seconds=901))
     assert back["pool"] == "gemini"
@@ -539,7 +539,7 @@ def _adapter_config(tmp_path) -> dict:
                     "model_rotation": {
                         "enabled": True,
                         "primary_model": "",
-                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                        "fallback_model": "claude-sonnet-4-6",
                     },
                 }
             }
@@ -592,14 +592,14 @@ def test_adapter_persists_dispatched_pool_in_worker_metadata(tmp_path):
     mr.record_exhaustion(config, "antigravity5", 900, pool="gemini")
     result, spawn = _deliver(config, tmp_path)
     assert result.metadata[mr.WORKER_POOL_KEY] == "claude"
-    assert result.metadata[mr.WORKER_MODEL_KEY] == "Claude Sonnet 4.6 (Thinking)"
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-sonnet-4-6"
     command = spawn.call_args.args[0]
-    # Structured argv: the model (with spaces/parentheses) stays ONE argument
+    # Structured argv: the model id stays ONE argument
     # and is never interpolated into a shell string.
-    assert command[command.index("--model") + 1] == "Claude Sonnet 4.6 (Thinking)"
+    assert command[command.index("--model") + 1] == "claude-sonnet-4-6"
 
 
-def test_adapter_selects_pro_from_dispatched_task_snapshot(tmp_path):
+def test_adapter_selects_high_risk_model_from_dispatched_task_snapshot(tmp_path):
     _isolate(tmp_path)
     config = _adapter_config(tmp_path)
     result, spawn = _deliver(
@@ -610,11 +610,11 @@ def test_adapter_selects_pro_from_dispatched_task_snapshot(tmp_path):
     )
 
     assert result.ok
-    assert result.metadata[mr.WORKER_MODEL_KEY] == "gemini-3.1-pro-high"
+    assert result.metadata[mr.WORKER_MODEL_KEY] == "claude-opus-4-6-thinking"
     assert result.metadata[mr.WORKER_MODEL_RISK_TIER_KEY] == "high"
     assert result.metadata[mr.WORKER_MODEL_REASON_KEY] == "business_priority_P0"
     command = spawn.call_args.args[0]
-    assert command[command.index("--model") + 1] == "gemini-3.1-pro-high"
+    assert command[command.index("--model") + 1] == "claude-opus-4-6-thinking"
     assert all(isinstance(part, str) for part in command)
     assert spawn.call_args.kwargs.get("env", {}).get("HOME") == str(pathlib.Path(tmp_path) / "home-ag5")
     assert not any(part.strip().startswith("&&") or ";" in part for part in command if part != "wake up")
