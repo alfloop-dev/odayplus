@@ -1203,6 +1203,9 @@ def ready_dispatch_signature(task: dict[str, Any], reason: str, task_map: dict[s
     )
 
 LEASE_BLOCK_RETRY_AFTER_SECONDS = 1800.0
+# An escalated block retries far more slowly, but it does still retry. See
+# `worktree_block_still_matches_dispatch` for why never retrying cannot work.
+ESCALATED_LEASE_BLOCK_RETRY_AFTER_SECONDS = 3600.0
 
 
 def lease_block_retry_after_seconds(config: dict[str, Any]) -> float:
@@ -1244,19 +1247,32 @@ def worktree_block_still_matches_dispatch(
     if str(entry.get("dispatch_signature") or "") != ready_dispatch_signature(task, reason, task_map):
         return False
     if entry.get("escalated"):
-        # Retrying is the thing that has already been established not to work:
-        # this block has repeated unchanged past the escalation threshold. The
-        # window exists to let a repairable worktree come back on its own, and
-        # by definition this one has not. Suppress until something actually
-        # changes - the entry resets whenever `refresh_status` differs, and an
-        # operator clearing the block removes it outright.
+        # An escalated block retries on a much longer window -- it does not stop.
         #
-        # Suppressing alone was tried on 2026-08-17 and jammed six worktrees for
-        # ten hours, because nothing said so anywhere an operator looks. That is
-        # why the caller writes the reason onto the task record: stopping and
-        # saying so are one change, and either half without the other is how
-        # this has failed twice.
-        return True
+        # Suppressing escalated blocks outright was the previous behaviour, on
+        # the reasoning that the entry "resets whenever `refresh_status`
+        # differs". That escape hatch is unreachable on its own: `refresh_status`
+        # is only rewritten by a lease attempt, and suppression is exactly what
+        # prevents the lease attempt. What actually cleared these blocks was the
+        # *other* escape -- an unrelated event happening to change the dispatch
+        # signature (a reviewer reopening the task, a status transition). So the
+        # block did lift eventually, but only by luck of external traffic, and
+        # the advice written onto the task record -- "an owner must repair the
+        # worktree" -- described a repair that nothing would look at.
+        #
+        # On 2026-08-22 three tasks sat escalated for four to seven hours with
+        # eleven idle slots and zero running workers. Cleaning one worktree by
+        # hand changed nothing; it took an unrelated review reopen to unjam it.
+        # A task parked in `in_progress` under a stable owner is precisely the
+        # shape with no such traffic -- the same case the non-escalated window
+        # above already calls out.
+        #
+        # Escalation should mean "cost one attempt an hour instead of one a
+        # tick", not "wait for unrelated traffic". Against a 180s tick that is
+        # twenty times cheaper than the ordinary window, which is what the
+        # 2026-08-19 livelock was actually about, while letting a repaired
+        # worktree recover on its own.
+        retry_after_seconds = max(retry_after_seconds, ESCALATED_LEASE_BLOCK_RETRY_AFTER_SECONDS)
     blocked_at = parse_runtime_timestamp(str(entry.get("last_at") or "") or None)
     if blocked_at is None:
         return True

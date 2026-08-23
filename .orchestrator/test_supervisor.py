@@ -3217,7 +3217,12 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
     def test_an_escalated_lease_block_is_reported_on_the_task_record(self) -> None:
         """Stopping dispatch silently is the 2026-08-17 jam; retrying forever is
         the 2026-08-19 livelock. An escalated block has to do both - stop, and
-        say so where an owner looks - or it repeats one of the two."""
+        say so where an owner looks - or it repeats one of the two.
+
+        `last_at` is recent because the stop is now bounded by the escalated
+        retry window: inside it the block stops dispatch and reports, and once
+        it expires the block is retried instead. A fixed date here would drift
+        out of the window and silently stop testing the reporting path."""
         import dispatch_engine
 
         task = {
@@ -3238,7 +3243,7 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
             "worker_worktree_lease_blocks": {
                 supervisor.normalize_agent_id(task["id"]): {
                     "dispatch_signature": signature,
-                    "last_at": "2026-08-20T00:00:00Z",
+                    "last_at": (datetime.now(UTC) - timedelta(seconds=60)).strftime("%Y-%m-%dT%H:%M:%SZ"),
                     "refresh_status": "unverifiable_refs: remote task branch is missing",
                     "escalated": True,
                     "count": 29,
@@ -13473,15 +13478,17 @@ class FleetDispatchLivelockTests(unittest.TestCase):
             )
         )
 
-    def test_an_escalated_block_is_not_retried_when_the_window_expires(self) -> None:
-        """Escalation means the block repeated unchanged past the threshold, so
-        the retry window has already been shown not to help. Expiring it anyway
-        is what produced 341 blocked dispatches over two days, each clearing
-        only when a person edited state by hand."""
+    def test_an_escalated_block_still_suppresses_inside_its_longer_window(self) -> None:
+        """Escalation buys a much longer window, not silence.
+
+        Retrying an escalated block on the ordinary window is what produced 341
+        blocked dispatches over two days, so the ordinary window must not apply
+        here. 3000s is past the ordinary 1800s window and still inside the
+        escalated one, which is exactly the gap this branch exists to cover."""
         import dispatch_engine
 
         task = self._task()
-        stale = (datetime.now(UTC) - timedelta(seconds=3600)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        stale = (datetime.now(UTC) - timedelta(seconds=3000)).strftime("%Y-%m-%dT%H:%M:%SZ")
         state = self._blocked_state(task, blocked_at=stale)
         entry = state["worker_worktree_lease_blocks"][supervisor.normalize_agent_id(task["id"])]
         entry.update({"escalated": True, "count": 7})
@@ -13496,6 +13503,40 @@ class FleetDispatchLivelockTests(unittest.TestCase):
             )
         )
         self.assertIs(dispatch_engine.escalated_lease_block(state, task), entry)
+
+    def test_an_escalated_block_is_retried_once_its_longer_window_expires(self) -> None:
+        """A repaired worktree has to be able to come back on its own.
+
+        Suppressing escalated blocks forever made the documented escape hatch
+        unreachable: the entry "resets whenever `refresh_status` differs", but
+        `refresh_status` is only rewritten by a lease attempt, and suppression
+        is precisely what prevents the lease attempt. On 2026-08-22 three tasks
+        sat escalated for four to seven hours with eleven idle slots, and
+        cleaning one worktree by hand changed nothing because no attempt
+        followed. Retrying once per escalated window costs one dispatch per task
+        per hour -- against a 180s tick, twenty times cheaper than the ordinary
+        window -- and is the only thing that makes "repair the worktree"
+        actionable."""
+        import dispatch_engine
+
+        task = self._task()
+        stale = (
+            datetime.now(UTC)
+            - timedelta(seconds=dispatch_engine.ESCALATED_LEASE_BLOCK_RETRY_AFTER_SECONDS + 60)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        state = self._blocked_state(task, blocked_at=stale)
+        entry = state["worker_worktree_lease_blocks"][supervisor.normalize_agent_id(task["id"])]
+        entry.update({"escalated": True, "count": 7})
+
+        self.assertFalse(
+            dispatch_engine.worktree_block_still_matches_dispatch(
+                state,
+                task,
+                "owned_in_progress_dispatch",
+                {task["id"]: task},
+                retry_after_seconds=1800.0,
+            )
+        )
 
     def test_a_block_below_the_threshold_still_expires(self) -> None:
         """Stopping every block would re-create the 2026-08-17 jam. Only an
