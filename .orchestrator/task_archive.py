@@ -66,6 +66,73 @@ def is_terminal_task(task: dict[str, Any] | None) -> bool:
     return task_status(task) == TERMINAL_STATUS_DONE
 
 
+def unresolved_required_delivery_blockers(task: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Return cross-repo delivery blockers carried by a task record.
+
+    The archive module intentionally does not call GitHub.  The live status
+    writer evaluates the delivery declarations and records the resulting
+    blocker snapshot on the task before it attempts a terminal transition.
+    Archive code still enforces the durable half of the contract: a task that
+    carries an open required-delivery blocker cannot be copied into the
+    immutable archive by a migration or alternate closeout path.
+    """
+    task = task or {}
+    blockers: list[dict[str, Any]] = []
+    gate = task.get("cross_repo_delivery_gate")
+    if isinstance(gate, dict) and str(gate.get("status") or "").lower() in {
+        "blocked",
+        "unresolved",
+    }:
+        for item in gate.get("blockers") or []:
+            if isinstance(item, dict):
+                blockers.append(deepcopy(item))
+        if not blockers:
+            blockers.append({"message": "required cross-repo delivery is unresolved"})
+
+    for item in task.get("delivery_blockers") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "open").lower() != "resolved":
+            blockers.append(deepcopy(item))
+    return blockers
+
+
+def ensure_task_archiveable(task: dict[str, Any] | None) -> None:
+    """Fail closed when a task still carries an unresolved delivery blocker."""
+    task = task or {}
+    declared_fields = (
+        "required_cross_repo_deliveries",
+        "cross_repo_delivery_requirements",
+        "cross_repo_deliveries",
+        "cross_repo_delivery",
+        "delivery_requirements",
+        "required_deliveries",
+        "required_delivery_prs",
+        "required_cross_repo_prs",
+    )
+    if any(task.get(field) for field in declared_fields):
+        gate = task.get("cross_repo_delivery_gate")
+        gate_status = str(gate.get("status") or "").lower() if isinstance(gate, dict) else ""
+        if gate_status not in {"ready", "not_required"}:
+            task_id = normalize_task_id(task.get("id")) or "<unknown>"
+            raise ValueError(
+                f"Cannot archive task {task_id}: required cross-repo delivery gate was not "
+                "verified. Create a follow-up task after the delivery is resolved."
+            )
+    blockers = unresolved_required_delivery_blockers(task)
+    if not blockers:
+        return
+    task_id = normalize_task_id((task or {}).get("id")) or "<unknown>"
+    summary = "; ".join(
+        str(item.get("message") or item.get("reason") or "required delivery unresolved")
+        for item in blockers[:3]
+    )
+    raise ValueError(
+        f"Cannot archive task {task_id}: required cross-repo delivery remains unresolved "
+        f"({summary}). Create a follow-up task after the delivery is resolved."
+    )
+
+
 def task_satisfies_dependency(task: dict[str, Any] | None) -> bool:
     return is_terminal_task(task) and terminal_outcome_for(task) != TERMINAL_OUTCOME_SUPERSEDED
 
@@ -212,6 +279,7 @@ def archive_task_snapshot(
 ) -> dict[str, Any]:
     if not is_terminal_task(task):
         raise ValueError("Only terminal tasks can be archived")
+    ensure_task_archiveable(task)
     task_id = normalize_task_id(task.get("id"))
     if not task_id:
         raise ValueError("Task id is required for archiving")
