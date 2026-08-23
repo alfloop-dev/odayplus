@@ -45,6 +45,11 @@ __all__ = [
     "AssignmentSlaService",
     "InMemoryAssignmentRepository",
     "InMemorySlaRepository",
+    # Platform Bridge symbols
+    "AssistedListingPlatformBridge",
+    "ObservationEnrichment",
+    "BRIDGE_CONTRACT",
+    "BRIDGE_VERSION",
 ]
 
 _EXPORT_MODULES = {
@@ -87,6 +92,11 @@ _EXPORT_MODULES = {
     "AssignmentSlaService": "modules.listing.application.assignment_sla",
     "InMemoryAssignmentRepository": "modules.listing.application.assignment_sla",
     "InMemorySlaRepository": "modules.listing.application.assignment_sla",
+    # Platform Bridge symbols
+    "AssistedListingPlatformBridge": "modules.listing.application.platform_bridge",
+    "ObservationEnrichment": "modules.listing.application.platform_bridge",
+    "BRIDGE_CONTRACT": "modules.listing.application.platform_bridge",
+    "BRIDGE_VERSION": "modules.listing.application.platform_bridge",
 }
 
 
