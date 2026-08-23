@@ -442,6 +442,15 @@
               "config_home": {
                 "type": "string"
               },
+              "effort": {
+                "description": "Optional `agy --effort` level. agy accepts only low|medium|high, and rejects the flag outright for the reasoning Claude ids, so the adapter omits it for those.",
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
               "env": {
                 "type": "object",
                 "propertyNames": {
