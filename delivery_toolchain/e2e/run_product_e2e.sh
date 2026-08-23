@@ -85,6 +85,7 @@ PLAYWRIGHT_COMMAND=(
   npx playwright test
   tests/e2e/e2e-network-find-areas-api-binding.spec.ts
   tests/e2e/e2e-operator-console.spec.ts
+  tests/e2e/market_intelligence.spec.ts
   tests/e2e/operator-assisted-listing-intake-a11y.spec.ts
   tests/e2e/operator-assisted-listing-intake-mobile.spec.ts
   tests/e2e/operator-assisted-listing-intake.spec.ts
