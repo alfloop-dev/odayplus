@@ -1,9 +1,9 @@
 """The shipped OSS notice must keep naming what we actually ship.
 
-Human/Ops decided the LGPL question on ODP-PLAN-OSS-LEGAL-POLICY-001 as
-allow-with-obligations. The obligation is this notice, so a notice that has
-drifted from the dependency tree is the obligation quietly lapsing rather than
-a cosmetic staleness.
+The legal policy and LGPL disposition remain PROPOSED under
+ODP-PLAN-OSS-LEGAL-POLICY-001 until an authoritative external receipt is resolved.
+The notice ensures all third-party components and obligations are tracked and
+reconciled against installed trees without unreviewed drift.
 """
 
 from __future__ import annotations

@@ -59,7 +59,7 @@
           { "package": "caniuse-lite", "version": "1.0.30001806", "scope": "prod", "via": "browserslist" }
         ],
         "obligation": "Attribution required for the data set. This is a data licence, not a code licence.",
-        "current_state": "Attribution not yet present in any distributed NOTICE."
+        "current_state": "Attribution present in distributed NOTICE-THIRD-PARTY.md."
       }
     ]
   },
@@ -176,14 +176,14 @@
   },
 
   "enforcement": {
-    "$comment": "There is no license gate implemented today. scripts/security/ contains generate_sbom.py, sast_scan.py, secret_scan.py and sign_images.sh only, and the committed SBOM carries no license data for any of its 780 components. Enforcement below describes what must be built once this policy is approved; approving the policy does not by itself create a gate.",
-    "gate_implemented": false,
-    "sbom_carries_license_data": false,
-    "required_before_enforcement": [
-      "generate_sbom.py must populate the CycloneDX licenses field per component",
-      "a gate script must evaluate the SBOM against this policy and fail closed on deny/unknown",
-      "the gate must be added to the required status checks"
-    ]
+    "$comment": "License gate and CycloneDX SBOM license population implemented under ODP-OSS-LICENSE-GATE-002; policy enforcement evaluates allow/deny/review_required rules and fails closed on unexempted or unknown licenses.",
+    "gate_implemented": true,
+    "sbom_carries_license_data": true,
+    "tools": {
+      "sbom_generator": "delivery_toolchain/security/generate_sbom.py",
+      "notice_generator": "delivery_toolchain/security/generate_oss_notice.py",
+      "gate_test_suite": "tests/security/test_oss_license_gate.py"
+    }
   },
 
   "exception_policy_ref": "docs/security/license_exemptions.json"
