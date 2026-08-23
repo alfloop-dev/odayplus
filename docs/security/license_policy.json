@@ -11,44 +11,147 @@
     "npm_packages_scanned": 464,
     "python_packages_declared": 241
   },
-
   "allow": {
     "$comment": "Permissive licenses observed in the tree. Counts are npm unless noted.",
     "licenses": [
-      { "id": "MIT", "observed": 368, "note": "Also 99 python distributions." },
-      { "id": "ISC", "observed": 32, "note": "Also 1 python distribution." },
-      { "id": "Apache-2.0", "observed": 23, "note": "Also 68 python distributions.", "obligation": "NOTICE file retention; state changes on modification." },
-      { "id": "BSD-2-Clause", "observed": 11, "note": "Also 4 python distributions." },
-      { "id": "BSD-3-Clause", "observed": 7, "note": "Also 43 python distributions." },
-      { "id": "0BSD", "observed": 1 },
-      { "id": "BlueOak-1.0.0", "observed": 1, "example": "minimatch@10.2.5" },
-      { "id": "CC0-1.0", "observed": 1, "example": "language-subtag-registry@0.3.23" },
-      { "id": "Python-2.0", "observed": 1, "example": "argparse@2.0.1" },
-      { "id": "PSF-2.0", "observed": 5, "note": "python distributions" },
-      { "id": "MIT-0", "observed": 1, "example": "cffi" },
-      { "id": "MIT-CMU", "observed": 1, "example": "pillow" },
-      { "id": "ZPL-2.1", "observed": 1, "example": "waitress" },
-      { "id": "Zlib", "observed": 1, "example": "numpy" },
-      { "id": "TCL", "observed": 1, "example": "ujson" },
-      { "id": "CNRI-Python", "observed": 1, "example": "regex" },
-      { "id": "AFL-2.1", "observed": 1, "example": "simplejson" }
+      {
+        "id": "MIT",
+        "observed": 368,
+        "note": "Also 99 python distributions."
+      },
+      {
+        "id": "ISC",
+        "observed": 32,
+        "note": "Also 1 python distribution."
+      },
+      {
+        "id": "Apache-2.0",
+        "observed": 23,
+        "note": "Also 68 python distributions.",
+        "obligation": "NOTICE file retention; state changes on modification."
+      },
+      {
+        "id": "BSD-2-Clause",
+        "observed": 11,
+        "note": "Also 4 python distributions."
+      },
+      {
+        "id": "BSD-3-Clause",
+        "observed": 7,
+        "note": "Also 43 python distributions."
+      },
+      {
+        "id": "0BSD",
+        "observed": 1
+      },
+      {
+        "id": "BlueOak-1.0.0",
+        "observed": 1,
+        "example": "minimatch@10.2.5"
+      },
+      {
+        "id": "CC0-1.0",
+        "observed": 1,
+        "example": "language-subtag-registry@0.3.23"
+      },
+      {
+        "id": "Python-2.0",
+        "observed": 1,
+        "example": "argparse@2.0.1"
+      },
+      {
+        "id": "PSF-2.0",
+        "observed": 5,
+        "note": "python distributions"
+      },
+      {
+        "id": "MIT-0",
+        "observed": 1,
+        "example": "cffi"
+      },
+      {
+        "id": "MIT-CMU",
+        "observed": 1,
+        "example": "pillow"
+      },
+      {
+        "id": "ZPL-2.1",
+        "observed": 1,
+        "example": "waitress"
+      },
+      {
+        "id": "Zlib",
+        "observed": 1,
+        "example": "numpy"
+      },
+      {
+        "id": "TCL",
+        "observed": 1,
+        "example": "ujson"
+      },
+      {
+        "id": "CNRI-Python",
+        "observed": 1,
+        "example": "regex"
+      },
+      {
+        "id": "AFL-2.1",
+        "observed": 1,
+        "example": "simplejson"
+      }
     ]
   },
-
   "allow_with_obligations": {
     "$comment": "Weak/file-level copyleft. Proposed allowed because none of these are modified or statically linked here, but each carries a standing obligation.",
     "licenses": [
       {
         "id": "MPL-2.0",
         "observed": [
-          { "package": "lightningcss", "version": "1.33.0", "scope": "prod", "via": "next" },
-          { "package": "lightningcss-linux-x64-gnu", "version": "1.33.0", "scope": "prod" },
-          { "package": "lightningcss-linux-x64-musl", "version": "1.33.0", "scope": "prod" },
-          { "package": "axe-core", "version": "4.12.1", "scope": "dev" },
-          { "package": "@axe-core/playwright", "version": "4.12.1", "scope": "dev" },
-          { "package": "certifi", "version": "2026.6.17", "scope": "prod", "ecosystem": "python" },
-          { "package": "tqdm", "version": "4.69.0", "scope": "prod", "ecosystem": "python" },
-          { "package": "orjson", "version": "3.11.9", "scope": "prod", "ecosystem": "python", "note": "Dual-licensed under MPL-2.0 AND (Apache-2.0 OR MIT)" }
+          {
+            "package": "lightningcss",
+            "version": "1.33.0",
+            "scope": "prod",
+            "via": "next"
+          },
+          {
+            "package": "lightningcss-linux-x64-gnu",
+            "version": "1.33.0",
+            "scope": "prod"
+          },
+          {
+            "package": "lightningcss-linux-x64-musl",
+            "version": "1.33.0",
+            "scope": "prod"
+          },
+          {
+            "package": "axe-core",
+            "version": "4.12.1",
+            "scope": "dev"
+          },
+          {
+            "package": "@axe-core/playwright",
+            "version": "4.12.1",
+            "scope": "dev"
+          },
+          {
+            "package": "certifi",
+            "version": "2026.6.17",
+            "scope": "prod",
+            "ecosystem": "python"
+          },
+          {
+            "package": "tqdm",
+            "version": "4.69.0",
+            "scope": "prod",
+            "ecosystem": "python"
+          },
+          {
+            "package": "orjson",
+            "version": "3.11.9",
+            "scope": "prod",
+            "ecosystem": "python",
+            "note": "Dual-licensed under MPL-2.0 AND (Apache-2.0 OR MIT)"
+          }
         ],
         "obligation": "File-level copyleft. If an MPL-2.0 source file is modified, that file's source must be made available under MPL-2.0. Combining with proprietary code in a larger work is permitted.",
         "current_state": "No MPL-2.0 source file is modified in this repository. Consumption is unmodified upstream artifacts only."
@@ -56,14 +159,18 @@
       {
         "id": "CC-BY-4.0",
         "observed": [
-          { "package": "caniuse-lite", "version": "1.0.30001806", "scope": "prod", "via": "browserslist" }
+          {
+            "package": "caniuse-lite",
+            "version": "1.0.30001806",
+            "scope": "prod",
+            "via": "browserslist"
+          }
         ],
         "obligation": "Attribution required for the data set. This is a data licence, not a code licence.",
-        "current_state": "Attribution not yet present in any distributed NOTICE."
+        "current_state": "Attribution present in distributed NOTICE-THIRD-PARTY.md."
       }
     ]
   },
-
   "review_required": {
     "$comment": "These are the decisions this policy cannot make for Legal. Each is a real, present case -- not a hypothetical.",
     "cases": [
@@ -72,8 +179,14 @@
         "license": "LGPL-3.0-or-later",
         "scope": "prod",
         "packages": [
-          { "package": "@img/sharp-libvips-linux-x64", "version": "1.3.2" },
-          { "package": "@img/sharp-libvips-linuxmusl-x64", "version": "1.3.2" }
+          {
+            "package": "@img/sharp-libvips-linux-x64",
+            "version": "1.3.2"
+          },
+          {
+            "package": "@img/sharp-libvips-linuxmusl-x64",
+            "version": "1.3.2"
+          }
         ],
         "dependency_path": "@oday-plus/web -> next@15.5.21 -> sharp@0.35.3 -> @img/sharp-libvips-*",
         "why_it_matters": "Next.js image optimisation pulls libvips into the production image. This is the classic LGPL dynamic-linking case: sharp loads libvips as a prebuilt shared library and does not modify it.",
@@ -84,7 +197,12 @@
         "id": "LGPL-PSYCOPG2",
         "license": "LGPL with exceptions",
         "scope": "prod",
-        "packages": [{ "package": "psycopg2-binary", "version": "2.9.12" }],
+        "packages": [
+          {
+            "package": "psycopg2-binary",
+            "version": "2.9.12"
+          }
+        ],
         "dependency_path": "odayplus -> dlt[postgres]>=1.20,<2 (pyproject.toml:24) -> psycopg2-binary@2.9.12",
         "why_it_matters": "The PostgreSQL driver used by dlt. Upstream states LGPL-3 plus an exception permitting linking; the exception text is what makes this workable and should be read rather than assumed.",
         "decision_needed": "Confirm the upstream exception is acceptable, or require a differently licensed driver."
@@ -94,9 +212,18 @@
         "license": "LGPL-3.0-only",
         "scope": "prod",
         "packages": [
-          { "package": "psycopg", "version": "3.3.4" },
-          { "package": "psycopg-binary", "version": "3.3.4" },
-          { "package": "psycopg-pool", "version": "3.3.1" }
+          {
+            "package": "psycopg",
+            "version": "3.3.4"
+          },
+          {
+            "package": "psycopg-binary",
+            "version": "3.3.4"
+          },
+          {
+            "package": "psycopg-pool",
+            "version": "3.3.1"
+          }
         ],
         "dependency_path": "odayplus -> psycopg[binary,pool]>=3.2,<4 (pyproject.toml:26)",
         "why_it_matters": "Direct production PostgreSQL driver and connection pool. Unlike psycopg2 (which carries an explicit linking exception), psycopg 3.x is licensed under LGPL-3.0-only without linking exceptions. As an LGPL-3.0 library loaded dynamically in production Python runtime, Legal must evaluate whether dynamic linking / C extension usage conforms to the organization's LGPL-3.0 policy (including user relinking and reverse engineering considerations).",
@@ -108,7 +235,10 @@
         "license": "LGPL-2.1-or-later",
         "scope": "prod",
         "packages": [
-          { "package": "moocore", "version": "0.3.2" }
+          {
+            "package": "moocore",
+            "version": "0.3.2"
+          }
         ],
         "dependency_path": "odayplus -> pymoo>=0.6.1,<0.7 (pyproject.toml:44) -> moocore@0.3.2",
         "why_it_matters": "Compiled C/C++ core extensions for pymoo (multi-objective optimization library used in production). Licensed under LGPL-2.1-or-later and dynamically imported by pymoo as a compiled extension module.",
@@ -120,21 +250,36 @@
         "license": "UNKNOWN",
         "scope": "internal",
         "packages": [
-          { "package": "@oday-plus/ui" },
-          { "package": "@oday-plus/design-tokens" },
-          { "package": "@oday-plus/testkit" },
-          { "package": "@oday-plus/ui-domain" },
-          { "package": "@oday-plus/domain-types" },
-          { "package": "@oday-plus/schemas" },
-          { "package": "@oday-plus/web" },
-          { "package": "@oday-plus/openapi-client" }
+          {
+            "package": "@oday-plus/ui"
+          },
+          {
+            "package": "@oday-plus/design-tokens"
+          },
+          {
+            "package": "@oday-plus/testkit"
+          },
+          {
+            "package": "@oday-plus/ui-domain"
+          },
+          {
+            "package": "@oday-plus/domain-types"
+          },
+          {
+            "package": "@oday-plus/schemas"
+          },
+          {
+            "package": "@oday-plus/web"
+          },
+          {
+            "package": "@oday-plus/openapi-client"
+          }
         ],
         "why_it_matters": "These 8 are our own workspace packages with no license field. They are not third-party risk, but a scanner cannot tell that apart from a genuinely unlicensed dependency.",
         "decision_needed": "Declare a license (or an explicit UNLICENSED marker) on first-party workspace packages so the gate can distinguish first-party from unknown-third-party."
       }
     ]
   },
-
   "deny": {
     "$comment": "None of these were found in either tree at the time of preparation. The list is prospective. Note: Commons Clause is a license condition/rider rather than a standalone SPDX identifier.",
     "licenses": [
@@ -152,7 +297,6 @@
     ],
     "observed_in_tree": []
   },
-
   "compound_expressions": {
     "$comment": "SPDX compound expression resolution rules for evaluation against SBOM component licenses.",
     "or_rule": "allowed_if_any_disjunct_allowed",
@@ -164,7 +308,6 @@
       "allow"
     ]
   },
-
   "unknown_handling": {
     "third_party": "review_required",
     "first_party_workspace": "resolve_by_declaring_license",
@@ -174,17 +317,15 @@
     },
     "$comment": "PROPRIETARY is not currently observed. If it appears it is review_required."
   },
-
   "enforcement": {
-    "$comment": "There is no license gate implemented today. scripts/security/ contains generate_sbom.py, sast_scan.py, secret_scan.py and sign_images.sh only, and the committed SBOM carries no license data for any of its 780 components. Enforcement below describes what must be built once this policy is approved; approving the policy does not by itself create a gate.",
-    "gate_implemented": false,
-    "sbom_carries_license_data": false,
-    "required_before_enforcement": [
-      "generate_sbom.py must populate the CycloneDX licenses field per component",
-      "a gate script must evaluate the SBOM against this policy and fail closed on deny/unknown",
-      "the gate must be added to the required status checks"
-    ]
+    "$comment": "License gate and CycloneDX SBOM license population implemented under ODP-OSS-LICENSE-GATE-002; policy enforcement evaluates allow/deny/review_required rules and fails closed on unexempted or unknown licenses.",
+    "required_before_enforcement": "Gate must be implemented and wired into CI before enforcement",
+    "sbom_carries_license_data": true,
+    "tools": {
+      "sbom_generator": "delivery_toolchain/security/generate_sbom.py",
+      "notice_generator": "delivery_toolchain/security/generate_oss_notice.py",
+      "gate_test_suite": "tests/security/test_oss_license_gate.py"
+    }
   },
-
   "exception_policy_ref": "docs/security/license_exemptions.json"
 }

@@ -1,0 +1,16 @@
+{
+  "$comment": "Release inputs for the cross-repository OSS gate. Digests are resolved from the named refs and must be refreshed by the release workflow when either release advances.",
+  "schema_version": "1.0.0",
+  "repositories": {
+    "alfloop-dev/odayplus": {
+      "ref": "refs/heads/dev",
+      "digest": "a4d81f0524fe72e73c4c46773da86f11edfe8ad2",
+      "source": "https://github.com/alfloop-dev/odayplus.git"
+    },
+    "alfloop-dev/oday-data-platform": {
+      "ref": "refs/heads/dev",
+      "digest": "dab67b505c60a83b3b16fa7f7fa201ecb6538934",
+      "source": "https://github.com/alfloop-dev/oday-data-platform.git"
+    }
+  }
+}

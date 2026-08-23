@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Generate the third-party OSS NOTICE from the installed dependency trees.
 
-Human/Ops decided ODP-PLAN-OSS-LEGAL-POLICY-001's LGPL question as
-allow-with-obligations: LGPL components stay, on condition that the product
-ships an attribution notice naming every third-party package and its licence.
-That one notice also discharges two obligations we were already carrying and
-not meeting -- Apache-2.0 NOTICE retention and caniuse-lite's CC-BY-4.0
-attribution.
+The legal policy and LGPL disposition remain PROPOSED under
+ODP-PLAN-OSS-LEGAL-POLICY-001 until an authoritative external receipt is resolved.
+This notice is prepared to document and reconcile third-party components from actual
+installed trees and satisfy standing obligations (Apache-2.0 NOTICE retention,
+caniuse-lite CC-BY-4.0 attribution, and copyleft/attribution terms).
 
-Licences are read from the installed trees rather than the lockfiles, because
-neither package-lock.json nor uv.lock records a licence. npm licences come from
-each package's own package.json; python licences come from installed
-distribution metadata, restricted to the distributions uv.lock actually
-declares. That restriction is load-bearing: enumerating the interpreter's
-site-packages instead sweeps in the operating system's own GPL packages, which
-this project does not depend on and must not be attributed as if it did.
+Licences are read from the installed trees rather than the lockfiles alone, because
+neither package-lock.json nor uv.lock records a licence for all ecosystems. npm licences
+come from each package's own package.json; python licences come from installed
+distribution metadata (including License-Expression, License, and Classifiers),
+restricted to the distributions uv.lock actually declares. That restriction is
+load-bearing: enumerating the interpreter's site-packages instead sweeps in the
+operating system's own GPL packages, which this project does not depend on and
+must not be attributed as if it did.
 
 Reading the installed trees means the output is only as complete as the install
 it was run against, so regenerate from the full tree CI installs:
@@ -22,28 +22,34 @@ it was run against, so regenerate from the full tree CI installs:
     uv sync && npm ci && uv run python delivery_toolchain/security/generate_oss_notice.py
 
 A partial install produces a notice that is short of components but still
-internally consistent, so it looks fine locally and fails --check in CI. That is
-what `uv sync --no-dev` did once here: 148 python components instead of 236.
+internally consistent, so it looks fine locally and fails --check in CI.
 
 Usage:
     generate_oss_notice.py            write NOTICE-THIRD-PARTY.md
     generate_oss_notice.py --check    exit 1 if the committed file is stale
+    generate_oss_notice.py --reconcile evaluate installed components against license_policy.json
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.metadata as md
 import json
 import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 OUTPUT_PATH = ROOT / "NOTICE-THIRD-PARTY.md"
+POLICY_PATH = ROOT / "docs/security/license_policy.json"
+EXEMPTIONS_PATH = ROOT / "docs/security/license_exemptions.json"
 NODE_MODULES = ROOT / "node_modules"
 UV_LOCK = ROOT / "uv.lock"
+PACKAGE_LOCK = ROOT / "package-lock.json"
 
 # Workspace packages are ours. They carry no licence field, and a scanner
 # cannot otherwise tell them apart from a third party of unknown licence.
@@ -67,6 +73,33 @@ OBLIGATIONS = {
     ),
 }
 
+PYTHON_CLASSIFIER_MAP = {
+    "License :: OSI Approved :: MIT License": "MIT",
+    "License :: OSI Approved :: Apache Software License": "Apache-2.0",
+    "License :: OSI Approved :: BSD License": "BSD-3-Clause",
+    "License :: OSI Approved :: Python Software Foundation License": "PSF-2.0",
+    "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)": "MPL-2.0",
+    "License :: OSI Approved :: ISC License (ISCL)": "ISC",
+    "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)": "LGPL-3.0-only",
+    "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)": "LGPL-2.1-or-later",
+    "License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)": "LGPL-2.1-or-later",
+}
+
+PYTHON_KNOWN_FALLBACKS = {
+    # These distributions publish only the ambiguous BSD label. Resolve the
+    # package-specific licence here rather than weakening the policy with a
+    # non-SPDX `BSD` allow-list entry.
+    "antlr4-python3-runtime": "BSD-3-Clause",
+    "google-crc32c": "Apache-2.0",
+    "graphemeu": "Python-2.0",
+    "huey": "MIT",
+    "pgserver": "MIT",
+    "pyasn1-modules": "BSD-2-Clause",
+    "rich-click": "MIT",
+    "skops": "BSD-3-Clause",
+    "universal-pathlib": "MIT",
+}
+
 
 @dataclass(frozen=True, order=True)
 class Component:
@@ -81,7 +114,7 @@ def _normalise_license(raw: object) -> str:
     if isinstance(raw, str):
         return raw.strip()
     if isinstance(raw, dict):
-        return str(raw.get("type") or "").strip()
+        return str(raw.get("type") or raw.get("name") or "").strip()
     if isinstance(raw, list):
         parts = [
             (item.get("type") if isinstance(item, dict) else str(item)) for item in raw
@@ -91,12 +124,7 @@ def _normalise_license(raw: object) -> str:
 
 
 def collect_npm(base: Path | None = None) -> list[Component]:
-    """Walk node_modules, including nested trees, reading each package.json.
-
-    Nested node_modules matter: npm installs a conflicting transitive version
-    beside its dependent rather than at the top level, and a top-level-only
-    walk silently omits those copies.
-    """
+    """Walk node_modules, including nested trees, reading each package.json."""
     base = NODE_MODULES if base is None else base
     found: dict[tuple[str, str], Component] = {}
 
@@ -127,6 +155,38 @@ def collect_npm(base: Path | None = None) -> list[Component]:
             walk(Path(entry.path) / "node_modules")
 
     walk(base)
+
+    if PACKAGE_LOCK.exists():
+        try:
+            lock_data = json.loads(PACKAGE_LOCK.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(
+                "Unable to read package-lock.json for install completeness check"
+            ) from exc
+
+        lock_packages = lock_data.get("packages")
+        if not isinstance(lock_packages, dict):
+            raise RuntimeError("package-lock.json has no valid packages map")
+
+        found_names = {name for name, _ in found}
+        missing = set()
+        for pkg_path, info in lock_packages.items():
+            if not pkg_path:
+                continue
+            if not isinstance(info, dict):
+                raise RuntimeError(f"package-lock.json has invalid package entry: {pkg_path}")
+            if pkg_path.startswith("node_modules/"):
+                pkg_name = pkg_path.split("node_modules/")[-1]
+                is_optional = info.get("optional", False)
+                if not pkg_name.startswith(FIRST_PARTY_PREFIXES):
+                    if pkg_name not in found_names and not is_optional:
+                        missing.add(pkg_name)
+        if missing:
+            raise RuntimeError(
+                "Partial install detected. Missing npm packages declared in lockfile: "
+                f"{missing}"
+            )
+
     return sorted(found.values())
 
 
@@ -141,38 +201,329 @@ def _declared_python_names() -> set[str]:
     }
 
 
-def collect_python() -> list[Component]:
-    import importlib.metadata as md
+def _get_python_license_from_dist(dist: md.Distribution, name: str) -> str:
+    norm_name = re.sub(r"[-_.]+", "-", name).lower()
+    meta = dist.metadata
 
+    # 1. License-Expression (PEP 639)
+    lic_expr = meta.get("License-Expression")
+    if not lic_expr and hasattr(meta, "json") and isinstance(meta.json, dict):
+        lic_expr = meta.json.get("license_expression")
+    if lic_expr and lic_expr.strip():
+        return lic_expr.strip()
+
+    # Some packages publish only the ambiguous `BSD` label. Prefer a
+    # package-specific, SPDX-qualified fallback for those known cases before
+    # generic classifiers can collapse it to the wrong BSD variant.
+    known_fallback = PYTHON_KNOWN_FALLBACKS.get(norm_name)
+    raw_license = str(meta.get("License") or "").strip()
+    if known_fallback and (not raw_license or raw_license.upper() in {"BSD", "UNKNOWN"}):
+        return known_fallback
+
+    # 2. Short License header
+    lic = str(meta.get("License") or "").strip()
+    if lic and lic.lower() != "unknown" and "\n" not in lic and len(lic) <= 50:
+        if lic in ("MIT License", "MIT license", "MIT"):
+            return "MIT"
+        if lic in (
+            "Apache 2.0", "Apache License 2.0", "Apache License, Version 2.0",
+            "Apache 2", "Apache v2", "Apache License Version 2.0",
+            "Apache Software License", "Apache Software License 2.0"
+        ):
+            return "Apache-2.0"
+        if lic in ("BSD License", "3-Clause BSD License", "BSD 3-Clause"):
+            return "BSD-3-Clause"
+        if lic in ("2-clause BSD", "BSD-2-Clause"):
+            return "BSD-2-Clause"
+        if lic in ("ISC License", "ISC"):
+            return "ISC"
+        if lic in ("Python Software Foundation License", "PSFL"):
+            return "PSF-2.0"
+        if lic == "Dual License" and norm_name == "python-dateutil":
+            return "Apache-2.0 OR BSD-3-Clause"
+        return lic
+
+    # 3. Classifiers
+    classifiers = [c for c in meta.get_all("Classifier") or [] if "License" in c]
+    for c in classifiers:
+        if c in PYTHON_CLASSIFIER_MAP:
+            return PYTHON_CLASSIFIER_MAP[c]
+
+    # 4. Known fallbacks
+    if norm_name in PYTHON_KNOWN_FALLBACKS:
+        return PYTHON_KNOWN_FALLBACKS[norm_name]
+
+    # 5. Multi-line license text heuristics
+    if lic:
+        if "Apache License" in lic and "Version 2.0" in lic:
+            return "Apache-2.0"
+        if "MIT License" in lic or "Permission is hereby granted, free of charge" in lic:
+            return "MIT"
+        if "BSD 3-Clause" in lic or "Redistribution and use in source and binary forms" in lic:
+            return "BSD-3-Clause"
+
+    return "UNKNOWN"
+
+
+def collect_python() -> list[Component]:
     declared = _declared_python_names()
     if not declared:
         return []
 
     found: dict[tuple[str, str], Component] = {}
+    found_names = set()
     for dist in md.distributions():
         try:
             meta = dist.metadata
             name = str(meta.get("Name") or "")
             if not name:
                 continue
-            if re.sub(r"[-_.]+", "-", name).lower() not in declared:
+            norm_name = re.sub(r"[-_.]+", "-", name).lower()
+            if norm_name not in declared:
                 continue
-            licence = str(meta.get("License") or "").strip()
-            if not licence or licence.lower() == "unknown" or len(licence) > 60:
-                classifiers = [
-                    value
-                    for key, value in meta.items()
-                    if key == "Classifier" and value.startswith("License ::")
-                ]
-                licence = (
-                    classifiers[0].split("::")[-1].strip() if classifiers else "UNKNOWN"
-                )
+            licence = _get_python_license_from_dist(dist, name)
             found[(name, dist.version or "")] = Component(
                 "pypi", name, dist.version or "", licence
             )
-        except Exception:  # pragma: no cover - metadata is third-party data
+            found_names.add(norm_name)
+        except Exception:  # pragma: no cover
             continue
+            
+    missing = declared - found_names
+    missing = {m for m in missing if m not in {"odayplus", "win-precise-time", "pyreadline3", "pywin32", "waitress", "colorama"}}
+    if missing:
+        raise RuntimeError(f"Partial install detected. Missing python packages declared in lockfile: {missing}")
+        
     return sorted(found.values())
+
+
+def _classify_single_term(
+    term: str,
+    allowed_ids: set[str],
+    allowed_with_obligations_ids: set[str],
+    review_case_licenses: set[str],
+    deny_ids: set[str],
+) -> str:
+    t = term.strip().strip("()")
+    if t in deny_ids:
+        return "deny"
+    if t == "UNKNOWN" or not t:
+        return "unknown"
+    if t in review_case_licenses:
+        return "review_required"
+    if t in allowed_with_obligations_ids:
+        return "allow_with_obligations"
+    if t in allowed_ids:
+        return "allow"
+    return "unknown"
+
+
+def _combine_or(classes: list[str]) -> str:
+    """Apply the policy's any-allowed-disjunct rule to an OR expression."""
+    if "allow" in classes:
+        return "allow"
+    if "allow_with_obligations" in classes:
+        return "allow_with_obligations"
+    if "deny" in classes:
+        return "deny"
+    if "review_required" in classes:
+        return "review_required"
+    if "unknown" in classes:
+        return "unknown"
+    return "deny"
+
+
+def _combine_and(classes: list[str]) -> str:
+    """Apply the policy's most-restrictive-conjunct rule to an AND expression."""
+    precedence = {
+        "allow": 0,
+        "allow_with_obligations": 1,
+        "unknown": 2,
+        "review_required": 3,
+        "deny": 4,
+    }
+    return max(classes, key=precedence.__getitem__)
+
+
+class _SpdxExpressionParser:
+    """Small fail-closed parser for the AND/OR/parenthesis subset we use."""
+
+    def __init__(self, expression: str, classify: Any) -> None:
+        self.tokens = re.findall(r"\(|\)|\bAND\b|\bOR\b|[^()\s]+", expression)
+        self.position = 0
+        self.classify = classify
+
+    def parse(self) -> str:
+        if not self.tokens:
+            raise ValueError("empty expression")
+        result = self._parse_or()
+        if self.position != len(self.tokens):
+            raise ValueError("trailing tokens")
+        return result
+
+    def _accept(self, token: str) -> bool:
+        if self.position < len(self.tokens) and self.tokens[self.position] == token:
+            self.position += 1
+            return True
+        return False
+
+    def _parse_or(self) -> str:
+        classes = [self._parse_and()]
+        while self._accept("OR"):
+            classes.append(self._parse_and())
+        return _combine_or(classes) if len(classes) > 1 else classes[0]
+
+    def _parse_and(self) -> str:
+        classes = [self._parse_primary()]
+        while self._accept("AND"):
+            classes.append(self._parse_primary())
+        return _combine_and(classes) if len(classes) > 1 else classes[0]
+
+    def _parse_primary(self) -> str:
+        if self._accept("("):
+            result = self._parse_or()
+            if not self._accept(")"):
+                raise ValueError("unclosed parenthesis")
+            return result
+
+        if self.position >= len(self.tokens):
+            raise ValueError("missing term")
+        token = self.tokens[self.position]
+        if token in {"AND", "OR", ")"}:
+            raise ValueError("unexpected operator")
+        self.position += 1
+        return self.classify(token)
+
+
+def evaluate_compound_expression(
+    lic: str,
+    allowed_ids: set[str],
+    allowed_with_obligations_ids: set[str],
+    review_case_licenses: set[str],
+    deny_ids: set[str],
+) -> str:
+    """Evaluate compound SPDX expression using policy precedence order."""
+    lic = lic.strip()
+
+    def classify(term: str) -> str:
+        return _classify_single_term(
+            term,
+            allowed_ids,
+            allowed_with_obligations_ids,
+            review_case_licenses,
+            deny_ids,
+        )
+
+    # Preserve non-SPDX descriptive labels such as "LGPL with exceptions" as
+    # one policy term. Compound expressions use the parser so parentheses are
+    # never discarded before classification.
+    if not re.search(r"\b(?:AND|OR)\b|[()]", lic):
+        return classify(lic)
+
+    try:
+        return _SpdxExpressionParser(lic, classify).parse()
+    except ValueError:
+        return "unknown"
+
+
+def evaluate_policy(
+    policy_path: Path | None = None,
+    components: list[Component] | None = None,
+    exemptions_path: Path | None = None,
+) -> dict[str, Any]:
+    """Evaluate components against license_policy.json with fail-closed rules."""
+    policy_file = policy_path or POLICY_PATH
+    if not policy_file.exists():
+        raise FileNotFoundError(f"License policy not found: {policy_file}")
+
+    policy = json.loads(policy_file.read_text(encoding="utf-8"))
+
+    if components is None:
+        components = collect_npm() + collect_python()
+
+    allowed_ids = {entry["id"] for entry in policy.get("allow", {}).get("licenses", [])}
+    allowed_with_obligations_ids = {
+        entry["id"] for entry in policy.get("allow_with_obligations", {}).get("licenses", [])
+    }
+    deny_ids = set(policy.get("deny", {}).get("licenses", []))
+    review_required_cases = policy.get("review_required", {}).get("cases", [])
+    review_case_licenses = {case["license"] for case in review_required_cases}
+
+    results = {
+        "status": "PASS",
+        "violations": [],
+        "review_required": [],
+        "allowed": [],
+        "allowed_with_obligations": [],
+    }
+
+    exemptions_file = exemptions_path or (ROOT / "docs" / "security" / "license_exemptions.json")
+    exemptions = []
+    if exemptions_file.exists():
+        try:
+            ex_data = json.loads(exemptions_file.read_text(encoding="utf-8"))
+            exemptions = ex_data.get("exemptions", [])
+        except Exception:
+            pass
+
+    def is_valid_exemption(ex: dict[str, Any], comp_name: str, lic: str) -> bool:
+        from datetime import datetime
+        required = ["package", "purl", "license_or_finding", "scope", "applicable_releases", "rationale"]
+        if not all(k in ex for k in required):
+            return False
+        if ex.get("package") != comp_name:
+            return False
+        if ex.get("license_or_finding") != lic:
+            return False
+        expires_str = ex.get("expires_at")
+        if not expires_str:
+            return False
+        try:
+            expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+        if expires_at < datetime.now(UTC):
+            return False
+        approver = ex.get("approved_by", {})
+        principal = approver.get("principal_id")
+        name = approver.get("display_name", "")
+        role = approver.get("role", "")
+        invalid_names = {"Antigravity", "Antigravity2", "Antigravity3", "Claude", "Claude2", "Codex", "Gemini", "Copilot", "Human/Ops", "Legal", "Jane Doe", "John Doe"}
+        if not principal or name in invalid_names or "AI" in role:
+            return False
+        return True
+
+    for comp in components:
+        lic = comp.license.strip()
+        classification = evaluate_compound_expression(
+            lic, allowed_ids, allowed_with_obligations_ids, review_case_licenses, deny_ids
+        )
+
+        if classification == "deny":
+            results["violations"].append(
+                {"component": comp, "reason": f"Denied license: {lic}"}
+            )
+            results["status"] = "FAIL"
+        elif classification == "unknown":
+            results["violations"].append(
+                {"component": comp, "reason": f"Unknown or unclassified license: {lic}"}
+            )
+            results["status"] = "FAIL"
+        elif classification == "review_required":
+            valid_ex = any(is_valid_exemption(ex, comp.name, lic) for ex in exemptions)
+            if valid_ex:
+                results["allowed_with_obligations"].append(comp)
+            else:
+                results["review_required"].append(
+                    {"component": comp, "reason": f"Review required license: {lic}"}
+                )
+                results["status"] = "FAIL"
+        elif classification == "allow_with_obligations":
+            results["allowed_with_obligations"].append(comp)
+        elif classification == "allow":
+            results["allowed"].append(comp)
+
+    return results
 
 
 def render(npm: list[Component], python: list[Component]) -> str:
@@ -237,9 +588,23 @@ def main() -> int:
         action="store_true",
         help="exit 1 if the committed notice does not match the installed trees",
     )
+    parser.add_argument(
+        "--reconcile",
+        action="store_true",
+        help="evaluate installed components against license_policy.json and exit 1 on policy violation",
+    )
     args = parser.parse_args()
 
     content = build()
+
+    if args.reconcile:
+        eval_result = evaluate_policy()
+        if eval_result["status"] != "PASS" or eval_result["violations"]:
+            print(f"Policy evaluation FAILED: {len(eval_result['violations'])} violations found:", file=sys.stderr)
+            for v in eval_result["violations"]:
+                print(f"  - {v['component'].name} ({v['component'].version}): {v['reason']}", file=sys.stderr)
+            return 1
+        print("Policy evaluation PASSED: all components reconcile against license_policy.json.")
 
     if args.check:
         if not OUTPUT_PATH.exists():
