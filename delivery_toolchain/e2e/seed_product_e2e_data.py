@@ -15,7 +15,7 @@ CORRELATION_ID = "corr-product-e2e-seed-001"
 TENANT_ID = "tenant-a"
 
 # ---------------------------------------------------------------------------
-# Cutover switch (ODP-XR-CUTOVER-PREP-002)
+# Cutover switch (ODP-XR-CUTOVER-ACTIVATE-002)
 # ---------------------------------------------------------------------------
 # `modules.external_data.application.market_data_facade` owns this contract.
 # This script is launched by run_product_e2e.sh with a bare `python3` and no
@@ -25,7 +25,7 @@ TENANT_ID = "tenant-a"
 FACADE_MODE_ENV = "ODAY_MARKET_DATA_FACADE_MODE"
 KILL_SWITCH_ENV = "ODAY_MARKET_DATA_KILL_SWITCH_ACTIVE"
 LEGACY_FETCH_MODES = frozenset({"LEGACY_ONLY", "LEGACY_FALLBACK", "DUAL_RUN"})
-DEFAULT_CUTOVER_MODE = "LEGACY_ONLY"
+DEFAULT_CUTOVER_MODE = "PLATFORM_PRIMARY"
 KILL_SWITCH_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
@@ -201,13 +201,12 @@ def main() -> int:
 def resolve_cutover_mode(env: dict[str, str] | None = None) -> str:
     """Effective cutover mode, mirroring the facade's precedence rules.
 
-    The kill switch wins over the configured mode, and an unset mode means
-    ``LEGACY_ONLY``, so an E2E run that configures nothing seeds exactly the way
-    it did before this task.
+    The kill switch wins over the configured mode and always returns
+    ``LEGACY_ONLY``, while an unset mode defaults to ``PLATFORM_PRIMARY``.
     """
     source = os.environ if env is None else env
     if str(source.get(KILL_SWITCH_ENV, "") or "").strip().lower() in KILL_SWITCH_TRUTHY:
-        return DEFAULT_CUTOVER_MODE
+        return "LEGACY_ONLY"
     raw = str(source.get(FACADE_MODE_ENV, "") or "").strip().upper()
     return raw or DEFAULT_CUTOVER_MODE
 

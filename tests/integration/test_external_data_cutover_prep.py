@@ -1,19 +1,8 @@
-"""Reversible consumer cutover preparation (ODP-XR-CUTOVER-PREP-002).
+"""Reversible consumer cutover activation (ODP-XR-CUTOVER-ACTIVATE-002).
 
-PR #970 decommissioned odayplus-side external ingestion outright: it deleted the
-providers, the scheduler and the ingestion service, and hardwired the API, the
-scheduler tick and the worker handler into their refusing form. This suite pins
-the reversible version of that intent.
-
-Two properties matter more than any individual assertion:
-
-1. **Nothing is disabled by default.** An unconfigured deployment behaves
-   exactly as it did before this task, because preparing a cutover is not
-   performing one.
-2. **Every consumer reads one switch.** The API trigger, the scheduler tick and
-   the worker handler must never disagree about whether this deployment still
-   fetches -- a scheduler that enqueues while the worker dead-letters produces
-   nothing but dead letters.
+ODayPlus is updated to read the versioned data-platform snapshot by default
+(PLATFORM_PRIMARY), with external acquisition remaining disabled by default,
+while the reversible switch and kill switch allow emergency rollback.
 """
 
 from __future__ import annotations
@@ -48,7 +37,7 @@ from modules.external_data.application.market_data_facade import (
 from shared.infrastructure.persistence.factory import build_persistence
 from shared.jobs.queue import JobRecord, NonRetryableJobError
 
-LEGACY_ENV: dict[str, str] = {}
+LEGACY_ENV = {FACADE_MODE_ENV: CUTOVER_MODE_LEGACY_ONLY}
 DUAL_RUN_ENV = {FACADE_MODE_ENV: CUTOVER_MODE_DUAL_RUN}
 PLATFORM_ENV = {FACADE_MODE_ENV: CUTOVER_MODE_PLATFORM_PRIMARY}
 ROLLED_BACK_ENV = {
@@ -62,12 +51,12 @@ ROLLED_BACK_ENV = {
 # ---------------------------------------------------------------------------
 
 
-def test_unconfigured_deployment_stays_on_the_legacy_path() -> None:
-    """The default is the whole safety property: prep must not perform a cutover."""
-    assert DEFAULT_CUTOVER_MODE == CUTOVER_MODE_LEGACY_ONLY
-    assert resolve_cutover_mode({}) == CUTOVER_MODE_LEGACY_ONLY
-    assert legacy_external_fetch_enabled({}) is True
-    assert platform_read_enabled({}) is False
+def test_unconfigured_deployment_reads_the_platform_by_default() -> None:
+    """ODP-XR-CUTOVER-ACTIVATE-002: platform snapshot is now the default read path."""
+    assert DEFAULT_CUTOVER_MODE == CUTOVER_MODE_PLATFORM_PRIMARY
+    assert resolve_cutover_mode({}) == CUTOVER_MODE_PLATFORM_PRIMARY
+    assert legacy_external_fetch_enabled({}) is False
+    assert platform_read_enabled({}) is True
 
 
 @pytest.mark.parametrize(
@@ -261,8 +250,17 @@ def test_snapshot_read_path_reaches_the_real_pinned_release() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_rollback_probe_reads_legacy_by_default() -> None:
+def test_rollback_probe_reads_the_platform_by_default() -> None:
     probe = rollback_probe({})
+
+    assert probe["mode"] == CUTOVER_MODE_PLATFORM_PRIMARY
+    assert probe["source"] == "platform"
+    assert probe["payload"]["contract"] == "emgi.site-market-context.v1"
+    assert probe["writes"] == 0
+
+
+def test_rollback_probe_reads_legacy_when_configured() -> None:
+    probe = rollback_probe(LEGACY_ENV)
 
     assert probe["mode"] == CUTOVER_MODE_LEGACY_ONLY
     assert probe["source"] == "legacy"
@@ -339,7 +337,7 @@ def _trigger(client):
 
 
 @pytest.mark.parametrize("env", [LEGACY_ENV, DUAL_RUN_ENV], ids=["legacy", "dual_run"])
-def test_manual_trigger_keeps_working_until_the_cutover_is_selected(
+def test_manual_trigger_keeps_working_when_configured(
     api_client, env: dict[str, str]
 ) -> None:
     response = _trigger(api_client(env))
@@ -347,10 +345,10 @@ def test_manual_trigger_keeps_working_until_the_cutover_is_selected(
     assert response.status_code == 202
 
 
-def test_manual_trigger_answers_410_with_a_branchable_code_after_cutover(
+def test_manual_trigger_answers_410_with_a_branchable_code_by_default(
     api_client,
 ) -> None:
-    response = _trigger(api_client(PLATFORM_ENV))
+    response = _trigger(api_client({}))
 
     assert response.status_code == 410
     error = response.json()["error"]
@@ -388,7 +386,21 @@ def _freshness(client):
     return client.get("/external-data/freshness", headers=API_HEADERS)
 
 
-def test_freshness_is_byte_for_byte_the_legacy_answer_by_default(api_client) -> None:
+def test_freshness_is_served_from_the_platform_by_default(api_client) -> None:
+    response = _freshness(api_client({}))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["availability"]["source"] == "data_platform"
+    assert body["correlation_id"] == "corr-cutover"
+    assert {row["provider_id"] for row in body["freshness"]} == {
+        "data_platform.foundation",
+        "data_platform.product",
+    }
+    assert all(row["provider_id"].startswith("data_platform.") for row in body["freshness"])
+
+
+def test_freshness_serves_legacy_when_configured(api_client) -> None:
     response = _freshness(api_client(LEGACY_ENV))
 
     assert response.status_code == 200
@@ -418,21 +430,6 @@ def test_freshness_dual_run_compares_without_changing_the_authoritative_answer(
         "data_platform.foundation",
         "data_platform.product",
     }
-
-
-def test_freshness_is_served_from_the_platform_after_cutover(api_client) -> None:
-    response = _freshness(api_client(PLATFORM_ENV))
-
-    assert response.status_code == 200
-    body = response.json()
-    assert body["availability"]["source"] == "data_platform"
-    assert body["correlation_id"] == "corr-cutover"
-    assert {row["provider_id"] for row in body["freshness"]} == {
-        "data_platform.foundation",
-        "data_platform.product",
-    }
-    # No legacy provenance is smuggled through alongside it.
-    assert all(row["provider_id"].startswith("data_platform.") for row in body["freshness"])
 
 
 def test_freshness_reports_an_unwired_platform_arm_instead_of_inventing_one(
@@ -507,7 +504,7 @@ def _scheduler(env: dict[str, str], *, tenant_id: str = "tenant-cutover"):
 
 
 @pytest.mark.parametrize("env", [LEGACY_ENV, DUAL_RUN_ENV], ids=["legacy", "dual_run"])
-def test_scheduler_keeps_enqueueing_until_the_cutover_is_selected(
+def test_scheduler_enqueues_when_configured(
     env: dict[str, str],
 ) -> None:
     scheduler = _scheduler(env)
@@ -515,8 +512,8 @@ def test_scheduler_keeps_enqueueing_until_the_cutover_is_selected(
     assert scheduler.recurring_job_types() == (EXTERNAL_FETCH_JOB_TYPE,)
 
 
-def test_scheduler_enqueues_nothing_after_cutover() -> None:
-    scheduler = _scheduler(PLATFORM_ENV)
+def test_scheduler_enqueues_nothing_by_default() -> None:
+    scheduler = _scheduler({})
     enqueued: list = []
     scheduler.job_queue.enqueue = lambda *a, **kw: enqueued.append((a, kw))
 
@@ -526,7 +523,7 @@ def test_scheduler_enqueues_nothing_after_cutover() -> None:
     assert enqueued == []
 
 
-def test_scheduler_still_enqueues_before_the_cutover() -> None:
+def test_scheduler_still_enqueues_when_configured_legacy() -> None:
     scheduler = _scheduler(LEGACY_ENV)
     enqueued: list = []
     scheduler.job_queue.enqueue = lambda request, **kw: enqueued.append(request)
@@ -604,10 +601,10 @@ class _ExplodingPersistence:
         raise AssertionError(f"cutover handler must not touch persistence.{name}")
 
 
-def test_worker_dead_letters_external_fetch_after_cutover(monkeypatch) -> None:
+def test_worker_dead_letters_external_fetch_by_default(monkeypatch) -> None:
     from apps.worker.oday_worker import handlers
 
-    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_PLATFORM_PRIMARY)
+    monkeypatch.delenv(FACADE_MODE_ENV, raising=False)
     monkeypatch.delenv(KILL_SWITCH_ENV, raising=False)
 
     with pytest.raises(NonRetryableJobError) as excinfo:
@@ -642,11 +639,11 @@ def test_external_fetch_stays_registered_after_cutover(monkeypatch) -> None:
     assert registry.get(handlers.EXTERNAL_FETCH_JOB_TYPE) is handlers.handle_external_fetch
 
 
-def test_worker_runs_the_legacy_path_before_the_cutover(monkeypatch) -> None:
-    """Default mode must not short-circuit: the handler proceeds past the switch."""
+def test_worker_runs_the_legacy_path_when_configured(monkeypatch) -> None:
+    """Explicit LEGACY_ONLY mode allows the handler to proceed past the switch."""
     from apps.worker.oday_worker import handlers
 
-    monkeypatch.delenv(FACADE_MODE_ENV, raising=False)
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
     monkeypatch.delenv(KILL_SWITCH_ENV, raising=False)
 
     with pytest.raises(AssertionError) as excinfo:
@@ -693,17 +690,8 @@ def test_seed_vocabulary_cannot_drift_from_the_facade() -> None:
         assert kill_switch_active(env) is True
 
 
-def test_seed_still_triggers_ingestion_before_the_cutover(monkeypatch) -> None:
+def test_seed_does_not_call_the_retired_trigger_by_default(monkeypatch) -> None:
     monkeypatch.delenv(FACADE_MODE_ENV, raising=False)
-    monkeypatch.delenv(KILL_SWITCH_ENV, raising=False)
-
-    assert seed_product_e2e_data.legacy_ingestion_trigger_available() is True
-
-
-def test_seed_does_not_call_the_retired_trigger_after_the_cutover(monkeypatch) -> None:
-    """Calling it to discover it is gone would make the seed the one caller
-    still asking a decommissioned deployment to fetch."""
-    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_PLATFORM_PRIMARY)
     monkeypatch.delenv(KILL_SWITCH_ENV, raising=False)
 
     posted: list = []
@@ -715,6 +703,13 @@ def test_seed_does_not_call_the_retired_trigger_after_the_cutover(monkeypatch) -
 
     assert seed_product_e2e_data.legacy_ingestion_trigger_available() is False
     assert posted == []
+
+
+def test_seed_still_triggers_ingestion_when_configured(monkeypatch) -> None:
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
+    monkeypatch.delenv(KILL_SWITCH_ENV, raising=False)
+
+    assert seed_product_e2e_data.legacy_ingestion_trigger_available() is True
 
 
 def test_seed_waits_for_a_real_published_platform_snapshot(monkeypatch) -> None:

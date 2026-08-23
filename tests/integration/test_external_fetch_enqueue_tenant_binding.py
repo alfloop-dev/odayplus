@@ -54,6 +54,11 @@ OPERATOR_HEADERS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _legacy_fetch_mode(monkeypatch):
+    monkeypatch.setenv("ODAY_MARKET_DATA_FACADE_MODE", "LEGACY_ONLY")
+
+
 @pytest.fixture()
 def bundle(tmp_path):
     """A durable bundle: only there is the run *physically* partitioned."""

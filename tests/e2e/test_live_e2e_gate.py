@@ -1900,7 +1900,9 @@ def test_worker_probe_job_type_is_registered_by_the_deployed_worker() -> None:
     assert "registry.register(EXTERNAL_FETCH_JOB_TYPE, handle_external_fetch)" in handlers
 
 
-def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back() -> None:
+def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back(
+    monkeypatch,
+) -> None:
     """The two halves of the gate's data assertion must meet in one store.
 
     This is the binding the previous revision lacked. ``handle_external_fetch``
@@ -1923,6 +1925,8 @@ def test_the_worker_probe_writes_the_ingestion_run_the_gate_reads_back() -> None
     from apps.worker.oday_worker.handlers import handle_external_fetch
     from shared.infrastructure.persistence.factory import build_persistence
     from shared.jobs.queue import JobRecord
+
+    monkeypatch.setenv("ODAY_MARKET_DATA_FACADE_MODE", "LEGACY_ONLY")
 
     bundle = build_persistence(mode="memory")
     provider_id = probe_provider_id()
