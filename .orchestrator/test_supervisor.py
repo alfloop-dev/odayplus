@@ -12665,6 +12665,49 @@ class QuarantineAndPreserveDirtyWorktreeTests(unittest.TestCase):
             self.assertTrue(leased_path.exists())
             self.assertFalse(os.path.islink(leased_path / "ai-status.json"))
             self.assertEqual((leased_path / "ai-status.json").read_text(encoding="utf-8"), '{"project":"canonical"}')
+
+    def test_a_clean_worktree_is_reported_as_clean_not_unreadable(self) -> None:
+        """`git status` succeeding with no output means nothing to preserve.
+
+        That took the same branch as `git status` failing, and both reported
+        `status_unreadable`. The one time the event fired, two sessions read
+        "No uncommitted work preserved ... status_unreadable" as lost work and
+        reported it as such. The routine outcome has to be distinguishable
+        from the failure it is not.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_p = Path(tmpdir)
+            repo_root, wt_path, branch_name = self._create_git_repo_and_worktree(tmp_p, "TASK-CLEAN-001")
+
+            status = subprocess.run(
+                ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+                cwd=wt_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            self.assertEqual(status.stdout.strip(), "", "the fixture worktree must start clean")
+
+            config = {
+                "paths": {
+                    "status_file": str(repo_root / "ai-status.json"),
+                    "activity_log": str(repo_root / "ai-activity-log.jsonl"),
+                },
+                "branch_workflow": {"task_branch_prefix": "task/", "dev_branch": "dev"},
+            }
+
+            outcome = supervisor._quarantine_and_preserve_dirty_worktree(
+                config,
+                {},
+                wt_path,
+                "TASK-CLEAN-001",
+                expected_branch=branch_name,
+                run_id=None,
+                trigger="unit_test",
+            )
+
+            self.assertFalse(outcome, "a clean worktree preserves nothing")
+            self.assertEqual(getattr(outcome, "reason", ""), "worktree_clean")
 class BlockedTaskRoleReassignmentTests(unittest.TestCase):
     """A blocked owner strands a task the same way a blocked reviewer does.
 
