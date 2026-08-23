@@ -417,6 +417,10 @@ def update_worker_runtime_markers(worker: dict[str, Any]) -> bool:
         if process_activity_at and process_activity_at > str(worker.get("last_process_activity_at") or ""):
             worker["last_process_activity_at"] = process_activity_at
             changed = True
+        disk_activity_at = str(payload.get("last_disk_activity_at") or "").strip()
+        if disk_activity_at and disk_activity_at > str(worker.get("last_disk_activity_at") or ""):
+            worker["last_disk_activity_at"] = disk_activity_at
+            changed = True
         process_activity = payload.get("process_activity")
         if isinstance(process_activity, dict) and worker.get("process_activity") != process_activity:
             worker["process_activity"] = process_activity

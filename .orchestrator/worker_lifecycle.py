@@ -474,6 +474,9 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             resolved_by_run.setdefault(run_id, []).append(item)
 
     stall_after = float(config.get("supervisor", {}).get("stall_after_seconds", 300))
+    hard_inactivity_after = float(
+        config.get("supervisor", {}).get("hard_inactivity_seconds", 3600)
+    )
     now = datetime.now(UTC)
     if provider_report is None:
         provider_report = load_provider_report(config)
@@ -979,6 +982,41 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 )
                 changed = True
                 continue
+            # Second, much slower tier.  The stall timer above trusts any counter
+            # movement, which a CLI blocked forever on an unterminated shell
+            # command still produces.  Storage I/O is what such a process stops
+            # producing, so a worker that has written nothing for an hour is hung
+            # even though it looks busy.  The window is long on purpose: a worker
+            # waiting on a slow model reply is also quiet, just not for this long.
+            disk_activity_dt = parse_iso_timestamp(str(worker.get("last_disk_activity_at") or ""))
+            if hard_inactivity_after > 0 and disk_activity_dt is not None:
+                inactive_seconds = (now - disk_activity_dt.astimezone(UTC)).total_seconds()
+                if inactive_seconds >= hard_inactivity_after:
+                    terminate_worker_pid(worker.get("pid"))
+                    worker["status"] = "failed"
+                    worker["last_event_at"] = utc_now()
+                    worker["last_error"] = (
+                        f"Worker produced no storage activity for {int(inactive_seconds)} seconds "
+                        "while still reporting heartbeats; terminated for redispatch."
+                    )
+                    write_activity_log(
+                        config,
+                        {
+                            "type": "worker_failed",
+                            "provider": worker.get("provider"),
+                            "task_id": worker.get("task_id"),
+                            "message": worker["last_error"],
+                            "worker_run_id": worker["run_id"],
+                        },
+                    )
+                    finalize_queue_event_record(config, state, worker, "failed", worker["last_error"])
+                    console_log(
+                        f"worker terminated after hard inactivity: task={worker.get('task_id')} "
+                        f"provider={worker.get('provider')} run={worker.get('run_id')}",
+                        quiet=SUPERVISOR_LOG_QUIET,
+                    )
+                    changed = True
+                    continue
             activity_times = [
                 parse_iso_timestamp(str(value or ""))
                 for value in (worker.get("last_event_at"), worker.get("last_process_activity_at"))
