@@ -2242,8 +2242,14 @@ def _quarantine_and_preserve_dirty_worktree(
         capture_output=True,
         check=False,
     )
-    if status_proc.returncode != 0 or not status_proc.stdout:
+    if status_proc.returncode != 0:
         return _quarantine_refused("status_unreadable")
+    if not status_proc.stdout:
+        # A clean worktree is the ordinary case at worker death, not a failure
+        # to read it. Folding both into "status_unreadable" made the routine
+        # outcome indistinguishable from a real one, and the single time it
+        # fired it was read as lost work.
+        return _quarantine_refused("worktree_clean")
 
     raw_entries = [e for e in status_proc.stdout.split(b"\0") if e]
     if not raw_entries:
