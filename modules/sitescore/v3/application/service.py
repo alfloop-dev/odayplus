@@ -195,7 +195,7 @@ class SiteScoreV3Service:
                 else:
                     try:
                         f_val = float(val)
-                        
+
                         if not math.isfinite(f_val):
                             missing_fields.append(f)
                         else:
