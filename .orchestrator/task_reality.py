@@ -42,9 +42,58 @@ ACTIVE_TASK_STATUSES = frozenset(
 #: Statuses that assert a reviewer has frozen a head, so a missing gate matters.
 REVIEW_GATE_STATUSES = frozenset({"review", "review_approved"})
 
+# A task may name the branch that its future work will use before that branch
+# has been materialized.  These fields are the durable evidence that the task
+# has already crossed that boundary.  Keep this list explicit: treating every
+# non-empty task field as delivery evidence would make a newly assigned todo
+# task fail closed again merely because it has planning metadata.
+DELIVERY_EVIDENCE_FIELDS = frozenset(
+    {
+        "pr_number",
+        "review_submission",
+        "approved_head",
+        "last_approved_head",
+        "review_gate_sha",
+        "merge_route",
+        "delivery",
+        "cross_repo_delivery_gate",
+        "delivery_blockers",
+    }
+)
+
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def task_has_delivery_evidence(task: dict[str, Any]) -> bool:
+    """Return whether a task record proves that branch work was materialized.
+
+    A positive PR number is evidence even when the PR lookup later fails.  The
+    other fields are records written by review, routing, and delivery paths;
+    any non-empty value must keep the missing-branch guard fail-closed.
+    """
+
+    pr_number = task.get("pr_number")
+    if isinstance(pr_number, bool):
+        if pr_number:
+            return True
+    else:
+        try:
+            if int(pr_number or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            if _text(pr_number):
+                return True
+
+    for field in DELIVERY_EVIDENCE_FIELDS - {"pr_number"}:
+        value = task.get(field)
+        if isinstance(value, (dict, list, tuple, set)):
+            if value:
+                return True
+        elif _text(value):
+            return True
+    return False
 
 
 def task_reality_findings(
@@ -75,7 +124,16 @@ def task_reality_findings(
     pr_merged = bool((pull_request or {}).get("merged"))
     pr_head_ref = _text((pull_request or {}).get("headRefName"))
 
-    if branch and not branch_exists:
+    # Assignment creates the durable task before the per-task branch is
+    # published.  That is an expected pre-materialization state only for a
+    # plain todo record.  Once the task has advanced, or any PR/delivery fact
+    # exists, a missing branch remains an integrity failure.
+    pre_materialization = (
+        status == "todo"
+        and pull_request is None
+        and not task_has_delivery_evidence(task)
+    )
+    if branch and not branch_exists and not pre_materialization:
         # A branch that no longer resolves cannot be leased, and every dispatch
         # fails `unverifiable_refs` until someone corrects the record.
         if pr_state == "OPEN" and pr_head_ref and pr_head_ref != branch:

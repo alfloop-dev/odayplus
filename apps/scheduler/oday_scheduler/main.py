@@ -25,6 +25,13 @@ logger = logging.getLogger("oday-scheduler")
 SCHEDULED_TENANT_ENV_VAR = "ODP_SCHEDULED_INGESTION_TENANT_ID"
 FALLBACK_TENANT_ENV_VAR = "ODP_TENANT_ID"
 MISSING_TENANT_REASON_CODE = "scheduled_ingestion_tenant_missing"
+INVALID_CUTOVER_MODE_REASON_CODE = "external_data_cutover_mode_invalid"
+CUTOVER_SKIP_REASON_CODE = "external_fetch_decommissioned"
+
+#: The one recurring job a tick enqueues while odayplus still owns external
+#: fetch. ODP-XR-CUTOVER-PREP-002 made that conditional rather than removing it:
+#: see :meth:`ODayScheduler.recurring_job_types`.
+EXTERNAL_FETCH_JOB_TYPE = "external-fetch"
 
 
 class SchedulerTenantConfigurationError(RuntimeError):
@@ -37,6 +44,18 @@ class SchedulerTenantConfigurationError(RuntimeError):
     """
 
     code = MISSING_TENANT_REASON_CODE
+
+
+class SchedulerCutoverConfigurationError(RuntimeError):
+    """Fail-closed: the deployment's cutover mode is not one this release knows.
+
+    Treated exactly like a missing tenant: the tick enqueues nothing and says so
+    every time, until an operator fixes the variable. Guessing a mode would mean
+    either fetching from a deployment an operator believes is cut over, or
+    silently stopping ingestion on one they believe is not.
+    """
+
+    code = INVALID_CUTOVER_MODE_REASON_CODE
 
 
 def scheduler_health() -> dict[str, str]:
@@ -82,11 +101,54 @@ class ODayScheduler:
             f"(code={MISSING_TENANT_REASON_CODE})"
         )
 
+    def _resolve_cutover_mode(self) -> str:
+        """Read the cutover switch for this tick.
+
+        Imported lazily: the switch is defined by the read facade, and a
+        scheduler process should not pay for that import unless a tick actually
+        runs. Resolved per tick, never cached, so pulling the kill switch takes
+        effect on the next tick instead of the next redeploy.
+        """
+        from modules.external_data.application.market_data_facade import (
+            MarketDataValidationError,
+            resolve_cutover_mode,
+        )
+
+        try:
+            return resolve_cutover_mode(self.env)
+        except MarketDataValidationError as exc:
+            raise SchedulerCutoverConfigurationError(
+                f"{exc} No external-fetch job was enqueued "
+                f"(code={INVALID_CUTOVER_MODE_REASON_CODE})"
+            ) from exc
+
+    def recurring_job_types(self) -> tuple[str, ...]:
+        """Job types a tick enqueues under the current cutover mode.
+
+        ``external-fetch`` is the only recurring job this scheduler owns, so
+        after the cutover this is empty and the deployment schedules nothing.
+        The deployment unit stays either way: health and metrics still report,
+        and a future recurring job registers here.
+        """
+        from modules.external_data.application.market_data_facade import (
+            legacy_external_fetch_enabled,
+        )
+
+        return (EXTERNAL_FETCH_JOB_TYPE,) if legacy_external_fetch_enabled(self.env) else ()
+
     def run_once(self) -> None:
         """Orchestrate and enqueue the scheduled tasks.
 
         Raises :class:`SchedulerTenantConfigurationError` when no tenant is
-        configured; nothing is enqueued in that case.
+        configured and :class:`SchedulerCutoverConfigurationError` when the
+        cutover mode is unreadable; nothing is enqueued in either case.
+
+        Once the cutover selects ``PLATFORM_PRIMARY`` the tick still runs and
+        still checks its tenant -- a deployment that lost its scheduled-ingestion
+        tenant is misconfigured whether or not there is work to enqueue -- but it
+        enqueues nothing, so no provider credential can be reached on a schedule.
+        Moving the mode back, or pulling the kill switch, restores enqueueing on
+        the very next tick without a redeploy.
         """
         correlation_id = new_correlation_id()
         context = TraceContext(
@@ -100,11 +162,24 @@ class ODayScheduler:
                 actor="scheduler",
                 resource="scheduler/tick",
             )
+            mode = self._resolve_cutover_mode()
             tenant_id = self._require_tenant_id()
+            if EXTERNAL_FETCH_JOB_TYPE not in self.recurring_job_types():
+                self.telemetry.logger.info(
+                    "Scheduler tick enqueued no jobs: external fetch is "
+                    f"decommissioned on this deployment (cutover mode {mode})",
+                    correlation_id=correlation_id,
+                    actor="scheduler",
+                    resource="scheduler/tick",
+                    action="skip",
+                    result="ok",
+                    error_code=CUTOVER_SKIP_REASON_CODE,
+                )
+                return
             try:
                 self.job_queue.enqueue(
                     JobRequest(
-                        job_type="external-fetch",
+                        job_type=EXTERNAL_FETCH_JOB_TYPE,
                         payload={
                             "tenant_id": tenant_id,
                             "provider_id": "listing.partner_feed",
@@ -160,17 +235,20 @@ class ODayScheduler:
         while stop_event is None or not stop_event.is_set():
             try:
                 self.run_once()
-            except SchedulerTenantConfigurationError as exc:
+            except (
+                SchedulerTenantConfigurationError,
+                SchedulerCutoverConfigurationError,
+            ) as exc:
                 # Fail closed and stay loud: nothing was enqueued, and every
                 # tick keeps reporting the misconfiguration until an operator
-                # sets the tenant. Crashing the process instead would only
-                # trade a visible error for a restart loop.
+                # sets the tenant or fixes the cutover mode. Crashing the process
+                # instead would only trade a visible error for a restart loop.
                 self.telemetry.logger.error(
                     f"Scheduler tick skipped: {exc}",
                     correlation_id="unknown",
                     actor="scheduler",
                     resource="scheduler/tick",
-                    error_code=MISSING_TENANT_REASON_CODE,
+                    error_code=exc.code,
                 )
             try:
                 self.export_metrics()

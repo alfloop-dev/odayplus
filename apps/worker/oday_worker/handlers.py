@@ -95,12 +95,25 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
     The scheduler alone only writes fetch watermark state. Route the worker
     through the ingestion service so the queryable run and audit evidence are
     committed by the same execution path.
+
+    The job type stays registered after the cutover on purpose. A queue drained
+    across the cutover can still hold enqueued ``external-fetch`` jobs, and an
+    unregistered type would retry until it dead-letters with an opaque "unknown
+    job type". Refusing here instead dead-letters on the first attempt with the
+    reason an operator needs, and -- because no fetch is attempted -- guarantees
+    no provider credential is read and no watermark advances.
     """
     from datetime import timedelta
 
     from modules.external_data.application.ingestion_service import (
         SCHEDULED_TENANT_ENV_VAR,
         ExternalIngestionService,
+    )
+    from modules.external_data.application.market_data_facade import (
+        FACADE_MODE_ENV,
+        MarketDataValidationError,
+        legacy_external_fetch_enabled,
+        resolve_cutover_mode,
     )
     from modules.external_data.workers.scheduled_fetch import (
         CONFIGURATION_REASON_CODES,
@@ -111,6 +124,26 @@ def handle_external_fetch(job: JobRecord, persistence: PersistenceBundle) -> Non
     provider_id = job.payload.get("provider_id", "listing.partner_feed")
     schedule_id = job.payload.get("schedule_id", "hourly-listing")
     freshness_sla_hours = job.payload.get("freshness_sla_hours", 6)
+
+    # Resolved per job, from the same switch the scheduler and the API read, so
+    # the three cannot disagree about whether this deployment still fetches.
+    try:
+        fetch_enabled = legacy_external_fetch_enabled()
+    except MarketDataValidationError as exc:
+        # A mode this release cannot read is fixed for the deployment: no retry
+        # changes it, so dead-letter now while the reason is still attached.
+        raise NonRetryableJobError(
+            f"External fetch cannot run: {exc}. Fix {FACADE_MODE_ENV} on the "
+            "worker deployment."
+        ) from exc
+    if not fetch_enabled:
+        raise NonRetryableJobError(
+            "External fetch is decommissioned on this deployment (cutover mode "
+            f"{resolve_cutover_mode()}): provider '{provider_id}' (schedule "
+            f"'{schedule_id}') is ingested by oday-data-platform and read "
+            "through the market data facade. Remove the schedule that enqueued "
+            "this job, or roll the cutover back to restore fetching."
+        )
     tenant_id = str(job.payload.get("tenant_id") or "").strip()
     if not tenant_id:
         # A schedule has no principal to fall back on, so an untenanted payload

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,20 @@ from urllib.request import Request, urlopen
 
 CORRELATION_ID = "corr-product-e2e-seed-001"
 TENANT_ID = "tenant-a"
+
+# ---------------------------------------------------------------------------
+# Cutover switch (ODP-XR-CUTOVER-PREP-002)
+# ---------------------------------------------------------------------------
+# `modules.external_data.application.market_data_facade` owns this contract.
+# This script is launched by run_product_e2e.sh with a bare `python3` and no
+# repository on sys.path, so it restates the vocabulary instead of importing it.
+# tests/integration/test_external_data_cutover_prep.py pins these names against
+# the facade's constants so the restatement cannot drift.
+FACADE_MODE_ENV = "ODAY_MARKET_DATA_FACADE_MODE"
+KILL_SWITCH_ENV = "ODAY_MARKET_DATA_KILL_SWITCH_ACTIVE"
+LEGACY_FETCH_MODES = frozenset({"LEGACY_ONLY", "LEGACY_FALLBACK", "DUAL_RUN"})
+DEFAULT_CUTOVER_MODE = "LEGACY_ONLY"
+KILL_SWITCH_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 def main() -> int:
@@ -40,8 +55,15 @@ def main() -> int:
 
     source_fixture = get_json(f"{source_stub_url}/external/listing_raw_snapshot.valid.json")
     health = get_json(f"{api_url}/platform/health")
-    ingestion_run = seed_tenant_ingestion(api_url)
-    freshness = wait_for_persisted_freshness(api_url)
+    if legacy_ingestion_trigger_available():
+        ingestion_run = seed_tenant_ingestion(api_url)
+        freshness = wait_for_persisted_freshness(api_url)
+    else:
+        # The trigger is retired in this mode and answers 410. Calling it to
+        # find that out would make the seed the one caller that still asks a
+        # decommissioned deployment to fetch, so it is not called at all.
+        ingestion_run = None
+        freshness = wait_for_platform_freshness(api_url)
     avm_case = post_json(
         f"{api_url}/avm/cases",
         {
@@ -159,7 +181,9 @@ def main() -> int:
         "api": health,
         "source_fixture_keys": sorted(source_fixture.keys()),
         "external_freshness": freshness,
-        "external_ingestion_run_id": ingestion_run["run_id"],
+        "external_freshness_source": freshness.get("availability", {}).get("source"),
+        "external_ingestion_run_id": ingestion_run["run_id"] if ingestion_run else None,
+        "cutover_mode": resolve_cutover_mode(),
         "avm_case_id": avm_case["case_id"],
         "heatzone_job_id": heatzone_job["job_id"],
         "scheduler_job_id": queued_job["job_id"],
@@ -172,6 +196,52 @@ def main() -> int:
     )
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
+
+
+def resolve_cutover_mode(env: dict[str, str] | None = None) -> str:
+    """Effective cutover mode, mirroring the facade's precedence rules.
+
+    The kill switch wins over the configured mode, and an unset mode means
+    ``LEGACY_ONLY``, so an E2E run that configures nothing seeds exactly the way
+    it did before this task.
+    """
+    source = os.environ if env is None else env
+    if str(source.get(KILL_SWITCH_ENV, "") or "").strip().lower() in KILL_SWITCH_TRUTHY:
+        return DEFAULT_CUTOVER_MODE
+    raw = str(source.get(FACADE_MODE_ENV, "") or "").strip().upper()
+    return raw or DEFAULT_CUTOVER_MODE
+
+
+def legacy_ingestion_trigger_available(env: dict[str, str] | None = None) -> bool:
+    """True while ``POST /external-data/ingestion-runs`` still accepts a trigger."""
+    return resolve_cutover_mode(env) in LEGACY_FETCH_MODES
+
+
+def wait_for_platform_freshness(
+    api_url: str, *, timeout_seconds: float = 180
+) -> dict[str, Any]:
+    """Wait until freshness is served from the published data-platform snapshot.
+
+    The cut-over counterpart of :func:`wait_for_persisted_freshness`. Seeding
+    cannot create this evidence -- the platform publishes it -- so the seed waits
+    for the deployment to read a real released snapshot and fails loudly if it
+    never does, rather than recording an empty run as success.
+    """
+    deadline = time.time() + timeout_seconds
+    last: dict[str, Any] | None = None
+    while True:
+        last = get_json(f"{api_url}/external-data/freshness")
+        availability = last.get("availability", {})
+        if availability.get("source") == "data_platform" and last.get("freshness"):
+            return last
+        if time.time() >= deadline:
+            break
+        time.sleep(2)
+    raise RuntimeError(
+        "timed out waiting for data-platform external-data freshness: the cut-over "
+        "deployment read no published platform snapshot. Last response: "
+        + json.dumps(last, sort_keys=True)
+    )
 
 
 def seed_tenant_ingestion(api_url: str) -> dict[str, Any]:

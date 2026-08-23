@@ -1264,6 +1264,12 @@ else:
                 ingestion_run_store_for_tenant=ingestion_run_store_for_tenant,
                 audit_log=audit_log,
                 require_provider=require_live_external_provider,
+                # The cutover read path (ODP-XR-CUTOVER-PREP-002) reuses the
+                # facade already resolved above rather than creating a second
+                # one: composition time is still the only place a transport is
+                # bound, and an unresolved binding stays `None` so the route
+                # reports an unwired platform arm instead of an empty transport.
+                market_data_facade=market_intelligence_facade,
             ),
         )
         mount_versioned(

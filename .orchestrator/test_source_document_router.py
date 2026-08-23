@@ -165,6 +165,18 @@ class SourceDocumentRouterTests(unittest.TestCase):
                     task={"repository": "alfloop-dev/oday-data-platform"},
                 )
 
+    def test_mutable_http_and_pull_request_urls_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_root, _, _, config = self._workspace(tmpdir)
+            for reference in (
+                "https://github.com/alfloop-dev/oday-data-platform/blob/dev/README.md",
+                "https://github.com/alfloop-dev/oday-data-platform/pull/123/files",
+            ):
+                with self.subTest(reference=reference):
+                    with self.assertRaises(SourceDocumentRoutingError) as ctx:
+                        resolve_source_document(config, status_root, reference, task={})
+                    self.assertIn("mutable HTTP/PR", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
