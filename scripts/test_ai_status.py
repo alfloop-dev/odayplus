@@ -1388,6 +1388,13 @@ class AssignmentSourceDocumentTests(unittest.TestCase):
         with (
             mock.patch.dict(os.environ, env, clear=False),
             mock.patch.object(ai_status, "configured_agent_names", return_value={"Codex", "Claude"}),
+            mock.patch.object(
+                ai_status,
+                "status_runtime_config",
+                return_value={
+                    "paths": {"status_file": str(ai_status.STATUS_ROOT / "ai-status.json")}
+                },
+            ),
         ):
             ai_status.command_assign(self.state, ["ODP-SOURCE-DOC-001", "Codex", "Claude"])
 
