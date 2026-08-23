@@ -1127,7 +1127,7 @@ class DetectWorkerFailureTests(unittest.TestCase):
                     "model_rotation": {
                         "enabled": True,
                         "primary_model": "",
-                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                        "fallback_model": "claude-sonnet-4-6",
                     }
                 }
             }
@@ -8530,7 +8530,7 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
                     "model_rotation": {
                         "enabled": True,
                         "primary_model": "",
-                        "fallback_model": "Claude Sonnet 4.6 (Thinking)",
+                        "fallback_model": "claude-sonnet-4-6",
                     }
                 },
             }

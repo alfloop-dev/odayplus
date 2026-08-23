@@ -507,7 +507,7 @@
         "model_policy": {
           "enabled": true,
           "standard_model": "gemini-3.7-flash-high",
-          "high_risk_model": "gemini-3.1-pro-high",
+          "high_risk_model": "claude-opus-4-6-thinking",
           "high_risk_priorities": ["P0", "P1"],
           "upgrade_after_review_reopens": 1
         },

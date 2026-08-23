@@ -42,7 +42,10 @@ def parse_reset_seconds(text: str | None) -> int | None:
 
 UTC = UTC
 _STATE_PATH = Path(__file__).resolve().parent / "runtime" / "antigravity_model_cooldown.json"
-DEFAULT_FALLBACK_MODEL = "Claude Sonnet 4.6 (Thinking)"
+# `agy --model` takes the model ID from `agy models`, not its display label.
+# This was "Claude Sonnet 4.6 (Thinking)" -- the label -- so every quota
+# fallback dispatched an unresolvable model and the claude pool was dead.
+DEFAULT_FALLBACK_MODEL = "claude-sonnet-4-6"
 
 POOLS = ("gemini", "claude")
 # Worker metadata keys: the pool/model a worker was ACTUALLY launched on. Quota
@@ -55,7 +58,15 @@ WORKER_MODEL_RISK_TIER_KEY = "antigravity_model_risk_tier"
 WORKER_MODEL_REASON_KEY = "antigravity_model_reason"
 
 DEFAULT_STANDARD_MODEL = "gemini-3.7-flash-high"
-DEFAULT_HIGH_RISK_MODEL = "gemini-3.1-pro-high"
+# NOT a gemini pro id. `agy --model gemini-3.1-pro-high` is not honoured: the
+# CLI logs "Model ID gemini-3.1-pro-high not in local config, defaulting to
+# CCPA" and the trajectory records `gemini-pro-default` (MODEL_PLACEHOLDER_M16)
+# instead of the requested model -- i.e. every P0/P1 dispatch silently ran on
+# agy's own default rather than the pro tier we asked for. Measured
+# 2026-08-23 across 19 of 23 runs. `claude-opus-4-6-thinking` and
+# `gemini-3.7-flash-high` both round-trip intact (M26 / M298), so high-risk
+# work goes to the strongest id the account actually resolves.
+DEFAULT_HIGH_RISK_MODEL = "claude-opus-4-6-thinking"
 DEFAULT_HIGH_RISK_PRIORITIES = ("P0", "P1")
 DEFAULT_HIGH_RISK_KEYWORDS = (
     "core/",
@@ -91,6 +102,20 @@ def normalize_pool(pool: Any) -> str | None:
     """Return 'gemini'/'claude' for a recognised pool name, else None."""
     value = str(pool or "").strip().lower()
     return value if value in POOLS else None
+
+
+def pool_for_model(model: Any, default: str = "gemini") -> str:
+    """Quota pool a model id actually bills against.
+
+    The risk policy and the quota-rotation pool are separate axes: a
+    high-risk dispatch can select a `claude-*` id while the rotation pool is
+    still 'gemini'. Attributing that run to 'gemini' would cool the wrong pool
+    on a quota failure, so the pool always follows the id being launched.
+    """
+    value = str(model or "").strip().lower()
+    if value.startswith("claude-"):
+        return "claude"
+    return default
 
 
 def _now(now: datetime | None = None) -> datetime:
@@ -268,6 +293,12 @@ def _entry(state: dict[str, Any], provider_id: str) -> dict[str, Any]:
     return entry if isinstance(entry, dict) else {}
 
 
+def pool_cooling(config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None) -> bool:
+    """Whether one pool is still inside its quota cooldown window."""
+    until = _parse(_entry(_load(), cooldown_scope(config, provider_id)).get(f"{pool}_until"))
+    return until is not None and _now(now) < until
+
+
 def active_pool(config: dict[str, Any] | None, provider_id: str, now: datetime | None = None) -> str | None:
     """Return 'gemini', 'claude', or None (both pools currently cooling down)."""
     now = _now(now)
@@ -323,9 +354,19 @@ def resolve_active_selection(
         }
     # 'gemini' or None (both cooling; the probe still goes out on primary) ->
     # primary model (empty string == agy default Gemini).
+    selected_model = policy_model or _primary_model(config, provider_id)
+    # The risk policy names the strongest id the account resolves, which for
+    # high-risk work lives in the claude pool. Reaching here means rotation did
+    # NOT grant claude -- either it is cooling, or both pools are -- so billing
+    # that id now would launch straight into the exhausted pool. Drop to the
+    # standard gemini id instead of the tier the policy asked for.
+    if pool_for_model(selected_model) == "claude" and pool_cooling(config, str(provider_id or ""), "claude", now):
+        selected_model = str(
+            model_policy_config(config, provider_id).get("standard_model") or DEFAULT_STANDARD_MODEL
+        ).strip()
     return {
-        "pool": "gemini",
-        "model": policy_model or _primary_model(config, provider_id),
+        "pool": pool_for_model(selected_model),
+        "model": selected_model,
         "rotating": True,
         "risk_tier": decision.get("risk_tier"),
         "selection_reason": decision.get("reason"),

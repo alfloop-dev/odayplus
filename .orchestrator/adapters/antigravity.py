@@ -32,6 +32,33 @@ ANTIGRAVITY_OAUTH_TOKEN_REL = Path(".gemini") / "antigravity-cli" / "antigravity
 # the normal task lifetime without pretending the CLI can reset this timer.
 DEFAULT_HARD_PRINT_TIMEOUT = "168h"
 
+# `agy --effort` accepts only these levels.
+ANTIGRAVITY_EFFORT_LEVELS = ("low", "medium", "high")
+
+
+def _effort_args(settings: dict, model: str) -> list[str]:
+    """`--effort` flags for this dispatch, or none.
+
+    Reasoning strength reaches agy two different ways and they are not
+    interchangeable. Gemini ids carry it in the id itself
+    (`gemini-3.7-flash-high` vs `-low`), while the reasoning Claude ids reject
+    the flag outright -- `agy --model claude-opus-4-6-thinking --effort high`
+    exits with "--effort is not supported for model ...", which would fail the
+    dispatch rather than degrade it. So the flag is opt-in per provider and is
+    never sent for a model that cannot take it.
+    """
+    effort = str(settings.get("effort") or "").strip().lower()
+    if not effort:
+        return []
+    if effort not in ANTIGRAVITY_EFFORT_LEVELS:
+        raise ValueError(
+            f"Unsupported Antigravity effort level {effort!r}; "
+            f"expected one of {', '.join(ANTIGRAVITY_EFFORT_LEVELS)}."
+        )
+    if str(model or "").strip().lower().startswith("claude-"):
+        return []
+    return ["--effort", effort]
+
 
 def _antigravity_home(config: dict | None = None, provider_id: str | None = None) -> Path:
     runtime = provider_section(config, provider_id=provider_id, section="antigravity", default="antigravity")
@@ -137,6 +164,7 @@ class AntigravityAdapter(BaseAdapter):
         if model:
             # Structured argv: the model string is one argument, never shell text.
             command.extend(["--model", model])
+        command.extend(_effort_args(settings, model))
         hard_print_timeout = str(
             settings.get("hard_print_timeout")
             or settings.get("print_timeout")  # backward-compatible legacy key
