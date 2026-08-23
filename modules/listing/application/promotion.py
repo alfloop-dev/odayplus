@@ -334,6 +334,52 @@ class PromotionService:
                 payback = getattr(score_report, "payback_p50_months", 100.0) or 100.0
                 score_val = int(max(0.0, min(1.0, (120.0 - payback) / 120.0)) * 59)
 
+            prop_ent_id = (
+                listing.get("property_id") or listing.get("propertyId") or listing.get("platform_property_id")
+                if hasattr(listing, "get")
+                else getattr(listing, "property_id", None) or getattr(listing, "platform_property_id", None)
+            )
+            list_obs_id = (
+                listing.get("listing_obs_id") or listing.get("listingObsId") or listing.get("platform_observation_id")
+                if hasattr(listing, "get")
+                else getattr(listing, "listing_obs_id", None) or getattr(listing, "platform_observation_id", None)
+            )
+            bench_data = (
+                listing.get("rent_benchmark") or {}
+                if hasattr(listing, "get")
+                else getattr(listing, "rent_benchmark", None) or {}
+            )
+            if not isinstance(bench_data, dict) and hasattr(bench_data, "to_dict"):
+                bench_data = bench_data.to_dict()
+            elif not isinstance(bench_data, dict):
+                bench_data = {}
+
+            bench_median = (
+                listing.get("rent_benchmark_median") or bench_data.get("median_rent_per_ping")
+                if hasattr(listing, "get")
+                else getattr(listing, "rent_benchmark_median", None) or bench_data.get("median_rent_per_ping")
+            )
+            bench_p25 = (
+                listing.get("rent_benchmark_p25") or bench_data.get("p25_rent_per_ping")
+                if hasattr(listing, "get")
+                else getattr(listing, "rent_benchmark_p25", None) or bench_data.get("p25_rent_per_ping")
+            )
+            bench_p75 = (
+                listing.get("rent_benchmark_p75") or bench_data.get("p75_rent_per_ping")
+                if hasattr(listing, "get")
+                else getattr(listing, "rent_benchmark_p75", None) or bench_data.get("p75_rent_per_ping")
+            )
+            bench_count = (
+                listing.get("rent_benchmark_sample_count") or bench_data.get("sample_count")
+                if hasattr(listing, "get")
+                else getattr(listing, "rent_benchmark_sample_count", None) or bench_data.get("sample_count")
+            )
+            bench_id = (
+                listing.get("rent_benchmark_id") or bench_data.get("benchmark_id")
+                if hasattr(listing, "get")
+                else getattr(listing, "rent_benchmark_id", None) or bench_data.get("benchmark_id")
+            )
+
             candidate_dict = {
                 "id": candidate_id,
                 "listingId": listing_id,
@@ -348,6 +394,20 @@ class PromotionService:
                 "missingData": [],
                 "reviewId": f"RV-{uuid.uuid4().hex[:8].upper()}",
             }
+            if prop_ent_id:
+                candidate_dict["propertyId"] = prop_ent_id
+            if list_obs_id:
+                candidate_dict["listingObsId"] = list_obs_id
+            if bench_median is not None:
+                candidate_dict["rentBenchmarkMedian"] = float(bench_median)
+            if bench_p25 is not None:
+                candidate_dict["rentBenchmarkP25"] = float(bench_p25)
+            if bench_p75 is not None:
+                candidate_dict["rentBenchmarkP75"] = float(bench_p75)
+            if bench_count is not None:
+                candidate_dict["rentBenchmarkSampleCount"] = int(bench_count)
+            if bench_id:
+                candidate_dict["rentBenchmarkId"] = bench_id
 
             # Save candidate
             if hasattr(self.listing_repository, "save_candidate") and not hasattr(self.listing_repository, "_state"):
@@ -397,6 +457,13 @@ class PromotionService:
                     model_version=score_report.model_version,
                     dataset_snapshot_id=ds_snapshot_id,
                     review_id=candidate_dict["reviewId"],
+                    property_entity_id=prop_ent_id,
+                    listing_observation_id=list_obs_id,
+                    rent_benchmark_median=float(bench_median) if bench_median is not None else None,
+                    rent_benchmark_p25=float(bench_p25) if bench_p25 is not None else None,
+                    rent_benchmark_p75=float(bench_p75) if bench_p75 is not None else None,
+                    rent_benchmark_sample_count=int(bench_count) if bench_count is not None else None,
+                    rent_benchmark_id=bench_id,
                 )
                 self.listing_repository.save_candidate(draft)
             else:

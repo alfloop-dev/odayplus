@@ -867,7 +867,7 @@ export class OdpApiClient {
     }
   }
 
-  private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  public async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
     const { value } = await this.requestWithMeta<T>(path, options);
     return value;
   }
