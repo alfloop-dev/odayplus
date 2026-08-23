@@ -444,6 +444,55 @@ def test_task_finalize_lint_preflight_ignores_files_the_branch_did_not_touch(rep
     assert "dry-run: git push" in result.stdout
 
 
+def test_task_finalize_refuses_untracked_one_shot_patch_scripts(repo: Path, tmp_path: Path):
+    """Left-behind scratch scripts stop the *next* lease, not this publish.
+
+    They are untracked so they never reach the PR, but they keep the worktree
+    dirty and the lease refuses a dirty worktree. Refusing here puts the cleanup
+    on the worker that still knows which files were scratch.
+    """
+    commit_on_task_branch(repo, tmp_path)
+    (repo / "fix_indent.py").write_text("# one-shot patcher\n", encoding="utf-8")
+    (repo / "patch_test.py").write_text("# another\n", encoding="utf-8")
+
+    result = task_finalize(repo, TASK, "--dry-run")
+
+    assert result.returncode == 1
+    assert "one-shot script" in result.stderr
+    assert "fix_indent.py" in result.stderr
+    assert "patch_test.py" in result.stderr
+    assert "dry-run: git push" not in result.stdout
+
+
+def test_task_finalize_allows_a_nested_fix_script(repo: Path, tmp_path: Path):
+    """`scripts/fix_foo.py` is a plausible real tool; only the root is scratch."""
+    commit_on_task_branch(repo, tmp_path)
+    (repo / "scripts").mkdir(exist_ok=True)
+    (repo / "scripts" / "fix_encoding.py").write_text("# a real tool\n", encoding="utf-8")
+
+    result = task_finalize(repo, TASK, "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert "dry-run: git push" in result.stdout
+
+
+def test_task_finalize_allows_a_committed_root_level_fix_script(repo: Path, tmp_path: Path):
+    """Only *untracked* files are scratch. A committed one is a deliverable."""
+    git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
+    (repo / "owned.txt").write_text("owned\n", encoding="utf-8")
+    (repo / "fix_encoding.py").write_text("# deliberately shipped\n", encoding="utf-8")
+    msg = write_msg(tmp_path, GOOD_MESSAGE)
+    committed = worker_commit(
+        repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt", "--scope", "fix_encoding.py"
+    )
+    assert committed.returncode == 0, committed.stderr
+
+    result = task_finalize(repo, TASK, "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert "dry-run: git push" in result.stdout
+
+
 def test_task_finalize_reports_already_merged_branch(repo: Path):
     git(repo, "switch", "--quiet", "--create", f"task/{TASK}")
     result = task_finalize(repo, TASK, "--dry-run")

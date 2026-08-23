@@ -173,6 +173,37 @@ if [ -n "$lint_targets" ]; then
   fi
 fi
 
+# 3. One-shot patch scripts left at the repository root.
+#
+#    Workers routinely edit tracked files by writing a small script that reads
+#    the file, string-replaces, and writes it back -- then leave the script
+#    behind. It is untracked, so it never reaches a PR and no reviewer sees it;
+#    but it does make the worktree dirty, and the next lease refuses to reuse a
+#    dirty worktree. The task then stops dispatching until someone clears it by
+#    hand. Observed twice on 2026-08-23: DPF-EMGI-DEPLOY-CONTROL-001 (3 files,
+#    blocking a reviewer dispatch) and DPF-LIVE-OFFICIAL-SOURCES-001 (22).
+#
+#    Refusing here puts the cleanup on the worker that created the mess, while
+#    it still has the context to know whether each file was scratch or work.
+#    Deciding that later, from the outside, means guessing.
+#
+#    Deliberately narrow: untracked, repository root only, and only these
+#    prefixes. Neither repository has a tracked file matching this at any depth,
+#    so it costs nothing today; a `scripts/fix_foo.py` is a plausible real tool
+#    and is left alone.
+scratch_patchers="$(git ls-files --others --exclude-standard \
+  ':(glob)fix_*.py' ':(glob)patch_*.py' ':(glob)tmp_*.py' ':(glob)scratch_*.py' ':(glob)debug_*.py' \
+  2>/dev/null | grep -v '/' || true)"
+if [ -n "$scratch_patchers" ]; then
+  count="$(printf '%s\n' "$scratch_patchers" | wc -l | tr -d ' ')"
+  echo "task_finalize: refusing to publish -- $count untracked one-shot script(s) left at the repository root:" >&2
+  printf '%s\n' "$scratch_patchers" | sed 's/^/  /' >&2
+  echo "task_finalize: these never reach the PR, but they keep the worktree dirty and the" >&2
+  echo "  next worker lease refuses a dirty worktree, so the task stops dispatching." >&2
+  echo "task_finalize: delete them if they were scratch, or commit them if they are deliverables." >&2
+  exit 1
+fi
+
 # gh resolution mirrors delivery_toolchain/github/check_pr_merge_eligibility.py:
 # .orchestrator/bin/gh is a broker shim, not the real CLI.
 resolve_gh() {
