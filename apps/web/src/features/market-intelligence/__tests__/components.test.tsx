@@ -29,8 +29,8 @@ describe('Market Intelligence Components', () => {
     render(jsx);
 
     expect(screen.getByTestId("surface-readiness").textContent).toBe("ready");
-    expect(screen.getByTestId("readiness").textContent).toBe("Missing");
-    expect(screen.getByTestId("coverage-state").textContent).toBe("Missing");
+    expect(screen.getByTestId("readiness-123").textContent).toBe("Missing");
+    expect(screen.getByTestId("coverage-state-123").textContent).toBe("Missing");
   });
 
   it('SiteDossier handles missing evidence', async () => {
@@ -58,8 +58,8 @@ describe('Market Intelligence Components', () => {
     const jsx = await CandidateCompare({ siteIds: ["site-1"] });
     render(jsx);
 
-    expect(screen.getByTestId("readiness").textContent).toBe("Missing");
-    expect(screen.getByTestId("uncertainty").textContent).toBe("Missing");
-    expect(screen.getByTestId("missing-domains").textContent).toBe("Missing");
+    expect(screen.getByTestId("readiness-site-1").textContent).toBe("Missing");
+    expect(screen.getByTestId("uncertainty-site-1").textContent).toBe("Missing");
+    expect(screen.getByTestId("missing-domains-site-1").textContent).toBe("Missing");
   });
 });

@@ -1,9 +1,9 @@
 import React from "react";
 
-import type { CoverageQuery } from "../../api/generated/market-intelligence/client";
 import { CandidateCompare } from "./CandidateCompare";
 import { MarketExplorer } from "./MarketExplorer";
 import { SiteDossier } from "./SiteDossier";
+import type { CoverageQuery } from "./api";
 
 export type MarketIntelligenceSearchParams = Record<
   string,
