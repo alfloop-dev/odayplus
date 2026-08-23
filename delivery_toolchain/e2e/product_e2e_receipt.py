@@ -17,8 +17,8 @@ from typing import Any
 from _support import load_json_object as read_json
 
 SCHEMA_VERSION = "2.0.0"
-EXPECTED_CANONICAL_SPEC_COUNT = 16
-EXPECTED_PLAYWRIGHT_TEST_COUNT = 107
+EXPECTED_CANONICAL_SPEC_COUNT = 17
+EXPECTED_PLAYWRIGHT_TEST_COUNT = 108
 RAW_PLAYWRIGHT_PATH = "docs/evidence/e2e/raw_playwright_results.json"
 RAW_PYTEST_PATH = "docs/evidence/e2e/raw_pytest_results.json"
 RECEIPT_PATH = "docs/evidence/e2e/PRODUCT_E2E_EXECUTION_RECEIPT.json"
@@ -266,6 +266,7 @@ E2E_SCENARIOS: tuple[E2EScenario, ...] = (
 CANONICAL_SPEC_INVENTORY = (
     "tests/e2e/e2e-network-find-areas-api-binding.spec.ts",
     "tests/e2e/e2e-operator-console.spec.ts",
+    "tests/e2e/market_intelligence.spec.ts",
     "tests/e2e/operator-assisted-listing-intake-a11y.spec.ts",
     "tests/e2e/operator-assisted-listing-intake-mobile.spec.ts",
     "tests/e2e/operator-assisted-listing-intake.spec.ts",
@@ -1229,7 +1230,11 @@ def validate_receipt_packet(
             or playwright_counts.get("total_tests") != EXPECTED_PLAYWRIGHT_TEST_COUNT
             or playwright_counts.get("passed") != EXPECTED_PLAYWRIGHT_TEST_COUNT
         ):
-            errors.append("Playwright receipt counts do not prove 16 specs / 107 passes")
+            errors.append(
+                "Playwright receipt counts do not prove "
+                f"{EXPECTED_CANONICAL_SPEC_COUNT} specs / "
+                f"{EXPECTED_PLAYWRIGHT_TEST_COUNT} passes"
+            )
         if receipt.get("runner_counts") != {
             runner: artifact.get("counts") for runner, artifact in artifacts.items()
         }:
@@ -1280,7 +1285,8 @@ def validate_acceptance_scenarios_and_inventory(root: Path) -> list[str]:
     )
     if actual_inventory != tuple(sorted(CANONICAL_SPEC_INVENTORY)):
         errors.append(
-            "canonical Playwright spec inventory differs from the explicit 16-file registry"
+            "canonical Playwright spec inventory differs from the explicit "
+            f"{EXPECTED_CANONICAL_SPEC_COUNT}-file registry"
         )
 
     proc = subprocess.run(
