@@ -119,6 +119,22 @@ class ConfigContractTests(unittest.TestCase):
             with self.assertRaisesRegex(common.ConfigError, "typo_seconds"):
                 common.load_config(path)
 
+    def test_retired_worker_tree_guard_is_dropped_before_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = self._write(
+                Path(tmpdir),
+                "runtime.json",
+                {
+                    "worker_tree_guard": {"enabled": True, "mode": "block"},
+                    "supervisor": {"poll_interval_seconds": 30},
+                },
+            )
+
+            loaded = common.load_config(path)
+
+        self.assertNotIn("worker_tree_guard", loaded)
+        self.assertEqual(loaded["supervisor"]["poll_interval_seconds"], 30)
+
     def test_json_comments_are_rejected_in_runtime_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "runtime.json"

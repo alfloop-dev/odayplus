@@ -369,7 +369,8 @@ def test_task_finalize_refuses_uncommitted_changes(repo: Path, tmp_path: Path):
     (repo / "owned.txt").write_text("edited after the commit\n", encoding="utf-8")
     result = task_finalize(repo, TASK, "--dry-run")
     assert result.returncode == 1
-    assert "uncommitted tracked changes" in result.stderr
+    assert "worktree handoff is not clean" in result.stderr
+    assert "owned.txt" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -444,36 +445,39 @@ def test_task_finalize_lint_preflight_ignores_files_the_branch_did_not_touch(rep
     assert "dry-run: git push" in result.stdout
 
 
-def test_task_finalize_refuses_untracked_one_shot_patch_scripts(repo: Path, tmp_path: Path):
-    """Left-behind scratch scripts stop the *next* lease, not this publish.
-
-    They are untracked so they never reach the PR, but they keep the worktree
-    dirty and the lease refuses a dirty worktree. Refusing here puts the cleanup
-    on the worker that still knows which files were scratch.
-    """
+def test_task_finalize_refuses_every_untracked_owner_artifact(repo: Path, tmp_path: Path):
+    """The owner must resolve all unknown dirt before reviewer handoff."""
     commit_on_task_branch(repo, tmp_path)
     (repo / "fix_indent.py").write_text("# one-shot patcher\n", encoding="utf-8")
     (repo / "patch_test.py").write_text("# another\n", encoding="utf-8")
+    (repo / "worker-output.orig").write_text("old\n", encoding="utf-8")
+    (repo / "worker-output.patch").write_text("patch\n", encoding="utf-8")
+    (repo / "worker-output.rej").write_text("reject\n", encoding="utf-8")
+    (repo / ".python-version").write_text("3.12\n", encoding="utf-8")
 
     result = task_finalize(repo, TASK, "--dry-run")
 
     assert result.returncode == 1
-    assert "one-shot script" in result.stderr
+    assert "worktree handoff is not clean" in result.stderr
     assert "fix_indent.py" in result.stderr
     assert "patch_test.py" in result.stderr
+    assert "worker-output.orig" in result.stderr
+    assert "worker-output.patch" in result.stderr
+    assert "+1 more" in result.stderr
     assert "dry-run: git push" not in result.stdout
 
 
-def test_task_finalize_allows_a_nested_fix_script(repo: Path, tmp_path: Path):
-    """`scripts/fix_foo.py` is a plausible real tool; only the root is scratch."""
+def test_task_finalize_refuses_an_untracked_nested_script(repo: Path, tmp_path: Path):
+    """Path names do not prove ownership: nested output is still unknown dirt."""
     commit_on_task_branch(repo, tmp_path)
     (repo / "scripts").mkdir(exist_ok=True)
     (repo / "scripts" / "fix_encoding.py").write_text("# a real tool\n", encoding="utf-8")
 
     result = task_finalize(repo, TASK, "--dry-run")
 
-    assert result.returncode == 0, result.stderr
-    assert "dry-run: git push" in result.stdout
+    assert result.returncode == 1
+    assert "scripts/fix_encoding.py" in result.stderr
+    assert "dry-run: git push" not in result.stdout
 
 
 def test_task_finalize_allows_a_committed_root_level_fix_script(repo: Path, tmp_path: Path):
@@ -483,7 +487,7 @@ def test_task_finalize_allows_a_committed_root_level_fix_script(repo: Path, tmp_
     (repo / "fix_encoding.py").write_text("# deliberately shipped\n", encoding="utf-8")
     msg = write_msg(tmp_path, GOOD_MESSAGE)
     committed = worker_commit(
-        repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt", "--scope", "fix_encoding.py"
+        repo, "--task-id", TASK, "--message-file", str(msg), "--scope", "owned.txt", "fix_encoding.py"
     )
     assert committed.returncode == 0, committed.stderr
 

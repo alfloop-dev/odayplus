@@ -142,6 +142,8 @@ class BaseAdapter:
         run_id = new_runtime_id(runtime_key)
         log_path = runtime_log_path(runtime_key, request.agent_id)
         runtime_paths = worker_runtime_paths(self.config, run_id)
+        scratch_dir = runtime_paths["status_path"].parents[1] / "scratch" / run_id
+        scratch_dir.mkdir(parents=True, exist_ok=True)
 
         env = dict(os.environ)
         env.update(delivery_runtime_env(self.config, request.metadata))
@@ -154,6 +156,12 @@ class BaseAdapter:
                 "ORCH_AGENT_ID": request.agent_id,
                 "ORCH_PROVIDER": provider_id,
                 "ORCH_RUN_ID": run_id,
+                # One-shot patchers and probe scripts belong outside the task
+                # checkout.  The handoff seal remains authoritative, but this
+                # gives every provider a safe default that prevents the common
+                # untracked-root-file failure before it happens.
+                "ORCH_SCRATCH_DIR": str(scratch_dir),
+                "PANTHEON_WORKER_SCRATCH_DIR": str(scratch_dir),
             }
         )
         if request.task_id:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -34,6 +35,7 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
                         "workspace_path": str(workspace),
                         "status_root": str(status_root),
                         "target_display_name": "Codex",
+                        "materialized_context_files": ["AI_COLLABORATION_GUIDE.md", "docs/source.md"],
                     },
                 )
 
@@ -42,6 +44,10 @@ class AdapterFallbackPolicyTests(unittest.TestCase):
         self.assertEqual(env["PANTHEON_WORKTREE_ROOT"], str(workspace))
         self.assertEqual(env["PANTHEON_STATUS_ROOT"], str(status_root))
         self.assertEqual(env["ORCH_STATUS_ROOT"], str(status_root))
+        self.assertEqual(
+            json.loads(env["ORCH_MATERIALIZED_CONTEXT_PATHS"]),
+            ["AI_COLLABORATION_GUIDE.md", "docs/source.md"],
+        )
 
     def test_codex_alias_sets_agent_identity_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

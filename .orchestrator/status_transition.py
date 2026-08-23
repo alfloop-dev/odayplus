@@ -434,6 +434,65 @@ def repair_unsubmitted_review_tasks(config: dict[str, Any], status: dict[str, An
     return changed
 
 
+def reject_unsealed_worker_handoff(
+    config: dict[str, Any],
+    status: dict[str, Any],
+    task: dict[str, Any],
+    *,
+    worker_run_id: str | None,
+    reason: str,
+    detail: str,
+) -> bool:
+    """Return a submitted review to its owner when the owner exit is unsealed.
+
+    ``task_finalize`` has already verified and opened the remote PR at this
+    point, so the PR is deliberately retained.  What is revoked is only the
+    local reviewer handoff: a reviewer must never receive a workspace whose
+    owner changed after submission.
+    """
+    sv = _supervisor_module()
+    if str(task.get("status") or "").lower() != "review":
+        return True
+    task_id = str(task.get("id") or "")
+    if not task_id or not any(item is task for item in status.get("tasks", []) or []):
+        return False
+    timestamp = sv.utc_now()
+    message = (
+        f"Owner closeout seal rejected ({reason}: {detail}). The task returned to in_progress; "
+        "only the same owner may resume the recorded worktree, clean it, and resubmit the existing PR."
+    )
+    task["status"] = "in_progress"
+    task["last_update"] = timestamp
+    task["next"] = message
+    task["handoff_seal"] = {
+        "status": "rejected",
+        "reason": reason,
+        "detail": detail,
+        "worker_run_id": worker_run_id,
+        "rejected_at": timestamp,
+    }
+    task.pop("waiting_for", None)
+    task.pop("approved_head", None)
+    for handoff in status.get("handoffs", []) or []:
+        if handoff.get("task_id") == task_id and handoff.get("status") != "done":
+            handoff["status"] = "done"
+            handoff["resolved_at"] = timestamp
+    if not commit_canonical_task_transition(config, status):
+        return False
+    sv.write_activity_log(
+        config,
+        {
+            "type": "worker_handoff_seal_rejected",
+            "task_id": task_id,
+            "worker_run_id": worker_run_id,
+            "reason": reason,
+            "detail": detail,
+            "message": message,
+        },
+    )
+    return True
+
+
 def requeue_task_for_ci_repair(
     config: dict[str, Any],
     status: dict[str, Any],

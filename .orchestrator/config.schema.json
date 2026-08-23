@@ -1088,33 +1088,6 @@
       },
       "additionalProperties": false
     },
-    "worker_tree_guard": {
-      "type": "object",
-      "properties": {
-        "auto_restore_enabled": {
-          "type": "boolean"
-        },
-        "auto_restore_globs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "blocking_globs": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "mode": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false
-    },
     "worker_worktrees": {
       "type": "object",
       "properties": {

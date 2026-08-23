@@ -5761,6 +5761,7 @@ def command_submit_review(state: dict[str, Any], args: list[str]) -> None:
     task["pr_number"] = submission["pr_number"]
     task["pr_url"] = submission["pr_url"]
     task.pop("approved_head", None)
+    task.pop("handoff_seal", None)
     task.pop("helper_execution_lease", None)
     mark_handoffs_done_for_actor(state, task_id, actor)
     mark_blockers_resolved(state, task_id)
