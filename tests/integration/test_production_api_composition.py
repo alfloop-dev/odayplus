@@ -17,6 +17,10 @@ from models.shared_ml.production_contracts import (
 )
 from models.shared_ml.production_runtime import ProductionModelRegistryError
 from modules.avm.application import AVMProductionExecutor
+from modules.external_data.application.market_data_facade import (
+    CUTOVER_MODE_LEGACY_ONLY,
+    FACADE_MODE_ENV,
+)
 from shared.infrastructure.persistence.factory import _durable_bundle, _memory_bundle
 from tests.integration._authz import EXTERNAL_DATA_HEADERS
 
@@ -404,6 +408,10 @@ def test_production_routes_gate_only_the_dependency_they_use(
 ) -> None:
     monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    # The point of this case is which dependency each route gates on. That is
+    # only observable while the ingestion trigger still exists: under the
+    # post-cutover default it answers 410 before reaching the provider gate.
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
     bundle = _production_backed_bundle(tmp_path / "scoped-gate.sqlite3")
     app = create_app(
         persistence=bundle,
@@ -455,6 +463,7 @@ def test_non_production_fixture_ingestion_is_unchanged(monkeypatch: Any) -> None
     monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
     monkeypatch.setenv("ODP_PRODUCT_MODE", "test")
     monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "fixture")
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
     app = create_app(persistence=_memory_bundle())
 
     with TestClient(app) as client:

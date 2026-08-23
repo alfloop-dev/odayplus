@@ -69,7 +69,7 @@ FACADE_CONTRACT = "odayplus.market-data-facade.v2"
 FACADE_VERSION = "2.0.0"
 
 # ---------------------------------------------------------------------------
-# Reversible consumer cutover switch (ODP-XR-CUTOVER-PREP-002)
+# Reversible consumer cutover switch (ODP-XR-CUTOVER-ACTIVATE-002)
 # ---------------------------------------------------------------------------
 # One env-driven switch decides, for every consumer of legacy external
 # ingestion, whether odayplus still fetches (`LEGACY_ONLY`), fetches while the
@@ -82,9 +82,10 @@ FACADE_VERSION = "2.0.0"
 # but dead letters, so three independent readings of the environment is the one
 # failure mode a cutover switch may not have.
 #
-# The default is `LEGACY_ONLY`: this task prepares the cutover and must not
-# perform it. Nothing is disabled until an operator sets the mode, and a later
-# activation task authorizes that.
+# ODP-XR-CUTOVER-ACTIVATE-002 activates the cutover by setting the default to
+# `PLATFORM_PRIMARY`: ODayPlus consumers read versioned data-platform snapshots
+# directly, external ingestion is decommissioned by default, and legacy fetch
+# paths remain available only as an emergency rollback via kill switch.
 
 FACADE_MODE_ENV = "ODAY_MARKET_DATA_FACADE_MODE"
 KILL_SWITCH_ENV = "ODAY_MARKET_DATA_KILL_SWITCH_ACTIVE"
@@ -98,7 +99,7 @@ CUTOVER_MODES = (
     CUTOVER_MODE_DUAL_RUN,
     CUTOVER_MODE_PLATFORM_PRIMARY,
 )
-DEFAULT_CUTOVER_MODE = CUTOVER_MODE_LEGACY_ONLY
+DEFAULT_CUTOVER_MODE = CUTOVER_MODE_PLATFORM_PRIMARY
 
 #: PR #970 named the rolled-back state `LEGACY_FALLBACK`. It describes the same
 #: consumer behaviour as `LEGACY_ONLY`, so it resolves to it instead of

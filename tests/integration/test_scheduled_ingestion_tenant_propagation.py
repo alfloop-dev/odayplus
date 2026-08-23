@@ -37,6 +37,10 @@ from modules.external_data.application.ingestion_service import (
     ScheduledIngestionTenantError,
 )
 from modules.external_data.application.ingestion_store import InMemoryIngestionRunStore
+from modules.external_data.application.market_data_facade import (
+    CUTOVER_MODE_LEGACY_ONLY,
+    FACADE_MODE_ENV,
+)
 from modules.external_data.workers.scheduled_fetch import (
     ExternalFetchJobSpec,
     InMemoryExternalFetchStateStore,
@@ -51,6 +55,19 @@ TENANT_A = "tenant-alpha"
 TENANT_B = "tenant-beta"
 WINDOW_START = datetime(2026, 6, 28, 8, 0, tzinfo=UTC)
 WINDOW_END = datetime(2026, 6, 28, 9, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _legacy_fetch_mode(monkeypatch):
+    """Pin this module to the arm it asserts on.
+
+    Tenant propagation is a property of the legacy scheduled-fetch path: the
+    scheduler tick, the ``external-fetch`` job it enqueues and the worker that
+    executes it. ODP-XR-CUTOVER-ACTIVATE-002 moved the deployment default to
+    ``PLATFORM_PRIMARY``, where that path enqueues nothing at all -- which would
+    turn these assertions green-by-absence rather than by tenant isolation.
+    """
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
 
 
 def _spec(schedule_id: str = "hourly-listing") -> ExternalFetchJobSpec:
@@ -159,8 +176,16 @@ def test_scheduled_tenant_is_read_from_environment_with_fallback() -> None:
 def test_configured_tenant_reaches_payload_run_record_and_watermark() -> None:
     """Scheduler env -> queue payload -> handler -> persisted run -> watermark."""
     bundle = build_persistence()
+    # An explicit ``env`` mapping replaces ``os.environ`` wholesale for this
+    # scheduler, so the autouse fixture cannot reach it: the mode has to be
+    # named here too, or the tick resolves the ``PLATFORM_PRIMARY`` default and
+    # enqueues nothing.
     ODayScheduler(
-        persistence=bundle, env={SCHEDULED_TENANT_ENV_VAR: TENANT_A}
+        persistence=bundle,
+        env={
+            SCHEDULED_TENANT_ENV_VAR: TENANT_A,
+            FACADE_MODE_ENV: CUTOVER_MODE_LEGACY_ONLY,
+        },
     ).run_once()
 
     queued = _external_fetch_jobs(bundle)
