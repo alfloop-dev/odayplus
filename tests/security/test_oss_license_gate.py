@@ -216,6 +216,7 @@ def test_negative_stale_notice_rejected(tmp_path: Path) -> None:
 def test_negative_partial_install_rejected(tmp_path: Path) -> None:
     """Partial install missing dependencies must be detected."""
     import pytest
+
     from delivery_toolchain.security.generate_oss_notice import collect_npm
     
     empty_node_modules = tmp_path / "node_modules"

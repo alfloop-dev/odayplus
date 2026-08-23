@@ -39,6 +39,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -380,7 +381,7 @@ def evaluate_policy(
             pass
 
     def is_valid_exemption(ex: dict[str, Any], comp_name: str, lic: str) -> bool:
-        from datetime import datetime, timezone
+        from datetime import datetime
         required = ["package", "purl", "license_or_finding", "scope", "applicable_releases", "rationale"]
         if not all(k in ex for k in required):
             return False
@@ -395,7 +396,7 @@ def evaluate_policy(
             expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
         except ValueError:
             return False
-        if expires_at < datetime.now(timezone.utc):
+        if expires_at < datetime.now(UTC):
             return False
         approver = ex.get("approved_by", {})
         principal = approver.get("principal_id")
