@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -597,6 +598,170 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertTrue(receipt.success)
         self.assertEqual(deleted_ids, ["res-rel-1-0"])
         self.assertEqual(len(receipt.resources), 1)
+
+    def test_auto_cleanup_and_state_mapping_for_expired_labeled_resources(self) -> None:
+        """Verify scan_orphans auto-cleanup matches labeled resources and correctly resolves state paths."""
+        now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
+        expired_time = now - timedelta(hours=26)
+        raw_release_id = "odp-20260824-001"
+        rel_label = release_label_value(raw_release_id)
+
+        expired_labels = generate_staging_labels(
+            release_id=raw_release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            created_at=expired_time,
+            ttl_hours=24,
+        )
+        self.assertEqual(expired_labels["release_id"], rel_label)
+
+        # Inventory item carrying only the GCP label value for release_id
+        inventory = [
+            {
+                "id": "projects/p/instances/i/databases/stg_db",
+                "type": "google_sql_database",
+                "labels": dict(expired_labels),
+            }
+        ]
+
+        deleted_items: list[str] = []
+
+        def mock_cleaner(res: Mapping[str, Any]) -> bool:
+            deleted_items.append(str(res.get("id")))
+            return True
+
+        # Scan with auto_cleanup=True must successfully delete the expired resource
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            now=now,
+            auto_cleanup=True,
+            deletion_executor=mock_cleaner,
+        )
+
+        self.assertEqual(result.expired_count, 1)
+        self.assertEqual(result.orphan_count, 1)
+        self.assertEqual(result.cleaned_count, 1)
+        self.assertEqual(result.failed_cleanups, 0)
+        self.assertEqual(deleted_items, ["projects/p/instances/i/databases/stg_db"])
+
+        # Test state path resolution for both raw ID and label value
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+            # First write a tfvars using raw release ID
+            state_p, vars_p, inv_p = _terraform_state_paths(raw_release_id, tmp_path)
+            vars_p.write_text(json.dumps({"release_id": raw_release_id}), encoding="utf-8")
+            state_p.touch()
+
+            # Looking up by label value must resolve to the EXACT SAME state and vars file
+            lookup_state_p, lookup_vars_p, lookup_inv_p = _terraform_state_paths(rel_label, tmp_path)
+            self.assertEqual(state_p.resolve(), lookup_state_p.resolve())
+            self.assertEqual(vars_p.resolve(), lookup_vars_p.resolve())
+
+    def test_rerun_create_preserves_authoritative_created_at(self) -> None:
+        """Verify that rerunning create for the same release preserves existing created_at and does not refresh TTL."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_time = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+            second_time = datetime(2026, 8, 24, 14, 0, 0, tzinfo=UTC)  # 2 hours later
+
+            cfg = dataclasses_replace(self.valid_config, created_at="", release_id="odp-rerun-test-001")
+            planned_first = plan_staging_resources(cfg, created_at=first_time)
+
+            from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+            state_p, vars_p, inv_p = _terraform_state_paths(cfg.release_id, tmp_path)
+
+            # Mock executor to simulate Terraform apply by writing files
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=tmp_path,
+                initialize=False,
+            )
+            # Patch _run_terraform inside executor
+            import unittest.mock as mock
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+                # First run at 12:00:00Z
+                executor(cfg, planned_first)
+                self.assertTrue(vars_p.is_file())
+                first_vars = json.loads(vars_p.read_text(encoding="utf-8"))
+                self.assertEqual(first_vars["created_at"], "2026-08-24T12:00:00Z")
+
+                # Second run at 14:00:00Z without created_at (simulate CLI rerun)
+                planned_second = plan_staging_resources(cfg, created_at=second_time)
+                executor(cfg, planned_second)
+                second_vars = json.loads(vars_p.read_text(encoding="utf-8"))
+
+                # Authoritative timestamp MUST NOT have changed to 14:00:00Z
+                self.assertEqual(second_vars["created_at"], "2026-08-24T12:00:00Z")
+                inv_data = json.loads(inv_p.read_text(encoding="utf-8"))
+                self.assertEqual(inv_data[0]["created_at"], "2026-08-24T12:00:00Z")
+                self.assertEqual(inv_data[0]["expires_at"], "2026-08-25T12:00:00Z")
+
+    def test_create_failure_triggers_exact_cleanup(self) -> None:
+        """Verify that create failure automatically executes failure-path cleanup to delete partial resources."""
+        cleaned_resources: list[str] = []
+
+        def failing_creator(cfg: StagingConfig, res: Any) -> bool:
+            raise RuntimeError("Cloud Run API quota exceeded during service deployment")
+
+        def mock_cleaner(res: Mapping[str, Any]) -> bool:
+            cleaned_resources.append(str(res.get("type")))
+            return True
+
+        receipt = create_ephemeral_staging(
+            self.valid_config,
+            dry_run=False,
+            creation_executor=failing_creator,
+            cleanup_executor=mock_cleaner,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertTrue(receipt.remediation_required)
+        self.assertTrue(any("quota exceeded" in err for err in receipt.errors))
+        # Failure cleanup must have been called for planned resources
+        self.assertTrue(len(cleaned_resources) > 0)
+        self.assertIn("failure_cleanup_receipt", receipt.metadata)
+        self.assertTrue(receipt.metadata["failure_cleanup_receipt"]["success"])
+        self.assertIn("failure-path cleanup succeeded", receipt.remediation_notes)
+
+    def test_future_creation_timestamp_is_rejected(self) -> None:
+        """Verify that created_at in the future is rejected to prevent bypassing TTL policy."""
+        now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+
+        # Future timestamp in 2099
+        future_cfg = dataclasses_replace(self.valid_config, created_at="2099-01-01T00:00:00Z")
+        errors = validate_staging_config(future_cfg, now=now)
+        self.assertTrue(any("cannot be in the future" in err for err in errors))
+
+        # Future timestamp +1 hour
+        near_future_cfg = dataclasses_replace(self.valid_config, created_at="2026-08-24T13:00:00Z")
+        errors = validate_staging_config(near_future_cfg, now=now)
+        self.assertTrue(any("cannot be in the future" in err for err in errors))
+
+        # Timestamp within 5-min clock skew is allowed
+        skew_cfg = dataclasses_replace(self.valid_config, created_at="2026-08-24T12:03:00Z")
+        self.assertEqual(validate_staging_config(skew_cfg, now=now), [])
+
+        # create_ephemeral_staging with future timestamp fails
+        receipt = create_ephemeral_staging(future_cfg, dry_run=True, now=now)
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("cannot be in the future" in err for err in receipt.errors))
+
+        # extend_staging_ttl with future created_at raises ValueError
+        with self.assertRaises(ValueError):
+            extend_staging_ttl(
+                release_id="odp-20260824-001",
+                extend_hours=12,
+                reason="debugging",
+                owner="Antigravity",
+                current_expires_at=datetime(2099, 1, 2, 0, 0, 0, tzinfo=UTC),
+                created_at=datetime(2099, 1, 1, 0, 0, 0, tzinfo=UTC),
+                now=now,
+            )
 
     def test_validate_module_contract(self) -> None:
         errors = validate_module_contract(MODULE_DIR)

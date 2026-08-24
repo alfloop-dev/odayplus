@@ -277,7 +277,7 @@ def generate_staging_labels(
     return labels
 
 
-def validate_staging_config(config: StagingConfig) -> list[str]:
+def validate_staging_config(config: StagingConfig, now: datetime | None = None) -> list[str]:
     """Validate all staging configuration parameters against schema and security rules."""
     errors: list[str] = []
 
@@ -329,20 +329,29 @@ def validate_staging_config(config: StagingConfig) -> list[str]:
 
     if config.created_at:
         try:
-            parse_timestamp(config.created_at)
+            created_dt = parse_timestamp(config.created_at)
+            now_dt = now or datetime.now(UTC)
+            # Future timestamps cannot be used to bypass TTL policy
+            if created_dt > now_dt + timedelta(minutes=5):
+                errors.append(
+                    f"Invalid created_at: {config.created_at!r}. Creation timestamp cannot be in the future (current time: {format_timestamp(now_dt)})."
+                )
         except Exception:
             errors.append(f"Invalid created_at: {config.created_at!r}. Must be valid ISO/RFC3339 timestamp.")
 
     return errors
 
 
-def generate_tfvars(config: StagingConfig, created_at: datetime | None = None) -> dict[str, Any]:
+def generate_tfvars(
+    config: StagingConfig,
+    created_at: datetime | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Generate Terraform variable mapping for ephemeral staging module."""
-    errors = validate_staging_config(config)
+    now_dt = created_at or (parse_timestamp(config.created_at) if config.created_at else (now or datetime.now(UTC)))
+    errors = validate_staging_config(config, now=now_dt)
     if errors:
         raise ValueError(f"Cannot generate tfvars for invalid config: {'; '.join(errors)}")
-
-    now_dt = created_at or (parse_timestamp(config.created_at) if config.created_at else datetime.now(UTC))
 
     return {
         "project_id": config.project_id,
@@ -365,22 +374,26 @@ def generate_tfvars(config: StagingConfig, created_at: datetime | None = None) -
     }
 
 
-def plan_staging_resources(config: StagingConfig, created_at: datetime | None = None) -> list[StagingResource]:
+def plan_staging_resources(
+    config: StagingConfig,
+    created_at: datetime | None = None,
+    now: datetime | None = None,
+) -> list[StagingResource]:
     """Compute the deterministic list of release-scoped ephemeral resources."""
-    now = created_at or (parse_timestamp(config.created_at) if config.created_at else datetime.now(UTC))
-    expires = now + timedelta(hours=config.ttl_hours)
+    now_dt = created_at or (parse_timestamp(config.created_at) if config.created_at else (now or datetime.now(UTC)))
+    expires = now_dt + timedelta(hours=config.ttl_hours)
     labels = generate_staging_labels(
         release_id=config.release_id,
         candidate_sha=config.candidate_sha,
         manifest_digest=config.manifest_digest,
         owner_task_id=config.owner_task_id,
         ttl_hours=config.ttl_hours,
-        created_at=now,
+        created_at=now_dt,
         additional_labels=config.additional_labels,
     )
 
     names = get_ephemeral_resource_names(config.release_id, config.project_id)
-    created_iso = format_timestamp(now)
+    created_iso = format_timestamp(now_dt)
     expires_iso = format_timestamp(expires)
 
     return [
@@ -535,14 +548,64 @@ def _terraform_state_paths(
     release_id: str,
     state_dir: Path,
 ) -> tuple[Path, Path, Path]:
-    """Return stable per-release state, variables, and inventory paths."""
-    suffix = sanitize_release_suffix(release_id)
-    release_hash = compute_release_hash(release_id)
+    """Return stable per-release state, variables, and inventory paths.
+
+    Resolves accurately whether release_id is provided as a raw identifier
+    or as an already-encoded release label.
+    """
+    state_path_root = state_dir.expanduser().resolve()
+    clean_id = release_id.strip()
+
+    # 1. Direct file stem match (e.g. if clean_id is already a stem/label)
+    direct_state = state_path_root / f"{clean_id}.tfstate"
+    direct_vars = state_path_root / f"{clean_id}.tfvars.json"
+    if direct_state.is_file() or direct_vars.is_file():
+        return (
+            direct_state,
+            direct_vars,
+            state_path_root / f"{clean_id}.inventory.json",
+        )
+
+    # 2. Canonical stem computed from raw release_id
+    suffix = sanitize_release_suffix(clean_id)
+    release_hash = compute_release_hash(clean_id)
     stem = f"{suffix[:48]}-{release_hash}"
+    stem_state = state_path_root / f"{stem}.tfstate"
+    stem_vars = state_path_root / f"{stem}.tfvars.json"
+    if stem_state.is_file() or stem_vars.is_file():
+        return (
+            stem_state,
+            stem_vars,
+            state_path_root / f"{stem}.inventory.json",
+        )
+
+    # 3. Check existing tfvars files for matching raw release_id or release_label
+    target_label = release_label_value(clean_id)
+    if state_path_root.is_dir():
+        for tfvars_file in sorted(state_path_root.glob("*.tfvars.json")):
+            try:
+                data = json.loads(tfvars_file.read_text(encoding="utf-8"))
+                rel = str(data.get("release_id", "")).strip()
+                if rel and (
+                    rel == clean_id
+                    or rel == target_label
+                    or release_label_value(rel) == clean_id
+                    or release_label_value(rel) == target_label
+                ):
+                    base_stem = tfvars_file.name[:-len(".tfvars.json")]
+                    return (
+                        state_path_root / f"{base_stem}.tfstate",
+                        tfvars_file,
+                        state_path_root / f"{base_stem}.inventory.json",
+                    )
+            except Exception:
+                continue
+
+    # Default to computed stem
     return (
-        state_dir / f"{stem}.tfstate",
-        state_dir / f"{stem}.tfvars.json",
-        state_dir / f"{stem}.inventory.json",
+        state_path_root / f"{stem}.tfstate",
+        state_path_root / f"{stem}.tfvars.json",
+        state_path_root / f"{stem}.inventory.json",
     )
 
 
@@ -595,7 +658,17 @@ def make_terraform_creation_executor(
 
         state_path_root.mkdir(parents=True, exist_ok=True)
         state_path, tfvars_path, inventory_path = _terraform_state_paths(config.release_id, state_path_root)
-        created_at = resources[0].created_at
+
+        # Preserve existing authoritative created_at if already provisioned
+        created_at = config.created_at or resources[0].created_at
+        if tfvars_path.is_file():
+            try:
+                prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
+                if prev_vars.get("created_at") and not config.created_at:
+                    created_at = str(prev_vars["created_at"]).strip()
+            except Exception:
+                pass
+
         apply_config = dataclasses.replace(config, created_at=created_at)
         tfvars_path.write_text(
             json.dumps(generate_tfvars(apply_config), indent=2, sort_keys=True),
@@ -608,9 +681,11 @@ def make_terraform_creation_executor(
                         "type": resource.resource_type,
                         "name": resource.resource_name,
                         "id": resource.resource_id,
+                        "release_id": resource.release_id,
+                        "raw_release_id": resource.release_id,
                         "labels": dict(resource.labels),
-                        "created_at": resource.created_at,
-                        "expires_at": resource.expires_at,
+                        "created_at": created_at,
+                        "expires_at": format_timestamp(parse_timestamp(created_at) + timedelta(hours=config.ttl_hours)),
                     }
                     for resource in resources
                 ],
@@ -707,10 +782,16 @@ def create_ephemeral_staging(
     dry_run: bool = False,
     now: datetime | None = None,
     creation_executor: Callable[[StagingConfig, Sequence[StagingResource]], bool | Sequence[dict[str, Any]]] | None = None,
+    cleanup_executor: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> StagingLifecycleReceipt:
-    """Create or plan an ephemeral staging environment instance."""
-    now_dt = now or (parse_timestamp(config.created_at) if config.created_at else datetime.now(UTC))
-    errors = validate_staging_config(config)
+    """Create or plan an ephemeral staging environment instance.
+
+    If creation execution fails on a live deployment, failure-path cleanup is
+    immediately triggered to avoid leaving partial dangling resources, per
+    ODP-DEPLOY-EPHEMERAL-STAGING-PROD-ROLLOUT-PLAN §15.
+    """
+    now_dt = now or datetime.now(UTC)
+    errors = validate_staging_config(config, now=now_dt)
     if errors:
         return StagingLifecycleReceipt(
             action="create",
@@ -725,7 +806,21 @@ def create_ephemeral_staging(
             metadata={"dry_run": dry_run},
         )
 
-    planned = plan_staging_resources(config, created_at=now_dt)
+    creation_dt = parse_timestamp(config.created_at) if config.created_at else now_dt
+    planned = plan_staging_resources(config, created_at=creation_dt, now=now_dt)
+    planned_dicts = [
+        {
+            "type": r.resource_type,
+            "name": r.resource_name,
+            "id": r.resource_id,
+            "release_id": r.release_id,
+            "raw_release_id": r.release_id,
+            "created_at": r.created_at,
+            "expires_at": r.expires_at,
+            "labels": dict(r.labels),
+        }
+        for r in planned
+    ]
 
     if dry_run:
         resource_dicts = [
@@ -797,6 +892,28 @@ def create_ephemeral_staging(
         exec_success = False
         errors.append(f"Creation executor failed: {exc}")
 
+    cleanup_receipt: dict[str, Any] | None = None
+    if not exec_success:
+        # Failure path: trigger exact cleanup per rollout plan §15
+        if cleanup_executor is not None:
+            try:
+                c_receipt = cleanup_ephemeral_staging(
+                    release_id=config.release_id,
+                    project_id=config.project_id,
+                    resource_inventory=planned_dicts,
+                    dry_run=False,
+                    now=now_dt,
+                    deletion_executor=cleanup_executor,
+                    allow_empty=True,
+                )
+                cleanup_receipt = c_receipt.to_dict()
+                if not c_receipt.success:
+                    errors.extend([f"Failure-path cleanup error: {e}" for e in c_receipt.errors])
+            except Exception as clean_exc:
+                errors.append(f"Failure-path cleanup failed: {clean_exc}")
+        else:
+            errors.append("No cleanup executor available for failure-path cleanup.")
+
     resource_dicts = [
         {
             "type": r.resource_type,
@@ -810,6 +927,24 @@ def create_ephemeral_staging(
         for r in planned
     ]
 
+    remediation_required = not exec_success
+    remediation_notes = ""
+    if not exec_success:
+        if cleanup_receipt and cleanup_receipt.get("success"):
+            remediation_notes = "Creation failed; failure-path cleanup succeeded in deleting partial staging resources."
+        else:
+            remediation_notes = "Creation failed and partial staging resources may require manual remediation."
+
+    metadata = {
+        "dry_run": False,
+        "ttl_hours": config.ttl_hours,
+        "project_id": config.project_id,
+        "region": config.region,
+        "scheduler_paused": True,
+    }
+    if cleanup_receipt is not None:
+        metadata["failure_cleanup_receipt"] = cleanup_receipt
+
     return StagingLifecycleReceipt(
         action="create",
         release_id=config.release_id,
@@ -819,15 +954,9 @@ def create_ephemeral_staging(
         timestamp=format_timestamp(now_dt),
         resources=resource_dicts,
         errors=errors,
-        remediation_required=not exec_success,
-        remediation_notes="" if exec_success else "Creation executor encountered errors during provisioning.",
-        metadata={
-            "dry_run": False,
-            "ttl_hours": config.ttl_hours,
-            "project_id": config.project_id,
-            "region": config.region,
-            "scheduler_paused": True,
-        },
+        remediation_required=remediation_required,
+        remediation_notes=remediation_notes,
+        metadata=metadata,
     )
 
 
@@ -842,8 +971,16 @@ def is_staging_ephemeral_resource(
     Requires full ownership labels (managed_by=terraform, app=oday-plus, environment=staging,
     ephemeral=true, release_id, candidate_sha, manifest_digest_prefix, owner_task).
     """
-    target_suffix = release_label_value(target_release_id)
-    if not target_suffix:
+    target_clean = str(target_release_id).strip()
+    if not target_clean:
+        return False
+
+    actual_label = str(labels.get("release_id", "")).strip()
+    if not actual_label:
+        return False
+
+    target_label = release_label_value(target_clean)
+    if actual_label != target_label and actual_label != target_clean:
         return False
 
     if (
@@ -851,7 +988,6 @@ def is_staging_ephemeral_resource(
         or labels.get("environment") != "staging"
         or labels.get("managed_by") != "terraform"
         or labels.get("ephemeral") != "true"
-        or str(labels.get("release_id", "")).strip() != target_suffix
     ):
         return False
 
@@ -1104,6 +1240,7 @@ def scan_orphans(
             continue
 
         release_id = str(labels.get("release_id", "")).strip()
+        raw_release_id = str(res.get("raw_release_id") or res.get("release_id") or "").strip()
         created_str = labels.get("created_at", "")
         expires_str = labels.get("expires_at", "")
 
@@ -1117,6 +1254,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
+                "raw_release_id": raw_release_id or release_id,
                 "reason": "Incomplete ownership labels (release_id, candidate_sha, manifest_digest_prefix, owner_task)",
                 "labels": dict(labels),
             })
@@ -1128,6 +1266,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
+                "raw_release_id": raw_release_id or release_id,
                 "reason": "Missing created_at or expires_at ownership label",
                 "labels": dict(labels),
             })
@@ -1144,6 +1283,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
+                "raw_release_id": raw_release_id or release_id,
                 "reason": "Invalid created_at or expires_at ownership label",
                 "labels": dict(labels),
             })
@@ -1155,6 +1295,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
+                "raw_release_id": raw_release_id or release_id,
                 "reason": "expires_at precedes created_at",
                 "labels": dict(labels),
             })
@@ -1166,6 +1307,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
+                "raw_release_id": raw_release_id or release_id,
                 "reason": f"TTL exceeds policy maximum of {max_ttl_hours}h",
                 "labels": dict(labels),
             })
@@ -1181,6 +1323,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
+                "raw_release_id": raw_release_id or release_id,
                 "reason": f"Resource expired (exceeded TTL {max_ttl_hours}h)",
                 "labels": dict(labels),
             })
@@ -1195,14 +1338,18 @@ def scan_orphans(
                 "id": item["id"],
                 "type": item["type"],
                 "labels": item.get("labels", {}),
+                "release_id": item.get("raw_release_id") or item.get("release_id"),
+                "raw_release_id": item.get("raw_release_id") or item.get("release_id"),
             }
-            rel_id = str(item.get("release_id", ""))
+            rel_id = str(item.get("raw_release_id") or item.get("release_id", ""))
+            label_rel_id = str(item.get("release_id", ""))
 
             # Only a complete, exact ownership set may be handed to cleanup.
             # Incomplete or unmanaged candidates are remediation-only; treating
             # their zero-match result as success would hide an orphan forever.
-            if not rel_id or not is_staging_ephemeral_resource(
-                res_dict["labels"], rel_id
+            if not rel_id or not (
+                is_staging_ephemeral_resource(res_dict["labels"], rel_id)
+                or (label_rel_id and is_staging_ephemeral_resource(res_dict["labels"], label_rel_id))
             ):
                 failed_cleanups += 1
                 remediation_tasks.append({
@@ -1297,6 +1444,9 @@ def extend_staging_ttl(
 
     if created_at > current_expires_at:
         raise ValueError("created_at cannot be after current_expires_at.")
+
+    if created_at > now_dt + timedelta(minutes=5):
+        raise ValueError("created_at cannot be in the future.")
 
     new_expires_at = current_expires_at + timedelta(hours=extend_hours)
     total_ttl_hours = (new_expires_at - created_at).total_seconds() / 3600.0
@@ -1486,6 +1636,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
 
     if args.command == "create":
+        state_dir_path = Path(args.state_dir).expanduser().resolve()
+        existing_created_at = ""
+        if not args.created_at:
+            _, existing_tfvars_path, existing_inventory_path = _terraform_state_paths(args.release_id, state_dir_path)
+            if existing_tfvars_path.is_file():
+                try:
+                    data = json.loads(existing_tfvars_path.read_text(encoding="utf-8"))
+                    existing_created_at = str(data.get("created_at", "")).strip()
+                except Exception:
+                    pass
+            if not existing_created_at and existing_inventory_path.is_file():
+                try:
+                    inv = json.loads(existing_inventory_path.read_text(encoding="utf-8"))
+                    if isinstance(inv, list) and inv and isinstance(inv[0], dict):
+                        existing_created_at = str(inv[0].get("created_at", "")).strip()
+                except Exception:
+                    pass
+
+        created_at_to_use = args.created_at or existing_created_at or format_timestamp(datetime.now(UTC))
+
         config = StagingConfig(
             release_id=args.release_id,
             candidate_sha=args.candidate_sha,
@@ -1507,13 +1677,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_image=args.api_image,
             web_image=args.web_image,
             ttl_hours=args.ttl_hours,
-            created_at=args.created_at or format_timestamp(datetime.now(UTC)),
+            created_at=created_at_to_use,
             owner_task_id=args.owner_task_id,
         )
 
         creation_executor = None
+        cleanup_executor = None
         if not args.dry_run:
             creation_executor = make_terraform_creation_executor(
+                module_dir=Path(args.terraform_module_dir),
+                state_dir=Path(args.state_dir),
+                terraform_bin=args.terraform_bin,
+                initialize=not args.skip_terraform_init,
+            )
+            cleanup_executor = make_terraform_deletion_executor(
+                args.release_id,
                 module_dir=Path(args.terraform_module_dir),
                 state_dir=Path(args.state_dir),
                 terraform_bin=args.terraform_bin,
@@ -1523,6 +1701,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config,
             dry_run=args.dry_run,
             creation_executor=creation_executor,
+            cleanup_executor=cleanup_executor,
         )
         if args.tfvars_out and (receipt.success or args.dry_run):
             tfvars = generate_tfvars(config)
@@ -1570,19 +1749,21 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         def orphan_deletion_executor(resource: Mapping[str, Any]) -> bool:
             labels = resource.get("labels", {})
-            release_id = str(labels.get("release_id", "")).strip() if isinstance(labels, Mapping) else ""
-            if not release_id:
+            raw_release_id = str(resource.get("raw_release_id") or resource.get("release_id") or "").strip()
+            label_release_id = str(labels.get("release_id", "")).strip() if isinstance(labels, Mapping) else ""
+            target_id = raw_release_id or label_release_id
+            if not target_id:
                 raise RuntimeError("orphan resource has no release_id for release-scoped cleanup")
-            executor = deletion_executors.get(release_id)
+            executor = deletion_executors.get(target_id)
             if executor is None:
                 executor = make_terraform_deletion_executor(
-                    release_id,
+                    target_id,
                     module_dir=Path(args.terraform_module_dir),
                     state_dir=Path(args.state_dir),
                     terraform_bin=args.terraform_bin,
                     initialize=not args.skip_terraform_init,
                 )
-                deletion_executors[release_id] = executor
+                deletion_executors[target_id] = executor
             return executor(resource)
 
         result = scan_orphans(
