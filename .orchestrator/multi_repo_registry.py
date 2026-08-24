@@ -530,7 +530,7 @@ def resolve_repository_binding(
                 "unresolved",
                 (
                     f"repository_checkout_mismatch: {resolved_root} points at "
-                    f"{actual}, expected {slug or expected_slug}"
+                    f"{actual}, expected {wanted}"
                 ),
                 str(repo.get("default_branch") or "").strip(),
             )
@@ -562,7 +562,14 @@ def resolve_task_repository(config: dict[str, Any], task: dict[str, Any] | None)
                 "unresolved",
                 f"unknown_repository: {declared} is not in the repository registry",
             )
-        return resolve_repository_binding(config, repo_id, expected_slug=declared)
+        # Canonicalize to the configured slug so origin verification compares
+        # the right value.  A task may declare a registry ID ("oday_data_platform"),
+        # an alias, a display name, or the full GitHub slug; all resolve to the
+        # same repo_id but only the configured slug matches what `git remote
+        # get-url origin` returns.  Passing the raw declared value caused false
+        # repository_checkout_mismatch when it was not already the slug.
+        configured_slug = repository_slug(config, repo_id)
+        return resolve_repository_binding(config, repo_id, expected_slug=configured_slug)
 
     inferred = _infer_repository_from_artifacts(config, task)
     if inferred is None:
@@ -586,7 +593,7 @@ def matching_repo_id(config: dict[str, Any], value: str | None) -> str | None:
     candidate = str(value or "").strip()
     if not candidate:
         return None
-    lowered = candidate.casefold()
+    lowered = re.sub(r"\.git$", "", candidate).casefold()
     for repo_id, repo in repositories(config).items():
         options = {
             repo_id,
@@ -598,7 +605,10 @@ def matching_repo_id(config: dict[str, Any], value: str | None) -> str | None:
             # either one routes somewhere else.
             *(str(alias) for alias in (repo.get("aliases") or [])),
         }
-        normalized = {item.strip().casefold() for item in options if item and item.strip()}
+        normalized = {
+            re.sub(r"\.git$", "", item.strip()).casefold()
+            for item in options if item and item.strip()
+        }
         if lowered in normalized:
             return repo_id
     return None

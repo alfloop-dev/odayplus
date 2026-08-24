@@ -22,3 +22,7 @@ Required environment variables:
 
 Secrets must be injected by the deployment platform. They are never committed to
 Terraform variable files, Docker compose, or CLI plan outputs.
+
+The target lifecycle, release gates, ephemeral staging isolation, production
+blue-green rollout, and Supervisor/Auto Worker task DAG are defined in
+[`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`](EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md).
