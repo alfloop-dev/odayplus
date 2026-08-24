@@ -73,7 +73,14 @@ DEFAULT_POLICY = ROOT / "docs/design/emgi/v0.4.1/LEGACY_EXTERNAL_DATA_DISPOSITIO
 EXPECTED_CONTRACT = "odayplus.legacy-external-data-disposition.v2"
 EXPECTED_SCHEMA_VERSION = 2
 
-CHECKS = ("classification", "freeze", "capabilities", "provider_references")
+CHECKS = (
+    "classification",
+    "freeze",
+    "capabilities",
+    "provider_references",
+    "runtime_gate_invariants",
+)
+CHECK_ALL = "__all__"
 
 
 class PolicyError(RuntimeError):
@@ -382,6 +389,180 @@ def validate_policy_structure(policy: Mapping[str, Any], *, source: str = "<poli
         if not _string_list(declaration, "paths", f"{source}: reference {declaration_id}"):
             raise PolicyError(f"{source}: reference {declaration_id!r} needs a paths list")
         _require(declaration, "rationale", str, f"{source}: reference {declaration_id}")
+
+    runtime_gates = _require(policy, "runtime_gate_invariants", dict, source)
+    if runtime_gates is not None:
+        if not isinstance(runtime_gates, Mapping):
+            raise PolicyError(f"{source}: runtime_gate_invariants must be a mapping")
+        version = _require(
+            runtime_gates, "schema_version", int, f"{source}: runtime_gate_invariants"
+        )
+        if version != 1:
+            raise PolicyError(
+                f"{source}: runtime_gate_invariants schema_version must be 1, got {version}"
+            )
+        entries = _require(runtime_gates, "entries", list, f"{source}: runtime_gate_invariants")
+        if not entries:
+            raise PolicyError(f"{source}: runtime_gate_invariants.entries must not be empty")
+
+        dispositioned_paths = {
+            path
+            for surface in policy.get("frozen_surfaces", [])
+            for path in surface.get("inventory", [])
+        }
+        dispositioned_paths |= {
+            path
+            for capability in policy.get("blocked_capabilities", [])
+            for path in capability.get("grandfathered_paths", [])
+        }
+
+        gate_ids: set[str] = set()
+        allowed_assertion_types = {"contains", "ordered_tokens", "constant_equals"}
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                raise PolicyError(f"{source}: runtime_gate_invariants entries must be mappings")
+            entry_id = _require(entry, "id", str, f"{source}: runtime gate invariant")
+            if entry_id in gate_ids:
+                raise PolicyError(
+                    f"{source}: duplicate runtime gate invariant id {entry_id!r}"
+                )
+            gate_ids.add(entry_id)
+
+            paths = _string_list(entry, "paths", f"{source}: runtime gate invariant {entry_id}")
+            if not paths:
+                raise PolicyError(
+                    f"{source}: runtime gate invariant {entry_id!r} must declare a non-empty paths list"
+                )
+            for path in paths:
+                if path not in dispositioned_paths:
+                    raise PolicyError(
+                        f"{source}: runtime gate invariant {entry_id!r} path {path!r} "
+                        "is not dispositioned in inventory or grandfathered_paths"
+                    )
+
+            assertions = _require(
+                entry, "assertions", list, f"{source}: runtime gate invariant {entry_id}"
+            )
+            if not assertions:
+                raise PolicyError(
+                    f"{source}: runtime gate invariant {entry_id!r} assertions must not be empty"
+                )
+            for assertion in assertions:
+                if not isinstance(assertion, Mapping):
+                    raise PolicyError(
+                        f"{source}: runtime gate invariant {entry_id!r} assertions must be mappings"
+                    )
+                atype = _require(
+                    assertion, "type", str, f"{source}: runtime gate invariant {entry_id} assertion"
+                )
+                if atype not in allowed_assertion_types:
+                    raise PolicyError(
+                        f"{source}: runtime gate invariant {entry_id!r} uses unknown assertion type {atype!r}"
+                    )
+                if atype == "contains":
+                    _require(
+                        assertion, "text", str, f"{source}: runtime gate invariant {entry_id} assertion"
+                    )
+                elif atype == "ordered_tokens":
+                    _require(
+                        assertion, "before", str, f"{source}: runtime gate invariant {entry_id} assertion"
+                    )
+                    _require(
+                        assertion, "after", str, f"{source}: runtime gate invariant {entry_id} assertion"
+                    )
+                elif atype == "constant_equals":
+                    _require(
+                        assertion, "name", str, f"{source}: runtime gate invariant {entry_id} assertion"
+                    )
+                    if "value" not in assertion:
+                        raise PolicyError(
+                            f"{source}: runtime gate invariant {entry_id} assertion: missing required key 'value'"
+                        )
+
+
+def evaluate_runtime_gate_assertion(
+    assertion: Mapping[str, Any],
+    content: str,
+) -> bool:
+    """Evaluate one runtime gate closure invariant assertion against file content."""
+    atype = assertion.get("type")
+    if atype == "contains":
+        return str(assertion.get("text", "")) in content
+    if atype == "ordered_tokens":
+        before = str(assertion.get("before", ""))
+        after = str(assertion.get("after", ""))
+        if before not in content or after not in content:
+            return False
+        return content.index(before) < content.index(after)
+    if atype == "constant_equals":
+        name = str(assertion.get("name", ""))
+        value = str(assertion.get("value", ""))
+        pattern = rf"^\s*{re.escape(name)}\s*=\s*{re.escape(value)}\b"
+        return re.search(pattern, content, re.MULTILINE) is not None
+    return False
+
+
+def check_runtime_gate_invariants(
+    files: Sequence[str],
+    policy: Mapping[str, Any],
+    read_text: Callable[[str], str],
+) -> tuple[list[Violation], dict[str, Any]]:
+    """Verify every dispositioned runtime closure assertion against live files."""
+    tracked = set(files)
+    violations: list[Violation] = []
+    entry_count = 0
+    path_count = 0
+    assertion_count = 0
+
+    for entry in policy["runtime_gate_invariants"]["entries"]:
+        entry_id = entry["id"]
+        entry_count += 1
+        for path in entry["paths"]:
+            path_count += 1
+            if path not in tracked:
+                violations.append(
+                    Violation(
+                        check="runtime_gate_invariants",
+                        code="runtime_gate_missing_path",
+                        path=path,
+                        detail=f"runtime gate invariant {entry_id!r} names a path that is not tracked",
+                    )
+                )
+                continue
+
+            content = read_text(path)
+            if not content:
+                violations.append(
+                    Violation(
+                        check="runtime_gate_invariants",
+                        code="runtime_gate_unreadable_path",
+                        path=path,
+                        detail=f"runtime gate invariant {entry_id!r} path is empty or unreadable",
+                    )
+                )
+                continue
+
+            for assertion in entry["assertions"]:
+                assertion_count += 1
+                if evaluate_runtime_gate_assertion(assertion, content):
+                    continue
+                violations.append(
+                    Violation(
+                        check="runtime_gate_invariants",
+                        code="runtime_gate_assertion_failed",
+                        path=path,
+                        detail=(
+                            f"runtime gate invariant {entry_id!r} assertion failed: "
+                            f"{json.dumps(dict(assertion), ensure_ascii=False, sort_keys=True)}"
+                        ),
+                    )
+                )
+
+    return violations, {
+        "runtime_gate_entries": entry_count,
+        "runtime_gate_paths": path_count,
+        "runtime_gate_assertions": assertion_count,
+    }
 
 
 def _compile_regex(pattern: str, where: str) -> re.Pattern[str]:
@@ -733,6 +914,10 @@ def evaluate(
         violations, stats = check_provider_references(files, policy, read_text)
         report.violations.extend(violations)
         report.stats.update(stats)
+    if "runtime_gate_invariants" in checks:
+        violations, stats = check_runtime_gate_invariants(files, policy, read_text)
+        report.violations.extend(violations)
+        report.stats.update(stats)
 
     report.violations.sort(key=lambda violation: (violation.check, violation.path, violation.code))
     return report
@@ -745,8 +930,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--check",
         action="append",
-        choices=CHECKS,
-        help="run only the named check (repeatable); defaults to all checks",
+        nargs="?",
+        const=CHECK_ALL,
+        choices=(*CHECKS, CHECK_ALL),
+        help="run only the named check (repeatable); bare --check runs all checks",
     )
     parser.add_argument("--json", action="store_true", help="emit the machine-readable report")
     return parser.parse_args(argv)
@@ -765,7 +952,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"git ls-files failed in {args.root}: {stderr.strip()}", file=sys.stderr)
         return 2
 
-    report = evaluate(policy, files, make_reader(args.root), tuple(args.check or CHECKS))
+    requested_checks = tuple(args.check or CHECKS)
+    if CHECK_ALL in requested_checks:
+        if len(requested_checks) != 1:
+            print("policy error: bare --check cannot be combined with a named check", file=sys.stderr)
+            return 2
+        requested_checks = CHECKS
+
+    report = evaluate(policy, files, make_reader(args.root), requested_checks)
 
     if args.json:
         print(json.dumps(report.to_dict(), indent=2, sort_keys=False))
