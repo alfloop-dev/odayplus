@@ -39,6 +39,7 @@ from scripts.validate_external_data_boundary import (  # noqa: E402
     Report,
     classify,
     evaluate,
+    evaluate_runtime_gate_assertion,
     glob_match,
     load_policy,
     main,
@@ -133,6 +134,116 @@ def test_runtime_gate_invariants_are_dispositioned_and_structured(
             "ordered_tokens",
             "constant_equals",
         }
+
+
+def test_runtime_gate_invariants_pass_on_live_tree(
+    policy: Mapping[str, Any],
+) -> None:
+    """All runtime gate invariants pass against the live repository tree."""
+    section = policy["runtime_gate_invariants"]
+    reader = make_reader(REPO_ROOT)
+    for entry in section["entries"]:
+        entry_id = entry["id"]
+        for path in entry["paths"]:
+            content = reader(path)
+            assert content, f"runtime gate invariant {entry_id} path {path} is empty or unreadable"
+            for assertion in entry["assertions"]:
+                assert evaluate_runtime_gate_assertion(assertion, content), (
+                    f"runtime gate invariant {entry_id} assertion {assertion} failed on {path}"
+                )
+
+
+def test_runtime_gate_invariants_reject_scheduler_mutation(policy: Mapping[str, Any]) -> None:
+    """Mutating scheduler to unconditionally enqueue external fetch fails the invariant."""
+    entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "scheduler_no_external_fetch_default"
+    )
+    assertion = entry["assertions"][0]
+    mutated_scheduler = """
+    def recurring_job_types(self) -> tuple[str, ...]:
+        return (EXTERNAL_FETCH_JOB_TYPE,)
+    """
+    assert not evaluate_runtime_gate_assertion(assertion, mutated_scheduler)
+
+
+def test_runtime_gate_invariants_reject_command_mutations(policy: Mapping[str, Any]) -> None:
+    """Mutating backfill commands to drop provider validation or guards fails invariants."""
+    provider_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "external_backfill_provider_validation"
+    )
+    feed_guard_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "external_backfill_feed_url_guard"
+    )
+    geo_live_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "geography_backfill_live_mode_guard"
+    )
+    geo_dsn_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "geography_backfill_dsn_guard"
+    )
+
+    mutated_backfill = """
+    def run_backfill():
+        do_unvalidated_ingestion()
+    """
+    assert not evaluate_runtime_gate_assertion(provider_entry["assertions"][0], mutated_backfill)
+    assert not evaluate_runtime_gate_assertion(feed_guard_entry["assertions"][0], mutated_backfill)
+
+    mutated_geo = """
+    def main():
+        connect_unconditionally()
+    """
+    assert not evaluate_runtime_gate_assertion(geo_live_entry["assertions"][0], mutated_geo)
+    assert not evaluate_runtime_gate_assertion(geo_dsn_entry["assertions"][0], mutated_geo)
+
+
+def test_runtime_gate_invariants_reject_worker_facade_and_api_mutations(
+    policy: Mapping[str, Any],
+) -> None:
+    """Mutating worker handler, facade cutover default, or API routes fails invariants."""
+    order_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "worker_gate_before_service_construction"
+    )
+    mutated_worker_order = """
+    service = ExternalIngestionService()
+    if not fetch_enabled:
+        raise NonRetryableJobError()
+    """
+    assert not evaluate_runtime_gate_assertion(order_entry["assertions"][0], mutated_worker_order)
+
+    gate_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "worker_fetch_gate"
+    )
+    assert not evaluate_runtime_gate_assertion(
+        gate_entry["assertions"][0], "service = ExternalIngestionService()"
+    )
+
+    facade_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "facade_platform_primary_default"
+    )
+    mutated_facade = "DEFAULT_CUTOVER_MODE = CUTOVER_MODE_LEGACY_ONLY\n"
+    assert not evaluate_runtime_gate_assertion(facade_entry["assertions"][0], mutated_facade)
+
+    api_410_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "api_external_fetch_http_410"
+    )
+    mutated_api = "raise ApiError(status.HTTP_404_NOT_FOUND, 'not found')\n"
+    assert not evaluate_runtime_gate_assertion(api_410_entry["assertions"][0], mutated_api)
+
+    gw_entry = next(
+        e for e in policy["runtime_gate_invariants"]["entries"]
+        if e["id"] == "provider_gateway_geocode_unconfigured"
+    )
+    mutated_gw = "return {'status': 'ok'}\n"
+    assert not evaluate_runtime_gate_assertion(gw_entry["assertions"][0], mutated_gw)
 
 
 def test_policy_supersedes_the_v1_diff_gate(policy: Mapping[str, Any]) -> None:
@@ -547,6 +658,50 @@ def test_loader_rejects_a_missing_file(tmp_path: Path) -> None:
                  "matches": ["a"], "paths": ["b"], "rationale": "r"}
             ),
             "unknown signal",
+        ),
+        (
+            lambda p: p["runtime_gate_invariants"]["entries"].append({
+                "id": "bad_assertion",
+                "paths": ["modules/external_data/application/market_data_facade.py"],
+                "assertions": [{"type": "unknown_type"}],
+            }),
+            "unknown assertion type",
+        ),
+        (
+            lambda p: p["runtime_gate_invariants"]["entries"].append({
+                "id": "facade_platform_primary_default",
+                "paths": ["modules/external_data/application/market_data_facade.py"],
+                "assertions": [{"type": "contains", "text": "foo"}],
+            }),
+            "duplicate runtime gate invariant id",
+        ),
+        (
+            lambda p: p["runtime_gate_invariants"]["entries"].append({
+                "id": "undispositioned_path_entry",
+                "paths": ["apps/web/features/operator/network/intake/AddListingFromUrlDialog.tsx"],
+                "assertions": [{"type": "contains", "text": "foo"}],
+            }),
+            "not dispositioned in inventory or grandfathered_paths",
+        ),
+        (
+            lambda p: p["runtime_gate_invariants"]["entries"].append({
+                "id": "no_assertions_entry",
+                "paths": ["modules/external_data/application/market_data_facade.py"],
+                "assertions": [],
+            }),
+            "assertions must not be empty",
+        ),
+        (
+            lambda p: p["runtime_gate_invariants"]["entries"].append({
+                "id": "no_paths_entry",
+                "paths": [],
+                "assertions": [{"type": "contains", "text": "foo"}],
+            }),
+            "must declare a non-empty paths list",
+        ),
+        (
+            lambda p: p["runtime_gate_invariants"].update({"schema_version": 99}),
+            "schema_version must be 1",
         ),
     ],
 )
