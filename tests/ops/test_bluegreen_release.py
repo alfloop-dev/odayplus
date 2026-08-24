@@ -431,6 +431,21 @@ def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
     res_desc_fail = switch_job_digests(targets, "sha256:green")
     assert res_desc_fail.success is False
 
+    # Missing or malformed bodies must fail closed instead of replacing the
+    # body with a digest-only payload.
+    for malformed_job in (
+        {"httpTarget": {}},
+        {"httpTarget": {"body": "not-json"}},
+        {"httpTarget": {"body": json.dumps(["not", "an", "object"])}},
+    ):
+        mock_gcloud.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps(malformed_job), stderr=""
+        )
+        res_malformed = switch_job_digests(targets, "sha256:green")
+        assert res_malformed.success is False
+        assert res_malformed.details["switched"] == []
+        assert res_malformed.details["failures"]
+
     # Idempotent skip: body already has target digest
     current_body = json.dumps({"image_digest": "sha256:green", "env": "prod"})
     b64_body = base64.b64encode(current_body.encode("utf-8")).decode("ascii")
@@ -691,6 +706,43 @@ def test_cli_capture_state(
     assert code == 0
     state_file = tmp_path / "release-state.json"
     assert state_file.exists()
+
+
+@patch("product_ops.deployment.bluegreen_release.capture_traffic_snapshot")
+@patch("product_ops.deployment.bluegreen_release.capture_data_platform_pointer")
+def test_cli_capture_state_dry_run_preserves_existing_release_state(
+    mock_cap_ptr: MagicMock, mock_cap_traffic: MagicMock, tmp_path: Path
+) -> None:
+    mock_cap_traffic.return_value = OperationResult(success=True, operation="cap", message="ok")
+    mock_cap_ptr.return_value = OperationResult(success=True, operation="ptr", message="ok")
+    state_file = tmp_path / "release-state.json"
+    existing_state = ReleaseState(
+        release_id="previous-release",
+        blue_api_revision="api-blue",
+        blue_web_revision="web-blue",
+    ).to_json()
+    state_file.write_text(existing_state, encoding="utf-8")
+
+    code = main(
+        [
+            "--dry-run",
+            "--project=my-p",
+            "--region=asia-east1",
+            "capture-state",
+            "--api-service=api",
+            "--web-service=web",
+            "--output-dir",
+            str(tmp_path),
+            "--release-id=rel-001",
+            "--selector-label=v1",
+            "--snapshot-id=s1",
+            "--namespace=dp",
+        ]
+    )
+    assert code == 0
+    assert state_file.read_text(encoding="utf-8") == existing_state
+    assert not (tmp_path / "api-traffic.json").exists()
+    assert not (tmp_path / "web-traffic.json").exists()
 
 
 @patch("product_ops.deployment.bluegreen_release.execute_bluegreen_switch")

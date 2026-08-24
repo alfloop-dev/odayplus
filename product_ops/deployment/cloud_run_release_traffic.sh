@@ -187,21 +187,3 @@ restore_scheduler_trigger() {
   echo "Cloud Scheduler trigger '${trigger}' successfully restored." >&2
   return 0
 }
-
-pause_scheduler_job() {
-  local trigger="$1"
-  echo "Pausing Cloud Scheduler trigger '${trigger}'..." >&2
-  gcloud scheduler jobs pause "${trigger}" \
-    --location="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" \
-    --quiet
-}
-
-resume_scheduler_job() {
-  local trigger="$1"
-  echo "Resuming Cloud Scheduler trigger '${trigger}'..." >&2
-  gcloud scheduler jobs resume "${trigger}" \
-    --location="${GCP_REGION}" \
-    --project="${GCP_PROJECT}" \
-    --quiet
-}

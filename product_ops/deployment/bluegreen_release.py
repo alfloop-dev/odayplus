@@ -591,6 +591,28 @@ def resume_schedulers(
     )
 
 
+def _decode_scheduler_body(raw_body: Any) -> dict[str, Any]:
+    """Decode a Cloud Scheduler HTTP body and require a JSON object."""
+    if isinstance(raw_body, dict):
+        body_json = copy.deepcopy(raw_body)
+    elif isinstance(raw_body, str) and raw_body:
+        try:
+            body_json = json.loads(base64.b64decode(raw_body, validate=True).decode("utf-8"))
+        except Exception as encoded_exc:
+            try:
+                body_json = json.loads(raw_body)
+            except Exception as raw_exc:
+                raise ValueError("scheduler HTTP body is not valid base64 or JSON") from raw_exc
+            if not isinstance(body_json, dict):
+                raise ValueError("scheduler HTTP body JSON must be an object") from encoded_exc
+    else:
+        raise ValueError("scheduler HTTP body is missing or empty")
+
+    if not isinstance(body_json, dict):
+        raise ValueError("scheduler HTTP body JSON must be an object")
+    return body_json
+
+
 def switch_job_digests(
     targets: list[SchedulerTarget],
     green_digest: str,
@@ -653,19 +675,13 @@ def switch_job_digests(
 
         try:
             job_data = json.loads(describe_result.stdout)
-            http_target = job_data.get("httpTarget", {})
-            raw_body = http_target.get("body", "")
-            if isinstance(raw_body, dict):
-                body_json = raw_body
-            elif isinstance(raw_body, str) and raw_body:
-                try:
-                    body_bytes = base64.b64decode(raw_body, validate=True)
-                    body_json = json.loads(body_bytes.decode("utf-8"))
-                except Exception:
-                    body_json = json.loads(raw_body) if raw_body.startswith("{") else {}
-            else:
-                body_json = {}
-        except (json.JSONDecodeError, KeyError) as exc:
+            if not isinstance(job_data, dict):
+                raise ValueError("scheduler job description must be a JSON object")
+            http_target = job_data.get("httpTarget")
+            if not isinstance(http_target, dict):
+                raise ValueError("scheduler job description is missing httpTarget")
+            body_json = _decode_scheduler_body(http_target.get("body"))
+        except (json.JSONDecodeError, ValueError) as exc:
             failed.append(f"{t.job_name}: body parse failed: {exc}")
             continue
 
@@ -1104,6 +1120,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # Write release state
         state_path = output_dir / "release-state.json"
+        if args.dry_run:
+            print(f"[DRY-RUN] Would write release state to {state_path}")
+            return 0
         state_path.write_text(state.to_json(), encoding="utf-8")
         print(f"Release state written to {state_path}")
         return 0
@@ -1126,7 +1145,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         for r in results:
             print(json.dumps(r.to_dict(), indent=2))
-        args.state_file.write_text(state.to_json(), encoding="utf-8")
+        if not args.dry_run:
+            args.state_file.write_text(state.to_json(), encoding="utf-8")
         return 0 if all(r.success for r in results) else 1
 
     if args.command == "rollback":
@@ -1148,7 +1168,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         for r in results:
             print(json.dumps(r.to_dict(), indent=2))
-        args.state_file.write_text(state.to_json(), encoding="utf-8")
+        if not args.dry_run:
+            args.state_file.write_text(state.to_json(), encoding="utf-8")
         return 0 if all(r.success for r in results) else 1
 
     if args.command == "resolve-tag":
