@@ -62,6 +62,25 @@ DEFAULT_EPHEMERAL_MODULE_DIR = Path("infra/terraform/modules/ephemeral_staging")
 # failure-path cleanup may run against it.
 UNVERIFIABLE_STATE_PREFIX = "Existing release state is unverifiable"
 
+# The tfvars sidecar is the only authoritative record of what an existing
+# release actually is. Validating it field-by-field is not enough: every
+# comparison is skipped when the stored value is absent, so a truncated bundle
+# (in the limit, ``{}``) reads as "no conflict" and lets a rerun overwrite the
+# sidecars and apply against state whose real identity nobody can prove. A
+# rerun is therefore only allowed when *every* field below is present.
+IMMUTABLE_RELEASE_IDENTITY_FIELDS: tuple[str, ...] = (
+    "release_id",
+    "project_id",
+    "region",
+    "tenant_id",
+    "candidate_sha",
+    "manifest_digest",
+    "api_image",
+    "web_image",
+    "created_at",
+    "owner_task_id",
+)
+
 
 class ReleaseIdentityConflict(RuntimeError):
     """Create was refused against existing release state, which stays untouched."""
@@ -801,10 +820,63 @@ def validate_immutable_release_identity(
             "inspected and restored by an operator."
         ]
 
+    # Fail closed: tfstate + tfvars but no inventory means the release-scoped
+    # ownership manifest is gone. cleanup_ephemeral_staging and scan_orphans both
+    # read that manifest to enumerate what the release owns, so applying here
+    # would extend a release that can no longer be safely deleted.
+    if state_path.is_file() and tfvars_path.is_file() and not inventory_path.is_file():
+        return [
+            f"{UNVERIFIABLE_STATE_PREFIX}: terraform state file {state_path.name} exists for "
+            f"release {config.release_id!r} with tfvars but without the release-scoped inventory "
+            "manifest. The provisioned resource set cannot be enumerated, so neither an apply nor "
+            "a cleanup may run; an operator must restore or remove the state."
+        ]
+
     if tfvars_path.is_file():
         try:
             prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
             if isinstance(prev_vars, dict):
+                # Completeness first. Without the full bundle the per-field
+                # comparisons below prove nothing, because each one is a no-op
+                # when the stored side is missing.
+                missing_fields = [
+                    field
+                    for field in IMMUTABLE_RELEASE_IDENTITY_FIELDS
+                    if not str(prev_vars.get(field, "")).strip()
+                ]
+                if missing_fields:
+                    errors.append(
+                        f"{UNVERIFIABLE_STATE_PREFIX}: tfvars file {tfvars_path.name} for release "
+                        f"{config.release_id!r} is missing the immutable identity field(s) "
+                        f"{', '.join(missing_fields)}. A partial bundle cannot prove what the "
+                        "existing release is; the state is preserved and this rerun is rejected."
+                    )
+
+                # The sidecar resolved for this release must actually belong to
+                # it. _terraform_state_paths can land on a stem by file-name
+                # match, so the stored release_id is the only proof of ownership.
+                prev_release = str(prev_vars.get("release_id", "")).strip()
+                if prev_release and release_label_value(prev_release) != release_label_value(config.release_id):
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} was provisioned for a "
+                        f"different release_id {prev_release!r}; rerun against another release's "
+                        "state is rejected."
+                    )
+
+                prev_region = str(prev_vars.get("region", "")).strip()
+                if prev_region and config.region.strip() != prev_region:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable region {prev_region!r}; "
+                        f"rerun with region {config.region.strip()!r} is rejected."
+                    )
+
+                prev_owner_task = str(prev_vars.get("owner_task_id", "")).strip()
+                if prev_owner_task and config.owner_task_id.strip() != prev_owner_task:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable owner_task_id "
+                        f"{prev_owner_task!r}; rerun with owner_task_id {config.owner_task_id.strip()!r} is rejected."
+                    )
+
                 prev_candidate = str(prev_vars.get("candidate_sha", "")).strip().lower()
                 if prev_candidate and config.candidate_sha.strip().lower() != prev_candidate:
                     errors.append(
@@ -898,6 +970,20 @@ def validate_immutable_release_identity(
                             f"{config.release_id!r} has no readable ownership labels at index {idx}."
                         )
                         continue
+
+                    # The same full-ownership proof cleanup requires. A row that
+                    # cannot be proven to belong to this release makes the whole
+                    # manifest unusable as an identity record. The per-field
+                    # comparisons below still run, so a mismatch is reported with
+                    # its specific cause as well.
+                    if not is_staging_ephemeral_resource(inv_labels, config.release_id):
+                        errors.append(
+                            f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
+                            f"{config.release_id!r} has an entry at index {idx} whose labels do not prove "
+                            "full release-scoped ownership (release_id, app, environment, managed_by, "
+                            "ephemeral, candidate_sha, manifest_digest_prefix, owner_task, created_at, "
+                            "expires_at)."
+                        )
 
                     # candidate_sha: must match across every member
                     inv_candidate = str(inv_labels.get("candidate_sha", "")).strip().lower()

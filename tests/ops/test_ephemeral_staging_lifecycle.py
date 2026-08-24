@@ -2452,6 +2452,263 @@ class FailClosedReviewBlockerRegressionTests(unittest.TestCase):
         self.assertEqual(result.orphan_count, 1)
 
 
+class IncompleteReleaseIdentityBundleTests(unittest.TestCase):
+    """A partial authoritative bundle must never read as "no existing release".
+
+    Every immutable comparison in ``validate_immutable_release_identity`` is a
+    no-op when the stored side is absent, so a truncated tfvars sidecar (in the
+    limit, ``{}``) used to return ``[]``. The creation executor then overwrote
+    the sidecars and applied against a ``.tfstate`` whose candidate, manifest,
+    images, project, tenant, and created_at nobody could prove.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+
+        self.state_dir = Path(tempfile.mkdtemp(prefix="incomplete-identity-"))
+        self.release_id = "odp-incomplete-bundle-001"
+        self.config = StagingConfig(
+            release_id=self.release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            project_id="oday-staging-proj",
+            region="asia-east1",
+            api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
+            web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            created_at="2026-08-24T12:00:00Z",
+        )
+        self.created_dt = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+        self.now = datetime(2026, 8, 24, 13, 0, 0, tzinfo=UTC)
+
+    def tearDown(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.state_dir, ignore_errors=True)
+
+    def _paths(self) -> tuple[Path, Path, Path]:
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        return _terraform_state_paths(self.release_id, self.state_dir)
+
+    def _inventory_rows(self) -> list[dict[str, Any]]:
+        labels = generate_staging_labels(
+            release_id=self.release_id,
+            candidate_sha=self.config.candidate_sha,
+            manifest_digest=self.config.manifest_digest,
+            owner_task_id=self.config.owner_task_id,
+            created_at=self.created_dt,
+        )
+        return [
+            {
+                "type": "google_storage_bucket",
+                "name": "bucket",
+                "id": "bucket-id",
+                "release_id": self.release_id,
+                "raw_release_id": self.release_id,
+                "labels": labels,
+            }
+        ]
+
+    def _seed(self, tfvars: Any, *, inventory: bool = True) -> None:
+        state_path, tfvars_path, inventory_path = self._paths()
+        state_path.write_text("{}", encoding="utf-8")
+        tfvars_path.write_text(json.dumps(tfvars), encoding="utf-8")
+        if inventory:
+            inventory_path.write_text(json.dumps(self._inventory_rows()), encoding="utf-8")
+
+    def test_empty_tfvars_object_is_unverifiable(self) -> None:
+        """tfstate plus a parseable but empty tfvars proves nothing."""
+        self._seed({})
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+
+        self.assertTrue(errors, "tfvars={} must not validate as 'no existing release'")
+        self.assertTrue(
+            any(err.startswith(UNVERIFIABLE_STATE_PREFIX) for err in errors), errors
+        )
+        self.assertTrue(
+            any("missing the immutable identity field" in err for err in errors), errors
+        )
+
+    def test_tfvars_missing_any_single_identity_field_is_unverifiable(self) -> None:
+        """Dropping one field at a time must always fail closed on that field."""
+        from product_ops.deployment.staging_lifecycle import (
+            IMMUTABLE_RELEASE_IDENTITY_FIELDS,
+        )
+
+        complete = generate_tfvars(self.config)
+        self.assertEqual(validate_immutable_release_identity(self.config, self.state_dir), [])
+
+        for field in IMMUTABLE_RELEASE_IDENTITY_FIELDS:
+            with self.subTest(field=field):
+                partial = dict(complete)
+                partial.pop(field)
+                self._seed(partial)
+
+                errors = validate_immutable_release_identity(self.config, self.state_dir)
+
+                self.assertTrue(errors, f"missing {field} must fail closed")
+                self.assertTrue(
+                    any(
+                        err.startswith(UNVERIFIABLE_STATE_PREFIX)
+                        and field in err
+                        for err in errors
+                    ),
+                    f"{field}: {errors}",
+                )
+
+    def test_reviewer_probe_bundle_is_unverifiable(self) -> None:
+        """The exact probe from the review: identity minus images and created_at."""
+        self._seed(
+            {
+                "release_id": self.release_id,
+                "candidate_sha": self.config.candidate_sha,
+                "manifest_digest": self.config.manifest_digest,
+                "project_id": self.config.project_id,
+                "tenant_id": resolve_tenant_id(self.release_id, ""),
+            }
+        )
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+
+        self.assertTrue(errors)
+        joined = " ".join(errors)
+        for field in ("region", "api_image", "web_image", "created_at", "owner_task_id"):
+            self.assertIn(field, joined)
+
+    def test_stored_release_id_must_match_this_release(self) -> None:
+        """A sidecar recorded for another release may not be applied against."""
+        foreign = dict(generate_tfvars(self.config))
+        foreign["release_id"] = "odp-some-other-release-999"
+        self._seed(foreign)
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+
+        self.assertTrue(
+            any("was provisioned for a different release_id" in err for err in errors),
+            errors,
+        )
+
+    def test_region_and_owner_task_are_immutable(self) -> None:
+        self._seed(generate_tfvars(self.config))
+
+        moved = dataclasses_replace(self.config, region="us-central1")
+        self.assertTrue(
+            any("immutable region" in err for err in validate_immutable_release_identity(moved, self.state_dir)),
+        )
+
+        reassigned = dataclasses_replace(self.config, owner_task_id="ODP-SOME-OTHER-TASK-001")
+        self.assertTrue(
+            any(
+                "immutable owner_task_id" in err
+                for err in validate_immutable_release_identity(reassigned, self.state_dir)
+            ),
+        )
+
+    def test_tfstate_and_tfvars_without_inventory_is_unverifiable(self) -> None:
+        """Without the ownership manifest the resource set cannot be enumerated."""
+        self._seed(generate_tfvars(self.config), inventory=False)
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+
+        self.assertTrue(errors)
+        self.assertTrue(
+            any(err.startswith(UNVERIFIABLE_STATE_PREFIX) for err in errors), errors
+        )
+        self.assertTrue(
+            any("without the release-scoped inventory manifest" in err for err in errors),
+            errors,
+        )
+
+    def test_inventory_row_without_full_ownership_labels_is_unverifiable(self) -> None:
+        """A row that cannot prove ownership makes the manifest unusable."""
+        rows = self._inventory_rows()
+        rows[0]["labels"].pop("owner_task")
+        state_path, tfvars_path, inventory_path = self._paths()
+        state_path.write_text("{}", encoding="utf-8")
+        tfvars_path.write_text(json.dumps(generate_tfvars(self.config)), encoding="utf-8")
+        inventory_path.write_text(json.dumps(rows), encoding="utf-8")
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+
+        self.assertTrue(
+            any("do not prove" in err and "full release-scoped ownership" in err for err in errors),
+            errors,
+        )
+
+    def test_complete_matching_bundle_still_validates_clean(self) -> None:
+        """The guard must not block a legitimate idempotent rerun."""
+        self._seed(generate_tfvars(self.config))
+
+        self.assertEqual(validate_immutable_release_identity(self.config, self.state_dir), [])
+
+        # A rerun that omits created_at adopts the stored authoritative value.
+        without_created = dataclasses_replace(self.config, created_at="")
+        self.assertEqual(
+            validate_immutable_release_identity(without_created, self.state_dir), []
+        )
+
+    def test_creation_executor_refuses_partial_bundle_without_write_or_apply(self) -> None:
+        """No sidecar overwrite, no terraform apply against unverifiable state."""
+        import unittest.mock as mock
+
+        partial = {
+            "release_id": self.release_id,
+            "candidate_sha": self.config.candidate_sha,
+            "manifest_digest": self.config.manifest_digest,
+            "project_id": self.config.project_id,
+            "tenant_id": resolve_tenant_id(self.release_id, ""),
+        }
+        self._seed(partial)
+        state_path, tfvars_path, inventory_path = self._paths()
+        inventory_before = inventory_path.read_text(encoding="utf-8")
+
+        executor = make_terraform_creation_executor(
+            module_dir=MODULE_DIR,
+            state_dir=self.state_dir,
+            initialize=False,
+        )
+        planned = plan_staging_resources(self.config, created_at=self.created_dt, now=self.now)
+
+        with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as run_tf:
+            with self.assertRaises(ReleaseStateUnverifiable) as ctx:
+                executor(self.config, planned)
+
+        self.assertIn(UNVERIFIABLE_STATE_PREFIX, str(ctx.exception))
+        run_tf.assert_not_called()
+        # The operator's evidence must survive untouched.
+        self.assertEqual(json.loads(tfvars_path.read_text(encoding="utf-8")), partial)
+        self.assertEqual(inventory_path.read_text(encoding="utf-8"), inventory_before)
+        self.assertEqual(state_path.read_text(encoding="utf-8"), "{}")
+
+    def test_create_never_cleans_up_after_a_partial_bundle_refusal(self) -> None:
+        """Failure-path cleanup would destroy exactly what the guard protected."""
+        self._seed({})
+        deleted: list[str] = []
+
+        executor = make_terraform_creation_executor(
+            module_dir=MODULE_DIR,
+            state_dir=self.state_dir,
+            initialize=False,
+        )
+        receipt = create_ephemeral_staging(
+            self.config,
+            dry_run=False,
+            now=self.now,
+            creation_executor=executor,
+            cleanup_executor=lambda res: deleted.append(str(res.get("id"))) or True,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertEqual(deleted, [], "unverifiable state must never trigger cleanup")
+        self.assertTrue(receipt.metadata.get("existing_release_state_preserved"))
+        self.assertTrue(receipt.metadata.get("release_state_unverifiable"))
+        self.assertNotIn("failure_cleanup_receipt", receipt.metadata)
+        self.assertTrue(receipt.remediation_required)
+        self.assertTrue(any(UNVERIFIABLE_STATE_PREFIX in err for err in receipt.errors), receipt.errors)
+
+
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
     d = obj.to_dict()
     d.update(changes)
