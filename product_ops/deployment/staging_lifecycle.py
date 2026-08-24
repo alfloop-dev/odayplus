@@ -774,6 +774,19 @@ def validate_immutable_release_identity(
     state_path, tfvars_path, inventory_path = _terraform_state_paths(config.release_id, state_path_root)
     errors: list[str] = []
 
+    # Fail closed: if terraform state exists but neither identity sidecar is
+    # present, the release identity cannot be verified.  Returning an empty
+    # error list here would let make_terraform_creation_executor write new
+    # tfvars/inventory and apply against the orphan state, potentially mutating
+    # resources whose candidate/manifest/project/tenant/created_at are unknown.
+    if state_path.is_file() and not tfvars_path.is_file() and not inventory_path.is_file():
+        return [
+            f"{UNVERIFIABLE_STATE_PREFIX}: terraform state file {state_path.name} exists for "
+            f"release {config.release_id!r} but neither tfvars nor inventory sidecars are present. "
+            "The identity of the existing release cannot be verified; a new release_id is required "
+            "or the orphan state must be inspected and removed by an operator."
+        ]
+
     if tfvars_path.is_file():
         try:
             prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))

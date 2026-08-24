@@ -1743,6 +1743,106 @@ class UnverifiableReleaseStateTests(unittest.TestCase):
         self.assertFalse(receipt.remediation_required)
         self.assertFalse(receipt.metadata.get("release_state_unverifiable", False))
 
+    def test_orphan_tfstate_without_sidecars_fails_closed(self) -> None:
+        """Regression: tfstate exists but no tfvars/inventory → unverifiable, not empty.
+
+        Before the fix, validate_immutable_release_identity returned [] when
+        only .tfstate existed (missing sidecars), which let
+        make_terraform_creation_executor write new tfvars/inventory and apply
+        against pre-existing state whose identity was unknown.
+        """
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+
+            # Create ONLY the .tfstate file — no tfvars, no inventory
+            state_p.write_text('{"version": 4, "resources": []}', encoding="utf-8")
+            self.assertTrue(state_p.is_file())
+            self.assertFalse(vars_p.is_file())
+            self.assertFalse(inv_p.is_file())
+
+            errors = validate_immutable_release_identity(self.config, state_root)
+
+            # Must NOT be empty — that would allow overwriting unknown state
+            self.assertTrue(errors, "Orphan tfstate with no sidecars must not validate as 'no existing release'")
+            self.assertTrue(
+                all(err.startswith(UNVERIFIABLE_STATE_PREFIX) for err in errors),
+                f"All errors must be unverifiable-prefixed, got: {errors}",
+            )
+            self.assertTrue(any("neither tfvars nor inventory" in err for err in errors), errors)
+
+    def test_orphan_tfstate_creation_executor_refuses_apply_and_no_sidecar_overwrite(self) -> None:
+        """Regression: orphan .tfstate must block apply, preserve state, and never write sidecars.
+
+        Proves three things:
+        1. make_terraform_creation_executor raises ReleaseStateUnverifiable (no apply).
+        2. create_ephemeral_staging does NOT run failure-path cleanup (no destroy of unknown resources).
+        3. No new tfvars or inventory file is written (no sidecar overwrite of unknown identity).
+        """
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+
+            # Pre-existing state file with no identity sidecars
+            original_state_content = '{"version": 4, "serial": 1, "resources": [{"type": "google_sql_database"}]}'
+            state_p.write_text(original_state_content, encoding="utf-8")
+
+            # 1. Creation executor must raise ReleaseStateUnverifiable
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=state_root,
+                terraform_bin="/bin/true",
+                initialize=False,
+            )
+            planned = plan_staging_resources(
+                self.config,
+                created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC),
+                now=self.now,
+            )
+            with self.assertRaises(ReleaseStateUnverifiable) as ctx:
+                executor(self.config, planned)
+            self.assertIn("Existing release state conflict", str(ctx.exception))
+            self.assertIn(UNVERIFIABLE_STATE_PREFIX, str(ctx.exception))
+
+            # 2. No sidecar files were created or overwritten
+            self.assertFalse(vars_p.is_file(), "tfvars must NOT be written for orphan state")
+            self.assertFalse(inv_p.is_file(), "inventory must NOT be written for orphan state")
+
+            # 3. Original state file is preserved untouched
+            self.assertEqual(state_p.read_text(encoding="utf-8"), original_state_content)
+
+            # 4. Full create_ephemeral_staging flow: no cleanup runs
+            cleaned: list[str] = []
+            receipt = create_ephemeral_staging(
+                self.config,
+                dry_run=False,
+                now=self.now,
+                creation_executor=make_terraform_creation_executor(
+                    module_dir=MODULE_DIR,
+                    state_dir=state_root,
+                    terraform_bin="/bin/true",
+                    initialize=False,
+                ),
+                cleanup_executor=lambda res: cleaned.append(str(res.get("id"))) or True,
+            )
+            self.assertFalse(receipt.success)
+            self.assertEqual(cleaned, [], "Failure-path cleanup must NOT run against unverifiable state")
+            self.assertTrue(receipt.metadata.get("existing_release_state_preserved"))
+            self.assertTrue(receipt.metadata.get("release_state_unverifiable"))
+            self.assertTrue(receipt.remediation_required)
+            # State file still untouched after the full flow
+            self.assertEqual(state_p.read_text(encoding="utf-8"), original_state_content)
+            self.assertFalse(vars_p.is_file())
+            self.assertFalse(inv_p.is_file())
+
     def test_cli_dry_run_rejects_unreadable_existing_state(self) -> None:
         import tempfile
 
