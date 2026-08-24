@@ -102,6 +102,39 @@ def test_policy_file_exists_and_declares_the_contract(policy: Mapping[str, Any])
     assert policy["schema_version"] == 2
 
 
+def test_runtime_gate_invariants_are_dispositioned_and_structured(
+    policy: Mapping[str, Any], repo_files: Sequence[str]
+) -> None:
+    """Runtime closure gates belong to v2, not to a downstream audit registry."""
+    section = policy["runtime_gate_invariants"]
+    assert section["schema_version"] == 1
+    entries = section["entries"]
+    assert entries
+    ids = [entry["id"] for entry in entries]
+    assert len(ids) == len(set(ids))
+
+    dispositioned = {
+        path
+        for surface in policy["frozen_surfaces"]
+        for path in surface.get("inventory", [])
+    }
+    dispositioned |= {
+        path
+        for capability in policy["blocked_capabilities"]
+        for path in capability.get("grandfathered_paths", [])
+    }
+    for entry in entries:
+        assert entry["paths"]
+        assert set(entry["paths"]) <= dispositioned
+        assert set(entry["paths"]) <= set(repo_files)
+        assert entry["assertions"]
+        assert {assertion["type"] for assertion in entry["assertions"]} <= {
+            "contains",
+            "ordered_tokens",
+            "constant_equals",
+        }
+
+
 def test_policy_supersedes_the_v1_diff_gate(policy: Mapping[str, Any]) -> None:
     superseded = {entry["path"] for entry in policy["supersedes"]}
     assert "delivery_toolchain/governance/emgi-consumer-boundary.json" in superseded

@@ -501,6 +501,126 @@ allowed_surfaces:
       - direct_provider_reference
 
 # ---------------------------------------------------------------------------
+# Runtime closure invariants
+# ---------------------------------------------------------------------------
+# This is part of the v2 disposition contract. Auditors may derive candidates
+# from inventory/grandfathered_paths and verify these assertions, but may not
+# carry a second path/fragment registry in another repository. Every path here
+# must also be in inventory or grandfathered_paths so a gate cannot be trusted
+# without a dispositioned owner.
+
+runtime_gate_invariants:
+  schema_version: 1
+  entries:
+    - id: facade_platform_primary_default
+      paths:
+        - modules/external_data/application/market_data_facade.py
+      assertions:
+        - type: constant_equals
+          name: DEFAULT_CUTOVER_MODE
+          value: CUTOVER_MODE_PLATFORM_PRIMARY
+
+    - id: api_external_fetch_http_410
+      paths:
+        - apps/api/app/routes/external_data.py
+      assertions:
+        - type: contains
+          text: status.HTTP_410_GONE
+
+    - id: api_external_fetch_error_code
+      paths:
+        - apps/api/app/routes/external_data.py
+      assertions:
+        - type: contains
+          text: 'code="external_fetch_decommissioned"'
+
+    - id: scheduler_no_external_fetch_default
+      paths:
+        - apps/scheduler/oday_scheduler/main.py
+      assertions:
+        - type: contains
+          text: >-
+            return (EXTERNAL_FETCH_JOB_TYPE,) if legacy_external_fetch_enabled(self.env) else ()
+
+    - id: worker_fetch_gate
+      paths:
+        - apps/worker/oday_worker/handlers.py
+      assertions:
+        - type: contains
+          text: "if not fetch_enabled:"
+
+    - id: worker_non_retryable_rejection
+      paths:
+        - apps/worker/oday_worker/handlers.py
+      assertions:
+        - type: contains
+          text: "raise NonRetryableJobError("
+
+    - id: worker_gate_before_service_construction
+      paths:
+        - apps/worker/oday_worker/handlers.py
+      assertions:
+        - type: ordered_tokens
+          before: "if not fetch_enabled:"
+          after: "service = ExternalIngestionService("
+
+    - id: external_backfill_provider_validation
+      paths:
+        - product_ops/external_data_backfill.py
+      assertions:
+        - type: contains
+          text: "validate_external_providers_or_raise("
+
+    - id: external_backfill_feed_url_guard
+      paths:
+        - product_ops/external_data_backfill.py
+      assertions:
+        - type: contains
+          text: ODP_LISTING_PROVIDER_FEED_URL is required for live ingestion.
+
+    - id: geography_backfill_live_mode_guard
+      paths:
+        - apps/data_platform/geography_backfill.py
+      assertions:
+        - type: contains
+          text: _require_live_mode(env)
+
+    - id: geography_backfill_dsn_guard
+      paths:
+        - apps/data_platform/geography_backfill.py
+      assertions:
+        - type: contains
+          text: 'raise GeographyBackfillError("ODAY_POSTGRES_DSN is required")'
+
+    - id: scheduled_fetch_configuration_error
+      paths:
+        - modules/external_data/workers/scheduled_fetch.py
+      assertions:
+        - type: contains
+          text: "class ExternalFetchProviderConfigurationError(RuntimeError):"
+
+    - id: scheduled_fetch_missing_credential_code
+      paths:
+        - modules/external_data/workers/scheduled_fetch.py
+      assertions:
+        - type: contains
+          text: '"missing_credential"'
+
+    - id: provider_gateway_geocode_unconfigured
+      paths:
+        - services/provider-gateway/app.py
+      assertions:
+        - type: contains
+          text: 'raise HTTPException(status_code=503, detail="geocode gateway unconfigured")'
+
+    - id: provider_gateway_poi_unconfigured
+      paths:
+        - services/provider-gateway/app.py
+      assertions:
+        - type: contains
+          text: 'raise HTTPException(status_code=503, detail="poi gateway unconfigured")'
+
+# ---------------------------------------------------------------------------
 # Blocked capabilities
 # ---------------------------------------------------------------------------
 # Detection is path-shape plus content signal, scoped to executable surfaces.
@@ -625,6 +745,9 @@ blocked_capabilities:
       - modules/external_data/application/ingestion_service.py
       # Worker job handler that still dispatches the frozen scheduler.
       - apps/worker/oday_worker/handlers.py
+      # Scheduler runtime gate: it must remain dispositioned while the
+      # platform cutover controls whether a tick enqueues external-fetch.
+      - apps/scheduler/oday_scheduler/main.py
 
   - id: new_raw_evidence_store
     description: >-
@@ -735,6 +858,9 @@ blocked_capabilities:
       - services/provider-gateway/WIRING.md
       - services/provider-gateway/app.py
       # Consumer coupling that ODP-LEGACY-FACADE-001 replaces with the read facade.
+      # The facade's cutover default is a runtime closure invariant, not a
+      # second audit registry entry.
+      - modules/external_data/application/market_data_facade.py
       - apps/api/app/routes/external_data.py
       - apps/api/oday_api/main.py
       - apps/data_platform/geography_backfill.py
