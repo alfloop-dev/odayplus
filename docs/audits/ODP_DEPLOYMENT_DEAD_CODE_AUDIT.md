@@ -5,7 +5,7 @@
 - **任務階段**: Wave 0 — 基線與介面凍結 (Dead Code Audit)
 - **盤點基準日期**: 2026-08-24
 - **盤點基準 commit**: `origin/dev` = `3329416d1b1b41289da152738d8e5392ebfcbf4d`（本報告分支已完成 base advance merge）
-- **負責人 (Owner)**: Claude
+- **負責人 (Owner)**: Antigravity
 - **審查人 (Reviewer)**: Codex
 - **來源依據**: [`docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`](../deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md)
 - **執行原則**: **本任務只稽核不刪 code**。所有項目均以 caller、workflow、runtime unit、cron、GitHub Actions 具體呼叫路徑逐項證明，作為後續 Wave 1 / Wave 2 實作與刪除任務（特別是 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` 與 `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`）之執行依據。
@@ -24,6 +24,10 @@
    - `.github/workflows/deploy-dev.yml` (`Runtime Release`) 是**唯一持有 GCP WIF 憑證的 workflow**（全庫僅此檔含 `google-github-actions/auth` / `workload_identity_provider`），但現況在 `deploy` job 內部現場執行 `docker build`，違反「Build Once、以 Digest 為唯一部署身分」原則。
    - `product_ops/deployment/deploy_cloud_run_waji.sh`（mode `755`，可執行）只依賴環境變數，具備 `gcloud` 認證之終端即可直接執行，繞過 `admission` job 之 release lease 檢查。
    - `.github/workflows/promote-dev-to-main.yml` 僅為代碼由 `dev` 晉級至 `main` 之 PR 自動合併流程（步驟只有 `make product-release-gate`、`gh pr create`、`gh pr merge` 與 status stamp），**不含任何 GCP 部署指令**；兩者責任界限須明確分離。
+1a. **擴大旁路搜尋：GKE 直接發布、Terraform Cloud Run 與手動部署指引 (Expanded Bypass Scope)**：
+   - `infra/k8s/data-platform/README.md` 文件記載了一條**完整的 GKE 手動部署路徑**：`docker build`（L40-45）→ `render.py`（L53-62）→ `kubectl apply`（L87-88），可繞過 `Runtime Release` lease 與 admission job 直接將 data-platform image 部署至 GKE。此路徑無自動化 workflow 觸發、無 WIF 認證，屬**操作員手動帶外部署**。但 `deployment_runtime.py` 實作之遷移收據門禁（要求 release SHA 與 image digest 完全匹配已通過之遷移紀錄）提供內建防護。§2 bypass 表補列此路徑並分類邊界。
+   - `infra/terraform/cloud_run.tf` 定義 API（L1-133）與 Web（L153-265）之 Cloud Run 服務資源；`infra/terraform/README.md`（L102-123）提供 `terraform init/plan/apply` 完整 bootstrap 指引。此路徑為**基礎設施 bootstrap**，非例行 runtime deploy：全庫無任何 GitHub Actions workflow 執行 terraform（`git grep -rn 'terraform\|hashicorp' -- .github/workflows/` 為空）；Terraform 不管理 Cloud Run Jobs（migration/worker/scheduler）或 Cloud Scheduler triggers；變更 `var.api_image` / `var.web_image` 之 tfvars 後 apply **可**產生新 revision，構成理論旁路面。§2 bypass 表補列並標示 bootstrap vs runtime 邊界。
+   - `docs/deployment/GCP_DEPLOY_GUIDE.md`（L7）明示「falling back to local environment variables during manual execution」；L39-49 以 Build & Deploy 步驟描述 API/Web 之 `docker build` → `docker push` → Cloud Run 部署流程。此文件描述的**正是** `deploy_cloud_run_waji.sh` 的手動執行路徑（已在原版 §2 列為旁路），但文件本身**合法化**了手動 fallback，且未宣告 release lease 為必要前置。§2 bypass 表補列此文件引導面。
 2. **舊版 External Proof Follow-up 殘留 (Legacy External Proof)**:
    - 歷史 PR #82 所衍生之 external-proof 執行面元件，已於 commit `1a8b0f44`（2026-08-14，`refactor(tooling): retire pr82 campaign and unsupported adapters`）**一次性完整刪除**：1 支 workflow、16 支 external-proof 專用 CLI（12 × `check_`、1 × `generate_`、2 × `sync_`、1 × `update_`）、15 支 `tests/e2e/test_external_proof_*.py`，另含同批移除之 `check_product_go_no_go.py`。逐檔清單見 §3.1。
    - 全庫掃描（三種邊界，定義見 §3.2）識別出 **21 個檔案**（不含本報告）含有 external-proof 相關字串。其中 **1 個為現行治理文件**（`docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`，即本 Wave 之規劃書，其 2 處引用是**宣告退役政策本身**），**其餘 20 個為舊機制殘留**。
@@ -58,6 +62,29 @@ git grep -ln 'google-github-actions/auth\|workload_identity_provider' -- .github
 
 掃描結果：具 GCP 變更指令之非文件檔案共 4 個（`deploy-dev.yml`、`cloud_run_release_traffic.sh`、`deploy_cloud_run_waji.sh`、`validate_cloud_run_live_deployment.py`）；持有 WIF 身分之 workflow 僅 `deploy-dev.yml` 1 個。
 
+**擴大搜尋（kubectl、terraform、docker build/push、render/apply）**：
+
+```bash
+# kubectl 部署指令（排除 tests/ 與 docs/audits/）
+git grep -ln 'kubectl' -- . | grep -v '^tests/' | grep -v '^docs/audits/'
+# -> docs/evidence/runtime/.../approval-queue-control-before.json  （歷史紀錄）
+# -> infra/k8s/data-platform/README.md                             （手動操作指引）
+
+# Terraform Cloud Run（排除 tests/ 與 docs/audits/）
+git grep -rn 'terraform apply\|terraform plan\|terraform init' -- . | grep -v '^tests/' | grep -v '^docs/audits/' | grep -v '^docs/evidence/'
+# -> infra/terraform/.terraform.lock.hcl:1      （自動生成註解）
+# -> infra/terraform/README.md:102,107           （bootstrap 指令）
+
+# GitHub workflow 中是否含 terraform
+git grep -rn 'terraform\|hashicorp' -- .github/workflows/
+# -> 空（全庫 workflow 不含 terraform）
+
+# render.py / deployment_runtime.py 之 caller（排除 tests/ 與 docs/）
+git grep -rn 'render\.py\|deployment_runtime\.py' -- . | grep -v '^tests/' | grep -v '^docs/'
+# -> infra/docker/data-platform.Dockerfile:58   （ENTRYPOINT）
+# -> infra/k8s/data-platform/README.md:53       （文件指引）
+```
+
 | 入口類型 | 檔案 / 路徑 | 現況行為與證據 | 風險與旁路機制 | 後續處置方案 |
 |---|---|---|---|---|
 | **唯一授權部署管線** | `.github/workflows/deploy-dev.yml` | `workflow_dispatch` inputs：`environment` (choice: dev/staging, L6-10)、`release_sha` (L11-14)、`task_id` (L15-18)、`release_lease` (L19-22)。`admission` job 於 L42-51 斷言 checkout HEAD == `inputs.release_sha`，L53-61 呼叫 `check_runtime_admission.py`。 | 為現行唯一具 WIF 身分之 workflow，屬期望路徑。缺口在於 lease 僅做 shape 檢查（見 §4.3）。 | **重構 (REPLACE)**：改為 Build Once 單一發布狀態機。 |
@@ -66,6 +93,9 @@ git grep -ln 'google-github-actions/auth\|workload_identity_provider' -- .github
 | **代碼晉級工作流** | `.github/workflows/promote-dev-to-main.yml` | `workflow_run` (CI completed on `dev`) 觸發。步驟僅：`npm ci` (L43)、`make product-release-gate` (L50)、開/重用 promote PR (L52-57)、stamp `task-review-gate` (L96-101)、`gh pr merge --auto` (L113-117)。**無 `google-github-actions/auth`，無任何 `gcloud` 指令。** | 容易被誤認為正式環境部署入口。實際上該 workflow 僅執行 Git branch 合併，完全不觸及 GCP。 | **保留並釐清 (KEEP & CLARIFY)**：保留作為 Code Promotion 自動化，但在文件與註解中嚴格宣告：**Merge 到 main 不等於 Production 部署**。 |
 | **設計合約驗證入口** | `.github/workflows/assisted-intake-design-validation.yml` | 包含 `workflow_dispatch` 手動觸發入口與 PR trigger，啟動本地 PostgreSQL 驗證 OpenAPI 與 SQL schema。無 WIF 身分、無 `gcloud`。 | 純合約驗證工具，不構成部署旁路。 | **保留 (KEEP)**：維持作為子系統設計合約驗證 gate。 |
 | **驗證器（非旁路，特別澄清）** | `product_ops/deployment/validate_cloud_run_live_deployment.py` | 檔內 `gcloud run deploy` 等字串（L184, L192, L201, L217）**僅為字串常值**，用於靜態比對 `deploy_cloud_run_waji.sh` 的指令順序，該程式本身不執行 GCP 變更。 | 不構成旁路。列於此處是為了避免純字串搜尋造成誤判。 | **保留 (KEEP)** |
+| **GKE 資料平台手動部署路徑** | `infra/k8s/data-platform/README.md` (文件引導) + `render.py` + `kubectl` | 完整步驟：(1) `docker build` data-platform image（L40-45）；(2) `docker push` 至 Artifact Registry；(3) `python infra/k8s/data-platform/render.py` 渲染 immutable manifest（L53-62），以 `__DATA_IMAGE__` 佔位符替換 release digest；(4) `kubectl apply --dry-run=server` 後 `kubectl apply`（L87-88）；(5) `kubectl wait` 等待 migration Job 完成（L89-92）。**全庫無任何 workflow 呼叫 `render.py` 或 `kubectl apply`**（`git grep -rn 'render\.py\|kubectl apply' -- .github/workflows/` 為空）。此路徑僅存在於 README 文件指引，屬操作員手動執行。 | **風險**：可繞過 `Runtime Release` 之 admission job、WIF 認證與 release lease 檢查，直接以 `kubeconfig` 權限部署至 GKE。<br>**內建防護**：(a) `render.py` 要求 immutable `sha256:` image reference（L40-41）與 40-char SHA（L34-35）；(b) `deployment_runtime.py` 之 `_migration_receipt()` 門禁要求 `odp_runtime.deployment_migration_receipts` 中存在 release SHA + image digest 完全匹配之 PASSED 收據，否則 fail-closed（不執行 backfill）；(c) 目標 namespace `oday-dev` 之 RBAC 與 ServiceAccount 由 operator 管理。<br>**邊界**：此路徑**僅部署資料平台**（migration/CronJob/suspended Jobs），不部署 ODay Plus API/Web/Worker/Scheduler Cloud Run 服務。 | **保留並納入治理 (KEEP & GOVERN)**：此為資料平台 GKE 部署的既定操作路徑，由 `DPF-EMGI-LIVE-ROLLOUT-001`（Wave 1）承接。後續應評估是否將此路徑整合至唯一 Runtime Release，或以獨立之 data-platform release gate 明確授權。 |
+| **Terraform Cloud Run bootstrap 路徑** | `infra/terraform/cloud_run.tf` + `infra/terraform/README.md` | `cloud_run.tf` 以 `google_cloud_run_v2_service` 定義 API（L1-133，`image = var.api_image`，L33）與 Web（L153-265，`image = var.web_image`，L178）Cloud Run 服務。`README.md` L102-109 提供 `terraform init/plan/apply` 指令。生產環境有 `lifecycle.precondition` 要求 immutable `@sha256:` digest（API L117-120、Web L252-255）。**全庫無任何 GitHub Actions workflow 執行 terraform**（`git grep -rn 'terraform\|hashicorp' -- .github/workflows/` 為空）。Terraform **不管理** Cloud Run Jobs（migration/worker/scheduler）、Cloud Scheduler triggers，這些全由 `deploy_cloud_run_waji.sh` 管理。 | **判定為 bootstrap 路徑**：(a) README L112-113 自述「The first environment bootstrap is intentionally two-phase」；(b) L128 明示「Never use `-target` for routine updates」；(c) 變更 `.tfvars` 中之 `api_image`/`web_image` 後 apply 可產生新 Cloud Run revision，構成**理論旁路面**，但需持有 Terraform state backend 寫入權限與 GCP org admin 身分；(d) Terraform 範圍不含 Cloud Scheduler triggers 與 Cloud Run Jobs，無法完成完整 release 生命週期。 | **保留並澄清 (KEEP & CLARIFY)**：由 `ODP-EPHEMERAL-STAGING-IAC-001`（Wave 1）與 `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001`（Wave 3）承接。文件與 IaC 應明確宣告：Terraform 僅負責 bootstrap 基礎設施 shell，不用於例行 runtime deployment；image 變數更新須經 Runtime Release 管線，不得以 `terraform apply` 直接推送新版本。 |
+| **手動部署文件引導** | `docs/deployment/GCP_DEPLOY_GUIDE.md` | L7 明示 pipeline 組態「falling back to local environment variables during manual execution」。§ Deployment Process Details（L39-49）詳述 API/Web 之 Build & Deploy 流程：(1) API image 以 `infra/docker/api.Dockerfile` 建置並推送至 Artifact Registry（L41-44）；(2) Web image 以 `infra/docker/web.Dockerfile` 建置，烘入 `ODP_API_BASE_URL`（L45-49）。此文件描述之步驟**正是** `deploy_cloud_run_waji.sh` 之手動執行（已在上列為旁路），但文件以參考指南形式**合法化**手動 fallback 且未宣告 release lease 為必要前置條件。 | 不構成獨立旁路，但其 L7 之 fallback 敘述與 L39-49 之步驟指引降低操作員對「必須經過 Runtime Release 管線」之認知。 | **更新文件 (UPDATE)**：在 `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`（Wave 2）完成後，更新文件以宣告：生產環境必須經唯一 Runtime Release 管線，手動執行僅限 dev 環境之除錯與緊急回復，且須事後補齊 evidence receipt。 |
 | **手動 Cloud Run 變更** | GCP Console / Direct gcloud | 操作者手動透過 GCP 控制台切換流量或部署 Revision。 | 人工帶外操作將導致 Git 與 live runtime 狀態漂移。 | **權限治理 (GOVERNANCE)**：依 Rollout Plan 第 8 節與第 16 節，限制 WIF Service Account 為唯一的部署者。 |
 
 ---
@@ -823,6 +853,58 @@ ls -l product_ops/deployment/deploy_cloud_run_waji.sh product_ops/deployment/clo
 #    cloud_run_release_traffic.sh  -rw-rw-r--   （無執行位元 = 需 source，次級旁路面）
 ```
 
+
+### 7.5a 擴大旁路掃描重現（GKE / Terraform / 手動部署文件）
+
+```bash
+# GKE data-platform README 之 docker build / render / kubectl 指引行號驗證
+check() {
+  local got; got="$(sed -n "${2}p" "$1")"
+  if printf '%s' "$got" | grep -qF "$3"; then printf 'OK   %s:%s\n' "$1" "$2"
+  else printf 'FAIL %s:%s want=%s got=%s\n' "$1" "$2" "$3" "$got"; return 1; fi
+}
+K=infra/k8s/data-platform/README.md
+check $K 40 'docker build'
+check $K 41 'data-platform.Dockerfile'
+check $K 53 'render.py'
+check $K 55 'data-image'
+check $K 62 'output /tmp/oday-data-platform.yaml'
+check $K 87 'kubectl apply --dry-run=server'
+check $K 88 'kubectl apply -f'
+
+# Terraform cloud_run.tf 行號驗證
+F=infra/terraform/cloud_run.tf
+check $F  1 'google_cloud_run_v2_service'
+check $F 33 'image = var.api_image'
+check $F 119 'Production Cloud Run cannot deploy a mutable image tag'
+check $F 153 'google_cloud_run_v2_service'
+check $F 178 'image = var.web_image'
+check $F 254 'Production Web cannot deploy a mutable image tag'
+
+# Terraform README bootstrap 指引行號
+G=infra/terraform/README.md
+check $G 102 'terraform -chdir=infra/terraform init'
+check $G 107 'terraform -chdir=infra/terraform plan'
+check $G 112 'first environment bootstrap'
+check $G 128 'Never use'
+
+# GCP_DEPLOY_GUIDE.md 行號
+H=docs/deployment/GCP_DEPLOY_GUIDE.md
+check $H  7 'local environment variables during manual execution'
+check $H 42 'api.Dockerfile'
+check $H 47 'web.Dockerfile'
+
+# 全庫 workflow 無 terraform 負向驗證
+count=$(git grep -rn 'terraform\|hashicorp' -- .github/workflows/ | wc -l)
+[ "$count" -eq 0 ] && echo 'OK   no terraform in workflows' || echo "FAIL terraform in workflows count=$count"
+
+# 全庫無 workflow 呼叫 render.py 或 kubectl apply
+count2=$(git grep -rn 'render\.py\|kubectl apply' -- .github/workflows/ | wc -l)
+[ "$count2" -eq 0 ] && echo 'OK   no render.py/kubectl in workflows' || echo "FAIL render.py/kubectl in workflows count=$count2"
+```
+
+實測輸出（基準 commit）：全部 OK。
+
 ---
 
 ### 7.6 計數對帳自動驗證（本報告自身的一致性檢查）
@@ -974,3 +1056,6 @@ ALL RECONCILED
 | （本版自查追加）§3.2 部分行號為過寬區間或漏列 | 各表改列 **S1 完整命中行號與命中數**；並標註 `PLAYBOOK:128,133`、`PICKUP_BOARD:124`、`RISK_ACCEPTANCE:49` 為 `external data/provider proof` 之現行概念（S2 偽陽性）已排除；`python-inventory csv` 之 L157 不命中亦特別註明 |
 | （第三次審查）§3.2.0 掃描指令未含本報告排除，實跑為 S1=21 / S2=22，與宣稱的 20 / 21 不符 | §3.2.0 三個邊界的「指令」欄改為**已含 `grep -vxF "$SELF"` 排除**之完整可貼上指令，輸出即等於宣稱數；同時明列未排除時的原始數字 S1=21 / S2=22 / S3=5，並在 §7.1 以 `/tmp/scan_boundary.sh` 對 raw 與 excluded 兩組數字同時做 fail-closed 斷言（含 `S1 ⊂ S2` 與差集個案） |
 | （第三次審查）§7.2 實含 77 個 `check` 呼叫但宣稱 76；且 `check()` 在 FAIL 後仍回傳成功，不是 fail-closed 斷言 | 宣稱數更正為 **77**（可用 `grep -oE '(^\|;[[:space:]]*)check[[:space:]]' /tmp/check_lines.sh \| wc -l` 獨立複核）；`check()` 改為累計 `fails`，腳本結尾以 `exit 1` 收斂並額外斷言「宣告 77 = 實際執行 77」，§7.2 另附負向驗證證明 `EXIT=1` 確實會發生；§7.6 對帳腳本再加一組斷言，把「內文宣稱數 / 腳本呼叫數 / 腳本自我斷言常數」三者鎖在一起，使同類漂移之後可被機器擋下 |
+| （第四次審查）§2 旁路掃描只涵蓋 `gcloud run` / Cloud Scheduler，漏列 GKE 直接發布入口 | 新增 §1.1 第 1a 項「擴大旁路搜尋」，§2 bypass 表新增 3 列（GKE 資料平台手動部署路徑、Terraform Cloud Run bootstrap 路徑、手動部署文件引導）。`infra/k8s/data-platform/README.md` L40-45（docker build）、L53-62（render.py）、L87-88（kubectl apply）完整呼叫鏈逐行記錄，並標示 `deployment_runtime.py` 之內建遷移收據門禁。§2 掃描方法新增 kubectl/terraform/render.py 擴大搜尋指令與結果 |
+| （第四次審查）未核對 Terraform Cloud Run apply 是否屬 bootstrap 還是 runtime deploy path | §2 bypass 表新增「Terraform Cloud Run bootstrap 路徑」列：判定為 **bootstrap-only**——全庫無 workflow 執行 terraform（`git grep` 證明）、Terraform 不管理 Cloud Run Jobs/Scheduler、README L112-113 自述 bootstrap、L128 禁止 routine `-target`；但標示 `.tfvars` image 變更後 apply 為理論旁路面 |
+| （第四次審查）未處理 `docs/deployment/GCP_DEPLOY_GUIDE.md` 之 manual/local deployment guidance | §2 bypass 表新增「手動部署文件引導」列：標示 L7 之 fallback 敘述與 L39-49 之步驟指引，釐清其與 `deploy_cloud_run_waji.sh` 手動執行之關係，建議 Wave 2 後更新文件 |
