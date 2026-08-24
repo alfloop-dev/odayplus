@@ -53,22 +53,6 @@ locals {
     "storage.googleapis.com",
   ])
 
-  required_provider_endpoint_env_names = toset([
-    "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-    "ODP_DEMOGRAPHICS_PROVIDER_URL",
-    "ODP_GEOCODE_PROVIDER_URL",
-    "ODP_LISTING_PROVIDER_FEED_URL",
-    "ODP_POI_PROVIDER_URL",
-    "ODP_WEATHER_PROVIDER_URL",
-  ])
-  required_provider_secret_env_names = toset([
-    "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
-    "ODP_DEMOGRAPHICS_PROVIDER_API_KEY",
-    "ODP_GEOCODE_PROVIDER_API_KEY",
-    "ODP_LISTING_PROVIDER_API_KEY",
-    "ODP_POI_PROVIDER_API_KEY",
-    "ODP_WEATHER_PROVIDER_API_KEY",
-  ])
   required_model_config_env_names = toset([
     "ODP_AVM_LIQUIDITY_APPROVED_AT",
     "ODP_AVM_LIQUIDITY_APPROVED_BY",
@@ -80,19 +64,6 @@ locals {
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
   ])
-  production_provider_ids = toset([
-    "admin_boundary.official_dataset",
-    "geocode.primary_api",
-    "listing.partner_feed",
-    "poi.commercial_api",
-  ])
-
-  provider_auth_status_env = {
-    ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS = "active"
-    ODP_GEOCODE_PROVIDER_AUTH_STATUS        = "active"
-    ODP_LISTING_PROVIDER_AUTH_STATUS        = "active"
-    ODP_POI_PROVIDER_AUTH_STATUS            = "active"
-  }
 
   fixed_runtime_env_names = toset([
     "APP_ENV",
@@ -115,7 +86,6 @@ locals {
     "ODP_OBJECT_STORE",
     "ODP_PERSISTENCE",
     "ODP_PRODUCT_MODE",
-    "ODP_PRODUCTION_PROVIDER_IDS",
     "ODP_REQUIRE_LIVE_DATA",
     "ODP_RESIDENCY_APPROVED_BUCKETS",
     "ODP_SOURCE_SNAPSHOT_BUCKET",
@@ -128,14 +98,11 @@ locals {
     "ODP_WEB_SESSION_SECRET",
   ])
   external_runtime_secret_env_names = setunion(
-    toset(keys(var.external_provider_secret_refs)),
     toset(keys(var.model_secret_refs)),
     toset(keys(var.runtime_additional_secret_refs)),
   )
   runtime_plain_env_names = setunion(
     local.fixed_runtime_env_names,
-    toset(keys(local.provider_auth_status_env)),
-    toset(keys(var.external_provider_endpoints)),
     toset(keys(var.model_runtime_config)),
     toset(keys(var.runtime_additional_env)),
   )
@@ -173,11 +140,10 @@ locals {
     ODP_AUTH_JWKS_URI               = var.oidc_jwks_uri
     ODP_AUTH_LEEWAY_SECONDS         = tostring(var.oidc_leeway_seconds)
     ODP_DEPLOY_ENV                  = var.environment
-    ODP_EXTERNAL_PROVIDER_MODE      = (local.is_prod || var.live_data_enabled) ? "live" : "fixture"
+    ODP_EXTERNAL_PROVIDER_MODE      = "fixture"
     ODP_OBJECT_STORE                = "gcs"
     ODP_PERSISTENCE                 = "postgresql"
     ODP_PRODUCT_MODE                = (local.is_prod || var.live_data_enabled) ? "live" : "development"
-    ODP_PRODUCTION_PROVIDER_IDS     = join(",", sort(tolist(local.production_provider_ids)))
     ODP_REQUIRE_LIVE_DATA           = tostring(local.is_prod || var.live_data_enabled)
     ODP_RESIDENCY_APPROVED_BUCKETS  = join(",", [google_storage_bucket.source_snapshots.name, google_storage_bucket.artifacts.name, module.audit_evidence.bucket_name])
     ODP_AUDIT_WORM_SINK_URI         = module.audit_evidence.worm_sink_uri
@@ -190,8 +156,6 @@ locals {
 
   runtime_plain_env = merge(
     local.fixed_runtime_env,
-    local.provider_auth_status_env,
-    var.external_provider_endpoints,
     var.model_runtime_config,
     var.runtime_additional_env,
   )
@@ -207,7 +171,6 @@ locals {
     }
   }
   external_runtime_secret_refs = merge(
-    var.external_provider_secret_refs,
     var.model_secret_refs,
     var.runtime_additional_secret_refs,
   )
@@ -230,11 +193,6 @@ locals {
     tolist(var.oidc_audiences),
     tolist(var.api_invoker_members),
     tolist(var.web_invoker_members),
-    values(var.external_provider_endpoints),
-    flatten([
-      for ref in values(var.external_provider_secret_refs) :
-      [ref.secret_id, ref.version]
-    ]),
     values(var.model_runtime_config),
     flatten([
       for ref in values(var.model_secret_refs) :

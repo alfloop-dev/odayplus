@@ -153,7 +153,7 @@ def commit(
     env = seed_private_index(root, index_file)
 
     for path in scope:
-        _git(["add", "--", normalize(path)], cwd=root, env=env)
+        _git(["add", "-f", "--", normalize(path)], cwd=root, env=env)
 
     staged_proc = _git(["diff", "--cached", "--name-only", "-z"], cwd=root, env=env)
     staged = [p for p in staged_proc.stdout.split("\0") if p]

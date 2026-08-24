@@ -184,6 +184,16 @@ def run_scheduler() -> int:
         return EXIT_FAILED
 
     if not tracking_queue.enqueued:
+        if not scheduler.recurring_job_types():
+            _emit_receipt(
+                "scheduler",
+                "succeeded",
+                reason="external_fetch_decommissioned",
+                active_jobs_before=before,
+                active_jobs_after=after,
+                jobs_enqueued=0,
+            )
+            return 0
         _emit_receipt(
             "scheduler",
             "failed",

@@ -70,33 +70,14 @@ resource "terraform_data" "production_contract" {
     }
 
     precondition {
-      condition = !local.is_prod || (
-        length(setsubtract(
-          local.required_provider_endpoint_env_names,
-          toset(keys(var.external_provider_endpoints)),
-        )) == 0
-        && length(setsubtract(
-          local.required_provider_secret_env_names,
-          toset(keys(var.external_provider_secret_refs)),
-        )) == 0
-        && alltrue([
-          for name in local.required_provider_endpoint_env_names :
-          startswith(lookup(var.external_provider_endpoints, name, ""), "https://")
-          && !can(regex("@", replace(lookup(var.external_provider_endpoints, name, ""), "https://", "")))
-        ])
-        && alltrue([
-          for ref in values(var.external_provider_secret_refs) :
-          can(regex("^[1-9][0-9]*$", ref.version))
-        ])
-        && alltrue([
-          for ref in concat(
-            values(var.model_secret_refs),
-            values(var.runtime_additional_secret_refs),
-          ) :
-          can(regex("^[1-9][0-9]*$", ref.version))
-        ])
-      )
-      error_message = "Production live-provider endpoints or pinned Secret Manager bindings are incomplete or unsafe."
+      condition = !local.is_prod || alltrue([
+        for ref in concat(
+          values(var.model_secret_refs),
+          values(var.runtime_additional_secret_refs),
+        ) :
+        can(regex("^[1-9][0-9]*$", ref.version))
+      ])
+      error_message = "Production Secret Manager bindings must use explicit numeric versions."
     }
 
     precondition {
@@ -260,41 +241,6 @@ check "production_identity_contract" {
       && !contains(var.api_invoker_members, "allAuthenticatedUsers")
     )
     error_message = "Production requires explicit non-public Cloud Run invoker members."
-  }
-}
-
-check "production_external_provider_contract" {
-  assert {
-    condition = !local.is_prod || length(setsubtract(
-      local.required_provider_endpoint_env_names,
-      toset(keys(var.external_provider_endpoints)),
-    )) == 0
-    error_message = "Production is missing one or more required live-provider endpoint environment variables."
-  }
-
-  assert {
-    condition = !local.is_prod || alltrue([
-      for name in local.required_provider_endpoint_env_names :
-      startswith(lookup(var.external_provider_endpoints, name, ""), "https://")
-      && !can(regex("@", replace(lookup(var.external_provider_endpoints, name, ""), "https://", "")))
-    ])
-    error_message = "Every production provider endpoint must be HTTPS and must not embed credentials."
-  }
-
-  assert {
-    condition = !local.is_prod || length(setsubtract(
-      local.required_provider_secret_env_names,
-      toset(keys(var.external_provider_secret_refs)),
-    )) == 0
-    error_message = "Production is missing one or more required provider credential Secret Manager bindings."
-  }
-
-  assert {
-    condition = !local.is_prod || alltrue([
-      for ref in values(var.external_provider_secret_refs) :
-      can(regex("^[1-9][0-9]*$", ref.version))
-    ])
-    error_message = "Production provider secrets must use explicit numeric Secret Manager versions, never latest."
   }
 }
 

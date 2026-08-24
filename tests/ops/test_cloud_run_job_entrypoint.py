@@ -65,6 +65,7 @@ def test_scheduler_fails_when_run_once_swallows_enqueue_exception(monkeypatch) -
     bundle = replace(build_persistence(), job_queue=ExplodingQueue())
     monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
     monkeypatch.setenv("ODP_SCHEDULED_INGESTION_TENANT_ID", "tenant-ops")
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_LEGACY_ONLY)
 
     assert entrypoint.run_scheduler() == entrypoint.EXIT_FAILED
 

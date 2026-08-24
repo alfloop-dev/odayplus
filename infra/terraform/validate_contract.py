@@ -52,7 +52,6 @@ REQUIRED_TOKENS = {
         "precondition",
         'check "production_image_and_capacity"',
         'check "production_identity_contract"',
-        'check "production_external_provider_contract"',
         'check "production_model_runtime_contract"',
         'check "production_forbidden_values"',
         "@sha256:[0-9a-f]{64}$",
@@ -62,7 +61,6 @@ REQUIRED_TOKENS = {
         "var.web_oidc_client_secret_ref",
         "var.web_invoker_members",
         "var.web_min_instances",
-        "required_provider_secret_env_names",
         "required_model_config_env_names",
         "forbidden_production_value_pattern",
     },
@@ -82,8 +80,9 @@ REQUIRED_TOKENS = {
     "network.tf": {
         'resource "google_compute_network" "runtime"',
         'resource "google_service_networking_connection" "private_services"',
-        'resource "google_compute_router_nat" "runtime"',
-        'nat_ip_allocate_option',
+        'resource "google_compute_firewall" "deny_all_egress"',
+        'resource "google_compute_firewall" "allow_private_egress"',
+        'resource "google_compute_firewall" "allow_restricted_google_apis"',
         "private_ip_google_access = true",
     },
     "kms.tf": {
@@ -224,11 +223,14 @@ def validate(root: Path = ROOT) -> list[str]:
     ):
         errors.append("runtime persistence is not fixed to PostgreSQL")
     if not re.search(
-        r'ODP_EXTERNAL_PROVIDER_MODE\s*=\s*'
-        r'\(local\.is_prod \|\| var\.live_data_enabled\) \? "live" : "fixture"',
+        r'ODP_EXTERNAL_PROVIDER_MODE\s*=\s*"fixture"',
         texts.get("main.tf", ""),
     ):
-        errors.append("provider mode does not force live behavior in production")
+        errors.append("provider mode is not fixed to fixture (external providers disabled)")
+    if "ODP_PRODUCTION_PROVIDER_IDS" in texts.get("main.tf", ""):
+        errors.append("main.tf must not project ODP_PRODUCTION_PROVIDER_IDS")
+    if "required_provider_secret_env_names" in texts.get("main.tf", ""):
+        errors.append("main.tf must not define required_provider_secret_env_names")
     if "is_locked        = var.lock_retention_policy" not in texts.get("audit/main.tf", ""):
         errors.append("audit retention lock is not environment-controlled")
 

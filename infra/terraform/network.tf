@@ -54,36 +54,50 @@ resource "google_compute_subnetwork_iam_member" "web_network_user" {
   member     = "serviceAccount:${google_service_account.web.email}"
 }
 
-resource "google_compute_address" "nat" {
-  name   = "${local.name_prefix}-nat"
-  region = var.region
+resource "google_compute_firewall" "deny_all_egress" {
+  name      = "${local.name_prefix}-deny-all-egress"
+  network   = google_compute_network.runtime.name
+  direction = "EGRESS"
+  priority  = 65534
 
-  depends_on = [google_project_service.required]
-}
-
-resource "google_compute_router" "runtime" {
-  name    = "${local.name_prefix}-runtime"
-  region  = var.region
-  network = google_compute_network.runtime.id
-}
-
-resource "google_compute_router_nat" "runtime" {
-  name                                = "${local.name_prefix}-runtime"
-  router                              = google_compute_router.runtime.name
-  region                              = var.region
-  nat_ip_allocate_option              = "MANUAL_ONLY"
-  nat_ips                             = [google_compute_address.nat.self_link]
-  source_subnetwork_ip_ranges_to_nat  = "LIST_OF_SUBNETWORKS"
-  min_ports_per_vm                    = 128
-  enable_endpoint_independent_mapping = true
-
-  subnetwork {
-    name                    = google_compute_subnetwork.runtime.id
-    source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
+  deny {
+    protocol = "all"
   }
 
-  log_config {
-    enable = true
-    filter = "ERRORS_ONLY"
+  destination_ranges = ["0.0.0.0/0"]
+}
+
+resource "google_compute_firewall" "allow_private_egress" {
+  name      = "${local.name_prefix}-allow-private-egress"
+  network   = google_compute_network.runtime.name
+  direction = "EGRESS"
+  priority  = 1000
+
+  allow {
+    protocol = "all"
   }
+
+  destination_ranges = [
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    var.network_cidr,
+  ]
+}
+
+resource "google_compute_firewall" "allow_restricted_google_apis" {
+  name      = "${local.name_prefix}-allow-restricted-google-apis"
+  network   = google_compute_network.runtime.name
+  direction = "EGRESS"
+  priority  = 1000
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
+  }
+
+  destination_ranges = [
+    "199.36.153.4/30",
+    "199.36.153.8/30",
+  ]
 }

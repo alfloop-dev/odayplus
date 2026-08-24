@@ -88,8 +88,6 @@ REQUIRED_PUBLIC_CONFIG = (
     "MLFLOW_TRACKING_URI",
     "ODP_FORECAST_ENGINE",
     "ODP_FORECAST_MODEL",
-    PRODUCTION_PROVIDER_IDS_ENV,
-    PROVIDER_PROBE_TIMEOUT_ENV,
     "ODP_AUTH_ISSUER",
     "ODP_AUTH_AUDIENCES",
     "ODP_AUTH_JWKS_URI",
@@ -112,7 +110,6 @@ REQUIRED_RUNTIME_VALUES = {
     "ODP_REQUIRE_LIVE_DATA": "true",
     "ODP_DATA_BINDING_MODE": "live",
     "ODP_PRODUCT_MODE": "production",
-    "ODP_EXTERNAL_PROVIDER_MODE": "live",
     "ODP_PERSISTENCE": "postgresql",
     "ODP_OBJECT_STORE": "gcs",
     "ODP_COMPETITOR_MANUAL_SOURCE_STATUS": "disabled",
@@ -140,6 +137,12 @@ def _configured(value: str) -> bool:
 
 def _bounded_provider_probe_timeout_check(env: Mapping[str, str]) -> CheckResult:
     raw_value = env.get(PROVIDER_PROBE_TIMEOUT_ENV, "").strip()
+    if not raw_value:
+        return CheckResult(
+            ok=True,
+            name=f"runtime:{PROVIDER_PROBE_TIMEOUT_ENV}",
+            detail="not configured (external providers off)",
+        )
     try:
         timeout_seconds = float(raw_value)
     except ValueError:
@@ -1441,24 +1444,90 @@ def preflight_checks(
         )
     )
 
-    allowlist_checks, production_provider_ids = provider_allowlist_checks(
-        env=env,
-        root=root,
+    # Acceptance 1: Production must not enable external provider live mode
+    provider_mode = env.get("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower()
+    checks.append(
+        CheckResult(
+            provider_mode != "live",
+            "runtime:external_provider_mode_off",
+            (
+                "external provider live mode is disabled; consumer reads platform snapshots"
+                if provider_mode != "live"
+                else "production deployment must not enable external provider live mode; external providers are off"
+            ),
+        )
     )
-    checks.extend(allowlist_checks)
-    checks.extend(
-        selected_provider_config_checks(
+
+    # Acceptance 2: Deploy script / workflow / env must not project provider endpoints or secrets
+    forbidden_provider_secrets = [
+        key
+        for key in env
+        if re.match(
+            r"^ODP_(?:LISTING|POI|GEOCODE|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER)_[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)",
+            key,
+        )
+        and env[key].strip()
+    ]
+    checks.append(
+        CheckResult(
+            not forbidden_provider_secrets,
+            "runtime:no_provider_secrets_projected",
+            (
+                "no external provider credentials projected"
+                if not forbidden_provider_secrets
+                else f"external provider secrets must not be projected: {','.join(sorted(forbidden_provider_secrets))}"
+            ),
+        )
+    )
+
+    forbidden_provider_endpoints = [
+        key
+        for key in env
+        if re.match(
+            r"^ODP_(?:LISTING|POI|GEOCODE|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER)_[A-Z0-9_]*(?:FEED_URL|URL)$",
+            key,
+        )
+        and env[key].strip()
+    ]
+    checks.append(
+        CheckResult(
+            not forbidden_provider_endpoints,
+            "runtime:no_provider_endpoints_projected",
+            (
+                "no external provider endpoints projected"
+                if not forbidden_provider_endpoints
+                else f"external provider endpoints must not be projected: {','.join(sorted(forbidden_provider_endpoints))}"
+            ),
+        )
+    )
+
+    raw_ids = env.get(PRODUCTION_PROVIDER_IDS_ENV, "")
+    if raw_ids.strip():
+        allowlist_checks, production_provider_ids = provider_allowlist_checks(
             env=env,
-            production_provider_ids=production_provider_ids,
             root=root,
         )
-    )
-    checks.extend(
-        repository_capability_checks(
-            root,
-            production_provider_ids=production_provider_ids,
+        checks.extend(allowlist_checks)
+        checks.extend(
+            selected_provider_config_checks(
+                env=env,
+                production_provider_ids=production_provider_ids,
+                root=root,
+            )
         )
-    )
+        checks.extend(
+            repository_capability_checks(
+                root,
+                production_provider_ids=production_provider_ids,
+            )
+        )
+    else:
+        checks.extend(
+            repository_capability_checks(
+                root,
+                production_provider_ids=frozenset(),
+            )
+        )
     return checks
 
 
@@ -1724,6 +1793,16 @@ def _provider_probe_checks(
                 False,
                 "smoke:/platform/health:external_providers:contract",
                 "missing structured provider connectivity report",
+            )
+        ]
+
+    mode = str(provider_report.get("mode", "fixture")).strip().lower()
+    if mode != "live":
+        return [
+            CheckResult(
+                ok=True,
+                name="smoke:/platform/health:external_providers:mode",
+                detail="external providers disabled (consumer-only deployment)",
             )
         ]
 
@@ -3340,10 +3419,7 @@ def _job_selected_provider_ids(
 
     occurrences = entries.get(PRODUCTION_PROVIDER_IDS_ENV, [])
     if not occurrences:
-        raise JobDescriptionError(
-            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
-            "the selected provider set is unprovable"
-        )
+        return ""
     if len(occurrences) > 1:
         raise JobDescriptionError(
             f"job declares {PRODUCTION_PROVIDER_IDS_ENV} {len(occurrences)} times; "
@@ -3525,60 +3601,102 @@ def job_secret_binding_checks(
     report["selected_provider_ids"] = sorted(selected_ids)
 
     if not selected_ids:
-        detail = (
-            f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
-            "the selected provider set is unprovable"
-        )
-        return [
-            CheckResult(False, selection_check, detail),
-            CheckResult(False, bindings_check, detail),
-        ], report
+        try:
+            _, _, known_credential_env_vars = required_job_secret_env_vars(
+                frozenset(), root=root
+            )
+        except Exception:
+            known_credential_env_vars = ()
+        unselected_bound = [k for k in known_credential_env_vars if k in entries]
+        if unselected_bound:
+            detail = (
+                f"job declares no plaintext {PRODUCTION_PROVIDER_IDS_ENV}; "
+                "the selected provider set is unprovable"
+            )
+            return [
+                CheckResult(False, selection_check, detail),
+                CheckResult(False, bindings_check, detail),
+            ], report
 
-    try:
-        required_env_vars, unknown_ids, known_credential_env_vars = required_job_secret_env_vars(
-            selected_ids, root=root
-        )
-    except Exception as exc:  # noqa: BLE001 - registry import failure must fail closed
-        detail = f"cannot import provider registry: {type(exc).__name__}: {exc}"
-        return [
-            CheckResult(False, selection_check, detail),
-            CheckResult(False, bindings_check, detail),
-        ], report
-
-    checks = [
-        CheckResult(
-            not unknown_ids,
-            selection_check,
-            (
-                f"selected={','.join(sorted(selected_ids))}"
-                if not unknown_ids
-                else f"unknown provider IDs: {','.join(unknown_ids)}"
-            ),
-        )
-    ]
-
-    if release_provider_ids is not None:
-        release_ids = frozenset(
-            provider_id.strip()
-            for provider_id in release_provider_ids.split(",")
-            if provider_id.strip()
-        )
-        matches = bool(release_ids) and release_ids == selected_ids
-        checks.append(
+        # Consumer deployment: no external providers selected
+        required_env_vars = (DATABASE_SECRET_ENV,)
+        unknown_ids = ()
+        known_credential_env_vars = ()
+        checks = [
             CheckResult(
-                matches,
-                f"jobs-smoke:{kind}:selected_provider_release_match",
+                True,
+                selection_check,
+                "no external providers selected (consumer-only deployment)",
+            )
+        ]
+        if release_provider_ids is not None:
+            release_ids = frozenset(
+                provider_id.strip()
+                for provider_id in release_provider_ids.split(",")
+                if provider_id.strip()
+            )
+            matches = not release_ids
+            checks.append(
+                CheckResult(
+                    matches,
+                    f"jobs-smoke:{kind}:selected_provider_release_match",
+                    (
+                        "job selection matches the release provider allowlist"
+                        if matches
+                        else (
+                            f"job selected=<none> "
+                            f"release selected={','.join(sorted(release_ids)) or '<none>'}"
+                        )
+                    ),
+                )
+            )
+            report["release_provider_ids"] = sorted(release_ids)
+    else:
+        try:
+            required_env_vars, unknown_ids, known_credential_env_vars = required_job_secret_env_vars(
+                selected_ids, root=root
+            )
+        except Exception as exc:  # noqa: BLE001 - registry import failure must fail closed
+            detail = f"cannot import provider registry: {type(exc).__name__}: {exc}"
+            return [
+                CheckResult(False, selection_check, detail),
+                CheckResult(False, bindings_check, detail),
+            ], report
+
+        checks = [
+            CheckResult(
+                not unknown_ids,
+                selection_check,
                 (
-                    "job selection matches the release provider allowlist"
-                    if matches
-                    else (
-                        f"job selected={','.join(sorted(selected_ids)) or '<none>'} "
-                        f"release selected={','.join(sorted(release_ids)) or '<none>'}"
-                    )
+                    f"selected={','.join(sorted(selected_ids))}"
+                    if not unknown_ids
+                    else f"unknown provider IDs: {','.join(unknown_ids)}"
                 ),
             )
-        )
-        report["release_provider_ids"] = sorted(release_ids)
+        ]
+
+        if release_provider_ids is not None:
+            release_ids = frozenset(
+                provider_id.strip()
+                for provider_id in release_provider_ids.split(",")
+                if provider_id.strip()
+            )
+            matches = bool(release_ids) and release_ids == selected_ids
+            checks.append(
+                CheckResult(
+                    matches,
+                    f"jobs-smoke:{kind}:selected_provider_release_match",
+                    (
+                        "job selection matches the release provider allowlist"
+                        if matches
+                        else (
+                            f"job selected={','.join(sorted(selected_ids)) or '<none>'} "
+                            f"release selected={','.join(sorted(release_ids)) or '<none>'}"
+                        )
+                    ),
+                )
+            )
+            report["release_provider_ids"] = sorted(release_ids)
 
     failures: list[str] = []
     bound: list[str] = []
