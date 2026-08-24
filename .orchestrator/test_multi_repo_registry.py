@@ -390,7 +390,7 @@ class RepositoryIdAuthorityCanonicalizeTests(unittest.TestCase):
 
     def test_git_url_slug_canonicalizes_correctly(self) -> None:
         """A ``.git`` URL like ``alfloop-dev/oday-data-platform.git`` must
-        still match after normalization strips the suffix."""
+        resolve after normalization strips the suffix."""
         config, checkout, tmpdir = self._make_env(
             "https://github.com/alfloop-dev/oday-data-platform.git"
         )
@@ -399,18 +399,11 @@ class RepositoryIdAuthorityCanonicalizeTests(unittest.TestCase):
                 config,
                 {"id": "T-GIT", "repository": "alfloop-dev/oday-data-platform.git"},
             )
-            # matching_repo_id checks casefold of the value against the repo's
-            # configured slug; the .git suffix is not stripped by matching_repo_id
-            # itself, so this may or may not match depending on whether the
-            # registry's ``repo`` field includes `.git`. Verify no crash and
-            # that, if it resolves, the slug is correct.
-            if binding.resolved:
-                self.assertEqual(binding.slug, "alfloop-dev/oday-data-platform")
-                self.assertIsNone(binding.error)
-            else:
-                # If matching_repo_id cannot find it, it must report unknown,
-                # not a mismatch.
-                self.assertIn("unknown_repository", binding.error or "")
+            self.assertTrue(binding.resolved, f"unexpected error: {binding.error}")
+            self.assertEqual(binding.repo_id, "oday_data_platform")
+            self.assertEqual(binding.slug, "alfloop-dev/oday-data-platform")
+            self.assertEqual(binding.root, checkout.resolve())
+            self.assertIsNone(binding.error)
         finally:
             import shutil
             shutil.rmtree(tmpdir, ignore_errors=True)
@@ -467,6 +460,30 @@ class RepositoryIdAuthorityCanonicalizeTests(unittest.TestCase):
         finally:
             import shutil
             shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_matching_repo_id_normalizes_git_suffix(self) -> None:
+        """matching_repo_id must strip .git before comparison so that
+        ``alfloop-dev/oday-data-platform.git`` resolves to the registered
+        slug ``alfloop-dev/oday-data-platform``."""
+        # .git suffix on a known slug
+        self.assertEqual(
+            multi_repo_registry.matching_repo_id({}, "alfloop-dev/oday-data-platform.git"),
+            "oday_data_platform",
+        )
+        # Without .git (baseline)
+        self.assertEqual(
+            multi_repo_registry.matching_repo_id({}, "alfloop-dev/oday-data-platform"),
+            "oday_data_platform",
+        )
+        # Alias / display name — no .git, still works
+        self.assertEqual(
+            multi_repo_registry.matching_repo_id({}, "oday-data-platform"),
+            "oday_data_platform",
+        )
+        # Unknown repo with .git still returns None
+        self.assertIsNone(
+            multi_repo_registry.matching_repo_id({}, "acme/widgets.git"),
+        )
 
 
 if __name__ == "__main__":

@@ -593,7 +593,7 @@ def matching_repo_id(config: dict[str, Any], value: str | None) -> str | None:
     candidate = str(value or "").strip()
     if not candidate:
         return None
-    lowered = candidate.casefold()
+    lowered = re.sub(r"\.git$", "", candidate).casefold()
     for repo_id, repo in repositories(config).items():
         options = {
             repo_id,
@@ -605,7 +605,10 @@ def matching_repo_id(config: dict[str, Any], value: str | None) -> str | None:
             # either one routes somewhere else.
             *(str(alias) for alias in (repo.get("aliases") or [])),
         }
-        normalized = {item.strip().casefold() for item in options if item and item.strip()}
+        normalized = {
+            re.sub(r"\.git$", "", item.strip()).casefold()
+            for item in options if item and item.strip()
+        }
         if lowered in normalized:
             return repo_id
     return None
