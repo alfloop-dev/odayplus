@@ -107,13 +107,21 @@ ls .github/workflows/                                              # -> 7 支，
 
 #### 3.2.0 掃描邊界宣告（Scan Boundary）
 
-「殘留」的判定會隨搜尋式而改變，因此本節先固定三個掃描邊界，全部以 `git ls-files` 追蹤範圍為母體，**並一律排除本報告自身**（`docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md`）：
+「殘留」的判定會隨搜尋式而改變，因此本節先固定三個掃描邊界，全部以 `git ls-files` 追蹤範圍為母體，**並一律排除本報告自身**。排除動作寫在指令裡，不靠讀者心算，先固定自我排除變數：
 
-| 代號 | 定義 | 指令 | 命中檔數（不含本報告） |
+```bash
+SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三個邊界一律排除
+```
+
+下表「指令」欄即為完整可貼上執行的指令，其輸出行數等於「命中檔數」欄的數字，無須再做任何加減：
+
+| 代號 | 定義 | 指令（已含本報告排除） | 命中檔數（不含本報告） |
 |---|---|---|---|
-| **S1 窄掃描** | 已退役 campaign 的**識別符形式**：`external` 與 `proof` 之間僅隔 1 個分隔字元（`-`、`_`、`.`、空白） | `git grep -Eil 'external[-_. ]proof'` | **20** |
-| **S2 寬掃描** | 允許 `external` 與 `proof` 之間夾雜至多 2 個英文字（涵蓋 `external runtime proof`、`external data proof` 等散文寫法） | `git grep -Eil 'external[^[:alpha:]]{0,3}([[:alpha:]]+[^[:alpha:]]{1,3}){0,2}proof'` | **21** |
-| **S3 檔名掃描** | 檔名本身帶 external-proof | `git ls-files \| grep -Ei 'external[-_.]?proof'` | **5**（皆為 S2 子集） |
+| **S1 窄掃描** | 已退役 campaign 的**識別符形式**：`external` 與 `proof` 之間僅隔 1 個分隔字元（`-`、`_`、`.`、空白） | `git grep -Eil 'external[-_. ]proof' \| grep -vxF "$SELF"` | **20** |
+| **S2 寬掃描** | 允許 `external` 與 `proof` 之間夾雜至多 2 個英文字（涵蓋 `external runtime proof`、`external data proof` 等散文寫法） | `git grep -Eil 'external[^[:alpha:]]{0,3}([[:alpha:]]+[^[:alpha:]]{1,3}){0,2}proof' \| grep -vxF "$SELF"` | **21** |
+| **S3 檔名掃描** | 檔名本身帶 external-proof | `git ls-files \| grep -Ei 'external[-_.]?proof' \| grep -vxF "$SELF"` | **5**（皆為 S2 子集） |
+
+> **未排除本報告時的原始數字**：S1 = 21、S2 = 22、S3 = 5（本報告檔名不含 external-proof，故 S3 不受影響）。本報告全文引用的 20 / 21 / 5 一律指上表**已排除**後的數字；§7.1 同時列出兩組數字並提供差值斷言。
 
 **三邊界聯集 = 21 檔（S2 即聯集，S1 ⊂ S2，S3 ⊂ S2）。**
 
@@ -507,28 +515,77 @@ ls .github/workflows/                                              # -> 7 支，
 
 ### 7.1 掃描邊界與檔數對帳
 
+§3.2.0 的三個掃描邊界一律排除本報告自身，下列腳本把「排除」與「數字」一起寫成**斷言**，而不是讓讀者自行加減。存為 `/tmp/scan_boundary.sh` 後執行：
+
 ```bash
-# S1 窄掃描（識別符形式）— 期望：21 行，扣除本報告 = 20
-git grep -Eil 'external[-_. ]proof' | wc -l
-
-# S2 寬掃描（含散文寫法）— 期望：22 行，扣除本報告 = 21
-git grep -Eil 'external[^[:alpha:]]{0,3}([[:alpha:]]+[^[:alpha:]]{1,3}){0,2}proof' | wc -l
-
-# S3 檔名掃描 — 期望：5
-git ls-files | grep -Ei 'external[-_.]?proof' | wc -l
-
-# S2 \ S1 差集 — 期望：僅 EXTERNAL_PROOF_HANDBACK_TEMPLATE.json（§3.2.0 邊界個案）
-comm -13 \
-  <(git grep -Eil 'external[-_. ]proof' | sort) \
-  <(git grep -Eil 'external[^[:alpha:]]{0,3}([[:alpha:]]+[^[:alpha:]]{1,3}){0,2}proof' | sort)
+bash /tmp/scan_boundary.sh; echo "EXIT=$?"
 ```
 
-實測輸出：S1 = 21、S2 = 22、S3 = 5；差集恰為 `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` 一檔。扣除本報告後：S1 = 20、S2 = 21，與 §3.2.0、§3.2.7 數字一致。
+```bash
+#!/usr/bin/env bash
+# §7.1 掃描邊界與檔數對帳（fail-closed）：任一項不符即以非 0 離開。
+set -uo pipefail
+
+SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'
+S1RE='external[-_. ]proof'
+S2RE='external[^[:alpha:]]{0,3}([[:alpha:]]+[^[:alpha:]]{1,3}){0,2}proof'
+fails=0
+
+num() {  # num <label> <want> <got>
+  if [ "$3" -eq "$2" ]; then printf 'OK   %s got=%s want=%s\n' "$1" "$3" "$2"
+  else printf 'FAIL %s got=%s want=%s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi
+}
+str() {  # str <label> <want> <got>
+  if [ "$3" = "$2" ]; then printf 'OK   %s got=%s\n' "$1" "$3"
+  else printf 'FAIL %s got=%s want=%s\n' "$1" "$3" "$2"; fails=$((fails + 1)); fi
+}
+
+s1_raw=$(git grep -Eil "$S1RE" | wc -l)
+s2_raw=$(git grep -Eil "$S2RE" | wc -l)
+s1=$(git grep -Eil "$S1RE" | grep -vxF "$SELF" | wc -l)
+s2=$(git grep -Eil "$S2RE" | grep -vxF "$SELF" | wc -l)
+s3=$(git ls-files | grep -Ei 'external[-_.]?proof' | grep -vxF "$SELF" | wc -l)
+s1_not_s2=$(comm -23 <(git grep -Eil "$S1RE" | sort) <(git grep -Eil "$S2RE" | sort) | wc -l)
+s2_not_s1=$(comm -13 <(git grep -Eil "$S1RE" | grep -vxF "$SELF" | sort) \
+                     <(git grep -Eil "$S2RE" | grep -vxF "$SELF" | sort) | tr '\n' ' ' | sed 's/ *$//')
+
+num 'S1-raw-with-report      ' 21 "$s1_raw"
+num 'S2-raw-with-report      ' 22 "$s2_raw"
+num 'S1-excluding-report     ' 20 "$s1"
+num 'S2-excluding-report     ' 21 "$s2"
+num 'S3-filename-scan        '  5 "$s3"
+num 'S1-minus-S2-must-be-zero'  0 "$s1_not_s2"
+num 'residual=S2-minus-plan  ' 20 "$((s2 - 1))"
+str 'S2-minus-S1-boundary-case' 'docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json' "$s2_not_s1"
+
+printf '\nfails=%s\n' "$fails"
+[ "$fails" -eq 0 ] || exit 1
+exit 0
+```
+
+實測輸出（基準 commit）：
+
+```text
+OK   S1-raw-with-report       got=21 want=21
+OK   S2-raw-with-report       got=22 want=22
+OK   S1-excluding-report      got=20 want=20
+OK   S2-excluding-report      got=21 want=21
+OK   S3-filename-scan         got=5 want=5
+OK   S1-minus-S2-must-be-zero got=0 want=0
+OK   residual=S2-minus-plan   got=20 want=20
+OK   S2-minus-S1-boundary-case got=docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json
+
+fails=0
+EXIT=0
+```
+
+兩組數字的關係在此一次講清楚：**未排除本報告時 S1 = 21、S2 = 22**；**排除本報告後 S1 = 20、S2 = 21**，後者才是 §3.2.0、§3.2.7、§1.1 全文採用的口徑。`S1-minus-S2-must-be-zero` 同時證明 S1 ⊂ S2，故「三邊界聯集 = S2」的說法成立。
 
 逐檔 S1 命中行號重現（§3.2.1–§3.2.6 各表「S1 命中行號」欄之來源）：
 
 ```bash
-for f in $(git grep -Eil 'external[-_. ]proof' | grep -v ODP_DEPLOYMENT_DEAD_CODE_AUDIT); do
+SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'
+for f in $(git grep -Eil 'external[-_. ]proof' | grep -vxF "$SELF"); do
   printf '%-80s %3s  %s\n' "$f" \
     "$(grep -Eic 'external[-_. ]proof' "$f")" \
     "$(grep -Ein 'external[-_. ]proof' "$f" | cut -d: -f1 | tr '\n' ',' | sed 's/,$//')"
@@ -537,13 +594,29 @@ done
 
 ### 7.2 行號引用逐項驗證
 
-下列 shell 函式對「檔案 / 行號 / 期望字串」三元組做斷言，可一次驗證本報告所有關鍵行號引用：
+下列腳本對「檔案 / 行號 / 期望字串」三元組做 **77 項** fail-closed 斷言，一次驗證本報告所有關鍵行號引用。`check()` 在 FAIL 時累計 `fails` 而非直接回傳成功，腳本結尾以 `exit 1` 收斂，因此**任何一項不符都會讓整支腳本以非 0 離開**；同時腳本會回頭數自己原始碼裡的 `check` 呼叫數，斷言「宣告 77 項 = 實際執行 77 項」，避免宣稱數與實際數再度脫節。存為 `/tmp/check_lines.sh` 後執行：
 
 ```bash
+bash /tmp/check_lines.sh; echo "EXIT=$?"
+```
+
+```bash
+#!/usr/bin/env bash
+# §7.2 行號引用逐項驗證（fail-closed）：任一斷言失敗、或執行數與宣告數不符，即以非 0 離開。
+set -uo pipefail
+
+checks=0
+fails=0
+
 check() {  # check <file> <line> <expected-substring>
-  local a; a="$(sed -n "${2}p" "$1")"
-  if printf '%s' "$a" | grep -qF "$3"; then printf 'OK   %s:%s\n' "$1" "$2"
-  else printf 'FAIL %s:%s want=%s got=%s\n' "$1" "$2" "$3" "$a"; fi
+  checks=$((checks + 1))
+  local got; got="$(sed -n "${2}p" "$1")"
+  if printf '%s' "$got" | grep -qF "$3"; then
+    printf 'OK   %s:%s\n' "$1" "$2"
+  else
+    printf 'FAIL %s:%s want=%s got=%s\n' "$1" "$2" "$3" "$got"
+    fails=$((fails + 1))
+  fi
 }
 
 W=.github/workflows/deploy-dev.yml
@@ -631,9 +704,42 @@ check docs/deployment/RELEASE_BASELINE.md 10 'Dockerfile.api'
 check docs/deployment/RELEASE_BASELINE.md 11 'infra/docker/docker-compose.yml'
 check tests/test_scaffold.py 58 'infra/k8s_optional'
 check tests/test_scaffold.py 59 'infra/cloudbuild'
+
+# --- fail-closed 收尾：斷言「全部通過」且「一項都沒漏跑」 ---
+declared=$(grep -oE '(^|;[[:space:]]*)check[[:space:]]' "${BASH_SOURCE[0]}" | wc -l)
+printf '\nchecks_declared=%s checks_executed=%s fails=%s\n' "$declared" "$checks" "$fails"
+[ "$declared" -eq 77 ] || { printf 'FAIL declared-count want=77 got=%s\n' "$declared"; fails=$((fails + 1)); }
+[ "$checks" -eq "$declared" ] || { printf 'FAIL executed=%s != declared=%s\n' "$checks" "$declared"; fails=$((fails + 1)); }
+[ "$fails" -eq 0 ] || exit 1
+exit 0
 ```
 
-**實測結果：全部 OK，無 FAIL。**（前版報告在此驗證下會於 `upsert_scheduler_trigger` 呼叫點與函式結束行、以及 `ci.yml:189` / `ci.yml:313` 的直接呼叫寫法上產生 FAIL；本版已更正為 L579-586、L443-470，並改以 `make` 兩段式標註。）
+實測輸出（基準 commit）：77 行全部 `OK`，收尾為
+
+```text
+checks_declared=77 checks_executed=77 fails=0
+EXIT=0
+```
+
+宣稱數可獨立複核（不必執行腳本）：
+
+```bash
+grep -oE '(^|;[[:space:]]*)check[[:space:]]' /tmp/check_lines.sh | wc -l   # -> 77
+```
+
+負向驗證（證明它真的 fail-closed，而非永遠回傳成功）：把任一行號改成不存在的行，腳本會印出 `FAIL` 並以 `EXIT=1` 離開：
+
+```bash
+# 只改掉最後一項斷言的行號與期望字串（此指令本身不含 check 呼叫，不影響上面的計數）
+sed 's|test_scaffold.py 59 .*|test_scaffold.py 999 "no-such-string"|' \
+  /tmp/check_lines.sh > /tmp/check_lines_neg.sh
+bash /tmp/check_lines_neg.sh >/dev/null; echo "EXIT=$?"
+# -> FAIL tests/test_scaffold.py:999 want=no-such-string got=
+#    checks_declared=77 checks_executed=77 fails=1
+#    EXIT=1
+```
+
+（前版報告在此驗證下會於 `upsert_scheduler_trigger` 呼叫點與函式結束行、以及 `ci.yml:189` / `ci.yml:313` 的直接呼叫寫法上產生 FAIL；本版已更正為 L579-586、L443-470，並改以 `make` 兩段式標註。）
 
 ### 7.3 刪除連動風險驗證：`infra/cloudbuild` 與 `infra/k8s_optional` 有 active 測試相依
 
@@ -721,7 +827,7 @@ ls -l product_ops/deployment/deploy_cloud_run_waji.sh product_ops/deployment/clo
 
 ### 7.6 計數對帳自動驗證（本報告自身的一致性檢查）
 
-前兩次審查退件的共同根因，是報告內不同章節的檔數/項數互相打架。為讓此類錯誤可被機器擋下而非靠人工核對，下列腳本**直接解析本報告的表格**，重算 §5.1 全部統計並與宣稱值斷言比對。將其存為 `/tmp/recon.py` 後執行：
+前三次審查退件的共同根因，是報告內不同章節的檔數/項數互相打架（第三次為 §7.2 內文宣稱 76 項、實際 77 項）。為讓此類錯誤可被機器擋下而非靠人工核對，下列腳本**直接解析本報告的表格與 §7.2 內嵌腳本**，重算 §5.1 全部統計、並額外對帳「§7.2 宣稱斷言數 = 腳本內 `check` 呼叫數 = 腳本自我斷言常數」三者。任一項不符即以 `EXIT=1` 離開。將其存為 `/tmp/recon.py` 後執行：
 
 ```bash
 python3 /tmp/recon.py docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md; echo "EXIT=$?"
@@ -789,6 +895,18 @@ for k, want in [('3.2.1', 5), ('3.2.2', 7), ('3.2.3', 3), ('3.2.4', 2), ('3.2.5'
 assert_eq("§3.2 殘留合計", nB, 20)
 assert_eq("軸 B REPLACE/UPDATE (3.2.2+3.2.3)", B['3.2.2'] + B['3.2.3'], 10)
 assert_eq("軸 B ARCHIVE/KEEP (3.2.4+3.2.6)", B['3.2.4'] + B['3.2.6'], 4)
+# --- §7.2 斷言數自我對帳：宣稱數 / 腳本內呼叫數 / 腳本自我斷言常數三者必須一致 ---
+sec72 = doc[doc.index("### 7.2 行號引用逐項驗證"):doc.index("### 7.3 ")]
+FENCE = chr(96) * 3
+b0 = sec72.index("#!/usr/bin/env bash")
+script72 = sec72[b0:sec72.index(FENCE, b0)]
+n72 = len(re.findall(r"(?:^|;[ \t]*)check[ \t]", script72, re.M))
+claimed72 = int(re.search(r"做 \*\*(\d+) 項\*\* fail-closed 斷言", sec72).group(1))
+selfconst72 = int(re.search(r'-eq (\d+) \] \|\| \{ printf .FAIL declared-count', script72).group(1))
+print("--- §7.2 行號斷言數 ---")
+assert_eq("§7.2 腳本內 check 呼叫數", n72, 77)
+assert_eq("§7.2 內文宣稱數 == 實際數", claimed72, n72)
+assert_eq("§7.2 腳本自我斷言常數 == 實際數", selfconst72, n72)
 print("--- 合併行動清單 ---")
 assert_eq("§5.2 刪除清單項數", d52, 10)
 assert_eq("§5.2 = 軸A DELETE + 軸B DELETE", A['DELETE'] + B['3.2.1'], d52)
@@ -802,25 +920,29 @@ sys.exit(0 if ok else 1)
 
 ```text
 --- 軸 A：§4 元件生命週期 ---
-OK   §4 總列數                        got=86   want=86
-OK   §4 KEEP                          got=74   want=74
-OK   §4 REPLACE                       got=7    want=7
-OK   §4 DELETE/RETIRE                 got=5    want=5
+OK   §4 總列數                                         got=86   want=86
+OK   §4 KEEP                                        got=74   want=74
+OK   §4 REPLACE                                     got=7    want=7
+OK   §4 DELETE/RETIRE                               got=5    want=5
 --- 軸 B：§3.2 external-proof 殘留 ---
-OK   §3.2.1 檔數                      got=5    want=5
-OK   §3.2.2 檔數                      got=7    want=7
-OK   §3.2.3 檔數                      got=3    want=3
-OK   §3.2.4 檔數                      got=2    want=2
-OK   §3.2.5 檔數                      got=1    want=1
-OK   §3.2.6 檔數                      got=2    want=2
-OK   §3.2 殘留合計                    got=20   want=20
-OK   軸 B REPLACE/UPDATE (3.2.2+3.2.3) got=10  want=10
-OK   軸 B ARCHIVE/KEEP (3.2.4+3.2.6)   got=4   want=4
+OK   §3.2.1 檔數                                      got=5    want=5
+OK   §3.2.2 檔數                                      got=7    want=7
+OK   §3.2.3 檔數                                      got=3    want=3
+OK   §3.2.4 檔數                                      got=2    want=2
+OK   §3.2.5 檔數                                      got=1    want=1
+OK   §3.2.6 檔數                                      got=2    want=2
+OK   §3.2 殘留合計                                      got=20   want=20
+OK   軸 B REPLACE/UPDATE (3.2.2+3.2.3)               got=10   want=10
+OK   軸 B ARCHIVE/KEEP (3.2.4+3.2.6)                 got=4    want=4
+--- §7.2 行號斷言數 ---
+OK   §7.2 腳本內 check 呼叫數                             got=77   want=77
+OK   §7.2 內文宣稱數 == 實際數                              got=77   want=77
+OK   §7.2 腳本自我斷言常數 == 實際數                           got=77   want=77
 --- 合併行動清單 ---
-OK   §5.2 刪除清單項數                got=10   want=10
-OK   §5.2 = 軸A DELETE + 軸B DELETE   got=10   want=10
-OK   §5.3 替換清單項數                got=8    want=8
-OK   §5.3 = 軸A REPLACE + 1           got=8    want=8
+OK   §5.2 刪除清單項數                                    got=10   want=10
+OK   §5.2 = 軸A DELETE + 軸B DELETE                   got=10   want=10
+OK   §5.3 替換清單項數                                    got=8    want=8
+OK   §5.3 = 軸A REPLACE + 1 (KEEP&EXPAND)            got=8    want=8
 
 ALL RECONCILED
 ```
@@ -833,7 +955,7 @@ ALL RECONCILED
 
 | # | 驗收條件 | 本報告對應章節 | 滿足方式 |
 |---|---|---|---|
-| 1 | 以 caller/workflow/runtime unit/cron/GitHub Actions usage 逐項證明 | §4（86 列逐項）、**§4.2.1**（Cloud Scheduler cron 全鏈逐行）、§4.5（GKE CronJob 逐行）、§7.2（行號機器驗證） | 每列均標示 caller 檔案與行號；`make` 間接呼叫一律兩段式標註；cron 兩套機制（Cloud Scheduler / GKE CronJob）各自給出建立、注入、回滾之精確行號 |
+| 1 | 以 caller/workflow/runtime unit/cron/GitHub Actions usage 逐項證明 | §4（86 列逐項）、**§4.2.1**（Cloud Scheduler cron 全鏈逐行）、§4.5（GKE CronJob 逐行）、§7.2（77 項 fail-closed 行號機器驗證） | 每列均標示 caller 檔案與行號；`make` 間接呼叫一律兩段式標註；cron 兩套機制（Cloud Scheduler / GKE CronJob）各自給出建立、注入、回滾之精確行號 |
 | 2 | 產出保留/替換/刪除清單 | §5.1（雙軸統計與對帳）、§5.2（刪除 10 項，含連動編輯）、§5.3（替換 8 項）、§5.4（保留彙整） | 兩軸母體、分項數與合併推導全部列出恆等式，可逐條核算 |
 | 3 | 辨識舊 External Proof Follow-up 與任何繞過 Runtime Release 的入口 | §2（旁路 7 類，含 WIF 唯一性證明與偽陽性澄清）、§3.1（移除 commit 逐檔）、§3.2（掃描邊界 + 20 檔殘留逐檔） | 旁路以「具 GCP 變更指令」與「持有 WIF 身分」雙查證；殘留以三種掃描邊界宣告後取聯集並分流 |
 | 4 | 本任務只稽核不刪 code | 全文 | 本次變更僅新增/修訂 `docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md` 一檔；未刪除或修改任何程式、workflow、config。刪除動作全部登記為 Wave 2 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` 之待辦，並附連動編輯要求 |
@@ -850,3 +972,5 @@ ALL RECONCILED
 | （本版自查追加）`ci.yml` 被寫成直接呼叫 `run_product_e2e.sh` / `check_drift.py` | 更正為 `make` 兩段式標註（`ci.yml:313 → Makefile:100-102`、`ci.yml:189 → Makefile:63-64`），§4 開頭並訂立「間接呼叫標記」規則 |
 | （本版自查追加）§1.1 稱「13 支 `check_external_proof_*.py`」 | 更正為 commit `1a8b0f44` 之實際刪除清單：1 workflow + 16 CLI（12 `check_` / 1 `generate_` / 2 `sync_` / 1 `update_`）+ 15 tests = 32 檔，另含同批之 `check_product_go_no_go.py`；§3.1 逐檔列出並附重現指令 |
 | （本版自查追加）§3.2 部分行號為過寬區間或漏列 | 各表改列 **S1 完整命中行號與命中數**；並標註 `PLAYBOOK:128,133`、`PICKUP_BOARD:124`、`RISK_ACCEPTANCE:49` 為 `external data/provider proof` 之現行概念（S2 偽陽性）已排除；`python-inventory csv` 之 L157 不命中亦特別註明 |
+| （第三次審查）§3.2.0 掃描指令未含本報告排除，實跑為 S1=21 / S2=22，與宣稱的 20 / 21 不符 | §3.2.0 三個邊界的「指令」欄改為**已含 `grep -vxF "$SELF"` 排除**之完整可貼上指令，輸出即等於宣稱數；同時明列未排除時的原始數字 S1=21 / S2=22 / S3=5，並在 §7.1 以 `/tmp/scan_boundary.sh` 對 raw 與 excluded 兩組數字同時做 fail-closed 斷言（含 `S1 ⊂ S2` 與差集個案） |
+| （第三次審查）§7.2 實含 77 個 `check` 呼叫但宣稱 76；且 `check()` 在 FAIL 後仍回傳成功，不是 fail-closed 斷言 | 宣稱數更正為 **77**（可用 `grep -oE '(^\|;[[:space:]]*)check[[:space:]]' /tmp/check_lines.sh \| wc -l` 獨立複核）；`check()` 改為累計 `fails`，腳本結尾以 `exit 1` 收斂並額外斷言「宣告 77 = 實際執行 77」，§7.2 另附負向驗證證明 `EXIT=1` 確實會發生；§7.6 對帳腳本再加一組斷言，把「內文宣稱數 / 腳本呼叫數 / 腳本自我斷言常數」三者鎖在一起，使同類漂移之後可被機器擋下 |
