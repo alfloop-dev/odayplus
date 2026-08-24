@@ -4,13 +4,14 @@
 - **任務 ID**: `ODP-DEPLOY-DEAD-CODE-AUDIT-001`
 - **任務階段**: Wave 0 — 基線與介面凍結 (Dead Code Audit)
 - **盤點基準日期**: 2026-08-24
-- **盤點基準 commit**: `origin/dev` = `3329416d1b1b41289da152738d8e5392ebfcbf4d`（本報告分支已完成 base advance merge）
+- **歷史盤點起始基準**: `origin/dev` @ `3329416d1b1b41289da152738d8e5392ebfcbf4d`
+- **當前驗證基準（Composed Head）**: `origin/dev` @ `04ddafe90a32821b50a18f9cf2fb945189a4e001`（包含 PR #999 `ODP-RELEASE-MANIFEST-GATES-001` 合併成果；本報告分支已完成 base advance merge）
 - **負責人 (Owner)**: Antigravity
-- **審查人 (Reviewer)**: Codex
+- **審查人 (Reviewer)**: Codex2
 - **來源依據**: [`docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`](../deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md)
 - **執行原則**: **本任務只稽核不刪 code**。所有項目均以 caller、workflow、runtime unit、cron、GitHub Actions 具體呼叫路徑逐項證明，作為後續 Wave 1 / Wave 2 實作與刪除任務（特別是 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` 與 `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`）之執行依據。
 
-> **行號引用約定**：本報告所有 `Lnn` / `lines a-b` 引用，皆以上述基準 commit 之檔案內容為準，並已於 §7 以可重跑指令逐項機器驗證。
+> **行號引用約定**：本報告所有 `Lnn` / `lines a-b` 引用與掃描斷言，皆以當前驗證基準與 composed head 之檔案內容為準，並已於 §7 以可重跑指令逐項機器驗證。
 
 ---
 
@@ -904,19 +905,19 @@ exit 0
 實測輸出（本次提交 head）：
 
 ```text
-OK   S-gcp-file-count                
-OK   S-gcp-file-set                  
-OK   S-class-executable-3           
-OK   S-class-validator-1            
-OK   S-class-textonly-1             
-OK   S-wif-workflow-set             
-OK   S-mode-deploy_cloud_run_waji   
+OK   S-gcp-file-count
+OK   S-gcp-file-set
+OK   S-class-executable-3
+OK   S-class-validator-1
+OK   S-class-textonly-1
+OK   S-wif-workflow-set
+OK   S-mode-deploy_cloud_run_waji
 OK   S-mode-cloud_run_release_traffic
-OK   S-sidecar-mode-non-exec        
-OK   S-sidecar-hit-lines            
-OK   S-support-tree-all-md          
-OK   S-support-tree-no-exec-bit     
-OK   S-sidecar-no-caller            
+OK   S-sidecar-mode-non-exec
+OK   S-sidecar-hit-lines
+OK   S-support-tree-all-md
+OK   S-support-tree-no-exec-bit
+OK   S-sidecar-no-caller
 
 fails=0
 EXIT=0
@@ -1157,3 +1158,4 @@ ALL RECONCILED
 | （第四次審查）未核對 Terraform Cloud Run apply 是否屬 bootstrap 還是 runtime deploy path | §2 bypass 表新增「Terraform Cloud Run bootstrap 路徑」列：判定為 **bootstrap-only**——全庫無 workflow 執行 terraform（`git grep` 證明）、Terraform 不管理 Cloud Run Jobs/Scheduler、README L112-113 自述 bootstrap、L128 禁止 routine `-target`；但標示 `.tfvars` image 變更後 apply 為理論旁路面 |
 | （第四次審查）未處理 `docs/deployment/GCP_DEPLOY_GUIDE.md` 之 manual/local deployment guidance | §2 bypass 表新增「手動部署文件引導」列：標示 L7 之 fallback 敘述與 L39-49 之步驟指引，釐清其與 `deploy_cloud_run_waji.sh` 手動執行之關係，建議 Wave 2 後更新文件 |
 | （第五次審查）§2 宣稱具 GCP 變更指令之非文件檔案為 4 個，但同一條指令在 base advance 後的合成 head 上也命中 `support/sidecars/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/…-SIDECAR-REVIEW.md`；需分類此純文字誤判或縮小掃描範圍 | 選擇**分類而非縮小掃描範圍**（縮小範圍會讓同類命中日後靜默消失）。§2 新增掃描邊界宣告，明示該指令只排除 `docs/` 與 `tests/`、**不排除 `support/`**，並將命中數更正為 **5**，以三分類表列出「具實際 GCP 變更能力 3 / 驗證器僅字串常值 1 / 純文件 review packet 散文 1」；§2 bypass 表新增「Sidecar review packet（非旁路，文字誤判）」列，逐項舉證：命中行為 L36/L54/L68 之審查散文、mode `100644` 無執行位元、`support/` 全樹 98 檔皆為 `.md` 且皆 `100644`、全庫無任何 workflow/腳本/程式碼執行或 `source` 此檔（唯一提及處為 `docs-site/orchestrator-state.json` 之派工紀錄）。§7.5 由註解式輸出改寫為 **13 項 fail-closed 斷言腳本**（檔案集合、三分類檔數、WIF 身分、執行位元、sidecar 純文件性質），並附負向驗證：把期望值改回錯誤的 `4` 即 `EXIT=1`。§7.6 另加三組交叉斷言，把「§2 三分類合計 = §2 宣稱命中數 = §7.5 腳本期望常數」與「§7.5 內文宣稱項數 = 腳本 `eq` 呼叫數」鎖在一起，使此類內文與指令脫節之漂移日後可被機器擋下 |
+| （第六次審查）報告 metadata 審查人標註為舊值 Codex；§7.5 範例輸出含尾隨空白；盤點基準未明確區分歷史掃描基準 3329416d 與當前 composed head 04ddafe9 | 審查人更新為 **Codex2**（負責人為 **Antigravity**）；移除 §7.5 輸出區塊第 907–919 行全部尾隨空白（通過 `git diff --check`）；於 §0 標頭明確區分「歷史盤點起始基準 `3329416d`」與「當前驗證基準 `04ddafe9`」（含 PR #999 `ODP-RELEASE-MANIFEST-GATES-001`），並於 §13 約定所有行號引用與機器斷言皆以當前驗證基準之 composed head 為準，重跑 §7.1、§7.2、§7.5、§7.5a、§7.6 及 `tests/test_scaffold.py` 全數 PASS |
