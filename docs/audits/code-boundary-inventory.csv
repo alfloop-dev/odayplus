@@ -240,6 +240,7 @@ delivery_toolchain/release/assisted_listing_intake/run.py,development_delivery_t
 delivery_toolchain/release/check_runtime_admission.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/migrate_gate_registry.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/release/release_manifest.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
+delivery_toolchain/release/release_receipts.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/__init__.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/attestation.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 delivery_toolchain/security/generate_oss_notice.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
@@ -904,6 +905,7 @@ tests/ops/test_cloud_run_live_deployment.py,verification,verification_only,false
 tests/ops/test_data_domain_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_deploy_workflow_contract.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_migration_backfill.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/ops/test_release_receipts.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_runtime_config_code_closeout.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/performance/assisted_listing_intake/test_capacity.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/performance/test_acceptance_budgets.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
