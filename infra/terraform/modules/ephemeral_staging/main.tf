@@ -11,7 +11,8 @@
 #   - Release-scoped Pub/Sub messaging (jobs + DLQ) with CMEK encryption
 #   - Release-scoped Cloud Run services (API + Web)
 #   - Cloud Scheduler trigger starting paused
-#   - All resources tagged with owner/created_at/expires_at labels
+#   - Label-capable resources tagged with owner/created_at/expires_at labels;
+#     unsupported child resources tracked by the release ownership manifest
 #
 # Cleanup relies on precise label matching, never broad wildcards.
 
@@ -32,8 +33,11 @@ terraform {
 
 locals {
   # Release ID normalized for naming and exact release_hash to guarantee uniqueness and prevent collision.
-  release_clean = lower(replace(var.release_id, "/[^a-z0-9-]/", "-"))
+  release_clean = trim(lower(replace(var.release_id, "/[^a-z0-9-]/", "-")), "-")
   release_hash  = substr(sha256(var.release_id), 0, 8)
+  release_label = length(local.release_clean) <= 63 ? local.release_clean : "${substr(local.release_clean, 0, 54)}-${local.release_hash}"
+  owner_clean   = trim(lower(replace(var.owner_task_id, "/[^a-z0-9-]/", "-")), "-")
+  owner_label   = length(local.owner_clean) <= 63 ? local.owner_clean : "${substr(local.owner_clean, 0, 54)}-${substr(sha256(var.owner_task_id), 0, 8)}"
 
   # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
   sa_slug       = substr(local.release_clean, 0, 13)
@@ -60,25 +64,70 @@ locals {
   name_prefix = "stg-${local.res_slug}-${local.release_hash}"
 
   # Immutable creation and expiration timestamps (ensures applies do not refresh TTL).
-  created_at = var.created_at != "" ? var.created_at : "2026-08-24T00:00:00Z"
+  # created_at is deliberately a required input. Terraform cannot safely invent
+  # a creation time here: doing so would make a later, otherwise idempotent
+  # apply move the cleanup deadline.
+  created_at = var.created_at
   expires_at = timeadd(local.created_at, "${var.ttl_hours}h")
 
-  # Labels applied to every ephemeral resource for precise cleanup targeting.
+  # Caller-supplied labels are only additive. The lifecycle labels below are
+  # authoritative and must win over an attempted override.
   resource_labels = merge(
+    var.additional_labels,
     {
       app                    = "oday-plus"
       environment            = "staging"
       managed_by             = "terraform"
       ephemeral              = "true"
-      release_id             = local.release_clean
-      owner_task             = lower(replace(var.owner_task_id, "/[^a-z0-9-]/", "-"))
+      release_id             = local.release_label
+      owner_task             = local.owner_label
       candidate_sha          = substr(var.candidate_sha, 0, 40)
       manifest_digest_prefix = substr(replace(var.manifest_digest, "sha256:", ""), 0, 16)
-      created_at             = replace(replace(local.created_at, ":", "-"), "T", "-")
-      expires_at             = replace(replace(local.expires_at, ":", "-"), "T", "-")
+      created_at             = formatdate("YYYY-MM-DD-hh-mm-ss", local.created_at)
+      expires_at             = formatdate("YYYY-MM-DD-hh-mm-ss", local.expires_at)
     },
-    var.additional_labels,
   )
+
+  ownership_description = join("; ", [
+    "managed_by=terraform",
+    "app=oday-plus",
+    "environment=staging",
+    "ephemeral=true",
+    "release_id=${local.release_label}",
+    "owner_task=${local.owner_label}",
+    "created_at=${local.created_at}",
+    "expires_at=${local.expires_at}",
+  ])
+}
+
+# Some GCP child resources (Cloud SQL databases/users, Secret Manager
+# versions, service accounts, Scheduler jobs and IAM bindings) do not expose
+# a labels field in the provider API. Keep their ownership metadata in the
+# Terraform state as one release-scoped manifest, while label-capable parent
+# resources carry the same labels in GCP. Cleanup must first match a
+# label-capable parent and then destroy this exact release state; it must never
+# infer ownership from a project-wide wildcard.
+resource "terraform_data" "staging_ownership" {
+  input = {
+    labels = local.resource_labels
+    resources = {
+      database             = local.database_name
+      database_user        = local.database_user
+      bucket               = local.bucket_name
+      runtime_service_acct = local.sa_runtime_id
+      web_service_acct     = local.sa_web_id
+      worker_service_acct  = local.sa_worker_id
+      name_prefix          = local.name_prefix
+    }
+  }
+
+  triggers_replace = [
+    var.release_id,
+    var.candidate_sha,
+    var.manifest_digest,
+    var.created_at,
+    local.expires_at,
+  ]
 }
 
 # --- Isolated Database ---
@@ -95,12 +144,16 @@ resource "random_password" "staging_db" {
 resource "google_sql_database" "staging" {
   name     = local.database_name
   instance = var.cloud_sql_instance_name
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 resource "google_sql_user" "staging" {
   name     = local.database_user
   instance = var.cloud_sql_instance_name
   password = random_password.staging_db.result
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 # Staging database URL secret.
@@ -132,6 +185,7 @@ resource "google_secret_manager_secret_version" "staging_database_url" {
   ])
 
   depends_on = [
+    terraform_data.staging_ownership,
     google_sql_database.staging,
     google_sql_user.staging,
   ]
@@ -172,19 +226,25 @@ resource "google_storage_bucket" "staging_data" {
 resource "google_service_account" "staging_runtime" {
   account_id   = local.sa_runtime_id
   display_name = "Staging ${var.release_id} runtime"
-  description  = "Ephemeral staging runtime identity, TTL ${var.ttl_hours}h."
+  description  = "Ephemeral staging runtime identity, TTL ${var.ttl_hours}h. ${local.ownership_description}"
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 resource "google_service_account" "staging_web" {
   account_id   = local.sa_web_id
   display_name = "Staging ${var.release_id} web BFF"
-  description  = "Ephemeral staging web identity, TTL ${var.ttl_hours}h."
+  description  = "Ephemeral staging web identity, TTL ${var.ttl_hours}h. ${local.ownership_description}"
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 resource "google_service_account" "staging_worker" {
   account_id   = local.sa_worker_id
   display_name = "Staging ${var.release_id} worker"
-  description  = "Ephemeral staging worker identity, TTL ${var.ttl_hours}h."
+  description  = "Ephemeral staging worker identity, TTL ${var.ttl_hours}h. ${local.ownership_description}"
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 # --- IAM: Runtime -> DB, Secrets, Bucket ---
@@ -326,6 +386,8 @@ resource "google_secret_manager_secret" "staging_cursor_signing_key" {
 resource "google_secret_manager_secret_version" "staging_cursor_signing_key" {
   secret      = google_secret_manager_secret.staging_cursor_signing_key.id
   secret_data = random_password.staging_cursor_signing_key.result
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 resource "google_secret_manager_secret_iam_member" "staging_runtime_cursor_key" {
@@ -357,6 +419,8 @@ resource "google_secret_manager_secret" "staging_web_session" {
 resource "google_secret_manager_secret_version" "staging_web_session" {
   secret      = google_secret_manager_secret.staging_web_session.id
   secret_data = random_password.staging_web_session.result
+
+  depends_on = [terraform_data.staging_ownership]
 }
 
 resource "google_secret_manager_secret_iam_member" "staging_web_session" {
@@ -654,11 +718,13 @@ resource "google_cloud_run_v2_service" "staging_web" {
 
 resource "google_cloud_scheduler_job" "staging_worker_trigger" {
   name        = "${local.name_prefix}-worker-trigger"
-  description = "Release-scoped ephemeral staging worker trigger (starts paused, TTL ${var.ttl_hours}h)"
+  description = "Release-scoped ephemeral staging worker trigger (starts paused, TTL ${var.ttl_hours}h). ${local.ownership_description}"
   schedule    = "*/15 * * * *"
   time_zone   = "UTC"
   paused      = true
   region      = var.region
+
+  depends_on = [terraform_data.staging_ownership]
 
   http_target {
     http_method = "POST"

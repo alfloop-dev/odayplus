@@ -77,19 +77,22 @@ variable "ttl_hours" {
 
 variable "created_at" {
   type        = string
-  description = "Fixed RFC3339 timestamp (e.g. 2026-08-24T12:00:00Z) when staging was created. Ensures idempotent Terraform applies."
-  default     = ""
+  description = "Required fixed RFC3339 timestamp (e.g. 2026-08-24T12:00:00Z) when staging was created. Ensures idempotent Terraform applies."
 
   validation {
-    condition     = var.created_at == "" || can(regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$", var.created_at))
-    error_message = "created_at must be an RFC3339 timestamp string (e.g. 2026-08-24T12:00:00Z) or empty."
+    condition     = can(regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$", var.created_at))
+    error_message = "created_at must be an RFC3339 timestamp string (e.g. 2026-08-24T12:00:00Z)."
   }
 }
 
 variable "owner_task_id" {
   type        = string
   description = "Task ID that owns this ephemeral staging release."
-  default     = ""
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$", var.owner_task_id))
+    error_message = "owner_task_id must be a non-empty task identifier."
+  }
 }
 
 variable "cloud_sql_instance_name" {

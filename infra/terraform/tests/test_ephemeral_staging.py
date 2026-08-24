@@ -62,7 +62,20 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
     def test_module_no_dynamic_timestamp_leak(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         self.assertNotIn("timestamp()", main_tf)
+        self.assertNotIn('"2026-08-24T00:00:00Z"', main_tf)
         self.assertIn("timeadd(local.created_at", main_tf)
+        self.assertIn("var.created_at", main_tf)
+
+    def test_mandatory_labels_win_over_additional_labels(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        self.assertLess(main_tf.index("var.additional_labels"), main_tf.index("app                    = \"oday-plus\""))
+        self.assertIn('resource "terraform_data" "staging_ownership"', main_tf)
+
+    def test_creation_and_owner_inputs_are_required(self) -> None:
+        vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
+        self.assertIn("Required fixed RFC3339 timestamp", vars_tf)
+        self.assertIn("owner_task_id must be a non-empty task identifier", vars_tf)
+        self.assertNotIn('default     = ""', vars_tf)
 
     def test_module_outputs_do_not_leak_secrets(self) -> None:
         outputs_tf = (MODULE_DIR / "outputs.tf").read_text(encoding="utf-8")

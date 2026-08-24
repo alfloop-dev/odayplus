@@ -132,6 +132,27 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["created_at"], "2026-08-24-12-00-00")
         self.assertEqual(labels["expires_at"], "2026-08-25-12-00-00")
 
+    def test_mandatory_labels_cannot_be_overridden(self) -> None:
+        labels = generate_staging_labels(
+            release_id="odp-20260824-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            additional_labels={
+                "managed_by": "unsafe-script",
+                "environment": "prod",
+                "ephemeral": "false",
+                "release_id": "other-release",
+                "custom_label": "retained",
+            },
+        )
+
+        self.assertEqual(labels["managed_by"], "terraform")
+        self.assertEqual(labels["environment"], "staging")
+        self.assertEqual(labels["ephemeral"], "true")
+        self.assertEqual(labels["release_id"], "odp-20260824-001")
+        self.assertEqual(labels["custom_label"], "retained")
+
     def test_generate_tfvars(self) -> None:
         now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
         tfvars = generate_tfvars(self.valid_config, created_at=now)
@@ -197,6 +218,14 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertFalse(receipt_exec.remediation_required)
         for r in receipt_exec.resources:
             self.assertEqual(r["status"], "provisioned")
+
+        empty_receipt = create_ephemeral_staging(
+            self.valid_config,
+            dry_run=False,
+            creation_executor=lambda _cfg, _resources: [],
+        )
+        self.assertFalse(empty_receipt.success)
+        self.assertTrue(empty_receipt.remediation_required)
 
     def test_cleanup_exact_label_matching_and_safety(self) -> None:
         target_release = "odp-20260824-001"
@@ -319,6 +348,24 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertTrue(receipt.remediation_required)
         self.assertTrue(any("database locked" in err for err in receipt.errors))
 
+    def test_cleanup_rejects_missing_ttl_labels(self) -> None:
+        labels = generate_staging_labels(
+            release_id="odp-20260824-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        )
+        labels.pop("expires_at")
+        receipt = cleanup_ephemeral_staging(
+            release_id="odp-20260824-001",
+            project_id="oday-staging-proj",
+            resource_inventory=[{"id": "unsafe", "type": "bucket", "labels": labels}],
+            dry_run=False,
+            allow_empty=False,
+        )
+        self.assertFalse(receipt.success)
+        self.assertIn("No matching ephemeral staging resources", receipt.errors[0])
+
     def test_scan_orphans_detects_expired_and_unmanaged(self) -> None:
         now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
         fresh_time = now - timedelta(hours=2)
@@ -368,6 +415,28 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(result.orphan_count, 2)  # expired-res and unmanaged-res
         self.assertIn("odp-expired-001", result.expired_releases)
         self.assertTrue(len(result.alerts) >= 2)
+
+    def test_scan_orphans_reports_staging_candidate_missing_app_label(self) -> None:
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=[
+                {
+                    "id": "missing-app",
+                    "type": "google_sql_database",
+                    "labels": {
+                        "environment": "staging",
+                        "ephemeral": "true",
+                        "release_id": "odp-orphan-001",
+                    },
+                }
+            ],
+            now=datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC),
+            auto_cleanup=True,
+        )
+        self.assertEqual(result.orphan_count, 1)
+        self.assertEqual(result.failed_cleanups, 1)
+        self.assertEqual(len(result.remediation_tasks), 1)
+        self.assertIn("incomplete staging identity", result.orphan_resources[0]["reason"])
 
     def test_extend_staging_ttl_enforces_limits_owner_and_reason(self) -> None:
         curr_expires = datetime(2026, 8, 24, 18, 0, 0, tzinfo=UTC)

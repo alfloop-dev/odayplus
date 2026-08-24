@@ -10,8 +10,10 @@ Key Guarantees:
 2. Isolated database/schema, bucket, dedicated service accounts, IAM, Cloud Run
    services, and Pub/Sub messaging are created with release-scoped names & labels.
 3. Cloud Scheduler triggers start in a PAUSED state.
-4. All resources carry immutable tracking labels (owner, created_at, expires_at,
-   ephemeral=true, managed_by=terraform, release_id, candidate_sha, manifest_digest_prefix).
+4. Label-capable resources carry immutable tracking labels (owner, created_at,
+   expires_at, ephemeral=true, managed_by=terraform, release_id, candidate_sha,
+   manifest_digest_prefix); unsupported child resources are tracked by the
+   release-scoped ownership manifest.
 5. Cleanup operates ONLY via exact label matching; broad wildcards are forbidden.
 6. Failed staging runs are retained for debugging up to 24 hours by default.
    TTL extensions require explicit owner and documented reason (max 168h / 7d).
@@ -25,7 +27,9 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import os
 import re
+import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
@@ -42,6 +46,8 @@ PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 
 DEFAULT_TTL_HOURS = 24
 MAX_TTL_HOURS = 168  # 7 days max allowed extension
+DEFAULT_EPHEMERAL_STATE_DIR = Path("/tmp/oday-plus-ephemeral-staging")
+DEFAULT_EPHEMERAL_MODULE_DIR = Path("infra/terraform/modules/ephemeral_staging")
 
 
 # --- Data Structures ---
@@ -168,6 +174,23 @@ def compute_release_hash(release_id: str) -> str:
     return hashlib.sha256(release_id.encode("utf-8")).hexdigest()[:8]
 
 
+def bounded_label_value(value: str, *, max_length: int = 63) -> str:
+    """Keep a generated GCP label value valid while preserving uniqueness."""
+    normalized = re.sub(r"[^a-z0-9_-]", "-", value.lower()).strip("-")
+    if len(normalized) <= max_length:
+        return normalized
+    suffix = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+    return f"{normalized[: max_length - len(suffix) - 1]}-{suffix}"
+
+
+def release_label_value(release_id: str) -> str:
+    """Return the canonical bounded release label used by Terraform and cleanup."""
+    normalized = sanitize_release_suffix(release_id)
+    if len(normalized) <= 63:
+        return normalized
+    return f"{normalized[:54]}-{compute_release_hash(release_id)}"
+
+
 def get_ephemeral_resource_names(release_id: str, project_id: str = "") -> dict[str, str]:
     """Compute collision-free, length-compliant GCP resource names for ephemeral staging."""
     clean = sanitize_release_suffix(release_id)
@@ -220,7 +243,7 @@ def generate_staging_labels(
     """Generate the canonical tracking label set for ephemeral staging resources."""
     now = created_at or datetime.now(UTC)
     expires = now + timedelta(hours=ttl_hours)
-    release_suffix = sanitize_release_suffix(release_id)
+    release_suffix = release_label_value(release_id)
 
     digest_clean = manifest_digest.replace("sha256:", "")
     manifest_prefix = digest_clean[:16] if digest_clean else "0" * 16
@@ -231,7 +254,7 @@ def generate_staging_labels(
         "managed_by": "terraform",
         "ephemeral": "true",
         "release_id": release_suffix,
-        "owner_task": re.sub(r"[^a-z0-9-]", "-", owner_task_id.lower()).strip("-") if owner_task_id else "unassigned",
+        "owner_task": bounded_label_value(owner_task_id) if owner_task_id else "unassigned",
         "candidate_sha": candidate_sha[:40].lower(),
         "manifest_digest_prefix": manifest_prefix,
         "created_at": now.strftime("%Y-%m-%d-%H-%M-%S"),
@@ -495,6 +518,176 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
     ]
 
 
+def _terraform_state_paths(
+    release_id: str,
+    state_dir: Path,
+) -> tuple[Path, Path, Path]:
+    """Return stable per-release state, variables, and inventory paths."""
+    suffix = sanitize_release_suffix(release_id)
+    release_hash = compute_release_hash(release_id)
+    stem = f"{suffix[:48]}-{release_hash}"
+    return (
+        state_dir / f"{stem}.tfstate",
+        state_dir / f"{stem}.tfvars.json",
+        state_dir / f"{stem}.inventory.json",
+    )
+
+
+def _run_terraform(
+    *,
+    module_dir: Path,
+    terraform_bin: str,
+    arguments: Sequence[str],
+) -> None:
+    """Run one non-interactive Terraform command without exposing stdout secrets."""
+    command = [terraform_bin, f"-chdir={module_dir}", *arguments]
+    process = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if process.returncode == 0:
+        return
+
+    # Terraform can echo variable values in diagnostics. Keep only a bounded
+    # stderr tail and never include stdout in an operations receipt.
+    stderr_lines = [line for line in process.stderr.splitlines() if line.strip()]
+    detail = " ".join(stderr_lines[-8:]) if stderr_lines else "no diagnostic output"
+    raise RuntimeError(f"terraform {' '.join(arguments[:2])} failed (exit {process.returncode}): {detail}")
+
+
+def make_terraform_creation_executor(
+    *,
+    module_dir: Path = DEFAULT_EPHEMERAL_MODULE_DIR,
+    state_dir: Path = DEFAULT_EPHEMERAL_STATE_DIR,
+    terraform_bin: str = "terraform",
+    initialize: bool = True,
+) -> Callable[[StagingConfig, Sequence[StagingResource]], bool]:
+    """Build the live create executor used by the CLI.
+
+    Terraform state and tfvars are isolated by release id. The planned
+    ``created_at`` is persisted into tfvars before apply, so a subsequent
+    apply uses the same timestamp rather than refreshing the TTL.
+    """
+    module_path = module_dir.expanduser().resolve()
+    state_path_root = state_dir.expanduser().resolve()
+
+    def execute(config: StagingConfig, resources: Sequence[StagingResource]) -> bool:
+        if not module_path.is_dir():
+            raise RuntimeError(f"Terraform module directory does not exist: {module_path}")
+        if not resources:
+            raise RuntimeError("Terraform create received an empty resource plan")
+
+        state_path_root.mkdir(parents=True, exist_ok=True)
+        state_path, tfvars_path, inventory_path = _terraform_state_paths(config.release_id, state_path_root)
+        created_at = resources[0].created_at
+        apply_config = dataclasses.replace(config, created_at=created_at)
+        tfvars_path.write_text(
+            json.dumps(generate_tfvars(apply_config), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        inventory_path.write_text(
+            json.dumps(
+                [
+                    {
+                        "type": resource.resource_type,
+                        "name": resource.resource_name,
+                        "id": resource.resource_id,
+                        "labels": dict(resource.labels),
+                        "created_at": resource.created_at,
+                        "expires_at": resource.expires_at,
+                    }
+                    for resource in resources
+                ],
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+
+        if initialize:
+            _run_terraform(
+                module_dir=module_path,
+                terraform_bin=terraform_bin,
+                arguments=["init", "-input=false", "-upgrade=false"],
+            )
+        _run_terraform(
+            module_dir=module_path,
+            terraform_bin=terraform_bin,
+            arguments=[
+                "apply",
+                "-input=false",
+                "-auto-approve",
+                f"-state={state_path}",
+                f"-var-file={tfvars_path}",
+            ],
+        )
+        return True
+
+    return execute
+
+
+def make_terraform_deletion_executor(
+    release_id: str,
+    *,
+    module_dir: Path = DEFAULT_EPHEMERAL_MODULE_DIR,
+    state_dir: Path = DEFAULT_EPHEMERAL_STATE_DIR,
+    terraform_bin: str = "terraform",
+    initialize: bool = True,
+) -> Callable[[Mapping[str, Any]], bool]:
+    """Build a release-scoped live destroy executor.
+
+    The first exact-label match performs one destroy against that release's
+    state. Later matches are acknowledged because the same Terraform destroy
+    removed the complete release graph. No project-wide destroy is possible.
+    """
+    module_path = module_dir.expanduser().resolve()
+    state_path_root = state_dir.expanduser().resolve()
+    state_path, tfvars_path, inventory_path = _terraform_state_paths(release_id, state_path_root)
+    attempted = False
+    destroy_success = False
+
+    def execute(_resource: Mapping[str, Any]) -> bool:
+        nonlocal attempted, destroy_success
+        if attempted:
+            return destroy_success
+        attempted = True
+
+        if not module_path.is_dir():
+            raise RuntimeError(f"Terraform module directory does not exist: {module_path}")
+        if not state_path.is_file() or not tfvars_path.is_file():
+            raise RuntimeError(
+                f"No release-scoped Terraform state for cleanup of {release_id!r}: {state_path}"
+            )
+        if initialize:
+            _run_terraform(
+                module_dir=module_path,
+                terraform_bin=terraform_bin,
+                arguments=["init", "-input=false", "-upgrade=false"],
+            )
+        _run_terraform(
+            module_dir=module_path,
+            terraform_bin=terraform_bin,
+            arguments=[
+                "destroy",
+                "-input=false",
+                "-auto-approve",
+                f"-state={state_path}",
+                f"-var-file={tfvars_path}",
+            ],
+        )
+        destroy_success = True
+        # The live resources are gone; remove the local release receipt inputs
+        # so a later cleanup cannot mistake stale inventory for live resources.
+        for path in (state_path, tfvars_path, inventory_path):
+            path.unlink(missing_ok=True)
+        return True
+
+    return execute
+
+
 def create_ephemeral_staging(
     config: StagingConfig,
     *,
@@ -583,7 +776,10 @@ def create_ephemeral_staging(
     exec_success = True
     try:
         exec_res = creation_executor(config, planned)
-        exec_success = bool(exec_res) if not isinstance(exec_res, Sequence) else True
+        if isinstance(exec_res, Sequence) and not isinstance(exec_res, (str, bytes, bytearray)):
+            exec_success = bool(exec_res)
+        else:
+            exec_success = bool(exec_res)
     except Exception as exc:
         exec_success = False
         errors.append(f"Creation executor failed: {exc}")
@@ -633,7 +829,7 @@ def is_staging_ephemeral_resource(
     Requires full ownership labels (managed_by=terraform, app=oday-plus, environment=staging,
     ephemeral=true, release_id, candidate_sha, manifest_digest_prefix, owner_task).
     """
-    target_suffix = sanitize_release_suffix(target_release_id)
+    target_suffix = release_label_value(target_release_id)
     if not target_suffix:
         return False
 
@@ -642,7 +838,7 @@ def is_staging_ephemeral_resource(
         or labels.get("environment") != "staging"
         or labels.get("managed_by") != "terraform"
         or labels.get("ephemeral") != "true"
-        or sanitize_release_suffix(str(labels.get("release_id", ""))) != target_suffix
+        or str(labels.get("release_id", "")).strip() != target_suffix
     ):
         return False
 
@@ -651,10 +847,24 @@ def is_staging_ephemeral_resource(
         if not CANDIDATE_SHA_PATTERN.fullmatch(sha):
             return False
         digest_prefix = str(labels.get("manifest_digest_prefix", "")).strip().lower()
-        if len(digest_prefix) < 8 or not re.fullmatch(r"^[0-9a-f]+$", digest_prefix):
+        if len(digest_prefix) != 16 or not re.fullmatch(r"^[0-9a-f]{16}$", digest_prefix):
             return False
         owner_task = str(labels.get("owner_task", "")).strip()
         if not owner_task:
+            return False
+
+        # A release without both immutable time labels is not safe to delete:
+        # it cannot be proven to be within the staging TTL contract.
+        created_str = str(labels.get("created_at", "")).strip()
+        expires_str = str(labels.get("expires_at", "")).strip()
+        if not created_str or not expires_str:
+            return False
+        try:
+            created_at = parse_timestamp(created_str)
+            expires_at = parse_timestamp(expires_str)
+        except ValueError:
+            return False
+        if expires_at < created_at:
             return False
 
     return True
@@ -839,14 +1049,35 @@ def scan_orphans(
         if not isinstance(labels, Mapping):
             continue
 
-        if labels.get("app") != "oday-plus" or labels.get("environment") != "staging":
-            continue
-
-        if labels.get("ephemeral") != "true":
+        # Inventory providers do not expose a common schema. A resource with
+        # any staging/ephemeral ownership signal is a candidate; missing
+        # identity labels must be reported as an orphan instead of silently
+        # disappearing from the scan.
+        is_candidate = (
+            labels.get("environment") == "staging"
+            or labels.get("ephemeral") == "true"
+            or bool(str(labels.get("release_id", "")).strip())
+            or bool(str(labels.get("owner_task", "")).strip())
+        )
+        if not is_candidate:
             continue
 
         res_id = str(res.get("id") or res.get("name", "unknown"))
         res_type = str(res.get("type", "unknown"))
+
+        if (
+            labels.get("app") != "oday-plus"
+            or labels.get("environment") != "staging"
+            or labels.get("ephemeral") != "true"
+        ):
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "reason": "Invalid or incomplete staging identity labels (app/environment/ephemeral)",
+                "labels": dict(labels),
+            })
+            alerts.append(f"Staging candidate has incomplete identity labels: {res_type} {res_id}")
+            continue
 
         # Check managed_by label
         if labels.get("managed_by") != "terraform":
@@ -879,23 +1110,56 @@ def scan_orphans(
             alerts.append(f"Orphan resource with incomplete ownership labels: {res_type} {res_id}")
             continue
 
+        if not created_str or not expires_str:
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "release_id": release_id,
+                "reason": "Missing created_at or expires_at ownership label",
+                "labels": dict(labels),
+            })
+            alerts.append(f"Orphan resource missing TTL labels: {res_type} {res_id}")
+            continue
+
         # Determine expiration
         is_expired = False
-        if expires_str:
-            try:
-                expires_dt = parse_timestamp(expires_str)
-                if now_dt >= expires_dt:
-                    is_expired = True
-            except Exception:
-                is_expired = True
-        elif created_str:
-            try:
-                created_dt = parse_timestamp(created_str)
-                if now_dt - created_dt >= timedelta(hours=max_ttl_hours):
-                    is_expired = True
-            except Exception:
-                is_expired = True
-        else:
+        try:
+            created_dt = parse_timestamp(created_str)
+            expires_dt = parse_timestamp(expires_str)
+        except ValueError:
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "release_id": release_id,
+                "reason": "Invalid created_at or expires_at ownership label",
+                "labels": dict(labels),
+            })
+            alerts.append(f"Orphan resource has invalid TTL labels: {res_type} {res_id}")
+            continue
+
+        if expires_dt < created_dt:
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "release_id": release_id,
+                "reason": "expires_at precedes created_at",
+                "labels": dict(labels),
+            })
+            alerts.append(f"Orphan resource has inverted TTL labels: {res_type} {res_id}")
+            continue
+
+        if expires_dt - created_dt > timedelta(hours=max_ttl_hours):
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "release_id": release_id,
+                "reason": f"TTL exceeds policy maximum of {max_ttl_hours}h",
+                "labels": dict(labels),
+            })
+            alerts.append(f"Staging resource exceeds maximum TTL: {res_type} {res_id}")
+            continue
+
+        if now_dt >= expires_dt:
             is_expired = True
 
         if is_expired:
@@ -920,6 +1184,24 @@ def scan_orphans(
                 "labels": item.get("labels", {}),
             }
             rel_id = str(item.get("release_id", ""))
+
+            # Only a complete, exact ownership set may be handed to cleanup.
+            # Incomplete or unmanaged candidates are remediation-only; treating
+            # their zero-match result as success would hide an orphan forever.
+            if not rel_id or not is_staging_ephemeral_resource(
+                res_dict["labels"], rel_id
+            ):
+                failed_cleanups += 1
+                remediation_tasks.append({
+                    "task_type": "ephemeral_staging_orphan_remediation",
+                    "resource_id": item["id"],
+                    "resource_type": item["type"],
+                    "release_id": rel_id,
+                    "errors": ["Resource lacks complete authoritative ownership labels; automatic deletion refused."],
+                    "timestamp": format_timestamp(now_dt),
+                })
+                continue
+
             cleanup_res = cleanup_ephemeral_staging(
                 release_id=rel_id if rel_id else "unknown",
                 project_id=project_id,
@@ -927,7 +1209,7 @@ def scan_orphans(
                 dry_run=False,
                 now=now_dt,
                 deletion_executor=deletion_executor,
-                allow_empty=True,
+                allow_empty=False,
             )
             if cleanup_res.success:
                 cleaned_resources.extend(cleanup_res.resources)
@@ -1098,6 +1380,28 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    def add_terraform_options(subparser: argparse.ArgumentParser) -> None:
+        subparser.add_argument(
+            "--terraform-module-dir",
+            default=str(DEFAULT_EPHEMERAL_MODULE_DIR),
+            help="Ephemeral staging Terraform module directory",
+        )
+        subparser.add_argument(
+            "--state-dir",
+            default=str(DEFAULT_EPHEMERAL_STATE_DIR),
+            help="Directory for per-release Terraform state and tfvars",
+        )
+        subparser.add_argument(
+            "--terraform-bin",
+            default="terraform",
+            help="Terraform executable",
+        )
+        subparser.add_argument(
+            "--skip-terraform-init",
+            action="store_true",
+            help="Skip Terraform init when the module is already initialized",
+        )
+
     # create
     create_p = subparsers.add_parser("create", help="Plan or create ephemeral staging")
     create_p.add_argument("--release-id", required=True, help="Release identifier")
@@ -1113,6 +1417,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_p.add_argument("--owner-task-id", default="", help="Owner Task ID")
     create_p.add_argument("--dry-run", action="store_true", help="Perform dry-run planning only")
     create_p.add_argument("--tfvars-out", help="Path to write tfvars JSON")
+    create_p.add_argument("--cloud-sql-connection-name", default="", help="Cloud SQL connection name")
+    create_p.add_argument("--network-name", default="oday-staging-vpc", help="Staging VPC network")
+    create_p.add_argument("--subnetwork-name", default="oday-staging-subnet", help="Staging VPC subnetwork")
+    create_p.add_argument("--kms-key-id", default="", help="CMEK key id")
+    create_p.add_argument("--deployer-service-account-email", default="", help="Terraform deployer identity")
+    add_terraform_options(create_p)
 
     # cleanup
     clean_p = subparsers.add_parser("cleanup", help="Clean up ephemeral staging resources")
@@ -1121,6 +1431,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     clean_p.add_argument("--dry-run", action="store_true", help="Perform dry-run without deletion")
     clean_p.add_argument("--inventory-file", help="JSON file with resource inventory for label filtering")
     clean_p.add_argument("--allow-empty", action="store_true", help="Allow empty inventory without error")
+    add_terraform_options(clean_p)
 
     # scan-orphans
     scan_p = subparsers.add_parser("scan-orphans", help="Scan for expired ephemeral staging resources")
@@ -1128,6 +1439,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     scan_p.add_argument("--max-ttl-hours", type=int, default=DEFAULT_TTL_HOURS, help="Max TTL threshold")
     scan_p.add_argument("--inventory-file", required=True, help="JSON file containing resource inventory")
     scan_p.add_argument("--auto-cleanup", action="store_true", help="Automatically delete expired resources")
+    add_terraform_options(scan_p)
 
     # extend-ttl
     ext_p = subparsers.add_parser("extend-ttl", help="Extend TTL for debugging failed staging run")
@@ -1156,14 +1468,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_id=args.project_id,
             region=args.region,
             cloud_sql_instance_name=args.cloud_sql_instance,
+            cloud_sql_connection_name=(
+                args.cloud_sql_connection_name
+                or f"{args.project_id}:{args.region}:{args.cloud_sql_instance}"
+            ),
+            network_name=args.network_name,
+            subnetwork_name=args.subnetwork_name,
+            kms_key_id=args.kms_key_id or StagingConfig.__dataclass_fields__["kms_key_id"].default,
+            deployer_service_account_email=(
+                args.deployer_service_account_email
+                or StagingConfig.__dataclass_fields__["deployer_service_account_email"].default
+            ),
             api_image=args.api_image,
             web_image=args.web_image,
             ttl_hours=args.ttl_hours,
-            created_at=args.created_at,
+            created_at=args.created_at or format_timestamp(datetime.now(UTC)),
             owner_task_id=args.owner_task_id,
         )
 
-        receipt = create_ephemeral_staging(config, dry_run=args.dry_run)
+        creation_executor = None
+        if not args.dry_run:
+            creation_executor = make_terraform_creation_executor(
+                module_dir=Path(args.terraform_module_dir),
+                state_dir=Path(args.state_dir),
+                terraform_bin=args.terraform_bin,
+                initialize=not args.skip_terraform_init,
+            )
+        receipt = create_ephemeral_staging(
+            config,
+            dry_run=args.dry_run,
+            creation_executor=creation_executor,
+        )
         if args.tfvars_out and (receipt.success or args.dry_run):
             tfvars = generate_tfvars(config)
             Path(args.tfvars_out).write_text(json.dumps(tfvars, indent=2), encoding="utf-8")
@@ -1175,12 +1510,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         inventory = []
         if args.inventory_file:
             inventory = json.loads(Path(args.inventory_file).read_text(encoding="utf-8"))
+        else:
+            _, _, inventory_path = _terraform_state_paths(
+                args.release_id,
+                Path(args.state_dir).expanduser().resolve(),
+            )
+            if inventory_path.is_file():
+                inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+
+        deletion_executor = None
+        if not args.dry_run:
+            deletion_executor = make_terraform_deletion_executor(
+                args.release_id,
+                module_dir=Path(args.terraform_module_dir),
+                state_dir=Path(args.state_dir),
+                terraform_bin=args.terraform_bin,
+                initialize=not args.skip_terraform_init,
+            )
 
         receipt = cleanup_ephemeral_staging(
             release_id=args.release_id,
             project_id=args.project_id,
             resource_inventory=inventory,
             dry_run=args.dry_run,
+            deletion_executor=deletion_executor,
             allow_empty=args.allow_empty,
         )
         print(json.dumps(receipt.to_dict(), indent=2))
@@ -1188,11 +1541,31 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     elif args.command == "scan-orphans":
         inventory = json.loads(Path(args.inventory_file).read_text(encoding="utf-8"))
+        deletion_executors: dict[str, Callable[[Mapping[str, Any]], bool]] = {}
+
+        def orphan_deletion_executor(resource: Mapping[str, Any]) -> bool:
+            labels = resource.get("labels", {})
+            release_id = str(labels.get("release_id", "")).strip() if isinstance(labels, Mapping) else ""
+            if not release_id:
+                raise RuntimeError("orphan resource has no release_id for release-scoped cleanup")
+            executor = deletion_executors.get(release_id)
+            if executor is None:
+                executor = make_terraform_deletion_executor(
+                    release_id,
+                    module_dir=Path(args.terraform_module_dir),
+                    state_dir=Path(args.state_dir),
+                    terraform_bin=args.terraform_bin,
+                    initialize=not args.skip_terraform_init,
+                )
+                deletion_executors[release_id] = executor
+            return executor(resource)
+
         result = scan_orphans(
             project_id=args.project_id,
             resource_inventory=inventory,
             max_ttl_hours=args.max_ttl_hours,
             auto_cleanup=args.auto_cleanup,
+            deletion_executor=orphan_deletion_executor if args.auto_cleanup else None,
         )
         print(json.dumps(result.to_dict(), indent=2))
         return 0 if result.failed_cleanups == 0 else 1

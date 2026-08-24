@@ -70,7 +70,12 @@ output "staging_scheduler_job_name" {
 
 output "resource_labels" {
   value       = local.resource_labels
-  description = "Labels applied to all ephemeral resources, for cleanup targeting."
+  description = "Canonical labels applied to label-capable ephemeral resources, for cleanup targeting."
+}
+
+output "ownership_manifest" {
+  value       = terraform_data.staging_ownership.output
+  description = "Release ownership metadata for provider resources that cannot expose native labels."
 }
 
 output "release_id" {
