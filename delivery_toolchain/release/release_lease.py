@@ -56,6 +56,14 @@ SIGNATURE_ALGORITHM = "ed25519"
 DEFAULT_TTL_SECONDS = 3600
 MAX_TTL_SECONDS = 86400
 
+# The Supervisor and the runner verifying a lease are different machines with
+# independently drifting clocks. A runner whose clock is a few seconds behind
+# would otherwise reject a lease that was genuinely issued a moment ago, which
+# is an availability failure and not a security one. The allowance is applied
+# only to the not-before edge; expiry stays strict, because that is the edge
+# where being generous would extend a credential's life.
+NOT_BEFORE_SKEW_SECONDS = 60
+
 STATE_ISSUED = "issued"
 STATE_CONSUMED = "consumed"
 STATE_REVOKED = "revoked"
@@ -412,7 +420,7 @@ class LeaseStateStore:
                 if current != STATE_ISSUED:
                     raise LeaseStateError(
                         f"lease {lease_id} is {current!r}, not {STATE_ISSUED!r}; "
-                        f"refusing to {to_state[:-1]}e it again (replay)"
+                        f"refusing to mark it {to_state!r} (replay)"
                     )
                 stored = record.get("lease")
                 if not isinstance(stored, dict) or canonical_bytes(stored) != canonical_bytes(lease):
@@ -625,7 +633,7 @@ def _validity_window_errors(lease: dict[str, Any], check_time: datetime) -> list
         errors.append(
             f"lease validity window exceeds the maximum {MAX_TTL_SECONDS} seconds"
         )
-    if check_time < issued_at:
+    if check_time < issued_at - timedelta(seconds=NOT_BEFORE_SKEW_SECONDS):
         errors.append(
             f"lease is not valid until {lease['issued_at']}; current time is "
             f"{check_time.isoformat()}"
@@ -853,6 +861,7 @@ __all__ = [
     "LEASE_SCHEMA_VERSION",
     "LEASE_STATES",
     "MAX_TTL_SECONDS",
+    "NOT_BEFORE_SKEW_SECONDS",
     "STATE_CONSUMED",
     "STATE_ISSUED",
     "STATE_REVOKED",

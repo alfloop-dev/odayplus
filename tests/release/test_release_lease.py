@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.serialization import load_pem_private_key, l
 
 from delivery_toolchain.release.release_lease import (
     MAX_TTL_SECONDS,
+    NOT_BEFORE_SKEW_SECONDS,
     STATE_CONSUMED,
     STATE_ISSUED,
     STATE_REVOKED,
@@ -205,9 +206,34 @@ def test_a_lease_presented_before_it_is_valid_is_rejected(keys, store) -> None:
         lease,
         public_key=public_key,
         state_store=store,
-        **expectations(now=NOW - timedelta(seconds=1)),
+        **expectations(now=NOW - timedelta(seconds=NOT_BEFORE_SKEW_SECONDS + 1)),
     )
     assert any("is not valid until" in error for error in errors)
+
+
+def test_clock_skew_within_tolerance_does_not_reject_a_fresh_lease(keys, store) -> None:
+    """A runner a few seconds behind the Supervisor is drift, not an attack."""
+
+    private_key, public_key = keys
+    lease = issued(private_key, store)
+    assert verify_lease(
+        lease,
+        public_key=public_key,
+        state_store=store,
+        **expectations(now=NOW - timedelta(seconds=NOT_BEFORE_SKEW_SECONDS - 1)),
+    ) == []
+
+
+def test_skew_tolerance_does_not_extend_expiry(keys, store) -> None:
+    private_key, public_key = keys
+    lease = issued(private_key, store, ttl_seconds=60)
+    errors = verify_lease(
+        lease,
+        public_key=public_key,
+        state_store=store,
+        **expectations(now=NOW + timedelta(seconds=61)),
+    )
+    assert any("lease expired at" in error for error in errors)
 
 
 def test_ttl_beyond_the_maximum_is_refused_at_issuance(keys) -> None:

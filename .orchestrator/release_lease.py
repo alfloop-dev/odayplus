@@ -315,6 +315,10 @@ def _cmd_revoke(args: argparse.Namespace) -> int:
         record = state_store.get(args.lease_id)
         if record is None:
             return _print_blocked([f"lease {args.lease_id} is not in the durable state store"])
+        if not isinstance(record.get("lease"), dict):
+            return _print_blocked(
+                [f"lease state record for {args.lease_id} carries no lease; refusing to act on it"]
+            )
         state_store.revoke(record["lease"], reason=args.reason)
     except LeaseError as exc:
         return _print_blocked([str(exc)])
@@ -332,18 +336,11 @@ def _cmd_show(args: argparse.Namespace) -> int:
         return _print_blocked([f"lease {args.lease_id} is not in the durable state store"])
     # The stored lease carries the signature and nonce; a status query has no
     # business handing those back out.
-    print(
-        json.dumps(
-            {
-                key: value
-                for key, value in record.items()
-                if key != "lease"
-            }
-            | {"target_environment": record["lease"].get("target_environment")},
-            indent=2,
-            ensure_ascii=False,
-        )
-    )
+    stored = record.get("lease")
+    summary = {key: value for key, value in record.items() if key != "lease"}
+    if isinstance(stored, dict):
+        summary["target_environment"] = stored.get("target_environment")
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0 if record.get("state") == STATE_ISSUED else 1
 
 
