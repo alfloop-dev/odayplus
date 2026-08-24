@@ -153,6 +153,25 @@ def test_runtime_gate_invariants_pass_on_live_tree(
                 )
 
 
+def test_runtime_gate_check_rejects_a_mutated_live_file(
+    policy: Mapping[str, Any], repo_files: Sequence[str]
+) -> None:
+    """The boundary report must fail when a closure gate is broken."""
+    path = "apps/scheduler/oday_scheduler/main.py"
+    original = make_reader(REPO_ROOT)(path)
+    expected = "return (EXTERNAL_FETCH_JOB_TYPE,) if legacy_external_fetch_enabled(self.env) else ()"
+    mutated = original.replace(expected, "return (EXTERNAL_FETCH_JOB_TYPE,)")
+    assert mutated != original
+
+    report = evaluate(
+        policy,
+        repo_files,
+        lambda candidate: mutated if candidate == path else make_reader(REPO_ROOT)(candidate),
+        ("runtime_gate_invariants",),
+    )
+    assert path in paths_for(report, "runtime_gate_assertion_failed")
+
+
 def test_runtime_gate_invariants_reject_scheduler_mutation(policy: Mapping[str, Any]) -> None:
     """Mutating scheduler to unconditionally enqueue external fetch fails the invariant."""
     entry = next(
@@ -660,6 +679,10 @@ def test_loader_rejects_a_missing_file(tmp_path: Path) -> None:
             "unknown signal",
         ),
         (
+            lambda p: p.pop("runtime_gate_invariants"),
+            "missing required key 'runtime_gate_invariants'",
+        ),
+        (
             lambda p: p["runtime_gate_invariants"]["entries"].append({
                 "id": "bad_assertion",
                 "paths": ["modules/external_data/application/market_data_facade.py"],
@@ -727,6 +750,15 @@ def test_shipped_policy_is_valid_yaml_and_structurally_sound() -> None:
 def test_cli_exits_zero_on_the_live_tree(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([]) == 0
     assert "external-data boundary: OK" in capsys.readouterr().out
+
+
+def test_cli_bare_check_runs_the_complete_fail_closed_gate(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["--check"]) == 0
+    output = capsys.readouterr().out
+    assert "runtime_gate_assertions" in output
+    assert "external-data boundary: OK" in output
 
 
 def test_cli_json_report_is_machine_readable(capsys: pytest.CaptureFixture[str]) -> None:

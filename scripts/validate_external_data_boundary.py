@@ -73,7 +73,14 @@ DEFAULT_POLICY = ROOT / "docs/design/emgi/v0.4.1/LEGACY_EXTERNAL_DATA_DISPOSITIO
 EXPECTED_CONTRACT = "odayplus.legacy-external-data-disposition.v2"
 EXPECTED_SCHEMA_VERSION = 2
 
-CHECKS = ("classification", "freeze", "capabilities", "provider_references")
+CHECKS = (
+    "classification",
+    "freeze",
+    "capabilities",
+    "provider_references",
+    "runtime_gate_invariants",
+)
+CHECK_ALL = "__all__"
 
 
 class PolicyError(RuntimeError):
@@ -383,7 +390,7 @@ def validate_policy_structure(policy: Mapping[str, Any], *, source: str = "<poli
             raise PolicyError(f"{source}: reference {declaration_id!r} needs a paths list")
         _require(declaration, "rationale", str, f"{source}: reference {declaration_id}")
 
-    runtime_gates = policy.get("runtime_gate_invariants")
+    runtime_gates = _require(policy, "runtime_gate_invariants", dict, source)
     if runtime_gates is not None:
         if not isinstance(runtime_gates, Mapping):
             raise PolicyError(f"{source}: runtime_gate_invariants must be a mapping")
@@ -493,6 +500,69 @@ def evaluate_runtime_gate_assertion(
         pattern = rf"^\s*{re.escape(name)}\s*=\s*{re.escape(value)}\b"
         return re.search(pattern, content, re.MULTILINE) is not None
     return False
+
+
+def check_runtime_gate_invariants(
+    files: Sequence[str],
+    policy: Mapping[str, Any],
+    read_text: Callable[[str], str],
+) -> tuple[list[Violation], dict[str, Any]]:
+    """Verify every dispositioned runtime closure assertion against live files."""
+    tracked = set(files)
+    violations: list[Violation] = []
+    entry_count = 0
+    path_count = 0
+    assertion_count = 0
+
+    for entry in policy["runtime_gate_invariants"]["entries"]:
+        entry_id = entry["id"]
+        entry_count += 1
+        for path in entry["paths"]:
+            path_count += 1
+            if path not in tracked:
+                violations.append(
+                    Violation(
+                        check="runtime_gate_invariants",
+                        code="runtime_gate_missing_path",
+                        path=path,
+                        detail=f"runtime gate invariant {entry_id!r} names a path that is not tracked",
+                    )
+                )
+                continue
+
+            content = read_text(path)
+            if not content:
+                violations.append(
+                    Violation(
+                        check="runtime_gate_invariants",
+                        code="runtime_gate_unreadable_path",
+                        path=path,
+                        detail=f"runtime gate invariant {entry_id!r} path is empty or unreadable",
+                    )
+                )
+                continue
+
+            for assertion in entry["assertions"]:
+                assertion_count += 1
+                if evaluate_runtime_gate_assertion(assertion, content):
+                    continue
+                violations.append(
+                    Violation(
+                        check="runtime_gate_invariants",
+                        code="runtime_gate_assertion_failed",
+                        path=path,
+                        detail=(
+                            f"runtime gate invariant {entry_id!r} assertion failed: "
+                            f"{json.dumps(dict(assertion), ensure_ascii=False, sort_keys=True)}"
+                        ),
+                    )
+                )
+
+    return violations, {
+        "runtime_gate_entries": entry_count,
+        "runtime_gate_paths": path_count,
+        "runtime_gate_assertions": assertion_count,
+    }
 
 
 def _compile_regex(pattern: str, where: str) -> re.Pattern[str]:
@@ -844,6 +914,10 @@ def evaluate(
         violations, stats = check_provider_references(files, policy, read_text)
         report.violations.extend(violations)
         report.stats.update(stats)
+    if "runtime_gate_invariants" in checks:
+        violations, stats = check_runtime_gate_invariants(files, policy, read_text)
+        report.violations.extend(violations)
+        report.stats.update(stats)
 
     report.violations.sort(key=lambda violation: (violation.check, violation.path, violation.code))
     return report
@@ -856,8 +930,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--check",
         action="append",
-        choices=CHECKS,
-        help="run only the named check (repeatable); defaults to all checks",
+        nargs="?",
+        const=CHECK_ALL,
+        choices=(*CHECKS, CHECK_ALL),
+        help="run only the named check (repeatable); bare --check runs all checks",
     )
     parser.add_argument("--json", action="store_true", help="emit the machine-readable report")
     return parser.parse_args(argv)
@@ -876,7 +952,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"git ls-files failed in {args.root}: {stderr.strip()}", file=sys.stderr)
         return 2
 
-    report = evaluate(policy, files, make_reader(args.root), tuple(args.check or CHECKS))
+    requested_checks = tuple(args.check or CHECKS)
+    if CHECK_ALL in requested_checks:
+        if len(requested_checks) != 1:
+            print("policy error: bare --check cannot be combined with a named check", file=sys.stderr)
+            return 2
+        requested_checks = CHECKS
+
+    report = evaluate(policy, files, make_reader(args.root), requested_checks)
 
     if args.json:
         print(json.dumps(report.to_dict(), indent=2, sort_keys=False))
