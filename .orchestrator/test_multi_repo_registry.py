@@ -325,5 +325,166 @@ class RepositoryResolutionHasOneAuthorityTests(unittest.TestCase):
             self.assertIsNotNone(binding.error)
 
 
+class RepositoryIdAuthorityCanonicalizeTests(unittest.TestCase):
+    """Regression tests for ODP-ORCH-REPOSITORY-ID-AUTHORITY-001.
+
+    A task's ``repository`` field may carry a registry ID, an alias, the
+    GitHub slug, a ``.git`` URL, or any other name ``matching_repo_id``
+    accepts. Before this fix, the raw declared value was passed as
+    ``expected_slug`` to origin verification, which compared it against
+    the checkout's actual origin slug. When the declared value was not
+    already the slug (e.g. a registry ID like ``oday_data_platform``),
+    origin verification always failed with a false
+    ``repository_checkout_mismatch``.
+    """
+
+    def _make_env(self, origin_url: str):
+        """Create a temp fleet root + repo checkout with the given origin."""
+        import tempfile
+        tmpdir = tempfile.mkdtemp()
+        fleet_root = Path(tmpdir) / "fleet"
+        checkout = _init_repo(
+            Path(tmpdir) / "data-platform", origin_url,
+        )
+        fleet_root.mkdir()
+        config = _config_anchored_at(fleet_root)
+        config["coordination"] = {
+            "repositories": {"oday_data_platform": {"local_path": str(checkout)}}
+        }
+        return config, checkout, tmpdir
+
+    def test_repo_id_canonicalizes_to_slug_before_origin_check(self) -> None:
+        """Registry ID like ``oday_data_platform`` must not cause a mismatch."""
+        config, checkout, tmpdir = self._make_env(
+            "https://github.com/alfloop-dev/oday-data-platform.git"
+        )
+        try:
+            binding = multi_repo_registry.resolve_task_repository(
+                config, {"id": "T-ID", "repository": "oday_data_platform"},
+            )
+            self.assertTrue(binding.resolved, f"unexpected error: {binding.error}")
+            self.assertEqual(binding.repo_id, "oday_data_platform")
+            self.assertEqual(binding.slug, "alfloop-dev/oday-data-platform")
+            self.assertEqual(binding.root, checkout.resolve())
+            self.assertIsNone(binding.error)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_full_slug_still_works(self) -> None:
+        """The happy path: ``alfloop-dev/oday-data-platform`` slug."""
+        config, checkout, tmpdir = self._make_env(
+            "https://github.com/alfloop-dev/oday-data-platform.git"
+        )
+        try:
+            binding = multi_repo_registry.resolve_task_repository(
+                config, {"id": "T-SLUG", "repository": "alfloop-dev/oday-data-platform"},
+            )
+            self.assertTrue(binding.resolved, f"unexpected error: {binding.error}")
+            self.assertEqual(binding.repo_id, "oday_data_platform")
+            self.assertEqual(binding.slug, "alfloop-dev/oday-data-platform")
+            self.assertIsNone(binding.error)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_git_url_slug_canonicalizes_correctly(self) -> None:
+        """A ``.git`` URL like ``alfloop-dev/oday-data-platform.git`` must
+        resolve after normalization strips the suffix."""
+        config, checkout, tmpdir = self._make_env(
+            "https://github.com/alfloop-dev/oday-data-platform.git"
+        )
+        try:
+            binding = multi_repo_registry.resolve_task_repository(
+                config,
+                {"id": "T-GIT", "repository": "alfloop-dev/oday-data-platform.git"},
+            )
+            self.assertTrue(binding.resolved, f"unexpected error: {binding.error}")
+            self.assertEqual(binding.repo_id, "oday_data_platform")
+            self.assertEqual(binding.slug, "alfloop-dev/oday-data-platform")
+            self.assertEqual(binding.root, checkout.resolve())
+            self.assertIsNone(binding.error)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_display_name_canonicalizes_to_slug(self) -> None:
+        """A display name like ``oday-data-platform`` must resolve correctly."""
+        config, checkout, tmpdir = self._make_env(
+            "https://github.com/alfloop-dev/oday-data-platform.git"
+        )
+        try:
+            binding = multi_repo_registry.resolve_task_repository(
+                config, {"id": "T-DISP", "repository": "oday-data-platform"},
+            )
+            self.assertTrue(binding.resolved, f"unexpected error: {binding.error}")
+            self.assertEqual(binding.repo_id, "oday_data_platform")
+            self.assertEqual(binding.slug, "alfloop-dev/oday-data-platform")
+            self.assertIsNone(binding.error)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_wrong_origin_still_fails_closed(self) -> None:
+        """A checkout pointing at a different origin must still be rejected."""
+        config, checkout, tmpdir = self._make_env(
+            "https://github.com/alfloop-dev/odayplus.git"
+        )
+        try:
+            binding = multi_repo_registry.resolve_task_repository(
+                config, {"id": "T-WRONG", "repository": "oday_data_platform"},
+            )
+            self.assertFalse(binding.resolved)
+            self.assertIn("repository_checkout_mismatch", binding.error or "")
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_mismatch_error_shows_real_compared_values(self) -> None:
+        """The error must show the normalized slug that was actually compared,
+        not the raw registry ID or some other un-normalized value."""
+        config, checkout, tmpdir = self._make_env(
+            "https://github.com/alfloop-dev/odayplus.git"
+        )
+        try:
+            binding = multi_repo_registry.resolve_task_repository(
+                config, {"id": "T-MSG", "repository": "oday_data_platform"},
+            )
+            self.assertFalse(binding.resolved)
+            error = binding.error or ""
+            # The error must contain the actual origin slug and the expected slug
+            self.assertIn("alfloop-dev/odayplus", error)
+            self.assertIn("alfloop-dev/oday-data-platform", error)
+            # The error must NOT contain the raw registry ID as the expected value
+            self.assertNotIn("expected oday_data_platform", error)
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_matching_repo_id_normalizes_git_suffix(self) -> None:
+        """matching_repo_id must strip .git before comparison so that
+        ``alfloop-dev/oday-data-platform.git`` resolves to the registered
+        slug ``alfloop-dev/oday-data-platform``."""
+        # .git suffix on a known slug
+        self.assertEqual(
+            multi_repo_registry.matching_repo_id({}, "alfloop-dev/oday-data-platform.git"),
+            "oday_data_platform",
+        )
+        # Without .git (baseline)
+        self.assertEqual(
+            multi_repo_registry.matching_repo_id({}, "alfloop-dev/oday-data-platform"),
+            "oday_data_platform",
+        )
+        # Alias / display name — no .git, still works
+        self.assertEqual(
+            multi_repo_registry.matching_repo_id({}, "oday-data-platform"),
+            "oday_data_platform",
+        )
+        # Unknown repo with .git still returns None
+        self.assertIsNone(
+            multi_repo_registry.matching_repo_id({}, "acme/widgets.git"),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
