@@ -5,8 +5,8 @@
 - **任務階段**: Wave 0 — 基線與介面凍結 (Dead Code Audit)
 - **盤點基準日期**: 2026-08-24
 - **歷史盤點起始基準**: `origin/dev` @ `3329416d1b1b41289da152738d8e5392ebfcbf4d`
-- **當前驗證基準（Composed Head）**: `origin/dev` @ `04ddafe90a32821b50a18f9cf2fb945189a4e001`（包含 PR #999 `ODP-RELEASE-MANIFEST-GATES-001` 合併成果；本報告分支已完成 base advance merge）
-- **負責人 (Owner)**: Codex
+- **當前驗證基準（Composed Head）**: `origin/dev` @ `30f885b04954f540ba2ab7d92dea6f402aad131b`（包含 PR #999 `ODP-RELEASE-MANIFEST-GATES-001` 與 PR #1001 `ODP-RELEASE-EVIDENCE-RECEIPTS-001` 合併成果；本報告分支已完成 base advance merge）
+- **負責人 (Owner)**: Antigravity
 - **審查人 (Reviewer)**: Codex2
 - **來源依據**: [`docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`](../deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md)
 - **執行原則**: **本任務只稽核不刪 code**。所有項目均以 caller、workflow、runtime unit、cron、GitHub Actions 具體呼叫路徑逐項證明，作為後續 Wave 1 / Wave 2 實作與刪除任務（特別是 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` 與 `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`）之執行依據。
@@ -275,7 +275,7 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 ---
 ## 4. 全系統元件逐項盤點與使用證明 (Item-by-Item Usage Evidence)
 
-本節針對倉庫內所有部署、Proof、Gate、Scheduler、Docker 與 IaC 相關元件，逐一列出其呼叫者、Workflow 參照、執行單元、測試涵蓋與處置判定。**本節共 87 列**（4.1: 7、4.2: 6、4.3: 15、4.4: 26、4.5: 15、4.6: 12、4.7: 6），處置分佈為 KEEP 74 / REPLACE 8 / DELETE·RETIRE 5，統計見 §5.1。
+本節針對倉庫內所有部署、Proof、Gate、Scheduler、Docker 與 IaC 相關元件，逐一列出其呼叫者、Workflow 參照、執行單元、測試涵蓋與處置判定。**本節共 90 列**（4.1: 7、4.2: 6、4.3: 18、4.4: 26、4.5: 15、4.6: 12、4.7: 6），處置分佈為 KEEP 77 / REPLACE 8 / DELETE·RETIRE 5，統計見 §5.1。
 
 > **間接呼叫標記**：凡呼叫者為 `make <target>` 者，本報告一律同時標出 workflow 行號與 `Makefile` 行號，不將 `make` 目標簡寫成「workflow 直接呼叫該腳本」。
 
@@ -334,6 +334,9 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 | 元件名稱與路徑 | 主要責任與對外介面 | 呼叫者與相依分析 (Usage Evidence) | 處置判定 | 承接 Wave 任務 |
 |---|---|---|---|---|
 | `delivery_toolchain/release/check_runtime_admission.py` | 發布入場檢查，驗證 release_sha、task_id、lease 及 Gate 0–6 registry。 | **Caller**: `deploy-dev.yml` (L61)。<br>**Imports**: `from delivery_toolchain.e2e.check_release_gate_registry import check_candidate_ancestry` (L32)。<br>**問題**: Lease 僅做 regex 檢查（非簽名授權）；要求 Gate 0–6 全過造成循環依賴；僅支援 dev/staging。 | **替換 (REPLACE)**：由具簽名與 CAS 狀態機之權威驗證器取代。 | `ODP-RELEASE-ADMISSION-AUTHORITY-001` (Wave 0) |
+| `delivery_toolchain/release/release_manifest.py` | Release Manifest 綱要定義與驗證函式庫。定義 Release ID、Candidate SHA、Manifest Digest、Policy Digests 與容器映像檔不可變 SHA256 digest 規格。 | **Caller**: `delivery_toolchain/e2e/check_release_gate_registry.py` (L47), `delivery_toolchain/release/migrate_gate_registry.py` (L20), `delivery_toolchain/release/release_receipts.py` (L28), `tests/release/test_release_manifest.py` (L16)。<br>**Boundary**: `docs/audits/code-boundary-inventory.csv:242`。 | **保留 (KEEP)** | `ODP-RELEASE-MANIFEST-GATES-001` (Wave 0) |
+| `delivery_toolchain/release/migrate_gate_registry.py` | Gate Registry v1 至 v2 分階段綱要遷移 CLI 工具。 | **Caller**: `docs/evidence/gates/README.md` (L227, L234 操作指引), `tests/release/test_release_manifest.py` (L12)。<br>**Boundary**: `docs/audits/code-boundary-inventory.csv:241`。 | **保留 (KEEP)** | `ODP-RELEASE-MANIFEST-GATES-001` (Wave 0) |
+| `delivery_toolchain/release/release_receipts.py` | 統一發布證據收據 (Release Receipts) 與機密遮蔽 (Secret Redaction) 核心函式庫。定義 `STAGE_ENVIRONMENT` 階段環境綁定 (`candidate-built`/`dev-verified` -> dev, `staging-verified` -> staging, `prod-admitted`/`prod-switched`/`release-complete` -> prod)、收據種類 (`deployment`, `verification`, `cleanup`, `rollback`)、`build_receipt` / `validate_receipt` / `read_receipt` / `write_receipt`，並宣告不可變之 `RUNTIME_RELEASE_ARTIFACT_ALLOWLIST` (8 項)。 | **Caller**: `tests/ops/test_release_receipts.py`（契約測試完整驗證階段綁定、機密遮蔽、allowlist 與 `.github/workflows/deploy-dev.yml` / `product_ops/deployment/deploy_cloud_run_waji.sh` 產出路徑之一致性）。<br>**Workflow & Script 對齊**: 凍結之 `RUNTIME_RELEASE_ARTIFACT_ALLOWLIST` (L59-68) 逐項對齊 `deploy-dev.yml` (L254-261 之 `actions/upload-artifact@v4`) 與 `deploy_cloud_run_waji.sh` (`PREFLIGHT_REPORT`, `SMOKE_REPORT`, `MIGRATION_COMPAT_REPORT`, `LIVE_E2E_REPORT`, `cloud-run-jobs/*-validation.json`)。<br>**Boundary**: `docs/audits/code-boundary-inventory.csv:243` (`development_delivery_tooling`)。 | **保留 (KEEP)** | `ODP-RELEASE-EVIDENCE-RECEIPTS-001` (Wave 1) |
 | `delivery_toolchain/e2e/check_release_gate_registry.py` | 靜態 Gate 0–6 機器可讀註冊表驗證器。 | **Caller**: `Makefile:82-83` (`make release-gate-registry`)；`check_product_release_gate.py:26,40`（以 subprocess 呼叫）；`check_runtime_admission.py:32`（import）。<br>**間接**: `Makefile:100` 之 `product-e2e-gate` 以 prerequisite 形式依賴 `release-gate-registry`。<br>**Tests**: `tests/e2e/test_release_gate_registry.py`。<br>**問題**: 缺少分階段狀態機支援。 | **重構 (REPLACE / REFACTOR)**：升級為多階段 Gate Registry 驗證器。 | `ODP-RELEASE-MANIFEST-GATES-001` (Wave 0) |
 | `delivery_toolchain/e2e/check_product_release_gate.py` | 產品發布門禁總成，整合 gate registry 與 deterministic E2E 收據。 | **Caller**: `Makefile:101` (`product-e2e-gate`，`--dev-merge`)、`Makefile:105` (`product-release-gate`，`--require-go`)；上游分別為 `ci.yml:313` 與 `promote-dev-to-main.yml:50`。<br>**Imports**: `product_e2e_receipt` (L56)。 | **重構 (REPLACE / REFACTOR)**：配合新 gate registry 調整參數與驗證邏輯。 | `ODP-RELEASE-MANIFEST-GATES-001` (Wave 0) |
 | `delivery_toolchain/e2e/check_live_e2e_gate.py` | 部署後線上即時 E2E 驗收門禁，透過真實 HTTP 操作驅動完整業務路徑與 Worker 執行。 | **Caller**: `deploy_cloud_run_waji.sh` (L624)，於 `DEPLOYMENT_COMMITTED` 之前執行，失敗會落入 EXIT trap 觸發流量與 scheduler 回滾（`deploy_cloud_run_waji.sh:590-596` 註解）。<br>**Dependencies**: `check_live_production_data.py` (L53)。<br>**Tests**: `tests/e2e/test_live_e2e_gate.py`。 | **保留 (KEEP)** | `ODP-RELEASE-EVIDENCE-RECEIPTS-001` (Wave 1) |
@@ -503,17 +506,17 @@ printf 'dagster_cli_daemon_runtime_hits=0\n'
 
 本報告的處置統計沿**兩條互不相同的軸**進行，兩軸各自封閉、可獨立對帳；混合計數是前版報告數字打架的根因，故此處明確分開呈現。
 
-**軸 A — 元件生命週期處置（母體 = §4 逐項盤點的 87 列）**
+**軸 A — 元件生命週期處置（母體 = §4 逐項盤點的 90 列）**
 
 ```text
 ┌──────────────────────────────┬───────┬──────────────────────────────────────────────┐
 │ 處置類別                     │ 列數  │ 來源章節（列數）                             │
 ├──────────────────────────────┼───────┼──────────────────────────────────────────────┤
-│ 保留 (KEEP，含擴充/重用)     │ 74 列 │ 4.1:6 4.2:5 4.3:10 4.4:26 4.5:10 4.6:11 4.7:6│
+│ 保留 (KEEP，含擴充/重用)     │ 77 列 │ 4.1:6 4.2:5 4.3:13 4.4:26 4.5:10 4.6:11 4.7:6│
 │ 替換/重構 (REPLACE)          │  8 列 │ 4.1:1 4.2:1 4.3:5 4.6:1                      │
 │ 刪除/退役 (DELETE / RETIRE)  │  5 列 │ 4.5:5                                        │
 ├──────────────────────────────┼───────┼──────────────────────────────────────────────┤
-│ 合計                         │ 87 列 │ 4.1:7 4.2:6 4.3:15 4.4:26 4.5:15 4.6:12 4.7:6│
+│ 合計                         │ 90 列 │ 4.1:7 4.2:6 4.3:18 4.4:26 4.5:15 4.6:12 4.7:6│
 └──────────────────────────────┴───────┴──────────────────────────────────────────────┘
 ```
 
@@ -540,7 +543,7 @@ printf 'dagster_cli_daemon_runtime_hits=0\n'
 |---|---|---|
 | §5.2 刪除清單 | **10** | 軸 A DELETE / RETIRE 5 項（`Dockerfile.api`、`Dockerfile.web`、`infra/docker/docker-compose.yml`、`infra/cloudbuild/README.md`、`infra/k8s_optional/README.md`）＋ 軸 B DELETE 5 檔（§3.2.1） |
 | §5.3 替換／重構清單 | **9** | 軸 A REPLACE 8 項（含目前未接線的 `apps/data_platform/definitions.py`）＋ `cloud_run_release_traffic.sh` 1 項（§4.2 判定為 KEEP & EXPAND，但需在 Wave 1 實質擴充，故納入行動清單） |
-| §5.4 保留清單 | — | 軸 A KEEP 74 項之代表性彙整（非逐項重列） |
+| §5.4 保留清單 | — | 軸 A KEEP 77 項之代表性彙整（非逐項重列） |
 | 文件重構清單 | **10** | 軸 B REPLACE / UPDATE 10 檔（§3.2.2 + §3.2.3），由 Wave 2 文件整併處理 |
 
 ---
@@ -558,7 +561,7 @@ printf 'dagster_cli_daemon_runtime_hits=0\n'
 | 4 | `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` | 孤立 JSON | 20,420 B | 舊版 PR #82 外部證明佇列，所屬 CLI 已於 `1a8b0f44` 全數刪除。無任何 active code 讀取或寫入；被 §3.2.2–3.2.3 之 10 份陳舊文件引用，但那些文件本身亦列為重構。 | 無（引用方一併於文件重構清單處理） |
 | 5 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` | 孤立 JSON | 7,514 B | 舊版 PR #82 handback JSON Schema 範本。唯一消費者 `check_external_proof_handback_template.py` 已於 `1a8b0f44` 刪除。**注意其掃描邊界特性見 §3.2.0 第 1 點（S1 命中 0，僅檔名與 S2 命中）。** | 無 |
 | 6 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` | 孤立 JSON | 6,145 B | 舊版 PR #82 外部證明看板。對應之 `check_/update_external_proof_handback_status_board.py` 已刪除，無 active code caller。 | 無 |
-| 7 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json` | 孤立 JSON | 4,367 B | 舊版 PR #82 handback 示範格式。L43 引用已刪除流程之 PR 查詢指令。無 active code caller。 | 無 |
+| 7 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json` | 4,367 B | 舊版 PR #82 handback 示範格式。L43 引用已刪除流程之 PR 查詢指令。無 active code caller。 | 無 |
 | 8 | `docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md` | 孤立 MD | 18,151 B | 舊版 PR #82 外部證明領取說明文件（S1 命中 51 行）。密集引用已刪除之 `check_/sync_external_proof_*.py` 與 `external-proof-followup.yml`。無 active code caller。 | 無 |
 | 9 | `infra/cloudbuild/README.md`（含目錄） | 說明文件 | 54 B（3 行） | 非空白檔案，但系統完全使用 GitHub Actions (WIF)：倉庫無 `cloudbuild.yaml`、無 Cloud Build trigger、無 Terraform 引用。目錄內僅此一檔。 | **`tests/test_scaffold.py:59`（必須同批移除該 `expected_paths` 條目，證明見 §7.3）** |
 | 10 | `infra/k8s_optional/README.md`（含目錄） | 說明文件 | 102 B（3 行） | 非空白檔案，但目錄內無任何 YAML manifest，無 workflow / 腳本 / Terraform 引用。現行 K8s 部署全部在 `infra/k8s/data-platform/`。 | **`tests/test_scaffold.py:58`（必須同批移除該 `expected_paths` 條目，證明見 §7.3）** |
@@ -583,10 +586,10 @@ printf 'dagster_cli_daemon_runtime_hits=0\n'
 
 ---
 
-### 5.4 保留清單 (KEEP) — 軸 A 74 項之代表性彙整
+### 5.4 保留清單 (KEEP) — 軸 A 77 項之代表性彙整
 
 - **Workflows (6)**: `ci.yml`, `promote-dev-to-main.yml`, `merge-queue-review-gate.yml`, `tooling-scope-review-gate.yml`, `emgi-consumer-boundary.yml`, `assisted-intake-design-validation.yml`。
-- **Core Deployment & Live Proof (5)**: `cloud_run_job_entrypoint.py`, `cloud_run_traffic.py`, `cloud_scheduler_trigger.py`, `validate_cloud_run_live_deployment.py`, `check_live_e2e_gate.py`／`check_live_production_data.py`。
+- **Core Deployment, Manifest & Release Receipts (8)**: `release_manifest.py`, `migrate_gate_registry.py`, `release_receipts.py`, `cloud_run_job_entrypoint.py`, `cloud_run_traffic.py`, `cloud_scheduler_trigger.py`, `validate_cloud_run_live_deployment.py`, `check_live_e2e_gate.py`／`check_live_production_data.py`。
 - **CI E2E & Contract Tooling**: `run_product_e2e.sh`, `run_python_e2e_tests.py`, `record_playwright_results.py`, `generate_product_e2e_receipt.py`／`product_e2e_receipt.py`, `seed_product_e2e_data.py`, `worker_heartbeat.py`, `check_product_grade_ci_gates.py`, `_release_target.py`／`_support.py`, `check_drift.py`, `export_openapi.py`, `generate_client.py`, `build_validate_assisted_listing_intake.py`。
 - **Security & Governance**: `secret_scan.py`, `sast_scan.py`, `generate_sbom.py`, `generate_oss_notice.py`, `attestation.py`, `sign_images.sh`, `check_code_boundaries.py`, `check_config_wiring.py`, `check_orchestrator_config.py`, `classify_change_review_scope.py`, `validate_assisted_listing_intake_design.py`, `validate_emgi_consumer_boundary.mjs`, `task_start.sh`, `task_finalize.sh`, `worker_commit.py`, `check_commit_scope.py`, `check_commit_trailers.py`, `check_task_delivery_identity.py`, `apply_branch_protection.py`, `check_pr_merge_eligibility.py`。
 - **Standard Docker & IaC**: `api.Dockerfile`, `web.Dockerfile`, `worker.Dockerfile`, `scheduler.Dockerfile`, `data-platform.Dockerfile`, `infra/docker/docker-compose.e2e.yml`, 根目錄 `docker-compose.yml`, `infra/terraform/**`, `infra/k8s/data-platform/**`（含 daily CronJob 與 3 個 suspended Job）, `infra/mlflow/**`。
@@ -699,7 +702,7 @@ done
 
 ### 7.2 行號引用逐項驗證
 
-下列腳本對「檔案 / 行號 / 期望字串」三元組做 **102 項** fail-closed 斷言，一次驗證本報告所有關鍵行號引用。`check()` 在 FAIL 時累計 `fails` 而非直接回傳成功，腳本結尾以 `exit 1` 收斂，因此**任何一項不符都會讓整支腳本以非 0 離開**；同時腳本會回頭數自己原始碼裡的 `check` 呼叫數，斷言「宣告 102 項 = 實際執行 102 項」，避免宣稱數與實際數再度脫節。存為 `/tmp/check_lines.sh` 後執行：
+下列腳本對「檔案 / 行號 / 期望字串」三元組做 **113 項** fail-closed 斷言，一次驗證本報告所有關鍵行號引用。`check()` 在 FAIL 時累計 `fails` 而非直接回傳成功，腳本結尾以 `exit 1` 收斂，因此**任何一項不符都會讓整支腳本以非 0 離開**；同時腳本會回頭數自己原始碼裡的 `check` 呼叫數，斷言「宣告 113 項 = 實際執行 113 項」，避免宣稱數與實際數再度脫節。存為 `/tmp/check_lines.sh` 後執行：
 
 ```bash
 bash /tmp/check_lines.sh; echo "EXIT=$?"
@@ -777,6 +780,19 @@ check $DP_TEST 7 'from apps.data_platform.definitions import ('
 check $DP_TEST 18 'def test_dagster_repository_loads_all_typed_assets() -> None:'
 check $DP_TEST 39 'def test_daily_schedule_carries_previous_day_partition_key() -> None:'
 
+# --- Release Manifest, Migration & Release Receipts（§4.3） ---
+check delivery_toolchain/release/release_manifest.py 25 'RELEASE_ID_PATTERN = re.compile'
+check delivery_toolchain/release/release_manifest.py 87 'def validate_manifest('
+check delivery_toolchain/release/migrate_gate_registry.py 30 'def migrate_registry('
+check delivery_toolchain/release/release_receipts.py 43 'STAGE_ENVIRONMENT = {'
+check delivery_toolchain/release/release_receipts.py 59 'RUNTIME_RELEASE_ARTIFACT_ALLOWLIST = ('
+check delivery_toolchain/release/release_receipts.py 214 'def redact_secrets('
+check delivery_toolchain/release/release_receipts.py 386 'def validate_receipt('
+check delivery_toolchain/release/release_receipts.py 474 'def build_receipt('
+check tests/ops/test_release_receipts.py 12 'from delivery_toolchain.release.release_receipts import ('
+check tests/ops/test_release_receipts.py 50 'def test_receipt_binds_manifest_identity_and_redacts_nested_values() -> None:'
+check tests/ops/test_release_receipts.py 118 'def test_allowlist_matches_workflow_uploads_and_script_producers() -> None:'
+
 # --- Workflow / 腳本 caller ---
 check $W  61 'check_runtime_admission.py'
 check $W  87 'verify_deployment_health_backup_rollback.py'
@@ -844,23 +860,23 @@ check tests/test_scaffold.py 59 'infra/cloudbuild'
 # --- fail-closed 收尾：斷言「全部通過」且「一項都沒漏跑」 ---
 declared=$(grep -oE '(^|;[[:space:]]*)check[[:space:]]' "${BASH_SOURCE[0]}" | wc -l)
 printf '\nchecks_declared=%s checks_executed=%s fails=%s\n' "$declared" "$checks" "$fails"
-[ "$declared" -eq 102 ] || { printf 'FAIL declared-count want=102 got=%s\n' "$declared"; fails=$((fails + 1)); }
+[ "$declared" -eq 113 ] || { printf 'FAIL declared-count want=113 got=%s\n' "$declared"; fails=$((fails + 1)); }
 [ "$checks" -eq "$declared" ] || { printf 'FAIL executed=%s != declared=%s\n' "$checks" "$declared"; fails=$((fails + 1)); }
 [ "$fails" -eq 0 ] || exit 1
 exit 0
 ```
 
-實測輸出（基準 commit）：102 行全部 `OK`，收尾為
+實測輸出（基準 commit）：113 行全部 `OK`，收尾為
 
 ```text
-checks_declared=102 checks_executed=102 fails=0
+checks_declared=113 checks_executed=113 fails=0
 EXIT=0
 ```
 
 宣稱數可獨立複核（不必執行腳本）：
 
 ```bash
-grep -oE '(^|;[[:space:]]*)check[[:space:]]' /tmp/check_lines.sh | wc -l   # -> 102
+grep -oE '(^|;[[:space:]]*)check[[:space:]]' /tmp/check_lines.sh | wc -l   # -> 113
 ```
 
 負向驗證（證明它真的 fail-closed，而非永遠回傳成功）：把任一行號改成不存在的行，腳本會印出 `FAIL` 並以 `EXIT=1` 離開：
@@ -871,7 +887,7 @@ sed 's|test_scaffold.py 59 .*|test_scaffold.py 999 "no-such-string"|' \
   /tmp/check_lines.sh > /tmp/check_lines_neg.sh
 bash /tmp/check_lines_neg.sh >/dev/null; echo "EXIT=$?"
 # -> FAIL tests/test_scaffold.py:999 want=no-such-string got=
-#    checks_declared=102 checks_executed=102 fails=1
+#    checks_declared=113 checks_executed=113 fails=1
 #    EXIT=1
 ```
 
@@ -1139,8 +1155,8 @@ def assert_eq(label, got, want):
     print(f"{'OK  ' if good else 'FAIL'} {label:<46} got={got:<4} want={want}")
 
 print("--- 軸 A：§4 元件生命週期 ---")
-assert_eq("§4 總列數", nA, 87)
-assert_eq("§4 KEEP", A['KEEP'], 74)
+assert_eq("§4 總列數", nA, 90)
+assert_eq("§4 KEEP", A['KEEP'], 77)
 assert_eq("§4 REPLACE", A['REPLACE'], 8)
 assert_eq("§4 DELETE/RETIRE", A['DELETE'], 5)
 print("--- 軸 B：§3.2 external-proof 殘留 ---")
@@ -1158,7 +1174,7 @@ n72 = len(re.findall(r"(?:^|;[ \t]*)check[ \t]", script72, re.M))
 claimed72 = int(re.search(r"做 \*\*(\d+) 項\*\* fail-closed 斷言", sec72).group(1))
 selfconst72 = int(re.search(r'-eq (\d+) \] \|\| \{ printf .FAIL declared-count', script72).group(1))
 print("--- §7.2 行號斷言數 ---")
-assert_eq("§7.2 腳本內 check 呼叫數", n72, 102)
+assert_eq("§7.2 腳本內 check 呼叫數", n72, 113)
 assert_eq("§7.2 內文宣稱數 == 實際數", claimed72, n72)
 assert_eq("§7.2 腳本自我斷言常數 == 實際數", selfconst72, n72)
 # --- §2 旁路掃描分類 vs §7.5 腳本常數（第五次退件之根因：內文 4、指令 5）---
@@ -1189,8 +1205,8 @@ sys.exit(0 if ok else 1)
 
 ```text
 --- 軸 A：§4 元件生命週期 ---
-OK   §4 總列數                                         got=87   want=87
-OK   §4 KEEP                                        got=74   want=74
+OK   §4 總列數                                         got=90   want=90
+OK   §4 KEEP                                        got=77   want=77
 OK   §4 REPLACE                                     got=8    want=8
 OK   §4 DELETE/RETIRE                               got=5    want=5
 --- 軸 B：§3.2 external-proof 殘留 ---
@@ -1204,9 +1220,9 @@ OK   §3.2 殘留合計                                      got=20   want=20
 OK   軸 B REPLACE/UPDATE (3.2.2+3.2.3)               got=10   want=10
 OK   軸 B ARCHIVE/KEEP (3.2.4+3.2.6)                 got=4    want=4
 --- §7.2 行號斷言數 ---
-OK   §7.2 腳本內 check 呼叫數                             got=102  want=102
-OK   §7.2 內文宣稱數 == 實際數                              got=102  want=102
-OK   §7.2 腳本自我斷言常數 == 實際數                           got=102  want=102
+OK   §7.2 腳本內 check 呼叫數                             got=113  want=113
+OK   §7.2 內文宣稱數 == 實際數                              got=113  want=113
+OK   §7.2 腳本自我斷言常數 == 實際數                           got=113  want=113
 --- §2 旁路掃描分類 vs §7.5 腳本常數 ---
 OK   §2 三分類檔數合計 == 宣稱命中數                            got=5    want=5
 OK   §2 宣稱命中數 == §7.5 腳本期望常數                        got=5    want=5
@@ -1228,7 +1244,7 @@ ALL RECONCILED
 
 | # | 驗收條件 | 本報告對應章節 | 滿足方式 |
 |---|---|---|---|
-| 1 | 以 caller/workflow/runtime unit/cron/GitHub Actions usage 逐項證明 | §4（87 列逐項）、**§4.2.1**（Cloud Scheduler cron 全鏈逐行）、§4.5（GKE CronJob 逐行）、**§4.6.1**（Dagster 宣告面與 0 命中 runtime wiring 負向證據）、**§4.6.2**（兩套 active runtime + 一套未接線宣告面的對帳矩陣）、§7.2（102 項 fail-closed 行號機器驗證） | 每列均標示 caller 檔案與行號；`make` 間接呼叫一律兩段式標註；對 active Cloud Scheduler／GKE CronJob 與未接線 Dagster definitions 分別給出建立、注入、runtime caller 或負向掃描證據 |
+| 1 | 以 caller/workflow/runtime unit/cron/GitHub Actions usage 逐項證明 | §4（90 列逐項）、**§4.2.1**（Cloud Scheduler cron 全鏈逐行）、§4.5（GKE CronJob 逐行）、**§4.6.1**（Dagster 宣告面與 0 命中 runtime wiring 負向證據）、**§4.6.2**（兩套 active runtime + 一套未接線宣告面的對帳矩陣）、§7.2（113 項 fail-closed 行號機器驗證） | 每列均標示 caller 檔案與行號；`make` 間接呼叫一律兩段式標註；對 active Cloud Scheduler／GKE CronJob 與未接線 Dagster definitions 分別給出建立、注入、runtime caller 或負向掃描證據 |
 | 2 | 產出保留/替換/刪除清單 | §5.1（雙軸統計與對帳）、§5.2（刪除 10 項，含連動編輯）、§5.3（替換 9 項）、§5.4（保留彙整） | 兩軸母體、分項數與合併推導全部列出恆等式，可逐條核算 |
 | 3 | 辨識舊 External Proof Follow-up 與任何繞過 Runtime Release 的入口 | §2（旁路 7 類，含 WIF 唯一性證明與偽陽性澄清）、§3.1（移除 commit 逐檔）、§3.2（掃描邊界 + 20 檔殘留逐檔） | 旁路以「具 GCP 變更指令」與「持有 WIF 身分」雙查證；殘留以三種掃描邊界宣告後取聯集並分流 |
 | 4 | 本任務只稽核不刪 code | 全文 | 本次變更僅新增/修訂 `docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md` 一檔；未刪除或修改任何程式、workflow、config。刪除動作全部登記為 Wave 2 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` 之待辦，並附連動編輯要求 |
@@ -1254,3 +1270,4 @@ ALL RECONCILED
 | （第六次審查）報告 metadata 審查人標註為舊值 Codex；§7.5 範例輸出含尾隨空白；盤點基準未明確區分歷史掃描基準 3329416d 與當前 composed head 04ddafe9 | 審查人更新為 **Codex2**（負責人為 **Antigravity**）；移除 §7.5 輸出區塊第 907–919 行全部尾隨空白（通過 `git diff --check`）；於 §0 標頭明確區分「歷史盤點起始基準 `3329416d`」與「當前驗證基準 `04ddafe9`」（含 PR #999 `ODP-RELEASE-MANIFEST-GATES-001`），並於 §13 約定所有行號引用與機器斷言皆以當前驗證基準之 composed head 為準，重跑 §7.1、§7.2、§7.5、§7.5a、§7.6 及 `tests/test_scaffold.py` 全數 PASS |
 | （第七次審查）報告遺漏 composed head 上的 Dagster data-platform definitions surface（6 組 ScheduleDefinition cron、3 組 900s sensor、defs 掛載、pyproject.toml entrypoint、README 排程文件）；未對帳 Cloud Scheduler、GKE CronJob 與 Dagster 之邊界 | 新增 **§4.6.1**（Dagster 排程與感應器 14 項逐行宣告證據表）、新增 **§4.6.2**（兩套 active runtime 與一套未接線宣告面的對帳矩陣）；更新 §1.1 第 5 項、§4.6 表格、§5.1／§5.4 統計與 §8 驗收追蹤表 |
 | （第八次審查）Dagster section 未證明 active：Docker ENTRYPOINT 實際進入 `deployment_runtime.py`，GKE CronJob 傳入 `scheduled` 並呼叫 `product_ops.data_platform.backfill`；`definitions.py` 與 backfill 共享 `DataPlaneRunner`，且 §7.2 負向輸出仍寫成 77 checks | §1.1、§4.6.1、§4.6.2 改以 runtime caller 證據與 0 命中 Dagster CLI／daemon／runtime 掃描，將 `definitions.py` 分類為 UNWIRED / REPLACE，列出與 `backfill.py` 重疊的 11 個 source kinds；§7.2 負向輸出更正並重跑為 `checks_declared=102 checks_executed=102 fails=1`、`EXIT=1`，§7.6 對帳同步為 KEEP 74 / REPLACE 8 / §5.3 9 項 |
+| （第九/十次審查）actual review head 包含 origin/dev 30f885b0 (PR #1001)，但報告記錄 04ddafe9 且遺漏 delivery_toolchain/release/release_receipts.py 與 tests/ops/test_release_receipts.py | 更新 composed-head 基準至 `30f885b0`（PR #999 + PR #1001 合併成果）；負責人更新為 **Antigravity**；新增 `release_receipts.py`（以及 `release_manifest.py`、`migrate_gate_registry.py`）之 caller、workflow 與 runtime 使用證明，分類為 **保留 (KEEP)**；§4 總列數更新為 **90 列**（KEEP 77 / REPLACE 8 / DELETE 5）；§7.2 機器驗證斷言增至 **113 項**（全部通過）；§7.6 自動對帳腳本與統計矩陣同步對齊 |
