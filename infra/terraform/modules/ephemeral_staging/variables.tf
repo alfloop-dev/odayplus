@@ -130,3 +130,16 @@ variable "additional_labels" {
   description = "Additional labels to merge onto ephemeral resources."
   default     = {}
 }
+
+variable "tenant_id" {
+  type        = string
+  description = "Release-scoped tenant identifier for staging tenant isolation."
+  default     = null
+
+  validation {
+    condition     = var.tenant_id == null || can(regex("^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$", var.tenant_id))
+    error_message = "tenant_id must be a valid tenant identifier (lowercase letters, digits, '.', '_', '-')."
+  }
+}
+
+

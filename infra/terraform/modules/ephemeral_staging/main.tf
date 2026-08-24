@@ -31,6 +31,11 @@ terraform {
   }
 }
 
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
 locals {
   # Release ID normalized for naming and exact release_hash to guarantee uniqueness and prevent collision.
   # Lowercase before replacing punctuation so Terraform derives the same
@@ -41,8 +46,13 @@ locals {
   release_hash   = substr(sha256(var.release_id), 0, 8)
   release_prefix = length(local.release_clean) > 0 ? trim(substr(local.release_clean, 0, 54), "-") : "rel"
   release_label  = length(local.release_prefix) > 0 ? "${local.release_prefix}-${local.release_hash}" : "rel-${local.release_hash}"
-  owner_clean    = trim(lower(replace(var.owner_task_id, "/[^a-z0-9-]/", "-")), "-")
+  owner_clean    = trim(replace(lower(var.owner_task_id), "/[^a-z0-9-]/", "-"), "-")
   owner_label    = length(local.owner_clean) <= 63 ? local.owner_clean : "${substr(local.owner_clean, 0, 54)}-${substr(sha256(var.owner_task_id), 0, 8)}"
+
+  # Release-scoped tenant isolation.
+  tenant_id    = try(length(var.tenant_id) > 0, false) ? var.tenant_id : "tenant-${local.release_clean}-${local.release_hash}"
+  tenant_clean = trim(replace(lower(local.tenant_id), "/[^a-z0-9-]/", "-"), "-")
+  tenant_label = length(local.tenant_clean) <= 63 ? local.tenant_clean : "${substr(local.tenant_clean, 0, 54)}-${substr(sha256(local.tenant_id), 0, 8)}"
 
   # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
   sa_slug       = substr(local.release_clean, 0, 13)
@@ -85,6 +95,7 @@ locals {
       managed_by             = "terraform"
       ephemeral              = "true"
       release_id             = local.release_label
+      tenant                 = local.tenant_label
       owner_task             = local.owner_label
       candidate_sha          = substr(var.candidate_sha, 0, 40)
       manifest_digest_prefix = substr(replace(var.manifest_digest, "sha256:", ""), 0, 16)
@@ -94,14 +105,10 @@ locals {
   )
 
   ownership_description = join("; ", [
-    "managed_by=terraform",
-    "app=oday-plus",
-    "environment=staging",
-    "ephemeral=true",
-    "release_id=${local.release_label}",
-    "owner_task=${local.owner_label}",
-    "created_at=${local.created_at}",
-    "expires_at=${local.expires_at}",
+    "release=${local.release_label}",
+    "tenant=${local.tenant_label}",
+    "owner=${local.owner_label}",
+    "expires=${local.expires_at}",
   ])
 }
 
@@ -116,6 +123,7 @@ resource "terraform_data" "staging_ownership" {
   input = {
     labels = local.resource_labels
     resources = {
+      tenant_id            = local.tenant_id
       database             = local.database_name
       database_user        = local.database_user
       bucket               = local.bucket_name
@@ -128,6 +136,7 @@ resource "terraform_data" "staging_ownership" {
 
   triggers_replace = [
     var.release_id,
+    local.tenant_id,
     var.candidate_sha,
     var.manifest_digest,
     var.created_at,
@@ -147,6 +156,7 @@ resource "random_password" "staging_db" {
 }
 
 resource "google_sql_database" "staging" {
+  project  = var.project_id
   name     = local.database_name
   instance = var.cloud_sql_instance_name
 
@@ -154,6 +164,7 @@ resource "google_sql_database" "staging" {
 }
 
 resource "google_sql_user" "staging" {
+  project  = var.project_id
   name     = local.database_user
   instance = var.cloud_sql_instance_name
   password = random_password.staging_db.result
@@ -163,6 +174,7 @@ resource "google_sql_user" "staging" {
 
 # Staging database URL secret.
 resource "google_secret_manager_secret" "staging_database_url" {
+  project   = var.project_id
   secret_id = "${local.name_prefix}-database-url"
 
   replication {
@@ -200,6 +212,7 @@ resource "google_secret_manager_secret_version" "staging_database_url" {
 # Use a dedicated bucket per release to guarantee label-precise cleanup.
 
 resource "google_storage_bucket" "staging_data" {
+  project                     = var.project_id
   name                        = local.bucket_name
   location                    = var.region
   uniform_bucket_level_access = true
@@ -229,25 +242,28 @@ resource "google_storage_bucket" "staging_data" {
 # --- Isolated Service Accounts ---
 
 resource "google_service_account" "staging_runtime" {
+  project      = var.project_id
   account_id   = local.sa_runtime_id
   display_name = "Staging ${var.release_id} runtime"
-  description  = "Ephemeral staging runtime identity, TTL ${var.ttl_hours}h. ${local.ownership_description}"
+  description  = substr("Ephemeral staging runtime identity, TTL ${var.ttl_hours}h. ${local.ownership_description}", 0, 256)
 
   depends_on = [terraform_data.staging_ownership]
 }
 
 resource "google_service_account" "staging_web" {
+  project      = var.project_id
   account_id   = local.sa_web_id
   display_name = "Staging ${var.release_id} web BFF"
-  description  = "Ephemeral staging web identity, TTL ${var.ttl_hours}h. ${local.ownership_description}"
+  description  = substr("Ephemeral staging web identity, TTL ${var.ttl_hours}h. ${local.ownership_description}", 0, 256)
 
   depends_on = [terraform_data.staging_ownership]
 }
 
 resource "google_service_account" "staging_worker" {
+  project      = var.project_id
   account_id   = local.sa_worker_id
   display_name = "Staging ${var.release_id} worker"
-  description  = "Ephemeral staging worker identity, TTL ${var.ttl_hours}h. ${local.ownership_description}"
+  description  = substr("Ephemeral staging worker identity, TTL ${var.ttl_hours}h. ${local.ownership_description}", 0, 256)
 
   depends_on = [terraform_data.staging_ownership]
 }
@@ -301,9 +317,19 @@ resource "google_cloud_run_v2_service_iam_member" "staging_web_invokes_api" {
   member   = "serviceAccount:${google_service_account.staging_web.email}"
 }
 
+# Worker / Cloud Scheduler -> API invoker.
+resource "google_cloud_run_v2_service_iam_member" "staging_worker_invokes_api" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.staging_api.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${google_service_account.staging_worker.email}"
+}
+
 # --- Pub/Sub Messaging ---
 
 resource "google_pubsub_topic" "staging_jobs" {
+  project      = var.project_id
   name         = "${local.name_prefix}-jobs"
   kms_key_name = var.kms_key_id
   labels       = local.resource_labels
@@ -314,6 +340,7 @@ resource "google_pubsub_topic" "staging_jobs" {
 }
 
 resource "google_pubsub_topic" "staging_jobs_dlq" {
+  project      = var.project_id
   name         = "${local.name_prefix}-jobs-dlq"
   kms_key_name = var.kms_key_id
   labels       = local.resource_labels
@@ -324,8 +351,9 @@ resource "google_pubsub_topic" "staging_jobs_dlq" {
 }
 
 resource "google_pubsub_subscription" "staging_jobs" {
-  name  = "${local.name_prefix}-jobs"
-  topic = google_pubsub_topic.staging_jobs.id
+  project = var.project_id
+  name    = "${local.name_prefix}-jobs"
+  topic   = google_pubsub_topic.staging_jobs.id
 
   ack_deadline_seconds       = 60
   retain_acked_messages      = false
@@ -345,8 +373,9 @@ resource "google_pubsub_subscription" "staging_jobs" {
 }
 
 resource "google_pubsub_subscription" "staging_jobs_dlq" {
-  name  = "${local.name_prefix}-jobs-dlq"
-  topic = google_pubsub_topic.staging_jobs_dlq.id
+  project = var.project_id
+  name    = "${local.name_prefix}-jobs-dlq"
+  topic   = google_pubsub_topic.staging_jobs_dlq.id
 
   ack_deadline_seconds       = 60
   retain_acked_messages      = false
@@ -356,12 +385,14 @@ resource "google_pubsub_subscription" "staging_jobs_dlq" {
 }
 
 resource "google_pubsub_topic_iam_member" "staging_runtime_publisher" {
-  topic  = google_pubsub_topic.staging_jobs.name
-  role   = "roles/pubsub.publisher"
-  member = "serviceAccount:${google_service_account.staging_runtime.email}"
+  project = var.project_id
+  topic   = google_pubsub_topic.staging_jobs.name
+  role    = "roles/pubsub.publisher"
+  member  = "serviceAccount:${google_service_account.staging_runtime.email}"
 }
 
 resource "google_pubsub_subscription_iam_member" "staging_worker_subscriber" {
+  project      = var.project_id
   subscription = google_pubsub_subscription.staging_jobs.name
   role         = "roles/pubsub.subscriber"
   member       = "serviceAccount:${google_service_account.staging_worker.email}"
@@ -375,6 +406,7 @@ resource "random_password" "staging_cursor_signing_key" {
 }
 
 resource "google_secret_manager_secret" "staging_cursor_signing_key" {
+  project   = var.project_id
   secret_id = "${local.name_prefix}-cursor-signing-key"
 
   replication {
@@ -408,6 +440,7 @@ resource "random_password" "staging_web_session" {
 }
 
 resource "google_secret_manager_secret" "staging_web_session" {
+  project   = var.project_id
   secret_id = "${local.name_prefix}-web-session"
 
   replication {
@@ -436,6 +469,7 @@ resource "google_secret_manager_secret_iam_member" "staging_web_session" {
 }
 
 resource "google_cloud_run_v2_service" "staging_api" {
+  project  = var.project_id
   name     = "${local.name_prefix}-api"
   location = var.region
   ingress  = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
@@ -506,6 +540,14 @@ resource "google_cloud_run_v2_service" "staging_api" {
       env {
         name  = "ODP_DEPLOY_ENV"
         value = "staging"
+      }
+      env {
+        name  = "ODP_TENANT_ID"
+        value = local.tenant_id
+      }
+      env {
+        name  = "ODP_SCHEDULED_INGESTION_TENANT_ID"
+        value = local.tenant_id
       }
       env {
         name  = "ODP_EXTERNAL_PROVIDER_MODE"
@@ -609,6 +651,7 @@ resource "google_cloud_run_v2_service" "staging_api" {
 }
 
 resource "google_cloud_run_v2_service" "staging_web" {
+  project  = var.project_id
   name     = "${local.name_prefix}-web"
   location = var.region
   ingress  = "INGRESS_TRAFFIC_ALL"
@@ -663,6 +706,10 @@ resource "google_cloud_run_v2_service" "staging_web" {
       env {
         name  = "ODP_DEPLOY_ENV"
         value = "staging"
+      }
+      env {
+        name  = "ODP_TENANT_ID"
+        value = local.tenant_id
       }
       env {
         name  = "ODP_PRODUCT_MODE"
@@ -722,18 +769,26 @@ resource "google_cloud_run_v2_service" "staging_web" {
 # --- Cloud Scheduler Trigger (Starts Paused) ---
 
 resource "google_cloud_scheduler_job" "staging_worker_trigger" {
+  project     = var.project_id
   name        = "${local.name_prefix}-worker-trigger"
-  description = "Release-scoped ephemeral staging worker trigger (starts paused, TTL ${var.ttl_hours}h). ${local.ownership_description}"
+  description = substr("Release-scoped ephemeral staging worker trigger (starts paused, TTL ${var.ttl_hours}h). ${local.ownership_description}", 0, 256)
   schedule    = "*/15 * * * *"
   time_zone   = "UTC"
   paused      = true
   region      = var.region
 
-  depends_on = [terraform_data.staging_ownership]
+  depends_on = [
+    terraform_data.staging_ownership,
+    google_cloud_run_v2_service_iam_member.staging_worker_invokes_api,
+  ]
 
   http_target {
     http_method = "POST"
     uri         = "${google_cloud_run_v2_service.staging_api.uri}/api/v1/jobs/trigger"
+
+    headers = {
+      "X-Tenant-Id" = local.tenant_id
+    }
 
     oidc_token {
       service_account_email = google_service_account.staging_worker.email

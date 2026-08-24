@@ -92,3 +92,9 @@ output "expires_at" {
   value       = local.expires_at
   description = "Timestamp when this staging instance becomes eligible for cleanup."
 }
+
+output "staging_tenant_id" {
+  value       = local.tenant_id
+  description = "Release-scoped staging tenant identifier."
+}
+

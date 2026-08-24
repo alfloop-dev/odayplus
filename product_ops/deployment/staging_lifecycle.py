@@ -43,6 +43,7 @@ TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 CANDIDATE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
+TENANT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$")
 PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 
 DEFAULT_TTL_HOURS = 24
@@ -61,6 +62,7 @@ class StagingConfig:
     manifest_digest: str
     project_id: str
     region: str = "asia-east1"
+    tenant_id: str = ""
     cloud_sql_instance_name: str = "oday-staging-db"
     cloud_sql_connection_name: str = "project:asia-east1:oday-staging-db"
     network_name: str = "oday-staging-vpc"
@@ -226,7 +228,19 @@ def _authoritative_inventory_release_id(
     return ""
 
 
-def get_ephemeral_resource_names(release_id: str, project_id: str = "") -> dict[str, str]:
+def tenant_label_value(tenant_id: str, release_id: str = "") -> str:
+    """Return canonical bounded tenant label."""
+    clean = tenant_id.strip()
+    if not clean and release_id:
+        clean = f"tenant-{sanitize_release_suffix(release_id)}-{compute_release_hash(release_id)}"
+    return bounded_label_value(clean) if clean else ""
+
+
+def get_ephemeral_resource_names(
+    release_id: str,
+    project_id: str = "",
+    tenant_id: str = "",
+) -> dict[str, str]:
     """Compute collision-free, length-compliant GCP resource names for ephemeral staging."""
     clean = sanitize_release_suffix(release_id)
     rel_hash = compute_release_hash(release_id)
@@ -244,9 +258,12 @@ def get_ephemeral_resource_names(release_id: str, project_id: str = "") -> dict[
     res_slug = clean[:24]
     name_prefix = f"stg-{res_slug}-{rel_hash}"
 
+    effective_tenant = tenant_id.strip() if tenant_id.strip() else f"tenant-{clean}-{rel_hash}"
+
     return {
         "name_prefix": name_prefix,
         "release_hash": rel_hash,
+        "tenant_id": effective_tenant,
         "sa_runtime": f"{sa_prefix}-rt",
         "sa_web": f"{sa_prefix}-web",
         "sa_worker": f"{sa_prefix}-wkr",
@@ -271,6 +288,7 @@ def generate_staging_labels(
     candidate_sha: str,
     manifest_digest: str,
     owner_task_id: str = "",
+    tenant_id: str = "",
     ttl_hours: int = DEFAULT_TTL_HOURS,
     created_at: datetime | None = None,
     additional_labels: Mapping[str, str] | None = None,
@@ -283,12 +301,18 @@ def generate_staging_labels(
     digest_clean = manifest_digest.replace("sha256:", "")
     manifest_prefix = digest_clean[:16] if digest_clean else "0" * 16
 
+    effective_tenant = tenant_id.strip() if tenant_id.strip() else (
+        f"tenant-{sanitize_release_suffix(release_id)}-{compute_release_hash(release_id)}" if release_id else ""
+    )
+    tenant_label = bounded_label_value(effective_tenant) if effective_tenant else "unassigned"
+
     labels: dict[str, str] = {
         "app": "oday-plus",
         "environment": "staging",
         "managed_by": "terraform",
         "ephemeral": "true",
         "release_id": release_suffix,
+        "tenant": tenant_label,
         "owner_task": bounded_label_value(owner_task_id) if owner_task_id else "unassigned",
         "candidate_sha": candidate_sha[:40].lower(),
         "manifest_digest_prefix": manifest_prefix,
@@ -316,6 +340,11 @@ def validate_staging_config(config: StagingConfig, now: datetime | None = None) 
     if not config.owner_task_id or not TASK_ID_PATTERN.fullmatch(config.owner_task_id):
         errors.append(
             f"Invalid owner_task_id: {config.owner_task_id!r}. Must match {TASK_ID_PATTERN.pattern}"
+        )
+
+    if config.tenant_id.strip() and not TENANT_ID_PATTERN.fullmatch(config.tenant_id.strip()):
+        errors.append(
+            f"Invalid tenant_id: {config.tenant_id!r}. Must match {TENANT_ID_PATTERN.pattern}"
         )
 
     if not CANDIDATE_SHA_PATTERN.fullmatch(config.candidate_sha):
@@ -384,6 +413,7 @@ def generate_tfvars(
         "project_id": config.project_id,
         "region": config.region,
         "release_id": config.release_id,
+        "tenant_id": config.tenant_id,
         "candidate_sha": config.candidate_sha,
         "manifest_digest": config.manifest_digest,
         "api_image": config.api_image,
@@ -414,12 +444,13 @@ def plan_staging_resources(
         candidate_sha=config.candidate_sha,
         manifest_digest=config.manifest_digest,
         owner_task_id=config.owner_task_id,
+        tenant_id=config.tenant_id,
         ttl_hours=config.ttl_hours,
         created_at=now_dt,
         additional_labels=config.additional_labels,
     )
 
-    names = get_ephemeral_resource_names(config.release_id, config.project_id)
+    names = get_ephemeral_resource_names(config.release_id, config.project_id, tenant_id=config.tenant_id)
     created_iso = format_timestamp(now_dt)
     expires_iso = format_timestamp(expires)
 
@@ -721,6 +752,13 @@ def validate_immutable_release_identity(
                         f"rerun with project_id {config.project_id.strip()!r} is rejected."
                     )
 
+                prev_tenant = str(prev_vars.get("tenant_id", "")).strip()
+                if prev_tenant and config.tenant_id.strip() and config.tenant_id.strip() != prev_tenant:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable tenant_id {prev_tenant!r}; "
+                        f"rerun with tenant_id {config.tenant_id.strip()!r} is rejected."
+                    )
+
                 prev_created = str(prev_vars.get("created_at", "")).strip()
                 if prev_created and config.created_at:
                     if parse_timestamp(config.created_at) != parse_timestamp(prev_created):
@@ -818,6 +856,7 @@ def make_terraform_creation_executor(
             candidate_sha=apply_config.candidate_sha,
             manifest_digest=apply_config.manifest_digest,
             owner_task_id=apply_config.owner_task_id,
+            tenant_id=apply_config.tenant_id,
             ttl_hours=apply_config.ttl_hours,
             created_at=authoritative_created_dt,
             additional_labels=apply_config.additional_labels,
@@ -1752,6 +1791,7 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         'resource "google_service_account" "staging_worker"',
         'resource "google_cloud_run_v2_service" "staging_api"',
         'resource "google_cloud_run_v2_service" "staging_web"',
+        'resource "google_cloud_run_v2_service_iam_member" "staging_worker_invokes_api"',
         'resource "google_pubsub_topic" "staging_jobs"',
         'resource "google_pubsub_subscription" "staging_jobs"',
         'resource "google_cloud_scheduler_job" "staging_worker_trigger"',
@@ -1767,6 +1807,7 @@ def validate_module_contract(module_dir: Path) -> list[str]:
     # Required labels check
     required_labels = (
         "release_id",
+        "tenant",
         "candidate_sha",
         "manifest_digest_prefix",
         "created_at",
@@ -1780,9 +1821,15 @@ def validate_module_contract(module_dir: Path) -> list[str]:
         if label not in main_text:
             errors.append(f"resource_labels is missing required tracking label: {label}")
 
-    # created_at variable check
+    # created_at and tenant_id variables check
     if 'variable "created_at"' not in vars_text:
         errors.append("variables.tf is missing required variable `created_at` for idempotent applies.")
+    if 'variable "tenant_id"' not in vars_text:
+        errors.append("variables.tf is missing required variable `tenant_id` for release-scoped tenant isolation.")
+
+    # outputs check
+    if 'output "staging_tenant_id"' not in out_text:
+        errors.append("outputs.tf is missing required output `staging_tenant_id`.")
 
     # No forbidden secret exposure in outputs
     forbidden_in_outputs = (
@@ -1833,6 +1880,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # create
     create_p = subparsers.add_parser("create", help="Plan or create ephemeral staging")
     create_p.add_argument("--release-id", required=True, help="Release identifier")
+    create_p.add_argument("--tenant-id", default="", help="Tenant identifier for staging tenant isolation")
     create_p.add_argument("--candidate-sha", required=True, help="Exact 40-character commit SHA")
     create_p.add_argument("--manifest-digest", required=True, help="SHA256 manifest digest")
     create_p.add_argument("--project-id", required=True, help="GCP Project ID")
@@ -1911,6 +1959,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         config = StagingConfig(
             release_id=args.release_id,
+            tenant_id=args.tenant_id,
             candidate_sha=args.candidate_sha,
             manifest_digest=args.manifest_digest,
             project_id=args.project_id,

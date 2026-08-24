@@ -66,14 +66,43 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn("timeadd(local.created_at", main_tf)
         self.assertIn("var.created_at", main_tf)
 
-    def test_release_identity_matches_python_normalization_order(self) -> None:
+    def test_release_and_owner_identity_matches_python_normalization_order(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         # Terraform must lowercase before replacing punctuation, matching
-        # staging_lifecycle.sanitize_release_suffix for IDs such as REL_1.0.
+        # staging_lifecycle.sanitize_release_suffix / bounded_label_value for IDs such as REL_1.0 or ODP-TASK-001.
         self.assertIn(
             'replace(lower(var.release_id), "/[^a-z0-9-]/", "-")',
             main_tf,
         )
+        self.assertIn(
+            'replace(lower(var.owner_task_id), "/[^a-z0-9-]/", "-")',
+            main_tf,
+        )
+
+    def test_provider_configuration_and_resource_projects(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        self.assertIn('provider "google"', main_tf)
+        self.assertIn("project = var.project_id", main_tf)
+        self.assertIn("region  = var.region", main_tf)
+
+    def test_scheduler_worker_invoker_iam_binding(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        self.assertIn('resource "google_cloud_run_v2_service_iam_member" "staging_worker_invokes_api"', main_tf)
+        self.assertIn("serviceAccount:${google_service_account.staging_worker.email}", main_tf)
+        self.assertIn("google_cloud_run_v2_service_iam_member.staging_worker_invokes_api", main_tf)
+
+    def test_tenant_isolation_contract(self) -> None:
+        vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        outputs_tf = (MODULE_DIR / "outputs.tf").read_text(encoding="utf-8")
+
+        self.assertIn('variable "tenant_id"', vars_tf)
+        self.assertIn('tenant                 = local.tenant_label', main_tf)
+        self.assertIn('tenant_id            = local.tenant_id', main_tf)
+        self.assertIn('name  = "ODP_TENANT_ID"', main_tf)
+        self.assertIn('name  = "ODP_SCHEDULED_INGESTION_TENANT_ID"', main_tf)
+        self.assertIn('"X-Tenant-Id" = local.tenant_id', main_tf)
+        self.assertIn('output "staging_tenant_id"', outputs_tf)
 
     def test_mandatory_labels_win_over_additional_labels(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
@@ -96,8 +125,10 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('output "staging_web_uri"', outputs_tf)
         self.assertIn('output "staging_database_name"', outputs_tf)
         self.assertIn('output "staging_data_bucket"', outputs_tf)
+        self.assertIn('output "staging_tenant_id"', outputs_tf)
         self.assertIn('output "resource_labels"', outputs_tf)
 
 
 if __name__ == "__main__":
     unittest.main()
+

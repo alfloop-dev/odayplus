@@ -138,11 +138,40 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["managed_by"], "terraform")
         self.assertEqual(labels["ephemeral"], "true")
         self.assertEqual(labels["release_id"], f"odp-20260824-001-{rel_hash}")
+        self.assertEqual(labels["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
         self.assertEqual(labels["candidate_sha"], "a" * 40)
         self.assertEqual(labels["manifest_digest_prefix"], "b" * 16)
         self.assertEqual(labels["owner_task"], "odp-ephemeral-staging-iac-001")
         self.assertEqual(labels["created_at"], "2026-08-24-12-00-00")
         self.assertEqual(labels["expires_at"], "2026-08-25-12-00-00")
+
+    def test_tenant_isolation_explicit_and_default(self) -> None:
+        rel_hash = compute_release_hash("odp-20260824-001")
+        # Default tenant derived from release_id
+        labels_default = generate_staging_labels(
+            release_id="odp-20260824-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        )
+        self.assertEqual(labels_default["tenant"], f"tenant-odp-20260824-001-{rel_hash}")
+
+        # Explicit tenant passed
+        labels_explicit = generate_staging_labels(
+            release_id="odp-20260824-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            tenant_id="custom-tenant-42",
+        )
+        self.assertEqual(labels_explicit["tenant"], "custom-tenant-42")
+
+        cfg_tenant = dataclasses_replace(self.valid_config, tenant_id="custom-tenant-42")
+        tfvars = generate_tfvars(cfg_tenant)
+        self.assertEqual(tfvars["tenant_id"], "custom-tenant-42")
+
+        names = get_ephemeral_resource_names("odp-20260824-001", "oday-staging-proj", tenant_id="custom-tenant-42")
+        self.assertEqual(names["tenant_id"], "custom-tenant-42")
 
     def test_mandatory_labels_cannot_be_overridden(self) -> None:
         rel_hash = compute_release_hash("odp-20260824-001")
@@ -171,6 +200,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         tfvars = generate_tfvars(self.valid_config, created_at=now)
         self.assertEqual(tfvars["project_id"], "oday-staging-proj")
         self.assertEqual(tfvars["release_id"], "odp-20260824-001")
+        self.assertEqual(tfvars["tenant_id"], "")
         self.assertEqual(tfvars["candidate_sha"], "a" * 40)
         self.assertEqual(tfvars["ttl_hours"], 24)
         self.assertEqual(tfvars["created_at"], "2026-08-24T12:00:00Z")
