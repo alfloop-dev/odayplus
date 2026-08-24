@@ -6,7 +6,7 @@
 - **盤點基準日期**: 2026-08-24
 - **歷史盤點起始基準**: `origin/dev` @ `3329416d1b1b41289da152738d8e5392ebfcbf4d`
 - **當前驗證基準（Composed Head）**: `origin/dev` @ `04ddafe90a32821b50a18f9cf2fb945189a4e001`（包含 PR #999 `ODP-RELEASE-MANIFEST-GATES-001` 合併成果；本報告分支已完成 base advance merge）
-- **負責人 (Owner)**: Antigravity
+- **負責人 (Owner)**: Codex
 - **審查人 (Reviewer)**: Codex2
 - **來源依據**: [`docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`](../deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md)
 - **執行原則**: **本任務只稽核不刪 code**。所有項目均以 caller、workflow、runtime unit、cron、GitHub Actions 具體呼叫路徑逐項證明，作為後續 Wave 1 / Wave 2 實作與刪除任務（特別是 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` 與 `ODP-RUNTIME-RELEASE-SINGLE-PATH-001`）之執行依據。
@@ -45,8 +45,8 @@
    - 本地開發使用根目錄 `docker-compose.yml` 啟動 `apps/scheduler/oday_scheduler`（L66）與 `apps/worker/oday_worker`（L54）。
    - **應用層排程 (Cloud Scheduler → Cloud Run Jobs)**：雲端環境使用 GCP Cloud Scheduler 定期 HTTP 呼叫觸發 Cloud Run Jobs，並以 `product_ops/deployment/cloud_run_job_entrypoint.py` 執行 bounded worker/scheduler。**Cloud Scheduler 完整呼叫鏈之精確行號證據見 §4.2.1**（函式定義 `deploy_cloud_run_waji.sh:443-470`；兩處呼叫 `deploy_cloud_run_waji.sh:579-582` 與 `:583-586`；cron 值由 `deploy-dev.yml:110-112` 注入）。
    - **叢集批次排程 (GKE CronJob)**：GKE 部署由 `infra/k8s/data-platform/workloads.yaml.tpl` 定義 CronJob `oday-data-platform-bounded-daily`（YAML document 涵蓋 L133-303），`schedule: "0 1 * * *"`（L148）、`timeZone: Etc/UTC`（L149），每日執行 bounded backfill。其工作範圍由 `infra/k8s/data-platform/README.md`（L98-107）劃定。
-   - **資料平台宣告式排程與感應器 (Dagster Repository / Data Platform Scheduler & Sensors)**：`apps/data_platform/definitions.py`（L208-249）定義 6 組 ScheduleDefinition daily crons（01:00, 02:00, 02:30, 03:00, 04:00, 05:00 UTC，依序驅動 dimensions → operations → transactions → forecast → commercial → learning）、L280-318 定義 3 組 900 秒即時變更感應器（sensors: dimensions, operations, authoritative-transactions），並於 L321-364 掛載至 `defs = Definitions(...)`。entrypoint 透過 `apps/data_platform/pyproject.toml:12-13`（`"dagster.repository"`）暴露，由 `apps/data_platform/README.md:195-210` 文件化，並在 `apps/data_platform/tests/test_definitions_and_backfill.py` 測試。**Dagster 完整定義與逐行證據見 §4.6.1**。
-   - **三套排程機制對帳與獨立性判定 (Reconciliation)**：(1) Cloud Scheduler 負責 ODay Plus 應用層非同步工作；(2) GKE CronJob 負責 K8s 叢集層每日批次容器啟動；(3) Dagster Definitions 負責資料平台內部資產依賴與分區/感應器調度。三者分屬不同 runtime 與架構層次，**無重複排程、無廢代碼、各具獨立且互補之運作路徑**（完整對帳矩陣見 §4.6.2）。雲端部署腳本之 traffic/trigger rollback 機制健全，應予以保留並延伸至 Production Blue-Green。
+   - **資料平台 Dagster 宣告面（目前未接線）**：`apps/data_platform/definitions.py`（L208-249）宣告 6 組 ScheduleDefinition daily crons，L280-318 宣告 3 組 900 秒感應器，並於 L321-364 掛載至 `defs = Definitions(...)`。但 `pyproject.toml:12-13` 只有 package entrypoint，README 與 tests 也不是 runtime caller；`data-platform.Dockerfile:58` 的 ENTRYPOINT 實際進入 `deployment_runtime.py`，GKE CronJob `workloads.yaml.tpl:218` 傳入 `scheduled`，再由 `deployment_runtime.py:403-425` 呼叫 `product_ops.data_platform.backfill`。針對 Dagster CLI/daemon/runtime invocation 的負向掃描為 0 命中，故本報告將 `definitions.py` 分類為 **未接線 (UNWIRED)、待替換或退役 (REPLACE)**，而非已證明 active 的第三套 scheduler；完整證據見 §4.6.1。
+   - **排程機制與共享 runner 對帳 (Reconciliation)**：(1) Cloud Scheduler 負責 ODay Plus 應用層非同步工作；(2) GKE CronJob 是目前資料平台實際批次啟動器；(3) Dagster Definitions 目前僅是未接線的宣告面。GKE `backfill.py` 與 Dagster asset 函式都會走 `DataPlaneRunner.run_partition`，且對 11 個 scheduled source kinds 重疊；因此不能把兩者宣稱為三套獨立 active runtime。後續只能選擇由 Runtime Release 正式接線 Dagster（含 daemon/CLI、lease 與 receipt），或退役其 schedule/sensor 宣告並保留唯一 backfill 路徑；本任務只記錄，不刪 code。完整對帳矩陣見 §4.6.2。
 
 ---
 
@@ -275,7 +275,7 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 ---
 ## 4. 全系統元件逐項盤點與使用證明 (Item-by-Item Usage Evidence)
 
-本節針對倉庫內所有部署、Proof、Gate、Scheduler、Docker 與 IaC 相關元件，逐一列出其呼叫者、Workflow 參照、執行單元、測試涵蓋與處置判定。**本節共 87 列**（4.1: 7、4.2: 6、4.3: 15、4.4: 26、4.5: 15、4.6: 12、4.7: 6），處置分佈為 KEEP 75 / REPLACE 7 / DELETE·RETIRE 5，統計見 §5.1。
+本節針對倉庫內所有部署、Proof、Gate、Scheduler、Docker 與 IaC 相關元件，逐一列出其呼叫者、Workflow 參照、執行單元、測試涵蓋與處置判定。**本節共 87 列**（4.1: 7、4.2: 6、4.3: 15、4.4: 26、4.5: 15、4.6: 12、4.7: 6），處置分佈為 KEEP 74 / REPLACE 8 / DELETE·RETIRE 5，統計見 §5.1。
 
 > **間接呼叫標記**：凡呼叫者為 `make <target>` 者，本報告一律同時標出 workflow 行號與 `Makefile` 行號，不將 `make` 目標簡寫成「workflow 直接呼叫該腳本」。
 
@@ -418,13 +418,31 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 | `pipelines/features/model_features.py` | 特徵計算管線。 | **Caller**: Feature pipeline。 | **保留 (KEEP)** | 維持現狀 |
 | `pipelines/training/model_training.py` | 模型訓練管線。 | **Caller**: Training pipeline。 | **保留 (KEEP)** | 維持現狀 |
 | `product_ops/modeling/` (全目錄) | 模型基準評測、發布與成果追蹤。 | **Caller**: `product_ops` 維運腳本與測試。 | **保留 (KEEP)** | 維持現狀 |
-| `product_ops/data_platform/backfill.py` | 資料平台回填維運腳本。 | **Caller**: 資料維運；GKE CronJob 之 bounded backfill 執行面。 | **保留 (KEEP)** | 維持現狀 |
+| `product_ops/data_platform/backfill.py` | 資料平台回填維運腳本。 | **Active caller**: `infra/k8s/data-platform/runtime/deployment_runtime.py:403-425` 組合 `python -m product_ops.data_platform.backfill`；GKE CronJob `workloads.yaml.tpl:215-218` 以 `args: ["scheduled"]` 進入該 runtime。`backfill.py:112-124` 建立 `DataPlaneRunner` 並逐 partition 執行。 | **保留 (KEEP)** | 維持唯一已接線的資料平台批次路徑 |
 | `product_ops/external_data_backfill.py` | 外部資料回填維運腳本。 | **Caller**: 資料維運。 | **保留 (KEEP)** | 維持現狀 |
-| `apps/data_platform/definitions.py` | Data Platform 宣告式資產圖譜、10 組資產作業、6 組每日分區排程 (01:00-05:00 UTC) 與 3 組 900 秒變更感應器 (sensors)。 | **Caller**: `apps/data_platform/pyproject.toml:12-13`（暴露 `"dagster.repository"` entrypoint：`oday_data_platform = "apps.data_platform.definitions:defs"`）；`apps/data_platform/README.md:195-210`（排程與回填說明文件）；`apps/data_platform/tests/test_definitions_and_backfill.py`（L7-13, L18-25, L39-49 測試 asset graph 與 schedule partition）。<br>**Runtime package**: `infra/docker/data-platform.Dockerfile`。<br>**Schedules**: 6 組 ScheduleDefinition（01:00, 02:00, 02:30, 03:00, 04:00, 05:00 UTC，見 §4.6.1）。<br>**Sensors**: 3 組 900 秒即時變更感應器（dimensions, operations, authoritative-transactions，見 §4.6.1）。 | **保留 (KEEP)** | `DPF-EMGI-LIVE-ROLLOUT-001` (Wave 1) |
+| `apps/data_platform/definitions.py` | Data Platform 宣告式資產圖譜、10 組資產作業、6 組每日分區排程 (01:00-05:00 UTC) 與 3 組 900 秒變更感應器 (sensors)。 | **Static-only evidence**: `apps/data_platform/pyproject.toml:12-13` 只暴露 `"dagster.repository"` entrypoint；README `:195-210` 與 tests `apps/data_platform/tests/test_definitions_and_backfill.py:7-49` 只是文件／測試 consumer。`infra/docker/data-platform.Dockerfile:58` 的 ENTRYPOINT 是 `deployment_runtime.py`，GKE `workloads.yaml.tpl:218` 傳入 `scheduled`，且該 runtime `:403-425` 只 caller `product_ops.data_platform.backfill`。全庫針對 Dagster CLI/daemon/runtime invocation 的負向掃描為 0。<br>**Declared surface**: 6 組 ScheduleDefinition、3 組 900 秒感應器與 `defs` 掛載（見 §4.6.1），其 asset `_run()`（L33-42）與 `backfill.py` 共享 `DataPlaneRunner.run_partition`，11 個 scheduled source kinds 重疊（見 §4.6.2）。 | **替換 (REPLACE)** — 目前未接線 (UNWIRED)，後續須正式接線或退役宣告面；本任務不刪 code | `DPF-EMGI-LIVE-ROLLOUT-001` (Wave 1) |
 
-#### 4.6.1 Data Platform Dagster 排程與 Sensor 完整定義（逐行證據）
+#### 4.6.1 Data Platform Dagster 排程與 Sensor 宣告面（逐行證據）
 
-依據驗收條件第 1 項（cron / runtime unit 逐項證明），此處給出 Data Platform Dagster 排程與變更感應器之精確行號與架構邊界。
+依據驗收條件第 1 項，此處列出 Data Platform Dagster 排程與變更感應器的**程式宣告**精確行號；這些行號證明 definitions 的內容，不等於證明它已被 runtime 啟動。當前 active runtime 的證據在 `infra/docker/data-platform.Dockerfile:58`、`infra/k8s/data-platform/workloads.yaml.tpl:215-218` 與 `infra/k8s/data-platform/runtime/deployment_runtime.py:403-425`，其鏈路落到 `product_ops.data_platform.backfill`。
+
+Dagster wiring 的負向檢查（排除 docs、tests 與套件鎖檔，尋找 daemon／CLI／runtime invocation）可重跑如下：
+
+```bash
+runtime_hits="$({
+  rg -n -i --glob '!docs/**' --glob '!tests/**' --glob '!*.lock' --glob '!*.pyc' \
+    'dagster-(daemon|webserver)|dagster[[:space:]]+(daemon|api|dev|instance|schedule|sensor|job|asset)|python(3)?[[:space:]].*dagster' \
+    .github infra apps product_ops pipelines scripts Makefile pyproject.toml 2>/dev/null || true
+})"
+if [ -n "$runtime_hits" ]; then
+  printf '%s\n' "$runtime_hits"
+  exit 1
+fi
+printf 'dagster_cli_daemon_runtime_hits=0\n'
+# -> dagster_cli_daemon_runtime_hits=0
+```
+
+相對地，`rg -n -i 'dagster|definitions:defs' apps/data_platform` 只命中 package dependency／entrypoint、README、`definitions.py` 本身與 tests；這些是宣告、文件或測試，不是部署 runtime caller。
 
 | 項目 | 名稱 / 識別符 | 類型與 Cron / 頻率 | 精確行號 | 職責與對應 Job / 資產 |
 |---|---|---|---|---|
@@ -439,28 +457,28 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 | **9. 營運變更感應器** | `operations_change_sensor` | `@sensor`<br>`minimum_interval_seconds=900`<br>`default_status=RUNNING` | `apps/data_platform/definitions.py` **L293-304** | 每 900 秒偵測 `(DEVICE_DAILY_STATISTICS,)` 來源變更；有異動時觸發 `operations_job` RunRequest。 |
 | **10. 交易變更感應器** | `authoritative_transaction_change_sensor` | `@sensor`<br>`minimum_interval_seconds=900`<br>`default_status=RUNNING` | `apps/data_platform/definitions.py` **L306-318** | 每 900 秒偵測 `(ORDERS,)` 來源變更；有異動時觸發 `authoritative_transaction_job` RunRequest。 |
 | **11. Definitions 總成** | `defs = Definitions(...)` | Dagster 頂層註冊物件 | `apps/data_platform/definitions.py` **L321-364** | 集中掛載 15 組資產 (L322-338)、10 組 Job (L339-350)、6 組 Schedule (L351-358) 與 3 組 Sensor (L359-363)。 |
-| **12. 套件進入點宣告** | `[project.entry-points]."dagster.repository"` | `pyproject.toml` entrypoint | `apps/data_platform/pyproject.toml` **L12-13** | 暴露 `oday_data_platform = "apps.data_platform.definitions:defs"`，供 Dagster CLI、UI 與 daemon 載入。 |
-| **13. 排程與回填文件** | `## Scheduling and Backfill` | 說明文件 | `apps/data_platform/README.md` **L195-210** | 記載 Dagster 每日執行順序（01:00-05:00）、變更感應器運作原則，以及手動受限回填邊界（`trade` 與 `device_log` 不排程，最高上限 100,000 筆）。 |
-| **14. 自動化測試證明** | `test_dagster_repository_loads_all_typed_assets`<br>`test_daily_schedule_carries_previous_day_partition_key` | Pytest 測試 | `apps/data_platform/tests/test_definitions_and_backfill.py` **L7-13, L18-25, L39-49** | 驗證 Dagster asset graph 載入全部 `SourceKind` 資產、排程前一日分區鍵生成與受限回填參數。 |
+| **12. 套件進入點宣告** | `[project.entry-points]."dagster.repository"` | `pyproject.toml` entrypoint | `apps/data_platform/pyproject.toml` **L12-13** | 只宣告 `oday_data_platform = "apps.data_platform.definitions:defs"`；沒有 repository loader、Dagster CLI、UI 或 daemon 的 caller。 |
+| **13. 排程與回填文件** | `## Scheduling and Backfill` | 說明文件 | `apps/data_platform/README.md` **L195-210** | 記載 Dagster 每日執行順序（01:00-05:00）、變更感應器運作原則，以及手動受限回填邊界；文件不是 runtime wiring 證據。 |
+| **14. 自動化測試證明** | `test_dagster_repository_loads_all_typed_assets`<br>`test_daily_schedule_carries_previous_day_partition_key` | Pytest 測試 | `apps/data_platform/tests/test_definitions_and_backfill.py` **L7-13, L18-25, L39-49** | 只在 pytest 中載入 `defs` 並驗證 asset graph／partition key；測試 consumer 不代表 production caller。 |
 
-#### 4.6.2 三套排程機制（Cloud Scheduler vs GKE CronJob vs Dagster）對帳與獨立性判定
+#### 4.6.2 排程機制與共享 `DataPlaneRunner` 對帳
 
-倉庫內存在三套排程與觸發機制，其邊界、職責與判定對帳如下：
+倉庫內有兩套已證明 active 的排程／觸發機制，另有一套尚未接線的 Dagster 宣告面。邊界、職責與判定對帳如下：
 
-| 維度 | 1. 應用層 Cloud Scheduler | 2. 叢集層 GKE CronJob | 3. 資料平台層 Dagster Definitions |
+| 維度 | 1. 應用層 Cloud Scheduler | 2. 叢集層 GKE CronJob | 3. 資料平台層 Dagster Definitions（未接線） |
 |---|---|---|---|
-| **執行環境 (Runtime)** | GCP Cloud Scheduler (Serverless HTTP Trigger) | GKE Kubernetes Cluster (In-Cluster CronJob Controller) | Dagster Orchestration Engine / Daemon / In-Process |
-| **所屬系統層級** | ODay Plus 核心應用層 (Application Plane) | 資料平台容器層 (Container Runner Plane) | 資料平台宣告式資產層 (Data Asset Plane) |
-| **排程與觸發頻率** | 由 GitHub environment `vars.ODP_WORKER_CRON` 與 `vars.ODP_SCHEDULER_CRON` 注入（見 §4.2.1） | `schedule: "0 1 * * *"` (UTC) 固定每日 01:00 執行（`workloads.yaml.tpl:148`） | (a) 6 組 daily crons：01:00, 02:00, 02:30, 03:00, 04:00, 05:00 UTC（`definitions.py:208-249`）<br>(b) 3 組 900 秒變更感應器（`definitions.py:280-318`） |
-| **觸發對象與 Payload** | Cloud Run Jobs (HTTP POST 呼叫 `.../jobs/<job>:run`) 執行 `cloud_run_job_entrypoint.py` | GKE Pod 執行 `python -m product_ops.data_platform.backfill` 進行 bounded backfill | 依資產相依圖譜調度 `dimension_job`、`operations_job`、`forecast_job` 等 10 組 Dagster Jobs |
-| **受限與安全邊界** | Bounded job（`--max-jobs 1`），受 Cloud Run memory/timeout 上限約束 | 透過 `render.py` 替換 immutable digest，`deployment_runtime.py` 嚴格要求 migration receipt PASSED 門禁（見 §2） | 大容量資料源（`trade` 158M、`device_log` 14.8M）強制標記 `_manual` 且設有單次 100,000 筆上限，「They are never scheduled」（`README.md:107, 209-210`） |
-| **狀態快照與回滾** | `cloud_run_release_traffic.sh` 支援 `capture_scheduler_trigger` 與 `restore_scheduler_trigger` 自動回滾 | Kubernetes declarative manifest，由 `kubectl apply` / namespace lifecycle 管理 | 宣告式 Python 代碼庫（`apps/data_platform/definitions.py`），隨 data-platform 容器 image digest 版本化發布 |
-| **重疊／廢代碼判定** | **獨立且必要 (INDEPENDENT / KEEP)**：為 ODay Plus 應用服務唯一雲端排程機制。 | **獨立且必要 (INDEPENDENT / KEEP)**：為 GKE 叢集內每日批次容器啟動器。 | **獨立且必要 (INDEPENDENT / KEEP)**：為資料平台細粒度資產依賴、分區計算與即時感應器調度核心。 |
+| **執行環境 (Runtime)** | GCP Cloud Scheduler (Serverless HTTP Trigger) | GKE Kubernetes Cluster (In-Cluster CronJob Controller) | 目前沒有已證明的 Dagster Orchestration Engine / Daemon / In-Process caller；僅有 Python declarations |
+| **所屬系統層級** | ODay Plus 核心應用層 (Application Plane) | 資料平台容器層 (Container Runner Plane) | 資料平台宣告式資產層 (Data Asset Plane)，目前未進入發布 runtime |
+| **排程與觸發頻率** | 由 GitHub environment `vars.ODP_WORKER_CRON` 與 `vars.ODP_SCHEDULER_CRON` 注入（見 §4.2.1） | `schedule: "0 1 * * *"` (UTC) 固定每日 01:00 執行（`workloads.yaml.tpl:148`） | 宣告 6 組 daily crons（`definitions.py:208-249`）與 3 組 900 秒感應器（`definitions.py:280-318`），但沒有 active tick caller |
+| **觸發對象與 Payload** | Cloud Run Jobs (HTTP POST 呼叫 `.../jobs/<job>:run`) 執行 `cloud_run_job_entrypoint.py` | GKE Pod 以 `deployment_runtime.py:403-425` 執行 `python -m product_ops.data_platform.backfill` 進行 bounded backfill | 若未來接線，才會依資產相依圖譜調度 Dagster Jobs；目前沒有此 payload／caller |
+| **受限與安全邊界** | Bounded job（`--max-jobs 1`），受 Cloud Run memory/timeout 上限約束 | 透過 `render.py` 替換 immutable digest，`deployment_runtime.py` 嚴格要求 migration receipt PASSED 門禁（見 §2） | 宣告的 source selection 對 `trade`、`device_log` 等大容量來源設有 manual／100,000 上限；這是 code policy，不是 active schedule 證據 |
+| **狀態快照與回滾** | `cloud_run_release_traffic.sh` 支援 `capture_scheduler_trigger` 與 `restore_scheduler_trigger` 自動回滾 | Kubernetes declarative manifest，由 `kubectl apply` / namespace lifecycle 管理 | 沒有已接線的 Dagster deployment、tick receipt 或 rollback caller |
+| **重疊／廢代碼判定** | **獨立且必要 (INDEPENDENT / KEEP)**：為 ODay Plus 應用服務唯一雲端排程機制。 | **目前 active 且必要 (ACTIVE / KEEP)**：為 GKE 叢集內每日批次容器啟動器。 | **未接線 (UNWIRED / REPLACE)**：宣告本身可被 import，但不是目前 runtime 的 scheduler；與 active backfill 共享 runner，不能直接判定為獨立保留。 |
 
 **判定結論**：
-1. **無重複排程 (No Duplicate Scheduling)**：Cloud Scheduler 服務於 Cloud Run 應用；GKE CronJob 負責 GKE 叢集內容器批次啟動；Dagster Definitions 提供宣告式資產圖譜、分時分區（01:00-05:00）依賴調度與 900 秒感應器。三者在不同架構分層各司其職，非同一排程的重複實作。
-2. **無廢代碼 (No Dead Code)**：三者均具備活躍之 Caller、CI 測試與說明文件，全部判定為 **保留 (KEEP)**。
-3. **後續治理 (Wave 1 承接)**：Cloud Scheduler 納入 release lease 授權（`ODP-PROD-BLUEGREEN-PRIMITIVES-001`）；GKE CronJob 與 Dagster 由 `DPF-EMGI-LIVE-ROLLOUT-001` 統一於資料平台 live rollout 落地並明確化調度邊界。
+1. **Active runtime 無 Dagster 重複排程**：Cloud Scheduler 與 GKE CronJob 的 caller 可由 workflow／manifest／runtime 逐層追到；Dagster 沒有 daemon、CLI 或 runtime invocation，因此目前不是第三套 active scheduler。
+2. **共享 runner 重疊已確認**：GKE 的 `backfill.py:112-124` 與 `definitions.py:33-42` 都建立 `DataPlaneRunner` 並呼叫 `run_partition`。GKE `SCHEDULED_KINDS`（`deployment_runtime.py:41-53`）與 Dagster 6 組 daily schedules 對同 11 個 source kinds 重疊：`merchant`, `place`, `device`, `device_daily_statistics`, `orders`, `ai_revenue_stats`, `campaign`, `product`, `products`, `promotions`, `ai_consumer_kmeans_v1`。這是待治理的 orchestration overlap，不是兩個已證明同時運作的 scheduler。
+3. **後續治理 (Wave 1 承接)**：Cloud Scheduler 納入 release lease 授權（`ODP-PROD-BLUEGREEN-PRIMITIVES-001`）；`DPF-EMGI-LIVE-ROLLOUT-001` 必須在接線前明確決定「以 Dagster 正式接管並納入 Runtime Release」或「退役 `definitions.py` 的 schedules／sensors，保留 `backfill.py` 唯一路徑」。本 Wave 不刪 code。
 
 
 ---
@@ -491,8 +509,8 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 ┌──────────────────────────────┬───────┬──────────────────────────────────────────────┐
 │ 處置類別                     │ 列數  │ 來源章節（列數）                             │
 ├──────────────────────────────┼───────┼──────────────────────────────────────────────┤
-│ 保留 (KEEP，含擴充/重用)     │ 75 列 │ 4.1:6 4.2:5 4.3:10 4.4:26 4.5:10 4.6:12 4.7:6│
-│ 替換/重構 (REPLACE)          │  7 列 │ 4.1:1 4.2:1 4.3:5                            │
+│ 保留 (KEEP，含擴充/重用)     │ 74 列 │ 4.1:6 4.2:5 4.3:10 4.4:26 4.5:10 4.6:11 4.7:6│
+│ 替換/重構 (REPLACE)          │  8 列 │ 4.1:1 4.2:1 4.3:5 4.6:1                      │
 │ 刪除/退役 (DELETE / RETIRE)  │  5 列 │ 4.5:5                                        │
 ├──────────────────────────────┼───────┼──────────────────────────────────────────────┤
 │ 合計                         │ 87 列 │ 4.1:7 4.2:6 4.3:15 4.4:26 4.5:15 4.6:12 4.7:6│
@@ -521,8 +539,8 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 | 行動清單 | 項數 | 推導 |
 |---|---|---|
 | §5.2 刪除清單 | **10** | 軸 A DELETE / RETIRE 5 項（`Dockerfile.api`、`Dockerfile.web`、`infra/docker/docker-compose.yml`、`infra/cloudbuild/README.md`、`infra/k8s_optional/README.md`）＋ 軸 B DELETE 5 檔（§3.2.1） |
-| §5.3 替換／重構清單 | **8** | 軸 A REPLACE 7 項 ＋ `cloud_run_release_traffic.sh` 1 項（§4.2 判定為 KEEP & EXPAND，但需在 Wave 1 實質擴充，故納入行動清單） |
-| §5.4 保留清單 | — | 軸 A KEEP 75 項之代表性彙整（非逐項重列） |
+| §5.3 替換／重構清單 | **9** | 軸 A REPLACE 8 項（含目前未接線的 `apps/data_platform/definitions.py`）＋ `cloud_run_release_traffic.sh` 1 項（§4.2 判定為 KEEP & EXPAND，但需在 Wave 1 實質擴充，故納入行動清單） |
+| §5.4 保留清單 | — | 軸 A KEEP 74 項之代表性彙整（非逐項重列） |
 | 文件重構清單 | **10** | 軸 B REPLACE / UPDATE 10 檔（§3.2.2 + §3.2.3），由 Wave 2 文件整併處理 |
 
 ---
@@ -561,17 +579,18 @@ SELF='docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md'   # 本報告自身，三�
 | 6 | `delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py` | 使用本地 docker-compose 模擬備份還原。 | 替換為 Staging 環境真實 Cloud SQL PostgreSQL 備份還原與回滾演練收據。 | `ODP-EPHEMERAL-STAGING-IAC-001` (Wave 1) |
 | 7 | `product_ops/deployment/deploy_cloud_run_waji.sh` | 現場 build/push 映像檔；流量推進僅支援單一環境 100%；`upsert_scheduler_trigger` (L443-470) 無 lease 授權。 | 抽離 build（改為接收 release manifest digest）；擴充支援 prod blue-green (0% green 驗證後 100% 切換)；Scheduler upsert 綁定 lease。 | `ODP-PROD-BLUEGREEN-PRIMITIVES-001` (Wave 1) |
 | 8 | `product_ops/deployment/cloud_run_release_traffic.sh` | 支援 dev/staging 流量切換與 scheduler trigger 快照/還原；函式可被裸 source 呼叫。 | 擴充支援 prod blue-green 與 GKE/Cloud Run 混合切換及回滾；函式層納入 lease 檢查。 | `ODP-PROD-BLUEGREEN-PRIMITIVES-001` (Wave 1) |
+| 9 | `apps/data_platform/definitions.py` | 僅有 Dagster definitions、package entrypoint、README 與 pytest consumer；全庫無 Dagster daemon/CLI/runtime caller。其 asset `_run()` 與 active `product_ops.data_platform.backfill` 共用 `DataPlaneRunner`，對 11 個 scheduled source kinds 重疊。 | 在決定的單一路徑中處理：若 Dagster 要成為正式 orchestrator，補上 Runtime Release 接線、lease、tick／run receipt 與 production-like runtime；否則退役 schedules／sensors／entrypoint，保留 `backfill.py` 的 active 路徑。 | `DPF-EMGI-LIVE-ROLLOUT-001` (Wave 1) |
 
 ---
 
-### 5.4 保留清單 (KEEP) — 軸 A 75 項之代表性彙整
+### 5.4 保留清單 (KEEP) — 軸 A 74 項之代表性彙整
 
 - **Workflows (6)**: `ci.yml`, `promote-dev-to-main.yml`, `merge-queue-review-gate.yml`, `tooling-scope-review-gate.yml`, `emgi-consumer-boundary.yml`, `assisted-intake-design-validation.yml`。
 - **Core Deployment & Live Proof (5)**: `cloud_run_job_entrypoint.py`, `cloud_run_traffic.py`, `cloud_scheduler_trigger.py`, `validate_cloud_run_live_deployment.py`, `check_live_e2e_gate.py`／`check_live_production_data.py`。
 - **CI E2E & Contract Tooling**: `run_product_e2e.sh`, `run_python_e2e_tests.py`, `record_playwright_results.py`, `generate_product_e2e_receipt.py`／`product_e2e_receipt.py`, `seed_product_e2e_data.py`, `worker_heartbeat.py`, `check_product_grade_ci_gates.py`, `_release_target.py`／`_support.py`, `check_drift.py`, `export_openapi.py`, `generate_client.py`, `build_validate_assisted_listing_intake.py`。
 - **Security & Governance**: `secret_scan.py`, `sast_scan.py`, `generate_sbom.py`, `generate_oss_notice.py`, `attestation.py`, `sign_images.sh`, `check_code_boundaries.py`, `check_config_wiring.py`, `check_orchestrator_config.py`, `classify_change_review_scope.py`, `validate_assisted_listing_intake_design.py`, `validate_emgi_consumer_boundary.mjs`, `task_start.sh`, `task_finalize.sh`, `worker_commit.py`, `check_commit_scope.py`, `check_commit_trailers.py`, `check_task_delivery_identity.py`, `apply_branch_protection.py`, `check_pr_merge_eligibility.py`。
 - **Standard Docker & IaC**: `api.Dockerfile`, `web.Dockerfile`, `worker.Dockerfile`, `scheduler.Dockerfile`, `data-platform.Dockerfile`, `infra/docker/docker-compose.e2e.yml`, 根目錄 `docker-compose.yml`, `infra/terraform/**`, `infra/k8s/data-platform/**`（含 daily CronJob 與 3 個 suspended Job）, `infra/mlflow/**`。
-- **Scheduler / Worker / Pipelines & Modeling**: `apps/scheduler/oday_scheduler`, `apps/worker/oday_worker`, `apps/data_platform/definitions.py`（含 `schedules` 6 組 / `sensors` 3 組 / `defs`）, `pipelines/data_quality/gates.py`, `pipelines/quality/great_expectations_gate.py`, `pipelines/dbt/**`, `pipelines/orchestration/**`, `pipelines/features/**`, `pipelines/training/**`, `product_ops/modeling/**`, `product_ops/data_platform/backfill.py`, `product_ops/external_data_backfill.py`。
+- **Scheduler / Worker / Pipelines & Modeling**: `apps/scheduler/oday_scheduler`, `apps/worker/oday_worker`, `pipelines/data_quality/gates.py`, `pipelines/quality/great_expectations_gate.py`, `pipelines/dbt/**`, `pipelines/orchestration/**`, `pipelines/features/**`, `pipelines/training/**`, `product_ops/modeling/**`, `product_ops/data_platform/backfill.py`, `product_ops/external_data_backfill.py`。`apps/data_platform/definitions.py` 不列入 KEEP；其未接線 Dagster 宣告面列於 §5.3 REPLACE，待 `DPF-EMGI-LIVE-ROLLOUT-001` 決定接線或退役。
 - **Scripts (6)**: `ai-status.sh`／`ai_status.py`, supervisor 啟動與守護腳本群, `supervisor_runtime_health.py`／`supervisor_watchdog_install.py`, `validate_external_data_boundary.py`, `check_task_dependency_resolvability.py`, `scripts/orchestrator/*.py`。
 - **軸 B 歸檔保留 (4 檔)**: `runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/static-verification.json`, `fleet_dispatch/package10_20260726/ODP-P10-DEV-LANDING-FIX-001.md`, `python-inventory-2026-08-13.csv`, `python-runtime-tooling-audit-2026-08-13.md`。
 
@@ -731,7 +750,7 @@ check $T  97 'restore_scheduler_trigger() {'
 check $W 110 'ODP_WORKER_CRON'
 check $W 112 'ODP_SCHEDULER_TIME_ZONE'
 
-# --- Data Platform Dagster 排程與 Sensor 呼叫鏈（§4.6.1） ---
+# --- Data Platform Dagster 宣告面行號（§4.6.1；非 active runtime 證據） ---
 check $DP_DEF 208 'dimension_schedule = ScheduleDefinition('
 check $DP_DEF 211 'cron_schedule="0 1 * * *"'
 check $DP_DEF 215 'operations_schedule = ScheduleDefinition('
@@ -852,7 +871,7 @@ sed 's|test_scaffold.py 59 .*|test_scaffold.py 999 "no-such-string"|' \
   /tmp/check_lines.sh > /tmp/check_lines_neg.sh
 bash /tmp/check_lines_neg.sh >/dev/null; echo "EXIT=$?"
 # -> FAIL tests/test_scaffold.py:999 want=no-such-string got=
-#    checks_declared=77 checks_executed=77 fails=1
+#    checks_declared=102 checks_executed=102 fails=1
 #    EXIT=1
 ```
 
@@ -1121,8 +1140,8 @@ def assert_eq(label, got, want):
 
 print("--- 軸 A：§4 元件生命週期 ---")
 assert_eq("§4 總列數", nA, 87)
-assert_eq("§4 KEEP", A['KEEP'], 75)
-assert_eq("§4 REPLACE", A['REPLACE'], 7)
+assert_eq("§4 KEEP", A['KEEP'], 74)
+assert_eq("§4 REPLACE", A['REPLACE'], 8)
 assert_eq("§4 DELETE/RETIRE", A['DELETE'], 5)
 print("--- 軸 B：§3.2 external-proof 殘留 ---")
 for k, want in [('3.2.1', 5), ('3.2.2', 7), ('3.2.3', 3), ('3.2.4', 2), ('3.2.5', 1), ('3.2.6', 2)]:
@@ -1160,7 +1179,7 @@ assert_eq("§7.5 內文宣稱項數 == 腳本 eq 呼叫數", claimed75, n75)
 print("--- 合併行動清單 ---")
 assert_eq("§5.2 刪除清單項數", d52, 10)
 assert_eq("§5.2 = 軸A DELETE + 軸B DELETE", A['DELETE'] + B['3.2.1'], d52)
-assert_eq("§5.3 替換清單項數", d53, 8)
+assert_eq("§5.3 替換清單項數", d53, 9)
 assert_eq("§5.3 = 軸A REPLACE + 1 (KEEP&EXPAND)", A['REPLACE'] + 1, d53)
 print("\nALL RECONCILED" if ok else "\nRECONCILIATION FAILED")
 sys.exit(0 if ok else 1)
@@ -1171,8 +1190,8 @@ sys.exit(0 if ok else 1)
 ```text
 --- 軸 A：§4 元件生命週期 ---
 OK   §4 總列數                                         got=87   want=87
-OK   §4 KEEP                                        got=75   want=75
-OK   §4 REPLACE                                     got=7    want=7
+OK   §4 KEEP                                        got=74   want=74
+OK   §4 REPLACE                                     got=8    want=8
 OK   §4 DELETE/RETIRE                               got=5    want=5
 --- 軸 B：§3.2 external-proof 殘留 ---
 OK   §3.2.1 檔數                                      got=5    want=5
@@ -1195,8 +1214,8 @@ OK   §7.5 內文宣稱項數 == 腳本 eq 呼叫數                       got=1
 --- 合併行動清單 ---
 OK   §5.2 刪除清單項數                                    got=10   want=10
 OK   §5.2 = 軸A DELETE + 軸B DELETE                   got=10   want=10
-OK   §5.3 替換清單項數                                    got=8    want=8
-OK   §5.3 = 軸A REPLACE + 1 (KEEP&EXPAND)            got=8    want=8
+OK   §5.3 替換清單項數                                    got=9    want=9
+OK   §5.3 = 軸A REPLACE + 1 (KEEP&EXPAND)            got=9    want=9
 
 ALL RECONCILED
 ```
@@ -1209,8 +1228,8 @@ ALL RECONCILED
 
 | # | 驗收條件 | 本報告對應章節 | 滿足方式 |
 |---|---|---|---|
-| 1 | 以 caller/workflow/runtime unit/cron/GitHub Actions usage 逐項證明 | §4（87 列逐項）、**§4.2.1**（Cloud Scheduler cron 全鏈逐行）、§4.5（GKE CronJob 逐行）、**§4.6.1**（Dagster 6 組 cron / 3 組 sensor 全鏈逐行）、**§4.6.2**（三套排程機制對帳矩陣）、§7.2（102 項 fail-closed 行號機器驗證） | 每列均標示 caller 檔案與行號；`make` 間接呼叫一律兩段式標註；cron 兩套雲端機制與一套資料平台排程機制（Cloud Scheduler / GKE CronJob / Dagster Definitions）各自給出建立、注入、回滾之精確行號 |
-| 2 | 產出保留/替換/刪除清單 | §5.1（雙軸統計與對帳）、§5.2（刪除 10 項，含連動編輯）、§5.3（替換 8 項）、§5.4（保留彙整） | 兩軸母體、分項數與合併推導全部列出恆等式，可逐條核算 |
+| 1 | 以 caller/workflow/runtime unit/cron/GitHub Actions usage 逐項證明 | §4（87 列逐項）、**§4.2.1**（Cloud Scheduler cron 全鏈逐行）、§4.5（GKE CronJob 逐行）、**§4.6.1**（Dagster 宣告面與 0 命中 runtime wiring 負向證據）、**§4.6.2**（兩套 active runtime + 一套未接線宣告面的對帳矩陣）、§7.2（102 項 fail-closed 行號機器驗證） | 每列均標示 caller 檔案與行號；`make` 間接呼叫一律兩段式標註；對 active Cloud Scheduler／GKE CronJob 與未接線 Dagster definitions 分別給出建立、注入、runtime caller 或負向掃描證據 |
+| 2 | 產出保留/替換/刪除清單 | §5.1（雙軸統計與對帳）、§5.2（刪除 10 項，含連動編輯）、§5.3（替換 9 項）、§5.4（保留彙整） | 兩軸母體、分項數與合併推導全部列出恆等式，可逐條核算 |
 | 3 | 辨識舊 External Proof Follow-up 與任何繞過 Runtime Release 的入口 | §2（旁路 7 類，含 WIF 唯一性證明與偽陽性澄清）、§3.1（移除 commit 逐檔）、§3.2（掃描邊界 + 20 檔殘留逐檔） | 旁路以「具 GCP 變更指令」與「持有 WIF 身分」雙查證；殘留以三種掃描邊界宣告後取聯集並分流 |
 | 4 | 本任務只稽核不刪 code | 全文 | 本次變更僅新增/修訂 `docs/audits/ODP_DEPLOYMENT_DEAD_CODE_AUDIT.md` 一檔；未刪除或修改任何程式、workflow、config。刪除動作全部登記為 Wave 2 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` 之待辦，並附連動編輯要求 |
 
@@ -1233,4 +1252,5 @@ ALL RECONCILED
 | （第四次審查）未處理 `docs/deployment/GCP_DEPLOY_GUIDE.md` 之 manual/local deployment guidance | §2 bypass 表新增「手動部署文件引導」列：標示 L7 之 fallback 敘述與 L39-49 之步驟指引，釐清其與 `deploy_cloud_run_waji.sh` 手動執行之關係，建議 Wave 2 後更新文件 |
 | （第五次審查）§2 宣稱具 GCP 變更指令之非文件檔案為 4 個，但同一條指令在 base advance 後的合成 head 上也命中 `support/sidecars/ODP-DEPLOY-SCHEDULER-ROLLBACK-RESTORE-001/…-SIDECAR-REVIEW.md`；需分類此純文字誤判或縮小掃描範圍 | 選擇**分類而非縮小掃描範圍**（縮小範圍會讓同類命中日後靜默消失）。§2 新增掃描邊界宣告，明示該指令只排除 `docs/` 與 `tests/`、**不排除 `support/`**，並將命中數更正為 **5**，以三分類表列出「具實際 GCP 變更能力 3 / 驗證器僅字串常值 1 / 純文件 review packet 散文 1」；§2 bypass 表新增「Sidecar review packet（非旁路，文字誤判）」列，逐項舉證：命中行為 L36/L54/L68 之審查散文、mode `100644` 無執行位元、`support/` 全樹 98 檔皆為 `.md` 且皆 `100644`、全庫無任何 workflow/腳本/程式碼執行或 `source` 此檔（唯一提及處為 `docs-site/orchestrator-state.json` 之派工紀錄）。§7.5 由註解式輸出改寫為 **13 項 fail-closed 斷言腳本**（檔案集合、三分類檔數、WIF 身分、執行位元、sidecar 純文件性質），並附負向驗證：把期望值改回錯誤的 `4` 即 `EXIT=1`。§7.6 另加三組交叉斷言，把「§2 三分類合計 = §2 宣稱命中數 = §7.5 腳本期望常數」與「§7.5 內文宣稱項數 = 腳本 `eq` 呼叫數」鎖在一起，使此類內文與指令脫節之漂移日後可被機器擋下 |
 | （第六次審查）報告 metadata 審查人標註為舊值 Codex；§7.5 範例輸出含尾隨空白；盤點基準未明確區分歷史掃描基準 3329416d 與當前 composed head 04ddafe9 | 審查人更新為 **Codex2**（負責人為 **Antigravity**）；移除 §7.5 輸出區塊第 907–919 行全部尾隨空白（通過 `git diff --check`）；於 §0 標頭明確區分「歷史盤點起始基準 `3329416d`」與「當前驗證基準 `04ddafe9`」（含 PR #999 `ODP-RELEASE-MANIFEST-GATES-001`），並於 §13 約定所有行號引用與機器斷言皆以當前驗證基準之 composed head 為準，重跑 §7.1、§7.2、§7.5、§7.5a、§7.6 及 `tests/test_scaffold.py` 全數 PASS |
-| （第七次審查）報告遺漏 composed head 上的 active Dagster data-platform scheduler surface（6 組 ScheduleDefinition cron、3 組 900s sensor、defs 掛載、pyproject.toml entrypoint、README 排程文件）；未對帳 Cloud Scheduler、GKE CronJob 與 Dagster 之邊界 | 新增 **§4.6.1**（Dagster 排程與感應器 14 項逐行證據表，含 6 組 cron、3 組 900s sensor、defs、entrypoint、README、測試）、新增 **§4.6.2**（三套排程機制對帳矩陣：環境、層級、頻率、payload、邊界、回滾與獨立性判定）；更新 §1.1 第 5 項、§4.6 表格（納入 `apps/data_platform/definitions.py`）、§5.1 統計（§4 列數增為 87、KEEP 增為 75）、§5.4 保留清單、§7.2 行號斷言腳本（增至 102 項，含 Dagster 25 項斷言）、§7.6 自動對帳腳本與 §8 驗收追蹤表 |
+| （第七次審查）報告遺漏 composed head 上的 Dagster data-platform definitions surface（6 組 ScheduleDefinition cron、3 組 900s sensor、defs 掛載、pyproject.toml entrypoint、README 排程文件）；未對帳 Cloud Scheduler、GKE CronJob 與 Dagster 之邊界 | 新增 **§4.6.1**（Dagster 排程與感應器 14 項逐行宣告證據表）、新增 **§4.6.2**（兩套 active runtime 與一套未接線宣告面的對帳矩陣）；更新 §1.1 第 5 項、§4.6 表格、§5.1／§5.4 統計與 §8 驗收追蹤表 |
+| （第八次審查）Dagster section 未證明 active：Docker ENTRYPOINT 實際進入 `deployment_runtime.py`，GKE CronJob 傳入 `scheduled` 並呼叫 `product_ops.data_platform.backfill`；`definitions.py` 與 backfill 共享 `DataPlaneRunner`，且 §7.2 負向輸出仍寫成 77 checks | §1.1、§4.6.1、§4.6.2 改以 runtime caller 證據與 0 命中 Dagster CLI／daemon／runtime 掃描，將 `definitions.py` 分類為 UNWIRED / REPLACE，列出與 `backfill.py` 重疊的 11 個 source kinds；§7.2 負向輸出更正並重跑為 `checks_declared=102 checks_executed=102 fails=1`、`EXIT=1`，§7.6 對帳同步為 KEEP 74 / REPLACE 8 / §5.3 9 項 |
