@@ -48,36 +48,17 @@ def complete_env() -> dict[str, str]:
         }
     )
     env.update(validator.REQUIRED_RUNTIME_VALUES)
-    env["ODP_PRODUCTION_PROVIDER_IDS"] = ",".join(sorted(validator.REQUIRED_PRODUCT_PROVIDER_IDS))
-    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "8"
     env["ODP_DEPLOY_ENV"] = "dev"
     env["ODAY_RELEASE_SHA"] = EXPECTED_SHA
     env["ODP_FORECAST_ENGINE"] = "statsforecast"
     env["ODP_FORECAST_MODEL"] = "seasonal_naive"
     env["ODP_SCHEDULED_INGESTION_TENANT_ID"] = "tenant-dev"
     env["ODP_TENANT_ID"] = "tenant-dev"
-    for provider in validator._provider_definitions(ROOT):
-        if provider.provider_id not in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
-            continue
-        if provider.endpoint_env_var:
-            env[provider.endpoint_env_var] = f"https://{provider.provider_id}.example.test/snapshot"
-        for credential in provider.credentials:
-            if credential.required_in_live:
-                env[f"{credential.env_var}_SECRET"] = "provider-secret:latest"
-                if credential.status_env_var:
-                    env[credential.status_env_var] = "active"
     return env
 
 
 def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
     env = complete_env()
-    for name in (
-        "ODP_LISTING_PROVIDER_FEED_URL",
-        "ODP_LISTING_PROVIDER_AUTH_STATUS",
-        "ODP_LISTING_PROVIDER_API_KEY_SECRET",
-    ):
-        env.pop(name, None)
-
     checks = validator.preflight_checks(
         env=env,
         expected_environment="dev",
@@ -94,25 +75,15 @@ def test_preflight_does_not_require_unselected_listing_partner_config() -> None:
     assert "config:ODP_LISTING_PROVIDER_FEED_URL" not in by_name
     assert "config:ODP_LISTING_PROVIDER_AUTH_STATUS" not in by_name
     assert "secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET" not in by_name
-    for name in (
-        "ODP_POI_PROVIDER_URL",
-        "ODP_GEOCODE_PROVIDER_URL",
-        "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-    ):
-        assert by_name[f"config:{name}"].ok is True
 
 
 def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
-    env = complete_env()
-    env["ODP_PRODUCTION_PROVIDER_IDS"] += ",listing.partner_feed"
-    env.pop("ODP_LISTING_PROVIDER_FEED_URL", None)
-    env.pop("ODP_LISTING_PROVIDER_AUTH_STATUS", None)
-    env.pop("ODP_LISTING_PROVIDER_API_KEY_SECRET", None)
-
-    checks = validator.preflight_checks(
+    env = {
+        "ODP_PRODUCTION_PROVIDER_IDS": "listing.partner_feed",
+    }
+    checks = validator.selected_provider_config_checks(
         env=env,
-        expected_environment="dev",
-        expected_sha=EXPECTED_SHA,
+        production_provider_ids=frozenset(["listing.partner_feed"]),
         root=ROOT,
     )
     by_name = {check.name: check for check in checks}
@@ -120,24 +91,6 @@ def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
     assert by_name["config:ODP_LISTING_PROVIDER_FEED_URL"].ok is False
     assert by_name["config:ODP_LISTING_PROVIDER_AUTH_STATUS"].ok is False
     assert by_name["secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET"].ok is False
-
-
-@pytest.mark.parametrize("value", ["", "0", "10.01", "nan", "infinity", "not-a-number"])
-def test_preflight_rejects_missing_or_unbounded_provider_probe_timeout(value: str) -> None:
-    env = complete_env()
-    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = value
-
-    checks = validator.preflight_checks(
-        env=env,
-        expected_environment="dev",
-        expected_sha=EXPECTED_SHA,
-        root=ROOT,
-    )
-    by_name = {check.name: check for check in checks}
-
-    timeout_check = by_name["runtime:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"]
-    assert timeout_check.ok is False
-    assert "between 0.05 and 10 seconds" in timeout_check.detail
 
 
 def _run_deploy_config_gate(
@@ -337,8 +290,6 @@ def test_deploy_preflight_imports_runtime_dependencies_via_locked_python(
     assert report["ok"] is True
     checks = {check["name"]: check for check in report["checks"]}
     assert "repository:provider_registry_import" not in checks
-    for provider_id in validator.REQUIRED_PRODUCT_PROVIDER_IDS:
-        assert checks[f"repository:provider_adapter:{provider_id}"]["ok"] is True
     assert checks["repository:operator_bootstrap_data_source"]["ok"] is True
 
 
@@ -498,7 +449,9 @@ def test_preflight_imports_every_registry_provider_adapter() -> None:
 
 def test_preflight_rejects_manual_competitor_in_production_allowlist() -> None:
     env = complete_env()
-    env["ODP_PRODUCTION_PROVIDER_IDS"] += ",competitor.manual_source"
+    env["ODP_PRODUCTION_PROVIDER_IDS"] = (
+        ",".join(sorted(validator.REQUIRED_PRODUCT_PROVIDER_IDS)) + ",competitor.manual_source"
+    )
     checks = validator.preflight_checks(
         env=env,
         expected_environment="dev",
@@ -530,11 +483,11 @@ def test_preflight_requires_all_product_provider_ids_and_disabled_manual_status(
     assert by_name["runtime:ODP_COMPETITOR_MANUAL_SOURCE_STATUS"].ok is False
 
 
-def test_preflight_rejects_missing_config_memory_and_fixture_modes() -> None:
+def test_preflight_rejects_missing_config_memory_and_live_provider_mode() -> None:
     env = complete_env()
     env["GCP_PROJECT"] = ""
     env["ODP_PERSISTENCE"] = "memory"
-    env["ODP_EXTERNAL_PROVIDER_MODE"] = "fixture"
+    env["ODP_EXTERNAL_PROVIDER_MODE"] = "live"
     checks = validator.preflight_checks(
         env=env,
         expected_environment="dev",
@@ -545,7 +498,7 @@ def test_preflight_rejects_missing_config_memory_and_fixture_modes() -> None:
 
     assert by_name["config:GCP_PROJECT"].ok is False
     assert by_name["runtime:ODP_PERSISTENCE"].ok is False
-    assert by_name["runtime:ODP_EXTERNAL_PROVIDER_MODE"].ok is False
+    assert by_name["runtime:external_provider_mode_off"].ok is False
 
 
 class DeterministicRuntimeHandler(BaseHTTPRequestHandler):
@@ -1969,18 +1922,22 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT" in text
         assert "ODP_WORKER_CRON" in text
         assert "ODP_SCHEDULER_CRON" in text
-        assert "ODP_PRODUCTION_PROVIDER_IDS" in text
-        assert (
-            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS: "
-            "${{ vars.ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS }}" in text
-        )
+        assert "ODP_PRODUCTION_PROVIDER_IDS" not in text
+        assert "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in text
+        assert "ODP_EXTERNAL_PROVIDER_MODE" not in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
         assert "ODP_OPERATOR_SMOKE_BEARER_TOKEN" not in text
         assert "ODP_AUTH_JWKS_URI" in text
-        assert "ODP_POI_PROVIDER_URL" in text
-        assert "ODP_ADMIN_BOUNDARY_PROVIDER_URL" in text
+        assert "ODP_POI_PROVIDER_URL" not in text
+        assert "ODP_ADMIN_BOUNDARY_PROVIDER_URL" not in text
+        assert "ODP_LISTING_PROVIDER_FEED_URL" not in text
+        assert "ODP_GEOCODE_PROVIDER_URL" not in text
+        assert "ODP_LISTING_PROVIDER_API_KEY_SECRET" not in text
+        assert "ODP_POI_PROVIDER_API_KEY_SECRET" not in text
+        assert "ODP_GEOCODE_PROVIDER_API_KEY_SECRET" not in text
+        assert "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET" not in text
         assert "ODP_WEB_OIDC_CLIENT_ID" in text
         assert "ODP_WEB_OIDC_CLIENT_SECRET_SECRET" in text
         assert "ODP_WEB_SESSION_SECRET_SECRET" in text
@@ -2004,28 +1961,6 @@ def test_dev_workflow_bootstraps_locked_dependencies_before_preflight() -> None:
         "product_ops/deployment/validate_cloud_run_live_deployment.py preflight" in text
     )
     assert "python3 product_ops/deployment/validate_cloud_run_live_deployment.py" not in text
-
-
-def test_provider_probe_timeout_band_matches_runtime_connector() -> None:
-    """The governed dev value for ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS
-    derives from the runtime connector's own default, and the preflight's
-    accepted band must stay aligned with the connector's clamp band. Drift on
-    either side re-opens the failure this task closed: a value the connector
-    accepts that the preflight rejects (or vice versa).
-    """
-    from modules.external_data.connectors import provider_connectivity as connectivity
-
-    # The connector clamps with _bounded_float(minimum=0.05, maximum=MAX_...).
-    assert validator.MIN_PROVIDER_PROBE_TIMEOUT_SECONDS == 0.05
-    assert validator.MAX_PROVIDER_PROBE_TIMEOUT_SECONDS == connectivity.MAX_PROBE_TIMEOUT_SECONDS
-    check = validator._bounded_provider_probe_timeout_check(
-        {
-            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": str(
-                connectivity.DEFAULT_PROBE_TIMEOUT_SECONDS
-            )
-        }
-    )
-    assert check.ok, check.detail
 
 
 def test_deploy_script_preflights_before_build_and_uses_secret_references() -> None:
@@ -2071,11 +2006,10 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert "::add-mask::${ODP_OPERATOR_SMOKE_BEARER_TOKEN}" in text
     assert "ODAY_RELEASE_SHA" in text
     assert "ODP_REQUIRE_LIVE_DATA" in text
-    assert "ODP_DATA_BINDING_MODE" in text
     assert "ODP_PERSISTENCE" in text
-    assert '"ODP_POI_PROVIDER_URL",' in text
-    assert '"ODP_ADMIN_BOUNDARY_PROVIDER_URL",' in text
-    assert 'case "${provider_id}" in' in text
+    assert '"ODP_POI_PROVIDER_URL"' not in text
+    assert '"ODP_ADMIN_BOUNDARY_PROVIDER_URL"' not in text
+    assert 'case "${provider_id}" in' not in text
     assert ': "${ODP_FORECAST_ENGINE:?' in text
     assert ': "${ODP_FORECAST_MODEL:?' in text
     assert '"ODP_FORECAST_ENGINE",' in text
@@ -2092,9 +2026,9 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
         'upsert_scheduler_trigger \\\n  "${SCHEDULER_SCHEDULE_NAME}"'
     )
     assert "restore_scheduler_trigger" in text
-    assert "ODP_PRODUCTION_PROVIDER_IDS" in text
-    assert ': "${ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS:?' in text
-    assert '"ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",' in text
+    assert "ODP_PRODUCTION_PROVIDER_IDS" not in text
+    assert "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in text
+    assert "ODP_EXTERNAL_PROVIDER_MODE" not in text
     assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION" not in text
     assert "oday-local" not in text
     assert "postgresql://" not in text
@@ -5369,3 +5303,270 @@ def test_deploy_dev_workflow_documents_smoke_principal_least_privilege_composite
     assert "operations_manager" in text
     assert "model_owner" in text
     assert "data_owner" in text
+
+
+# --- ODP-XR-PROVIDER-OFF-DEPLOYMENT-001 negative and invariant tests ---
+
+
+def test_preflight_rejects_external_provider_live_mode() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject ODP_EXTERNAL_PROVIDER_MODE=live."""
+    env = complete_env()
+    env["ODP_EXTERNAL_PROVIDER_MODE"] = "live"
+    for name in list(env.keys()):
+        if any(p in name for p in ("POI", "GEOCODE", "ADMIN_BOUNDARY", "LISTING")):
+            env.pop(name, None)
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:external_provider_mode_off" in by_name
+    assert by_name["runtime:external_provider_mode_off"].ok is False
+
+
+def test_preflight_rejects_projected_provider_secrets() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject any projected provider secrets."""
+    env = complete_env()
+    for name in list(env.keys()):
+        if any(p in name for p in ("POI", "GEOCODE", "ADMIN_BOUNDARY", "LISTING")):
+            env.pop(name, None)
+    env["ODP_POI_PROVIDER_API_KEY_SECRET"] = "secret:1"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_provider_secrets_projected" in by_name
+    assert by_name["runtime:no_provider_secrets_projected"].ok is False
+    assert "ODP_POI_PROVIDER_API_KEY_SECRET" in by_name["runtime:no_provider_secrets_projected"].detail
+
+
+def test_preflight_rejects_projected_provider_endpoints() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject any projected provider endpoints."""
+    env = complete_env()
+    for name in list(env.keys()):
+        if any(p in name for p in ("POI", "GEOCODE", "ADMIN_BOUNDARY", "LISTING")):
+            env.pop(name, None)
+    env["ODP_GEOCODE_PROVIDER_URL"] = "https://geocode.example.test"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_provider_endpoints_projected" in by_name
+    assert by_name["runtime:no_provider_endpoints_projected"].ok is False
+    assert "ODP_GEOCODE_PROVIDER_URL" in by_name["runtime:no_provider_endpoints_projected"].detail
+
+
+def test_consumer_only_job_secret_bindings_require_only_database() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: Job with no provider IDs requires only database secret."""
+    sha = "a" * 40
+    job_description = {
+        "name": "projects/oday/locations/asia-east1/jobs/oday-worker-consumer",
+        "labels": {"oday-release-sha": sha},
+        "template": {
+            "template": {
+                "containers": [
+                    {
+                        "image": f"registry/worker:dev-{sha}",
+                        "command": ["python"],
+                        "args": ["product_ops/deployment/cloud_run_job_entrypoint.py", "worker"],
+                        "env": [
+                            {"name": "ODAY_RELEASE_SHA", "value": sha},
+                            {
+                                "name": "ODAY_DATABASE_URL",
+                                "valueSource": {
+                                    "secretKeyRef": {
+                                        "secret": "oday-database-url",
+                                        "version": "1",
+                                    }
+                                },
+                            },
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+    execution = {
+        "metadata": {"name": "oday-worker-consumer-exec-1"},
+        "status": {
+            "succeededCount": 1,
+            "failedCount": 0,
+            "completionTime": "2026-08-24T00:00:00Z",
+            "conditions": [{"type": "Completed", "state": "CONDITION_SUCCEEDED"}],
+        },
+    }
+    checks, report = validator.cloud_run_job_checks(
+        kind="worker",
+        job_description=job_description,
+        execution=execution,
+        expected_sha=sha,
+    )
+    by_name = {c.name: c for c in checks}
+    assert by_name["jobs-smoke:worker:provider_selection"].ok is True
+    assert by_name["jobs-smoke:worker:secret_bindings"].ok is True
+    assert report["required_secret_env_vars"] == ["ODAY_DATABASE_URL"]
+
+
+@pytest.mark.parametrize(
+    "status_var",
+    [
+        "ODP_POI_PROVIDER_AUTH_STATUS",
+        "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS",
+        "ODP_STORE_OPENING_AUTHORITY_STATUS",
+    ],
+)
+def test_preflight_rejects_projected_provider_auth_status(status_var: str) -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject any projected provider auth status."""
+    env = complete_env()
+    for name in list(env.keys()):
+        if any(p in name for p in ("POI", "GEOCODE", "ADMIN_BOUNDARY", "LISTING", "STORE_OPENING")):
+            env.pop(name, None)
+    env[status_var] = "active"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_provider_auth_status_projected" in by_name
+    assert by_name["runtime:no_provider_auth_status_projected"].ok is False
+    assert status_var in by_name["runtime:no_provider_auth_status_projected"].detail
+
+
+def test_preflight_rejects_projected_production_provider_ids() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject projected ODP_PRODUCTION_PROVIDER_IDS in consumer deployment."""
+    env = complete_env()
+    env["ODP_PRODUCTION_PROVIDER_IDS"] = "poi.commercial_api,geocode.primary_api"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_production_provider_ids_projected" in by_name
+    assert by_name["runtime:no_production_provider_ids_projected"].ok is False
+    assert "poi.commercial_api" in by_name["runtime:no_production_provider_ids_projected"].detail
+
+
+def test_preflight_rejects_projected_provider_probe_timeout() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject projected ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS in consumer deployment."""
+    env = complete_env()
+    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "5.0"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_provider_probe_timeout_projected" in by_name
+    assert by_name["runtime:no_provider_probe_timeout_projected"].ok is False
+
+
+def test_preflight_dynamically_rejects_all_registered_provider_env_vars() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: every provider in PROVIDER_REGISTRY has its endpoints, credentials, and statuses rejected."""
+    from modules.external_data.connectors.provider_registry import PROVIDER_REGISTRY
+
+    for provider in PROVIDER_REGISTRY:
+        if provider.endpoint_env_var:
+            env = complete_env()
+            env[provider.endpoint_env_var] = "https://endpoint.example.test"
+            checks = validator.preflight_checks(
+                env=env,
+                expected_environment="dev",
+                expected_sha=EXPECTED_SHA,
+                root=ROOT,
+            )
+            by_name = {c.name: c for c in checks}
+            assert by_name["runtime:no_provider_endpoints_projected"].ok is False
+            assert provider.endpoint_env_var in by_name["runtime:no_provider_endpoints_projected"].detail
+
+        for cred in provider.credentials:
+            if cred.env_var:
+                env = complete_env()
+                env[cred.env_var] = "test-secret-value"
+                checks = validator.preflight_checks(
+                    env=env,
+                    expected_environment="dev",
+                    expected_sha=EXPECTED_SHA,
+                    root=ROOT,
+                )
+                by_name = {c.name: c for c in checks}
+                assert by_name["runtime:no_provider_secrets_projected"].ok is False
+                assert cred.env_var in by_name["runtime:no_provider_secrets_projected"].detail
+
+            if cred.status_env_var and cred.status_env_var != "ODP_COMPETITOR_MANUAL_SOURCE_STATUS":
+                env = complete_env()
+                env[cred.status_env_var] = "active"
+                checks = validator.preflight_checks(
+                    env=env,
+                    expected_environment="dev",
+                    expected_sha=EXPECTED_SHA,
+                    root=ROOT,
+                )
+                by_name = {c.name: c for c in checks}
+                assert by_name["runtime:no_provider_auth_status_projected"].ok is False
+                assert cred.status_env_var in by_name["runtime:no_provider_auth_status_projected"].detail
+
+
+def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight fails closed and early-returns when PROVIDER_REGISTRY cannot be loaded."""
+    def _failing_inventory(*_args: object, **_kwargs: object):
+        raise RuntimeError("simulated PROVIDER_REGISTRY load failure")
+
+    monkeypatch.setattr(validator, "dynamic_provider_env_inventory", _failing_inventory)
+    env = complete_env()
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "repository:provider_registry_inventory" in by_name
+    assert by_name["repository:provider_registry_inventory"].ok is False
+    assert "simulated PROVIDER_REGISTRY load failure" in by_name["repository:provider_registry_inventory"].detail
+    assert not all(c.ok for c in checks)
+    assert checks[-1].name == "repository:provider_registry_inventory"
+    # Verify early-return fail-closed behavior: downstream provider-off checks are not evaluated
+    assert "runtime:external_provider_mode_off" not in by_name
+    assert "runtime:no_production_provider_ids_projected" not in by_name
+    assert "runtime:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in by_name
+    assert "runtime:no_provider_probe_timeout_projected" not in by_name
+    assert "runtime:no_provider_secrets_projected" not in by_name
+    assert "runtime:no_provider_endpoints_projected" not in by_name
+    assert "runtime:no_provider_auth_status_projected" not in by_name
+
+
+def test_dynamic_provider_env_inventory_returns_exact_general_keys_and_registry_vars() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: dynamic inventory derives all keys directly from provider_registry."""
+    from modules.external_data.connectors.provider_registry import (
+        LIVE_MODE_ENV_VAR,
+        PRODUCTION_PROVIDER_IDS_ENV_VAR,
+        PROVIDER_PROBE_TIMEOUT_ENV_VAR,
+    )
+
+    inv = validator.dynamic_provider_env_inventory(root=ROOT)
+    assert inv["live_mode_key"] == LIVE_MODE_ENV_VAR
+    assert inv["production_provider_ids_key"] == PRODUCTION_PROVIDER_IDS_ENV_VAR
+    assert inv["probe_timeout_key"] == PROVIDER_PROBE_TIMEOUT_ENV_VAR
+    assert inv["general"] == {
+        LIVE_MODE_ENV_VAR,
+        PRODUCTION_PROVIDER_IDS_ENV_VAR,
+        PROVIDER_PROBE_TIMEOUT_ENV_VAR,
+    }
+    assert "ODP_POI_PROVIDER_API_KEY" in inv["secrets"]
+    assert "ODP_POI_PROVIDER_URL" in inv["endpoints"]
+    assert "ODP_POI_PROVIDER_AUTH_STATUS" in inv["auth_statuses"]

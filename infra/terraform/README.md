@@ -11,11 +11,11 @@ memory persistence.
 | Cloud Run API | Immutable digest, exact release SHA, IAM-only invocation, Gen2, Direct VPC egress, Cloud SQL volume, `/readiness` startup probe, `/healthz` liveness probe. |
 | Cloud Run Web | Immutable digest, exact release SHA, OIDC session enforcement, service-to-service identity token, private API invocation, Gen2, Direct VPC egress. |
 | Cloud SQL PostgreSQL 16 | Private IP only, `REGIONAL` HA, SSD/autoresize, PITR, 30+ backups, CMEK, encrypted connections, deletion protection. |
-| Secret Manager | Terraform-generated database URL and cursor key plus references to environment-owned provider/model credentials. No secret payload is accepted as a variable or exposed as an output. |
+| Secret Manager | Terraform-generated database URL, cursor key, and Web session secret plus references to environment-owned model credentials. External provider credentials and direct external data acquisition are disabled in consumer deployment. No secret payload is accepted as a variable or exposed as an output. |
 | Cloud Storage | Separate CMEK-encrypted, versioned artifact and source-snapshot buckets plus the WORM audit-evidence module. |
 | Pub/Sub | CMEK job topic, ordered subscription, bounded retry, DLQ topic/subscription, regional persistence. |
 | IAM | Separate API, worker, audit-writer, and audit-retention identities with resource-level grants. |
-| VPC | Custom regional subnet, Direct VPC egress, Private Service Access, static Cloud NAT egress IP, no Cloud SQL public IPv4. |
+| VPC | Custom regional subnet, Direct VPC egress, Private Service Access, default-deny egress firewall with restricted RFC1918 and Google API CIDR allow rules, no Cloud NAT, no Cloud SQL public IPv4. |
 
 ## Production Fail-Closed Gates
 
@@ -25,7 +25,7 @@ A production plan fails when any of the following is true:
 - `release_sha` is not an exact 40-character Git SHA;
 - API or Web Cloud Run has fewer than two minimum instances, or the API has a public invoker;
 - OIDC issuer/JWKS are not HTTPS or no audience is configured;
-- any required live-provider endpoint or Secret Manager binding is missing;
+- external provider mode is not fixture or any external provider credentials, endpoints, auth status, or provider IDs are projected;
 - MLflow is not a remote HTTPS registry;
 - approved AVM/forecast model metadata is incomplete or the artifact digest is invalid;
 - any production input contains mock, fixture, synthetic, seed, memory, SQLite,
@@ -39,13 +39,13 @@ blocks repeat the conditions for readable diagnostics, but no resource or API
 enablement can begin until the lifecycle preconditions pass.
 
 `ODAY_ENV=prod`, `ODP_DEPLOY_ENV=prod`, `ODP_PERSISTENCE=postgresql`,
-`ODP_REQUIRE_LIVE_DATA=true`, `ODP_EXTERNAL_PROVIDER_MODE=live`,
+`ODP_REQUIRE_LIVE_DATA=true`, `ODP_EXTERNAL_PROVIDER_MODE=fixture`,
 `ODP_PRODUCT_MODE=live`, and `ODP_OBJECT_STORE=gcs` are Terraform-owned and
 cannot be overridden through `runtime_additional_env`.
 
-Dev defaults to PostgreSQL with fixture provider/model startup permitted.
-Staging can opt into the same live gate with `live_data_enabled=true`.
-Production always forces live mode regardless of that variable.
+Dev defaults to PostgreSQL with platform snapshot consumer startup.
+Staging and production read platform snapshots; external provider live mode
+and egress NAT are disabled across all environments.
 
 ## Required External Values
 
@@ -57,12 +57,11 @@ Values, approvals, and secret payloads are owned outside Terraform:
 2. Immutable API and Web image digests built from the same exact source commit.
 3. OIDC issuer, audience list, JWKS URI, Web client registration/secret, public
    HTTPS Web origin, API invoker members, and Web invoker members.
-4. Approved HTTPS endpoints for listing, POI, geocode, admin-boundary, weather,
-   and demographics providers. Their owners must allowlist
-   `runtime_egress_ip` when source-IP restrictions apply.
-5. Existing Secret Manager secret IDs and explicit numeric versions for all six
-   provider credentials. Secret values must have that enabled version before
-   Cloud Run is applied; `latest` is not accepted in production.
+4. External provider live endpoints, credentials, and Cloud NAT egress IPs are
+   disabled in consumer-only platform snapshot deployment. Direct external
+   provider acquisition is off.
+5. Model registry credentials (if MLflow does not use workload identity) and OIDC
+   client secret.
 6. Remote MLflow URI, production aliases/artifacts, AVM liquidity approval
    metadata, digest, dataset snapshot, and OSS forecast engine/model.
 7. Optional MLflow credential secret IDs when the registry does not use
@@ -86,9 +85,7 @@ As with every Terraform-generated credential, the encrypted Terraform state
 contains sensitive material. The GCS backend must therefore use CMEK,
 versioning, retention, access logging, and a dedicated Terraform-runner role.
 
-Provider and model secret **IDs** may be supplied in `.tfvars`; their payloads
-are read by Cloud Run from Secret Manager at runtime and never enter Terraform
-configuration or outputs.
+Model secret **IDs** may be supplied in `.tfvars`; external provider secrets are disabled and rejected. Their payloads are read by Cloud Run from Secret Manager at runtime and never enter Terraform configuration or outputs.
 
 ## Bootstrap and Apply
 
@@ -121,11 +118,11 @@ uses the real `/readiness` gate:
 2. Run the committed PostgreSQL migrations and live-data reconciliation from an
    approved migration identity with Cloud SQL Client and access only to the
    database URL secret.
-3. Confirm provider secrets have enabled versions, MLflow production aliases
+3. Confirm model secrets have enabled versions, MLflow production aliases
    are approved, and the canonical datasets exist.
 4. Run a fresh full plan, review it, and apply the saved plan.
 5. Verify `/healthz`, `/readiness`, exact `release_sha`, OIDC rejection/acceptance,
-   provider lineage, model lineage, Pub/Sub/DLQ, backup/PITR, and restore drill
+   model lineage, Pub/Sub/DLQ, backup/PITR, and restore drill
    evidence before routing user traffic.
 
 Never use `-target` for routine updates. The one bootstrap target above exists
@@ -133,7 +130,7 @@ only to break the initial database-migration/readiness dependency.
 
 ## Rotation and Recovery
 
-- Rotate provider/model credentials by adding a new enabled Secret Manager
+- Rotate model credentials by adding a new enabled Secret Manager
   version; deploy a new Cloud Run revision and verify readiness before disabling
   the old version.
 - Database and cursor keys are replaced only through a reviewed state move or

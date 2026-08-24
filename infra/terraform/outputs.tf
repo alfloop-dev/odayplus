@@ -98,11 +98,6 @@ output "runtime_network" {
   description = "Private runtime VPC."
 }
 
-output "runtime_egress_ip" {
-  value       = google_compute_address.nat.address
-  description = "Static outbound IP to allowlist at approved external providers."
-}
-
 output "runtime_kms_key" {
   value       = google_kms_crypto_key.runtime.id
   description = "CMEK resource id. No key material is exposed."

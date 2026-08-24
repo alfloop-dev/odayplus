@@ -140,18 +140,21 @@ variable "web_memory" {
 
 variable "live_data_enabled" {
   type        = bool
-  description = "Enable live provider and production model gates outside prod. Production always forces this on."
+  description = "Enable platform snapshot and production model gates outside prod. Production always forces this on."
   default     = false
 }
 
 variable "network_cidr" {
   type        = string
-  description = "Primary Direct VPC egress subnet CIDR."
+  description = "Primary Direct VPC egress subnet CIDR within RFC1918 private address space."
   default     = "10.42.0.0/24"
 
   validation {
-    condition     = can(cidrhost(var.network_cidr, 1))
-    error_message = "network_cidr must be a valid CIDR."
+    condition = (
+      can(cidrhost(var.network_cidr, 1))
+      && can(regex("^(10\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.|192\\.168\\.)", var.network_cidr))
+    )
+    error_message = "network_cidr must be a valid RFC1918 private CIDR (10.0.0.0/8, 172.16.0.0/12, or 192.168.0.0/16)."
   }
 }
 
@@ -350,20 +353,6 @@ variable "mlflow_tracking_uri" {
   default     = ""
 }
 
-variable "external_provider_endpoints" {
-  type        = map(string)
-  description = "Runtime environment variable to approved live-provider HTTPS endpoint."
-  default     = {}
-}
-
-variable "external_provider_secret_refs" {
-  type = map(object({
-    secret_id = string
-    version   = string
-  }))
-  description = "Runtime provider credential environment variable to pinned Secret Manager secret id/version. Secret values never enter Terraform variables."
-  default     = {}
-}
 
 variable "model_runtime_config" {
   type        = map(string)
