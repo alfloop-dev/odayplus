@@ -5453,3 +5453,110 @@ def test_consumer_only_job_secret_bindings_require_only_database() -> None:
     assert by_name["jobs-smoke:worker:provider_selection"].ok is True
     assert by_name["jobs-smoke:worker:secret_bindings"].ok is True
     assert report["required_secret_env_vars"] == ["ODAY_DATABASE_URL"]
+
+
+@pytest.mark.parametrize(
+    "status_var",
+    [
+        "ODP_POI_PROVIDER_AUTH_STATUS",
+        "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+        "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+        "ODP_LISTING_PROVIDER_AUTH_STATUS",
+        "ODP_STORE_OPENING_AUTHORITY_STATUS",
+    ],
+)
+def test_preflight_rejects_projected_provider_auth_status(status_var: str) -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject any projected provider auth status."""
+    env = complete_env()
+    for name in list(env.keys()):
+        if any(p in name for p in ("POI", "GEOCODE", "ADMIN_BOUNDARY", "LISTING", "STORE_OPENING")):
+            env.pop(name, None)
+    env[status_var] = "active"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_provider_auth_status_projected" in by_name
+    assert by_name["runtime:no_provider_auth_status_projected"].ok is False
+    assert status_var in by_name["runtime:no_provider_auth_status_projected"].detail
+
+
+def test_preflight_rejects_projected_production_provider_ids() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject projected ODP_PRODUCTION_PROVIDER_IDS in consumer deployment."""
+    env = complete_env()
+    env["ODP_PRODUCTION_PROVIDER_IDS"] = "poi.commercial_api,geocode.primary_api"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_production_provider_ids_projected" in by_name
+    assert by_name["runtime:no_production_provider_ids_projected"].ok is False
+    assert "poi.commercial_api" in by_name["runtime:no_production_provider_ids_projected"].detail
+
+
+def test_preflight_rejects_projected_provider_probe_timeout() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight must reject projected ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS in consumer deployment."""
+    env = complete_env()
+    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = "5.0"
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "runtime:no_provider_probe_timeout_projected" in by_name
+    assert by_name["runtime:no_provider_probe_timeout_projected"].ok is False
+
+
+def test_preflight_dynamically_rejects_all_registered_provider_env_vars() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: every provider in PROVIDER_REGISTRY has its endpoints, credentials, and statuses rejected."""
+    from modules.external_data.connectors.provider_registry import PROVIDER_REGISTRY
+
+    for provider in PROVIDER_REGISTRY:
+        if provider.endpoint_env_var:
+            env = complete_env()
+            env[provider.endpoint_env_var] = "https://endpoint.example.test"
+            checks = validator.preflight_checks(
+                env=env,
+                expected_environment="dev",
+                expected_sha=EXPECTED_SHA,
+                root=ROOT,
+            )
+            by_name = {c.name: c for c in checks}
+            assert by_name["runtime:no_provider_endpoints_projected"].ok is False
+            assert provider.endpoint_env_var in by_name["runtime:no_provider_endpoints_projected"].detail
+
+        for cred in provider.credentials:
+            if cred.env_var:
+                env = complete_env()
+                env[cred.env_var] = "test-secret-value"
+                checks = validator.preflight_checks(
+                    env=env,
+                    expected_environment="dev",
+                    expected_sha=EXPECTED_SHA,
+                    root=ROOT,
+                )
+                by_name = {c.name: c for c in checks}
+                assert by_name["runtime:no_provider_secrets_projected"].ok is False
+                assert cred.env_var in by_name["runtime:no_provider_secrets_projected"].detail
+
+            if cred.status_env_var and cred.status_env_var != "ODP_COMPETITOR_MANUAL_SOURCE_STATUS":
+                env = complete_env()
+                env[cred.status_env_var] = "active"
+                checks = validator.preflight_checks(
+                    env=env,
+                    expected_environment="dev",
+                    expected_sha=EXPECTED_SHA,
+                    root=ROOT,
+                )
+                by_name = {c.name: c for c in checks}
+                assert by_name["runtime:no_provider_auth_status_projected"].ok is False
+                assert cred.status_env_var in by_name["runtime:no_provider_auth_status_projected"].detail
+

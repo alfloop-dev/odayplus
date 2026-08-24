@@ -207,15 +207,30 @@ def validate(root: Path = ROOT) -> list[str]:
         if pattern.search(combined):
             errors.append(f"plaintext secret-like assignment matched {pattern.pattern!r}")
 
+    variables = texts.get("variables.tf", "")
+    if re.search(r'variable\s+"external_provider_', variables):
+        errors.append("variables.tf must not define external_provider_* variables (provider-off contract)")
+    if "external_provider_endpoints" in variables:
+        errors.append("variables.tf must not expose external_provider_endpoints")
+    if "external_provider_secret_refs" in variables:
+        errors.append("variables.tf must not expose external_provider_secret_refs")
+
     outputs = texts.get("outputs.tf", "")
     for forbidden in (
         "random_password.database.result",
         "secret_data",
         "password =",
         "password=",
+        "runtime_egress_ip",
+        "google_compute_router_nat",
+        "router_nat",
+        "nat_ip",
     ):
         if forbidden in outputs:
             errors.append(f"outputs.tf must not expose {forbidden!r}")
+
+    network = texts.get("network.tf", "")
+    errors.extend(validate_egress_contract(network))
 
     if not re.search(
         r'ODP_PERSISTENCE\s*=\s*"postgresql"',
@@ -233,6 +248,94 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append("main.tf must not define required_provider_secret_env_names")
     if "is_locked        = var.lock_retention_policy" not in texts.get("audit/main.tf", ""):
         errors.append("audit retention lock is not environment-controlled")
+
+    return errors
+
+
+def validate_egress_contract(network_text: str) -> list[str]:
+    """Computably verify fail-closed egress firewall rules and absence of Cloud NAT."""
+    errors: list[str] = []
+    if "google_compute_router_nat" in network_text:
+        errors.append("network.tf must not define google_compute_router_nat (Cloud NAT disabled)")
+    if "google_compute_router" in network_text:
+        errors.append("network.tf must not define google_compute_router (Cloud NAT disabled)")
+
+    firewall_pattern = re.compile(
+        r'resource\s+"google_compute_firewall"\s+"([^"]+)"\s*\{(?P<body>.*?)\n\}',
+        re.DOTALL,
+    )
+    firewalls: dict[str, str] = {}
+    for match in firewall_pattern.finditer(network_text):
+        name = match.group(1)
+        firewalls[name] = match.group("body")
+
+    if "deny_all_egress" not in firewalls:
+        errors.append("network.tf: missing required firewall rule 'deny_all_egress'")
+    else:
+        body = firewalls["deny_all_egress"]
+        if not re.search(r'direction\s*=\s*"EGRESS"', body):
+            errors.append("deny_all_egress: direction must be EGRESS")
+        if not re.search(r'priority\s*=\s*65534\b', body):
+            errors.append("deny_all_egress: priority must be 65534")
+        if not re.search(r'deny\s*\{\s*protocol\s*=\s*"all"\s*\}', body):
+            errors.append("deny_all_egress: must deny protocol 'all'")
+        dest_match = re.search(r'destination_ranges\s*=\s*\[(.*?)\]', body, re.DOTALL)
+        if not dest_match:
+            errors.append("deny_all_egress: missing destination_ranges")
+        else:
+            ranges = [r.strip().strip('"') for r in dest_match.group(1).split(",") if r.strip()]
+            if ranges != ["0.0.0.0/0"]:
+                errors.append(f"deny_all_egress: destination_ranges must be ['0.0.0.0/0'], got {ranges}")
+
+    if "allow_private_egress" not in firewalls:
+        errors.append("network.tf: missing required firewall rule 'allow_private_egress'")
+    else:
+        body = firewalls["allow_private_egress"]
+        if not re.search(r'direction\s*=\s*"EGRESS"', body):
+            errors.append("allow_private_egress: direction must be EGRESS")
+        if not re.search(r'priority\s*=\s*1000\b', body):
+            errors.append("allow_private_egress: priority must be 1000")
+        if not re.search(r'allow\s*\{\s*protocol\s*=\s*"all"\s*\}', body):
+            errors.append("allow_private_egress: must allow protocol 'all'")
+        dest_match = re.search(r'destination_ranges\s*=\s*\[(.*?)\]', body, re.DOTALL)
+        if not dest_match:
+            errors.append("allow_private_egress: missing destination_ranges")
+        else:
+            ranges = {r.strip().strip('"') for r in dest_match.group(1).split(",") if r.strip()}
+            allowed_rfc1918 = {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "var.network_cidr"}
+            if not ranges.issubset(allowed_rfc1918) or not ranges:
+                errors.append(f"allow_private_egress: destination_ranges contains non-RFC1918 destinations: {ranges - allowed_rfc1918}")
+
+    if "allow_restricted_google_apis" not in firewalls:
+        errors.append("network.tf: missing required firewall rule 'allow_restricted_google_apis'")
+    else:
+        body = firewalls["allow_restricted_google_apis"]
+        if not re.search(r'direction\s*=\s*"EGRESS"', body):
+            errors.append("allow_restricted_google_apis: direction must be EGRESS")
+        if not re.search(r'priority\s*=\s*1000\b', body):
+            errors.append("allow_restricted_google_apis: priority must be 1000")
+        if not re.search(r'allow\s*\{[^}]*protocol\s*=\s*"tcp"', body):
+            errors.append("allow_restricted_google_apis: must allow protocol 'tcp'")
+        ports_match = re.search(r'ports\s*=\s*\[(.*?)\]', body)
+        if not ports_match:
+            errors.append("allow_restricted_google_apis: missing ports definition")
+        else:
+            ports = [p.strip().strip('"') for p in ports_match.group(1).split(",") if p.strip()]
+            if ports != ["443"]:
+                errors.append(f"allow_restricted_google_apis: ports must be ['443'], got {ports}")
+        dest_match = re.search(r'destination_ranges\s*=\s*\[(.*?)\]', body, re.DOTALL)
+        if not dest_match:
+            errors.append("allow_restricted_google_apis: missing destination_ranges")
+        else:
+            ranges = {r.strip().strip('"') for r in dest_match.group(1).split(",") if r.strip()}
+            allowed_google_apis = {"199.36.153.4/30", "199.36.153.8/30"}
+            if ranges != allowed_google_apis:
+                errors.append(f"allow_restricted_google_apis: destination_ranges must be {allowed_google_apis}, got {ranges}")
+
+    known_egress = {"deny_all_egress", "allow_private_egress", "allow_restricted_google_apis"}
+    for name, body in firewalls.items():
+        if name not in known_egress and re.search(r'direction\s*=\s*"EGRESS"', body):
+            errors.append(f"network.tf: unexpected egress firewall rule {name!r}")
 
     return errors
 

@@ -1349,6 +1349,71 @@ def selected_provider_config_checks(
     return checks
 
 
+def dynamic_provider_env_inventory() -> dict[str, set[str]]:
+    """Dynamically discover external provider configuration environment variables from the provider registry."""
+    try:
+        from modules.external_data.connectors.provider_registry import (
+            PRODUCTION_PROVIDER_IDS_ENV_VAR,
+            PROVIDER_REGISTRY,
+        )
+
+        endpoints: set[str] = {p.endpoint_env_var for p in PROVIDER_REGISTRY if p.endpoint_env_var}
+        secrets: set[str] = set()
+        for p in PROVIDER_REGISTRY:
+            for cred in p.credentials:
+                if cred.env_var:
+                    secrets.add(cred.env_var)
+                    secrets.add(f"{cred.env_var}_SECRET")
+        auth_statuses: set[str] = {
+            cred.status_env_var
+            for p in PROVIDER_REGISTRY
+            for cred in p.credentials
+            if cred.status_env_var and cred.status_env_var != "ODP_COMPETITOR_MANUAL_SOURCE_STATUS"
+        }
+        general: set[str] = {
+            PRODUCTION_PROVIDER_IDS_ENV_VAR,
+            PROVIDER_PROBE_TIMEOUT_ENV,
+        }
+    except Exception:
+        endpoints = {
+            "ODP_LISTING_PROVIDER_FEED_URL",
+            "ODP_POI_PROVIDER_URL",
+            "ODP_GEOCODE_PROVIDER_URL",
+            "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
+        }
+        secrets = {
+            "ODP_LISTING_PROVIDER_API_KEY",
+            "ODP_LISTING_PROVIDER_API_KEY_SECRET",
+            "ODP_POI_PROVIDER_API_KEY",
+            "ODP_POI_PROVIDER_API_KEY_SECRET",
+            "ODP_GEOCODE_PROVIDER_API_KEY",
+            "ODP_GEOCODE_PROVIDER_API_KEY_SECRET",
+            "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
+            "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET",
+            "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",
+            "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET",
+            "ODP_STORE_OPENING_AUTHORITY_ATTESTATION",
+            "ODP_STORE_OPENING_AUTHORITY_ATTESTATION_SECRET",
+        }
+        auth_statuses = {
+            "ODP_LISTING_PROVIDER_AUTH_STATUS",
+            "ODP_POI_PROVIDER_AUTH_STATUS",
+            "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
+            "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
+            "ODP_STORE_OPENING_AUTHORITY_STATUS",
+        }
+        general = {
+            "ODP_PRODUCTION_PROVIDER_IDS",
+            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
+        }
+    return {
+        "endpoints": endpoints,
+        "secrets": secrets,
+        "auth_statuses": auth_statuses,
+        "general": general,
+    }
+
+
 def preflight_checks(
     *,
     env: Mapping[str, str],
@@ -1458,13 +1523,62 @@ def preflight_checks(
         )
     )
 
-    # Acceptance 2: Deploy script / workflow / env must not project provider endpoints or secrets
+    # Acceptance 2: Deploy script / workflow / env must not project provider IDs or probe timeout in consumer-only deployment
+    raw_provider_ids = env.get(PRODUCTION_PROVIDER_IDS_ENV, "").strip()
+    checks.append(
+        CheckResult(
+            not raw_provider_ids,
+            "runtime:no_production_provider_ids_projected",
+            (
+                "no external provider IDs projected in consumer-only deployment"
+                if not raw_provider_ids
+                else f"external provider IDs must not be projected in consumer-only deployment: {raw_provider_ids}"
+            ),
+        )
+    )
+
+    raw_probe_timeout = env.get(PROVIDER_PROBE_TIMEOUT_ENV, "").strip()
+    checks.append(
+        CheckResult(
+            not raw_probe_timeout,
+            "runtime:no_provider_probe_timeout_projected",
+            (
+                "no external provider probe timeout projected in consumer-only deployment"
+                if not raw_probe_timeout
+                else f"external provider probe timeout must not be projected in consumer-only deployment: {raw_probe_timeout}"
+            ),
+        )
+    )
+
+    # Acceptance 3: Deploy script / workflow / env must not project provider secrets, endpoints, or auth status
+    inv = dynamic_provider_env_inventory()
+
     forbidden_provider_secrets = [
         key
         for key in env
-        if re.match(
-            r"^ODP_(?:LISTING|POI|GEOCODE|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER)_[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)",
-            key,
+        if (
+            key in inv["secrets"]
+            or re.match(
+                r"^ODP_(?:LISTING|POI|GEOCODE|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER|STORE_OPENING)_[A-Z0-9_]*(?:API_KEY|TOKEN|SECRET)",
+                key,
+            )
+            or (
+                key.startswith("ODP_")
+                and key.endswith(
+                    (
+                        "_API_KEY",
+                        "_TOKEN",
+                        "_API_KEY_SECRET",
+                        "_TOKEN_SECRET",
+                        "_ATTESTATION",
+                        "_ATTESTATION_SECRET",
+                    )
+                )
+                and "AUTH" not in key
+                and "WEB" not in key
+                and "SESSION" not in key
+                and "JWKS" not in key
+            )
         )
         and env[key].strip()
     ]
@@ -1483,9 +1597,12 @@ def preflight_checks(
     forbidden_provider_endpoints = [
         key
         for key in env
-        if re.match(
-            r"^ODP_(?:LISTING|POI|GEOCODE|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER)_[A-Z0-9_]*(?:FEED_URL|URL)$",
-            key,
+        if (
+            key in inv["endpoints"]
+            or re.match(
+                r"^ODP_(?:LISTING|POI|GEOCODE|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER|STORE_OPENING)_[A-Z0-9_]*(?:FEED_URL|URL)$",
+                key,
+            )
         )
         and env[key].strip()
     ]
@@ -1497,6 +1614,33 @@ def preflight_checks(
                 "no external provider endpoints projected"
                 if not forbidden_provider_endpoints
                 else f"external provider endpoints must not be projected: {','.join(sorted(forbidden_provider_endpoints))}"
+            ),
+        )
+    )
+
+    forbidden_provider_auth_status = [
+        key
+        for key in env
+        if (
+            key in inv["auth_statuses"]
+            or (
+                re.match(
+                    r"^ODP_(?:LISTING|POI|GEOCODE|ADMIN_BOUNDARY|DEMOGRAPHICS|WEATHER|STORE_OPENING)_[A-Z0-9_]*(?:AUTH_STATUS|STATUS)$",
+                    key,
+                )
+                and key != "ODP_COMPETITOR_MANUAL_SOURCE_STATUS"
+            )
+        )
+        and env[key].strip()
+    ]
+    checks.append(
+        CheckResult(
+            not forbidden_provider_auth_status,
+            "runtime:no_provider_auth_status_projected",
+            (
+                "no external provider auth status projected"
+                if not forbidden_provider_auth_status
+                else f"external provider auth status must not be projected: {','.join(sorted(forbidden_provider_auth_status))}"
             ),
         )
     )

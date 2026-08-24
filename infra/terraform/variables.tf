@@ -350,20 +350,6 @@ variable "mlflow_tracking_uri" {
   default     = ""
 }
 
-variable "external_provider_endpoints" {
-  type        = map(string)
-  description = "Runtime environment variable to approved live-provider HTTPS endpoint."
-  default     = {}
-}
-
-variable "external_provider_secret_refs" {
-  type = map(object({
-    secret_id = string
-    version   = string
-  }))
-  description = "Runtime provider credential environment variable to pinned Secret Manager secret id/version. Secret values never enter Terraform variables."
-  default     = {}
-}
 
 variable "model_runtime_config" {
   type        = map(string)
