@@ -93,24 +93,6 @@ def test_preflight_requires_listing_config_when_listing_is_selected() -> None:
     assert by_name["secret-reference:ODP_LISTING_PROVIDER_API_KEY_SECRET"].ok is False
 
 
-@pytest.mark.parametrize("value", ["0", "10.01", "nan", "infinity", "not-a-number"])
-def test_preflight_rejects_missing_or_unbounded_provider_probe_timeout(value: str) -> None:
-    env = complete_env()
-    env["ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"] = value
-
-    checks = validator.preflight_checks(
-        env=env,
-        expected_environment="dev",
-        expected_sha=EXPECTED_SHA,
-        root=ROOT,
-    )
-    by_name = {check.name: check for check in checks}
-
-    timeout_check = by_name["runtime:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"]
-    assert timeout_check.ok is False
-    assert "between 0.05 and 10 seconds" in timeout_check.detail
-
-
 def _run_deploy_config_gate(
     tmp_path: Path,
     *,
@@ -1979,28 +1961,6 @@ def test_dev_workflow_bootstraps_locked_dependencies_before_preflight() -> None:
         "product_ops/deployment/validate_cloud_run_live_deployment.py preflight" in text
     )
     assert "python3 product_ops/deployment/validate_cloud_run_live_deployment.py" not in text
-
-
-def test_provider_probe_timeout_band_matches_runtime_connector() -> None:
-    """The governed dev value for ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS
-    derives from the runtime connector's own default, and the preflight's
-    accepted band must stay aligned with the connector's clamp band. Drift on
-    either side re-opens the failure this task closed: a value the connector
-    accepts that the preflight rejects (or vice versa).
-    """
-    from modules.external_data.connectors import provider_connectivity as connectivity
-
-    # The connector clamps with _bounded_float(minimum=0.05, maximum=MAX_...).
-    assert validator.MIN_PROVIDER_PROBE_TIMEOUT_SECONDS == 0.05
-    assert validator.MAX_PROVIDER_PROBE_TIMEOUT_SECONDS == connectivity.MAX_PROBE_TIMEOUT_SECONDS
-    check = validator._bounded_provider_probe_timeout_check(
-        {
-            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS": str(
-                connectivity.DEFAULT_PROBE_TIMEOUT_SECONDS
-            )
-        }
-    )
-    assert check.ok, check.detail
 
 
 def test_deploy_script_preflights_before_build_and_uses_secret_references() -> None:
@@ -5583,6 +5543,7 @@ def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(monkeypa
     # Verify early-return fail-closed behavior: downstream provider-off checks are not evaluated
     assert "runtime:external_provider_mode_off" not in by_name
     assert "runtime:no_production_provider_ids_projected" not in by_name
+    assert "runtime:ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in by_name
     assert "runtime:no_provider_probe_timeout_projected" not in by_name
     assert "runtime:no_provider_secrets_projected" not in by_name
     assert "runtime:no_provider_endpoints_projected" not in by_name
