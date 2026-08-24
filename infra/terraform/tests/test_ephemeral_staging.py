@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 import unittest
@@ -61,7 +62,10 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
 
     def test_module_no_dynamic_timestamp_leak(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
-        self.assertNotIn("timestamp()", main_tf)
+        # Direct dynamic timestamp() is forbidden during apply to prevent perpetual diffs,
+        # but plan-time plantimestamp() is required in lifecycle preconditions for future guard.
+        self.assertFalse(re.search(r"(?<!plan)timestamp\(\)", main_tf))
+        self.assertIn("plantimestamp()", main_tf)
         self.assertNotIn('"2026-08-24T00:00:00Z"', main_tf)
         self.assertIn("timeadd(local.created_at", main_tf)
         self.assertIn("var.created_at", main_tf)
@@ -69,13 +73,17 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
     def test_release_and_owner_identity_matches_python_normalization_order(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         # Terraform must lowercase before replacing punctuation, matching
-        # staging_lifecycle.sanitize_release_suffix / bounded_label_value for IDs such as REL_1.0 or ODP-TASK-001.
+        # staging_lifecycle.sanitize_release_suffix / bounded_label_value for IDs such as REL_1.0 or ODP_TASK_001.
         self.assertIn(
             'replace(lower(var.release_id), "/[^a-z0-9-]/", "-")',
             main_tf,
         )
         self.assertIn(
-            'replace(lower(var.owner_task_id), "/[^a-z0-9-]/", "-")',
+            'replace(lower(var.owner_task_id), "/[^a-z0-9_-]/", "-")',
+            main_tf,
+        )
+        self.assertIn(
+            'replace(lower(local.tenant_id), "/[^a-z0-9_-]/", "-")',
             main_tf,
         )
 
@@ -127,6 +135,111 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('output "staging_data_bucket"', outputs_tf)
         self.assertIn('output "staging_tenant_id"', outputs_tf)
         self.assertIn('output "resource_labels"', outputs_tf)
+
+    def test_cross_implementation_tenant_and_owner_normalization(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            bounded_label_value,
+            generate_staging_labels,
+            tenant_label_value,
+        )
+
+        tenant_id = "custom_tenant"
+        owner_task_id = "ODP_TASK_001"
+        release_id = "odp-20260824-001"
+        candidate_sha = "0" * 40
+        manifest_digest = "sha256:" + "0" * 64
+
+        labels = generate_staging_labels(
+            release_id=release_id,
+            candidate_sha=candidate_sha,
+            manifest_digest=manifest_digest,
+            owner_task_id=owner_task_id,
+            tenant_id=tenant_id,
+        )
+
+        self.assertEqual(labels["tenant"], "custom_tenant")
+        self.assertEqual(labels["owner_task"], "odp_task_001")
+        self.assertEqual(bounded_label_value(tenant_id), "custom_tenant")
+        self.assertEqual(bounded_label_value(owner_task_id), "odp_task_001")
+        self.assertEqual(tenant_label_value(tenant_id), "custom_tenant")
+
+    def test_terraform_standalone_plan_guards_future_timestamp_and_accepts_valid(self) -> None:
+        import shutil
+        import subprocess
+        import tempfile
+        from datetime import UTC, datetime
+
+        if not shutil.which("terraform"):
+            self.skipTest("terraform binary not available in environment")
+
+        valid_now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        future_ts = "2099-01-01T00:00:00Z"
+
+        tfvars_content = {
+            "project_id": "test-staging-proj",
+            "region": "asia-east1",
+            "release_id": "odp-20260824-001",
+            "candidate_sha": "0" * 40,
+            "manifest_digest": "sha256:" + "0" * 64,
+            "api_image": "asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
+            "web_image": "asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            "ttl_hours": 24,
+            "owner_task_id": "ODP_TASK_001",
+            "tenant_id": "custom_tenant",
+            "cloud_sql_instance_name": "test-db",
+            "cloud_sql_connection_name": "test:asia-east1:test-db",
+            "network_name": "test-vpc",
+            "subnetwork_name": "test-subnet",
+            "kms_key_id": "projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
+            "deployer_service_account_email": "deployer@test.iam.gserviceaccount.com",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+            # Copy module files
+            for f in ("main.tf", "variables.tf", "outputs.tf"):
+                shutil.copy(MODULE_DIR / f, tmppath / f)
+
+            # Init terraform
+            init_res = subprocess.run(
+                ["terraform", f"-chdir={tmppath}", "init", "-backend=false"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(init_res.returncode, 0, f"terraform init failed: {init_res.stderr}")
+
+            # 1. Test future timestamp produces plan failure
+            future_vars = dict(tfvars_content)
+            future_vars["created_at"] = future_ts
+            (tmppath / "future.tfvars.json").write_text(json.dumps(future_vars), encoding="utf-8")
+
+            future_plan = subprocess.run(
+                ["terraform", f"-chdir={tmppath}", "plan", "-var-file=future.tfvars.json"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(
+                future_plan.returncode,
+                0,
+                "Terraform plan MUST fail closed on future created_at timestamp.",
+            )
+            self.assertIn("created_at cannot be in the future", future_plan.stderr + future_plan.stdout)
+
+            # 2. Test valid current timestamp produces plan success
+            valid_vars = dict(tfvars_content)
+            valid_vars["created_at"] = valid_now
+            (tmppath / "valid.tfvars.json").write_text(json.dumps(valid_vars), encoding="utf-8")
+
+            valid_plan = subprocess.run(
+                ["terraform", f"-chdir={tmppath}", "plan", "-var-file=valid.tfvars.json"],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                valid_plan.returncode,
+                0,
+                f"Terraform plan failed for valid inputs: {valid_plan.stderr}\n{valid_plan.stdout}",
+            )
 
 
 if __name__ == "__main__":

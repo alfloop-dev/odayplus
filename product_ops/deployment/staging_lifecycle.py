@@ -404,10 +404,17 @@ def generate_tfvars(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Generate Terraform variable mapping for ephemeral staging module."""
-    now_dt = created_at or (parse_timestamp(config.created_at) if config.created_at else (now or datetime.now(UTC)))
-    errors = validate_staging_config(config, now=now_dt)
+    ref_now = now or datetime.now(UTC)
+    errors = validate_staging_config(config, now=ref_now)
     if errors:
         raise ValueError(f"Cannot generate tfvars for invalid config: {'; '.join(errors)}")
+
+    if created_at is not None:
+        target_created_dt = created_at
+    elif config.created_at:
+        target_created_dt = parse_timestamp(config.created_at)
+    else:
+        target_created_dt = ref_now
 
     return {
         "project_id": config.project_id,
@@ -419,7 +426,7 @@ def generate_tfvars(
         "api_image": config.api_image,
         "web_image": config.web_image,
         "ttl_hours": config.ttl_hours,
-        "created_at": format_timestamp(now_dt),
+        "created_at": format_timestamp(target_created_dt),
         "owner_task_id": config.owner_task_id,
         "cloud_sql_instance_name": config.cloud_sql_instance_name,
         "cloud_sql_connection_name": config.cloud_sql_connection_name,
@@ -437,8 +444,14 @@ def plan_staging_resources(
     now: datetime | None = None,
 ) -> list[StagingResource]:
     """Compute the deterministic list of release-scoped ephemeral resources."""
-    now_dt = created_at or (parse_timestamp(config.created_at) if config.created_at else (now or datetime.now(UTC)))
-    expires = now_dt + timedelta(hours=config.ttl_hours)
+    ref_now = now or datetime.now(UTC)
+    if created_at is not None:
+        target_created_dt = created_at
+    elif config.created_at:
+        target_created_dt = parse_timestamp(config.created_at)
+    else:
+        target_created_dt = ref_now
+    expires = target_created_dt + timedelta(hours=config.ttl_hours)
     labels = generate_staging_labels(
         release_id=config.release_id,
         candidate_sha=config.candidate_sha,
@@ -446,12 +459,12 @@ def plan_staging_resources(
         owner_task_id=config.owner_task_id,
         tenant_id=config.tenant_id,
         ttl_hours=config.ttl_hours,
-        created_at=now_dt,
+        created_at=target_created_dt,
         additional_labels=config.additional_labels,
     )
 
     names = get_ephemeral_resource_names(config.release_id, config.project_id, tenant_id=config.tenant_id)
-    created_iso = format_timestamp(now_dt)
+    created_iso = format_timestamp(target_created_dt)
     expires_iso = format_timestamp(expires)
 
     return [

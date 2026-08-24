@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import sys
 import unittest
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -758,7 +759,10 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             cfg = dataclasses_replace(self.valid_config, created_at="", release_id="odp-rerun-test-001")
             planned_first = plan_staging_resources(cfg, created_at=first_time)
 
-            from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+            from product_ops.deployment.staging_lifecycle import (
+                _terraform_state_paths,
+                make_terraform_creation_executor,
+            )
             state_p, vars_p, inv_p = _terraform_state_paths(cfg.release_id, tmp_path)
 
             # Mock executor to simulate Terraform apply by writing files
@@ -865,7 +869,6 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         """Verify that an active resource whose TTL exceeds scanner max_ttl_hours is remediation-only and never auto-deleted."""
         now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
         created_time = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
-        expires_time = datetime(2026, 9, 1, 14, 0, 0, tzinfo=UTC)  # 168h TTL extension
 
         labels = generate_staging_labels(
             release_id="odp-legal-168h-001",
@@ -933,7 +936,6 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
     def test_scan_orphans_expired_over_policy_resource_is_auto_deleted_when_expired(self) -> None:
         """Verify that an over-policy resource is safely auto-deleted once it actually expires."""
         created_time = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
-        expires_time = datetime(2026, 9, 1, 14, 0, 0, tzinfo=UTC)
         now_after_expiry = datetime(2026, 9, 2, 14, 0, 0, tzinfo=UTC)  # Past expiry
 
         labels = generate_staging_labels(
@@ -998,6 +1000,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
     def test_cli_scan_orphans_validates_max_ttl_hours(self) -> None:
         """Verify that scan-orphans CLI command rejects invalid max_ttl_hours bounds."""
         import tempfile
+
         from product_ops.deployment.staging_lifecycle import main
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
@@ -1027,7 +1030,11 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         """
         import tempfile
         import unittest.mock as mock
-        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+            make_terraform_creation_executor,
+        )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -1085,7 +1092,11 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         """Verify that rerunning with a different manifest_digest on the same release is rejected."""
         import tempfile
         import unittest.mock as mock
-        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+            make_terraform_creation_executor,
+        )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -1126,6 +1137,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         """Verify that rerunning with changed container images or project_id is rejected."""
         import tempfile
         import unittest.mock as mock
+
         from product_ops.deployment.staging_lifecycle import make_terraform_creation_executor
 
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1179,7 +1191,11 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         """Verify that rerunning create with the exact same immutable identity succeeds idempotently."""
         import tempfile
         import unittest.mock as mock
-        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+            make_terraform_creation_executor,
+        )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -1245,7 +1261,12 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
     def test_cli_create_dry_run_rejects_immutable_identity_conflict(self) -> None:
         """Verify that CLI create --dry-run rejects mismatched immutable identity if state exists."""
         import tempfile
-        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, generate_tfvars, main
+
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+            generate_tfvars,
+            main,
+        )
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -1281,7 +1302,8 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
     def test_validate_immutable_release_identity_direct_cases(self) -> None:
         """Direct unit tests for validate_immutable_release_identity."""
         import tempfile
-        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, generate_tfvars, validate_immutable_release_identity
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, generate_tfvars
 
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -1318,6 +1340,58 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             cfg_bad_created = dataclasses_replace(cfg_base, created_at="2026-08-24T15:00:00Z")
             errs = validate_immutable_release_identity(cfg_bad_created, tmp_path)
             self.assertTrue(any("authoritative created_at" in e for e in errs))
+
+    def test_tenant_and_owner_punctuation_normalization_and_labels(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            bounded_label_value,
+            tenant_label_value,
+        )
+
+        cfg = dataclasses_replace(
+            self.valid_config,
+            tenant_id="custom_tenant",
+            owner_task_id="ODP_TASK_001",
+        )
+
+        # 1. Config validation passes
+        self.assertEqual(validate_staging_config(cfg), [])
+
+        # 2. Label generation preserves underscores
+        labels = generate_staging_labels(
+            release_id=cfg.release_id,
+            candidate_sha=cfg.candidate_sha,
+            manifest_digest=cfg.manifest_digest,
+            owner_task_id=cfg.owner_task_id,
+            tenant_id=cfg.tenant_id,
+        )
+        self.assertEqual(labels["tenant"], "custom_tenant")
+        self.assertEqual(labels["owner_task"], "odp_task_001")
+        self.assertEqual(bounded_label_value("custom_tenant"), "custom_tenant")
+        self.assertEqual(bounded_label_value("ODP_TASK_001"), "odp_task_001")
+        self.assertEqual(tenant_label_value("custom_tenant"), "custom_tenant")
+
+        # 3. Planned resources have consistent tenant and owner labels
+        planned = plan_staging_resources(cfg)
+        for r in planned:
+            self.assertEqual(r.labels["tenant"], "custom_tenant")
+            self.assertEqual(r.labels["owner_task"], "odp_task_001")
+
+        # 4. TFVars generation retains exact tenant_id and owner_task_id
+        tfvars = generate_tfvars(cfg, created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC))
+        self.assertEqual(tfvars["tenant_id"], "custom_tenant")
+        self.assertEqual(tfvars["owner_task_id"], "ODP_TASK_001")
+
+    def test_created_at_future_timestamp_guard(self) -> None:
+        # Future timestamp in config validation
+        future_cfg = dataclasses_replace(self.valid_config, created_at="2099-01-01T00:00:00Z")
+        now_dt = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+        errs = validate_staging_config(future_cfg, now=now_dt)
+        self.assertTrue(any("cannot be in the future" in e for e in errs))
+
+        # generate_tfvars rejects future created_at
+        with self.assertRaises(ValueError) as ctx:
+            generate_tfvars(future_cfg, now=now_dt)
+        self.assertIn("cannot be in the future", str(ctx.exception))
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:

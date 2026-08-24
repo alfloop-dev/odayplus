@@ -46,12 +46,12 @@ locals {
   release_hash   = substr(sha256(var.release_id), 0, 8)
   release_prefix = length(local.release_clean) > 0 ? trim(substr(local.release_clean, 0, 54), "-") : "rel"
   release_label  = length(local.release_prefix) > 0 ? "${local.release_prefix}-${local.release_hash}" : "rel-${local.release_hash}"
-  owner_clean    = trim(replace(lower(var.owner_task_id), "/[^a-z0-9-]/", "-"), "-")
+  owner_clean    = trim(replace(lower(var.owner_task_id), "/[^a-z0-9_-]/", "-"), "-")
   owner_label    = length(local.owner_clean) <= 63 ? local.owner_clean : "${substr(local.owner_clean, 0, 54)}-${substr(sha256(var.owner_task_id), 0, 8)}"
 
   # Release-scoped tenant isolation.
   tenant_id    = try(length(var.tenant_id) > 0, false) ? var.tenant_id : "tenant-${local.release_clean}-${local.release_hash}"
-  tenant_clean = trim(replace(lower(local.tenant_id), "/[^a-z0-9-]/", "-"), "-")
+  tenant_clean = trim(replace(lower(local.tenant_id), "/[^a-z0-9_-]/", "-"), "-")
   tenant_label = length(local.tenant_clean) <= 63 ? local.tenant_clean : "${substr(local.tenant_clean, 0, 54)}-${substr(sha256(local.tenant_id), 0, 8)}"
 
   # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
@@ -131,6 +131,17 @@ resource "terraform_data" "staging_ownership" {
       web_service_acct     = local.sa_web_id
       worker_service_acct  = local.sa_worker_id
       name_prefix          = local.name_prefix
+    }
+  }
+
+  lifecycle {
+    precondition {
+      condition     = timecmp(var.created_at, timeadd(plantimestamp(), "5m")) <= 0
+      error_message = "created_at cannot be in the future (exceeds current plan timestamp + 5 minutes)."
+    }
+    precondition {
+      condition     = timecmp(local.expires_at, timeadd(plantimestamp(), "${var.ttl_hours + 1}h")) <= 0
+      error_message = "expires_at exceeds maximum allowed TTL window from the current plan timestamp."
     }
   }
 
