@@ -85,7 +85,8 @@
     - `test_preflight_rejects_projected_production_provider_ids`: 驗證若部署環境投射 `ODP_PRODUCTION_PROVIDER_IDS`，預檢立即失敗。
     - `test_preflight_rejects_projected_provider_probe_timeout`: 驗證若部署環境投射 `ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS`，預檢立即失敗。
     - `test_preflight_dynamically_rejects_all_registered_provider_env_vars`: 動態遍歷 `PROVIDER_REGISTRY` 中所有 provider，驗證個別注入其 endpoint、credential、status env var 皆會使預檢 fail-closed。
-    - `test_preflight_fails_closed_when_provider_registry_cannot_be_loaded`: 驗證若 `PROVIDER_REGISTRY` 無法載入，預檢以 `repository:provider_registry_inventory` 明確 fail-closed。
+    - `test_preflight_fails_closed_when_provider_registry_cannot_be_loaded`: 驗證若 `PROVIDER_REGISTRY` 無法載入，預檢以 `repository:provider_registry_inventory` 明確 fail-closed 並 early-return 停止 provider-off 預檢。
+    - `test_dynamic_provider_env_inventory_returns_exact_general_keys_and_registry_vars`: 驗證動態註冊表直接導出所有 general keys 與 provider 變數，不含任何 getattr/connectivity 或手寫 fallback。
     - `test_consumer_only_job_secret_bindings_require_only_database`: 驗證 consumer 模式下 Job 僅需資料庫密鑰，不要求任何 provider 密鑰。
   - 在 `infra/terraform/tests/test_contract.py` 新增負向竄改測試：
     - `test_external_provider_variables_are_rejected`: 驗證 `variables.tf` 若重新加入 `external_provider_*` 變數會被拒絕。
@@ -113,4 +114,3 @@
 | Terraform 官方語法驗證 | `terraform -chdir=infra/terraform validate` | **Success! The configuration is valid (PASSED)** |
 | Terraform 契約單元測試 | `python3 -m unittest discover -s infra/terraform/tests -p 'test_*.py'` | **14/14 全部通過 (OK)** |
 | Ops 部署與上線檢核測試套件 | `uv run pytest tests/ops -q` | **全部通過 (PASSED)** |
-

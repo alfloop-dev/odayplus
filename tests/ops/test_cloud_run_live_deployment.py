@@ -5562,7 +5562,7 @@ def test_preflight_dynamically_rejects_all_registered_provider_env_vars() -> Non
 
 
 def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight fails closed if PROVIDER_REGISTRY cannot be loaded."""
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight fails closed and early-returns when PROVIDER_REGISTRY cannot be loaded."""
     def _failing_inventory(*_args: object, **_kwargs: object):
         raise RuntimeError("simulated PROVIDER_REGISTRY load failure")
 
@@ -5579,5 +5579,33 @@ def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(monkeypa
     assert by_name["repository:provider_registry_inventory"].ok is False
     assert "simulated PROVIDER_REGISTRY load failure" in by_name["repository:provider_registry_inventory"].detail
     assert not all(c.ok for c in checks)
+    assert checks[-1].name == "repository:provider_registry_inventory"
+    # Verify early-return fail-closed behavior: downstream provider-off checks are not evaluated
+    assert "runtime:external_provider_mode_off" not in by_name
+    assert "runtime:no_production_provider_ids_projected" not in by_name
+    assert "runtime:no_provider_probe_timeout_projected" not in by_name
+    assert "runtime:no_provider_secrets_projected" not in by_name
+    assert "runtime:no_provider_endpoints_projected" not in by_name
+    assert "runtime:no_provider_auth_status_projected" not in by_name
 
 
+def test_dynamic_provider_env_inventory_returns_exact_general_keys_and_registry_vars() -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: dynamic inventory derives all keys directly from provider_registry."""
+    from modules.external_data.connectors.provider_registry import (
+        LIVE_MODE_ENV_VAR,
+        PRODUCTION_PROVIDER_IDS_ENV_VAR,
+        PROVIDER_PROBE_TIMEOUT_ENV_VAR,
+    )
+
+    inv = validator.dynamic_provider_env_inventory(root=ROOT)
+    assert inv["live_mode_key"] == LIVE_MODE_ENV_VAR
+    assert inv["production_provider_ids_key"] == PRODUCTION_PROVIDER_IDS_ENV_VAR
+    assert inv["probe_timeout_key"] == PROVIDER_PROBE_TIMEOUT_ENV_VAR
+    assert inv["general"] == {
+        LIVE_MODE_ENV_VAR,
+        PRODUCTION_PROVIDER_IDS_ENV_VAR,
+        PROVIDER_PROBE_TIMEOUT_ENV_VAR,
+    }
+    assert "ODP_POI_PROVIDER_API_KEY" in inv["secrets"]
+    assert "ODP_POI_PROVIDER_URL" in inv["endpoints"]
+    assert "ODP_POI_PROVIDER_AUTH_STATUS" in inv["auth_statuses"]

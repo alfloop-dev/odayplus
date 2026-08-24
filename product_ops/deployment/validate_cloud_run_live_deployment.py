@@ -1349,14 +1349,13 @@ def selected_provider_config_checks(
     return checks
 
 
-def dynamic_provider_env_inventory(root: Path = ROOT) -> dict[str, set[str]]:
+def dynamic_provider_env_inventory(root: Path = ROOT) -> dict[str, Any]:
     """Dynamically discover external provider configuration environment variables from the provider registry."""
     root_text = str(root.resolve())
     if root_text not in sys.path:
         sys.path.insert(0, root_text)
     importlib.invalidate_caches()
     registry_module = importlib.import_module("modules.external_data.connectors.provider_registry")
-    connectivity_module = importlib.import_module("modules.external_data.connectors.provider_connectivity")
 
     endpoints: set[str] = {
         p.endpoint_env_var
@@ -1375,16 +1374,22 @@ def dynamic_provider_env_inventory(root: Path = ROOT) -> dict[str, set[str]]:
         for cred in p.credentials
         if cred.status_env_var and cred.status_env_var != "ODP_COMPETITOR_MANUAL_SOURCE_STATUS"
     }
+    live_mode_key = registry_module.LIVE_MODE_ENV_VAR
+    production_provider_ids_key = registry_module.PRODUCTION_PROVIDER_IDS_ENV_VAR
+    probe_timeout_key = registry_module.PROVIDER_PROBE_TIMEOUT_ENV_VAR
     general: set[str] = {
-        registry_module.LIVE_MODE_ENV_VAR,
-        registry_module.PRODUCTION_PROVIDER_IDS_ENV_VAR,
-        getattr(registry_module, "PROVIDER_PROBE_TIMEOUT_ENV_VAR", connectivity_module.PROBE_TIMEOUT_ENV_VAR),
+        live_mode_key,
+        production_provider_ids_key,
+        probe_timeout_key,
     }
     return {
         "endpoints": endpoints,
         "secrets": secrets,
         "auth_statuses": auth_statuses,
         "general": general,
+        "live_mode_key": live_mode_key,
+        "production_provider_ids_key": production_provider_ids_key,
+        "probe_timeout_key": probe_timeout_key,
     }
 
 
@@ -1486,37 +1491,26 @@ def preflight_checks(
     # Provider registry environment inventory discovery
     try:
         inv = dynamic_provider_env_inventory(root=root)
-        registry_loaded = True
-        inventory_error = ""
     except Exception as exc:
-        inv = {
-            "endpoints": set(),
-            "secrets": set(),
-            "auth_statuses": set(),
-            "general": set(),
-        }
-        registry_loaded = False
-        inventory_error = str(exc)
+        checks.append(
+            CheckResult(
+                ok=False,
+                name="repository:provider_registry_inventory",
+                detail=f"failed to load provider registry inventory: {exc}",
+            )
+        )
+        return checks
 
     checks.append(
         CheckResult(
-            ok=registry_loaded,
+            ok=True,
             name="repository:provider_registry_inventory",
-            detail=(
-                "provider registry inventory loaded dynamically"
-                if registry_loaded
-                else f"failed to load provider registry inventory: {inventory_error}"
-            ),
+            detail="provider registry inventory loaded dynamically",
         )
     )
 
     # Acceptance 1: Production must not enable external provider live mode
-    live_mode_key = (
-        "ODP_EXTERNAL_PROVIDER_MODE"
-        if "ODP_EXTERNAL_PROVIDER_MODE" in inv["general"]
-        else "ODP_EXTERNAL_PROVIDER_MODE"
-    )
-    provider_mode = env.get(live_mode_key, "").strip().lower()
+    provider_mode = env.get(inv["live_mode_key"], "").strip().lower()
     checks.append(
         CheckResult(
             provider_mode != "live",
@@ -1530,12 +1524,7 @@ def preflight_checks(
     )
 
     # Acceptance 2: Deploy script / workflow / env must not project provider IDs or probe timeout in consumer-only deployment
-    raw_provider_ids = env.get(
-        "ODP_PRODUCTION_PROVIDER_IDS"
-        if "ODP_PRODUCTION_PROVIDER_IDS" in inv["general"]
-        else PRODUCTION_PROVIDER_IDS_ENV,
-        "",
-    ).strip()
+    raw_provider_ids = env.get(inv["production_provider_ids_key"], "").strip()
     checks.append(
         CheckResult(
             not raw_provider_ids,
@@ -1548,12 +1537,7 @@ def preflight_checks(
         )
     )
 
-    raw_probe_timeout = env.get(
-        "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"
-        if "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" in inv["general"]
-        else PROVIDER_PROBE_TIMEOUT_ENV,
-        "",
-    ).strip()
+    raw_probe_timeout = env.get(inv["probe_timeout_key"], "").strip()
     checks.append(
         CheckResult(
             not raw_probe_timeout,
@@ -1660,7 +1644,7 @@ def preflight_checks(
         )
     )
 
-    raw_ids = env.get(PRODUCTION_PROVIDER_IDS_ENV, "")
+    raw_ids = env.get(inv["production_provider_ids_key"], "")
     if raw_ids.strip():
         allowlist_checks, production_provider_ids = provider_allowlist_checks(
             env=env,
