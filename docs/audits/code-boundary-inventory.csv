@@ -278,6 +278,7 @@ infra/mlflow/entrypoint.py,product_system,product_required,true,,engineering;ope
 infra/mlflow/healthcheck.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 infra/mlflow/runtime.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 infra/terraform/tests/test_contract.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+infra/terraform/tests/test_ephemeral_staging.py,verification,verification_only,false,development_delivery_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 infra/terraform/validate_contract.py,development_delivery_tooling,delivery_only,false,,engineering,true,"The product will no longer be built, secured, released, or maintained from this repository."
 models/model_ready/__init__.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
 models/model_ready/contracts.py,product_system,product_required,true,,engineering;operations;production,false,Product capability is retired through a product migration.
@@ -620,6 +621,7 @@ product_ops/data_platform/backfill.py,product_operations_tooling,operations_requ
 product_ops/deployment/cloud_run_job_entrypoint.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/deployment/cloud_run_traffic.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/deployment/cloud_scheduler_trigger.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
+product_ops/deployment/staging_lifecycle.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/deployment/validate_cloud_run_live_deployment.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/external_data_backfill.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/migrations/assisted_listing_intake/migrate.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
@@ -903,6 +905,7 @@ tests/ops/test_cloud_run_job_entrypoint.py,verification,verification_only,false,
 tests/ops/test_cloud_run_live_deployment.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_data_domain_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_deploy_workflow_contract.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/ops/test_ephemeral_staging_lifecycle.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_migration_backfill.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_runtime_config_code_closeout.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/performance/assisted_listing_intake/test_capacity.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
