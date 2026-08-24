@@ -775,6 +775,154 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             # Ensure deploy-dev.yml is present and untouched
             self.assertIn("deploy-dev.yml", files)
 
+    def test_scan_orphans_active_over_policy_resource_is_remediation_only_and_not_auto_deleted(self) -> None:
+        """Verify that an active resource whose TTL exceeds scanner max_ttl_hours is remediation-only and never auto-deleted."""
+        now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
+        created_time = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
+        expires_time = datetime(2026, 9, 1, 14, 0, 0, tzinfo=UTC)  # 168h TTL extension
+
+        labels = generate_staging_labels(
+            release_id="odp-legal-168h-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            created_at=created_time,
+            ttl_hours=168,
+        )
+
+        inventory = [
+            {"id": "active-168h-res", "type": "google_sql_database", "labels": labels},
+        ]
+
+        deleted_items: list[str] = []
+
+        def mock_cleaner(res: Mapping[str, Any]) -> bool:
+            deleted_items.append(str(res.get("id")))
+            return True
+
+        # Under default 24h scanner with auto_cleanup=True:
+        # Must be active=1, expired=0, orphan=1, cleaned=0 (auto-deletion refused, remediation task generated)
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            max_ttl_hours=24,
+            now=now,
+            auto_cleanup=True,
+            deletion_executor=mock_cleaner,
+        )
+
+        self.assertEqual(result.active_count, 1)
+        self.assertEqual(result.expired_count, 0)
+        self.assertEqual(result.orphan_count, 1)
+        self.assertEqual(result.cleaned_count, 0)
+        self.assertEqual(deleted_items, [])
+        self.assertEqual(result.failed_cleanups, 1)
+        self.assertEqual(len(result.remediation_tasks), 1)
+        self.assertEqual(result.remediation_tasks[0]["task_type"], "ephemeral_staging_orphan_remediation")
+        self.assertTrue(any("active" in err.lower() and "automatic deletion refused" in err.lower() for err in result.remediation_tasks[0]["errors"]))
+        self.assertTrue(any("exceeds maximum TTL" in alert for alert in result.alerts))
+
+        # Under 168h scanner:
+        # Resource is within policy and active -> orphan_count=0, remediation_tasks=0
+        result_168 = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            max_ttl_hours=168,
+            now=now,
+            auto_cleanup=True,
+            deletion_executor=mock_cleaner,
+        )
+        self.assertEqual(result_168.active_count, 1)
+        self.assertEqual(result_168.expired_count, 0)
+        self.assertEqual(result_168.orphan_count, 0)
+        self.assertEqual(result_168.cleaned_count, 0)
+        self.assertEqual(result_168.failed_cleanups, 0)
+        self.assertEqual(len(result_168.remediation_tasks), 0)
+
+    def test_scan_orphans_expired_over_policy_resource_is_auto_deleted_when_expired(self) -> None:
+        """Verify that an over-policy resource is safely auto-deleted once it actually expires."""
+        created_time = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
+        expires_time = datetime(2026, 9, 1, 14, 0, 0, tzinfo=UTC)
+        now_after_expiry = datetime(2026, 9, 2, 14, 0, 0, tzinfo=UTC)  # Past expiry
+
+        labels = generate_staging_labels(
+            release_id="odp-expired-168h-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            created_at=created_time,
+            ttl_hours=168,
+        )
+
+        inventory = [
+            {"id": "expired-168h-res", "type": "google_sql_database", "labels": labels},
+        ]
+
+        deleted_items: list[str] = []
+
+        def mock_cleaner(res: Mapping[str, Any]) -> bool:
+            deleted_items.append(str(res.get("id")))
+            return True
+
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            max_ttl_hours=24,
+            now=now_after_expiry,
+            auto_cleanup=True,
+            deletion_executor=mock_cleaner,
+        )
+
+        self.assertEqual(result.active_count, 0)
+        self.assertEqual(result.expired_count, 1)
+        self.assertEqual(result.orphan_count, 1)
+        self.assertEqual(result.cleaned_count, 1)
+        self.assertEqual(result.failed_cleanups, 0)
+        self.assertEqual(deleted_items, ["expired-168h-res"])
+        self.assertEqual(len(result.remediation_tasks), 0)
+
+    def test_scan_orphans_validates_max_ttl_hours_bounds(self) -> None:
+        """Verify that scan_orphans rejects max_ttl_hours outside 1..168."""
+        inventory: list[dict[str, Any]] = []
+
+        for bad_ttl in (0, -1, -24, 169, 500):
+            with self.assertRaises(ValueError):
+                scan_orphans(
+                    project_id="oday-staging-proj",
+                    resource_inventory=inventory,
+                    max_ttl_hours=bad_ttl,
+                )
+
+        # Valid bounds work without error
+        res_min = scan_orphans(project_id="oday-staging-proj", resource_inventory=inventory, max_ttl_hours=1)
+        self.assertEqual(res_min.total_scanned, 0)
+        res_max = scan_orphans(project_id="oday-staging-proj", resource_inventory=inventory, max_ttl_hours=168)
+        self.assertEqual(res_max.total_scanned, 0)
+
+    def test_cli_scan_orphans_validates_max_ttl_hours(self) -> None:
+        """Verify that scan-orphans CLI command rejects invalid max_ttl_hours bounds."""
+        import tempfile
+        from product_ops.deployment.staging_lifecycle import main
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as tf:
+            tf.write("[]")
+            tf_path = tf.name
+
+        try:
+            # 0 must exit 1
+            code_0 = main(["scan-orphans", "--project-id", "oday-staging-proj", "--inventory-file", tf_path, "--max-ttl-hours", "0"])
+            self.assertEqual(code_0, 1)
+
+            # 200 must exit 1
+            code_200 = main(["scan-orphans", "--project-id", "oday-staging-proj", "--inventory-file", tf_path, "--max-ttl-hours", "200"])
+            self.assertEqual(code_200, 1)
+
+            # 24 must exit 0
+            code_24 = main(["scan-orphans", "--project-id", "oday-staging-proj", "--inventory-file", tf_path, "--max-ttl-hours", "24"])
+            self.assertEqual(code_24, 0)
+        finally:
+            Path(tf_path).unlink(missing_ok=True)
+
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
     d = obj.to_dict()

@@ -1182,6 +1182,11 @@ def scan_orphans(
     deletion_executor: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> OrphanScanResult:
     """Scan inventory for expired ephemeral staging resources and unmanaged orphans."""
+    if not (1 <= max_ttl_hours <= MAX_TTL_HOURS):
+        raise ValueError(
+            f"Invalid max_ttl_hours: {max_ttl_hours}. Must be between 1 and {MAX_TTL_HOURS} hours."
+        )
+
     now_dt = now or datetime.now(UTC)
     scanned_total = len(resource_inventory)
 
@@ -1302,34 +1307,44 @@ def scan_orphans(
             alerts.append(f"Orphan resource has inverted TTL labels: {res_type} {res_id}")
             continue
 
-        if expires_dt - created_dt > timedelta(hours=max_ttl_hours):
-            orphan_resources.append({
-                "id": res_id,
-                "type": res_type,
-                "release_id": release_id,
-                "raw_release_id": raw_release_id or release_id,
-                "reason": f"TTL exceeds policy maximum of {max_ttl_hours}h",
-                "labels": dict(labels),
-            })
-            alerts.append(f"Staging resource exceeds maximum TTL: {res_type} {res_id}")
-            continue
-
-        if now_dt >= expires_dt:
-            is_expired = True
+        # Determine expiration & policy compliance
+        is_over_policy = (expires_dt - created_dt > timedelta(hours=max_ttl_hours))
+        is_expired = (now_dt >= expires_dt)
 
         if is_expired:
             expired_releases.add(release_id)
-            orphan_resources.append({
-                "id": res_id,
-                "type": res_type,
-                "release_id": release_id,
-                "raw_release_id": raw_release_id or release_id,
-                "reason": f"Resource expired (exceeded TTL {max_ttl_hours}h)",
-                "labels": dict(labels),
-            })
-            alerts.append(f"Expired staging resource found: {res_type} {res_id} (release: {release_id})")
+            if is_over_policy:
+                orphan_resources.append({
+                    "id": res_id,
+                    "type": res_type,
+                    "release_id": release_id,
+                    "raw_release_id": raw_release_id or release_id,
+                    "reason": f"Resource expired and exceeded TTL policy ({max_ttl_hours}h)",
+                    "labels": dict(labels),
+                })
+                alerts.append(f"Expired staging resource found (exceeded TTL policy {max_ttl_hours}h): {res_type} {res_id} (release: {release_id})")
+            else:
+                orphan_resources.append({
+                    "id": res_id,
+                    "type": res_type,
+                    "release_id": release_id,
+                    "raw_release_id": raw_release_id or release_id,
+                    "reason": f"Resource expired (exceeded TTL {max_ttl_hours}h)",
+                    "labels": dict(labels),
+                })
+                alerts.append(f"Expired staging resource found: {res_type} {res_id} (release: {release_id})")
         else:
             active_releases.add(release_id)
+            if is_over_policy:
+                orphan_resources.append({
+                    "id": res_id,
+                    "type": res_type,
+                    "release_id": release_id,
+                    "raw_release_id": raw_release_id or release_id,
+                    "reason": f"TTL exceeds policy maximum of {max_ttl_hours}h",
+                    "labels": dict(labels),
+                })
+                alerts.append(f"Staging resource exceeds maximum TTL: {res_type} {res_id}")
 
     # Perform auto cleanup on expired resources if requested
     if auto_cleanup and orphan_resources:
@@ -1358,6 +1373,35 @@ def scan_orphans(
                     "resource_type": item["type"],
                     "release_id": rel_id,
                     "errors": ["Resource lacks complete authoritative ownership labels; automatic deletion refused."],
+                    "timestamp": format_timestamp(now_dt),
+                })
+                continue
+
+            # Active resources (expires_at > now) must NEVER be auto-deleted.
+            # They are remediation-only until expired.
+            item_labels = res_dict["labels"]
+            expires_str = str(item_labels.get("expires_at", "")).strip()
+            try:
+                item_expires_dt = parse_timestamp(expires_str)
+                if now_dt < item_expires_dt:
+                    failed_cleanups += 1
+                    remediation_tasks.append({
+                        "task_type": "ephemeral_staging_orphan_remediation",
+                        "resource_id": item["id"],
+                        "resource_type": item["type"],
+                        "release_id": rel_id,
+                        "errors": ["Resource is active (expires_at > now); automatic deletion refused for over-policy staging resource."],
+                        "timestamp": format_timestamp(now_dt),
+                    })
+                    continue
+            except Exception:
+                failed_cleanups += 1
+                remediation_tasks.append({
+                    "task_type": "ephemeral_staging_orphan_remediation",
+                    "resource_id": item["id"],
+                    "resource_type": item["type"],
+                    "release_id": rel_id,
+                    "errors": ["Invalid expires_at timestamp; automatic deletion refused."],
                     "timestamp": format_timestamp(now_dt),
                 })
                 continue
@@ -1744,6 +1788,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if receipt.success else 1
 
     elif args.command == "scan-orphans":
+        if not (1 <= args.max_ttl_hours <= MAX_TTL_HOURS):
+            print(
+                f"ERROR: Invalid max_ttl_hours: {args.max_ttl_hours}. Must be between 1 and {MAX_TTL_HOURS} hours.",
+                file=sys.stderr,
+            )
+            return 1
         inventory = json.loads(Path(args.inventory_file).read_text(encoding="utf-8"))
         deletion_executors: dict[str, Callable[[Mapping[str, Any]], bool]] = {}
 
