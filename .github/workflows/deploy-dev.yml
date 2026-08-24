@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       release_lease:
-        description: "Supervisor release lease identifier"
+        description: "Base64-encoded signed Supervisor release lease document (JSON)"
         required: true
         type: string
 
@@ -50,19 +50,46 @@ jobs:
             exit 1
           fi
 
+      # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
+      # Ed25519 verification key and is deliberately a var, not a secret: it
+      # cannot sign, so publishing it grants nothing. `ODP_RELEASE_LEASE_STATE_DIR`
+      # must resolve to the Supervisor's durable lease state on this runner;
+      # admission fails closed when it does not, because a lease consumed
+      # against a directory the Supervisor cannot see has not been consumed.
       - name: Validate supervisor release admission
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
           RELEASE_TASK_ID: ${{ inputs.task_id }}
           RELEASE_LEASE: ${{ inputs.release_lease }}
+          ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
+          RELEASE_LEASE_STATE_DIR: ${{ vars.ODP_RELEASE_LEASE_STATE_DIR }}
         run: |
           set -euo pipefail
+          umask 077
+          printf '%s' "${RELEASE_LEASE}" | base64 -d > "${RUNNER_TEMP}/release-lease.json"
           python3 delivery_toolchain/release/check_runtime_admission.py \
             --sha "${RELEASE_SHA}" \
             --environment "${RELEASE_ENVIRONMENT}" \
             --task-id "${RELEASE_TASK_ID}" \
-            --lease "${RELEASE_LEASE}"
+            --lease-file "${RUNNER_TEMP}/release-lease.json" \
+            --lease-state-dir "${RELEASE_LEASE_STATE_DIR}" \
+            --receipt "${RUNNER_TEMP}/release-admission-receipt.json"
+
+      # The receipt is the audit trail for the admission decision. It carries
+      # digests of the nonce and signature rather than the values, so it is safe
+      # to publish whether or not the release was admitted.
+      - name: Publish release admission receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-admission-receipt-${{ inputs.environment }}
+          path: ${{ runner.temp }}/release-admission-receipt.json
+          if-no-files-found: warn
+
+      - name: Discard the lease document from the runner
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/release-lease.json"
 
   e2e-operational-evidence:
     needs: admission
