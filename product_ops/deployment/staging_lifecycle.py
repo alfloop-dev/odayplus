@@ -39,6 +39,7 @@ from typing import Any
 # --- Validation Regex Patterns ---
 
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
+TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
 SHA256_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 CANDIDATE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
@@ -184,11 +185,18 @@ def bounded_label_value(value: str, *, max_length: int = 63) -> str:
 
 
 def release_label_value(release_id: str) -> str:
-    """Return the canonical bounded release label used by Terraform and cleanup."""
+    """Return the canonical bounded release label used by Terraform and cleanup.
+
+    Always appends the deterministic hash of the exact raw release_id to guarantee unique
+    label identity and prevent collisions between release IDs that differ only by case
+    or punctuation (e.g. rel_1.0 vs rel.1.0 vs rel-1-0 vs REL_1.0 vs rel_1_0).
+    """
     normalized = sanitize_release_suffix(release_id)
-    if len(normalized) <= 63:
-        return normalized
-    return f"{normalized[:54]}-{compute_release_hash(release_id)}"
+    rel_hash = compute_release_hash(release_id)
+    prefix = normalized[:54].strip("-")
+    if prefix:
+        return f"{prefix}-{rel_hash}"
+    return f"rel-{rel_hash}"
 
 
 def get_ephemeral_resource_names(release_id: str, project_id: str = "") -> dict[str, str]:
@@ -276,6 +284,11 @@ def validate_staging_config(config: StagingConfig) -> list[str]:
     if not RELEASE_ID_PATTERN.fullmatch(config.release_id):
         errors.append(
             f"Invalid release_id: {config.release_id!r}. Must match {RELEASE_ID_PATTERN.pattern}"
+        )
+
+    if not config.owner_task_id or not TASK_ID_PATTERN.fullmatch(config.owner_task_id):
+        errors.append(
+            f"Invalid owner_task_id: {config.owner_task_id!r}. Must match {TASK_ID_PATTERN.pattern}"
         )
 
     if not CANDIDATE_SHA_PATTERN.fullmatch(config.candidate_sha):
@@ -1243,7 +1256,6 @@ def scan_orphans(
 
 def extend_staging_ttl(
     release_id: str,
-    *,
     extend_hours: int,
     reason: str,
     owner: str,
@@ -1257,6 +1269,7 @@ def extend_staging_ttl(
     Policy:
     - Ephemeral staging retention on failure must NOT exceed 24 hours without explicit owner and reason.
     - Maximum allowable extension cannot exceed 168 hours (7 days) from initial creation.
+    - Authoritative created_at timestamp is REQUIRED to prevent exceeding max TTL across multiple extensions.
     """
     now_dt = now or datetime.now(UTC)
 
@@ -1269,15 +1282,27 @@ def extend_staging_ttl(
     if extend_hours <= 0:
         raise ValueError("extend_hours must be positive.")
 
-    if extend_hours > max_total_ttl_hours:
-        raise ValueError(
-            f"extend_hours ({extend_hours}h) exceeds maximum allowable TTL of {max_total_ttl_hours} hours."
-        )
+    if created_at is None:
+        raise ValueError("TTL extension requires an authoritative 'created_at' timestamp.")
+
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    else:
+        created_at = created_at.astimezone(UTC)
+
+    if current_expires_at.tzinfo is None:
+        current_expires_at = current_expires_at.replace(tzinfo=UTC)
+    else:
+        current_expires_at = current_expires_at.astimezone(UTC)
+
+    if created_at > current_expires_at:
+        raise ValueError("created_at cannot be after current_expires_at.")
 
     new_expires_at = current_expires_at + timedelta(hours=extend_hours)
+    total_ttl_hours = (new_expires_at - created_at).total_seconds() / 3600.0
 
-    baseline_created = created_at or (current_expires_at - timedelta(hours=DEFAULT_TTL_HOURS))
-    total_ttl_hours = (new_expires_at - baseline_created).total_seconds() / 3600.0
+    if total_ttl_hours <= 0:
+        raise ValueError("Total TTL after extension must be positive.")
 
     if total_ttl_hours > max_total_ttl_hours:
         raise ValueError(
@@ -1414,7 +1439,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_p.add_argument("--web-image", required=True, help="Web image reference with @sha256")
     create_p.add_argument("--ttl-hours", type=int, default=DEFAULT_TTL_HOURS, help="TTL in hours")
     create_p.add_argument("--created-at", default="", help="Creation timestamp ISO")
-    create_p.add_argument("--owner-task-id", default="", help="Owner Task ID")
+    create_p.add_argument("--owner-task-id", required=True, help="Owner Task ID")
     create_p.add_argument("--dry-run", action="store_true", help="Perform dry-run planning only")
     create_p.add_argument("--tfvars-out", help="Path to write tfvars JSON")
     create_p.add_argument("--cloud-sql-connection-name", default="", help="Cloud SQL connection name")
@@ -1448,7 +1473,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ext_p.add_argument("--owner", required=True, help="Owner identity requesting extension")
     ext_p.add_argument("--reason", required=True, help="Documented reason for extension")
     ext_p.add_argument("--current-expires-at", required=True, help="Current expires_at ISO timestamp")
-    ext_p.add_argument("--created-at", default="", help="Initial created_at ISO timestamp")
+    ext_p.add_argument("--created-at", required=True, help="Initial created_at ISO timestamp")
 
     # validate-contract
     val_p = subparsers.add_parser("validate-contract", help="Validate ephemeral staging Terraform module")
@@ -1572,7 +1597,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     elif args.command == "extend-ttl":
         curr_exp = parse_timestamp(args.current_expires_at)
-        created_dt = parse_timestamp(args.created_at) if args.created_at else None
+        created_dt = parse_timestamp(args.created_at)
         res = extend_staging_ttl(
             release_id=args.release_id,
             extend_hours=args.extend_hours,

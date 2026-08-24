@@ -22,7 +22,9 @@ from product_ops.deployment.staging_lifecycle import (
     generate_staging_labels,
     generate_tfvars,
     get_ephemeral_resource_names,
+    is_staging_ephemeral_resource,
     plan_staging_resources,
+    release_label_value,
     scan_orphans,
     validate_module_contract,
     validate_staging_config,
@@ -59,6 +61,13 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         # Invalid release_id
         bad_cfg = dataclasses_replace(self.valid_config, release_id="invalid id with spaces")
         self.assertTrue(any("release_id" in err for err in validate_staging_config(bad_cfg)))
+
+        # Invalid owner_task_id
+        bad_cfg = dataclasses_replace(self.valid_config, owner_task_id="")
+        self.assertTrue(any("owner_task_id" in err for err in validate_staging_config(bad_cfg)))
+
+        bad_cfg = dataclasses_replace(self.valid_config, owner_task_id="invalid task id with spaces")
+        self.assertTrue(any("owner_task_id" in err for err in validate_staging_config(bad_cfg)))
 
         # Invalid candidate_sha
         bad_cfg = dataclasses_replace(self.valid_config, candidate_sha="not-a-40-char-sha")
@@ -112,6 +121,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
 
     def test_generate_staging_labels(self) -> None:
         now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+        rel_hash = compute_release_hash("odp-20260824-001")
         labels = generate_staging_labels(
             release_id="odp-20260824-001",
             candidate_sha="a" * 40,
@@ -125,7 +135,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["environment"], "staging")
         self.assertEqual(labels["managed_by"], "terraform")
         self.assertEqual(labels["ephemeral"], "true")
-        self.assertEqual(labels["release_id"], "odp-20260824-001")
+        self.assertEqual(labels["release_id"], f"odp-20260824-001-{rel_hash}")
         self.assertEqual(labels["candidate_sha"], "a" * 40)
         self.assertEqual(labels["manifest_digest_prefix"], "b" * 16)
         self.assertEqual(labels["owner_task"], "odp-ephemeral-staging-iac-001")
@@ -133,6 +143,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["expires_at"], "2026-08-25-12-00-00")
 
     def test_mandatory_labels_cannot_be_overridden(self) -> None:
+        rel_hash = compute_release_hash("odp-20260824-001")
         labels = generate_staging_labels(
             release_id="odp-20260824-001",
             candidate_sha="a" * 40,
@@ -150,7 +161,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["managed_by"], "terraform")
         self.assertEqual(labels["environment"], "staging")
         self.assertEqual(labels["ephemeral"], "true")
-        self.assertEqual(labels["release_id"], "odp-20260824-001")
+        self.assertEqual(labels["release_id"], f"odp-20260824-001-{rel_hash}")
         self.assertEqual(labels["custom_label"], "retained")
 
     def test_generate_tfvars(self) -> None:
@@ -413,7 +424,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(result.active_count, 1)
         self.assertEqual(result.expired_count, 1)
         self.assertEqual(result.orphan_count, 2)  # expired-res and unmanaged-res
-        self.assertIn("odp-expired-001", result.expired_releases)
+        self.assertIn(release_label_value("odp-expired-001"), result.expired_releases)
         self.assertTrue(len(result.alerts) >= 2)
 
     def test_scan_orphans_reports_staging_candidate_missing_app_label(self) -> None:
@@ -456,6 +467,41 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(ext["owner"], "Antigravity3")
         self.assertEqual(ext["new_expires_at"], "2026-08-25T06:00:00Z")
 
+        # Missing created_at must be rejected (cannot omit or infer)
+        with self.assertRaises(ValueError):
+            extend_staging_ttl(
+                release_id="odp-20260824-001",
+                extend_hours=12,
+                reason="debugging",
+                owner="Antigravity3",
+                current_expires_at=curr_expires,
+                created_at=None,
+            )
+
+        # Inverted created_at > current_expires_at must be rejected
+        with self.assertRaises(ValueError):
+            extend_staging_ttl(
+                release_id="odp-20260824-001",
+                extend_hours=12,
+                reason="debugging",
+                owner="Antigravity3",
+                current_expires_at=curr_expires,
+                created_at=curr_expires + timedelta(hours=1),
+            )
+
+        # An actually 168h-old release cannot be extended by even 1h (exceeds max 168h TTL)
+        old_created = datetime(2026, 8, 24, 0, 0, 0, tzinfo=UTC)
+        old_expires = datetime(2026, 8, 31, 0, 0, 0, tzinfo=UTC)  # 168h from old_created
+        with self.assertRaises(ValueError):
+            extend_staging_ttl(
+                release_id="odp-20260824-001",
+                extend_hours=1,
+                reason="debugging",
+                owner="Antigravity3",
+                current_expires_at=old_expires,
+                created_at=old_created,
+            )
+
         # 999h extension must be rejected
         with self.assertRaises(ValueError):
             extend_staging_ttl(
@@ -486,6 +532,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 reason="",
                 owner="Antigravity3",
                 current_expires_at=curr_expires,
+                created_at=created_at,
             )
 
         # Missing owner raises ValueError
@@ -496,7 +543,60 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 reason="debugging",
                 owner="",
                 current_expires_at=curr_expires,
+                created_at=created_at,
             )
+
+    def test_release_label_collision_avoidance_for_ambiguous_ids(self) -> None:
+        """Verify release IDs differing only by punctuation or case never collide in label or cleanup."""
+        ambiguous_ids = ["rel_1.0", "rel.1.0", "rel-1-0", "REL_1.0", "rel_1_0"]
+        labels_by_id = {}
+        for rid in ambiguous_ids:
+            lbl = release_label_value(rid)
+            self.assertLessEqual(len(lbl), 63)
+            self.assertNotIn(lbl, labels_by_id.values(), f"Collision detected for release_id {rid}")
+            labels_by_id[rid] = lbl
+
+        # Verify that generate_staging_labels and is_staging_ephemeral_resource enforce exact release isolation
+        staging_labels_by_id = {
+            rid: generate_staging_labels(
+                release_id=rid,
+                candidate_sha="a" * 40,
+                manifest_digest="sha256:" + "b" * 64,
+                owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            )
+            for rid in ambiguous_ids
+        }
+
+        # Each release must match ONLY its own target_release_id and reject all other ambiguous variants
+        for target_rid in ambiguous_ids:
+            for candidate_rid, candidate_lbl in staging_labels_by_id.items():
+                is_match = is_staging_ephemeral_resource(candidate_lbl, target_rid)
+                if candidate_rid == target_rid:
+                    self.assertTrue(is_match, f"Expected exact match for {target_rid}")
+                else:
+                    self.assertFalse(is_match, f"Expected non-match between {target_rid} and {candidate_rid}")
+
+        # Inventory cleanup test: cleanup for rel-1-0 cleans ONLY rel-1-0 and leaves others untouched
+        inventory = [
+            {"id": f"res-{rid}", "type": "google_sql_database", "labels": staging_labels_by_id[rid]}
+            for rid in ambiguous_ids
+        ]
+        deleted_ids: list[str] = []
+
+        def track_deletion(r: Any) -> bool:
+            deleted_ids.append(r["id"])
+            return True
+
+        receipt = cleanup_ephemeral_staging(
+            release_id="rel-1-0",
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            dry_run=False,
+            deletion_executor=track_deletion,
+        )
+        self.assertTrue(receipt.success)
+        self.assertEqual(deleted_ids, ["res-rel-1-0"])
+        self.assertEqual(len(receipt.resources), 1)
 
     def test_validate_module_contract(self) -> None:
         errors = validate_module_contract(MODULE_DIR)

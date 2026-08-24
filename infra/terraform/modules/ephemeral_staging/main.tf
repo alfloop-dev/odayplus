@@ -33,11 +33,12 @@ terraform {
 
 locals {
   # Release ID normalized for naming and exact release_hash to guarantee uniqueness and prevent collision.
-  release_clean = trim(lower(replace(var.release_id, "/[^a-z0-9-]/", "-")), "-")
-  release_hash  = substr(sha256(var.release_id), 0, 8)
-  release_label = length(local.release_clean) <= 63 ? local.release_clean : "${substr(local.release_clean, 0, 54)}-${local.release_hash}"
-  owner_clean   = trim(lower(replace(var.owner_task_id, "/[^a-z0-9-]/", "-")), "-")
-  owner_label   = length(local.owner_clean) <= 63 ? local.owner_clean : "${substr(local.owner_clean, 0, 54)}-${substr(sha256(var.owner_task_id), 0, 8)}"
+  release_clean  = trim(lower(replace(var.release_id, "/[^a-z0-9-]/", "-")), "-")
+  release_hash   = substr(sha256(var.release_id), 0, 8)
+  release_prefix = length(local.release_clean) > 0 ? trim(substr(local.release_clean, 0, 54), "-") : "rel"
+  release_label  = length(local.release_prefix) > 0 ? "${local.release_prefix}-${local.release_hash}" : "rel-${local.release_hash}"
+  owner_clean    = trim(lower(replace(var.owner_task_id, "/[^a-z0-9-]/", "-")), "-")
+  owner_label    = length(local.owner_clean) <= 63 ? local.owner_clean : "${substr(local.owner_clean, 0, 54)}-${substr(sha256(var.owner_task_id), 0, 8)}"
 
   # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
   sa_slug       = substr(local.release_clean, 0, 13)
