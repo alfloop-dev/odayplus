@@ -718,6 +718,13 @@ def build_receipt(
     The nonce and signature are the bearer parts of the credential, so the
     receipt carries their digests instead of their values. No key material is
     ever included.
+
+    This is deliberately not a `delivery_toolchain.release.release_receipts`
+    envelope. That contract describes evidence produced by a deployment stage
+    and requires an artifact from its allow-list; an admission decision produces
+    no such artifact, and inventing a path to satisfy the schema would be the
+    same kind of fiction this module exists to remove. Binding the two is a
+    cross-task integration call, not something to smuggle in here.
     """
 
     document = lease if isinstance(lease, dict) else {}
