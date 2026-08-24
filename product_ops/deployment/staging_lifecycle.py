@@ -46,6 +46,11 @@ IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 TENANT_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$")
 PROJECT_ID_PATTERN = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 
+# Derived tenant ids are bounded to a valid GCP label length so the same value is
+# accepted by the Terraform `tenant_id` validation and usable as a label verbatim.
+TENANT_ID_PREFIX = "tenant-"
+MAX_TENANT_ID_LENGTH = 63
+
 DEFAULT_TTL_HOURS = 24
 MAX_TTL_HOURS = 168  # 7 days max allowed extension
 DEFAULT_EPHEMERAL_STATE_DIR = Path("/tmp/oday-plus-ephemeral-staging")
@@ -228,11 +233,43 @@ def _authoritative_inventory_release_id(
     return ""
 
 
+def derive_release_tenant_id(release_id: str) -> str:
+    """Return the deterministic release-scoped tenant id used when none is supplied.
+
+    ``infra/terraform/modules/ephemeral_staging/main.tf`` derives the identical
+    value in ``local.tenant_derived``.  Both sides bound the result to
+    ``MAX_TENANT_ID_LENGTH`` so a derived tenant always satisfies the module's
+    ``tenant_id`` validation and stays usable as a GCP label value without a
+    second round of hashing.  The release hash is computed from the exact raw
+    release id, so truncating the readable slug never collapses two releases
+    onto one tenant.
+    """
+    if not release_id.strip():
+        return ""
+    clean = sanitize_release_suffix(release_id) or "rel"
+    rel_hash = compute_release_hash(release_id)
+    budget = MAX_TENANT_ID_LENGTH - len(TENANT_ID_PREFIX) - 1 - len(rel_hash)
+    if len(clean) > budget:
+        clean = clean[:budget].strip("-") or "rel"
+    return f"{TENANT_ID_PREFIX}{clean}-{rel_hash}"
+
+
+def resolve_tenant_id(release_id: str, tenant_id: str = "") -> str:
+    """Return the effective tenant id: the explicit one, else the release-derived one.
+
+    Every layer that needs a tenant (tfvars, planned resources, labels, and the
+    immutable-identity check) resolves it here so the Python planner and the
+    Terraform module can never disagree about which tenant owns a release.
+    """
+    explicit = tenant_id.strip()
+    if explicit:
+        return explicit
+    return derive_release_tenant_id(release_id)
+
+
 def tenant_label_value(tenant_id: str, release_id: str = "") -> str:
     """Return canonical bounded tenant label."""
-    clean = tenant_id.strip()
-    if not clean and release_id:
-        clean = f"tenant-{sanitize_release_suffix(release_id)}-{compute_release_hash(release_id)}"
+    clean = resolve_tenant_id(release_id, tenant_id) if release_id else tenant_id.strip()
     return bounded_label_value(clean) if clean else ""
 
 
@@ -258,7 +295,7 @@ def get_ephemeral_resource_names(
     res_slug = clean[:24]
     name_prefix = f"stg-{res_slug}-{rel_hash}"
 
-    effective_tenant = tenant_id.strip() if tenant_id.strip() else f"tenant-{clean}-{rel_hash}"
+    effective_tenant = resolve_tenant_id(release_id, tenant_id)
 
     return {
         "name_prefix": name_prefix,
@@ -301,9 +338,7 @@ def generate_staging_labels(
     digest_clean = manifest_digest.replace("sha256:", "")
     manifest_prefix = digest_clean[:16] if digest_clean else "0" * 16
 
-    effective_tenant = tenant_id.strip() if tenant_id.strip() else (
-        f"tenant-{sanitize_release_suffix(release_id)}-{compute_release_hash(release_id)}" if release_id else ""
-    )
+    effective_tenant = resolve_tenant_id(release_id, tenant_id)
     tenant_label = bounded_label_value(effective_tenant) if effective_tenant else "unassigned"
 
     labels: dict[str, str] = {
@@ -420,7 +455,10 @@ def generate_tfvars(
         "project_id": config.project_id,
         "region": config.region,
         "release_id": config.release_id,
-        "tenant_id": config.tenant_id,
+        # Never emit an empty tenant_id: the module's `tenant_id` validation only
+        # accepts null or a valid identifier, so an empty string would make every
+        # default (no --tenant-id) create fail closed before provisioning.
+        "tenant_id": resolve_tenant_id(config.release_id, config.tenant_id),
         "candidate_sha": config.candidate_sha,
         "manifest_digest": config.manifest_digest,
         "api_image": config.api_image,
@@ -765,11 +803,15 @@ def validate_immutable_release_identity(
                         f"rerun with project_id {config.project_id.strip()!r} is rejected."
                     )
 
+                # Compare the resolved tenant, not the raw input: a rerun that
+                # supplies an explicit tenant after a release was created with the
+                # derived one is still a tenant change and must be rejected.
                 prev_tenant = str(prev_vars.get("tenant_id", "")).strip()
-                if prev_tenant and config.tenant_id.strip() and config.tenant_id.strip() != prev_tenant:
+                current_tenant = resolve_tenant_id(config.release_id, config.tenant_id)
+                if prev_tenant and current_tenant and current_tenant != prev_tenant:
                     errors.append(
                         f"Existing release state for {config.release_id!r} has immutable tenant_id {prev_tenant!r}; "
-                        f"rerun with tenant_id {config.tenant_id.strip()!r} is rejected."
+                        f"rerun with tenant_id {current_tenant!r} is rejected."
                     )
 
                 prev_created = str(prev_vars.get("created_at", "")).strip()
@@ -1776,6 +1818,148 @@ def extend_staging_ttl(
     }
 
 
+VARIABLE_BLOCK_START_PATTERN = re.compile(r'^variable\s+"([A-Za-z0-9_-]+)"\s*\{', re.MULTILINE)
+HCL_STRING_BODY = r'((?:[^"\\]|\\.)*)'
+CAN_REGEX_PATTERN = re.compile(r'can\(\s*regex\(\s*"' + HCL_STRING_BODY + r'"\s*,\s*var\.([A-Za-z0-9_-]+)\s*\)\s*\)')
+
+
+def _hcl_block_body(text: str, open_brace_index: int) -> str:
+    """Return the body of the HCL block whose opening brace is at the given index.
+
+    Quoted strings and ``#`` / ``//`` line comments are skipped so a brace or an
+    unbalanced quote inside them cannot confuse the depth count.
+    """
+    depth = 0
+    in_string = False
+    escaped = False
+    index = open_brace_index
+    while index < len(text):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "#" or (char == "/" and text[index + 1 : index + 2] == "/"):
+            newline = text.find("\n", index)
+            if newline == -1:
+                break
+            index = newline
+            continue
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[open_brace_index + 1 : index]
+        index += 1
+    return ""
+
+
+def parse_module_variables(variables_text: str) -> dict[str, dict[str, Any]]:
+    """Parse ``variable`` blocks into a declaration map for cross-layer checks.
+
+    Only the parts the tfvars contract depends on are extracted: whether the
+    variable has a default, and what its ``validation`` blocks accept.
+    """
+    declarations: dict[str, dict[str, Any]] = {}
+    for match in VARIABLE_BLOCK_START_PATTERN.finditer(variables_text):
+        name = match.group(1)
+        body = _hcl_block_body(variables_text, match.end() - 1)
+        conditions = re.findall(r"^\s*condition\s*=\s*(.+)$", body, re.MULTILINE)
+        patterns: list[str] = []
+        for condition in conditions:
+            for raw_pattern, target in CAN_REGEX_PATTERN.findall(condition):
+                if target != name:
+                    continue
+                try:
+                    patterns.append(json.loads(f'"{raw_pattern}"'))
+                except json.JSONDecodeError:
+                    patterns.append(raw_pattern)
+        joined = " ".join(conditions)
+        declarations[name] = {
+            "has_default": bool(re.search(r"^\s*default\s*=", body, re.MULTILINE)),
+            "patterns": patterns,
+            "allows_null": f"var.{name} == null" in joined,
+            "allows_empty": f'var.{name} == ""' in joined,
+        }
+    return declarations
+
+
+def validate_tfvars_against_module(
+    tfvars: Mapping[str, Any], module_dir: Path
+) -> list[str]:
+    """Check that generated tfvars are actually accepted by the module's variables.
+
+    Terraform rejects a whole plan/apply when any ``-var-file`` value fails a
+    ``validation`` block, so a producer/module mismatch fails closed at deploy
+    time rather than in any Python test.  This check runs the module's own
+    declared rules against the exact mapping :func:`generate_tfvars` emits.
+    """
+    variables_path = module_dir / "variables.tf"
+    if not variables_path.is_file():
+        return [f"Missing required module file: variables.tf (in {module_dir})"]
+
+    declarations = parse_module_variables(variables_path.read_text(encoding="utf-8"))
+    errors: list[str] = []
+
+    for name in sorted(set(tfvars) - set(declarations)):
+        errors.append(f"tfvars key {name!r} is not a declared module variable.")
+
+    for name, declaration in sorted(declarations.items()):
+        if name not in tfvars:
+            if not declaration["has_default"]:
+                errors.append(
+                    f"tfvars is missing required module variable {name!r} (no default declared)."
+                )
+            continue
+
+        value = tfvars[name]
+        if value is None:
+            if not declaration["allows_null"]:
+                errors.append(f"tfvars sets {name!r} to null, which the module rejects.")
+            continue
+        if not isinstance(value, str):
+            continue
+        if value == "":
+            if declaration["patterns"] and not declaration["allows_empty"]:
+                errors.append(
+                    f"tfvars sets {name!r} to an empty string, which the module rejects; "
+                    "omit the key or emit a valid value."
+                )
+            continue
+        for pattern in declaration["patterns"]:
+            if not re.search(pattern, value):
+                errors.append(
+                    f"tfvars value for {name!r} ({value!r}) fails the module validation "
+                    f"pattern {pattern!r}."
+                )
+
+    return errors
+
+
+def _contract_probe_config() -> StagingConfig:
+    """Canonical no-explicit-tenant config used to exercise the tfvars contract.
+
+    This mirrors the default CLI create path (``--tenant-id`` omitted), which is
+    the combination that must never produce tfvars the module refuses.
+    """
+    return StagingConfig(
+        release_id="odp-contract-probe-001",
+        candidate_sha="0" * 40,
+        manifest_digest="sha256:" + "0" * 64,
+        project_id="oday-staging-probe",
+        owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+
 def validate_module_contract(module_dir: Path) -> list[str]:
     """Validate that the Terraform ephemeral_staging module meets all architectural rules."""
     errors: list[str] = []
@@ -1855,6 +2039,27 @@ def validate_module_contract(module_dir: Path) -> list[str]:
     for forbidden in forbidden_in_outputs:
         if forbidden in out_text:
             errors.append(f"outputs.tf must not expose sensitive secret token: {forbidden!r}")
+
+    # Cross-layer contract: the tfvars this repo generates for the default
+    # create path must satisfy the module's own variable validations.
+    probe_config = _contract_probe_config()
+    try:
+        probe_tfvars = generate_tfvars(probe_config)
+    except ValueError as exc:  # pragma: no cover - probe config is static
+        errors.append(f"tfvars contract probe could not be generated: {exc}")
+    else:
+        errors.extend(validate_tfvars_against_module(probe_tfvars, module_dir))
+
+        # The module tolerates a null/empty tenant by deriving one, but the
+        # generated tfvars are also the durable record used by the immutable
+        # release identity check, so they must pin the tenant explicitly.
+        expected_tenant = derive_release_tenant_id(probe_config.release_id)
+        probe_tenant = str(probe_tfvars.get("tenant_id", "")).strip()
+        if probe_tenant != expected_tenant:
+            errors.append(
+                "generated tfvars must record the deterministic release-derived tenant_id "
+                f"{expected_tenant!r} when no tenant is supplied, got {probe_tenant!r}."
+            )
 
     return errors
 

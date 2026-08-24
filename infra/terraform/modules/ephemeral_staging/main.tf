@@ -50,9 +50,16 @@ locals {
   owner_label    = length(local.owner_clean) <= 63 ? local.owner_clean : "${substr(local.owner_clean, 0, 54)}-${substr(sha256(var.owner_task_id), 0, 8)}"
 
   # Release-scoped tenant isolation.
-  tenant_id    = try(length(var.tenant_id) > 0, false) ? var.tenant_id : "tenant-${local.release_clean}-${local.release_hash}"
-  tenant_clean = trim(replace(lower(local.tenant_id), "/[^a-z0-9_-]/", "-"), "-")
-  tenant_label = length(local.tenant_clean) <= 63 ? local.tenant_clean : "${substr(local.tenant_clean, 0, 54)}-${substr(sha256(local.tenant_id), 0, 8)}"
+  # The derived tenant is bounded to 63 characters ("tenant-" + 47 slug + "-" +
+  # 8 hash) so it satisfies the tenant_id validation on a rerun and can be used
+  # as a label value verbatim. staging_lifecycle.derive_release_tenant_id
+  # computes the identical value, which is what the generated tfvars pass back
+  # in; a null or empty var.tenant_id must resolve to the same tenant.
+  tenant_slug    = length(local.release_clean) > 0 ? local.release_clean : "rel"
+  tenant_derived = "tenant-${length(local.tenant_slug) <= 47 ? local.tenant_slug : trim(substr(local.tenant_slug, 0, 47), "-")}-${local.release_hash}"
+  tenant_id      = try(length(var.tenant_id) > 0, false) ? var.tenant_id : local.tenant_derived
+  tenant_clean   = trim(replace(lower(local.tenant_id), "/[^a-z0-9_-]/", "-"), "-")
+  tenant_label   = length(local.tenant_clean) <= 63 ? local.tenant_clean : "${substr(local.tenant_clean, 0, 54)}-${substr(sha256(local.tenant_id), 0, 8)}"
 
   # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
   sa_slug       = substr(local.release_clean, 0, 13)

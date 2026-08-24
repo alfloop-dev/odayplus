@@ -133,12 +133,12 @@ variable "additional_labels" {
 
 variable "tenant_id" {
   type        = string
-  description = "Release-scoped tenant identifier for staging tenant isolation."
+  description = "Release-scoped tenant identifier for staging tenant isolation. Null or empty means derive the deterministic release-scoped tenant (see local.tenant_derived); callers must not treat that as 'no tenant'."
   default     = null
 
   validation {
-    condition     = var.tenant_id == null || can(regex("^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$", var.tenant_id))
-    error_message = "tenant_id must be a valid tenant identifier (lowercase letters, digits, '.', '_', '-')."
+    condition     = var.tenant_id == null || var.tenant_id == "" || can(regex("^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$", var.tenant_id))
+    error_message = "tenant_id must be null, empty (derive from release_id), or a valid tenant identifier (lowercase letters, digits, '.', '_', '-')."
   }
 }
 

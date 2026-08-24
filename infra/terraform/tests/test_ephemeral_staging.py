@@ -242,6 +242,147 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             )
 
 
+
+class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
+    """Plan the module with the tfvars the default create path actually writes.
+
+    The pre-existing plan coverage always passed an explicit ``tenant_id``, so it
+    never exercised the CLI default (``--tenant-id`` omitted). That default used
+    to emit ``tenant_id: ""``, which the module's variable validation rejected,
+    making every live create fail closed before provisioning.
+    """
+
+    TENANT_OUTPUT_PATTERN = re.compile(r'staging_tenant_id\s*=\s*"([^"]+)"')
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import shutil
+        import subprocess
+        import tempfile
+
+        if not shutil.which("terraform"):
+            raise unittest.SkipTest("terraform binary not available in environment")
+
+        cls._tmpdir = tempfile.TemporaryDirectory()
+        cls.workdir = Path(cls._tmpdir.name)
+        for filename in ("main.tf", "variables.tf", "outputs.tf"):
+            shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
+
+        init_res = subprocess.run(
+            ["terraform", f"-chdir={cls.workdir}", "init", "-backend=false"],
+            capture_output=True,
+            text=True,
+        )
+        if init_res.returncode != 0:
+            cls._tmpdir.cleanup()
+            raise unittest.SkipTest(f"terraform init unavailable: {init_res.stderr}")
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if hasattr(cls, "_tmpdir"):
+            cls._tmpdir.cleanup()
+
+    def _config(self, release_id: str):
+        from datetime import UTC, datetime
+
+        from product_ops.deployment.staging_lifecycle import StagingConfig
+
+        return StagingConfig(
+            release_id=release_id,
+            candidate_sha="0" * 40,
+            manifest_digest="sha256:" + "0" * 64,
+            project_id="test-staging-proj",
+            owner_task_id="ODP_TASK_001",
+            api_image="asia-east1-docker.pkg.dev/test/repo/api@sha256:" + "0" * 64,
+            web_image="asia-east1-docker.pkg.dev/test/repo/web@sha256:" + "0" * 64,
+            cloud_sql_instance_name="test-db",
+            cloud_sql_connection_name="test:asia-east1:test-db",
+            network_name="test-vpc",
+            subnetwork_name="test-subnet",
+            kms_key_id="projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
+            deployer_service_account_email="deployer@test.iam.gserviceaccount.com",
+            created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+
+    def _plan(self, name: str, tfvars: dict) -> str:
+        import subprocess
+
+        var_file = f"{name}.tfvars.json"
+        (self.workdir / var_file).write_text(json.dumps(tfvars), encoding="utf-8")
+        result = subprocess.run(
+            ["terraform", f"-chdir={self.workdir}", "plan", "-no-color", f"-var-file={var_file}"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"terraform plan failed for {name}: {result.stderr}\n{result.stdout}",
+        )
+        return result.stdout + result.stderr
+
+    def _planned_tenant(self, output: str) -> str:
+        match = self.TENANT_OUTPUT_PATTERN.search(output)
+        self.assertIsNotNone(match, f"plan did not expose staging_tenant_id:\n{output}")
+        return match.group(1)
+
+    def test_default_generated_tfvars_plan_succeeds_with_derived_tenant(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            derive_release_tenant_id,
+            generate_tfvars,
+        )
+
+        release_id = "odp-20260824-001"
+        config = self._config(release_id)
+        self.assertEqual(config.tenant_id, "", "probe must exercise the no-tenant default")
+
+        tfvars = generate_tfvars(config)
+        planned_tenant = self._planned_tenant(self._plan("default_tenant", tfvars))
+
+        self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
+
+    def test_plan_tolerates_an_explicitly_empty_tenant_id(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            derive_release_tenant_id,
+            generate_tfvars,
+        )
+
+        release_id = "odp-20260824-001"
+        tfvars = generate_tfvars(self._config(release_id))
+        tfvars["tenant_id"] = ""
+
+        planned_tenant = self._planned_tenant(self._plan("empty_tenant", tfvars))
+
+        self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
+
+    def test_terraform_and_python_derive_the_same_bounded_tenant(self) -> None:
+        from product_ops.deployment.staging_lifecycle import (
+            MAX_TENANT_ID_LENGTH,
+            derive_release_tenant_id,
+            generate_tfvars,
+        )
+
+        release_id = "odp-" + "x" * 120
+        tfvars = generate_tfvars(self._config(release_id))
+        tfvars["tenant_id"] = ""
+
+        planned_tenant = self._planned_tenant(self._plan("long_release_tenant", tfvars))
+
+        self.assertEqual(planned_tenant, derive_release_tenant_id(release_id))
+        self.assertLessEqual(len(planned_tenant), MAX_TENANT_ID_LENGTH)
+
+    def test_explicit_tenant_still_wins_over_the_derived_one(self) -> None:
+        from product_ops.deployment.staging_lifecycle import generate_tfvars
+
+        config = self._config("odp-20260824-001")
+        tfvars = generate_tfvars(config)
+        tfvars["tenant_id"] = "custom-tenant-42"
+
+        planned_tenant = self._planned_tenant(self._plan("explicit_tenant", tfvars))
+
+        self.assertEqual(planned_tenant, "custom-tenant-42")
+
+
 if __name__ == "__main__":
     unittest.main()
 

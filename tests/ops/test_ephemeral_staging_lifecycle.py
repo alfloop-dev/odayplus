@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import unittest
 from collections.abc import Mapping
@@ -16,21 +17,27 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from product_ops.deployment.staging_lifecycle import (
+    MAX_TENANT_ID_LENGTH,
+    TENANT_ID_PATTERN,
     StagingConfig,
     cleanup_ephemeral_staging,
     compute_release_hash,
     create_ephemeral_staging,
+    derive_release_tenant_id,
     extend_staging_ttl,
     generate_staging_labels,
     generate_tfvars,
     get_ephemeral_resource_names,
     is_staging_ephemeral_resource,
+    parse_module_variables,
     plan_staging_resources,
     release_label_value,
+    resolve_tenant_id,
     scan_orphans,
     validate_immutable_release_identity,
     validate_module_contract,
     validate_staging_config,
+    validate_tfvars_against_module,
 )
 
 MODULE_DIR = ROOT / "infra/terraform/modules/ephemeral_staging"
@@ -201,7 +208,9 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         tfvars = generate_tfvars(self.valid_config, created_at=now)
         self.assertEqual(tfvars["project_id"], "oday-staging-proj")
         self.assertEqual(tfvars["release_id"], "odp-20260824-001")
-        self.assertEqual(tfvars["tenant_id"], "")
+        # An omitted tenant resolves to the deterministic release-derived tenant.
+        # Emitting "" here would be rejected by the module's tenant_id validation.
+        self.assertEqual(tfvars["tenant_id"], derive_release_tenant_id("odp-20260824-001"))
         self.assertEqual(tfvars["candidate_sha"], "a" * 40)
         self.assertEqual(tfvars["ttl_hours"], 24)
         self.assertEqual(tfvars["created_at"], "2026-08-24T12:00:00Z")
@@ -1392,6 +1401,176 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             generate_tfvars(future_cfg, now=now_dt)
         self.assertIn("cannot be in the future", str(ctx.exception))
+
+
+class DefaultTenantTfvarsContractTests(unittest.TestCase):
+    """Regression cover for the default (no explicit tenant) create path.
+
+    ``generate_tfvars`` used to emit ``tenant_id: ""`` whenever ``--tenant-id``
+    was omitted, which is the CLI default. The module's ``tenant_id`` validation
+    only accepted null or a valid identifier, so every normal live create failed
+    closed with "Invalid value for variable" before provisioning anything.
+    """
+
+    def setUp(self) -> None:
+        self.release_id = "odp-20260824-001"
+        self.config = StagingConfig(
+            release_id=self.release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            project_id="oday-staging-proj",
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        )
+
+    def test_default_tfvars_tenant_is_never_empty(self) -> None:
+        self.assertEqual(self.config.tenant_id, "")
+
+        tfvars = generate_tfvars(self.config)
+
+        self.assertNotEqual(tfvars["tenant_id"], "")
+        self.assertEqual(tfvars["tenant_id"], derive_release_tenant_id(self.release_id))
+        self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(tfvars["tenant_id"]))
+
+    def test_default_tfvars_satisfy_module_variable_validations(self) -> None:
+        tfvars = generate_tfvars(self.config)
+
+        self.assertEqual(validate_tfvars_against_module(tfvars, MODULE_DIR), [])
+
+    def test_empty_tenant_tfvars_would_be_caught_by_module_contract(self) -> None:
+        """The module tolerates an empty tenant, but tfvars must still pin one."""
+        declarations = parse_module_variables((MODULE_DIR / "variables.tf").read_text(encoding="utf-8"))
+
+        tenant_declaration = declarations["tenant_id"]
+        self.assertTrue(tenant_declaration["allows_null"])
+        self.assertTrue(tenant_declaration["allows_empty"])
+        self.assertTrue(tenant_declaration["patterns"])
+
+        # An empty string does not satisfy the declared identifier pattern, which
+        # is exactly why the producer must resolve it before writing tfvars.
+        for pattern in tenant_declaration["patterns"]:
+            self.assertIsNone(re.search(pattern, ""))
+
+    def test_module_contract_rejects_a_producer_that_drops_the_tenant(self) -> None:
+        """validate_module_contract must fail if generate_tfvars regresses."""
+        import product_ops.deployment.staging_lifecycle as lifecycle
+
+        original = lifecycle.generate_tfvars
+
+        def empty_tenant_tfvars(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            tfvars = original(*args, **kwargs)
+            tfvars["tenant_id"] = ""
+            return tfvars
+
+        lifecycle.generate_tfvars = empty_tenant_tfvars
+        try:
+            errors = lifecycle.validate_module_contract(MODULE_DIR)
+        finally:
+            lifecycle.generate_tfvars = original
+
+        self.assertTrue(
+            any("release-derived tenant_id" in err for err in errors),
+            f"module contract did not catch an empty generated tenant_id: {errors}",
+        )
+
+    def test_variable_parser_ignores_comments_and_quoted_braces(self) -> None:
+        sample = """
+variable "with_comment" {
+  type = string
+  # a comment with a brace { and a lone quote "
+  // another } comment
+  default = "x"
+
+  validation {
+    condition     = can(regex("^[a-z]+$", var.with_comment))
+    error_message = "bad"
+  }
+}
+
+variable "after_comment" {
+  type = string
+}
+"""
+        declarations = parse_module_variables(sample)
+
+        self.assertEqual(set(declarations), {"with_comment", "after_comment"})
+        self.assertEqual(declarations["with_comment"]["patterns"], ["^[a-z]+$"])
+        self.assertTrue(declarations["with_comment"]["has_default"])
+        self.assertFalse(declarations["after_comment"]["has_default"])
+
+    def test_missing_required_variable_is_reported(self) -> None:
+        tfvars = generate_tfvars(self.config)
+        tfvars.pop("kms_key_id")
+
+        errors = validate_tfvars_against_module(tfvars, MODULE_DIR)
+
+        self.assertTrue(any("kms_key_id" in err for err in errors), errors)
+
+    def test_undeclared_tfvars_key_is_reported(self) -> None:
+        tfvars = generate_tfvars(self.config)
+        tfvars["not_a_module_variable"] = "x"
+
+        errors = validate_tfvars_against_module(tfvars, MODULE_DIR)
+
+        self.assertTrue(any("not_a_module_variable" in err for err in errors), errors)
+
+    def test_derived_tenant_is_deterministic_and_release_scoped(self) -> None:
+        first = derive_release_tenant_id(self.release_id)
+        second = derive_release_tenant_id(self.release_id)
+        other = derive_release_tenant_id("odp-20260824-002")
+
+        self.assertEqual(first, second)
+        self.assertNotEqual(first, other)
+        self.assertEqual(first, f"tenant-{self.release_id}-{compute_release_hash(self.release_id)}")
+
+    def test_derived_tenant_stays_within_module_length_limit(self) -> None:
+        long_release = "odp-" + "x" * 120
+        derived = derive_release_tenant_id(long_release)
+
+        self.assertLessEqual(len(derived), MAX_TENANT_ID_LENGTH)
+        self.assertIsNotNone(TENANT_ID_PATTERN.fullmatch(derived))
+        # Uniqueness survives truncation because the hash covers the raw release id.
+        self.assertNotEqual(derived, derive_release_tenant_id(long_release + "y"))
+
+        long_config = dataclasses_replace(self.config, release_id=long_release)
+        self.assertEqual(validate_tfvars_against_module(generate_tfvars(long_config), MODULE_DIR), [])
+
+    def test_tenant_resolution_is_shared_by_every_layer(self) -> None:
+        derived = derive_release_tenant_id(self.release_id)
+
+        tfvars = generate_tfvars(self.config)
+        names = get_ephemeral_resource_names(self.release_id, self.config.project_id)
+        labels = generate_staging_labels(
+            release_id=self.release_id,
+            candidate_sha=self.config.candidate_sha,
+            manifest_digest=self.config.manifest_digest,
+            owner_task_id=self.config.owner_task_id,
+        )
+
+        self.assertEqual(tfvars["tenant_id"], derived)
+        self.assertEqual(names["tenant_id"], derived)
+        self.assertEqual(labels["tenant"], derived)
+        self.assertEqual(resolve_tenant_id(self.release_id), derived)
+        self.assertEqual(resolve_tenant_id(self.release_id, "explicit-tenant"), "explicit-tenant")
+
+    def test_default_tenant_rerun_is_idempotent_and_tenant_change_is_rejected(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            tfvars_path = state_root / "odp-20260824-001.tfvars.json"
+            tfvars_path.write_text(json.dumps(generate_tfvars(self.config)), encoding="utf-8")
+
+            # Same release, tenant still omitted: resolves to the recorded tenant.
+            self.assertEqual(validate_immutable_release_identity(self.config, state_root), [])
+
+            # Re-supplying the derived tenant explicitly is still the same tenant.
+            same = dataclasses_replace(self.config, tenant_id=derive_release_tenant_id(self.release_id))
+            self.assertEqual(validate_immutable_release_identity(same, state_root), [])
+
+            # Switching to a different tenant on an existing release is rejected.
+            switched = dataclasses_replace(self.config, tenant_id="other-tenant")
+            errors = validate_immutable_release_identity(switched, state_root)
+            self.assertTrue(any("immutable tenant_id" in err for err in errors), errors)
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
