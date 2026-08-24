@@ -214,6 +214,10 @@ def validate(root: Path = ROOT) -> list[str]:
         errors.append("variables.tf must not expose external_provider_endpoints")
     if "external_provider_secret_refs" in variables:
         errors.append("variables.tf must not expose external_provider_secret_refs")
+    if "live provider" in variables.lower():
+        errors.append("variables.tf: live_data_enabled description must not reference legacy live provider mode")
+    if "RFC1918" not in variables and "10\\." not in variables:
+        errors.append("variables.tf: network_cidr must restrict subnet to RFC1918 private address space")
 
     outputs = texts.get("outputs.tf", "")
     for forbidden in (

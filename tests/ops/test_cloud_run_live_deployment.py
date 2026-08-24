@@ -5560,3 +5560,24 @@ def test_preflight_dynamically_rejects_all_registered_provider_env_vars() -> Non
                 assert by_name["runtime:no_provider_auth_status_projected"].ok is False
                 assert cred.status_env_var in by_name["runtime:no_provider_auth_status_projected"].detail
 
+
+def test_preflight_fails_closed_when_provider_registry_cannot_be_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ODP-XR-PROVIDER-OFF-DEPLOYMENT-001: preflight fails closed if PROVIDER_REGISTRY cannot be loaded."""
+    def _failing_inventory(*_args: object, **_kwargs: object):
+        raise RuntimeError("simulated PROVIDER_REGISTRY load failure")
+
+    monkeypatch.setattr(validator, "dynamic_provider_env_inventory", _failing_inventory)
+    env = complete_env()
+    checks = validator.preflight_checks(
+        env=env,
+        expected_environment="dev",
+        expected_sha=EXPECTED_SHA,
+        root=ROOT,
+    )
+    by_name = {c.name: c for c in checks}
+    assert "repository:provider_registry_inventory" in by_name
+    assert by_name["repository:provider_registry_inventory"].ok is False
+    assert "simulated PROVIDER_REGISTRY load failure" in by_name["repository:provider_registry_inventory"].detail
+    assert not all(c.ok for c in checks)
+
+

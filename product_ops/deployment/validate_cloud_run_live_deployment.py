@@ -1349,63 +1349,37 @@ def selected_provider_config_checks(
     return checks
 
 
-def dynamic_provider_env_inventory() -> dict[str, set[str]]:
+def dynamic_provider_env_inventory(root: Path = ROOT) -> dict[str, set[str]]:
     """Dynamically discover external provider configuration environment variables from the provider registry."""
-    try:
-        from modules.external_data.connectors.provider_registry import (
-            PRODUCTION_PROVIDER_IDS_ENV_VAR,
-            PROVIDER_REGISTRY,
-        )
+    root_text = str(root.resolve())
+    if root_text not in sys.path:
+        sys.path.insert(0, root_text)
+    importlib.invalidate_caches()
+    registry_module = importlib.import_module("modules.external_data.connectors.provider_registry")
+    connectivity_module = importlib.import_module("modules.external_data.connectors.provider_connectivity")
 
-        endpoints: set[str] = {p.endpoint_env_var for p in PROVIDER_REGISTRY if p.endpoint_env_var}
-        secrets: set[str] = set()
-        for p in PROVIDER_REGISTRY:
-            for cred in p.credentials:
-                if cred.env_var:
-                    secrets.add(cred.env_var)
-                    secrets.add(f"{cred.env_var}_SECRET")
-        auth_statuses: set[str] = {
-            cred.status_env_var
-            for p in PROVIDER_REGISTRY
-            for cred in p.credentials
-            if cred.status_env_var and cred.status_env_var != "ODP_COMPETITOR_MANUAL_SOURCE_STATUS"
-        }
-        general: set[str] = {
-            PRODUCTION_PROVIDER_IDS_ENV_VAR,
-            PROVIDER_PROBE_TIMEOUT_ENV,
-        }
-    except Exception:
-        endpoints = {
-            "ODP_LISTING_PROVIDER_FEED_URL",
-            "ODP_POI_PROVIDER_URL",
-            "ODP_GEOCODE_PROVIDER_URL",
-            "ODP_ADMIN_BOUNDARY_PROVIDER_URL",
-        }
-        secrets = {
-            "ODP_LISTING_PROVIDER_API_KEY",
-            "ODP_LISTING_PROVIDER_API_KEY_SECRET",
-            "ODP_POI_PROVIDER_API_KEY",
-            "ODP_POI_PROVIDER_API_KEY_SECRET",
-            "ODP_GEOCODE_PROVIDER_API_KEY",
-            "ODP_GEOCODE_PROVIDER_API_KEY_SECRET",
-            "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN",
-            "ODP_ADMIN_BOUNDARY_PROVIDER_TOKEN_SECRET",
-            "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION",
-            "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET",
-            "ODP_STORE_OPENING_AUTHORITY_ATTESTATION",
-            "ODP_STORE_OPENING_AUTHORITY_ATTESTATION_SECRET",
-        }
-        auth_statuses = {
-            "ODP_LISTING_PROVIDER_AUTH_STATUS",
-            "ODP_POI_PROVIDER_AUTH_STATUS",
-            "ODP_GEOCODE_PROVIDER_AUTH_STATUS",
-            "ODP_ADMIN_BOUNDARY_PROVIDER_AUTH_STATUS",
-            "ODP_STORE_OPENING_AUTHORITY_STATUS",
-        }
-        general = {
-            "ODP_PRODUCTION_PROVIDER_IDS",
-            "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
-        }
+    endpoints: set[str] = {
+        p.endpoint_env_var
+        for p in registry_module.PROVIDER_REGISTRY
+        if p.endpoint_env_var
+    }
+    secrets: set[str] = set()
+    for p in registry_module.PROVIDER_REGISTRY:
+        for cred in p.credentials:
+            if cred.env_var:
+                secrets.add(cred.env_var)
+                secrets.add(f"{cred.env_var}_SECRET")
+    auth_statuses: set[str] = {
+        cred.status_env_var
+        for p in registry_module.PROVIDER_REGISTRY
+        for cred in p.credentials
+        if cred.status_env_var and cred.status_env_var != "ODP_COMPETITOR_MANUAL_SOURCE_STATUS"
+    }
+    general: set[str] = {
+        registry_module.LIVE_MODE_ENV_VAR,
+        registry_module.PRODUCTION_PROVIDER_IDS_ENV_VAR,
+        getattr(registry_module, "PROVIDER_PROBE_TIMEOUT_ENV_VAR", connectivity_module.PROBE_TIMEOUT_ENV_VAR),
+    }
     return {
         "endpoints": endpoints,
         "secrets": secrets,
@@ -1509,8 +1483,40 @@ def preflight_checks(
         )
     )
 
+    # Provider registry environment inventory discovery
+    try:
+        inv = dynamic_provider_env_inventory(root=root)
+        registry_loaded = True
+        inventory_error = ""
+    except Exception as exc:
+        inv = {
+            "endpoints": set(),
+            "secrets": set(),
+            "auth_statuses": set(),
+            "general": set(),
+        }
+        registry_loaded = False
+        inventory_error = str(exc)
+
+    checks.append(
+        CheckResult(
+            ok=registry_loaded,
+            name="repository:provider_registry_inventory",
+            detail=(
+                "provider registry inventory loaded dynamically"
+                if registry_loaded
+                else f"failed to load provider registry inventory: {inventory_error}"
+            ),
+        )
+    )
+
     # Acceptance 1: Production must not enable external provider live mode
-    provider_mode = env.get("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower()
+    live_mode_key = (
+        "ODP_EXTERNAL_PROVIDER_MODE"
+        if "ODP_EXTERNAL_PROVIDER_MODE" in inv["general"]
+        else "ODP_EXTERNAL_PROVIDER_MODE"
+    )
+    provider_mode = env.get(live_mode_key, "").strip().lower()
     checks.append(
         CheckResult(
             provider_mode != "live",
@@ -1524,7 +1530,12 @@ def preflight_checks(
     )
 
     # Acceptance 2: Deploy script / workflow / env must not project provider IDs or probe timeout in consumer-only deployment
-    raw_provider_ids = env.get(PRODUCTION_PROVIDER_IDS_ENV, "").strip()
+    raw_provider_ids = env.get(
+        "ODP_PRODUCTION_PROVIDER_IDS"
+        if "ODP_PRODUCTION_PROVIDER_IDS" in inv["general"]
+        else PRODUCTION_PROVIDER_IDS_ENV,
+        "",
+    ).strip()
     checks.append(
         CheckResult(
             not raw_provider_ids,
@@ -1537,7 +1548,12 @@ def preflight_checks(
         )
     )
 
-    raw_probe_timeout = env.get(PROVIDER_PROBE_TIMEOUT_ENV, "").strip()
+    raw_probe_timeout = env.get(
+        "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"
+        if "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" in inv["general"]
+        else PROVIDER_PROBE_TIMEOUT_ENV,
+        "",
+    ).strip()
     checks.append(
         CheckResult(
             not raw_probe_timeout,
@@ -1551,7 +1567,6 @@ def preflight_checks(
     )
 
     # Acceptance 3: Deploy script / workflow / env must not project provider secrets, endpoints, or auth status
-    inv = dynamic_provider_env_inventory()
 
     forbidden_provider_secrets = [
         key

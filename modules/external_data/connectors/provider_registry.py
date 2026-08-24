@@ -157,6 +157,7 @@ class ExternalProviderConfigError(RuntimeError):
 
 LIVE_MODE_ENV_VAR = "ODP_EXTERNAL_PROVIDER_MODE"
 PRODUCTION_PROVIDER_IDS_ENV_VAR = "ODP_PRODUCTION_PROVIDER_IDS"
+PROVIDER_PROBE_TIMEOUT_ENV_VAR = "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS"
 # Providers that MUST be live-configured before the External Data Platform may
 # run in production live mode. These are the enrichment/reference sources that
 # have a live upstream today (geocode, POI, admin boundary).

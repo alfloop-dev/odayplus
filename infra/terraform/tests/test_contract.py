@@ -176,6 +176,63 @@ class TerraformProductionContractTests(unittest.TestCase):
             errors = validator.validate(copy_root)
             self.assertTrue(any("unexpected egress firewall rule 'allow_all'" in error for error in errors))
 
+    def test_tampered_network_cidr_public_ip_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            copy_root = Path(directory)
+            for relative in validator.REQUIRED_FILES:
+                source = ROOT / relative
+                destination = copy_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            variables = copy_root / "variables.tf"
+            # Simulate removing RFC1918 validation constraint from network_cidr
+            variables.write_text(
+                variables.read_text(encoding="utf-8").replace(
+                    '&& can(regex("^(10\\\\.|172\\\\.(1[6-9]|2[0-9]|3[0-1])\\\\.|192\\\\.168\\\\.)", var.network_cidr))',
+                    "",
+                ).replace("RFC1918", "any"),
+                encoding="utf-8",
+            )
+            errors = validator.validate(copy_root)
+            self.assertTrue(any("network_cidr must restrict subnet to RFC1918" in error for error in errors))
+
+    def test_tampered_live_data_enabled_description_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            copy_root = Path(directory)
+            for relative in validator.REQUIRED_FILES:
+                source = ROOT / relative
+                destination = copy_root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+            variables = copy_root / "variables.tf"
+            variables.write_text(
+                variables.read_text(encoding="utf-8").replace(
+                    "Enable platform snapshot and production model gates",
+                    "Enable live provider and production model gates",
+                ),
+                encoding="utf-8",
+            )
+            errors = validator.validate(copy_root)
+            self.assertTrue(any("live_data_enabled description must not reference legacy live provider mode" in error for error in errors))
+
+    def test_network_cidr_rfc1918_validation_rejects_public_cidrs(self) -> None:
+        import ipaddress
+        import re
+
+        pattern = re.compile(r"^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)")
+
+        # Valid RFC1918 CIDRs
+        valid_cidrs = ["10.0.0.0/8", "10.42.0.0/24", "172.16.0.0/12", "172.20.1.0/24", "172.31.255.0/24", "192.168.1.0/24"]
+        for cidr in valid_cidrs:
+            net = ipaddress.ip_network(cidr)
+            self.assertTrue(net.is_private, f"{cidr} should be private")
+            self.assertTrue(bool(pattern.match(cidr)), f"{cidr} should match RFC1918 pattern")
+
+        # Public / non-RFC1918 CIDRs that must be rejected
+        public_cidrs = ["8.8.8.0/24", "1.1.1.0/24", "172.15.0.0/16", "172.32.0.0/16", "192.169.0.0/16", "203.0.113.0/24"]
+        for cidr in public_cidrs:
+            self.assertFalse(bool(pattern.match(cidr)), f"{cidr} must NOT match RFC1918 pattern")
+
 
 if __name__ == "__main__":
     unittest.main()
