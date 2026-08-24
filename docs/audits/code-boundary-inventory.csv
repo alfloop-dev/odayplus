@@ -617,6 +617,7 @@ pipelines/training/model_training.py,product_system,product_required,true,,engin
 product_ops/__init__.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/data_platform/__init__.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/data_platform/backfill.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
+product_ops/deployment/bluegreen_release.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/deployment/cloud_run_job_entrypoint.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/deployment/cloud_run_traffic.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
 product_ops/deployment/cloud_scheduler_trigger.py,product_operations_tooling,operations_required,false,,engineering;operations,conditional,"Deployment, migration, recurring-job, and rollback support windows have ended."
@@ -899,6 +900,7 @@ tests/models/test_sitescore_prediction_source.py,verification,verification_only,
 tests/models/test_sitescore_v3_contract.py,verification,verification_only,false,product_system,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_assisted_listing_intake_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_assisted_listing_intake_release.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
+tests/ops/test_bluegreen_release.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_cloud_run_job_entrypoint.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_cloud_run_live_deployment.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
 tests/ops/test_data_domain_migration.py,verification,verification_only,false,product_operations_tooling,engineering,true,The corresponding maintained code and its support obligation have been removed.
