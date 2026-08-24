@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -44,7 +45,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
 
         # Paused Scheduler trigger
         self.assertIn('resource "google_cloud_scheduler_job" "staging_worker_trigger"', main_tf)
-        self.assertIn('paused           = true', main_tf)
+        self.assertTrue(re.search(r"paused\s*=\s*true", main_tf))
 
     def test_module_variables_validation_rules(self) -> None:
         vars_tf = (MODULE_DIR / "variables.tf").read_text(encoding="utf-8")
@@ -55,7 +56,13 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn('variable "api_image"', vars_tf)
         self.assertIn('variable "web_image"', vars_tf)
         self.assertIn('variable "ttl_hours"', vars_tf)
+        self.assertIn('variable "created_at"', vars_tf)
         self.assertIn('var.ttl_hours >= 1 && var.ttl_hours <= 168', vars_tf)
+
+    def test_module_no_dynamic_timestamp_leak(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        self.assertNotIn("timestamp()", main_tf)
+        self.assertIn("timeadd(local.created_at", main_tf)
 
     def test_module_outputs_do_not_leak_secrets(self) -> None:
         outputs_tf = (MODULE_DIR / "outputs.tf").read_text(encoding="utf-8")

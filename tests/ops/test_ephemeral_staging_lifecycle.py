@@ -3,32 +3,26 @@
 
 from __future__ import annotations
 
-import copy
-import json
 import sys
-import tempfile
 import unittest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from product_ops.deployment.staging_lifecycle import (
-    DEFAULT_TTL_HOURS,
-    MAX_TTL_HOURS,
     StagingConfig,
     cleanup_ephemeral_staging,
+    compute_release_hash,
     create_ephemeral_staging,
     extend_staging_ttl,
-    format_timestamp,
     generate_staging_labels,
     generate_tfvars,
-    is_staging_ephemeral_resource,
-    parse_timestamp,
+    get_ephemeral_resource_names,
     plan_staging_resources,
-    sanitize_release_suffix,
     scan_orphans,
     validate_module_contract,
     validate_staging_config,
@@ -85,8 +79,39 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         bad_cfg = dataclasses_replace(self.valid_config, ttl_hours=200)
         self.assertTrue(any("ttl_hours" in err for err in validate_staging_config(bad_cfg)))
 
+    def test_naming_collision_avoidance_and_length_limits(self) -> None:
+        # Two very long release IDs differing only in the last character
+        rel1 = "odp-20260824-feature-very-long-branch-name-segment-001"
+        rel2 = "odp-20260824-feature-very-long-branch-name-segment-002"
+
+        names1 = get_ephemeral_resource_names(rel1, "oday-staging-proj-very-long-30")
+        names2 = get_ephemeral_resource_names(rel2, "oday-staging-proj-very-long-30")
+
+        # Names must be strictly different (no collision)
+        self.assertNotEqual(names1["sa_runtime"], names2["sa_runtime"])
+        self.assertNotEqual(names1["database_name"], names2["database_name"])
+        self.assertNotEqual(names1["bucket_name"], names2["bucket_name"])
+        self.assertNotEqual(names1["cloud_run_api"], names2["cloud_run_api"])
+
+        # GCP Limits verification
+        # Service account account_id: max 30 chars
+        self.assertLessEqual(len(names1["sa_runtime"]), 30)
+        self.assertLessEqual(len(names1["sa_web"]), 30)
+        self.assertLessEqual(len(names1["sa_worker"]), 30)
+
+        # Cloud SQL DB & User: max 63 chars
+        self.assertLessEqual(len(names1["database_name"]), 63)
+        self.assertLessEqual(len(names1["database_user"]), 63)
+
+        # GCS Bucket: max 63 chars
+        self.assertLessEqual(len(names1["bucket_name"]), 63)
+
+        # Cloud Run Service: max 63 chars
+        self.assertLessEqual(len(names1["cloud_run_api"]), 63)
+        self.assertLessEqual(len(names1["cloud_run_web"]), 63)
+
     def test_generate_staging_labels(self) -> None:
-        now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
         labels = generate_staging_labels(
             release_id="odp-20260824-001",
             candidate_sha="a" * 40,
@@ -108,11 +133,13 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(labels["expires_at"], "2026-08-25-12-00-00")
 
     def test_generate_tfvars(self) -> None:
-        tfvars = generate_tfvars(self.valid_config)
+        now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+        tfvars = generate_tfvars(self.valid_config, created_at=now)
         self.assertEqual(tfvars["project_id"], "oday-staging-proj")
         self.assertEqual(tfvars["release_id"], "odp-20260824-001")
         self.assertEqual(tfvars["candidate_sha"], "a" * 40)
         self.assertEqual(tfvars["ttl_hours"], 24)
+        self.assertEqual(tfvars["created_at"], "2026-08-24T12:00:00Z")
 
     def test_plan_staging_resources(self) -> None:
         resources = plan_staging_resources(self.valid_config)
@@ -129,12 +156,18 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertIn("google_cloud_run_v2_service", types)
         self.assertIn("google_cloud_scheduler_job", types)
 
-        self.assertIn("stg_odp_20260824_001", names)
-        self.assertIn("stg_odp_20260824_001_app", names)
+        rel_hash = compute_release_hash("odp-20260824-001")
+        self.assertIn(f"stg_odp_20260824_001_{rel_hash}", names)
+        self.assertIn(f"stg_odp_20260824_001_{rel_hash}_app", names)
         self.assertTrue(any("worker-trigger" in n for n in names))
 
-    def test_create_ephemeral_staging_receipt(self) -> None:
-        now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=timezone.utc)
+        for r in resources:
+            self.assertEqual(r.labels["managed_by"], "terraform")
+            self.assertEqual(r.labels["ephemeral"], "true")
+            self.assertEqual(r.labels["app"], "oday-plus")
+
+    def test_create_ephemeral_staging_receipt_dry_run(self) -> None:
+        now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
         receipt = create_ephemeral_staging(self.valid_config, dry_run=True, now=now)
 
         self.assertTrue(receipt.success)
@@ -145,6 +178,25 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertTrue(len(receipt.resources) > 0)
         for r in receipt.resources:
             self.assertEqual(r["status"], "planned")
+            self.assertIn("labels", r)
+            self.assertEqual(r["labels"]["managed_by"], "terraform")
+
+    def test_create_ephemeral_staging_non_dry_run_requires_executor(self) -> None:
+        # Non dry run without executor fails closed
+        receipt = create_ephemeral_staging(self.valid_config, dry_run=False)
+        self.assertFalse(receipt.success)
+        self.assertTrue(receipt.remediation_required)
+        self.assertTrue(any("creation_executor" in err for err in receipt.errors))
+
+        # With executor succeeds
+        def mock_executor(cfg: StagingConfig, res: list) -> bool:
+            return True
+
+        receipt_exec = create_ephemeral_staging(self.valid_config, dry_run=False, creation_executor=mock_executor)
+        self.assertTrue(receipt_exec.success)
+        self.assertFalse(receipt_exec.remediation_required)
+        for r in receipt_exec.resources:
+            self.assertEqual(r["status"], "provisioned")
 
     def test_cleanup_exact_label_matching_and_safety(self) -> None:
         target_release = "odp-20260824-001"
@@ -154,11 +206,13 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             release_id=target_release,
             candidate_sha="a" * 40,
             manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
         other_labels = generate_staging_labels(
             release_id=other_release,
             candidate_sha="1" * 40,
             manifest_digest="sha256:" + "2" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
 
         inventory = [
@@ -168,6 +222,12 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             {"id": "svc-1", "type": "google_cloud_run_v2_service", "labels": target_labels},
             # Different staging release (must NOT be deleted)
             {"id": "db-2", "type": "google_sql_database", "labels": other_labels},
+            # Missing managed_by=terraform (must NOT be deleted by standard cleanup)
+            {
+                "id": "unmanaged-db",
+                "type": "google_sql_database",
+                "labels": {"app": "oday-plus", "environment": "staging", "ephemeral": "true", "release_id": target_release},
+            },
             # Production resource (must NEVER be deleted)
             {
                 "id": "prod-db",
@@ -182,19 +242,44 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             },
         ]
 
+        def mock_deleter(res: dict) -> bool:
+            return True
+
         receipt = cleanup_ephemeral_staging(
             release_id=target_release,
             project_id="oday-staging-proj",
             resource_inventory=inventory,
             dry_run=False,
+            deletion_executor=mock_deleter,
         )
 
         self.assertTrue(receipt.success)
         deleted_ids = [r["id"] for r in receipt.resources]
         self.assertEqual(sorted(deleted_ids), ["bucket-1", "db-1", "svc-1"])
         self.assertNotIn("db-2", deleted_ids)
+        self.assertNotIn("unmanaged-db", deleted_ids)
         self.assertNotIn("prod-db", deleted_ids)
         self.assertNotIn("shared-vpc", deleted_ids)
+
+    def test_cleanup_empty_inventory_fails_without_allow_empty(self) -> None:
+        receipt = cleanup_ephemeral_staging(
+            release_id="odp-20260824-001",
+            project_id="oday-staging-proj",
+            resource_inventory=[],
+            dry_run=True,
+            allow_empty=False,
+        )
+        self.assertFalse(receipt.success)
+        self.assertTrue(any("No matching ephemeral staging resources found" in err for err in receipt.errors))
+
+        receipt_allowed = cleanup_ephemeral_staging(
+            release_id="odp-20260824-001",
+            project_id="oday-staging-proj",
+            resource_inventory=[],
+            dry_run=True,
+            allow_empty=True,
+        )
+        self.assertTrue(receipt_allowed.success)
 
     def test_cleanup_rejects_broad_wildcard_targets(self) -> None:
         for bad_target in ("*", "all", "prod", "production", "dev", ""):
@@ -213,6 +298,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             release_id="odp-20260824-001",
             candidate_sha="a" * 40,
             manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
         )
         inventory = [
             {"id": "db-fail", "type": "google_sql_database", "labels": target_labels},
@@ -234,7 +320,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertTrue(any("database locked" in err for err in receipt.errors))
 
     def test_scan_orphans_detects_expired_and_unmanaged(self) -> None:
-        now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
         fresh_time = now - timedelta(hours=2)
         expired_time = now - timedelta(hours=26)
 
@@ -242,6 +328,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             release_id="odp-fresh-001",
             candidate_sha="a" * 40,
             manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
             created_at=fresh_time,
             ttl_hours=24,
         )
@@ -249,20 +336,22 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             release_id="odp-expired-001",
             candidate_sha="c" * 40,
             manifest_digest="sha256:" + "d" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
             created_at=expired_time,
             ttl_hours=24,
         )
-        missing_release_labels = {
+        unmanaged_labels = {
             "app": "oday-plus",
             "environment": "staging",
             "ephemeral": "true",
-            "managed_by": "terraform",
+            "managed_by": "custom_script",
+            "release_id": "odp-orphan-001",
         }
 
         inventory = [
             {"id": "fresh-res", "type": "google_sql_database", "labels": fresh_labels},
             {"id": "expired-res", "type": "google_sql_database", "labels": expired_labels},
-            {"id": "orphan-res", "type": "google_storage_bucket", "labels": missing_release_labels},
+            {"id": "unmanaged-res", "type": "google_storage_bucket", "labels": unmanaged_labels},
             {"id": "prod-res", "type": "google_sql_database", "labels": {"environment": "prod"}},
         ]
 
@@ -276,25 +365,49 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         self.assertEqual(result.total_scanned, 4)
         self.assertEqual(result.active_count, 1)
         self.assertEqual(result.expired_count, 1)
-        self.assertEqual(result.orphan_count, 2)  # expired-res and orphan-res
+        self.assertEqual(result.orphan_count, 2)  # expired-res and unmanaged-res
         self.assertIn("odp-expired-001", result.expired_releases)
         self.assertTrue(len(result.alerts) >= 2)
 
-    def test_extend_staging_ttl_enforces_owner_and_reason(self) -> None:
-        curr_expires = datetime(2026, 8, 24, 18, 0, 0, tzinfo=timezone.utc)
+    def test_extend_staging_ttl_enforces_limits_owner_and_reason(self) -> None:
+        curr_expires = datetime(2026, 8, 24, 18, 0, 0, tzinfo=UTC)
+        created_at = datetime(2026, 8, 23, 18, 0, 0, tzinfo=UTC)
 
-        # Successful extension
+        # Successful extension (12h)
         ext = extend_staging_ttl(
             release_id="odp-20260824-001",
             extend_hours=12,
             reason="Investigating intermittent E2E timeout in worker drill",
             owner="Antigravity3",
             current_expires_at=curr_expires,
+            created_at=created_at,
         )
         self.assertEqual(ext["release_id"], "odp-20260824-001")
         self.assertEqual(ext["extended_by_hours"], 12)
         self.assertEqual(ext["owner"], "Antigravity3")
         self.assertEqual(ext["new_expires_at"], "2026-08-25T06:00:00Z")
+
+        # 999h extension must be rejected
+        with self.assertRaises(ValueError):
+            extend_staging_ttl(
+                release_id="odp-20260824-001",
+                extend_hours=999,
+                reason="debugging",
+                owner="Antigravity3",
+                current_expires_at=curr_expires,
+                created_at=created_at,
+            )
+
+        # Total TTL > 168h must be rejected
+        with self.assertRaises(ValueError):
+            extend_staging_ttl(
+                release_id="odp-20260824-001",
+                extend_hours=150,
+                reason="debugging",
+                owner="Antigravity3",
+                current_expires_at=curr_expires,
+                created_at=created_at,
+            )
 
         # Missing reason raises ValueError
         with self.assertRaises(ValueError):

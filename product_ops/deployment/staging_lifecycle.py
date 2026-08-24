@@ -11,7 +11,7 @@ Key Guarantees:
    services, and Pub/Sub messaging are created with release-scoped names & labels.
 3. Cloud Scheduler triggers start in a PAUSED state.
 4. All resources carry immutable tracking labels (owner, created_at, expires_at,
-   ephemeral=true, release_id, candidate_sha, manifest_digest_prefix).
+   ephemeral=true, managed_by=terraform, release_id, candidate_sha, manifest_digest_prefix).
 5. Cleanup operates ONLY via exact label matching; broad wildcards are forbidden.
 6. Failed staging runs are retained for debugging up to 24 hours by default.
    TTL extensions require explicit owner and documented reason (max 168h / 7d).
@@ -22,15 +22,15 @@ Key Guarantees:
 from __future__ import annotations
 
 import argparse
-import copy
 import dataclasses
+import hashlib
 import json
 import re
 import sys
-from datetime import datetime, timezone, timedelta
+from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
-
+from typing import Any
 
 # --- Validation Regex Patterns ---
 
@@ -63,6 +63,7 @@ class StagingConfig:
     api_image: str = "asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "0" * 64
     web_image: str = "asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "0" * 64
     ttl_hours: int = DEFAULT_TTL_HOURS
+    created_at: str = ""
     owner_task_id: str = ""
     additional_labels: dict[str, str] = dataclasses.field(default_factory=dict)
 
@@ -126,22 +127,21 @@ class OrphanScanResult:
 def format_timestamp(dt: datetime) -> str:
     """Format datetime in UTC ISO 8601 string with Z suffix."""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     else:
-        dt = dt.astimezone(timezone.utc)
+        dt = dt.astimezone(UTC)
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_timestamp(ts_str: str) -> datetime:
     """Parse ISO timestamp or sanitized label timestamp into timezone-aware datetime."""
-    # Label timestamps may replace : and T with -
     cleaned = ts_str.strip()
     if cleaned.endswith("Z"):
         cleaned = cleaned[:-1] + "+00:00"
     try:
         dt = datetime.fromisoformat(cleaned)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except ValueError:
         pass
@@ -151,7 +151,7 @@ def parse_timestamp(ts_str: str) -> datetime:
     if len(parts) >= 6:
         try:
             year, month, day, hour, minute, second = (int(p) for p in parts[:6])
-            return datetime(year, month, day, hour, minute, second, tzinfo=timezone.utc)
+            return datetime(year, month, day, hour, minute, second, tzinfo=UTC)
         except Exception:
             pass
 
@@ -161,6 +161,51 @@ def parse_timestamp(ts_str: str) -> datetime:
 def sanitize_release_suffix(release_id: str) -> str:
     """Normalize release ID into a safe lowercase hyphenated suffix."""
     return re.sub(r"[^a-z0-9-]", "-", release_id.lower()).strip("-")
+
+
+def compute_release_hash(release_id: str) -> str:
+    """Compute deterministic 8-character hex hash of release_id to prevent naming collisions."""
+    return hashlib.sha256(release_id.encode("utf-8")).hexdigest()[:8]
+
+
+def get_ephemeral_resource_names(release_id: str, project_id: str = "") -> dict[str, str]:
+    """Compute collision-free, length-compliant GCP resource names for ephemeral staging."""
+    clean = sanitize_release_suffix(release_id)
+    rel_hash = compute_release_hash(release_id)
+
+    sa_slug = clean[:13]
+    sa_prefix = f"stg-{sa_slug}-{rel_hash}"
+
+    db_slug_clean = clean.replace("-", "_")
+    db_slug = db_slug_clean[:40]
+    db_user_slug = db_slug_clean[:36]
+
+    bucket_slug = clean[:12]
+    bucket_name = f"stg-{bucket_slug}-{rel_hash}-data-{project_id}" if project_id else f"stg-{bucket_slug}-{rel_hash}-data"
+
+    res_slug = clean[:24]
+    name_prefix = f"stg-{res_slug}-{rel_hash}"
+
+    return {
+        "name_prefix": name_prefix,
+        "release_hash": rel_hash,
+        "sa_runtime": f"{sa_prefix}-rt",
+        "sa_web": f"{sa_prefix}-web",
+        "sa_worker": f"{sa_prefix}-wkr",
+        "database_name": f"stg_{db_slug}_{rel_hash}",
+        "database_user": f"stg_{db_user_slug}_{rel_hash}_app",
+        "bucket_name": bucket_name,
+        "cloud_run_api": f"{name_prefix}-api",
+        "cloud_run_web": f"{name_prefix}-web",
+        "jobs_topic": f"{name_prefix}-jobs",
+        "jobs_dlq_topic": f"{name_prefix}-jobs-dlq",
+        "jobs_sub": f"{name_prefix}-jobs",
+        "jobs_dlq_sub": f"{name_prefix}-jobs-dlq",
+        "secret_db_url": f"{name_prefix}-database-url",
+        "secret_cursor_key": f"{name_prefix}-cursor-signing-key",
+        "secret_web_session": f"{name_prefix}-web-session",
+        "scheduler_job": f"{name_prefix}-worker-trigger",
+    }
 
 
 def generate_staging_labels(
@@ -173,7 +218,7 @@ def generate_staging_labels(
     additional_labels: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Generate the canonical tracking label set for ephemeral staging resources."""
-    now = created_at or datetime.now(timezone.utc)
+    now = created_at or datetime.now(UTC)
     expires = now + timedelta(hours=ttl_hours)
     release_suffix = sanitize_release_suffix(release_id)
 
@@ -246,14 +291,22 @@ def validate_staging_config(config: StagingConfig) -> list[str]:
     if not config.kms_key_id.strip():
         errors.append("kms_key_id must be non-empty.")
 
+    if config.created_at:
+        try:
+            parse_timestamp(config.created_at)
+        except Exception:
+            errors.append(f"Invalid created_at: {config.created_at!r}. Must be valid ISO/RFC3339 timestamp.")
+
     return errors
 
 
-def generate_tfvars(config: StagingConfig) -> dict[str, Any]:
+def generate_tfvars(config: StagingConfig, created_at: datetime | None = None) -> dict[str, Any]:
     """Generate Terraform variable mapping for ephemeral staging module."""
     errors = validate_staging_config(config)
     if errors:
         raise ValueError(f"Cannot generate tfvars for invalid config: {'; '.join(errors)}")
+
+    now_dt = created_at or (parse_timestamp(config.created_at) if config.created_at else datetime.now(UTC))
 
     return {
         "project_id": config.project_id,
@@ -264,6 +317,7 @@ def generate_tfvars(config: StagingConfig) -> dict[str, Any]:
         "api_image": config.api_image,
         "web_image": config.web_image,
         "ttl_hours": config.ttl_hours,
+        "created_at": format_timestamp(now_dt),
         "owner_task_id": config.owner_task_id,
         "cloud_sql_instance_name": config.cloud_sql_instance_name,
         "cloud_sql_connection_name": config.cloud_sql_connection_name,
@@ -277,7 +331,7 @@ def generate_tfvars(config: StagingConfig) -> dict[str, Any]:
 
 def plan_staging_resources(config: StagingConfig, created_at: datetime | None = None) -> list[StagingResource]:
     """Compute the deterministic list of release-scoped ephemeral resources."""
-    now = created_at or datetime.now(timezone.utc)
+    now = created_at or (parse_timestamp(config.created_at) if config.created_at else datetime.now(UTC))
     expires = now + timedelta(hours=config.ttl_hours)
     labels = generate_staging_labels(
         release_id=config.release_id,
@@ -288,19 +342,16 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         created_at=now,
         additional_labels=config.additional_labels,
     )
-    suffix = sanitize_release_suffix(config.release_id)
-    name_prefix = f"stg-{suffix[:30]}"
-    db_name = f"stg_{suffix.replace('-', '_')}"
-    db_user = f"stg_{suffix.replace('-', '_')}_app"
 
+    names = get_ephemeral_resource_names(config.release_id, config.project_id)
     created_iso = format_timestamp(now)
     expires_iso = format_timestamp(expires)
 
     return [
         StagingResource(
             resource_type="google_sql_database",
-            resource_name=db_name,
-            resource_id=f"projects/{config.project_id}/instances/{config.cloud_sql_instance_name}/databases/{db_name}",
+            resource_name=names["database_name"],
+            resource_id=f"projects/{config.project_id}/instances/{config.cloud_sql_instance_name}/databases/{names['database_name']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -308,8 +359,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_sql_user",
-            resource_name=db_user,
-            resource_id=f"projects/{config.project_id}/instances/{config.cloud_sql_instance_name}/users/{db_user}",
+            resource_name=names["database_user"],
+            resource_id=f"projects/{config.project_id}/instances/{config.cloud_sql_instance_name}/users/{names['database_user']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -317,8 +368,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_secret_manager_secret",
-            resource_name=f"{name_prefix}-database-url",
-            resource_id=f"projects/{config.project_id}/secrets/{name_prefix}-database-url",
+            resource_name=names["secret_db_url"],
+            resource_id=f"projects/{config.project_id}/secrets/{names['secret_db_url']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -326,8 +377,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_secret_manager_secret",
-            resource_name=f"{name_prefix}-cursor-signing-key",
-            resource_id=f"projects/{config.project_id}/secrets/{name_prefix}-cursor-signing-key",
+            resource_name=names["secret_cursor_key"],
+            resource_id=f"projects/{config.project_id}/secrets/{names['secret_cursor_key']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -335,8 +386,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_secret_manager_secret",
-            resource_name=f"{name_prefix}-web-session",
-            resource_id=f"projects/{config.project_id}/secrets/{name_prefix}-web-session",
+            resource_name=names["secret_web_session"],
+            resource_id=f"projects/{config.project_id}/secrets/{names['secret_web_session']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -344,8 +395,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_storage_bucket",
-            resource_name=f"{name_prefix}-data-{config.project_id}",
-            resource_id=f"gs://{name_prefix}-data-{config.project_id}",
+            resource_name=names["bucket_name"],
+            resource_id=f"gs://{names['bucket_name']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -353,8 +404,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_service_account",
-            resource_name=f"{name_prefix}-rt",
-            resource_id=f"projects/{config.project_id}/serviceAccounts/{name_prefix}-rt@{config.project_id}.iam.gserviceaccount.com",
+            resource_name=names["sa_runtime"],
+            resource_id=f"projects/{config.project_id}/serviceAccounts/{names['sa_runtime']}@{config.project_id}.iam.gserviceaccount.com",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -362,8 +413,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_service_account",
-            resource_name=f"{name_prefix}-web",
-            resource_id=f"projects/{config.project_id}/serviceAccounts/{name_prefix}-web@{config.project_id}.iam.gserviceaccount.com",
+            resource_name=names["sa_web"],
+            resource_id=f"projects/{config.project_id}/serviceAccounts/{names['sa_web']}@{config.project_id}.iam.gserviceaccount.com",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -371,8 +422,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_service_account",
-            resource_name=f"{name_prefix}-wkr",
-            resource_id=f"projects/{config.project_id}/serviceAccounts/{name_prefix}-wkr@{config.project_id}.iam.gserviceaccount.com",
+            resource_name=names["sa_worker"],
+            resource_id=f"projects/{config.project_id}/serviceAccounts/{names['sa_worker']}@{config.project_id}.iam.gserviceaccount.com",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -380,8 +431,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_pubsub_topic",
-            resource_name=f"{name_prefix}-jobs",
-            resource_id=f"projects/{config.project_id}/topics/{name_prefix}-jobs",
+            resource_name=names["jobs_topic"],
+            resource_id=f"projects/{config.project_id}/topics/{names['jobs_topic']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -389,8 +440,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_pubsub_topic",
-            resource_name=f"{name_prefix}-jobs-dlq",
-            resource_id=f"projects/{config.project_id}/topics/{name_prefix}-jobs-dlq",
+            resource_name=names["jobs_dlq_topic"],
+            resource_id=f"projects/{config.project_id}/topics/{names['jobs_dlq_topic']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -398,8 +449,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_pubsub_subscription",
-            resource_name=f"{name_prefix}-jobs",
-            resource_id=f"projects/{config.project_id}/subscriptions/{name_prefix}-jobs",
+            resource_name=names["jobs_sub"],
+            resource_id=f"projects/{config.project_id}/subscriptions/{names['jobs_sub']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -407,8 +458,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_pubsub_subscription",
-            resource_name=f"{name_prefix}-jobs-dlq",
-            resource_id=f"projects/{config.project_id}/subscriptions/{name_prefix}-jobs-dlq",
+            resource_name=names["jobs_dlq_sub"],
+            resource_id=f"projects/{config.project_id}/subscriptions/{names['jobs_dlq_sub']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -416,8 +467,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_cloud_run_v2_service",
-            resource_name=f"{name_prefix}-api",
-            resource_id=f"projects/{config.project_id}/locations/{config.region}/services/{name_prefix}-api",
+            resource_name=names["cloud_run_api"],
+            resource_id=f"projects/{config.project_id}/locations/{config.region}/services/{names['cloud_run_api']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -425,8 +476,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_cloud_run_v2_service",
-            resource_name=f"{name_prefix}-web",
-            resource_id=f"projects/{config.project_id}/locations/{config.region}/services/{name_prefix}-web",
+            resource_name=names["cloud_run_web"],
+            resource_id=f"projects/{config.project_id}/locations/{config.region}/services/{names['cloud_run_web']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -434,8 +485,8 @@ def plan_staging_resources(config: StagingConfig, created_at: datetime | None = 
         ),
         StagingResource(
             resource_type="google_cloud_scheduler_job",
-            resource_name=f"{name_prefix}-worker-trigger",
-            resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{name_prefix}-worker-trigger",
+            resource_name=names["scheduler_job"],
+            resource_id=f"projects/{config.project_id}/locations/{config.region}/jobs/{names['scheduler_job']}",
             release_id=config.release_id,
             labels=labels,
             created_at=created_iso,
@@ -449,9 +500,10 @@ def create_ephemeral_staging(
     *,
     dry_run: bool = False,
     now: datetime | None = None,
+    creation_executor: Callable[[StagingConfig, Sequence[StagingResource]], bool | Sequence[dict[str, Any]]] | None = None,
 ) -> StagingLifecycleReceipt:
     """Create or plan an ephemeral staging environment instance."""
-    now_dt = now or datetime.now(timezone.utc)
+    now_dt = now or (parse_timestamp(config.created_at) if config.created_at else datetime.now(UTC))
     errors = validate_staging_config(config)
     if errors:
         return StagingLifecycleReceipt(
@@ -468,14 +520,83 @@ def create_ephemeral_staging(
         )
 
     planned = plan_staging_resources(config, created_at=now_dt)
+
+    if dry_run:
+        resource_dicts = [
+            {
+                "type": r.resource_type,
+                "name": r.resource_name,
+                "id": r.resource_id,
+                "status": "planned",
+                "created_at": r.created_at,
+                "expires_at": r.expires_at,
+                "labels": dict(r.labels),
+            }
+            for r in planned
+        ]
+        return StagingLifecycleReceipt(
+            action="create",
+            release_id=config.release_id,
+            candidate_sha=config.candidate_sha,
+            manifest_digest_prefix=config.manifest_digest.replace("sha256:", "")[:16],
+            success=True,
+            timestamp=format_timestamp(now_dt),
+            resources=resource_dicts,
+            errors=[],
+            remediation_required=False,
+            metadata={
+                "dry_run": True,
+                "ttl_hours": config.ttl_hours,
+                "project_id": config.project_id,
+                "region": config.region,
+                "scheduler_paused": True,
+            },
+        )
+
+    # Non-dry-run without an executor cannot claim live provisioning
+    if creation_executor is None:
+        return StagingLifecycleReceipt(
+            action="create",
+            release_id=config.release_id,
+            candidate_sha=config.candidate_sha,
+            manifest_digest_prefix=config.manifest_digest.replace("sha256:", "")[:16],
+            success=False,
+            timestamp=format_timestamp(now_dt),
+            resources=[
+                {
+                    "type": r.resource_type,
+                    "name": r.resource_name,
+                    "id": r.resource_id,
+                    "status": "not_provisioned",
+                    "created_at": r.created_at,
+                    "expires_at": r.expires_at,
+                    "labels": dict(r.labels),
+                }
+                for r in planned
+            ],
+            errors=["Non-dry-run creation requires a creation_executor or live provisioning backend."],
+            remediation_required=True,
+            remediation_notes="No creation executor was supplied to perform live resource provisioning.",
+            metadata={"dry_run": False},
+        )
+
+    exec_success = True
+    try:
+        exec_res = creation_executor(config, planned)
+        exec_success = bool(exec_res) if not isinstance(exec_res, Sequence) else True
+    except Exception as exc:
+        exec_success = False
+        errors.append(f"Creation executor failed: {exc}")
+
     resource_dicts = [
         {
             "type": r.resource_type,
             "name": r.resource_name,
             "id": r.resource_id,
-            "status": "planned" if dry_run else "provisioned",
+            "status": "provisioned" if exec_success else "failed",
             "created_at": r.created_at,
             "expires_at": r.expires_at,
+            "labels": dict(r.labels),
         }
         for r in planned
     ]
@@ -485,13 +606,14 @@ def create_ephemeral_staging(
         release_id=config.release_id,
         candidate_sha=config.candidate_sha,
         manifest_digest_prefix=config.manifest_digest.replace("sha256:", "")[:16],
-        success=True,
+        success=exec_success,
         timestamp=format_timestamp(now_dt),
         resources=resource_dicts,
-        errors=[],
-        remediation_required=False,
+        errors=errors,
+        remediation_required=not exec_success,
+        remediation_notes="" if exec_success else "Creation executor encountered errors during provisioning.",
         metadata={
-            "dry_run": dry_run,
+            "dry_run": False,
             "ttl_hours": config.ttl_hours,
             "project_id": config.project_id,
             "region": config.region,
@@ -500,18 +622,42 @@ def create_ephemeral_staging(
     )
 
 
-def is_staging_ephemeral_resource(labels: Mapping[str, str], target_release_id: str) -> bool:
-    """Strictly verify if resource labels match the target ephemeral staging release."""
+def is_staging_ephemeral_resource(
+    labels: Mapping[str, str],
+    target_release_id: str,
+    *,
+    require_full_ownership: bool = True,
+) -> bool:
+    """Strictly verify if resource labels match the target ephemeral staging release.
+
+    Requires full ownership labels (managed_by=terraform, app=oday-plus, environment=staging,
+    ephemeral=true, release_id, candidate_sha, manifest_digest_prefix, owner_task).
+    """
     target_suffix = sanitize_release_suffix(target_release_id)
     if not target_suffix:
         return False
 
-    return (
-        labels.get("app") == "oday-plus"
-        and labels.get("environment") == "staging"
-        and labels.get("ephemeral") == "true"
-        and labels.get("release_id") == target_suffix
-    )
+    if (
+        labels.get("app") != "oday-plus"
+        or labels.get("environment") != "staging"
+        or labels.get("managed_by") != "terraform"
+        or labels.get("ephemeral") != "true"
+        or sanitize_release_suffix(str(labels.get("release_id", ""))) != target_suffix
+    ):
+        return False
+
+    if require_full_ownership:
+        sha = str(labels.get("candidate_sha", "")).strip().lower()
+        if not CANDIDATE_SHA_PATTERN.fullmatch(sha):
+            return False
+        digest_prefix = str(labels.get("manifest_digest_prefix", "")).strip().lower()
+        if len(digest_prefix) < 8 or not re.fullmatch(r"^[0-9a-f]+$", digest_prefix):
+            return False
+        owner_task = str(labels.get("owner_task", "")).strip()
+        if not owner_task:
+            return False
+
+    return True
 
 
 def cleanup_ephemeral_staging(
@@ -522,16 +668,20 @@ def cleanup_ephemeral_staging(
     dry_run: bool = False,
     now: datetime | None = None,
     deletion_executor: Callable[[Mapping[str, Any]], bool] | None = None,
+    allow_empty: bool = False,
 ) -> StagingLifecycleReceipt:
     """Destroy ephemeral staging resources strictly by exact label matching.
 
     Guarantees:
     - Never uses wildcards or project-wide deletions.
-    - Explicitly verifies `ephemeral=true`, `environment=staging`, `app=oday-plus`, and matching `release_id`.
+    - Explicitly verifies `ephemeral=true`, `managed_by=terraform`, `environment=staging`,
+      `app=oday-plus`, and matching `release_id` and ownership labels.
     - Protected resources (prod/dev/shared infra) are never touched.
+    - Empty inventory or zero matching resources without allow_empty is rejected as non-success.
+    - Non-dry-run cleanup requires a deletion_executor.
     - If any deletion fails, a remediation task is marked.
     """
-    now_dt = now or datetime.now(timezone.utc)
+    now_dt = now or datetime.now(UTC)
     target_suffix = sanitize_release_suffix(release_id)
 
     # Reject empty, wildcard, or broad environment strings
@@ -556,8 +706,7 @@ def cleanup_ephemeral_staging(
             remediation_notes="Cleanup was aborted because release_id is unsafe or broad.",
         )
 
-    # Use supplied inventory or empty if none passed
-    inventory = resource_inventory or []
+    inventory = resource_inventory if resource_inventory is not None else []
     matching_resources: list[Mapping[str, Any]] = []
 
     for res in inventory:
@@ -565,12 +714,47 @@ def cleanup_ephemeral_staging(
         if not isinstance(labels, Mapping):
             continue
 
-        # Strictly check label match
+        # Strictly check full label match
         if is_staging_ephemeral_resource(labels, release_id):
-            # Guard against accidental prod/shared target
-            if labels.get("environment") != "staging" or labels.get("ephemeral") != "true":
-                continue
             matching_resources.append(res)
+
+    if not matching_resources and not allow_empty:
+        return StagingLifecycleReceipt(
+            action="cleanup",
+            release_id=release_id,
+            candidate_sha="",
+            manifest_digest_prefix="",
+            success=False,
+            timestamp=format_timestamp(now_dt),
+            resources=[],
+            errors=[f"No matching ephemeral staging resources found for release {release_id!r} in inventory."],
+            remediation_required=False,
+            remediation_notes="Cleanup found 0 matching resources in inventory.",
+            metadata={"dry_run": dry_run, "matched_count": 0},
+        )
+
+    if not dry_run and deletion_executor is None and matching_resources:
+        return StagingLifecycleReceipt(
+            action="cleanup",
+            release_id=release_id,
+            candidate_sha="",
+            manifest_digest_prefix="",
+            success=False,
+            timestamp=format_timestamp(now_dt),
+            resources=[
+                {
+                    "id": str(res.get("id") or res.get("name", "unknown")),
+                    "type": str(res.get("type", "unknown")),
+                    "status": "not_deleted",
+                    "labels": dict(res.get("labels", {})),
+                }
+                for res in matching_resources
+            ],
+            errors=["Non-dry-run cleanup requires a deletion_executor to perform real resource deletion."],
+            remediation_required=True,
+            remediation_notes="No deletion executor provided for live cleanup.",
+            metadata={"dry_run": False, "matched_count": len(matching_resources)},
+        )
 
     deleted: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -584,10 +768,10 @@ def cleanup_ephemeral_staging(
                 "id": res_id,
                 "type": res_type,
                 "status": "planned_deletion",
+                "labels": dict(res.get("labels", {})),
             })
             continue
 
-        # Execute deletion via executor callback if provided, else simulated success
         success = True
         if deletion_executor is not None:
             try:
@@ -601,6 +785,7 @@ def cleanup_ephemeral_staging(
                 "id": res_id,
                 "type": res_type,
                 "status": "deleted",
+                "labels": dict(res.get("labels", {})),
             })
         else:
             if not any(res_id in err for err in errors):
@@ -637,8 +822,8 @@ def scan_orphans(
     auto_cleanup: bool = False,
     deletion_executor: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> OrphanScanResult:
-    """Scan inventory for expired ephemeral staging resources and orphans."""
-    now_dt = now or datetime.now(timezone.utc)
+    """Scan inventory for expired ephemeral staging resources and unmanaged orphans."""
+    now_dt = now or datetime.now(UTC)
     scanned_total = len(resource_inventory)
 
     active_releases: set[str] = set()
@@ -660,11 +845,39 @@ def scan_orphans(
         if labels.get("ephemeral") != "true":
             continue
 
+        res_id = str(res.get("id") or res.get("name", "unknown"))
+        res_type = str(res.get("type", "unknown"))
+
+        # Check managed_by label
+        if labels.get("managed_by") != "terraform":
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "reason": "Missing or invalid managed_by label on ephemeral resource",
+                "labels": dict(labels),
+            })
+            alerts.append(f"Unmanaged orphan resource found: {res_type} {res_id}")
+            continue
+
         release_id = str(labels.get("release_id", "")).strip()
         created_str = labels.get("created_at", "")
         expires_str = labels.get("expires_at", "")
-        res_id = str(res.get("id") or res.get("name", "unknown"))
-        res_type = str(res.get("type", "unknown"))
+
+        # Check full ownership labels
+        candidate_sha = str(labels.get("candidate_sha", "")).strip()
+        manifest_prefix = str(labels.get("manifest_digest_prefix", "")).strip()
+        owner_task = str(labels.get("owner_task", "")).strip()
+
+        if not release_id or not candidate_sha or not manifest_prefix or not owner_task:
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "release_id": release_id,
+                "reason": "Incomplete ownership labels (release_id, candidate_sha, manifest_digest_prefix, owner_task)",
+                "labels": dict(labels),
+            })
+            alerts.append(f"Orphan resource with incomplete ownership labels: {res_type} {res_id}")
+            continue
 
         # Determine expiration
         is_expired = False
@@ -683,18 +896,7 @@ def scan_orphans(
             except Exception:
                 is_expired = True
         else:
-            # Missing timestamps in ephemeral resource -> orphan
             is_expired = True
-
-        if not release_id:
-            orphan_resources.append({
-                "id": res_id,
-                "type": res_type,
-                "reason": "Missing release_id label on ephemeral resource",
-                "labels": dict(labels),
-            })
-            alerts.append(f"Orphan resource without release_id found: {res_type} {res_id}")
-            continue
 
         if is_expired:
             expired_releases.add(release_id)
@@ -725,6 +927,7 @@ def scan_orphans(
                 dry_run=False,
                 now=now_dt,
                 deletion_executor=deletion_executor,
+                allow_empty=True,
             )
             if cleanup_res.success:
                 cleaned_resources.extend(cleanup_res.resources)
@@ -765,6 +968,7 @@ def extend_staging_ttl(
     current_expires_at: datetime,
     max_total_ttl_hours: int = MAX_TTL_HOURS,
     now: datetime | None = None,
+    created_at: datetime | None = None,
 ) -> dict[str, Any]:
     """Extend TTL for debugging a failed staging deployment with mandatory owner and reason.
 
@@ -772,7 +976,7 @@ def extend_staging_ttl(
     - Ephemeral staging retention on failure must NOT exceed 24 hours without explicit owner and reason.
     - Maximum allowable extension cannot exceed 168 hours (7 days) from initial creation.
     """
-    now_dt = now or datetime.now(timezone.utc)
+    now_dt = now or datetime.now(UTC)
 
     if not reason or not reason.strip():
         raise ValueError("TTL extension requires a non-empty documented 'reason'.")
@@ -783,7 +987,20 @@ def extend_staging_ttl(
     if extend_hours <= 0:
         raise ValueError("extend_hours must be positive.")
 
+    if extend_hours > max_total_ttl_hours:
+        raise ValueError(
+            f"extend_hours ({extend_hours}h) exceeds maximum allowable TTL of {max_total_ttl_hours} hours."
+        )
+
     new_expires_at = current_expires_at + timedelta(hours=extend_hours)
+
+    baseline_created = created_at or (current_expires_at - timedelta(hours=DEFAULT_TTL_HOURS))
+    total_ttl_hours = (new_expires_at - baseline_created).total_seconds() / 3600.0
+
+    if total_ttl_hours > max_total_ttl_hours:
+        raise ValueError(
+            f"Total TTL after extension ({total_ttl_hours:.1f}h) exceeds maximum allowable TTL of {max_total_ttl_hours} hours."
+        )
 
     return {
         "release_id": release_id,
@@ -793,6 +1010,7 @@ def extend_staging_ttl(
         "previous_expires_at": format_timestamp(current_expires_at),
         "new_expires_at": format_timestamp(new_expires_at),
         "extended_at": format_timestamp(now_dt),
+        "total_ttl_hours": total_ttl_hours,
     }
 
 
@@ -833,7 +1051,7 @@ def validate_module_contract(module_dir: Path) -> list[str]:
             errors.append(f"main.tf is missing expected resource: {res}")
 
     # Paused scheduler check
-    if 'paused           = true' not in main_text and 'paused = true' not in main_text:
+    if not re.search(r"paused\s*=\s*true", main_text):
         errors.append("google_cloud_scheduler_job.staging_worker_trigger must start paused (`paused = true`).")
 
     # Required labels check
@@ -851,6 +1069,10 @@ def validate_module_contract(module_dir: Path) -> list[str]:
     for label in required_labels:
         if label not in main_text:
             errors.append(f"resource_labels is missing required tracking label: {label}")
+
+    # created_at variable check
+    if 'variable "created_at"' not in vars_text:
+        errors.append("variables.tf is missing required variable `created_at` for idempotent applies.")
 
     # No forbidden secret exposure in outputs
     forbidden_in_outputs = (
@@ -887,6 +1109,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_p.add_argument("--api-image", required=True, help="API image reference with @sha256")
     create_p.add_argument("--web-image", required=True, help="Web image reference with @sha256")
     create_p.add_argument("--ttl-hours", type=int, default=DEFAULT_TTL_HOURS, help="TTL in hours")
+    create_p.add_argument("--created-at", default="", help="Creation timestamp ISO")
     create_p.add_argument("--owner-task-id", default="", help="Owner Task ID")
     create_p.add_argument("--dry-run", action="store_true", help="Perform dry-run planning only")
     create_p.add_argument("--tfvars-out", help="Path to write tfvars JSON")
@@ -897,6 +1120,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     clean_p.add_argument("--project-id", required=True, help="GCP Project ID")
     clean_p.add_argument("--dry-run", action="store_true", help="Perform dry-run without deletion")
     clean_p.add_argument("--inventory-file", help="JSON file with resource inventory for label filtering")
+    clean_p.add_argument("--allow-empty", action="store_true", help="Allow empty inventory without error")
 
     # scan-orphans
     scan_p = subparsers.add_parser("scan-orphans", help="Scan for expired ephemeral staging resources")
@@ -912,6 +1136,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ext_p.add_argument("--owner", required=True, help="Owner identity requesting extension")
     ext_p.add_argument("--reason", required=True, help="Documented reason for extension")
     ext_p.add_argument("--current-expires-at", required=True, help="Current expires_at ISO timestamp")
+    ext_p.add_argument("--created-at", default="", help="Initial created_at ISO timestamp")
 
     # validate-contract
     val_p = subparsers.add_parser("validate-contract", help="Validate ephemeral staging Terraform module")
@@ -934,11 +1159,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             api_image=args.api_image,
             web_image=args.web_image,
             ttl_hours=args.ttl_hours,
+            created_at=args.created_at,
             owner_task_id=args.owner_task_id,
         )
 
         receipt = create_ephemeral_staging(config, dry_run=args.dry_run)
-        if args.tfvars_out and receipt.success:
+        if args.tfvars_out and (receipt.success or args.dry_run):
             tfvars = generate_tfvars(config)
             Path(args.tfvars_out).write_text(json.dumps(tfvars, indent=2), encoding="utf-8")
 
@@ -955,6 +1181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             project_id=args.project_id,
             resource_inventory=inventory,
             dry_run=args.dry_run,
+            allow_empty=args.allow_empty,
         )
         print(json.dumps(receipt.to_dict(), indent=2))
         return 0 if receipt.success else 1
@@ -972,12 +1199,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     elif args.command == "extend-ttl":
         curr_exp = parse_timestamp(args.current_expires_at)
+        created_dt = parse_timestamp(args.created_at) if args.created_at else None
         res = extend_staging_ttl(
             release_id=args.release_id,
             extend_hours=args.extend_hours,
             reason=args.reason,
             owner=args.owner,
             current_expires_at=curr_exp,
+            created_at=created_dt,
         )
         print(json.dumps(res, indent=2))
         return 0

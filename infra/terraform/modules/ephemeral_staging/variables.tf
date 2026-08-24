@@ -75,6 +75,17 @@ variable "ttl_hours" {
   }
 }
 
+variable "created_at" {
+  type        = string
+  description = "Fixed RFC3339 timestamp (e.g. 2026-08-24T12:00:00Z) when staging was created. Ensures idempotent Terraform applies."
+  default     = ""
+
+  validation {
+    condition     = var.created_at == "" || can(regex("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$", var.created_at))
+    error_message = "created_at must be an RFC3339 timestamp string (e.g. 2026-08-24T12:00:00Z) or empty."
+  }
+}
+
 variable "owner_task_id" {
   type        = string
   description = "Task ID that owns this ephemeral staging release."

@@ -31,11 +31,36 @@ terraform {
 }
 
 locals {
-  # Safe suffix: lowercase release_id truncated for GCP naming limits.
-  release_suffix = lower(replace(var.release_id, "/[^a-z0-9-]/", "-"))
-  name_prefix    = "stg-${substr(local.release_suffix, 0, 30)}"
+  # Release ID normalized for naming and exact release_hash to guarantee uniqueness and prevent collision.
+  release_clean = lower(replace(var.release_id, "/[^a-z0-9-]/", "-"))
+  release_hash  = substr(sha256(var.release_id), 0, 8)
 
-  created_at = timestamp()
+  # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
+  sa_slug       = substr(local.release_clean, 0, 13)
+  sa_prefix     = "stg-${local.sa_slug}-${local.release_hash}"
+  sa_runtime_id = "${local.sa_prefix}-rt"
+  sa_web_id     = "${local.sa_prefix}-web"
+  sa_worker_id  = "${local.sa_prefix}-wkr"
+
+  # Cloud SQL database name max 63 chars: "stg_" (4) + slug (40) + "_" (1) + hash (8) = 53 chars.
+  db_slug_clean = replace(local.release_clean, "-", "_")
+  db_slug       = substr(local.db_slug_clean, 0, 40)
+  database_name = "stg_${local.db_slug}_${local.release_hash}"
+
+  # Cloud SQL user name max 63 chars: "stg_" (4) + slug (36) + "_" (1) + hash (8) + "_app" (4) = 53 chars.
+  db_user_slug  = substr(local.db_slug_clean, 0, 36)
+  database_user = "stg_${local.db_user_slug}_${local.release_hash}_app"
+
+  # Bucket name max 63 chars: "stg-" (4) + slug (12) + "-" (1) + hash (8) + "-data-" (6) + project_id (<= 30) = <= 61 chars.
+  bucket_slug = substr(local.release_clean, 0, 12)
+  bucket_name = "stg-${local.bucket_slug}-${local.release_hash}-data-${var.project_id}"
+
+  # Cloud Run & Secret Manager & Pub/Sub prefix: "stg-" (4) + slug (24) + "-" (1) + hash (8) = 37 chars.
+  res_slug    = substr(local.release_clean, 0, 24)
+  name_prefix = "stg-${local.res_slug}-${local.release_hash}"
+
+  # Immutable creation and expiration timestamps (ensures applies do not refresh TTL).
+  created_at = var.created_at != "" ? var.created_at : "2026-08-24T00:00:00Z"
   expires_at = timeadd(local.created_at, "${var.ttl_hours}h")
 
   # Labels applied to every ephemeral resource for precise cleanup targeting.
@@ -45,7 +70,7 @@ locals {
       environment            = "staging"
       managed_by             = "terraform"
       ephemeral              = "true"
-      release_id             = local.release_suffix
+      release_id             = local.release_clean
       owner_task             = lower(replace(var.owner_task_id, "/[^a-z0-9-]/", "-"))
       candidate_sha          = substr(var.candidate_sha, 0, 40)
       manifest_digest_prefix = substr(replace(var.manifest_digest, "sha256:", ""), 0, 16)
@@ -54,9 +79,6 @@ locals {
     },
     var.additional_labels,
   )
-
-  database_name = "stg_${replace(local.release_suffix, "-", "_")}"
-  database_user = "stg_${replace(local.release_suffix, "-", "_")}_app"
 }
 
 # --- Isolated Database ---
@@ -119,7 +141,7 @@ resource "google_secret_manager_secret_version" "staging_database_url" {
 # Use a dedicated bucket per release to guarantee label-precise cleanup.
 
 resource "google_storage_bucket" "staging_data" {
-  name                        = "${local.name_prefix}-data-${var.project_id}"
+  name                        = local.bucket_name
   location                    = var.region
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
@@ -148,19 +170,19 @@ resource "google_storage_bucket" "staging_data" {
 # --- Isolated Service Accounts ---
 
 resource "google_service_account" "staging_runtime" {
-  account_id   = "${local.name_prefix}-rt"
+  account_id   = local.sa_runtime_id
   display_name = "Staging ${var.release_id} runtime"
   description  = "Ephemeral staging runtime identity, TTL ${var.ttl_hours}h."
 }
 
 resource "google_service_account" "staging_web" {
-  account_id   = "${local.name_prefix}-web"
+  account_id   = local.sa_web_id
   display_name = "Staging ${var.release_id} web BFF"
   description  = "Ephemeral staging web identity, TTL ${var.ttl_hours}h."
 }
 
 resource "google_service_account" "staging_worker" {
-  account_id   = "${local.name_prefix}-wkr"
+  account_id   = local.sa_worker_id
   display_name = "Staging ${var.release_id} worker"
   description  = "Ephemeral staging worker identity, TTL ${var.ttl_hours}h."
 }
@@ -631,12 +653,12 @@ resource "google_cloud_run_v2_service" "staging_web" {
 # --- Cloud Scheduler Trigger (Starts Paused) ---
 
 resource "google_cloud_scheduler_job" "staging_worker_trigger" {
-  name             = "${local.name_prefix}-worker-trigger"
-  description      = "Release-scoped ephemeral staging worker trigger (starts paused, TTL ${var.ttl_hours}h)"
-  schedule         = "*/15 * * * *"
-  time_zone        = "UTC"
-  paused           = true
-  region           = var.region
+  name        = "${local.name_prefix}-worker-trigger"
+  description = "Release-scoped ephemeral staging worker trigger (starts paused, TTL ${var.ttl_hours}h)"
+  schedule    = "*/15 * * * *"
+  time_zone   = "UTC"
+  paused      = true
+  region      = var.region
 
   http_target {
     http_method = "POST"

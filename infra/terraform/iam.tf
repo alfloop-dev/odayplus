@@ -94,8 +94,8 @@ resource "google_iam_workload_identity_pool" "github_actions" {
 resource "google_iam_workload_identity_pool_provider" "odayplus" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.github_actions.workload_identity_pool_id
   workload_identity_pool_provider_id = "odayplus"
-  display_name                        = "GitHub Actions Provider"
-  description                         = "OIDC identity provider for GitHub Actions."
+  display_name                       = "GitHub Actions Provider"
+  description                        = "OIDC identity provider for GitHub Actions."
 
   attribute_mapping = {
     "google.subject"       = "assertion.sub"
