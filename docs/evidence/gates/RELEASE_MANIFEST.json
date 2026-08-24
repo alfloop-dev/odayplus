@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "release_id": "odp-20260730-001",
+  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "components": {
+    "api": {
+      "image": "ghcr.io/alfloop-dev/odayplus-api@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "web": {
+      "image": "ghcr.io/alfloop-dev/odayplus-web@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    },
+    "data_platform": {
+      "image": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "migration": {
+      "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "worker": {
+      "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "scheduler": {
+      "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:6666666666666666666666666666666666666666666666666666666666666666"
+    }
+  },
+  "migration_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "data_contract_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "source_policy_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "external_sources_expected_enabled": [],
+  "sbom_refs": [
+    "oci://ghcr.io/alfloop-dev/odayplus/sbom@sha256:7777777777777777777777777777777777777777777777777777777777777777"
+  ],
+  "signature_refs": [
+    "oci://ghcr.io/alfloop-dev/odayplus/signature@sha256:8888888888888888888888888888888888888888888888888888888888888888"
+  ],
+  "created_at": "2026-07-30T12:00:00Z",
+  "created_by_workflow": "github://alfloop-dev/odayplus/actions/runtime-release.yml/run-0001",
+  "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271"
+}

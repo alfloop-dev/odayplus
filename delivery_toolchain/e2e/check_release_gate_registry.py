@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed validator for the Gate 0-6 machine-readable release registry.
+"""Fail-closed validator for the staged Gate 0-6 release registry.
 
 ``docs/evidence/gates/RELEASE_GATE_REGISTRY.json`` is the authoritative record
 of the seven release gates. Prose checklists (``docs/release/RELEASE_GATE_CHECKLIST.md``)
@@ -8,8 +8,9 @@ final gate audit reads.
 
 Everything fails closed. A gate is *not* cleared unless the registry proves it:
 
-* every gate carries status, owner, reviewer, status date, and the exact release
-  SHA it was attested against;
+* the v2 registry carries an immutable manifest bound to the exact release SHA;
+* every gate carries status, owner, reviewer, status date, stage, environment,
+  admission target, and the exact release SHA it was attested against;
 * a cleared gate needs at least one evidence reference that resolves to a real
   repository path and at least one passing receipt bound to that same exact SHA;
 * a receipt that names a different SHA is stale, not evidence -- a new release
@@ -17,7 +18,9 @@ Everything fails closed. A gate is *not* cleared unless the registry proves it:
 * an open gate must name at least one blocker, so a red registry says what to
   fix rather than going quiet;
 * ``release.decision`` may only be ``go`` when all seven gates are cleared and a
-  human sign-off is recorded.
+  human sign-off is recorded;
+* staging admission is the ``dev-verified`` boundary, so staging evidence
+  cannot be a prerequisite for creating the staging environment.
 
 Exit codes: ``0`` when the registry is internally consistent, ``1`` when any
 integrity rule fails or when ``--require-go`` is passed and the release is not
@@ -31,20 +34,44 @@ import argparse
 import json
 import re
 import subprocess
+import sys
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-SUPPORTED_SCHEMA_VERSIONS = ("1.0.0",)
+from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    is_sha256_digest,
+    load_manifest,
+)
+
+SUPPORTED_SCHEMA_VERSIONS = ("2.0.0",)
 GATE_COUNT = 7
 
 CLEARED_STATUSES = ("passed", "passed-with-deviation", "not-applicable")
 OPEN_STATUSES = ("not-started", "in-progress", "blocked", "failed")
 ALLOWED_STATUSES = CLEARED_STATUSES + OPEN_STATUSES
 ALLOWED_DECISIONS = ("go", "no-go")
+
+# A gate's stage is an admission boundary, not a claim that all seven gate
+# categories are complete.  In particular, staging is admitted by the
+# dev-verified boundary; it must not require receipts produced by staging
+# itself.  This is the explicit break in the old Gate-0..6 circularity.
+STAGE_CONTRACT = {
+    "candidate-built": ("dev", "dev"),
+    "dev-verified": ("dev", "staging"),
+    "staging-verified": ("staging", "production"),
+    "prod-admitted": ("production", "production-green"),
+    "prod-switched": ("production", "production-switch"),
+    "release-complete": ("production", "release-complete"),
+}
+STAGES = tuple(STAGE_CONTRACT)
+ENVIRONMENTS = tuple(sorted({contract[0] for contract in STAGE_CONTRACT.values()}))
+ADMISSION_TARGETS = tuple(dict.fromkeys(contract[1] for contract in STAGE_CONTRACT.values()))
 
 EVIDENCE_KINDS = ("doc", "script", "test", "ci-check", "command")
 PATH_EVIDENCE_KINDS = ("doc", "script", "test")
@@ -58,11 +85,17 @@ REQUIRED_TOP_LEVEL_KEYS = (
     "task_id",
     "generated_at",
     "release",
+    "migration",
     "gates",
 )
 REQUIRED_RELEASE_KEYS = (
     "candidate_sha",
     "candidate_ref",
+    "manifest_ref",
+    "manifest_digest",
+    "stage",
+    "environment",
+    "admission_target",
     "decision",
     "decision_owner",
     "decision_date",
@@ -78,6 +111,9 @@ REQUIRED_GATE_KEYS = (
     "status",
     "status_date",
     "release_sha",
+    "stage",
+    "environment",
+    "admission_target",
     "required_checks",
     "evidence",
     "receipts",
@@ -94,6 +130,13 @@ REQUIRED_RECEIPT_KEYS = (
 )
 REQUIRED_DEVIATION_KEYS = ("description", "approver", "review_by")
 REQUIRED_SIGNOFF_KEYS = ("approver", "date")
+REQUIRED_MIGRATION_KEYS = (
+    "from_schema_version",
+    "source_registry_id",
+    "migrated_at",
+    "strategy",
+    "re_attestation_required",
+)
 
 
 class RegistryLoadError(Exception):
@@ -156,7 +199,43 @@ def blocking_gates(registry: dict[str, Any]) -> list[str]:
     return blocking
 
 
-def validate_release(release: Any, errors: list[str]) -> str | None:
+def validate_stage_metadata(
+    value: Any,
+    *,
+    label: str,
+    errors: list[str],
+) -> None:
+    """Validate one explicit stage/environment/admission boundary."""
+
+    if not isinstance(value, dict):
+        errors.append(f"{label} must be an object")
+        return
+    for key in ("stage", "environment", "admission_target"):
+        if not is_nonempty_str(value.get(key)):
+            errors.append(f"{label}.{key} must be a non-empty string")
+
+    stage = value.get("stage")
+    if stage not in STAGE_CONTRACT:
+        errors.append(f"{label}.stage must be one of {list(STAGES)}, got: {stage!r}")
+        return
+    expected_environment, expected_target = STAGE_CONTRACT[stage]
+    if value.get("environment") != expected_environment:
+        errors.append(
+            f"{label}.environment {value.get('environment')!r} does not match stage "
+            f"{stage!r} (expected {expected_environment!r})"
+        )
+    if value.get("admission_target") != expected_target:
+        errors.append(
+            f"{label}.admission_target {value.get('admission_target')!r} does not match "
+            f"stage {stage!r} (expected {expected_target!r})"
+        )
+
+
+def validate_release(
+    release: Any,
+    errors: list[str],
+    root: Path = ROOT,
+) -> str | None:
     """Validate the release block; return the candidate SHA when it is usable."""
     if not isinstance(release, dict):
         errors.append("release must be an object")
@@ -176,6 +255,30 @@ def validate_release(release: Any, errors: list[str]) -> str | None:
 
     if not is_nonempty_str(release.get("candidate_ref")):
         errors.append("release.candidate_ref must be a non-empty string")
+
+    validate_stage_metadata(release, label="release", errors=errors)
+
+    manifest_ref = release.get("manifest_ref")
+    manifest_digest = release.get("manifest_digest")
+    if not is_nonempty_str(manifest_ref):
+        errors.append("release.manifest_ref must be a non-empty repository-relative path")
+    elif Path(manifest_ref).is_absolute() or ".." in Path(manifest_ref).parts:
+        errors.append("release.manifest_ref must not escape the repository root")
+    if not is_sha256_digest(manifest_digest):
+        errors.append("release.manifest_digest must be a sha256:<64 lowercase hex> digest")
+
+    if (
+        is_nonempty_str(manifest_ref)
+        and not Path(manifest_ref).is_absolute()
+        and ".." not in Path(manifest_ref).parts
+        and is_sha256_digest(manifest_digest)
+    ):
+        _manifest, manifest_errors = load_manifest(
+            root / manifest_ref,
+            expected_candidate_sha=candidate_sha,
+            expected_digest=manifest_digest,
+        )
+        errors.extend(f"release manifest: {error}" for error in manifest_errors)
 
     decision = release.get("decision")
     if decision not in ALLOWED_DECISIONS:
@@ -206,6 +309,30 @@ def validate_release(release: Any, errors: list[str]) -> str | None:
                 errors.append("release.human_signoff.date must be an ISO date")
 
     return candidate_sha
+
+
+def validate_migration(migration: Any, errors: list[str]) -> None:
+    """Require an auditable statement of how the staged registry was made."""
+
+    if not isinstance(migration, dict):
+        errors.append("registry.migration must be an object")
+        return
+    for key in REQUIRED_MIGRATION_KEYS:
+        if key not in migration:
+            errors.append(f"registry.migration missing required field: {key}")
+    if migration.get("from_schema_version") != "1.0.0":
+        errors.append(
+            "registry.migration.from_schema_version must be the explicitly migrated "
+            f"legacy version '1.0.0', got: {migration.get('from_schema_version')!r}"
+        )
+    if not is_nonempty_str(migration.get("source_registry_id")):
+        errors.append("registry.migration.source_registry_id must be a non-empty string")
+    if not is_valid_timestamp(migration.get("migrated_at")):
+        errors.append("registry.migration.migrated_at must be an RFC3339 timestamp")
+    if not is_nonempty_str(migration.get("strategy")):
+        errors.append("registry.migration.strategy must be a non-empty string")
+    if migration.get("re_attestation_required") is not True:
+        errors.append("registry.migration.re_attestation_required must be true")
 
 
 def validate_evidence(
@@ -324,6 +451,8 @@ def validate_gate(
     for key in ("name", "scope", "owner", "reviewer"):
         if not is_nonempty_str(gate.get(key)):
             errors.append(f"{gate_id}.{key} must be a non-empty string")
+
+    validate_stage_metadata(gate, label=gate_id, errors=errors)
 
     owner = gate.get("owner")
     reviewer = gate.get("reviewer")
@@ -446,7 +575,8 @@ def validate_registry(registry: dict[str, Any], root: Path = ROOT) -> list[str]:
             f"registry.generated_at must be an ISO date, got: {registry.get('generated_at')!r}"
         )
 
-    candidate_sha = validate_release(registry.get("release"), errors)
+    validate_migration(registry.get("migration"), errors)
+    candidate_sha = validate_release(registry.get("release"), errors, root)
 
     gates = registry.get("gates")
     if not isinstance(gates, list):
@@ -490,6 +620,10 @@ def build_report(registry: dict[str, Any], errors: list[str]) -> dict[str, Any]:
     return {
         "registry_id": registry.get("registry_id"),
         "candidate_sha": release.get("candidate_sha"),
+        "manifest_digest": release.get("manifest_digest"),
+        "stage": release.get("stage"),
+        "environment": release.get("environment"),
+        "admission_target": release.get("admission_target"),
         "decision": release.get("decision"),
         "gate_count": len(gates),
         "cleared_gates": [
@@ -504,6 +638,10 @@ def build_report(registry: dict[str, Any], errors: list[str]) -> dict[str, Any]:
 def print_report(report: dict[str, Any], registry: dict[str, Any]) -> None:
     print(f"Release gate registry: {report['registry_id']}")
     print(f"Release candidate SHA: {report['candidate_sha']}")
+    print(
+        "Admission boundary: "
+        f"{report['stage']} / {report['environment']} -> {report['admission_target']}"
+    )
     print(f"Recorded decision: {report['decision']}")
     print(f"Gates cleared: {len(report['cleared_gates'])}/{report['gate_count']}")
 
