@@ -26,6 +26,8 @@ Design rules
 
 from __future__ import annotations
 
+import argparse
+import base64
 import copy
 import json
 import logging
@@ -100,6 +102,7 @@ class ReleaseState:
     scheduler_states: dict[str, str] = field(default_factory=dict)
     scheduler_digests: dict[str, str] = field(default_factory=dict)
     data_platform_pointer: dict[str, str] = field(default_factory=dict)
+    data_platform_pointer_snapshot_path: str = ""
     switch_completed_at: str = ""
     rollback_completed_at: str = ""
 
@@ -116,6 +119,7 @@ class ReleaseState:
                 "scheduler_states": self.scheduler_states,
                 "scheduler_digests": self.scheduler_digests,
                 "data_platform_pointer": self.data_platform_pointer,
+                "data_platform_pointer_snapshot_path": self.data_platform_pointer_snapshot_path,
                 "switch_completed_at": self.switch_completed_at,
                 "rollback_completed_at": self.rollback_completed_at,
             },
@@ -139,6 +143,7 @@ class ReleaseState:
             scheduler_states=data.get("scheduler_states", {}),
             scheduler_digests=data.get("scheduler_digests", {}),
             data_platform_pointer=data.get("data_platform_pointer", {}),
+            data_platform_pointer_snapshot_path=data.get("data_platform_pointer_snapshot_path", ""),
             switch_completed_at=data.get("switch_completed_at", ""),
             rollback_completed_at=data.get("rollback_completed_at", ""),
         )
@@ -190,6 +195,97 @@ def _run_gcloud(
         capture_output=True,
         text=True,
         check=False,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tag resolution (Green 0% tag smoke verification)
+# ---------------------------------------------------------------------------
+
+def get_tagged_target_from_description(description: dict[str, Any], tag: str) -> tuple[str, str]:
+    """Extract (revisionName, url) for a tag from a Cloud Run service description.
+
+    Raises ValueError if tag is missing or malformed.
+    """
+    status = description.get("status")
+    traffic = status.get("traffic") if isinstance(status, dict) else None
+    if not isinstance(traffic, list):
+        raise ValueError("Cloud Run service description is missing status.traffic")
+
+    matches = [
+        item for item in traffic if isinstance(item, dict) and str(item.get("tag") or "") == tag
+    ]
+    if len(matches) != 1:
+        raise ValueError(f"expected exactly one Cloud Run traffic target for tag {tag!r}")
+
+    target = matches[0]
+    revision = str(target.get("revisionName") or "").strip()
+    url = str(target.get("url") or "").strip()
+    if not revision:
+        raise ValueError(f"tag {tag!r} has no immutable revisionName")
+    if not url.startswith("https://"):
+        raise ValueError(f"tag {tag!r} has no HTTPS URL")
+    return revision, url
+
+
+def resolve_tagged_target(
+    target: ServiceTarget,
+    tag: str,
+    *,
+    dry_run: bool = False,
+) -> OperationResult:
+    """Resolve the revision and HTTPS URL for a given tag on a Cloud Run service.
+
+    Used during green 0% smoke verification prior to 100% traffic switch.
+    """
+    if not tag:
+        return OperationResult(
+            success=False,
+            operation="resolve_tagged_target",
+            message="tag must be a non-empty string",
+        )
+
+    result = _run_gcloud(
+        [
+            "run", "services", "describe", target.service,
+            *target.gcloud_args(),
+            "--format=json",
+        ],
+        dry_run=dry_run,
+        capture_json=True,
+    )
+    if dry_run:
+        return OperationResult(
+            success=True,
+            operation="resolve_tagged_target",
+            message=f"[DRY-RUN] Would resolve tag '{tag}' for {target.service}",
+            dry_run=True,
+            details={"tag": tag, "revision": f"{target.service}-{tag}-mock", "url": f"https://{tag}---{target.service}.run.app"},
+        )
+
+    if result.returncode != 0:
+        return OperationResult(
+            success=False,
+            operation="resolve_tagged_target",
+            message=f"Failed to describe {target.service}: {result.stderr.strip()}",
+            details={"returncode": result.returncode},
+        )
+
+    try:
+        description = json.loads(result.stdout)
+        revision, url = get_tagged_target_from_description(description, tag)
+    except Exception as exc:
+        return OperationResult(
+            success=False,
+            operation="resolve_tagged_target",
+            message=f"Failed to resolve tagged revision for {tag}: {exc}",
+        )
+
+    return OperationResult(
+        success=True,
+        operation="resolve_tagged_target",
+        message=f"Resolved tag '{tag}' -> {revision} ({url})",
+        details={"tag": tag, "revision": revision, "url": url},
     )
 
 
@@ -261,7 +357,7 @@ def atomic_traffic_switch(
     """Atomically switch a Cloud Run service to 100% on ``green_revision``.
 
     This is a single ``gcloud run services update-traffic`` call that
-    moves **all** traffic in one operation.  There is no 10/90 canary
+    moves **all** traffic in one operation. There is no 10/90 canary
     step — the rollout plan §8.3 explicitly avoids long mixed-runs.
     """
     if not green_revision:
@@ -398,7 +494,7 @@ def pause_all_schedulers(
     """Pause all Cloud Scheduler triggers.
 
     Per rollout plan §8.2, schedulers start paused during green
-    deployment.  This is also the first rollback step (§8.4 step 1).
+    deployment. This is also the first rollback step (§8.4 step 1).
     """
     if not targets:
         return OperationResult(
@@ -484,7 +580,7 @@ def switch_job_digests(
     """Update Cloud Scheduler job HTTP bodies to reference the green digest.
 
     Per rollout plan §8.3 step 4, worker/scheduler job targets are
-    updated to the green digest.  The job's HTTP POST body is updated
+    updated to the green digest. The job's HTTP POST body is updated
     with the new digest, preserving all other fields.
 
     ``body_key`` controls which JSON field within the HTTP body holds
@@ -534,9 +630,10 @@ def switch_job_digests(
         try:
             job_data = json.loads(describe_result.stdout)
             http_target = job_data.get("httpTarget", {})
-            import base64
             raw_body = http_target.get("body", "")
-            if raw_body:
+            if isinstance(raw_body, dict):
+                body_json = raw_body
+            elif isinstance(raw_body, str) and raw_body:
                 try:
                     body_bytes = base64.b64decode(raw_body, validate=True)
                     body_json = json.loads(body_bytes.decode("utf-8"))
@@ -555,20 +652,7 @@ def switch_job_digests(
 
         # Update body
         body_json[body_key] = green_digest
-        import base64 as b64
-        new_body_b64 = b64.b64encode(json.dumps(body_json).encode("utf-8")).decode("ascii")
 
-        update_result = _run_gcloud(
-            [
-                "scheduler", "jobs", "update", "http", t.job_name,
-                *t.gcloud_args(),
-                f"--message-body-from-file=-",
-                "--quiet",
-            ],
-            dry_run=dry_run,
-        )
-        # For a real implementation we'd pipe the body; here we use
-        # --message-body with the decoded JSON directly
         update_result = _run_gcloud(
             [
                 "scheduler", "jobs", "update", "http", t.job_name,
@@ -649,6 +733,7 @@ def capture_data_platform_pointer(
 def restore_data_platform_pointer(
     snapshot_path: Path,
     *,
+    output_path: Path | None = None,
     dry_run: bool = False,
 ) -> OperationResult:
     """Restore data platform selector / snapshot pointer from a snapshot.
@@ -658,7 +743,7 @@ def restore_data_platform_pointer(
 
     In the current implementation this writes a ``restore-pointer.json``
     marker that the data platform deploy tooling reads to reconcile
-    state.  The actual reconciliation is handled by the data platform
+    state. The actual reconciliation is handled by the data platform
     layer (out of scope for this module), but the pointer file is the
     durable instruction.
     """
@@ -671,7 +756,9 @@ def restore_data_platform_pointer(
 
     try:
         pointer_data = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
+        if not isinstance(pointer_data, dict):
+            raise ValueError("Data platform pointer snapshot must be a JSON object")
+    except Exception as exc:
         return OperationResult(
             success=False,
             operation="restore_data_platform_pointer",
@@ -687,15 +774,16 @@ def restore_data_platform_pointer(
             details=pointer_data,
         )
 
-    restore_path = snapshot_path.parent / "restore-pointer.json"
+    target_restore_path = output_path or (snapshot_path.parent / "restore-pointer.json")
+    target_restore_path.parent.mkdir(parents=True, exist_ok=True)
     restore_data = copy.deepcopy(pointer_data)
     restore_data["restore_requested_at"] = datetime.now(timezone.utc).isoformat()
-    restore_path.write_text(json.dumps(restore_data, indent=2), encoding="utf-8")
+    target_restore_path.write_text(json.dumps(restore_data, indent=2), encoding="utf-8")
 
     return OperationResult(
         success=True,
         operation="restore_data_platform_pointer",
-        message=f"Restore pointer written to {restore_path}",
+        message=f"Restore pointer written to {target_restore_path}",
         details=restore_data,
     )
 
@@ -726,10 +814,8 @@ def execute_bluegreen_switch(
     5. One-shot verify, then resume scheduler triggers.
     6. Start watch window.
 
-    Steps 2–5 are implemented here.  Steps 1 and 6 are the caller's
-    responsibility.  Smoke / E2E validation between steps should be
-    invoked by the caller; this function can be called step-by-step
-    or all-at-once for dry-run planning.
+    Steps 2–5 are implemented here. Steps 1 and 6 are the caller's
+    responsibility.
     """
     results: list[OperationResult] = []
 
@@ -746,14 +832,16 @@ def execute_bluegreen_switch(
         return results
 
     # Step 4: Switch job digests
-    r = switch_job_digests(scheduler_targets, green_job_digest, dry_run=dry_run)
-    results.append(r)
-    if not r.success and not dry_run:
-        return results
+    if green_job_digest and scheduler_targets:
+        r = switch_job_digests(scheduler_targets, green_job_digest, dry_run=dry_run)
+        results.append(r)
+        if not r.success and not dry_run:
+            return results
 
     # Step 5: Resume schedulers (caller should one-shot verify first)
-    r = resume_schedulers(scheduler_targets, dry_run=dry_run)
-    results.append(r)
+    if scheduler_targets:
+        r = resume_schedulers(scheduler_targets, dry_run=dry_run)
+        results.append(r)
 
     # Record completion time
     if not dry_run and all(op.success for op in results):
@@ -787,22 +875,22 @@ def execute_rollback(
     6. Rollback smoke & data consistency check.
     7. Preserve staging & failed green evidence, create incident task.
 
-    Steps 1–4 are automated here.  Steps 5–7 require caller validation.
+    Steps 1–4 are automated here. Steps 5–7 require caller validation.
     """
     results: list[OperationResult] = []
 
     # Step 1: Pause all schedulers
-    r = pause_all_schedulers(scheduler_targets, dry_run=dry_run)
-    results.append(r)
-    if not r.success and not dry_run:
-        return results
+    if scheduler_targets:
+        r = pause_all_schedulers(scheduler_targets, dry_run=dry_run)
+        results.append(r)
+        if not r.success and not dry_run:
+            return results
 
     # Step 2: Restore Web traffic first (reverse order of switch)
     r = restore_traffic_from_snapshot(
         web_target, web_snapshot_path, dry_run=dry_run, traffic_helper=traffic_helper,
     )
     results.append(r)
-    # Continue even on Web failure — API rollback is more critical
 
     # Step 2 (cont): Restore API traffic
     r = restore_traffic_from_snapshot(
@@ -811,12 +899,18 @@ def execute_rollback(
     results.append(r)
 
     # Step 3: Switch job digests back to blue
-    r = switch_job_digests(scheduler_targets, blue_job_digest, dry_run=dry_run)
-    results.append(r)
+    if blue_job_digest and scheduler_targets:
+        r = switch_job_digests(scheduler_targets, blue_job_digest, dry_run=dry_run)
+        results.append(r)
 
     # Step 4: Restore data platform pointer
-    if data_platform_pointer_path:
-        r = restore_data_platform_pointer(data_platform_pointer_path, dry_run=dry_run)
+    effective_pointer_path = data_platform_pointer_path or (
+        Path(release_state.data_platform_pointer_snapshot_path)
+        if release_state.data_platform_pointer_snapshot_path
+        else None
+    )
+    if effective_pointer_path:
+        r = restore_data_platform_pointer(effective_pointer_path, dry_run=dry_run)
         results.append(r)
 
     # Record completion time
@@ -830,9 +924,7 @@ def execute_rollback(
 # CLI interface
 # ---------------------------------------------------------------------------
 
-def _build_parser() -> "argparse.ArgumentParser":
-    import argparse
-
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -849,6 +941,9 @@ def _build_parser() -> "argparse.ArgumentParser":
     cap.add_argument("--web-service", required=True)
     cap.add_argument("--output-dir", required=True, type=Path)
     cap.add_argument("--release-id", required=True)
+    cap.add_argument("--selector-label", default="")
+    cap.add_argument("--snapshot-id", default="")
+    cap.add_argument("--namespace", default="")
 
     # switch
     sw = sub.add_parser("switch", help="Execute blue→green 100% traffic switch")
@@ -857,6 +952,7 @@ def _build_parser() -> "argparse.ArgumentParser":
     sw.add_argument("--green-api-revision", required=True)
     sw.add_argument("--green-web-revision", required=True)
     sw.add_argument("--green-job-digest", default="")
+    sw.add_argument("--scheduler-jobs", nargs="*", default=[])
     sw.add_argument("--state-file", required=True, type=Path)
 
     # rollback
@@ -865,15 +961,46 @@ def _build_parser() -> "argparse.ArgumentParser":
     rb.add_argument("--web-service", required=True)
     rb.add_argument("--state-file", required=True, type=Path)
     rb.add_argument("--blue-job-digest", default="")
+    rb.add_argument("--scheduler-jobs", nargs="*", default=[])
+    rb.add_argument("--data-platform-pointer", type=Path, default=None)
+
+    # resolve-tag
+    rt = sub.add_parser("resolve-tag", help="Resolve revision and URL for a tag")
+    rt.add_argument("--service", required=True)
+    rt.add_argument("--tag", required=True)
+
+    # pause-schedulers
+    ps = sub.add_parser("pause-schedulers", help="Pause Cloud Scheduler triggers")
+    ps.add_argument("--jobs", nargs="+", required=True)
+
+    # resume-schedulers
+    rs = sub.add_parser("resume-schedulers", help="Resume Cloud Scheduler triggers")
+    rs.add_argument("--jobs", nargs="+", required=True)
+
+    # switch-digests
+    sd = sub.add_parser("switch-digests", help="Update job digests for Cloud Scheduler triggers")
+    sd.add_argument("--jobs", nargs="+", required=True)
+    sd.add_argument("--digest", required=True)
+    sd.add_argument("--body-key", default="image_digest")
+
+    # capture-pointer
+    cp = sub.add_parser("capture-pointer", help="Capture data platform selector / snapshot pointer")
+    cp.add_argument("--selector-label", required=True)
+    cp.add_argument("--snapshot-id", required=True)
+    cp.add_argument("--namespace", required=True)
+    cp.add_argument("--output-file", required=True, type=Path)
+
+    # restore-pointer
+    rp = sub.add_parser("restore-pointer", help="Restore data platform selector / snapshot pointer")
+    rp.add_argument("--snapshot-file", required=True, type=Path)
+    rp.add_argument("--output-file", type=Path, default=None)
 
     return parser
 
 
-def main() -> int:
-    import argparse
-
+def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -915,6 +1042,25 @@ def main() -> int:
             return 1
         state.web_traffic_snapshot_path = str(output_dir / "web-traffic.json")
 
+        # Optional data platform pointer capture
+        if getattr(args, "selector_label", "") and getattr(args, "snapshot_id", ""):
+            pointer = DataPlatformPointer(
+                selector_label=args.selector_label,
+                snapshot_id=args.snapshot_id,
+                namespace=getattr(args, "namespace", "default"),
+            )
+            pointer_path = output_dir / "data-platform-pointer.json"
+            r = capture_data_platform_pointer(pointer, pointer_path, dry_run=args.dry_run)
+            print(json.dumps(r.to_dict(), indent=2))
+            if not r.success:
+                return 1
+            state.data_platform_pointer = {
+                "selector_label": pointer.selector_label,
+                "snapshot_id": pointer.snapshot_id,
+                "namespace": pointer.namespace,
+            }
+            state.data_platform_pointer_snapshot_path = str(pointer_path)
+
         # Write release state
         state_path = output_dir / "release-state.json"
         state_path.write_text(state.to_json(), encoding="utf-8")
@@ -923,12 +1069,16 @@ def main() -> int:
 
     if args.command == "switch":
         state = ReleaseState.from_json(args.state_file.read_text(encoding="utf-8"))
+        schedulers = [
+            SchedulerTarget(job_name=j, project=args.project, location=args.region)
+            for j in getattr(args, "scheduler_jobs", [])
+        ]
         results = execute_bluegreen_switch(
             api_target=api_target,
             web_target=web_target,
             green_api_revision=args.green_api_revision,
             green_web_revision=args.green_web_revision,
-            scheduler_targets=[],  # populated from state or config
+            scheduler_targets=schedulers,
             green_job_digest=args.green_job_digest,
             release_state=state,
             dry_run=args.dry_run,
@@ -940,13 +1090,18 @@ def main() -> int:
 
     if args.command == "rollback":
         state = ReleaseState.from_json(args.state_file.read_text(encoding="utf-8"))
+        schedulers = [
+            SchedulerTarget(job_name=j, project=args.project, location=args.region)
+            for j in getattr(args, "scheduler_jobs", [])
+        ]
         results = execute_rollback(
             api_target=api_target,
             web_target=web_target,
             api_snapshot_path=Path(state.api_traffic_snapshot_path),
             web_snapshot_path=Path(state.web_traffic_snapshot_path),
-            scheduler_targets=[],
+            scheduler_targets=schedulers,
             blue_job_digest=args.blue_job_digest,
+            data_platform_pointer_path=getattr(args, "data_platform_pointer", None),
             release_state=state,
             dry_run=args.dry_run,
         )
@@ -954,6 +1109,58 @@ def main() -> int:
             print(json.dumps(r.to_dict(), indent=2))
         args.state_file.write_text(state.to_json(), encoding="utf-8")
         return 0 if all(r.success for r in results) else 1
+
+    if args.command == "resolve-tag":
+        svc_target = ServiceTarget(service=args.service, project=args.project, region=args.region)
+        r = resolve_tagged_target(svc_target, args.tag, dry_run=args.dry_run)
+        print(json.dumps(r.to_dict(), indent=2))
+        return 0 if r.success else 1
+
+    if args.command == "pause-schedulers":
+        targets = [
+            SchedulerTarget(job_name=j, project=args.project, location=args.region)
+            for j in args.jobs
+        ]
+        r = pause_all_schedulers(targets, dry_run=args.dry_run)
+        print(json.dumps(r.to_dict(), indent=2))
+        return 0 if r.success else 1
+
+    if args.command == "resume-schedulers":
+        targets = [
+            SchedulerTarget(job_name=j, project=args.project, location=args.region)
+            for j in args.jobs
+        ]
+        r = resume_schedulers(targets, dry_run=args.dry_run)
+        print(json.dumps(r.to_dict(), indent=2))
+        return 0 if r.success else 1
+
+    if args.command == "switch-digests":
+        targets = [
+            SchedulerTarget(job_name=j, project=args.project, location=args.region)
+            for j in args.jobs
+        ]
+        r = switch_job_digests(
+            targets, args.digest, dry_run=args.dry_run, body_key=args.body_key,
+        )
+        print(json.dumps(r.to_dict(), indent=2))
+        return 0 if r.success else 1
+
+    if args.command == "capture-pointer":
+        pointer = DataPlatformPointer(
+            selector_label=args.selector_label,
+            snapshot_id=args.snapshot_id,
+            namespace=args.namespace,
+        )
+        r = capture_data_platform_pointer(pointer, args.output_file, dry_run=args.dry_run)
+        print(json.dumps(r.to_dict(), indent=2))
+        return 0 if r.success else 1
+
+    if args.command == "restore-pointer":
+        r = restore_data_platform_pointer(
+            args.snapshot_file, output_path=args.output_file, dry_run=args.dry_run,
+        )
+        print(json.dumps(r.to_dict(), indent=2))
+        return 0 if r.success else 1
 
     return 1
 
