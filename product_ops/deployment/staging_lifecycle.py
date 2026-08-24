@@ -199,6 +199,33 @@ def release_label_value(release_id: str) -> str:
     return f"rel-{rel_hash}"
 
 
+def _authoritative_inventory_release_id(
+    resource: Mapping[str, Any], labels: Mapping[str, str]
+) -> str:
+    """Resolve the raw release id that is allowed to drive destructive cleanup.
+
+    ``release_id`` is intentionally stored as a bounded, hashed label and is
+    not reversible.  An inventory row therefore has to carry the raw id from
+    the Terraform ownership manifest (``raw_release_id``); a provider-facing
+    ``release_id`` field is accepted only when it proves the same mapping.  A
+    label-only row is reportable by the orphan scanner but can never authorize
+    deletion.
+    """
+    label_value = str(labels.get("release_id", "")).strip()
+    if not label_value:
+        return ""
+
+    candidates = (
+        resource.get("raw_release_id"),
+        resource.get("release_id"),
+    )
+    for candidate in candidates:
+        raw_id = str(candidate or "").strip()
+        if RELEASE_ID_PATTERN.fullmatch(raw_id) and release_label_value(raw_id) == label_value:
+            return raw_id
+    return ""
+
+
 def get_ephemeral_resource_names(release_id: str, project_id: str = "") -> dict[str, str]:
     """Compute collision-free, length-compliant GCP resource names for ephemeral staging."""
     clean = sanitize_release_suffix(release_id)
@@ -662,14 +689,29 @@ def make_terraform_creation_executor(
         # Preserve existing authoritative created_at if already provisioned
         created_at = config.created_at or resources[0].created_at
         if tfvars_path.is_file():
-            try:
-                prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
-                if prev_vars.get("created_at") and not config.created_at:
-                    created_at = str(prev_vars["created_at"]).strip()
-            except Exception:
-                pass
+            prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
+            previous_created_at = str(prev_vars.get("created_at", "")).strip()
+            if previous_created_at:
+                if config.created_at and parse_timestamp(config.created_at) != parse_timestamp(
+                    previous_created_at
+                ):
+                    raise RuntimeError(
+                        "Existing release state has an authoritative created_at; "
+                        "rerun cannot replace it."
+                    )
+                created_at = previous_created_at
 
         apply_config = dataclasses.replace(config, created_at=created_at)
+        authoritative_created_dt = parse_timestamp(created_at)
+        authoritative_labels = generate_staging_labels(
+            release_id=apply_config.release_id,
+            candidate_sha=apply_config.candidate_sha,
+            manifest_digest=apply_config.manifest_digest,
+            owner_task_id=apply_config.owner_task_id,
+            ttl_hours=apply_config.ttl_hours,
+            created_at=authoritative_created_dt,
+            additional_labels=apply_config.additional_labels,
+        )
         tfvars_path.write_text(
             json.dumps(generate_tfvars(apply_config), indent=2, sort_keys=True),
             encoding="utf-8",
@@ -682,10 +724,12 @@ def make_terraform_creation_executor(
                         "name": resource.resource_name,
                         "id": resource.resource_id,
                         "release_id": resource.release_id,
-                        "raw_release_id": resource.release_id,
-                        "labels": dict(resource.labels),
+                        "raw_release_id": apply_config.release_id,
+                        "labels": dict(authoritative_labels),
                         "created_at": created_at,
-                        "expires_at": format_timestamp(parse_timestamp(created_at) + timedelta(hours=config.ttl_hours)),
+                        "expires_at": format_timestamp(
+                            authoritative_created_dt + timedelta(hours=apply_config.ttl_hours)
+                        ),
                     }
                     for resource in resources
                 ],
@@ -972,7 +1016,7 @@ def is_staging_ephemeral_resource(
     ephemeral=true, release_id, candidate_sha, manifest_digest_prefix, owner_task).
     """
     target_clean = str(target_release_id).strip()
-    if not target_clean:
+    if not target_clean or not RELEASE_ID_PATTERN.fullmatch(target_clean):
         return False
 
     actual_label = str(labels.get("release_id", "")).strip()
@@ -980,7 +1024,11 @@ def is_staging_ephemeral_resource(
         return False
 
     target_label = release_label_value(target_clean)
-    if actual_label != target_label and actual_label != target_clean:
+    # The label contains a hash of the raw id and is the only canonical
+    # release identity accepted here.  Accepting the raw value as a label (or
+    # treating a bounded label as a raw id) makes punctuation/case variants
+    # indistinguishable and can delete the wrong release.
+    if actual_label != target_label:
         return False
 
     if (
@@ -1036,7 +1084,8 @@ def cleanup_ephemeral_staging(
     - Explicitly verifies `ephemeral=true`, `managed_by=terraform`, `environment=staging`,
       `app=oday-plus`, and matching `release_id` and ownership labels.
     - Protected resources (prod/dev/shared infra) are never touched.
-    - Empty inventory or zero matching resources without allow_empty is rejected as non-success.
+    - Empty inventory or zero matching resources is always rejected as non-success;
+      ``allow_empty`` is retained only for compatibility and cannot bypass this gate.
     - Non-dry-run cleanup requires a deletion_executor.
     - If any deletion fails, a remediation task is marked.
     """
@@ -1077,7 +1126,13 @@ def cleanup_ephemeral_staging(
         if is_staging_ephemeral_resource(labels, release_id):
             matching_resources.append(res)
 
-    if not matching_resources and not allow_empty:
+    if not matching_resources:
+        inventory_state = "empty inventory" if not inventory else "no exact ownership-label match"
+        override_note = (
+            " The allow_empty option cannot authorize a cleanup without verified resources."
+            if allow_empty
+            else ""
+        )
         return StagingLifecycleReceipt(
             action="cleanup",
             release_id=release_id,
@@ -1086,10 +1141,21 @@ def cleanup_ephemeral_staging(
             success=False,
             timestamp=format_timestamp(now_dt),
             resources=[],
-            errors=[f"No matching ephemeral staging resources found for release {release_id!r} in inventory."],
-            remediation_required=False,
-            remediation_notes="Cleanup found 0 matching resources in inventory.",
-            metadata={"dry_run": dry_run, "matched_count": 0},
+            errors=[
+                f"No matching ephemeral staging resources found for release {release_id!r} in {inventory_state}."
+                f"{override_note}"
+            ],
+            remediation_required=True,
+            remediation_notes=(
+                "Cleanup cannot report success without a verified inventory match; "
+                "missing inventory requires an inventory/remediation check."
+            ),
+            metadata={
+                "dry_run": dry_run,
+                "matched_count": 0,
+                "inventory_count": len(inventory),
+                "allow_empty_requested": allow_empty,
+            },
         )
 
     if not dry_run and deletion_executor is None and matching_resources:
@@ -1245,7 +1311,13 @@ def scan_orphans(
             continue
 
         release_id = str(labels.get("release_id", "")).strip()
-        raw_release_id = str(res.get("raw_release_id") or res.get("release_id") or "").strip()
+        raw_release_id = _authoritative_inventory_release_id(res, labels)
+        identity_error = ""
+        if not raw_release_id:
+            identity_error = (
+                "Missing or mismatched authoritative raw_release_id for the bounded release label; "
+                "automatic deletion is refused"
+            )
         created_str = labels.get("created_at", "")
         expires_str = labels.get("expires_at", "")
 
@@ -1259,7 +1331,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
-                "raw_release_id": raw_release_id or release_id,
+                "raw_release_id": raw_release_id,
                 "reason": "Incomplete ownership labels (release_id, candidate_sha, manifest_digest_prefix, owner_task)",
                 "labels": dict(labels),
             })
@@ -1271,7 +1343,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
-                "raw_release_id": raw_release_id or release_id,
+                "raw_release_id": raw_release_id,
                 "reason": "Missing created_at or expires_at ownership label",
                 "labels": dict(labels),
             })
@@ -1288,7 +1360,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
-                "raw_release_id": raw_release_id or release_id,
+                "raw_release_id": raw_release_id,
                 "reason": "Invalid created_at or expires_at ownership label",
                 "labels": dict(labels),
             })
@@ -1300,7 +1372,7 @@ def scan_orphans(
                 "id": res_id,
                 "type": res_type,
                 "release_id": release_id,
-                "raw_release_id": raw_release_id or release_id,
+                "raw_release_id": raw_release_id,
                 "reason": "expires_at precedes created_at",
                 "labels": dict(labels),
             })
@@ -1310,6 +1382,7 @@ def scan_orphans(
         # Determine expiration & policy compliance
         is_over_policy = (expires_dt - created_dt > timedelta(hours=max_ttl_hours))
         is_expired = (now_dt >= expires_dt)
+        identity_prefix = f"{identity_error}; " if identity_error else ""
 
         if is_expired:
             expired_releases.add(release_id)
@@ -1318,8 +1391,8 @@ def scan_orphans(
                     "id": res_id,
                     "type": res_type,
                     "release_id": release_id,
-                    "raw_release_id": raw_release_id or release_id,
-                    "reason": f"Resource expired and exceeded TTL policy ({max_ttl_hours}h)",
+                    "raw_release_id": raw_release_id,
+                    "reason": f"{identity_prefix}Resource expired and exceeded TTL policy ({max_ttl_hours}h)",
                     "labels": dict(labels),
                 })
                 alerts.append(f"Expired staging resource found (exceeded TTL policy {max_ttl_hours}h): {res_type} {res_id} (release: {release_id})")
@@ -1328,8 +1401,8 @@ def scan_orphans(
                     "id": res_id,
                     "type": res_type,
                     "release_id": release_id,
-                    "raw_release_id": raw_release_id or release_id,
-                    "reason": f"Resource expired (exceeded TTL {max_ttl_hours}h)",
+                    "raw_release_id": raw_release_id,
+                    "reason": f"{identity_prefix}Resource expired (exceeded TTL {max_ttl_hours}h)",
                     "labels": dict(labels),
                 })
                 alerts.append(f"Expired staging resource found: {res_type} {res_id} (release: {release_id})")
@@ -1340,11 +1413,21 @@ def scan_orphans(
                     "id": res_id,
                     "type": res_type,
                     "release_id": release_id,
-                    "raw_release_id": raw_release_id or release_id,
-                    "reason": f"TTL exceeds policy maximum of {max_ttl_hours}h",
+                    "raw_release_id": raw_release_id,
+                    "reason": f"{identity_prefix}TTL exceeds policy maximum of {max_ttl_hours}h",
                     "labels": dict(labels),
                 })
                 alerts.append(f"Staging resource exceeds maximum TTL: {res_type} {res_id}")
+            elif identity_error:
+                orphan_resources.append({
+                    "id": res_id,
+                    "type": res_type,
+                    "release_id": release_id,
+                    "raw_release_id": raw_release_id,
+                    "reason": identity_error,
+                    "labels": dict(labels),
+                })
+                alerts.append(f"Staging resource has no authoritative raw release identity: {res_type} {res_id}")
 
     # Perform auto cleanup on expired resources if requested
     if auto_cleanup and orphan_resources:
@@ -1353,19 +1436,15 @@ def scan_orphans(
                 "id": item["id"],
                 "type": item["type"],
                 "labels": item.get("labels", {}),
-                "release_id": item.get("raw_release_id") or item.get("release_id"),
-                "raw_release_id": item.get("raw_release_id") or item.get("release_id"),
+                "release_id": item.get("raw_release_id") or "",
+                "raw_release_id": item.get("raw_release_id") or "",
             }
-            rel_id = str(item.get("raw_release_id") or item.get("release_id", ""))
-            label_rel_id = str(item.get("release_id", ""))
+            rel_id = str(item.get("raw_release_id") or "")
 
             # Only a complete, exact ownership set may be handed to cleanup.
             # Incomplete or unmanaged candidates are remediation-only; treating
             # their zero-match result as success would hide an orphan forever.
-            if not rel_id or not (
-                is_staging_ephemeral_resource(res_dict["labels"], rel_id)
-                or (label_rel_id and is_staging_ephemeral_resource(res_dict["labels"], label_rel_id))
-            ):
+            if not rel_id or not is_staging_ephemeral_resource(res_dict["labels"], rel_id):
                 failed_cleanups += 1
                 remediation_tasks.append({
                     "task_type": "ephemeral_staging_orphan_remediation",
@@ -1472,6 +1551,17 @@ def extend_staging_ttl(
 
     if extend_hours <= 0:
         raise ValueError("extend_hours must be positive.")
+
+    # This argument is retained for callers that set a scanner-specific
+    # policy, but it cannot weaken the product-wide retention contract.  A
+    # caller-provided 999h cap used to make an otherwise valid release exceed
+    # the hard 168h maximum.
+    if not isinstance(max_total_ttl_hours, int) or isinstance(max_total_ttl_hours, bool):
+        raise ValueError("max_total_ttl_hours must be an integer between 1 and 168 hours.")
+    if not 1 <= max_total_ttl_hours <= MAX_TTL_HOURS:
+        raise ValueError(
+            f"max_total_ttl_hours must be between 1 and {MAX_TTL_HOURS} hours."
+        )
 
     if created_at is None:
         raise ValueError("TTL extension requires an authoritative 'created_at' timestamp.")
@@ -1798,12 +1888,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         deletion_executors: dict[str, Callable[[Mapping[str, Any]], bool]] = {}
 
         def orphan_deletion_executor(resource: Mapping[str, Any]) -> bool:
-            labels = resource.get("labels", {})
-            raw_release_id = str(resource.get("raw_release_id") or resource.get("release_id") or "").strip()
-            label_release_id = str(labels.get("release_id", "")).strip() if isinstance(labels, Mapping) else ""
-            target_id = raw_release_id or label_release_id
+            target_id = str(resource.get("raw_release_id") or "").strip()
             if not target_id:
-                raise RuntimeError("orphan resource has no release_id for release-scoped cleanup")
+                raise RuntimeError(
+                    "orphan resource has no authoritative raw_release_id for release-scoped cleanup"
+                )
             executor = deletion_executors.get(target_id)
             if executor is None:
                 executor = make_terraform_deletion_executor(

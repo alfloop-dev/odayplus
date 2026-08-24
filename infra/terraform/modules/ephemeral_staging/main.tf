@@ -33,7 +33,11 @@ terraform {
 
 locals {
   # Release ID normalized for naming and exact release_hash to guarantee uniqueness and prevent collision.
-  release_clean  = trim(lower(replace(var.release_id, "/[^a-z0-9-]/", "-")), "-")
+  # Lowercase before replacing punctuation so Terraform derives the same
+  # canonical identity as staging_lifecycle.py.  Replacing uppercase bytes
+  # first would make REL_1.0 become el-1-0 instead of rel-1-0 and leave the
+  # release label/name cleanup paths unable to address the same resources.
+  release_clean  = trim(replace(lower(var.release_id), "/[^a-z0-9-]/", "-"), "-")
   release_hash   = substr(sha256(var.release_id), 0, 8)
   release_prefix = length(local.release_clean) > 0 ? trim(substr(local.release_clean, 0, 54), "-") : "rel"
   release_label  = length(local.release_prefix) > 0 ? "${local.release_prefix}-${local.release_hash}" : "rel-${local.release_hash}"

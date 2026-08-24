@@ -320,7 +320,8 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             dry_run=True,
             allow_empty=True,
         )
-        self.assertTrue(receipt_allowed.success)
+        self.assertFalse(receipt_allowed.success)
+        self.assertIn("allow_empty option cannot authorize", receipt_allowed.errors[0])
 
     def test_cleanup_rejects_broad_wildcard_targets(self) -> None:
         for bad_target in ("*", "all", "prod", "production", "dev", ""):
@@ -408,8 +409,18 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         }
 
         inventory = [
-            {"id": "fresh-res", "type": "google_sql_database", "labels": fresh_labels},
-            {"id": "expired-res", "type": "google_sql_database", "labels": expired_labels},
+            {
+                "id": "fresh-res",
+                "type": "google_sql_database",
+                "raw_release_id": "odp-fresh-001",
+                "labels": fresh_labels,
+            },
+            {
+                "id": "expired-res",
+                "type": "google_sql_database",
+                "raw_release_id": "odp-expired-001",
+                "labels": expired_labels,
+            },
             {"id": "unmanaged-res", "type": "google_storage_bucket", "labels": unmanaged_labels},
             {"id": "prod-res", "type": "google_sql_database", "labels": {"environment": "prod"}},
         ]
@@ -512,6 +523,19 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
                 owner="Antigravity3",
                 current_expires_at=curr_expires,
                 created_at=created_at,
+            )
+
+        # A caller cannot weaken the hard product cap by passing a larger
+        # max_total_ttl_hours policy.
+        with self.assertRaises(ValueError):
+            extend_staging_ttl(
+                release_id="odp-20260824-001",
+                extend_hours=1,
+                reason="debugging",
+                owner="Antigravity3",
+                current_expires_at=curr_expires,
+                created_at=created_at,
+                max_total_ttl_hours=999,
             )
 
         # Total TTL > 168h must be rejected
@@ -621,6 +645,7 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             {
                 "id": "projects/p/instances/i/databases/stg_db",
                 "type": "google_sql_database",
+                "raw_release_id": raw_release_id,
                 "labels": dict(expired_labels),
             }
         ]
@@ -660,6 +685,36 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             lookup_state_p, lookup_vars_p, lookup_inv_p = _terraform_state_paths(rel_label, tmp_path)
             self.assertEqual(state_p.resolve(), lookup_state_p.resolve())
             self.assertEqual(vars_p.resolve(), lookup_vars_p.resolve())
+
+    def test_label_only_inventory_is_reported_but_never_auto_deleted(self) -> None:
+        """A hashed release label is not reversible and cannot authorize deletion."""
+        now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
+        raw_release_id = "odp-label-only-001"
+        labels = generate_staging_labels(
+            release_id=raw_release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            created_at=now - timedelta(hours=26),
+            ttl_hours=24,
+        )
+        deleted: list[str] = []
+
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=[
+                {"id": "label-only", "type": "google_sql_database", "labels": labels}
+            ],
+            now=now,
+            auto_cleanup=True,
+            deletion_executor=lambda resource: deleted.append(str(resource["id"])) or True,
+        )
+
+        self.assertEqual(result.expired_count, 1)
+        self.assertEqual(result.cleaned_count, 0)
+        self.assertEqual(result.failed_cleanups, 1)
+        self.assertEqual(deleted, [])
+        self.assertIn("authoritative raw_release_id", result.orphan_resources[0]["reason"])
 
     def test_rerun_create_preserves_authoritative_created_at(self) -> None:
         """Verify that rerunning create for the same release preserves existing created_at and does not refresh TTL."""
@@ -791,7 +846,12 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         )
 
         inventory = [
-            {"id": "active-168h-res", "type": "google_sql_database", "labels": labels},
+            {
+                "id": "active-168h-res",
+                "type": "google_sql_database",
+                "raw_release_id": "odp-legal-168h-001",
+                "labels": labels,
+            },
         ]
 
         deleted_items: list[str] = []
@@ -855,7 +915,12 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
         )
 
         inventory = [
-            {"id": "expired-168h-res", "type": "google_sql_database", "labels": labels},
+            {
+                "id": "expired-168h-res",
+                "type": "google_sql_database",
+                "raw_release_id": "odp-expired-168h-001",
+                "labels": labels,
+            },
         ]
 
         deleted_items: list[str] = []

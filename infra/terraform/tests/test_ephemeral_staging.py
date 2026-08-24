@@ -66,6 +66,15 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
         self.assertIn("timeadd(local.created_at", main_tf)
         self.assertIn("var.created_at", main_tf)
 
+    def test_release_identity_matches_python_normalization_order(self) -> None:
+        main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
+        # Terraform must lowercase before replacing punctuation, matching
+        # staging_lifecycle.sanitize_release_suffix for IDs such as REL_1.0.
+        self.assertIn(
+            'replace(lower(var.release_id), "/[^a-z0-9-]/", "-")',
+            main_tf,
+        )
+
     def test_mandatory_labels_win_over_additional_labels(self) -> None:
         main_tf = (MODULE_DIR / "main.tf").read_text(encoding="utf-8")
         self.assertLess(main_tf.index("var.additional_labels"), main_tf.index("app                    = \"oday-plus\""))
