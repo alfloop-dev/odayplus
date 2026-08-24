@@ -23,7 +23,7 @@
    - `.github/workflows/promote-dev-to-main.yml` 僅為代碼由 `dev` 晉級至 `main` 之 PR 自動合併流程，不是 Production 部署管線；兩者責任界限須明確分離。
 2. **舊版 External Proof Follow-up 殘留 (Legacy External Proof)**:
    - 歷史 PR #82 所衍生之 `.github/workflows/external-proof-followup.yml` 及 13 支 `check_external_proof_*.py` 腳本，在最新 `origin/dev` 上**已經完全移除（檔案已不存在）**。
-   - 然而，`docs/evidence/` 下仍殘留 4 個完全孤立的 JSON/MD 佇列與狀態板檔案（如 `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`、`EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` 等），且 4 份關閉文件（如 `PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md` 等）仍充斥對已刪除腳本之幽靈引用。依規劃書原則，這些殘留文件應在 Wave 2 正式刪除。
+   - 然而，全庫搜索識別出 **19 個檔案**（不含本報告）仍含有對已退役 external-proof 機制之引用。其中 5 個完全孤立之 JSON/MD 佇列與狀態板檔案（`PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`、`EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json`、`EXTERNAL_PROOF_HANDBACK_TEMPLATE.json`、`EXTERNAL_PROOF_HANDBACK_EXAMPLE.json`、`EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md`），7 份關閉/門禁/排程文件（`PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md`、`PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md`、`PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md`、`PRODUCT_RELEASE_GO_NO_GO.md`、`PRODUCT_RELEASE_RISK_ACCEPTANCE.md`、`PRODUCT_E2E_READINESS_REPORT.md`、`PRODUCT_GRADE_E2E_GATE_RECONCILIATION.md`），3 份艦隊派遣/領取文件（`PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md`、`PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json`、`PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md`），1 份 runtime 靜態驗證紀錄（`runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/static-verification.json`），1 份艦隊修復紀錄（`fleet_dispatch/package10_20260726/ODP-P10-DEV-LANDING-FIX-001.md`），1 支 active 程式碼（`check_product_release_gate.py`，僅作歷史脈絡註解），以及 2 份歷史稽核文件（`python-inventory-2026-08-13.csv`、`python-runtime-tooling-audit-2026-08-13.md`）。完整逐檔證據見第 3.2 節。依規劃書原則，這些殘留文件應在 Wave 2 正式清理。
 3. **門禁與入場機制重複與循環依賴 (Admission & Gate Redundancy)**:
    - `delivery_toolchain/release/check_runtime_admission.py` 現況僅檢查 `task_id` 與 `release_lease` 之正規表達式（Shape-only），尚未綁定 Supervisor 簽名與 CAS 防重放狀態。
    - `check_runtime_admission.py` 與 `check_release_gate_registry.py` 目前在部署 dev/staging 前硬性要求 Gate 0–6 全部通過，造成「staging 才能產生的驗證收據反過來阻擋 staging 部署」的循環依賴。
@@ -33,7 +33,9 @@
    - `infra/docker/docker-compose.yml` 引用過期之 `Dockerfile.api`，與根目錄標準 `docker-compose.yml` 重複且行為不一致。
 5. **排程與工作處理器 (Scheduler & Worker)**:
    - 本地開發使用根目錄 `docker-compose.yml` 啟動 `apps/scheduler/oday_scheduler` 與 `apps/worker/oday_worker`。
-   - 雲端環境使用 GCP Cloud Scheduler 定期 HTTP 呼叫觸發 Cloud Run Jobs，並以 `product_ops/deployment/cloud_run_job_entrypoint.py` 執行 bounded worker/scheduler。兩者分工明確，雲端部署腳本之 traffic/trigger rollback 機制健全，應予以保留並延伸至 Production Blue-Green。
+   - 雲端環境使用 GCP Cloud Scheduler 定期 HTTP 呼叫觸發 Cloud Run Jobs，並以 `product_ops/deployment/cloud_run_job_entrypoint.py` 執行 bounded worker/scheduler。Cloud Scheduler trigger 之建立/更新由 `deploy_cloud_run_waji.sh` 內之 `upsert_scheduler_trigger()` 函式（lines 443-480）完成，呼叫 `gcloud scheduler jobs create/update http`，使用 `ODP_SCHEDULER_CRON` 與 `ODP_WORKER_CRON` 環境變數（由 `deploy-dev.yml` lines 110-112 從 GitHub environment vars 注入）。
+   - GKE 部署另有 `infra/k8s/data-platform/workloads.yaml.tpl` 定義之 CronJob `oday-data-platform-bounded-daily`（lines 133-170），schedule `0 1 * * *` (UTC)，每日執行 bounded backfill，附有 `concurrencyPolicy: Forbid`、`activeDeadlineSeconds: 14400`、`backoffLimit: 1` 等安全機制。其工作範圍由 `infra/k8s/data-platform/README.md`（lines 98-107）劃定：daily CronJob 只載入 bounded merchant、place、device、daily operations、orders、AI revenue、commercial inputs 與 KMeans lineage；trade 與 device logs 為獨立 suspended Jobs，須人工審查後 unsuspend。
+   - 兩套排程機制（Cloud Scheduler → Cloud Run Jobs、GKE CronJob → Data Platform）分工明確，雲端部署腳本之 traffic/trigger rollback 機制健全，應予以保留並延伸至 Production Blue-Green。
 
 ---
 
@@ -73,20 +75,77 @@
 - ❌ `delivery_toolchain/e2e/check_external_proof_followup_workflow.py`（已移除）
 - ❌ `delivery_toolchain/e2e/check_product_go_no_go.py`（已移除）
 
-### 3.2 殘留之孤立狀態檔案與幽靈文件引用（待 Wave 2 刪除）
+### 3.2 殘留之孤立狀態檔案與幽靈文件引用（完整全庫盤點）
 
-雖然執行腳本已刪除，但在 `docs/evidence/` 目錄中仍殘留大量定義檔，且現存文件仍描述這些不存在的腳本：
+雖然執行腳本已刪除，但全庫搜索（`grep -ri 'external.proof'`）識別出 **19 個檔案**（不含本報告）仍含有對已退役 PR #82 external-proof 機制之直接引用。以下依類別逐檔列出，包含大小、匹配行號與處置建議。
 
-| 殘留檔案路徑 | 類型 | 內容描述 | 幽靈引用與現況分析 | 處置建議 |
-|---|---|---|---|---|
-| `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` | 孤立 JSON | 記錄 7 個外部證明任務（#132–#138，包含供應商認證、圖資、Staging 證明等）。 | 無任何 active code 讀取或寫入此 JSON；所引用的 issue #132–#138 追蹤腳本均已刪除。 | **刪除 (DELETE)**（於 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001`） |
-| `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` | 孤立 JSON | 定義外部證明 handback 格式之 JSON Schema 範本。 | 無 active code 引用，原對應之 `check_external_proof_handback_template.py` 已刪除。 | **刪除 (DELETE)**（於 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001`） |
-| `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` | 孤立 JSON | 外部證明交付狀態追蹤看板。 | 無 active code 引用，原對應之 `check_external_proof_handback_status_board.py` 已刪除。 | **刪除 (DELETE)**（於 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001`） |
-| `docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md` | 孤立 MD | 描述 #132–#138 領取與交付說明之說明文件。 | 內容全部基於已退役之 PR #82 與已刪除之 sync 腳本。 | **刪除 (DELETE)**（於 `ODP-DEPLOY-DEAD-CODE-REMOVAL-001`） |
-| `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md` | 陳舊文件 | 記錄 PR #82 關閉檢查清單。 | 表格第 30–41 行列出 13 個已刪除之 `check_external_proof_*.py` 腳本與 `external-proof-followup.yml`。 | **重構/精簡 (REPLACE / UPDATE)**：清除已刪除腳本指令，轉型為歷史封存紀錄。 |
-| `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` | 陳舊文件 | 記錄 PR #82 Human/Ops GO/NO-GO 檢核表。 | 表格第 59–68 行要求執行已刪除之 10 個外部證明檢查指令。 | **重構/精簡 (REPLACE / UPDATE)**：替換為基於新 Gate 0–6 分階段 Gate 狀態之檢核表。 |
-| `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md` | 陳舊文件 | PR #82 Closeout 操作手冊。 | 內含大量已刪除之 external proof 指令。 | **重構/精簡 (REPLACE / UPDATE)**。 |
-| `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md` | 陳舊文件 | PR #82 領取狀態看板。 | 內含大量已刪除之 external proof 指令。 | **重構/精簡 (REPLACE / UPDATE)**。 |
+#### 3.2.1 完全孤立之 JSON/MD 佇列與狀態板（5 檔，無 active code caller）
+
+| # | 殘留檔案路徑 | 大小 | 類型 | 代表性引用行號 | 幽靈引用與現況分析 | 處置建議 |
+|---|---|---|---|---|---|---|
+| 1 | `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` | 20,420 B | 孤立 JSON | L10–13, L19, L29, L38, L62… | 記錄 7 個外部證明任務（#132–#138）；內含 `check_external_proof_closeout_queue.py`、`check_external_proof_live_blockers.py` 等已刪除腳本指令；每個 task 條目引用 `generate_external_proof_handback_skeleton.py`、`check_external_proof_handback_template.py`、`check_external_proof_handback_artifact.py`。無任何 active code 讀取或寫入。 | **刪除 (DELETE)** |
+| 2 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` | 7,514 B | 孤立 JSON | L4, L15 | 定義外部證明 handback 格式之 JSON Schema 範本；原對應之 `check_external_proof_handback_template.py` 已刪除。 | **刪除 (DELETE)** |
+| 3 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` | 6,145 B | 孤立 JSON | L4, L10, L18–20, L28, L38… | 外部證明交付狀態追蹤看板；每個 task 引用 `check_external_proof_handback_artifact.py`；header 引用 `update_external_proof_handback_status_board.py`、`check_external_proof_handback_bundle.py`。無 active code caller。 | **刪除 (DELETE)** |
+| 4 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json` | 4,367 B | 孤立 JSON | L43 | 示範 handback JSON 格式；L43 引用 `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` 之 PR 查詢指令。無 active code caller。 | **刪除 (DELETE)** |
+| 5 | `docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md` | 18,151 B | 孤立 MD | L1, L5, L9, L18–28, L36–38, L142… | 描述 #132–#138 領取與交付說明；密集引用 14 支已刪除之 `check_external_proof_*.py` / `sync_external_proof_*.py` 腳本與 `external-proof-followup.yml`。 | **刪除 (DELETE)** |
+
+#### 3.2.2 關閉/門禁/排程文件含幽靈引用（7 檔）
+
+| # | 殘留檔案路徑 | 大小 | 類型 | 代表性引用行號 | 幽靈引用與現況分析 | 處置建議 |
+|---|---|---|---|---|---|---|
+| 6 | `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_MANIFEST.md` | 19,773 B | 陳舊文件 | L29–41, L73, L103–135, L154 | PR #82 關閉檢查清單；表格 L29–41 列出 13 個已刪除之 `check_external_proof_*.py` 腳本與 `external-proof-followup.yml`，詳細檢核清單 L103–154 引用已刪除流程。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 7 | `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PLAYBOOK.md` | 16,711 B | 陳舊文件 | L40–42, L147–215, L228–270 | PR #82 Closeout 操作手冊；大量 external proof checker 指令、boards 與 workflows 引用。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 8 | `docs/evidence/PRODUCT_RELEASE_CLOSEOUT_PICKUP_BOARD.md` | 15,298 B | 陳舊文件 | L20, L38–65, L168–204 | PR #82 領取狀態看板；引用 `EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md`、`external-proof-followup.yml` 與多支已刪除 checker。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 9 | `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md` | 10,296 B | 陳舊文件 | L59–68, L72, L75, L77 | PR #82 Human/Ops GO/NO-GO 檢核表；L59–68 要求執行 10 個已刪除之 external proof 檢查指令；L72 起為 External Proof Blocking Tasks 段落。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 10 | `docs/evidence/PRODUCT_RELEASE_RISK_ACCEPTANCE.md` | 10,876 B | 陳舊文件 | L42, L54, L56, L97 | 記錄 deferred external-proof tasks；L56 引用已刪除之 `check_external_proof_handback_bundle.py`；L97 引用 `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 11 | `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md` | 11,504 B | 陳舊文件 | L76 | L76 引用 `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` 作為 external proof closeout 追蹤來源。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 12 | `docs/evidence/PRODUCT_GRADE_E2E_GATE_RECONCILIATION.md` | 3,179 B | 陳舊文件 | L20, L21, L23 | 表格引用 `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` 與 `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` 作為 blocker 計數來源。 | **重構/精簡 (REPLACE / UPDATE)** |
+
+#### 3.2.3 艦隊派遣/領取文件含幽靈引用（3 檔）
+
+| # | 殘留檔案路徑 | 大小 | 類型 | 代表性引用行號 | 幽靈引用與現況分析 | 處置建議 |
+|---|---|---|---|---|---|---|
+| 13 | `docs/evidence/PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md` | 11,410 B | 陳舊文件 | L30, L34, L38, L41–48, L54 | § Current External Proof Closeout 段落列出 8 支已刪除之 external proof 腳本完整指令（`generate_external_proof_handback_skeleton.py` 至 `check_external_proof_issue_sync.py`）。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 14 | `docs/evidence/PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json` | 34,088 B | 陳舊 JSON | L9, L11 | `current_remaining_queue` 指向 `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`；`dispatch_rule` 描述 external-proof routing。 | **重構/精簡 (REPLACE / UPDATE)** |
+| 15 | `docs/evidence/PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md` | 7,750 B | 陳舊文件 | L6, L16–19, L89–99 | 同 Fleet Assignment Ledger；兩處完整列出 external proof checker 指令鏈，包含 `generate_`, `check_`, `update_`, `sync_` 系列已刪除腳本。 | **重構/精簡 (REPLACE / UPDATE)** |
+
+#### 3.2.4 Runtime 靜態驗證與艦隊修復紀錄（2 檔）
+
+| # | 殘留檔案路徑 | 大小 | 類型 | 代表性引用行號 | 幽靈引用與現況分析 | 處置建議 |
+|---|---|---|---|---|---|---|
+| 16 | `docs/evidence/runtime/ODP-P10-LIVE-LEGACY-RETIREMENT-001/static-verification.json` | 53,256 B | 歷史紀錄 | L700–744 | ODP-P10 legacy retirement 之靜態驗證結果；引用已刪除之 `test_external_proof_fleet_notifications_checker.py`（L700, L704, L708, L712）與 `test_external_proof_issue_sync_checker.py`（L716, L720, L724, L728, L732, L736, L740, L744）。此為歷史快照紀錄，不需刪除但不應視為 active evidence。 | **歸檔保留 (ARCHIVE / KEEP)**：歷史紀錄 |
+| 17 | `docs/evidence/fleet_dispatch/package10_20260726/ODP-P10-DEV-LANDING-FIX-001.md` | 8,335 B | 歷史紀錄 | L55, L72, L88, L89 | ODP-P10 dev landing 修復紀錄；L55 引用 `check_external_proof_closeout_queue.py`；L88–89 引用 `test_external_proof_handback_artifact.py` 測試執行結果。此為歷史紀錄。 | **歸檔保留 (ARCHIVE / KEEP)**：歷史紀錄 |
+
+#### 3.2.5 Active 程式碼中之脈絡註解（1 檔）
+
+| # | 殘留檔案路徑 | 大小 | 類型 | 代表性引用行號 | 幽靈引用與現況分析 | 處置建議 |
+|---|---|---|---|---|---|---|
+| 18 | `delivery_toolchain/e2e/check_product_release_gate.py` | 3,402 B | Active 程式碼 | L5 | docstring 內註解 `deliberately independent of the retired PR82 external-proof campaign`。此為歷史脈絡說明而非 dead code，原有程式功能與 external-proof 機制完全獨立。 | **保留 (KEEP)**：Active 程式碼 |
+
+#### 3.2.6 歷史稽核文件（2 檔）
+
+| # | 殘留檔案路徑 | 大小 | 類型 | 代表性引用行號 | 幽靈引用與現況分析 | 處置建議 |
+|---|---|---|---|---|---|---|
+| 19 | `docs/audits/python-inventory-2026-08-13.csv` | 68,267 B | 歷史稽核 | L122–133, L149, L155–158, L255–269 | 2026-08-13 Python 盤點之 CSV 匯出；列出當時存在之 `check_external_proof_*.py`、`sync_external_proof_*.py`、`test_external_proof_*.py` 等檔案條目。此為歷史稽核快照。 | **歸檔保留 (ARCHIVE / KEEP)**：歷史紀錄 |
+| 20 | `docs/audits/python-runtime-tooling-audit-2026-08-13.md` | 13,682 B | 歷史稽核 | L23, L142, L158 | 2026-08-13 Python 工具稽核報告；提及 external-proof 約 20 支 CLI 之分析結論。此為歷史稽核。 | **歸檔保留 (ARCHIVE / KEEP)**：歷史紀錄 |
+
+#### 3.2.7 External Proof 殘留盤點統計
+
+```text
+┌────────────────────────────────────────┬───────┬───────────────────────────────────────┐
+│ 類別                                   │ 數量  │ 處置                                  │
+├────────────────────────────────────────┼───────┼───────────────────────────────────────┤
+│ 完全孤立 JSON/MD（無 active caller）   │  5 檔 │ 刪除 (DELETE)                         │
+│ 關閉/門禁/排程/艦隊文件含幽靈引用      │ 10 檔 │ 重構精簡 (REPLACE / UPDATE)            │
+│ Runtime / Fleet 歷史紀錄               │  2 檔 │ 歸檔保留 (ARCHIVE / KEEP)             │
+│ Active 程式碼（僅脈絡註解）            │  1 檔 │ 保留 (KEEP)                           │
+│ 歷史稽核文件                           │  2 檔 │ 歸檔保留 (ARCHIVE / KEEP)             │
+├────────────────────────────────────────┼───────┼───────────────────────────────────────┤
+│ 合計                                   │ 20 檔 │ （不含本報告）                        │
+└────────────────────────────────────────┴───────┴───────────────────────────────────────┘
+```
+
+> **修正說明**：前版報告僅列出 8 檔（4 孤立 + 4 關閉文件），遺漏 `PRODUCT_RELEASE_RISK_ACCEPTANCE.md`、`PRODUCT_GRADE_E2E_FLEET_ASSIGNMENT_LEDGER.md`、`PRODUCT_GRADE_E2E_FLEET_DISPATCH_QUEUE.json`、`PRODUCT_GRADE_E2E_FLEET_KICKOFF_RUNBOOK.md`、`PRODUCT_GRADE_E2E_GATE_RECONCILIATION.md`、`PRODUCT_E2E_READINESS_REPORT.md`、`EXTERNAL_PROOF_HANDBACK_EXAMPLE.json`、`runtime/static-verification.json`、`fleet_dispatch/.../ODP-P10-DEV-LANDING-FIX-001.md`、`check_product_release_gate.py`、`python-inventory-2026-08-13.csv`、`python-runtime-tooling-audit-2026-08-13.md` 共 12 檔。本版已完整列出全部 20 檔（含本報告為 21 檔，但本報告不計入殘留）。先前版本將外部 proof 引用不精確地標註為「已隔離」，實際上殘留範圍遠比原先統計更廣，涵蓋閉鎖文件、艦隊派遣、runtime 驗證與歷史稽核等多個子目錄。
 
 ---
 
@@ -112,7 +171,7 @@
 
 | 元件名稱與路徑 | 主要責任與對外介面 | 呼叫者與相依分析 (Usage Evidence) | 處置判定 | 承接 Wave 任務 |
 |---|---|---|---|---|
-| `product_ops/deployment/deploy_cloud_run_waji.sh` | Cloud Run 服務 (API, Web) 與 Jobs (Migration, Worker, Scheduler) 部署主腳本。 | **Caller**: `.github/workflows/deploy-dev.yml` (line 217)。<br>**Dependencies**: 呼叫 `cloud_run_release_traffic.sh`、`validate_cloud_run_live_deployment.py`、`check_live_e2e_gate.py`、`cosign`、`docker`、`gcloud`。<br>**問題**: 內含 `docker build`；流量推進僅支援單一環境 100% 切換，尚未支援 production 0% green 驗證後再 100% blue-green 切換。 | **重構 (REPLACE / REFACTOR)**：抽離 build 步驟（改為接收 release manifest digest）；擴充支援 prod blue-green。 | `ODP-PROD-BLUEGREEN-PRIMITIVES-001` (Wave 1), `ODP-RUNTIME-RELEASE-SINGLE-PATH-001` (Wave 2) |
+| `product_ops/deployment/deploy_cloud_run_waji.sh` | Cloud Run 服務 (API, Web) 與 Jobs (Migration, Worker, Scheduler) 部署主腳本。另包含 Cloud Scheduler trigger 建立/更新函式 `upsert_scheduler_trigger()`（lines 443-480）。 | **Caller**: `.github/workflows/deploy-dev.yml` (line 217)。<br>**Dependencies**: 呼叫 `cloud_run_release_traffic.sh`、`validate_cloud_run_live_deployment.py`、`check_live_e2e_gate.py`、`cosign`、`docker`、`gcloud`。<br>**Cloud Scheduler 呼叫鏈**: `upsert_scheduler_trigger()` (lines 443-480) 為 Bash 函式，先用 `gcloud scheduler jobs describe` 偵測 trigger 是否存在，再分支為 `gcloud scheduler jobs create http` 或 `gcloud scheduler jobs update http`，綁定 `--schedule` (cron)、`--time-zone` (`ODP_SCHEDULER_TIME_ZONE`)、`--uri` (Cloud Run Jobs 執行端點)、`--oauth-service-account-email` (`ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT`)。呼叫兩次（lines 575-580）：第一次建立/更新 Scheduler trigger (`SCHEDULER_SCHEDULE_NAME` ← `ODP_SCHEDULER_CRON`)，第二次建立/更新 Worker trigger (`WORKER_SCHEDULE_NAME` ← `ODP_WORKER_CRON`)。Cron 值由 `deploy-dev.yml` 之 `deploy` job env block (lines 110-112) 從 GitHub environment vars 注入：`ODP_WORKER_CRON: ${{ vars.ODP_WORKER_CRON }}`、`ODP_SCHEDULER_CRON: ${{ vars.ODP_SCHEDULER_CRON }}`、`ODP_SCHEDULER_TIME_ZONE: ${{ vars.ODP_SCHEDULER_TIME_ZONE }}`。<br>**問題**: 內含 `docker build`；流量推進僅支援單一環境 100% 切換，尚未支援 production 0% green 驗證後再 100% blue-green 切換；`upsert_scheduler_trigger` 無簽名 lease 驗證。 | **重構 (REPLACE / REFACTOR)**：抽離 build 步驟（改為接收 release manifest digest）；擴充支援 prod blue-green；`upsert_scheduler_trigger` 須綁定 release lease 授權。 | `ODP-PROD-BLUEGREEN-PRIMITIVES-001` (Wave 1), `ODP-RUNTIME-RELEASE-SINGLE-PATH-001` (Wave 2) |
 | `product_ops/deployment/cloud_run_job_entrypoint.py` | Cloud Run Job 容器內進入點，支援 `migrate`, `worker`, `scheduler` 子命令。 | **Caller**: 由 Cloud Run Jobs 在容器啟動時以 `python product_ops/deployment/cloud_run_job_entrypoint.py <subcommand>` 執行。<br>**Tests**: `tests/ops/test_cloud_run_job_entrypoint.py` 完整覆蓋。<br>**判定**: 結構化輸出 JSON receipt、租約管理與錯誤碼封裝健全。 | **保留 (KEEP)** | 維持現狀 |
 | `product_ops/deployment/cloud_run_release_traffic.sh` | Bash 流量控制與 rollback 模組。 | **Caller**: 由 `deploy_cloud_run_waji.sh` source (line 76)。<br>**Functions**: `capture_service_traffic`, `promote_service_traffic`, `restore_service_traffic`, `rollback_release_traffic`, `capture_scheduler_trigger`, `restore_scheduler_trigger`。<br>**判定**: 提供失敗自動 rollback 核心能力。 | **保留並擴充 (KEEP & EXPAND)** | `ODP-PROD-BLUEGREEN-PRIMITIVES-001` (Wave 1) |
 | `product_ops/deployment/cloud_run_traffic.py` | Python 輔助工具，解析 Cloud Run JSON 描述檔並產生流量復原參數。 | **Caller**: `cloud_run_release_traffic.sh`。<br>**Tests**: `tests/ops/test_cloud_run_live_deployment.py`。<br>**判定**: 核心流量解析工具。 | **保留 (KEEP)** | `ODP-PROD-BLUEGREEN-PRIMITIVES-001` (Wave 1) |
@@ -191,9 +250,9 @@
 | `infra/docker/docker-compose.e2e.yml` | E2E 測試用 Docker Compose (包含 api, web, postgres, source-stub)。 | **Caller**: `delivery_toolchain/e2e/run_product_e2e.sh` (line 24)。 | **保留 (KEEP)** | 維持現狀 |
 | `docker-compose.yml` (根目錄) | 本地開發完整 multi-service stack (migrate, api, worker, scheduler, web)。 | **Caller**: 開發者手動 `docker compose up --build`。 | **保留 (KEEP)** | 維持現狀 |
 | `infra/terraform/` (`*.tf`, `audit/`, `env/`) | Cloud Run、Cloud SQL、KMS、IAM、GCS 等長期基礎設施 Terraform 模組。 | **Caller**: IaC 佈署流程；`tests/ops/test_runtime_config_code_closeout.py`。<br>**判定**: 屬共用底層 IaC，應保留並作為 Ephemeral Staging 基礎。 | **保留 (KEEP)** | `ODP-EPHEMERAL-STAGING-IAC-001` (Wave 1) |
-| `infra/cloudbuild/README.md` | Cloud Build 說明文件（空白 stub）。 | **Caller**: 無；現行發布全部走 GitHub Actions (WIF)，不使用 Cloud Build。 | **歸檔 / 刪除 (RETIRE)** | `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` (Wave 2) |
-| `infra/k8s_optional/README.md` | 空白 stub 目錄。 | **Caller**: 無。 | **刪除 (DELETE)** | `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` (Wave 2) |
-| `infra/k8s/data-platform/` (`render.py`, `workloads.yaml.tpl`, `deployment_runtime.py`, `status_mapping.prod.json`) | Data Platform GKE 部署範本與渲染腳本。 | **Caller**: Data Platform EMGI 部署。 | **保留 (KEEP)** | `DPF-EMGI-LIVE-ROLLOUT-001` (Wave 1) |
+| `infra/cloudbuild/README.md` | Cloud Build 說明文件（54 bytes, 4 行；內容為 `# Cloud Build` 標題與 `Cloud Build and CI/CD pipeline assets.` 描述，非空白 stub）。 | **Caller**: 無 active code 或 workflow 引用；現行發布全部走 GitHub Actions (WIF)，不使用 Cloud Build。倉庫無 `cloudbuild.yaml` 或 Cloud Build trigger 定義。`infra/cloudbuild/` 目錄僅含此 README。 | **歸檔 / 刪除 (RETIRE)**：含目錄一併移除 | `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` (Wave 2) |
+| `infra/k8s_optional/README.md` | Optional Kubernetes 說明文件（102 bytes, 4 行；內容為 `# Optional Kubernetes` 標題與 `Optional Kubernetes manifests, used only if deployment topology requires them.` 描述，非空白 stub）。 | **Caller**: 無 active code、workflow 或 Terraform 引用。`infra/k8s_optional/` 目錄僅含此 README，無任何 YAML manifest。現行 K8s 部署全部在 `infra/k8s/data-platform/`。 | **刪除 (DELETE)**：含目錄一併移除 | `ODP-DEPLOY-DEAD-CODE-REMOVAL-001` (Wave 2) |
+| `infra/k8s/data-platform/` (`render.py`, `workloads.yaml.tpl`, `deployment_runtime.py`, `status_mapping.prod.json`) | Data Platform GKE 部署範本與渲染腳本。包含 active CronJob `oday-data-platform-bounded-daily`。 | **Caller**: Data Platform EMGI 部署。<br>**CronJob 證據**: `workloads.yaml.tpl` lines 133-170 定義 CronJob `oday-data-platform-bounded-daily`（namespace: `oday-dev`, schedule: `0 1 * * *` UTC），以 `concurrencyPolicy: Forbid`、`startingDeadlineSeconds: 1800`、`activeDeadlineSeconds: 14400`、`backoffLimit: 1` 控制執行邊界。Image 使用 `__DATA_IMAGE__` 佔位符由 `render.py` 替換為 release digest。<br>**README 邊界**: `README.md` lines 98-107 明確劃定 daily CronJob 只載入 bounded merchant、place、device、daily operations、orders、AI revenue、commercial inputs 與 KMeans lineage；trade 與 device logs 為獨立 suspended Jobs 須人工 unsuspend，不排程。 | **保留 (KEEP)** | `DPF-EMGI-LIVE-ROLLOUT-001` (Wave 1) |
 | `infra/mlflow/` (`Dockerfile`, `entrypoint.py`, `runtime.py`, `healthcheck.py`) | MLflow Tracking Server 容器定義。 | **Caller**: MLflow 部署。 | **保留 (KEEP)** | 維持現狀 |
 
 ---
@@ -236,13 +295,19 @@
 ### 5.1 統計摘要
 
 ```text
-┌────────────────────────┬───────┬────────────────────────────────────────────────────────┐
-│ 處置類別               │ 數量  │ 主要範疇與代表項目                                     │
-├────────────────────────┼───────┼────────────────────────────────────────────────────────┤
-│ 【保留 (KEEP)】        │ 48 項 │ CI 工作流、標準 Dockerfile、線上 E2E 門禁、維運腳本等   │
-│ 【替換/重構 (REPLACE)】│  8 項 │ Runtime Release、check_runtime_admission、Gate Registry│
-│ 【刪除/退役 (DELETE)】 │  9 項 │ 過期 Dockerfile.api/web、舊 docker-compose、孤立狀態檔 │
-└────────────────────────┴───────┴────────────────────────────────────────────────────────┘
+┌──────────────────────────────────┬───────┬──────────────────────────────────────────────────────────┐
+│ 處置類別                         │ 數量  │ 主要範疇與代表項目                                       │
+├──────────────────────────────────┼───────┼──────────────────────────────────────────────────────────┤
+│ 【保留 (KEEP)】                  │ 48 項 │ CI 工作流、標準 Dockerfile、K8s CronJob、E2E 門禁、      │
+│                                  │       │ 維運腳本、Cloud Scheduler trigger 等                     │
+│ 【替換/重構 (REPLACE)】          │  8 項 │ Runtime Release、check_runtime_admission、Gate Registry、│
+│                                  │       │ deploy_cloud_run_waji.sh (含 upsert_scheduler_trigger)   │
+│ 【刪除/退役 (DELETE)】           │ 10 項 │ 過期 Dockerfile.api/web、舊 docker-compose、             │
+│                                  │       │ 6 個孤立 external-proof 狀態檔、cloudbuild/k8s_optional  │
+│ 【重構精簡 (REPLACE / UPDATE)】  │ 10 項 │ 含 external-proof 幽靈引用之關閉/門禁/艦隊文件           │
+│                                  │       │ (見 §3.2.2 與 §3.2.3)                                   │
+│ 【歸檔保留 (ARCHIVE / KEEP)】    │  4 項 │ Runtime/Fleet 歷史紀錄、歷史稽核文件                     │
+└──────────────────────────────────┴───────┴──────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -251,17 +316,18 @@
 
 > **注意**：依本任務規範，本任務只記錄清單，不直接刪除任何代碼。
 
-| 序號 | 檔案路徑 | 類型 | 刪除理由與 Caller 證明 |
-|---|---|---|---|
-| 1 | `infra/docker/Dockerfile.api` | Dockerfile | 過期舊版 Dockerfile（暴露 8080 port，寫死 pip install 依賴）。已由 `infra/docker/api.Dockerfile` 取代。 |
-| 2 | `infra/docker/Dockerfile.web` | Dockerfile | 過期舊版 Dockerfile（暴露 8080 port）。已由 `infra/docker/web.Dockerfile` 取代。 |
-| 3 | `infra/docker/docker-compose.yml` | Compose | 過期 Compose 檔，引用舊版 `Dockerfile.api`。已由根目錄標準 `docker-compose.yml` 取代。 |
-| 4 | `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` | 狀態 JSON | 舊版 PR #82 外部證明佇列，所屬 13 支腳本已刪除，本檔案已完全孤立無 caller。 |
-| 5 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` | 範本 JSON | 舊版 PR #82 外部證明 handback 範本，無 active code 引用。 |
-| 6 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` | 狀態 JSON | 舊版 PR #82 外部證明看板，無 active code 引用。 |
-| 7 | `docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md` | 說明 MD | 舊版 PR #82 外部證明領取說明文件，已完全過期。 |
-| 8 | `infra/cloudbuild/README.md` | 文件 Stub | 空白說明文件；系統完全使用 GitHub Actions (WIF)，不使用 Cloud Build。 |
-| 9 | `infra/k8s_optional/README.md` | 文件 Stub | 空白說明目錄，無實質用途。 |
+| 序號 | 檔案路徑 | 類型 | 大小 | 刪除理由與 Caller 證明 |
+|---|---|---|---|---|
+| 1 | `infra/docker/Dockerfile.api` | Dockerfile | — | 過期舊版 Dockerfile（暴露 8080 port，寫死 pip install 依賴）。已由 `infra/docker/api.Dockerfile` 取代；唯一引用者為過期之 `infra/docker/docker-compose.yml`。 |
+| 2 | `infra/docker/Dockerfile.web` | Dockerfile | — | 過期舊版 Dockerfile（暴露 8080 port）。已由 `infra/docker/web.Dockerfile` 取代；`deploy_cloud_run_waji.sh` 已改用 `web.Dockerfile`。無 active caller。 |
+| 3 | `infra/docker/docker-compose.yml` | Compose | — | 過期 Compose 檔，引用舊版 `Dockerfile.api`。已由根目錄標準 `docker-compose.yml` 取代。唯一引用者為同目錄 `README.md`。 |
+| 4 | `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` | 孤立 JSON | 20,420 B | 舊版 PR #82 外部證明佇列，所屬 13 支腳本已刪除。無任何 active code 讀取或寫入；被其他 10 份陳舊文件引用但那些文件本身亦待重構（見 §3.2.2–3.2.3）。 |
+| 5 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` | 孤立 JSON | 7,514 B | 舊版 PR #82 外部證明 handback JSON Schema 範本。原對應之 `check_external_proof_handback_template.py` 已刪除，無 active code 引用。 |
+| 6 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` | 孤立 JSON | 6,145 B | 舊版 PR #82 外部證明看板。原對應之 `check/update_external_proof_handback_status_board.py` 已刪除，無 active code caller。 |
+| 7 | `docs/evidence/EXTERNAL_PROOF_HANDBACK_EXAMPLE.json` | 孤立 JSON | 4,367 B | 舊版 PR #82 外部證明 handback 示範格式。L43 引用 `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` 之 PR 查詢指令。無 active code caller。 |
+| 8 | `docs/evidence/EXTERNAL_PROOF_FLEET_PICKUP_BOARD.md` | 孤立 MD | 18,151 B | 舊版 PR #82 外部證明領取說明文件。密集引用 14 支已刪除之 `check_external_proof_*.py` 與 `sync_external_proof_*.py` 腳本。無 active code caller。 |
+| 9 | `infra/cloudbuild/README.md` | 說明文件 | 54 B | 非空白檔案（`# Cloud Build\n\nCloud Build and CI/CD pipeline assets.`），但系統完全使用 GitHub Actions (WIF)，倉庫無 `cloudbuild.yaml` 或 Cloud Build trigger 定義。無 active code、workflow 或 Terraform 引用。含 `infra/cloudbuild/` 目錄一併移除。 |
+| 10 | `infra/k8s_optional/README.md` | 說明文件 | 102 B | 非空白檔案（`# Optional Kubernetes\n\nOptional Kubernetes manifests, used only if deployment topology requires them.`），但目錄內無任何 YAML manifest。無 active code、workflow 或 Terraform 引用。現行 K8s 部署全部在 `infra/k8s/data-platform/`。含 `infra/k8s_optional/` 目錄一併移除。 |
 
 ---
 
