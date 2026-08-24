@@ -27,6 +27,7 @@ from product_ops.deployment.staging_lifecycle import (
     plan_staging_resources,
     release_label_value,
     scan_orphans,
+    validate_immutable_release_identity,
     validate_module_contract,
     validate_staging_config,
 )
@@ -987,6 +988,306 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             self.assertEqual(code_24, 0)
         finally:
             Path(tf_path).unlink(missing_ok=True)
+
+    def test_rerun_create_rejects_mismatched_candidate_sha_and_preserves_existing_state(self) -> None:
+        """Regression test for Rollout Plan §5.2:
+
+        Rerunning create for an existing release with a different candidate_sha must be
+        rejected without modifying existing tfvars, inventory, or live state.
+        """
+        import tempfile
+        import unittest.mock as mock
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_time = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+
+            # First run: candidate 'a'*40, manifest 'b'*64
+            cfg1 = dataclasses_replace(
+                self.valid_config,
+                release_id="odp-immutable-test-001",
+                candidate_sha="a" * 40,
+                manifest_digest="sha256:" + "b" * 64,
+                created_at="2026-08-24T12:00:00Z",
+            )
+            planned_first = plan_staging_resources(cfg1, created_at=first_time)
+            _, vars_p, inv_p = _terraform_state_paths(cfg1.release_id, tmp_path)
+
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=tmp_path,
+                initialize=False,
+            )
+
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+                # First run succeeds and writes initial tfvars/inventory
+                executor(cfg1, planned_first)
+                self.assertTrue(vars_p.is_file())
+                first_vars = json.loads(vars_p.read_text(encoding="utf-8"))
+                self.assertEqual(first_vars["candidate_sha"], "a" * 40)
+                self.assertEqual(first_vars["manifest_digest"], "sha256:" + "b" * 64)
+
+                # Second run: same release, but candidate_sha changed to 'e'*40
+                cfg2 = dataclasses_replace(
+                    cfg1,
+                    candidate_sha="e" * 40,
+                    manifest_digest="sha256:" + "f" * 64,
+                )
+                planned_second = plan_staging_resources(cfg2, created_at=first_time)
+
+                with self.assertRaises(RuntimeError) as ctx:
+                    executor(cfg2, planned_second)
+
+                self.assertIn("immutable candidate_sha", str(ctx.exception).lower())
+                self.assertIn("5.2", str(ctx.exception))
+
+                # Verify persisted tfvars was NOT modified and still has original 'a'*40 and 'b'*64
+                persisted_vars = json.loads(vars_p.read_text(encoding="utf-8"))
+                self.assertEqual(persisted_vars["candidate_sha"], "a" * 40)
+                self.assertEqual(persisted_vars["manifest_digest"], "sha256:" + "b" * 64)
+
+                # Verify persisted inventory was NOT modified
+                persisted_inv = json.loads(inv_p.read_text(encoding="utf-8"))
+                self.assertEqual(persisted_inv[0]["labels"]["candidate_sha"], "a" * 40)
+
+    def test_rerun_create_rejects_mismatched_manifest_digest(self) -> None:
+        """Verify that rerunning with a different manifest_digest on the same release is rejected."""
+        import tempfile
+        import unittest.mock as mock
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_time = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+
+            cfg1 = dataclasses_replace(
+                self.valid_config,
+                release_id="odp-manifest-test-001",
+                candidate_sha="a" * 40,
+                manifest_digest="sha256:" + "b" * 64,
+                created_at="2026-08-24T12:00:00Z",
+            )
+            planned = plan_staging_resources(cfg1, created_at=first_time)
+            _, vars_p, _ = _terraform_state_paths(cfg1.release_id, tmp_path)
+
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=tmp_path,
+                initialize=False,
+            )
+
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+                executor(cfg1, planned)
+
+                # Same candidate, but different manifest digest
+                cfg2 = dataclasses_replace(
+                    cfg1,
+                    manifest_digest="sha256:" + "f" * 64,
+                )
+                with self.assertRaises(RuntimeError) as ctx:
+                    executor(cfg2, planned)
+
+                self.assertIn("immutable manifest_digest", str(ctx.exception).lower())
+                persisted_vars = json.loads(vars_p.read_text(encoding="utf-8"))
+                self.assertEqual(persisted_vars["manifest_digest"], "sha256:" + "b" * 64)
+
+    def test_rerun_create_rejects_mismatched_images_or_project(self) -> None:
+        """Verify that rerunning with changed container images or project_id is rejected."""
+        import tempfile
+        import unittest.mock as mock
+        from product_ops.deployment.staging_lifecycle import make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_time = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+
+            cfg1 = dataclasses_replace(
+                self.valid_config,
+                release_id="odp-img-test-001",
+                created_at="2026-08-24T12:00:00Z",
+            )
+            planned = plan_staging_resources(cfg1, created_at=first_time)
+
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=tmp_path,
+                initialize=False,
+            )
+
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform"):
+                executor(cfg1, planned)
+
+                # Changed api_image
+                cfg_api = dataclasses_replace(
+                    cfg1,
+                    api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "9" * 64,
+                )
+                with self.assertRaises(RuntimeError) as ctx:
+                    executor(cfg_api, planned)
+                self.assertIn("immutable api_image", str(ctx.exception).lower())
+
+                # Changed web_image
+                cfg_web = dataclasses_replace(
+                    cfg1,
+                    web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "8" * 64,
+                )
+                with self.assertRaises(RuntimeError) as ctx:
+                    executor(cfg_web, planned)
+                self.assertIn("immutable web_image", str(ctx.exception).lower())
+
+                # Changed project_id
+                cfg_proj = dataclasses_replace(
+                    cfg1,
+                    project_id="other-staging-proj",
+                )
+                with self.assertRaises(RuntimeError) as ctx:
+                    executor(cfg_proj, planned)
+                self.assertIn("project_id", str(ctx.exception).lower())
+
+    def test_rerun_create_allows_idempotent_reapply_with_matching_identity(self) -> None:
+        """Verify that rerunning create with the exact same immutable identity succeeds idempotently."""
+        import tempfile
+        import unittest.mock as mock
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, make_terraform_creation_executor
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            first_time = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+
+            cfg = dataclasses_replace(
+                self.valid_config,
+                release_id="odp-idempotent-001",
+                created_at="2026-08-24T12:00:00Z",
+            )
+            planned = plan_staging_resources(cfg, created_at=first_time)
+            _, vars_p, _ = _terraform_state_paths(cfg.release_id, tmp_path)
+
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=tmp_path,
+                initialize=False,
+            )
+
+            with mock.patch("product_ops.deployment.staging_lifecycle._run_terraform") as mock_tf:
+                # First run
+                res1 = executor(cfg, planned)
+                self.assertTrue(res1)
+                self.assertEqual(mock_tf.call_count, 1)  # apply only since initialize=False
+
+                # Second run with same config and empty created_at
+                cfg_rerun = dataclasses_replace(cfg, created_at="")
+                res2 = executor(cfg_rerun, planned)
+                self.assertTrue(res2)
+                self.assertEqual(mock_tf.call_count, 2)  # 2 applies total
+
+                persisted = json.loads(vars_p.read_text(encoding="utf-8"))
+                self.assertEqual(persisted["created_at"], "2026-08-24T12:00:00Z")
+                self.assertEqual(persisted["candidate_sha"], cfg.candidate_sha)
+                self.assertEqual(persisted["manifest_digest"], cfg.manifest_digest)
+
+    def test_create_conflict_does_not_trigger_failure_cleanup_of_existing_release(self) -> None:
+        """Verify that a rejected create rerun due to immutable identity conflict does NOT destroy existing release."""
+        cleaned: list[str] = []
+
+        def failing_creator(cfg: StagingConfig, res: Any) -> bool:
+            raise RuntimeError(
+                "Existing release state conflict for 'odp-safe-001': "
+                "Existing release state has immutable candidate_sha 'a'*40; rerun with candidate_sha 'e'*40 is rejected."
+            )
+
+        def mock_cleaner(res: Mapping[str, Any]) -> bool:
+            cleaned.append(str(res.get("id")))
+            return True
+
+        receipt = create_ephemeral_staging(
+            self.valid_config,
+            dry_run=False,
+            creation_executor=failing_creator,
+            cleanup_executor=mock_cleaner,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertFalse(receipt.remediation_required)
+        self.assertEqual(cleaned, [])  # Cleanup executor MUST NOT be invoked!
+        self.assertIn("conflict", receipt.remediation_notes.lower())
+
+    def test_cli_create_dry_run_rejects_immutable_identity_conflict(self) -> None:
+        """Verify that CLI create --dry-run rejects mismatched immutable identity if state exists."""
+        import tempfile
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, generate_tfvars, main
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            rel_id = "odp-cli-conflict-001"
+
+            # Create existing tfvars with candidate_sha 'a'*40
+            _, vars_p, _ = _terraform_state_paths(rel_id, tmp_path)
+            cfg1 = dataclasses_replace(
+                self.valid_config,
+                release_id=rel_id,
+                candidate_sha="a" * 40,
+                manifest_digest="sha256:" + "b" * 64,
+                created_at="2026-08-24T12:00:00Z",
+            )
+            vars_p.write_text(json.dumps(generate_tfvars(cfg1), indent=2), encoding="utf-8")
+
+            # Run CLI create in dry-run with candidate_sha 'e'*40
+            argv = [
+                "create",
+                "--release-id", rel_id,
+                "--candidate-sha", "e" * 40,
+                "--manifest-digest", "sha256:" + "b" * 64,
+                "--project-id", "oday-staging-proj",
+                "--api-image", self.valid_config.api_image,
+                "--web-image", self.valid_config.web_image,
+                "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
+                "--state-dir", str(tmp_path),
+                "--dry-run",
+            ]
+            exit_code = main(argv)
+            self.assertEqual(exit_code, 1)
+
+    def test_validate_immutable_release_identity_direct_cases(self) -> None:
+        """Direct unit tests for validate_immutable_release_identity."""
+        import tempfile
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, generate_tfvars, validate_immutable_release_identity
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            rel_id = "odp-direct-val-001"
+
+            # Non-existent state dir returns no errors
+            self.assertEqual(validate_immutable_release_identity(self.valid_config, tmp_path / "nonexistent"), [])
+
+            # Write tfvars
+            _, vars_p, inv_p = _terraform_state_paths(rel_id, tmp_path)
+            cfg_base = dataclasses_replace(
+                self.valid_config,
+                release_id=rel_id,
+                candidate_sha="a" * 40,
+                manifest_digest="sha256:" + "b" * 64,
+                created_at="2026-08-24T12:00:00Z",
+            )
+            vars_p.write_text(json.dumps(generate_tfvars(cfg_base), indent=2), encoding="utf-8")
+
+            # Matching config -> empty errors
+            self.assertEqual(validate_immutable_release_identity(cfg_base, tmp_path), [])
+
+            # Mismatched candidate_sha
+            cfg_bad_sha = dataclasses_replace(cfg_base, candidate_sha="f" * 40)
+            errs = validate_immutable_release_identity(cfg_bad_sha, tmp_path)
+            self.assertTrue(any("candidate_sha" in e for e in errs))
+
+            # Mismatched manifest_digest
+            cfg_bad_md = dataclasses_replace(cfg_base, manifest_digest="sha256:" + "9" * 64)
+            errs = validate_immutable_release_identity(cfg_bad_md, tmp_path)
+            self.assertTrue(any("manifest_digest" in e for e in errs))
+
+            # Mismatched created_at
+            cfg_bad_created = dataclasses_replace(cfg_base, created_at="2026-08-24T15:00:00Z")
+            errs = validate_immutable_release_identity(cfg_bad_created, tmp_path)
+            self.assertTrue(any("authoritative created_at" in e for e in errs))
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:

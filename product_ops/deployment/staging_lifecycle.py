@@ -661,6 +661,107 @@ def _run_terraform(
     raise RuntimeError(f"terraform {' '.join(arguments[:2])} failed (exit {process.returncode}): {detail}")
 
 
+def validate_immutable_release_identity(
+    config: StagingConfig,
+    state_dir: Path,
+) -> list[str]:
+    """Validate that config matches immutable release identity if release was already provisioned.
+
+    In accordance with Rollout Plan §5.2:
+    Once a manifest enters staging it must not be rewritten. Any change to candidate commit SHA,
+    manifest digest, container images, or target project requires a new release_id.
+    """
+    state_path_root = state_dir.expanduser().resolve()
+    if not state_path_root.is_dir():
+        return []
+
+    state_path, tfvars_path, inventory_path = _terraform_state_paths(config.release_id, state_path_root)
+    errors: list[str] = []
+
+    if tfvars_path.is_file():
+        try:
+            prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
+            if isinstance(prev_vars, dict):
+                prev_candidate = str(prev_vars.get("candidate_sha", "")).strip().lower()
+                if prev_candidate and config.candidate_sha.strip().lower() != prev_candidate:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable candidate_sha {prev_candidate!r}; "
+                        f"rerun with candidate_sha {config.candidate_sha.strip().lower()!r} is rejected. "
+                        "Rollout plan §5.2 requires a new release_id for code/candidate changes."
+                    )
+
+                prev_manifest = str(prev_vars.get("manifest_digest", "")).strip()
+                if prev_manifest and config.manifest_digest.strip() != prev_manifest:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable manifest_digest {prev_manifest!r}; "
+                        f"rerun with manifest_digest {config.manifest_digest.strip()!r} is rejected. "
+                        "Rollout plan §5.2 requires a new release_id for manifest changes."
+                    )
+
+                prev_api = str(prev_vars.get("api_image", "")).strip()
+                if prev_api and config.api_image.strip() != prev_api:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable api_image {prev_api!r}; "
+                        f"rerun with api_image {config.api_image.strip()!r} is rejected. "
+                        "Rollout plan §5.2 requires a new release_id for image changes."
+                    )
+
+                prev_web = str(prev_vars.get("web_image", "")).strip()
+                if prev_web and config.web_image.strip() != prev_web:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has immutable web_image {prev_web!r}; "
+                        f"rerun with web_image {config.web_image.strip()!r} is rejected. "
+                        "Rollout plan §5.2 requires a new release_id for image changes."
+                    )
+
+                prev_project = str(prev_vars.get("project_id", "")).strip()
+                if prev_project and config.project_id.strip() != prev_project:
+                    errors.append(
+                        f"Existing release state for {config.release_id!r} has project_id {prev_project!r}; "
+                        f"rerun with project_id {config.project_id.strip()!r} is rejected."
+                    )
+
+                prev_created = str(prev_vars.get("created_at", "")).strip()
+                if prev_created and config.created_at:
+                    if parse_timestamp(config.created_at) != parse_timestamp(prev_created):
+                        errors.append(
+                            f"Existing release state for {config.release_id!r} has authoritative created_at {prev_created!r}; "
+                            f"rerun with created_at {config.created_at!r} is rejected."
+                        )
+        except Exception:
+            pass
+
+    if inventory_path.is_file():
+        try:
+            prev_inv = json.loads(inventory_path.read_text(encoding="utf-8"))
+            if isinstance(prev_inv, list) and prev_inv and isinstance(prev_inv[0], dict):
+                inv_labels = prev_inv[0].get("labels", {})
+                if isinstance(inv_labels, dict):
+                    inv_candidate = str(inv_labels.get("candidate_sha", "")).strip().lower()
+                    if inv_candidate and config.candidate_sha.strip().lower() != inv_candidate:
+                        msg = (
+                            f"Existing release inventory for {config.release_id!r} has immutable candidate_sha {inv_candidate!r}; "
+                            f"rerun with candidate_sha {config.candidate_sha.strip().lower()!r} is rejected. "
+                            "Rollout plan §5.2 requires a new release_id for code/candidate changes."
+                        )
+                        if msg not in errors:
+                            errors.append(msg)
+                    inv_manifest_prefix = str(inv_labels.get("manifest_digest_prefix", "")).strip().lower()
+                    clean_manifest_prefix = config.manifest_digest.replace("sha256:", "")[:16].lower()
+                    if inv_manifest_prefix and clean_manifest_prefix != inv_manifest_prefix:
+                        msg = (
+                            f"Existing release inventory for {config.release_id!r} has immutable manifest_digest_prefix {inv_manifest_prefix!r}; "
+                            f"rerun with manifest_digest {config.manifest_digest.strip()!r} is rejected. "
+                            "Rollout plan §5.2 requires a new release_id for manifest changes."
+                        )
+                        if msg not in errors:
+                            errors.append(msg)
+        except Exception:
+            pass
+
+    return errors
+
+
 def make_terraform_creation_executor(
     *,
     module_dir: Path = DEFAULT_EPHEMERAL_MODULE_DIR,
@@ -686,20 +787,29 @@ def make_terraform_creation_executor(
         state_path_root.mkdir(parents=True, exist_ok=True)
         state_path, tfvars_path, inventory_path = _terraform_state_paths(config.release_id, state_path_root)
 
+        # Validate immutable release identity against existing state BEFORE any write or apply
+        identity_errors = validate_immutable_release_identity(config, state_path_root)
+        if identity_errors:
+            raise RuntimeError(
+                f"Existing release state conflict for {config.release_id!r}: {'; '.join(identity_errors)}"
+            )
+
         # Preserve existing authoritative created_at if already provisioned
         created_at = config.created_at or resources[0].created_at
         if tfvars_path.is_file():
             prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
             previous_created_at = str(prev_vars.get("created_at", "")).strip()
             if previous_created_at:
-                if config.created_at and parse_timestamp(config.created_at) != parse_timestamp(
-                    previous_created_at
-                ):
-                    raise RuntimeError(
-                        "Existing release state has an authoritative created_at; "
-                        "rerun cannot replace it."
-                    )
                 created_at = previous_created_at
+        elif inventory_path.is_file():
+            try:
+                inv = json.loads(inventory_path.read_text(encoding="utf-8"))
+                if isinstance(inv, list) and inv and isinstance(inv[0], dict):
+                    previous_created_at = str(inv[0].get("created_at", "")).strip()
+                    if previous_created_at:
+                        created_at = previous_created_at
+            except Exception:
+                pass
 
         apply_config = dataclasses.replace(config, created_at=created_at)
         authoritative_created_dt = parse_timestamp(created_at)
@@ -926,6 +1036,7 @@ def create_ephemeral_staging(
         )
 
     exec_success = True
+    is_conflict = False
     try:
         exec_res = creation_executor(config, planned)
         if isinstance(exec_res, Sequence) and not isinstance(exec_res, (str, bytes, bytearray)):
@@ -934,10 +1045,13 @@ def create_ephemeral_staging(
             exec_success = bool(exec_res)
     except Exception as exc:
         exec_success = False
-        errors.append(f"Creation executor failed: {exc}")
+        err_msg = str(exc)
+        errors.append(f"Creation executor failed: {err_msg}")
+        if "Existing release state conflict" in err_msg or "Immutable release identity" in err_msg:
+            is_conflict = True
 
     cleanup_receipt: dict[str, Any] | None = None
-    if not exec_success:
+    if not exec_success and not is_conflict:
         # Failure path: trigger exact cleanup per rollout plan §15
         if cleanup_executor is not None:
             try:
@@ -971,10 +1085,15 @@ def create_ephemeral_staging(
         for r in planned
     ]
 
-    remediation_required = not exec_success
+    remediation_required = not exec_success and not is_conflict
     remediation_notes = ""
     if not exec_success:
-        if cleanup_receipt and cleanup_receipt.get("success"):
+        if is_conflict:
+            remediation_notes = (
+                "Creation rejected due to immutable release identity conflict; "
+                "existing release state was preserved and not modified."
+            )
+        elif cleanup_receipt and cleanup_receipt.get("success"):
             remediation_notes = "Creation failed; failure-path cleanup succeeded in deleting partial staging resources."
         else:
             remediation_notes = "Creation failed and partial staging resources may require manual remediation."
@@ -1815,6 +1934,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             owner_task_id=args.owner_task_id,
         )
 
+        if args.dry_run:
+            identity_errors = validate_immutable_release_identity(config, state_dir_path)
+            if identity_errors:
+                receipt = StagingLifecycleReceipt(
+                    action="create",
+                    release_id=config.release_id,
+                    candidate_sha=config.candidate_sha,
+                    manifest_digest_prefix=config.manifest_digest.replace("sha256:", "")[:16],
+                    success=False,
+                    timestamp=format_timestamp(datetime.now(UTC)),
+                    resources=[],
+                    errors=[f"Existing release state conflict for {config.release_id!r}: {'; '.join(identity_errors)}"],
+                    remediation_required=False,
+                    remediation_notes="Dry-run creation rejected due to immutable release identity conflict with existing release state.",
+                    metadata={"dry_run": True},
+                )
+                print(json.dumps(receipt.to_dict(), indent=2))
+                return 1
+
         creation_executor = None
         cleanup_executor = None
         if not args.dry_run:
@@ -1837,7 +1975,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             creation_executor=creation_executor,
             cleanup_executor=cleanup_executor,
         )
-        if args.tfvars_out and (receipt.success or args.dry_run):
+        if args.tfvars_out and receipt.success:
             tfvars = generate_tfvars(config)
             Path(args.tfvars_out).write_text(json.dumps(tfvars, indent=2), encoding="utf-8")
 
