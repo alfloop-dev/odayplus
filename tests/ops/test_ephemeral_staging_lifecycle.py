@@ -423,7 +423,15 @@ class EphemeralStagingLifecycleTests(unittest.TestCase):
             allow_empty=False,
         )
         self.assertFalse(receipt.success)
-        self.assertIn("No matching ephemeral staging resources", receipt.errors[0])
+        # The resource shares the release label but fails full ownership
+        # validation (missing expires_at), so the new sibling-verification
+        # gate refuses the entire release-scoped cleanup.
+        self.assertTrue(
+            any("incomplete or invalid ownership labels" in e for e in receipt.errors)
+            or any("No matching ephemeral staging resources" in e for e in receipt.errors),
+            f"Expected sibling-verification or no-match error, got: {receipt.errors}",
+        )
+        self.assertTrue(receipt.remediation_required)
 
     def test_scan_orphans_detects_expired_and_unmanaged(self) -> None:
         now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
@@ -2103,6 +2111,345 @@ class ReleaseScopedAutoCleanupTests(unittest.TestCase):
         self.assertEqual(deleted, ["expired-mine"])
         self.assertEqual(result.cleaned_count, 1)
         self.assertEqual(result.failed_cleanups, 0)
+
+
+class FailClosedReviewBlockerRegressionTests(unittest.TestCase):
+    """Regression tests for the three fail-closed review blockers.
+
+    These directly correspond to the Codex2 REOPEN findings:
+    (1) validate_immutable_release_identity must fail closed when tfstate+inventory
+        but no tfvars, and must check ALL inventory rows for project/tenant/created_at.
+    (2) cleanup_ephemeral_staging must refuse when same-release siblings have
+        invalid or incomplete labels, and must refuse when labels are non-mapping.
+    (3) scan_orphans must report non-mapping labels as orphans, never skip silently.
+    """
+
+    def setUp(self) -> None:
+        import tempfile
+        self.state_dir = Path(tempfile.mkdtemp(prefix="review-blockers-"))
+        self.config = StagingConfig(
+            release_id="odp-blocker-regression-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            project_id="oday-staging-proj",
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            created_at="2026-08-24T10:00:00Z",
+        )
+        self.now = datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC)
+
+    def tearDown(self) -> None:
+        import shutil
+        shutil.rmtree(self.state_dir, ignore_errors=True)
+
+    # --- Blocker 1: validate_immutable_release_identity ---
+
+    def test_tfstate_plus_inventory_no_tfvars_fails_closed(self) -> None:
+        """Regression: tfstate + inventory without tfvars is unverifiable."""
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+        )
+        state_path, _tfvars, inventory_path = _terraform_state_paths(
+            self.config.release_id, self.state_dir,
+        )
+        state_path.write_text("{}", encoding="utf-8")
+        labels = generate_staging_labels(
+            release_id=self.config.release_id,
+            candidate_sha=self.config.candidate_sha,
+            manifest_digest=self.config.manifest_digest,
+            owner_task_id=self.config.owner_task_id,
+            created_at=self.now,
+        )
+        inventory_path.write_text(json.dumps([{
+            "type": "google_sql_database",
+            "name": "db",
+            "id": "db-id",
+            "labels": labels,
+        }]), encoding="utf-8")
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+        self.assertTrue(len(errors) > 0, "Expected unverifiable error, got empty")
+        self.assertTrue(
+            any(UNVERIFIABLE_STATE_PREFIX in e for e in errors),
+            f"Expected UNVERIFIABLE_STATE_PREFIX in errors, got: {errors}",
+        )
+        self.assertTrue(
+            any("without the authoritative tfvars sidecar" in e for e in errors),
+            f"Expected 'without the authoritative tfvars sidecar' in errors, got: {errors}",
+        )
+
+    def test_inventory_all_rows_checked_not_just_first(self) -> None:
+        """Regression: a conflicting 2nd-row candidate_sha must be caught."""
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+        )
+        _state, tfvars_path, inventory_path = _terraform_state_paths(
+            self.config.release_id, self.state_dir,
+        )
+        tfvars_path.write_text(json.dumps({
+            "release_id": self.config.release_id,
+            "candidate_sha": self.config.candidate_sha,
+            "manifest_digest": self.config.manifest_digest,
+            "project_id": self.config.project_id,
+            "tenant_id": resolve_tenant_id(self.config.release_id, ""),
+            "created_at": self.config.created_at,
+        }), encoding="utf-8")
+
+        good_labels = generate_staging_labels(
+            release_id=self.config.release_id,
+            candidate_sha=self.config.candidate_sha,
+            manifest_digest=self.config.manifest_digest,
+            owner_task_id=self.config.owner_task_id,
+            created_at=self.now,
+        )
+        bad_labels = dict(good_labels)
+        bad_labels["candidate_sha"] = "f" * 40
+
+        inventory_path.write_text(json.dumps([
+            {"type": "bucket", "name": "row0", "id": "id0", "labels": good_labels},
+            {"type": "db", "name": "row1", "id": "id1", "labels": bad_labels},
+        ]), encoding="utf-8")
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+        self.assertTrue(len(errors) > 0, "Expected error for mismatched row 1")
+        self.assertTrue(
+            any("at index 1" in e for e in errors),
+            f"Expected index 1 reference in errors, got: {errors}",
+        )
+
+    def test_inventory_non_dict_row_fails_closed(self) -> None:
+        """Regression: a non-dict inventory row is unverifiable."""
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+        )
+        _state, tfvars_path, inventory_path = _terraform_state_paths(
+            self.config.release_id, self.state_dir,
+        )
+        tfvars_path.write_text(json.dumps({
+            "release_id": self.config.release_id,
+            "candidate_sha": self.config.candidate_sha,
+            "manifest_digest": self.config.manifest_digest,
+        }), encoding="utf-8")
+        inventory_path.write_text(json.dumps([
+            "not-a-dict-row",
+        ]), encoding="utf-8")
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+        self.assertTrue(len(errors) > 0)
+        self.assertTrue(
+            any("non-dict entry at index 0" in e for e in errors),
+            f"Expected non-dict error, got: {errors}",
+        )
+
+    def test_inventory_tenant_mismatch_caught(self) -> None:
+        """Regression: mismatched tenant label across inventory must be caught."""
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+            bounded_label_value,
+        )
+        _state, tfvars_path, inventory_path = _terraform_state_paths(
+            self.config.release_id, self.state_dir,
+        )
+        tfvars_path.write_text(json.dumps({
+            "release_id": self.config.release_id,
+            "candidate_sha": self.config.candidate_sha,
+            "manifest_digest": self.config.manifest_digest,
+            "project_id": self.config.project_id,
+            "tenant_id": resolve_tenant_id(self.config.release_id, ""),
+            "created_at": self.config.created_at,
+        }), encoding="utf-8")
+
+        labels = generate_staging_labels(
+            release_id=self.config.release_id,
+            candidate_sha=self.config.candidate_sha,
+            manifest_digest=self.config.manifest_digest,
+            owner_task_id=self.config.owner_task_id,
+            created_at=self.now,
+        )
+        tampered_labels = dict(labels)
+        tampered_labels["tenant"] = bounded_label_value("wrong-tenant-id")
+
+        inventory_path.write_text(json.dumps([
+            {"type": "bucket", "name": "row0", "id": "id0", "labels": tampered_labels},
+        ]), encoding="utf-8")
+
+        errors = validate_immutable_release_identity(self.config, self.state_dir)
+        self.assertTrue(
+            any("immutable tenant label" in e for e in errors),
+            f"Expected tenant label mismatch error, got: {errors}",
+        )
+
+    def test_inventory_created_at_mismatch_caught(self) -> None:
+        """Regression: mismatched created_at across inventory must be caught."""
+        from product_ops.deployment.staging_lifecycle import (
+            _terraform_state_paths,
+        )
+        _state, tfvars_path, inventory_path = _terraform_state_paths(
+            self.config.release_id, self.state_dir,
+        )
+        tfvars_path.write_text(json.dumps({
+            "release_id": self.config.release_id,
+            "candidate_sha": self.config.candidate_sha,
+            "manifest_digest": self.config.manifest_digest,
+            "project_id": self.config.project_id,
+            "tenant_id": resolve_tenant_id(self.config.release_id, ""),
+            "created_at": self.config.created_at,
+        }), encoding="utf-8")
+
+        labels = generate_staging_labels(
+            release_id=self.config.release_id,
+            candidate_sha=self.config.candidate_sha,
+            manifest_digest=self.config.manifest_digest,
+            owner_task_id=self.config.owner_task_id,
+            created_at=self.now,
+        )
+        tampered_labels = dict(labels)
+        tampered_labels["created_at"] = "2099-01-01-00-00-00"
+
+        config_with_time = StagingConfig(
+            release_id=self.config.release_id,
+            candidate_sha=self.config.candidate_sha,
+            manifest_digest=self.config.manifest_digest,
+            project_id=self.config.project_id,
+            owner_task_id=self.config.owner_task_id,
+            created_at="2026-08-24T12:00:00Z",
+        )
+        inventory_path.write_text(json.dumps([
+            {"type": "bucket", "name": "row0", "id": "id0", "labels": tampered_labels},
+        ]), encoding="utf-8")
+
+        errors = validate_immutable_release_identity(config_with_time, self.state_dir)
+        self.assertTrue(
+            any("authoritative created_at" in e for e in errors),
+            f"Expected created_at mismatch error, got: {errors}",
+        )
+
+    # --- Blocker 2: cleanup_ephemeral_staging ---
+
+    def test_cleanup_refuses_same_release_sibling_invalid_labels(self) -> None:
+        """Regression: cleanup refuses when any sibling has incomplete labels."""
+        labels_good = generate_staging_labels(
+            release_id="odp-sibling-test-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        )
+        labels_bad = dict(labels_good)
+        labels_bad["candidate_sha"] = ""
+
+        inventory = [
+            {"id": "good-res", "type": "bucket", "labels": labels_good},
+            {"id": "bad-res", "type": "db", "labels": labels_bad},
+        ]
+        receipt = cleanup_ephemeral_staging(
+            release_id="odp-sibling-test-001",
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            dry_run=True,
+        )
+        self.assertFalse(receipt.success)
+        self.assertTrue(receipt.remediation_required)
+        self.assertTrue(
+            any("incomplete or invalid ownership labels" in e for e in receipt.errors),
+            f"Expected sibling validation error, got: {receipt.errors}",
+        )
+
+    def test_cleanup_refuses_non_mapping_labels_in_inventory(self) -> None:
+        """Regression: cleanup refuses when inventory has non-mapping labels."""
+        labels_good = generate_staging_labels(
+            release_id="odp-nonmap-test-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        )
+        inventory = [
+            {"id": "good-res", "type": "bucket", "labels": labels_good},
+            {"id": "bad-res", "type": "db", "labels": "not-a-mapping"},
+        ]
+        receipt = cleanup_ephemeral_staging(
+            release_id="odp-nonmap-test-001",
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            dry_run=True,
+        )
+        self.assertFalse(receipt.success)
+        self.assertTrue(receipt.remediation_required)
+        self.assertTrue(
+            any("unreadable labels" in e for e in receipt.errors),
+            f"Expected non-mapping label error, got: {receipt.errors}",
+        )
+
+    def test_cleanup_succeeds_when_all_siblings_valid(self) -> None:
+        """Positive: cleanup succeeds when all same-release resources are valid."""
+        labels = generate_staging_labels(
+            release_id="odp-allgood-test-001",
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        )
+        inventory = [
+            {"id": "res1", "type": "bucket", "labels": labels},
+            {"id": "res2", "type": "db", "labels": labels},
+        ]
+        receipt = cleanup_ephemeral_staging(
+            release_id="odp-allgood-test-001",
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            dry_run=True,
+        )
+        self.assertTrue(receipt.success)
+        self.assertEqual(len(receipt.resources), 2)
+
+    # --- Blocker 3: scan_orphans ---
+
+    def test_scan_orphans_reports_non_mapping_labels_as_orphan(self) -> None:
+        """Regression: non-mapping labels must be reported, not silently skipped."""
+        inventory = [
+            {"id": "malformed-res", "type": "bucket", "labels": "not-a-dict"},
+            {"id": "also-malformed", "type": "db", "labels": 42},
+            {"id": "list-labels", "type": "svc", "labels": ["a", "b"]},
+        ]
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            now=self.now,
+        )
+        self.assertEqual(result.orphan_count, 3, f"Expected 3 orphans, got {result.orphan_count}")
+        for orphan in result.orphan_resources:
+            self.assertIn("non-mapping labels", orphan["reason"])
+        self.assertEqual(len(result.alerts), 3)
+        for alert in result.alerts:
+            self.assertIn("non-mapping labels", alert)
+
+    def test_scan_orphans_non_mapping_labels_not_auto_deleted(self) -> None:
+        """Regression: non-mapping labels resources must not be auto-deleted."""
+        deleted: list[str] = []
+        inventory = [
+            {"id": "malformed-res", "type": "bucket", "labels": "not-a-dict"},
+        ]
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            now=self.now,
+            auto_cleanup=True,
+            deletion_executor=lambda res: deleted.append(str(res.get("id"))) or True,
+        )
+        self.assertEqual(len(deleted), 0, "Non-mapping labels resources must not be auto-deleted")
+        self.assertEqual(result.orphan_count, 1)
+        self.assertEqual(result.cleaned_count, 0)
+
+    def test_scan_orphans_non_mapping_counted_in_total(self) -> None:
+        """Regression: non-mapping labels resources must count in total_scanned."""
+        inventory = [
+            {"id": "normal", "type": "bucket", "labels": {}},
+            {"id": "malformed", "type": "db", "labels": None},
+        ]
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            now=self.now,
+        )
+        self.assertEqual(result.total_scanned, 2)
+        self.assertEqual(result.orphan_count, 1)
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:

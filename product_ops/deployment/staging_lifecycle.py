@@ -787,6 +787,20 @@ def validate_immutable_release_identity(
             "or the orphan state must be inspected and removed by an operator."
         ]
 
+    # Fail closed: tfstate + inventory but no tfvars means the authoritative
+    # identity sidecar is missing.  The inventory alone only carries label
+    # prefixes (e.g. manifest_digest_prefix) and cannot prove the full identity
+    # (project, full manifest, images, tenant, created_at).  A creation executor
+    # could write new tfvars and apply against unverifiable state.
+    if state_path.is_file() and not tfvars_path.is_file() and inventory_path.is_file():
+        return [
+            f"{UNVERIFIABLE_STATE_PREFIX}: terraform state file {state_path.name} exists for "
+            f"release {config.release_id!r} with inventory but without the authoritative tfvars "
+            "sidecar. Inventory labels alone cannot prove project, full manifest digest, images, "
+            "tenant, or created_at; a new release_id is required or the orphan state must be "
+            "inspected and restored by an operator."
+        ]
+
     if tfvars_path.is_file():
         try:
             prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
@@ -867,33 +881,73 @@ def validate_immutable_release_identity(
     if inventory_path.is_file():
         try:
             prev_inv = json.loads(inventory_path.read_text(encoding="utf-8"))
-            if isinstance(prev_inv, list) and prev_inv and isinstance(prev_inv[0], dict):
-                inv_labels = prev_inv[0].get("labels", {})
-                if isinstance(inv_labels, dict):
+            if isinstance(prev_inv, list) and prev_inv:
+                # Every inventory member must be a dict with readable labels;
+                # a single unreadable row makes the whole release unverifiable.
+                for idx, inv_row in enumerate(prev_inv):
+                    if not isinstance(inv_row, dict):
+                        errors.append(
+                            f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
+                            f"{config.release_id!r} has a non-dict entry at index {idx}."
+                        )
+                        continue
+                    inv_labels = inv_row.get("labels", {})
+                    if not isinstance(inv_labels, dict):
+                        errors.append(
+                            f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
+                            f"{config.release_id!r} has no readable ownership labels at index {idx}."
+                        )
+                        continue
+
+                    # candidate_sha: must match across every member
                     inv_candidate = str(inv_labels.get("candidate_sha", "")).strip().lower()
                     if inv_candidate and config.candidate_sha.strip().lower() != inv_candidate:
                         msg = (
-                            f"Existing release inventory for {config.release_id!r} has immutable candidate_sha {inv_candidate!r}; "
-                            f"rerun with candidate_sha {config.candidate_sha.strip().lower()!r} is rejected. "
+                            f"Existing release inventory for {config.release_id!r} has immutable candidate_sha {inv_candidate!r} "
+                            f"at index {idx}; rerun with candidate_sha {config.candidate_sha.strip().lower()!r} is rejected. "
                             "Rollout plan §5.2 requires a new release_id for code/candidate changes."
                         )
                         if msg not in errors:
                             errors.append(msg)
+
+                    # manifest_digest_prefix: must match across every member
                     inv_manifest_prefix = str(inv_labels.get("manifest_digest_prefix", "")).strip().lower()
                     clean_manifest_prefix = config.manifest_digest.replace("sha256:", "")[:16].lower()
                     if inv_manifest_prefix and clean_manifest_prefix != inv_manifest_prefix:
                         msg = (
-                            f"Existing release inventory for {config.release_id!r} has immutable manifest_digest_prefix {inv_manifest_prefix!r}; "
-                            f"rerun with manifest_digest {config.manifest_digest.strip()!r} is rejected. "
+                            f"Existing release inventory for {config.release_id!r} has immutable manifest_digest_prefix {inv_manifest_prefix!r} "
+                            f"at index {idx}; rerun with manifest_digest {config.manifest_digest.strip()!r} is rejected. "
                             "Rollout plan §5.2 requires a new release_id for manifest changes."
                         )
                         if msg not in errors:
                             errors.append(msg)
-                else:
-                    errors.append(
-                        f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
-                        f"{config.release_id!r} has no readable ownership labels."
-                    )
+
+                    # tenant: the inventory records the bounded tenant label; the
+                    # current config must resolve to the same label value.
+                    inv_tenant_label = str(inv_labels.get("tenant", "")).strip()
+                    current_tenant = resolve_tenant_id(config.release_id, config.tenant_id)
+                    current_tenant_label = bounded_label_value(current_tenant) if current_tenant else "unassigned"
+                    if inv_tenant_label and current_tenant_label and inv_tenant_label != current_tenant_label:
+                        msg = (
+                            f"Existing release inventory for {config.release_id!r} has immutable tenant label {inv_tenant_label!r} "
+                            f"at index {idx}; rerun with tenant label {current_tenant_label!r} is rejected."
+                        )
+                        if msg not in errors:
+                            errors.append(msg)
+
+                    # created_at: the authoritative creation timestamp must not shift
+                    inv_created = str(inv_labels.get("created_at", "")).strip()
+                    if inv_created and config.created_at:
+                        try:
+                            if parse_timestamp(config.created_at) != parse_timestamp(inv_created):
+                                msg = (
+                                    f"Existing release inventory for {config.release_id!r} has authoritative created_at {inv_created!r} "
+                                    f"at index {idx}; rerun with created_at {config.created_at!r} is rejected."
+                                )
+                                if msg not in errors:
+                                    errors.append(msg)
+                        except ValueError:
+                            pass  # Unparseable label timestamps are already caught by label checks
             else:
                 errors.append(
                     f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
@@ -1417,15 +1471,109 @@ def cleanup_ephemeral_staging(
 
     inventory = resource_inventory if resource_inventory is not None else []
     matching_resources: list[Mapping[str, Any]] = []
+    # Track all same-release inventory entries, including ones that fail
+    # ownership validation. The CLI deletion executor is release-scoped: a
+    # single terraform destroy removes the entire release graph. If any
+    # same-release row has invalid or incomplete labels, the deletion is
+    # refused because those rows cannot be proven to belong to the same
+    # release and may be a different release's resources.
+    same_release_all: list[Mapping[str, Any]] = []
+    same_release_invalid: list[str] = []
+
+    target_label = release_label_value(release_id)
 
     for res in inventory:
         labels = res.get("labels", {})
         if not isinstance(labels, Mapping):
+            # A resource with non-mapping labels in the inventory is
+            # unverifiable. If it carries no release signal at all, it is
+            # irrelevant to this release's cleanup. But we cannot determine
+            # that without readable labels, so conservatively flag it if it
+            # shares the same inventory source.
+            same_release_invalid.append(
+                f"Resource {res.get('id', res.get('name', 'unknown'))!r} has non-mapping labels; "
+                "its release identity cannot be verified"
+            )
             continue
 
-        # Strictly check full label match
+        # Check if this resource belongs to the same release (by label value)
+        actual_label = str(labels.get("release_id", "")).strip()
+        if actual_label == target_label:
+            same_release_all.append(res)
+
+        # Strictly check full label match for deletion eligibility
         if is_staging_ephemeral_resource(labels, release_id):
             matching_resources.append(res)
+
+    # Fail closed: if the inventory contains same-release rows with invalid
+    # or incomplete ownership labels, a release-scoped deletion would destroy
+    # resources that could not be verified. This protects against the scenario
+    # where the authoritative inventory is partial or has been corrupted.
+    if same_release_invalid:
+        return StagingLifecycleReceipt(
+            action="cleanup",
+            release_id=release_id,
+            candidate_sha="",
+            manifest_digest_prefix="",
+            success=False,
+            timestamp=format_timestamp(now_dt),
+            resources=[],
+            errors=[
+                f"Inventory contains resources with unreadable labels; release-scoped cleanup "
+                f"for {release_id!r} is refused to prevent destroying unverified siblings: "
+                + "; ".join(same_release_invalid)
+            ],
+            remediation_required=True,
+            remediation_notes=(
+                "One or more inventory resources have non-mapping labels. The release-scoped "
+                "deletion executor would destroy the entire release graph including unverifiable "
+                "resources. Manual inspection of the inventory is required."
+            ),
+            metadata={
+                "dry_run": dry_run,
+                "matched_count": len(matching_resources),
+                "invalid_count": len(same_release_invalid),
+            },
+        )
+
+    # Fail closed: if the inventory has same-release rows that did NOT pass
+    # full ownership validation (i.e. they share the release label but failed
+    # is_staging_ephemeral_resource), the release-scoped destroy would take
+    # them out alongside the verified ones.
+    unverified_siblings = [
+        r for r in same_release_all if r not in matching_resources
+    ]
+    if unverified_siblings:
+        unverified_ids = [
+            str(r.get("id") or r.get("name", "unknown")) for r in unverified_siblings
+        ]
+        return StagingLifecycleReceipt(
+            action="cleanup",
+            release_id=release_id,
+            candidate_sha="",
+            manifest_digest_prefix="",
+            success=False,
+            timestamp=format_timestamp(now_dt),
+            resources=[],
+            errors=[
+                f"Release {release_id!r} has {len(unverified_siblings)} same-release resource(s) "
+                f"with incomplete or invalid ownership labels: {', '.join(unverified_ids)}. "
+                "Release-scoped cleanup is refused because the deletion executor would destroy "
+                "the entire release graph including these unverified siblings."
+            ],
+            remediation_required=True,
+            remediation_notes=(
+                "Some resources share the release label but fail full ownership validation. "
+                "The release-scoped deletion executor cannot safely target only verified resources. "
+                "Repair the inventory labels or remove the unverified resources before retrying."
+            ),
+            metadata={
+                "dry_run": dry_run,
+                "matched_count": len(matching_resources),
+                "unverified_sibling_count": len(unverified_siblings),
+                "unverified_sibling_ids": unverified_ids,
+            },
+        )
 
     if not matching_resources:
         inventory_state = "empty inventory" if not inventory else "no exact ownership-label match"
@@ -1587,6 +1735,23 @@ def scan_orphans(
     for res in resource_inventory:
         labels = res.get("labels", {})
         if not isinstance(labels, Mapping):
+            # Non-mapping labels make the resource unclassifiable. Report it
+            # as an orphan with malformed inventory rather than silently
+            # skipping it, which would hide damaged inventory from the scanner.
+            res_id = str(res.get("id") or res.get("name", "unknown"))
+            res_type = str(res.get("type", "unknown"))
+            orphan_resources.append({
+                "id": res_id,
+                "type": res_type,
+                "reason": (
+                    "Resource has non-mapping labels; its release identity and TTL "
+                    "cannot be verified. Automatic deletion is refused."
+                ),
+                "labels": {},
+            })
+            alerts.append(
+                f"Malformed inventory: resource {res_type} {res_id} has non-mapping labels"
+            )
             continue
 
         # Inventory providers do not expose a common schema. A resource with
