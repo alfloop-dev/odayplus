@@ -1,12 +1,24 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "ODP-PLAN-GATE-REGISTRY-001",
   "generated_at": "2026-08-01",
   "description": "Authoritative machine-readable state of ODay Plus release Gate 0 through Gate 6. Validated by delivery_toolchain/e2e/check_release_gate_registry.py; see docs/evidence/gates/README.md for the schema and update rules.",
+  "migration": {
+    "from_schema_version": "1.0.0",
+    "source_registry_id": "ODP-RELEASE-GATE-REGISTRY",
+    "migrated_at": "2026-08-24T12:00:00Z",
+    "strategy": "legacy-gates-to-staged-registry",
+    "re_attestation_required": true
+  },
   "release": {
     "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
     "candidate_ref": "origin/dev",
+    "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+    "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+    "stage": "candidate-built",
+    "environment": "dev",
+    "admission_target": "dev",
     "decision": "no-go",
     "decision_owner": "Human/Ops",
     "decision_date": "2026-07-30",
@@ -23,6 +35,9 @@
       "status": "blocked",
       "status_date": "2026-07-30",
       "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
       "required_checks": [
         "lint and format checks pass on the release candidate commit",
         "static/type checks pass where configured",
@@ -63,6 +78,9 @@
       "status": "blocked",
       "status_date": "2026-07-30",
       "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
       "required_checks": [
         "OpenAPI diff reviewed for breaking changes",
         "event schema compatibility checked",
@@ -103,6 +121,9 @@
       "status": "blocked",
       "status_date": "2026-07-30",
       "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
       "required_checks": [
         "source contract and sample data reviewed",
         "canonical mapping tests pass",
@@ -144,6 +165,9 @@
       "status": "blocked",
       "status_date": "2026-07-30",
       "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
       "required_checks": [
         "dataset snapshot is reproducible and hash-identified",
         "baseline comparison and segment metrics reviewed",
@@ -182,6 +206,9 @@
       "status": "blocked",
       "status_date": "2026-07-30",
       "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
       "required_checks": [
         "secret scan passes",
         "dependency and SAST scans pass with no unresolved critical/high findings",
@@ -218,6 +245,9 @@
       "status": "blocked",
       "status_date": "2026-07-30",
       "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
       "required_checks": [
         "every canonical E2E spec in the acceptance registry exists and produced an execution receipt",
         "live end-to-end gate passes against the deployed release candidate",
@@ -265,6 +295,9 @@
       "status": "blocked",
       "status_date": "2026-07-30",
       "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "stage": "candidate-built",
+      "environment": "dev",
+      "admission_target": "dev",
       "required_checks": [
         "release note and deployment plan completed",
         "rollback plan completed, reviewed, and proven",

@@ -4,7 +4,14 @@
 machine-readable state of the seven ODay Plus release gates. It is validated by
 `delivery_toolchain/e2e/check_release_gate_registry.py` and is the file the final gate
 audit (`ODP-PLAN-FINAL-GATE-AUDIT-001`) reads instead of re-deriving gate state
-from prose.
+from prose. The registry is schema `2.0.0`; the v1 registry is not accepted by
+the validator.
+
+`docs/evidence/gates/RELEASE_MANIFEST.json` is the immutable release identity.
+It binds the exact candidate SHA, every component image to an `@sha256:` digest,
+the migration/data-contract/source-policy digests, SBOM/signature references,
+and its own canonical `manifest_digest`. Deployments carry this manifest by
+digest; they do not rebuild it per environment.
 
 `docs/release/RELEASE_GATE_CHECKLIST.md` stays the human-facing narrative and
 per-check worksheet. Where the two disagree, the registry is the state of
@@ -15,7 +22,8 @@ record and the checklist is the explanation.
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
 `e496be62c47c45d758681b8a4d3abfae16f1c96d`. Deterministic product-E2E readiness
-(`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness.
+(`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
+current state is `candidate-built` in `dev`, with admission target `dev`.
 
 ## Gate 0-6
 
@@ -64,13 +72,19 @@ before it reaches a release decision.
 The validator exits non-zero when any of these is true:
 
 1. The registry file is missing, unparseable, or not a JSON object.
-2. A required top-level, release, gate, evidence, receipt, deviation, or
+2. The registry is not schema `2.0.0`, or its explicit v1 migration record is
+   missing/incomplete.
+3. The manifest is missing, not digest-pinned, bound to a different candidate,
+   or its canonical `manifest_digest` does not match the file contents.
+4. A release or gate has a stage/environment/admission target combination that
+   is not in the staged admission contract.
+5. A required top-level, release, gate, evidence, receipt, deviation, or
    sign-off field is absent or empty.
-3. `release.candidate_sha`, `gates[].release_sha`, or a receipt's
+6. `release.candidate_sha`, `gates[].release_sha`, or a receipt's
    `release_sha` is not an exact 40-character lowercase git SHA.
-4. A gate's `release_sha` differs from `release.candidate_sha` — a new
+7. A gate's `release_sha` differs from `release.candidate_sha` — a new
    candidate re-opens every gate rather than inheriting old attestations.
-5. A receipt names a SHA other than the candidate. Stale receipts are not
+8. A receipt names a SHA other than the candidate. Stale receipts are not
    evidence.
 6. Evidence of kind `doc`, `script`, or `test`, or any receipt `artifact`,
    points at a repository path that does not exist.
@@ -97,14 +111,26 @@ proves.
 
 ```jsonc
 {
-  "schema_version": "1.0.0",
+  "schema_version": "2.0.0",
   "registry_id": "ODP-RELEASE-GATE-REGISTRY",
   "task_id": "<task that last changed the registry>",
   "generated_at": "YYYY-MM-DD",
   "description": "...",
+  "migration": {
+    "from_schema_version": "1.0.0",
+    "source_registry_id": "<legacy registry id>",
+    "migrated_at": "RFC3339 timestamp",
+    "strategy": "legacy-gates-to-staged-registry",
+    "re_attestation_required": true
+  },
   "release": {
     "candidate_sha": "<40-char lowercase git SHA>",
     "candidate_ref": "<branch, tag, or PR head the SHA came from>",
+    "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+    "manifest_digest": "sha256:<64 lowercase hex>",
+    "stage": "candidate-built | dev-verified | staging-verified | prod-admitted | prod-switched | release-complete",
+    "environment": "dev | staging | production",
+    "admission_target": "dev | staging | production | production-green | production-switch | release-complete",
     "decision": "go | no-go",
     "decision_owner": "<who owns the decision>",
     "decision_date": "YYYY-MM-DD",
@@ -125,6 +151,9 @@ proves.
       "status": "not-started | in-progress | blocked | failed | passed | passed-with-deviation | not-applicable",
       "status_date": "YYYY-MM-DD",
       "release_sha": "<must equal release.candidate_sha>",
+      "stage": "candidate-built | dev-verified | staging-verified | prod-admitted | prod-switched | release-complete",
+      "environment": "dev | staging | production",
+      "admission_target": "<stage contract target>",
       "required_checks": ["<what must be true for this gate to pass>"],
       "evidence": [
         {
@@ -169,4 +198,41 @@ proves.
 When the release candidate moves to a new commit, update
 `release.candidate_sha` and every gate's `release_sha`. This deliberately
 invalidates all existing receipts: gates are re-attested against the commit
-that actually ships, not inherited from a commit that did not.
+that actually ships, not inherited from a commit that did not. The manifest
+must also be regenerated, with a new `manifest_digest`, and all component
+digests must be re-recorded. A registry mutation that changes the manifest
+file without changing its digest fails closed.
+
+## Staged admission contract
+
+Each gate records the boundary at which its evidence applies. The validator
+enforces these pairs:
+
+| Stage | Environment | Admission target |
+|---|---|---|
+| `candidate-built` | `dev` | `dev` |
+| `dev-verified` | `dev` | `staging` |
+| `staging-verified` | `staging` | `production` |
+| `prod-admitted` | `production` | `production-green` |
+| `prod-switched` | `production` | `production-switch` |
+| `release-complete` | `production` | `release-complete` |
+
+The `staging` admission target is the `dev-verified` boundary. It does not
+require staging receipts, because those receipts can only be produced after
+the ephemeral environment exists. Staging verification is a later
+`staging-verified` boundary used to request production approval.
+
+## Legacy migration
+
+Use `delivery_toolchain/release/migrate_gate_registry.py` to migrate a v1
+registry. It requires a valid manifest for the same candidate SHA, preserves
+all old statuses and receipts, adds the stage metadata, and marks
+`re_attestation_required: true`. It never fabricates a receipt or promotes a
+gate. A missing or mismatched manifest aborts the migration.
+
+```bash
+python3 delivery_toolchain/release/migrate_gate_registry.py \
+  --registry legacy/RELEASE_GATE_REGISTRY.json \
+  --manifest docs/evidence/gates/RELEASE_MANIFEST.json \
+  --output docs/evidence/gates/RELEASE_GATE_REGISTRY.json
+```
