@@ -34,7 +34,7 @@ import logging
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ServiceTarget:
@@ -128,7 +129,7 @@ class ReleaseState:
         )
 
     @classmethod
-    def from_json(cls, text: str) -> "ReleaseState":
+    def from_json(cls, text: str) -> ReleaseState:
         data = json.loads(text)
         if not isinstance(data, dict):
             raise ValueError("ReleaseState JSON must be an object")
@@ -173,6 +174,7 @@ class OperationResult:
 # Shell helpers (thin wrappers for testability)
 # ---------------------------------------------------------------------------
 
+
 def _run_gcloud(
     args: list[str],
     *,
@@ -201,6 +203,7 @@ def _run_gcloud(
 # ---------------------------------------------------------------------------
 # Tag resolution (Green 0% tag smoke verification)
 # ---------------------------------------------------------------------------
+
 
 def get_tagged_target_from_description(description: dict[str, Any], tag: str) -> tuple[str, str]:
     """Extract (revisionName, url) for a tag from a Cloud Run service description.
@@ -247,7 +250,10 @@ def resolve_tagged_target(
 
     result = _run_gcloud(
         [
-            "run", "services", "describe", target.service,
+            "run",
+            "services",
+            "describe",
+            target.service,
             *target.gcloud_args(),
             "--format=json",
         ],
@@ -260,7 +266,11 @@ def resolve_tagged_target(
             operation="resolve_tagged_target",
             message=f"[DRY-RUN] Would resolve tag '{tag}' for {target.service}",
             dry_run=True,
-            details={"tag": tag, "revision": f"{target.service}-{tag}-mock", "url": f"https://{tag}---{target.service}.run.app"},
+            details={
+                "tag": tag,
+                "revision": f"{target.service}-{tag}-mock",
+                "url": f"https://{tag}---{target.service}.run.app",
+            },
         )
 
     if result.returncode != 0:
@@ -293,6 +303,7 @@ def resolve_tagged_target(
 # Traffic operations
 # ---------------------------------------------------------------------------
 
+
 def capture_traffic_snapshot(
     target: ServiceTarget,
     output_path: Path,
@@ -306,7 +317,10 @@ def capture_traffic_snapshot(
     """
     result = _run_gcloud(
         [
-            "run", "services", "describe", target.service,
+            "run",
+            "services",
+            "describe",
+            target.service,
             *target.gcloud_args(),
             "--format=json",
         ],
@@ -369,7 +383,10 @@ def atomic_traffic_switch(
 
     result = _run_gcloud(
         [
-            "run", "services", "update-traffic", target.service,
+            "run",
+            "services",
+            "update-traffic",
+            target.service,
             *target.gcloud_args(),
             f"--to-revisions={green_revision}=100",
             "--quiet",
@@ -450,7 +467,10 @@ def restore_traffic_from_snapshot(
 
     result = _run_gcloud(
         [
-            "run", "services", "update-traffic", target.service,
+            "run",
+            "services",
+            "update-traffic",
+            target.service,
             *target.gcloud_args(),
             f"--to-revisions={traffic_arg}",
             "--quiet",
@@ -485,6 +505,7 @@ def restore_traffic_from_snapshot(
 # ---------------------------------------------------------------------------
 # Scheduler operations
 # ---------------------------------------------------------------------------
+
 
 def pause_all_schedulers(
     targets: list[SchedulerTarget],
@@ -611,7 +632,10 @@ def switch_job_digests(
         # Read current job description
         describe_result = _run_gcloud(
             [
-                "scheduler", "jobs", "describe", t.job_name,
+                "scheduler",
+                "jobs",
+                "describe",
+                t.job_name,
                 *t.gcloud_args(),
                 "--format=json",
             ],
@@ -655,7 +679,11 @@ def switch_job_digests(
 
         update_result = _run_gcloud(
             [
-                "scheduler", "jobs", "update", "http", t.job_name,
+                "scheduler",
+                "jobs",
+                "update",
+                "http",
+                t.job_name,
                 *t.gcloud_args(),
                 f"--message-body={json.dumps(body_json)}",
                 "--quiet",
@@ -692,6 +720,7 @@ def switch_job_digests(
 # Data platform pointer operations
 # ---------------------------------------------------------------------------
 
+
 def capture_data_platform_pointer(
     pointer: DataPlatformPointer,
     output_path: Path,
@@ -708,7 +737,7 @@ def capture_data_platform_pointer(
         "selector_label": pointer.selector_label,
         "snapshot_id": pointer.snapshot_id,
         "namespace": pointer.namespace,
-        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "captured_at": datetime.now(UTC).isoformat(),
     }
 
     if dry_run:
@@ -777,7 +806,7 @@ def restore_data_platform_pointer(
     target_restore_path = output_path or (snapshot_path.parent / "restore-pointer.json")
     target_restore_path.parent.mkdir(parents=True, exist_ok=True)
     restore_data = copy.deepcopy(pointer_data)
-    restore_data["restore_requested_at"] = datetime.now(timezone.utc).isoformat()
+    restore_data["restore_requested_at"] = datetime.now(UTC).isoformat()
     target_restore_path.write_text(json.dumps(restore_data, indent=2), encoding="utf-8")
 
     return OperationResult(
@@ -791,6 +820,7 @@ def restore_data_platform_pointer(
 # ---------------------------------------------------------------------------
 # Composite operations: full switch and full rollback
 # ---------------------------------------------------------------------------
+
 
 def execute_bluegreen_switch(
     *,
@@ -845,7 +875,7 @@ def execute_bluegreen_switch(
 
     # Record completion time
     if not dry_run and all(op.success for op in results):
-        release_state.switch_completed_at = datetime.now(timezone.utc).isoformat()
+        release_state.switch_completed_at = datetime.now(UTC).isoformat()
 
     return results
 
@@ -888,13 +918,19 @@ def execute_rollback(
 
     # Step 2: Restore Web traffic first (reverse order of switch)
     r = restore_traffic_from_snapshot(
-        web_target, web_snapshot_path, dry_run=dry_run, traffic_helper=traffic_helper,
+        web_target,
+        web_snapshot_path,
+        dry_run=dry_run,
+        traffic_helper=traffic_helper,
     )
     results.append(r)
 
     # Step 2 (cont): Restore API traffic
     r = restore_traffic_from_snapshot(
-        api_target, api_snapshot_path, dry_run=dry_run, traffic_helper=traffic_helper,
+        api_target,
+        api_snapshot_path,
+        dry_run=dry_run,
+        traffic_helper=traffic_helper,
     )
     results.append(r)
 
@@ -915,7 +951,7 @@ def execute_rollback(
 
     # Record completion time
     if not dry_run and all(op.success for op in results):
-        release_state.rollback_completed_at = datetime.now(timezone.utc).isoformat()
+        release_state.rollback_completed_at = datetime.now(UTC).isoformat()
 
     return results
 
@@ -923,6 +959,7 @@ def execute_rollback(
 # ---------------------------------------------------------------------------
 # CLI interface
 # ---------------------------------------------------------------------------
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -1026,7 +1063,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # Capture API traffic
         r = capture_traffic_snapshot(
-            api_target, output_dir / "api-traffic.json", dry_run=args.dry_run,
+            api_target,
+            output_dir / "api-traffic.json",
+            dry_run=args.dry_run,
         )
         print(json.dumps(r.to_dict(), indent=2))
         if not r.success:
@@ -1035,7 +1074,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # Capture Web traffic
         r = capture_traffic_snapshot(
-            web_target, output_dir / "web-traffic.json", dry_run=args.dry_run,
+            web_target,
+            output_dir / "web-traffic.json",
+            dry_run=args.dry_run,
         )
         print(json.dumps(r.to_dict(), indent=2))
         if not r.success:
@@ -1140,7 +1181,10 @@ def main(argv: list[str] | None = None) -> int:
             for j in args.jobs
         ]
         r = switch_job_digests(
-            targets, args.digest, dry_run=args.dry_run, body_key=args.body_key,
+            targets,
+            args.digest,
+            dry_run=args.dry_run,
+            body_key=args.body_key,
         )
         print(json.dumps(r.to_dict(), indent=2))
         return 0 if r.success else 1
@@ -1157,7 +1201,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "restore-pointer":
         r = restore_data_platform_pointer(
-            args.snapshot_file, output_path=args.output_file, dry_run=args.dry_run,
+            args.snapshot_file,
+            output_path=args.output_file,
+            dry_run=args.dry_run,
         )
         print(json.dumps(r.to_dict(), indent=2))
         return 0 if r.success else 1

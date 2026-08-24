@@ -29,10 +29,10 @@ from product_ops.deployment.bluegreen_release import (
     switch_job_digests,
 )
 
-
 # ---------------------------------------------------------------------------
 # Data model and serialization tests
 # ---------------------------------------------------------------------------
+
 
 def test_service_target_and_scheduler_target_args() -> None:
     svc = ServiceTarget(service="odp-api", project="my-project", region="asia-east1")
@@ -96,12 +96,23 @@ def test_operation_result_to_dict() -> None:
 # Tag resolution tests (Green 0% tag smoke)
 # ---------------------------------------------------------------------------
 
+
 def test_get_tagged_target_from_description_success() -> None:
     desc = {
         "status": {
             "traffic": [
-                {"tag": "blue", "revisionName": "api-v1", "percent": 100, "url": "https://blue---api.run.app"},
-                {"tag": "green", "revisionName": "api-v2", "percent": 0, "url": "https://green---api.run.app"},
+                {
+                    "tag": "blue",
+                    "revisionName": "api-v1",
+                    "percent": 100,
+                    "url": "https://blue---api.run.app",
+                },
+                {
+                    "tag": "green",
+                    "revisionName": "api-v2",
+                    "percent": 0,
+                    "url": "https://green---api.run.app",
+                },
             ]
         }
     }
@@ -128,14 +139,26 @@ def test_get_tagged_target_from_description_validation_errors() -> None:
     # Missing revisionName
     with pytest.raises(ValueError, match="no immutable revisionName"):
         get_tagged_target_from_description(
-            {"status": {"traffic": [{"tag": "green", "revisionName": "", "url": "https://green.run.app"}]}},
+            {
+                "status": {
+                    "traffic": [
+                        {"tag": "green", "revisionName": "", "url": "https://green.run.app"}
+                    ]
+                }
+            },
             "green",
         )
 
     # Invalid URL
     with pytest.raises(ValueError, match="no HTTPS URL"):
         get_tagged_target_from_description(
-            {"status": {"traffic": [{"tag": "green", "revisionName": "rev-1", "url": "http://insecure.app"}]}},
+            {
+                "status": {
+                    "traffic": [
+                        {"tag": "green", "revisionName": "rev-1", "url": "http://insecure.app"}
+                    ]
+                }
+            },
             "green",
         )
 
@@ -155,7 +178,9 @@ def test_resolve_tagged_target(mock_gcloud: MagicMock) -> None:
     assert res_dry.dry_run is True
 
     # Gcloud failure
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="service not found")
+    mock_gcloud.return_value = subprocess.CompletedProcess(
+        [], 1, stdout="", stderr="service not found"
+    )
     res_fail = resolve_tagged_target(svc, "green")
     assert res_fail.success is False
     assert "Failed to describe" in res_fail.message
@@ -169,13 +194,19 @@ def test_resolve_tagged_target(mock_gcloud: MagicMock) -> None:
     mock_gcloud.return_value = subprocess.CompletedProcess(
         [],
         0,
-        stdout=json.dumps({
-            "status": {
-                "traffic": [
-                    {"tag": "green", "revisionName": "odp-api-green-001", "url": "https://green---odp-api.run.app"}
-                ]
+        stdout=json.dumps(
+            {
+                "status": {
+                    "traffic": [
+                        {
+                            "tag": "green",
+                            "revisionName": "odp-api-green-001",
+                            "url": "https://green---odp-api.run.app",
+                        }
+                    ]
+                }
             }
-        }),
+        ),
         stderr="",
     )
     res_ok = resolve_tagged_target(svc, "green")
@@ -187,6 +218,7 @@ def test_resolve_tagged_target(mock_gcloud: MagicMock) -> None:
 # ---------------------------------------------------------------------------
 # Traffic operations tests
 # ---------------------------------------------------------------------------
+
 
 @patch("product_ops.deployment.bluegreen_release._run_gcloud")
 def test_capture_traffic_snapshot(mock_gcloud: MagicMock, tmp_path: Path) -> None:
@@ -212,7 +244,9 @@ def test_capture_traffic_snapshot(mock_gcloud: MagicMock, tmp_path: Path) -> Non
     assert "Invalid JSON" in res_bad.message
 
     # Success
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 0, stdout='{"status": {"traffic": []}}', stderr="")
+    mock_gcloud.return_value = subprocess.CompletedProcess(
+        [], 0, stdout='{"status": {"traffic": []}}', stderr=""
+    )
     res_ok = capture_traffic_snapshot(svc, out_file)
     assert res_ok.success is True
     assert out_file.exists()
@@ -233,7 +267,9 @@ def test_atomic_traffic_switch(mock_gcloud: MagicMock) -> None:
     assert res_dry.dry_run is True
 
     # Gcloud failure
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="permission denied")
+    mock_gcloud.return_value = subprocess.CompletedProcess(
+        [], 1, stdout="", stderr="permission denied"
+    )
     res_fail = atomic_traffic_switch(svc, "api-green-1")
     assert res_fail.success is False
     assert "permission denied" in res_fail.message
@@ -244,8 +280,12 @@ def test_atomic_traffic_switch(mock_gcloud: MagicMock) -> None:
     assert res_ok.success is True
     mock_gcloud.assert_called_with(
         [
-            "run", "services", "update-traffic", "odp-api",
-            "--project=p", "--region=r",
+            "run",
+            "services",
+            "update-traffic",
+            "odp-api",
+            "--project=p",
+            "--region=r",
             "--to-revisions=api-green-1=100",
             "--quiet",
         ],
@@ -255,7 +295,9 @@ def test_atomic_traffic_switch(mock_gcloud: MagicMock) -> None:
 
 @patch("product_ops.deployment.bluegreen_release.subprocess.run")
 @patch("product_ops.deployment.bluegreen_release._run_gcloud")
-def test_restore_traffic_from_snapshot(mock_gcloud: MagicMock, mock_subproc: MagicMock, tmp_path: Path) -> None:
+def test_restore_traffic_from_snapshot(
+    mock_gcloud: MagicMock, mock_subproc: MagicMock, tmp_path: Path
+) -> None:
     svc = ServiceTarget(service="odp-api", project="p", region="r")
     snap_file = tmp_path / "snap.json"
 
@@ -279,7 +321,9 @@ def test_restore_traffic_from_snapshot(mock_gcloud: MagicMock, mock_subproc: Mag
     assert "Empty traffic restore argument" in res_empty_arg.message
 
     # Dry run with valid helper output
-    mock_subproc.return_value = subprocess.CompletedProcess([], 0, stdout="rev-blue=100\n", stderr="")
+    mock_subproc.return_value = subprocess.CompletedProcess(
+        [], 0, stdout="rev-blue=100\n", stderr=""
+    )
     res_dry = restore_traffic_from_snapshot(svc, snap_file, dry_run=True)
     assert res_dry.success is True
     assert res_dry.dry_run is True
@@ -296,8 +340,12 @@ def test_restore_traffic_from_snapshot(mock_gcloud: MagicMock, mock_subproc: Mag
     assert res_ok.success is True
     mock_gcloud.assert_called_with(
         [
-            "run", "services", "update-traffic", "odp-api",
-            "--project=p", "--region=r",
+            "run",
+            "services",
+            "update-traffic",
+            "odp-api",
+            "--project=p",
+            "--region=r",
             "--to-revisions=rev-blue=100",
             "--quiet",
         ],
@@ -308,6 +356,7 @@ def test_restore_traffic_from_snapshot(mock_gcloud: MagicMock, mock_subproc: Mag
 # ---------------------------------------------------------------------------
 # Scheduler operations tests
 # ---------------------------------------------------------------------------
+
 
 @patch("product_ops.deployment.bluegreen_release._run_gcloud")
 def test_pause_and_resume_schedulers(mock_gcloud: MagicMock) -> None:
@@ -376,7 +425,9 @@ def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
     assert res_dry.dry_run is True
 
     # Describe failure
-    mock_gcloud.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="describe error")
+    mock_gcloud.return_value = subprocess.CompletedProcess(
+        [], 1, stdout="", stderr="describe error"
+    )
     res_desc_fail = switch_job_digests(targets, "sha256:green")
     assert res_desc_fail.success is False
 
@@ -396,7 +447,9 @@ def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
     old_b64 = base64.b64encode(old_body.encode("utf-8")).decode("ascii")
     mock_gcloud.side_effect = [
         # Describe
-        subprocess.CompletedProcess([], 0, stdout=json.dumps({"httpTarget": {"body": old_b64}}), stderr=""),
+        subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"httpTarget": {"body": old_b64}}), stderr=""
+        ),
         # Update
         subprocess.CompletedProcess([], 0, stdout="", stderr=""),
     ]
@@ -406,7 +459,14 @@ def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
 
     # Raw JSON string body instead of base64
     mock_gcloud.side_effect = [
-        subprocess.CompletedProcess([], 0, stdout=json.dumps({"httpTarget": {"body": json.dumps({"image_digest": "sha256:blue"})}}), stderr=""),
+        subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps(
+                {"httpTarget": {"body": json.dumps({"image_digest": "sha256:blue"})}}
+            ),
+            stderr="",
+        ),
         subprocess.CompletedProcess([], 0, stdout="", stderr=""),
     ]
     res_raw_json = switch_job_digests(targets, "sha256:green")
@@ -414,7 +474,12 @@ def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
 
     # Dict body
     mock_gcloud.side_effect = [
-        subprocess.CompletedProcess([], 0, stdout=json.dumps({"httpTarget": {"body": {"image_digest": "sha256:blue"}}}), stderr=""),
+        subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"httpTarget": {"body": {"image_digest": "sha256:blue"}}}),
+            stderr="",
+        ),
         subprocess.CompletedProcess([], 0, stdout="", stderr=""),
     ]
     res_dict = switch_job_digests(targets, "sha256:green")
@@ -422,7 +487,9 @@ def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
 
     # Update command failure
     mock_gcloud.side_effect = [
-        subprocess.CompletedProcess([], 0, stdout=json.dumps({"httpTarget": {"body": old_b64}}), stderr=""),
+        subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"httpTarget": {"body": old_b64}}), stderr=""
+        ),
         subprocess.CompletedProcess([], 1, stdout="", stderr="update failed"),
     ]
     res_update_fail = switch_job_digests(targets, "sha256:green")
@@ -433,8 +500,11 @@ def test_switch_job_digests(mock_gcloud: MagicMock) -> None:
 # Data platform pointer operations tests
 # ---------------------------------------------------------------------------
 
+
 def test_capture_and_restore_data_platform_pointer(tmp_path: Path) -> None:
-    pointer = DataPlatformPointer(selector_label="prod-green", snapshot_id="snap-999", namespace="data-prod")
+    pointer = DataPlatformPointer(
+        selector_label="prod-green", snapshot_id="snap-999", namespace="data-prod"
+    )
     out_file = tmp_path / "pointer.json"
 
     # Capture dry run
@@ -487,6 +557,7 @@ def test_capture_and_restore_data_platform_pointer(tmp_path: Path) -> None:
 # Composite operations tests (Full Switch and Rollback)
 # ---------------------------------------------------------------------------
 
+
 @patch("product_ops.deployment.bluegreen_release.resume_schedulers")
 @patch("product_ops.deployment.bluegreen_release.switch_job_digests")
 @patch("product_ops.deployment.bluegreen_release.atomic_traffic_switch")
@@ -502,7 +573,9 @@ def test_execute_bluegreen_switch(
 
     # Success full sequence
     mock_traffic.return_value = OperationResult(success=True, operation="traffic", message="ok")
-    mock_switch_digests.return_value = OperationResult(success=True, operation="digests", message="ok")
+    mock_switch_digests.return_value = OperationResult(
+        success=True, operation="digests", message="ok"
+    )
     mock_resume_sched.return_value = OperationResult(success=True, operation="sched", message="ok")
 
     results = execute_bluegreen_switch(
@@ -562,9 +635,15 @@ def test_execute_rollback(
     )
 
     mock_pause.return_value = OperationResult(success=True, operation="pause", message="ok")
-    mock_restore_traffic.return_value = OperationResult(success=True, operation="restore_traffic", message="ok")
-    mock_switch_digests.return_value = OperationResult(success=True, operation="digests", message="ok")
-    mock_restore_ptr.return_value = OperationResult(success=True, operation="restore_ptr", message="ok")
+    mock_restore_traffic.return_value = OperationResult(
+        success=True, operation="restore_traffic", message="ok"
+    )
+    mock_switch_digests.return_value = OperationResult(
+        success=True, operation="digests", message="ok"
+    )
+    mock_restore_ptr.return_value = OperationResult(
+        success=True, operation="restore_ptr", message="ok"
+    )
 
     results = execute_rollback(
         api_target=api_target,
@@ -585,24 +664,30 @@ def test_execute_rollback(
 # CLI tests
 # ---------------------------------------------------------------------------
 
+
 @patch("product_ops.deployment.bluegreen_release.capture_traffic_snapshot")
 @patch("product_ops.deployment.bluegreen_release.capture_data_platform_pointer")
-def test_cli_capture_state(mock_cap_ptr: MagicMock, mock_cap_traffic: MagicMock, tmp_path: Path) -> None:
+def test_cli_capture_state(
+    mock_cap_ptr: MagicMock, mock_cap_traffic: MagicMock, tmp_path: Path
+) -> None:
     mock_cap_traffic.return_value = OperationResult(success=True, operation="cap", message="ok")
     mock_cap_ptr.return_value = OperationResult(success=True, operation="ptr", message="ok")
 
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "capture-state",
-        "--api-service=api",
-        "--web-service=web",
-        "--output-dir", str(tmp_path),
-        "--release-id=rel-001",
-        "--selector-label=v1",
-        "--snapshot-id=s1",
-        "--namespace=dp",
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "capture-state",
+            "--api-service=api",
+            "--web-service=web",
+            "--output-dir",
+            str(tmp_path),
+            "--release-id=rel-001",
+            "--selector-label=v1",
+            "--snapshot-id=s1",
+            "--namespace=dp",
+        ]
+    )
     assert code == 0
     state_file = tmp_path / "release-state.json"
     assert state_file.exists()
@@ -614,18 +699,23 @@ def test_cli_switch(mock_switch: MagicMock, tmp_path: Path) -> None:
     state_file.write_text(ReleaseState(release_id="rel-1").to_json(), encoding="utf-8")
 
     mock_switch.return_value = [OperationResult(success=True, operation="sw", message="ok")]
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "switch",
-        "--api-service=api",
-        "--web-service=web",
-        "--green-api-revision=api-g",
-        "--green-web-revision=web-g",
-        "--green-job-digest=sha256:g",
-        "--scheduler-jobs", "job1", "job2",
-        "--state-file", str(state_file),
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "switch",
+            "--api-service=api",
+            "--web-service=web",
+            "--green-api-revision=api-g",
+            "--green-web-revision=web-g",
+            "--green-job-digest=sha256:g",
+            "--scheduler-jobs",
+            "job1",
+            "job2",
+            "--state-file",
+            str(state_file),
+        ]
+    )
     assert code == 0
 
 
@@ -640,81 +730,101 @@ def test_cli_rollback(mock_rb: MagicMock, tmp_path: Path) -> None:
     state_file.write_text(state.to_json(), encoding="utf-8")
 
     mock_rb.return_value = [OperationResult(success=True, operation="rb", message="ok")]
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "rollback",
-        "--api-service=api",
-        "--web-service=web",
-        "--blue-job-digest=sha256:b",
-        "--scheduler-jobs", "job1",
-        "--state-file", str(state_file),
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "rollback",
+            "--api-service=api",
+            "--web-service=web",
+            "--blue-job-digest=sha256:b",
+            "--scheduler-jobs",
+            "job1",
+            "--state-file",
+            str(state_file),
+        ]
+    )
     assert code == 0
 
 
 @patch("product_ops.deployment.bluegreen_release.resolve_tagged_target")
 def test_cli_resolve_tag(mock_resolve: MagicMock) -> None:
     mock_resolve.return_value = OperationResult(success=True, operation="tag", message="ok")
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "resolve-tag",
-        "--service=api",
-        "--tag=green",
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "resolve-tag",
+            "--service=api",
+            "--tag=green",
+        ]
+    )
     assert code == 0
 
 
 @patch("product_ops.deployment.bluegreen_release.pause_all_schedulers")
 def test_cli_pause_schedulers(mock_pause: MagicMock) -> None:
     mock_pause.return_value = OperationResult(success=True, operation="pause", message="ok")
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "pause-schedulers",
-        "--jobs", "job1", "job2",
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "pause-schedulers",
+            "--jobs",
+            "job1",
+            "job2",
+        ]
+    )
     assert code == 0
 
 
 @patch("product_ops.deployment.bluegreen_release.resume_schedulers")
 def test_cli_resume_schedulers(mock_resume: MagicMock) -> None:
     mock_resume.return_value = OperationResult(success=True, operation="resume", message="ok")
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "resume-schedulers",
-        "--jobs", "job1", "job2",
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "resume-schedulers",
+            "--jobs",
+            "job1",
+            "job2",
+        ]
+    )
     assert code == 0
 
 
 @patch("product_ops.deployment.bluegreen_release.switch_job_digests")
 def test_cli_switch_digests(mock_switch: MagicMock) -> None:
     mock_switch.return_value = OperationResult(success=True, operation="switch", message="ok")
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "switch-digests",
-        "--jobs", "job1",
-        "--digest=sha256:green",
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "switch-digests",
+            "--jobs",
+            "job1",
+            "--digest=sha256:green",
+        ]
+    )
     assert code == 0
 
 
 @patch("product_ops.deployment.bluegreen_release.capture_data_platform_pointer")
 def test_cli_capture_pointer(mock_cap: MagicMock, tmp_path: Path) -> None:
     mock_cap.return_value = OperationResult(success=True, operation="cap", message="ok")
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "capture-pointer",
-        "--selector-label=v1",
-        "--snapshot-id=s1",
-        "--namespace=dp",
-        "--output-file", str(tmp_path / "ptr.json"),
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "capture-pointer",
+            "--selector-label=v1",
+            "--snapshot-id=s1",
+            "--namespace=dp",
+            "--output-file",
+            str(tmp_path / "ptr.json"),
+        ]
+    )
     assert code == 0
 
 
@@ -723,10 +833,13 @@ def test_cli_restore_pointer(mock_rest: MagicMock, tmp_path: Path) -> None:
     mock_rest.return_value = OperationResult(success=True, operation="rest", message="ok")
     snap_file = tmp_path / "ptr.json"
     snap_file.write_text("{}", encoding="utf-8")
-    code = main([
-        "--project=my-p",
-        "--region=asia-east1",
-        "restore-pointer",
-        "--snapshot-file", str(snap_file),
-    ])
+    code = main(
+        [
+            "--project=my-p",
+            "--region=asia-east1",
+            "restore-pointer",
+            "--snapshot-file",
+            str(snap_file),
+        ]
+    )
     assert code == 0
