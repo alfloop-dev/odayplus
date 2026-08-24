@@ -56,6 +56,20 @@ MAX_TTL_HOURS = 168  # 7 days max allowed extension
 DEFAULT_EPHEMERAL_STATE_DIR = Path("/tmp/oday-plus-ephemeral-staging")
 DEFAULT_EPHEMERAL_MODULE_DIR = Path("infra/terraform/modules/ephemeral_staging")
 
+# Identity errors that start with this prefix mean existing release state was
+# found but could not be read or parsed. That state must be preserved: it is
+# indistinguishable from a live release, so neither an apply nor a
+# failure-path cleanup may run against it.
+UNVERIFIABLE_STATE_PREFIX = "Existing release state is unverifiable"
+
+
+class ReleaseIdentityConflict(RuntimeError):
+    """Create was refused against existing release state, which stays untouched."""
+
+
+class ReleaseStateUnverifiable(ReleaseIdentityConflict):
+    """Existing release state exists but its immutable identity cannot be read."""
+
 
 # --- Data Structures ---
 
@@ -821,8 +835,21 @@ def validate_immutable_release_identity(
                             f"Existing release state for {config.release_id!r} has authoritative created_at {prev_created!r}; "
                             f"rerun with created_at {config.created_at!r} is rejected."
                         )
-        except Exception:
-            pass
+            else:
+                errors.append(
+                    f"{UNVERIFIABLE_STATE_PREFIX}: tfvars file {tfvars_path.name} for release "
+                    f"{config.release_id!r} is not a JSON object, so the immutable identity of the "
+                    "existing release cannot be verified."
+                )
+        except Exception as exc:
+            # Never fall through to an empty error list here. A swallowed parse or
+            # read error reads as "no existing release", which lets an apply run
+            # against live state and lets the failure path destroy it.
+            errors.append(
+                f"{UNVERIFIABLE_STATE_PREFIX}: tfvars file {tfvars_path.name} for release "
+                f"{config.release_id!r} could not be read or parsed ({type(exc).__name__}: {exc}); "
+                "the existing release is preserved and this rerun is rejected."
+            )
 
     if inventory_path.is_file():
         try:
@@ -849,8 +876,22 @@ def validate_immutable_release_identity(
                         )
                         if msg not in errors:
                             errors.append(msg)
-        except Exception:
-            pass
+                else:
+                    errors.append(
+                        f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
+                        f"{config.release_id!r} has no readable ownership labels."
+                    )
+            else:
+                errors.append(
+                    f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
+                    f"{config.release_id!r} is not a non-empty JSON array of resource records."
+                )
+        except Exception as exc:
+            errors.append(
+                f"{UNVERIFIABLE_STATE_PREFIX}: inventory file {inventory_path.name} for release "
+                f"{config.release_id!r} could not be read or parsed ({type(exc).__name__}: {exc}); "
+                "the existing release is preserved and this rerun is rejected."
+            )
 
     return errors
 
@@ -883,15 +924,29 @@ def make_terraform_creation_executor(
         # Validate immutable release identity against existing state BEFORE any write or apply
         identity_errors = validate_immutable_release_identity(config, state_path_root)
         if identity_errors:
-            raise RuntimeError(
-                f"Existing release state conflict for {config.release_id!r}: {'; '.join(identity_errors)}"
-            )
+            message = f"Existing release state conflict for {config.release_id!r}: {'; '.join(identity_errors)}"
+            # Both branches refuse before touching anything, so the caller must not
+            # run failure-path cleanup. Unverifiable state is reported separately
+            # because it needs a human to inspect the state files.
+            if any(err.startswith(UNVERIFIABLE_STATE_PREFIX) for err in identity_errors):
+                raise ReleaseStateUnverifiable(message)
+            raise ReleaseIdentityConflict(message)
 
         # Preserve existing authoritative created_at if already provisioned
         created_at = config.created_at or resources[0].created_at
         if tfvars_path.is_file():
-            prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
-            previous_created_at = str(prev_vars.get("created_at", "")).strip()
+            try:
+                prev_vars = json.loads(tfvars_path.read_text(encoding="utf-8"))
+                previous_created_at = str(prev_vars.get("created_at", "")).strip()
+            except Exception as exc:
+                # Unreachable while the identity guard above holds, but a raw
+                # RuntimeError here would be classified as a live apply failure and
+                # trigger a destroy of the existing release.
+                raise ReleaseStateUnverifiable(
+                    f"Existing release state conflict for {config.release_id!r}: "
+                    f"{UNVERIFIABLE_STATE_PREFIX}: tfvars file {tfvars_path.name} could not be read "
+                    f"({type(exc).__name__}: {exc})."
+                ) from exc
             if previous_created_at:
                 created_at = previous_created_at
         elif inventory_path.is_file():
@@ -1131,6 +1186,7 @@ def create_ephemeral_staging(
 
     exec_success = True
     is_conflict = False
+    state_unverifiable = False
     try:
         exec_res = creation_executor(config, planned)
         if isinstance(exec_res, Sequence) and not isinstance(exec_res, (str, bytes, bytearray)):
@@ -1141,8 +1197,15 @@ def create_ephemeral_staging(
         exec_success = False
         err_msg = str(exc)
         errors.append(f"Creation executor failed: {err_msg}")
-        if "Existing release state conflict" in err_msg or "Immutable release identity" in err_msg:
+        # A conflict means the executor refused before mutating anything, so the
+        # resources named in the plan may still be a live release. Cleaning them
+        # up would destroy exactly what the guard protected.
+        if isinstance(exc, ReleaseIdentityConflict):
             is_conflict = True
+            state_unverifiable = isinstance(exc, ReleaseStateUnverifiable)
+        elif "Existing release state conflict" in err_msg or "Immutable release identity" in err_msg:
+            is_conflict = True
+            state_unverifiable = UNVERIFIABLE_STATE_PREFIX in err_msg
 
     cleanup_receipt: dict[str, Any] | None = None
     if not exec_success and not is_conflict:
@@ -1179,10 +1242,18 @@ def create_ephemeral_staging(
         for r in planned
     ]
 
-    remediation_required = not exec_success and not is_conflict
+    # An identity conflict is a clean refusal and needs no remediation, but
+    # unreadable state does: an operator has to inspect the preserved files.
+    remediation_required = not exec_success and (not is_conflict or state_unverifiable)
     remediation_notes = ""
     if not exec_success:
-        if is_conflict:
+        if state_unverifiable:
+            remediation_notes = (
+                "Creation rejected because existing release state could not be read or parsed; "
+                "the existing release was preserved untouched and requires manual inspection "
+                "before any rerun or cleanup."
+            )
+        elif is_conflict:
             remediation_notes = (
                 "Creation rejected due to immutable release identity conflict; "
                 "existing release state was preserved and not modified."
@@ -1201,6 +1272,10 @@ def create_ephemeral_staging(
     }
     if cleanup_receipt is not None:
         metadata["failure_cleanup_receipt"] = cleanup_receipt
+    if is_conflict:
+        metadata["existing_release_state_preserved"] = True
+    if state_unverifiable:
+        metadata["release_state_unverifiable"] = True
 
     return StagingLifecycleReceipt(
         action="create",
@@ -1451,6 +1526,20 @@ def cleanup_ephemeral_staging(
     )
 
 
+def _release_group_key(labels: Mapping[str, str], resource_id: str) -> str:
+    """Group scanned resources the way a release-scoped destroy would hit them.
+
+    The bounded ``release_id`` label is the only identity every row shares: a
+    label-only row and a row carrying ``raw_release_id`` still belong to the same
+    Terraform state. A row without the label cannot be grouped at all, so it gets
+    a private key and can never be cleaned as part of somebody else's release.
+    """
+    label_value = str(labels.get("release_id", "")).strip()
+    if label_value:
+        return label_value
+    return f"__unlabeled__:{resource_id}"
+
+
 def scan_orphans(
     *,
     project_id: str,
@@ -1472,6 +1561,11 @@ def scan_orphans(
     active_releases: set[str] = set()
     expired_releases: set[str] = set()
     orphan_resources: list[dict[str, Any]] = []
+    # Every scanned resource grouped by its bounded release label, including the
+    # healthy active ones that never become orphans. Live deletion is
+    # release-scoped, so the cleanup decision needs the whole release, not just
+    # the rows that happened to be flagged.
+    release_members: dict[str, list[dict[str, Any]]] = {}
     cleaned_resources: list[dict[str, Any]] = []
     failed_cleanups = 0
     alerts: list[str] = []
@@ -1497,6 +1591,18 @@ def scan_orphans(
 
         res_id = str(res.get("id") or res.get("name", "unknown"))
         res_type = str(res.get("type", "unknown"))
+
+        group_key = _release_group_key(labels, res_id)
+        member: dict[str, Any] = {
+            "id": res_id,
+            "type": res_type,
+            "raw_release_id": "",
+            # Default to the unsafe verdict: any row that exits this loop early
+            # is unverified and must block deletion of its release.
+            "expired": False,
+            "deletable": False,
+        }
+        release_members.setdefault(group_key, []).append(member)
 
         if (
             labels.get("app") != "oday-plus"
@@ -1525,6 +1631,7 @@ def scan_orphans(
 
         release_id = str(labels.get("release_id", "")).strip()
         raw_release_id = _authoritative_inventory_release_id(res, labels)
+        member["raw_release_id"] = raw_release_id
         identity_error = ""
         if not raw_release_id:
             identity_error = (
@@ -1595,6 +1702,8 @@ def scan_orphans(
         # Determine expiration & policy compliance
         is_over_policy = (expires_dt - created_dt > timedelta(hours=max_ttl_hours))
         is_expired = (now_dt >= expires_dt)
+        member["expired"] = is_expired
+        member["deletable"] = bool(raw_release_id) and is_staging_ephemeral_resource(labels, raw_release_id)
         identity_prefix = f"{identity_error}; " if identity_error else ""
 
         if is_expired:
@@ -1644,6 +1753,30 @@ def scan_orphans(
 
     # Perform auto cleanup on expired resources if requested
     if auto_cleanup and orphan_resources:
+        # A live deletion executor is release-scoped: destroying one expired
+        # resource tears down the whole release graph (and its Terraform state).
+        # Deleting per item would therefore take active siblings with it, so a
+        # release is only cleanable when every scanned member of it is verified
+        # expired and carries a complete, resolvable ownership identity.
+        release_gate: dict[str, str] = {}
+        for gate_key, members in release_members.items():
+            raw_ids = {m["raw_release_id"] for m in members if m["raw_release_id"]}
+            if any(not m["expired"] for m in members):
+                release_gate[gate_key] = (
+                    "Release still has active or unverified resources; release-scoped automatic "
+                    "deletion is refused because it would destroy resources that are not expired."
+                )
+            elif any(not m["deletable"] for m in members):
+                release_gate[gate_key] = (
+                    "Release has resources without a complete authoritative ownership identity; "
+                    "release-scoped automatic deletion is refused."
+                )
+            elif len(raw_ids) != 1:
+                release_gate[gate_key] = (
+                    "Release label resolves to more than one raw release identity; "
+                    "release-scoped automatic deletion is refused."
+                )
+
         for item in orphan_resources:
             res_dict = {
                 "id": item["id"],
@@ -1694,6 +1827,21 @@ def scan_orphans(
                     "resource_type": item["type"],
                     "release_id": rel_id,
                     "errors": ["Invalid expires_at timestamp; automatic deletion refused."],
+                    "timestamp": format_timestamp(now_dt),
+                })
+                continue
+
+            # Even a fully cleanable resource is refused while any sibling in the
+            # same release is still active or unverified.
+            gate_reason = release_gate.get(_release_group_key(item_labels, str(item["id"])))
+            if gate_reason:
+                failed_cleanups += 1
+                remediation_tasks.append({
+                    "task_type": "ephemeral_staging_orphan_remediation",
+                    "resource_id": item["id"],
+                    "resource_type": item["type"],
+                    "release_id": rel_id,
+                    "errors": [gate_reason],
                     "timestamp": format_timestamp(now_dt),
                 })
                 continue

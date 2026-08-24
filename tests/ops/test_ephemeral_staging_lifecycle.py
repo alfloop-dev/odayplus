@@ -19,6 +19,9 @@ if str(ROOT) not in sys.path:
 from product_ops.deployment.staging_lifecycle import (
     MAX_TENANT_ID_LENGTH,
     TENANT_ID_PATTERN,
+    UNVERIFIABLE_STATE_PREFIX,
+    ReleaseIdentityConflict,
+    ReleaseStateUnverifiable,
     StagingConfig,
     cleanup_ephemeral_staging,
     compute_release_hash,
@@ -29,6 +32,8 @@ from product_ops.deployment.staging_lifecycle import (
     generate_tfvars,
     get_ephemeral_resource_names,
     is_staging_ephemeral_resource,
+    make_terraform_creation_executor,
+    make_terraform_deletion_executor,
     parse_module_variables,
     plan_staging_resources,
     release_label_value,
@@ -1571,6 +1576,433 @@ variable "after_comment" {
             switched = dataclasses_replace(self.config, tenant_id="other-tenant")
             errors = validate_immutable_release_identity(switched, state_root)
             self.assertTrue(any("immutable tenant_id" in err for err in errors), errors)
+
+
+class UnverifiableReleaseStateTests(unittest.TestCase):
+    """Existing release state that cannot be parsed must fail closed.
+
+    A swallowed parse error made ``validate_immutable_release_identity`` return
+    ``[]``, which reads as "nothing provisioned yet". The live apply then failed
+    on the same unreadable file and ``create_ephemeral_staging`` ran failure-path
+    cleanup against the exact labels of the release that was already there.
+    """
+
+    def setUp(self) -> None:
+        self.release_id = "odp-unreadable-001"
+        self.config = StagingConfig(
+            release_id=self.release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            project_id="oday-staging-proj",
+            region="asia-east1",
+            cloud_sql_instance_name="oday-staging-pg",
+            cloud_sql_connection_name="oday-staging-proj:asia-east1:oday-staging-pg",
+            network_name="oday-staging-vpc",
+            subnetwork_name="oday-staging-subnet",
+            kms_key_id="projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
+            deployer_service_account_email="deployer@oday-staging-proj.iam.gserviceaccount.com",
+            api_image="asia-east1-docker.pkg.dev/proj/repo/api@sha256:" + "c" * 64,
+            web_image="asia-east1-docker.pkg.dev/proj/repo/web@sha256:" + "d" * 64,
+            ttl_hours=24,
+            created_at="2026-08-24T12:00:00Z",
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+        )
+        self.now = datetime(2026, 8, 24, 13, 0, 0, tzinfo=UTC)
+
+    def test_unparsable_tfvars_is_an_identity_error_not_an_empty_result(self) -> None:
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        for payload in ("{ this is not json", '"a string"', "[]", "null"):
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as tmpdir:
+                state_root = Path(tmpdir)
+                _, vars_p, _ = _terraform_state_paths(self.release_id, state_root)
+                vars_p.write_text(payload, encoding="utf-8")
+
+                errors = validate_immutable_release_identity(self.config, state_root)
+                self.assertTrue(errors, f"{payload!r} must not validate as 'no existing release'")
+                self.assertTrue(
+                    all(err.startswith(UNVERIFIABLE_STATE_PREFIX) for err in errors),
+                    errors,
+                )
+
+    def test_unparsable_inventory_is_an_identity_error(self) -> None:
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            _, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+            vars_p.write_text(json.dumps(generate_tfvars(self.config)), encoding="utf-8")
+            inv_p.write_text("{not json at all", encoding="utf-8")
+
+            errors = validate_immutable_release_identity(self.config, state_root)
+            self.assertTrue(errors)
+            self.assertTrue(any(err.startswith(UNVERIFIABLE_STATE_PREFIX) for err in errors), errors)
+            self.assertTrue(any("inventory file" in err for err in errors), errors)
+
+    def test_readable_matching_state_still_validates_clean(self) -> None:
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            _, vars_p, _ = _terraform_state_paths(self.release_id, state_root)
+            vars_p.write_text(json.dumps(generate_tfvars(self.config)), encoding="utf-8")
+            self.assertEqual(validate_immutable_release_identity(self.config, state_root), [])
+
+    def test_creation_executor_raises_a_typed_unverifiable_conflict(self) -> None:
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            _, vars_p, _ = _terraform_state_paths(self.release_id, state_root)
+            vars_p.write_text("{ corrupt", encoding="utf-8")
+
+            executor = make_terraform_creation_executor(
+                module_dir=MODULE_DIR,
+                state_dir=state_root,
+                terraform_bin="/bin/true",
+                initialize=False,
+            )
+            planned = plan_staging_resources(
+                self.config,
+                created_at=datetime(2026, 8, 24, 12, 0, 0, tzinfo=UTC),
+                now=self.now,
+            )
+            with self.assertRaises(ReleaseStateUnverifiable) as ctx:
+                executor(self.config, planned)
+            self.assertIn("Existing release state conflict", str(ctx.exception))
+            self.assertTrue(issubclass(ReleaseStateUnverifiable, ReleaseIdentityConflict))
+            # The corrupt file is evidence for the operator and must survive.
+            self.assertEqual(vars_p.read_text(encoding="utf-8"), "{ corrupt")
+
+    def test_unreadable_state_create_preserves_release_and_never_cleans_up(self) -> None:
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+            state_p.write_text('{"live": "terraform state"}', encoding="utf-8")
+            vars_p.write_text("{ corrupt", encoding="utf-8")
+
+            cleaned: list[str] = []
+
+            receipt = create_ephemeral_staging(
+                self.config,
+                dry_run=False,
+                now=self.now,
+                creation_executor=make_terraform_creation_executor(
+                    module_dir=MODULE_DIR,
+                    state_dir=state_root,
+                    terraform_bin="/bin/true",
+                    initialize=False,
+                ),
+                cleanup_executor=lambda res: cleaned.append(str(res.get("id"))) or True,
+            )
+
+            self.assertFalse(receipt.success)
+            # The whole point: no exact-label cleanup of the existing release.
+            self.assertEqual(cleaned, [])
+            self.assertNotIn("failure_cleanup_receipt", receipt.metadata)
+            self.assertTrue(receipt.metadata.get("existing_release_state_preserved"))
+            self.assertTrue(receipt.metadata.get("release_state_unverifiable"))
+            # Unreadable state is not a clean refusal; a human has to look at it.
+            self.assertTrue(receipt.remediation_required)
+            self.assertIn("preserved", receipt.remediation_notes.lower())
+            # Existing state files are untouched and no new tfvars was written.
+            self.assertEqual(state_p.read_text(encoding="utf-8"), '{"live": "terraform state"}')
+            self.assertEqual(vars_p.read_text(encoding="utf-8"), "{ corrupt")
+            self.assertFalse(inv_p.exists())
+
+    def test_plain_identity_conflict_stays_remediation_free(self) -> None:
+        cleaned: list[str] = []
+
+        def conflicting_creator(cfg: StagingConfig, res: Any) -> bool:
+            raise ReleaseIdentityConflict(
+                f"Existing release state conflict for {cfg.release_id!r}: immutable candidate_sha"
+            )
+
+        receipt = create_ephemeral_staging(
+            self.config,
+            dry_run=False,
+            now=self.now,
+            creation_executor=conflicting_creator,
+            cleanup_executor=lambda res: cleaned.append(str(res.get("id"))) or True,
+        )
+
+        self.assertFalse(receipt.success)
+        self.assertEqual(cleaned, [])
+        self.assertFalse(receipt.remediation_required)
+        self.assertFalse(receipt.metadata.get("release_state_unverifiable", False))
+
+    def test_cli_dry_run_rejects_unreadable_existing_state(self) -> None:
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths, main
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            _, vars_p, _ = _terraform_state_paths(self.release_id, state_root)
+            vars_p.write_text("{ corrupt", encoding="utf-8")
+
+            exit_code = main([
+                "create",
+                "--release-id", self.release_id,
+                "--candidate-sha", "a" * 40,
+                "--manifest-digest", "sha256:" + "b" * 64,
+                "--project-id", "oday-staging-proj",
+                "--api-image", self.config.api_image,
+                "--web-image", self.config.web_image,
+                "--owner-task-id", "ODP-EPHEMERAL-STAGING-IAC-001",
+                "--state-dir", str(state_root),
+                "--dry-run",
+            ])
+            self.assertEqual(exit_code, 1)
+
+
+class ReleaseScopedAutoCleanupTests(unittest.TestCase):
+    """Auto-cleanup must decide per release, because deletion is per release.
+
+    ``make_terraform_deletion_executor`` runs one ``terraform destroy`` for the
+    whole release state. Deciding expiry per inventory row therefore let a single
+    expired resource take its still-active siblings, and the release state file,
+    down with it.
+    """
+
+    def setUp(self) -> None:
+        self.now = datetime(2026, 8, 25, 14, 0, 0, tzinfo=UTC)
+        self.release_id = "odp-mixed-ttl-001"
+
+    def _labels(self, *, created_at: datetime, ttl_hours: int) -> dict[str, str]:
+        return generate_staging_labels(
+            release_id=self.release_id,
+            candidate_sha="a" * 40,
+            manifest_digest="sha256:" + "b" * 64,
+            owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+            created_at=created_at,
+            ttl_hours=ttl_hours,
+        )
+
+    def _mixed_inventory(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": "active-168h-res",
+                "type": "google_sql_database",
+                "raw_release_id": self.release_id,
+                "labels": self._labels(created_at=self.now - timedelta(hours=1), ttl_hours=168),
+            },
+            {
+                "id": "expired-24h-res",
+                "type": "google_storage_bucket",
+                "raw_release_id": self.release_id,
+                "labels": self._labels(created_at=self.now - timedelta(hours=26), ttl_hours=24),
+            },
+        ]
+
+    def test_expired_sibling_does_not_authorize_deleting_an_active_resource(self) -> None:
+        deleted: list[str] = []
+
+        # max_ttl_hours=168 keeps the active resource entirely off the orphan
+        # list, so only the release grouping can protect it.
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=self._mixed_inventory(),
+            max_ttl_hours=168,
+            now=self.now,
+            auto_cleanup=True,
+            deletion_executor=lambda res: deleted.append(str(res.get("id"))) or True,
+        )
+
+        self.assertEqual(deleted, [])
+        self.assertEqual(result.active_count, 1)
+        self.assertEqual(result.expired_count, 1)
+        self.assertEqual(result.orphan_count, 1)
+        self.assertEqual(result.cleaned_count, 0)
+        self.assertEqual(result.failed_cleanups, 1)
+        self.assertEqual(len(result.remediation_tasks), 1)
+        self.assertTrue(
+            any("not expired" in err for err in result.remediation_tasks[0]["errors"]),
+            result.remediation_tasks[0],
+        )
+
+    def test_mixed_release_under_strict_policy_refuses_every_member(self) -> None:
+        deleted: list[str] = []
+
+        # max_ttl_hours=24 puts the over-policy active resource on the orphan
+        # list too; it still must not be deleted, and neither may its sibling.
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=self._mixed_inventory(),
+            max_ttl_hours=24,
+            now=self.now,
+            auto_cleanup=True,
+            deletion_executor=lambda res: deleted.append(str(res.get("id"))) or True,
+        )
+
+        self.assertEqual(deleted, [])
+        self.assertEqual(result.orphan_count, 2)
+        self.assertEqual(result.cleaned_count, 0)
+        self.assertEqual(result.failed_cleanups, 2)
+        self.assertEqual(len(result.remediation_tasks), 2)
+
+    def test_label_only_sibling_blocks_the_whole_release(self) -> None:
+        """A row whose raw id cannot be proven still shares the release state."""
+        deleted: list[str] = []
+        inventory = [
+            {
+                "id": "label-only-res",
+                "type": "google_sql_database",
+                "labels": self._labels(created_at=self.now - timedelta(hours=26), ttl_hours=24),
+            },
+            {
+                "id": "expired-24h-res",
+                "type": "google_storage_bucket",
+                "raw_release_id": self.release_id,
+                "labels": self._labels(created_at=self.now - timedelta(hours=26), ttl_hours=24),
+            },
+        ]
+
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            now=self.now,
+            auto_cleanup=True,
+            deletion_executor=lambda res: deleted.append(str(res.get("id"))) or True,
+        )
+
+        self.assertEqual(deleted, [])
+        self.assertEqual(result.cleaned_count, 0)
+        self.assertEqual(result.failed_cleanups, 2)
+
+    def test_terraform_destroy_and_release_state_survive_a_mixed_release(self) -> None:
+        """End-to-end proof against the real release-scoped deletion executor."""
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+            state_p.write_text('{"live": "terraform state"}', encoding="utf-8")
+            vars_p.write_text(json.dumps({"release_id": self.release_id}), encoding="utf-8")
+            inv_p.write_text("[]", encoding="utf-8")
+
+            # /bin/true makes every terraform call "succeed", so a destroy that
+            # runs would unlink all three release files.
+            result = scan_orphans(
+                project_id="oday-staging-proj",
+                resource_inventory=self._mixed_inventory(),
+                max_ttl_hours=168,
+                now=self.now,
+                auto_cleanup=True,
+                deletion_executor=make_terraform_deletion_executor(
+                    self.release_id,
+                    module_dir=MODULE_DIR,
+                    state_dir=state_root,
+                    terraform_bin="/bin/true",
+                    initialize=False,
+                ),
+            )
+
+            self.assertEqual(result.cleaned_count, 0)
+            self.assertEqual(result.failed_cleanups, 1)
+            self.assertTrue(state_p.is_file(), "release-scoped destroy removed live state")
+            self.assertTrue(vars_p.is_file())
+            self.assertTrue(inv_p.is_file())
+
+    def test_fully_expired_release_is_still_cleaned_as_one_unit(self) -> None:
+        """The grouping gate must not block a release that really is finished."""
+        import tempfile
+
+        from product_ops.deployment.staging_lifecycle import _terraform_state_paths
+
+        inventory = [
+            {
+                "id": "expired-db",
+                "type": "google_sql_database",
+                "raw_release_id": self.release_id,
+                "labels": self._labels(created_at=self.now - timedelta(hours=30), ttl_hours=24),
+            },
+            {
+                "id": "expired-bucket",
+                "type": "google_storage_bucket",
+                "raw_release_id": self.release_id,
+                "labels": self._labels(created_at=self.now - timedelta(hours=26), ttl_hours=24),
+            },
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_root = Path(tmpdir)
+            state_p, vars_p, inv_p = _terraform_state_paths(self.release_id, state_root)
+            state_p.write_text('{"live": "terraform state"}', encoding="utf-8")
+            vars_p.write_text(json.dumps({"release_id": self.release_id}), encoding="utf-8")
+            inv_p.write_text("[]", encoding="utf-8")
+
+            result = scan_orphans(
+                project_id="oday-staging-proj",
+                resource_inventory=inventory,
+                now=self.now,
+                auto_cleanup=True,
+                deletion_executor=make_terraform_deletion_executor(
+                    self.release_id,
+                    module_dir=MODULE_DIR,
+                    state_dir=state_root,
+                    terraform_bin="/bin/true",
+                    initialize=False,
+                ),
+            )
+
+            self.assertEqual(result.cleaned_count, 2)
+            self.assertEqual(result.failed_cleanups, 0)
+            self.assertEqual(result.remediation_tasks, [])
+            self.assertFalse(state_p.exists())
+            self.assertFalse(vars_p.exists())
+            self.assertFalse(inv_p.exists())
+
+    def test_separate_releases_do_not_block_each_other(self) -> None:
+        deleted: list[str] = []
+        other_release = "odp-other-release-001"
+        inventory = [
+            {
+                "id": "active-other",
+                "type": "google_sql_database",
+                "raw_release_id": other_release,
+                "labels": generate_staging_labels(
+                    release_id=other_release,
+                    candidate_sha="c" * 40,
+                    manifest_digest="sha256:" + "d" * 64,
+                    owner_task_id="ODP-EPHEMERAL-STAGING-IAC-001",
+                    created_at=self.now - timedelta(hours=1),
+                    ttl_hours=24,
+                ),
+            },
+            {
+                "id": "expired-mine",
+                "type": "google_storage_bucket",
+                "raw_release_id": self.release_id,
+                "labels": self._labels(created_at=self.now - timedelta(hours=26), ttl_hours=24),
+            },
+        ]
+
+        result = scan_orphans(
+            project_id="oday-staging-proj",
+            resource_inventory=inventory,
+            now=self.now,
+            auto_cleanup=True,
+            deletion_executor=lambda res: deleted.append(str(res.get("id"))) or True,
+        )
+
+        self.assertEqual(deleted, ["expired-mine"])
+        self.assertEqual(result.cleaned_count, 1)
+        self.assertEqual(result.failed_cleanups, 0)
 
 
 def dataclasses_replace(obj: StagingConfig, **changes: Any) -> StagingConfig:
