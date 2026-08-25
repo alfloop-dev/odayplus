@@ -20,6 +20,26 @@ on:
         description: "Base64-encoded signed Supervisor release lease document (JSON)"
         required: true
         type: string
+      api_image:
+        description: "Immutable API image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      web_image:
+        description: "Immutable Web image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      worker_image:
+        description: "Immutable Worker image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
+      scheduler_image:
+        description: "Immutable Scheduler image reference from the first build (repo/service@sha256:...)"
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: runtime-release-${{ inputs.environment }}
@@ -48,6 +68,39 @@ jobs:
           if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
             echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
             exit 1
+          fi
+
+      - name: Validate immutable image handoff
+        env:
+          API_IMAGE_INPUT: ${{ inputs.api_image }}
+          WEB_IMAGE_INPUT: ${{ inputs.web_image }}
+          WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
+          SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+        run: |
+          set -euo pipefail
+          values=(
+            "${API_IMAGE_INPUT}"
+            "${WEB_IMAGE_INPUT}"
+            "${WORKER_IMAGE_INPUT}"
+            "${SCHEDULER_IMAGE_INPUT}"
+          )
+          filled=0
+          for value in "${values[@]}"; do
+            if [ -n "${value}" ]; then
+              filled=$((filled + 1))
+            fi
+          done
+          if [ "${filled}" -ne 0 ] && [ "${filled}" -ne 4 ]; then
+            echo "Error: api_image, web_image, worker_image, and scheduler_image must be supplied together." >&2
+            exit 1
+          fi
+          if [ "${filled}" -eq 4 ]; then
+            for image in "${values[@]}"; do
+              if [[ ! "${image}" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+                echo "Error: image handoff must use an immutable @sha256 reference: ${image}" >&2
+                exit 1
+              fi
+            done
           fi
 
       # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
@@ -93,7 +146,13 @@ jobs:
 
   build:
     needs: admission
+    if: ${{ inputs.api_image == '' && inputs.web_image == '' && inputs.worker_image == '' && inputs.scheduler_image == '' }}
     runs-on: ubuntu-latest
+    outputs:
+      api_image: ${{ steps.publish-images.outputs.api_image }}
+      web_image: ${{ steps.publish-images.outputs.web_image }}
+      worker_image: ${{ steps.publish-images.outputs.worker_image }}
+      scheduler_image: ${{ steps.publish-images.outputs.scheduler_image }}
     env:
       HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -145,6 +204,14 @@ jobs:
       - name: Run E2E deployment health, backup, restore, and rollback proof
         run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
 
+      - name: Validate WIF authentication for the build
+        run: |
+          set -euo pipefail
+          if [ "${HAS_WIF}" != "true" ]; then
+            echo "Error: Workload Identity Federation variables are required for the build." >&2
+            exit 1
+          fi
+
       - name: Authenticate to Google Cloud (WIF)
         if: ${{ env.HAS_WIF == 'true' }}
         uses: google-github-actions/auth@v2
@@ -160,17 +227,60 @@ jobs:
         uses: sigstore/cosign-installer@v3
 
       - name: Build, publish, and sign immutable container images
-        if: ${{ env.HAS_WIF == 'true' }}
+        id: publish-images
         run: |
           set -euo pipefail
           REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
           REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
           gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
 
+          resolve_image_digest() {
+            local image="$1"
+            local digest
+            digest="$(gcloud artifacts docker images describe "${image}" \
+              --format='value(image_summary.digest)' 2>/dev/null | tr -d '\r\n')" || return 1
+            if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              return 1
+            fi
+            printf '%s@%s' "${image%:*}" "${digest}"
+          }
+
+          api_tagged="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
+          web_tagged="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+          worker_tagged="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
+          scheduler_tagged="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
+          api_existing="$(resolve_image_digest "${api_tagged}" || true)"
+          web_existing="$(resolve_image_digest "${web_tagged}" || true)"
+          worker_existing="$(resolve_image_digest "${worker_tagged}" || true)"
+          scheduler_existing="$(resolve_image_digest "${scheduler_tagged}" || true)"
+          existing_count=0
+          for image in "${api_existing}" "${web_existing}" "${worker_existing}" "${scheduler_existing}"; do
+            if [ -n "${image}" ]; then
+              existing_count=$((existing_count + 1))
+            fi
+          done
+          if [ "${existing_count}" -eq 4 ]; then
+            echo "Immutable images already exist for ${ODAY_RELEASE_SHA}; reusing their digests."
+            CI=true ./delivery_toolchain/security/sign_images.sh verify "${api_existing}"
+            CI=true ./delivery_toolchain/security/sign_images.sh verify "${web_existing}"
+            CI=true ./delivery_toolchain/security/sign_images.sh verify "${worker_existing}"
+            CI=true ./delivery_toolchain/security/sign_images.sh verify "${scheduler_existing}"
+            printf 'api_image=%s\n' "${api_existing}" >> "${GITHUB_OUTPUT}"
+            printf 'web_image=%s\n' "${web_existing}" >> "${GITHUB_OUTPUT}"
+            printf 'worker_image=%s\n' "${worker_existing}" >> "${GITHUB_OUTPUT}"
+            printf 'scheduler_image=%s\n' "${scheduler_existing}" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          if [ "${existing_count}" -ne 0 ]; then
+            echo "Error: release image tag set is incomplete; refusing to rebuild or move an existing tag." >&2
+            exit 1
+          fi
+
           build_and_sign() {
             local name="$1"
             local image="$2"
             local dockerfile="$3"
+            local output_key="$4"
             echo "Building immutable ${name} image..."
             docker build \
               --platform linux/amd64 \
@@ -182,26 +292,54 @@ jobs:
             docker push "${image}"
             cosign sign --yes "${image}"
             CI=true ./delivery_toolchain/security/sign_images.sh verify "${image}"
+            local digest
+            digest="$(resolve_image_digest "${image}")"
+            printf '%s=%s\n' "${output_key}" "${digest}" >> "${GITHUB_OUTPUT}"
           }
 
-          build_and_sign "API" "${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}" "infra/docker/api.Dockerfile"
-          build_and_sign "worker" "${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}" "infra/docker/worker.Dockerfile"
-          build_and_sign "scheduler" "${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}" "infra/docker/scheduler.Dockerfile"
+          build_and_sign "API" "${api_tagged}" "infra/docker/api.Dockerfile" api_image
+          build_and_sign "worker" "${worker_tagged}" "infra/docker/worker.Dockerfile" worker_image
+          build_and_sign "scheduler" "${scheduler_tagged}" "infra/docker/scheduler.Dockerfile" scheduler_image
+          build_and_sign "Web" "${web_tagged}" "infra/docker/web.Dockerfile" web_image
 
-          echo "Building and publishing Web image..."
-          docker build \
-            --platform linux/amd64 \
-            --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
-            --label "com.oday-plus.data-binding=live" \
-            -t "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}" \
-            -f infra/docker/web.Dockerfile \
-            .
-          docker push "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
-          cosign sign --yes "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
-          CI=true ./delivery_toolchain/security/sign_images.sh verify "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+      - name: Write immutable image handoff
+        env:
+          API_IMAGE: ${{ steps.publish-images.outputs.api_image }}
+          WEB_IMAGE: ${{ steps.publish-images.outputs.web_image }}
+          WORKER_IMAGE: ${{ steps.publish-images.outputs.worker_image }}
+          SCHEDULER_IMAGE: ${{ steps.publish-images.outputs.scheduler_image }}
+          HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          images = {
+              "api": os.environ["API_IMAGE"],
+              "web": os.environ["WEB_IMAGE"],
+              "worker": os.environ["WORKER_IMAGE"],
+              "scheduler": os.environ["SCHEDULER_IMAGE"],
+          }
+          if any(not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image) for image in images.values()):
+              raise SystemExit("build did not produce four immutable image references")
+          Path(os.environ["HANDOFF_PATH"]).write_text(
+              json.dumps(images, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          PY
+
+      - name: Publish immutable image handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-images-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/runtime-release-images.json
+          if-no-files-found: error
 
   deploy:
     needs: [admission, build]
+    if: ${{ always() && needs.admission.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
@@ -267,6 +405,10 @@ jobs:
       ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
       ODP_PROD_DEPLOY_URL: ${{ vars.ODP_PROD_DEPLOY_URL }}
       ODP_PROD_API_URL: ${{ vars.ODP_PROD_API_URL }}
+      API_IMAGE: ${{ needs.build.outputs.api_image || inputs.api_image }}
+      WEB_IMAGE: ${{ needs.build.outputs.web_image || inputs.web_image }}
+      WORKER_IMAGE: ${{ needs.build.outputs.worker_image || inputs.worker_image }}
+      SCHEDULER_IMAGE: ${{ needs.build.outputs.scheduler_image || inputs.scheduler_image }}
       ODP_DEPLOY_BY_DIGEST: "true"
     steps:
       - uses: actions/checkout@v4
@@ -320,10 +462,7 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Deploy Cloud Run by digest
-        env:
-          IMAGE_TAG: release-${{ inputs.release_sha }}
-          ODP_DEPLOY_BY_DIGEST: "true"
+      - name: Deploy Cloud Run by immutable digest
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
       - name: Verify configured staging authority endpoint

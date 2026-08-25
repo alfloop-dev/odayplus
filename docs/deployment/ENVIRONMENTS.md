@@ -32,9 +32,8 @@ blue-green rollout, and Supervisor/Auto Worker task DAG are defined in
 The system uses a single CI/CD release workflow entrypoint (`.github/workflows/deploy-dev.yml`, named `Runtime Release`) to orchestrate releases across all environments:
 
 1. **Admission Gate**: Authoritative verifier (`delivery_toolchain/release/check_runtime_admission.py`) checks the Ed25519-signed Supervisor release lease and staged gate registry (`RELEASE_GATE_REGISTRY.json`) for the requested environment (`dev`, `staging`, `production`).
-2. **Build Once**: A dedicated `build` job executes once per release candidate SHA, running secret scanning, SAST (Bandit), SBOM generation, and container image builds/Cosign signing. The output immutable digests are shared across all deployment targets.
+2. **Build Once**: The first dispatch leaves the four optional image handoff inputs empty, so a dedicated `build` job runs secret scanning, SAST (Bandit), SBOM generation, and container image builds/Cosign signing once. It resolves the pushed tags to four immutable digests and publishes them as the cross-environment handoff. Staging and production dispatches pass all four `repo/service@sha256:...` values, skip the build job, and reuse the exact same images.
 3. **Deploy by Digest**:
    - **`dev`**: Deploys immutable digests, executes migrations, runs live preflight, Cloud Run Job validations, and live E2E gate.
    - **`staging`**: Provisions short-lived ephemeral staging instance with isolated database schema, tenant partitioning, and masked snapshot; verifies migration compatibility and remote staging proof; cleans up on release completion or holds up to 24h for debugging on failure.
    - **`production`**: Deploys green revisions (0% public traffic), validates green smoke and IAM bindings, atomistically promotes traffic to green (100%), updates Cloud Scheduler targets to green digests, and arms fail-closed rollback primitives.
-

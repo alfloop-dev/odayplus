@@ -555,7 +555,7 @@ def test_environment_inputs_support_dev_staging_production() -> None:
 
 
 def test_build_once_job_exists_and_precedes_deploy() -> None:
-    """A single build job must run once and precede the deploy job."""
+    """A first dispatch builds once; later dispatches reuse immutable refs."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     jobs = parsed["jobs"]
     assert "build" in jobs
@@ -577,12 +577,72 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
     assert any("generate_sbom.py" in run for run in build_runs)
     assert any("verify_deployment_health_backup_rollback.py" in run for run in build_runs)
 
+    build_if = jobs["build"].get("if", "")
+    assert all(
+        f"inputs.{name} == ''" in build_if
+        for name in ("api_image", "web_image", "worker_image", "scheduler_image")
+    )
+    assert "gcloud artifacts docker images describe" in "\n".join(build_runs)
+    assert "GITHUB_OUTPUT" in "\n".join(build_runs)
+    assert set(jobs["build"]["outputs"]) == {
+        "api_image",
+        "web_image",
+        "worker_image",
+        "scheduler_image",
+    }
+
+    deploy_if = jobs["deploy"].get("if", "")
+    assert "needs.build.result == 'skipped'" in deploy_if
+
 
 def test_deploy_job_configures_deploy_by_digest() -> None:
-    """Deploy job must deploy by digest without rebuilding."""
+    """Deploy job must pass the build output or handoff input to the script."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     deploy_env = parsed["jobs"]["deploy"]["env"]
     assert deploy_env.get("ODP_DEPLOY_BY_DIGEST") == "true"
+    for name in ("API_IMAGE", "WEB_IMAGE", "WORKER_IMAGE", "SCHEDULER_IMAGE"):
+        lower = name.lower()
+        expected = "${{ needs.build.outputs." + lower + " || inputs." + lower + " }}"
+        assert deploy_env[name] == expected
+
+    deploy_runs = [
+        step.get("run", "")
+        for step in parsed["jobs"]["deploy"]["steps"]
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+    assert not any("docker build" in run for run in deploy_runs)
+
+
+def test_image_handoff_inputs_are_all_or_none_immutable_refs() -> None:
+    """The cross-environment handoff cannot mix tags, blanks, or components."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+    image_names = {"api_image", "web_image", "worker_image", "scheduler_image"}
+    assert image_names <= set(inputs)
+    for name in image_names:
+        assert inputs[name]["required"] is False
+        assert inputs[name]["default"] == ""
+
+    validation_step = next(
+        step
+        for step in parsed["jobs"]["admission"]["steps"]
+        if isinstance(step, dict) and step.get("name") == "Validate immutable image handoff"
+    )
+    validation = validation_step["run"]
+    assert "must be supplied together" in validation
+    assert "@sha256:[0-9a-f]{64}" in validation
+
+
+def test_deploy_script_uses_digest_refs_for_every_cloud_run_target() -> None:
+    """The deploy script's immutable path cannot silently turn refs into tags."""
+    script = _deploy_script_text()
+    assert "@sha256:[0-9a-f]{64}" in script
+    assert 'ODP_DEPLOY_BY_DIGEST:-false' in script
+    assert '--image="${API_IMAGE}"' in script
+    assert '--image="${WEB_IMAGE}"' in script
+    assert '--image="${WORKER_IMAGE}"' in script
+    assert '--image="${SCHEDULER_IMAGE}"' in script
+    assert "deploy-by-digest requires immutable image reference" in script
 
 
 def test_production_bluegreen_verification_gated_on_production_environment() -> None:
@@ -597,5 +657,3 @@ def test_production_bluegreen_verification_gated_on_production_environment() -> 
     assert len(prod_steps) == 1
     step = prod_steps[0]
     assert step.get("if") == "${{ inputs.environment == 'production' }}"
-
-

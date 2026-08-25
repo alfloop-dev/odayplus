@@ -65,11 +65,13 @@ If the deployment runs and WIF variables (`GCP_WORKLOAD_IDENTITY_PROVIDER` and `
 1. **Build Once (`build` job)**:
    - Container images for API (`infra/docker/api.Dockerfile`), Worker (`infra/docker/worker.Dockerfile`), Scheduler (`infra/docker/scheduler.Dockerfile`), and Web (`infra/docker/web.Dockerfile`) are built for `linux/amd64` using the exact release SHA.
    - Images are pushed to Artifact Registry: `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/<service>:release-<sha>`
+   - The job resolves each pushed tag to its immutable `repo/service@sha256:<64-hex>` reference and publishes the four-reference handoff artifact `runtime-release-images-<sha>`.
    - Images are signed with Cosign and verified against OCI signatures.
    - Secret scan, SAST (Bandit), SBOM generation, and baseline E2E backup/restore proofs run in the build stage.
 
 2. **Deploy-by-Digest (`deploy` job)**:
-   - Deploys pre-built immutable image digests without rebuilding.
+   - The first environment dispatch leaves `api_image`, `web_image`, `worker_image`, and `scheduler_image` empty so the build job runs. Staging and production dispatches must pass all four exact references from the handoff artifact; supplying only some, a mutable tag, or a different reference is rejected before admission.
+   - When the handoff is supplied, the build job is skipped and the deploy job passes those exact digest references to Cloud Run. The deploy script rejects tags in this mode and never rebuilds.
    - For `dev`: Deploys API/Web services, Migration/Worker/Scheduler jobs, updates scheduler triggers, and runs live E2E acceptance gate.
    - For `staging`: Provisions ephemeral staging with release-scoped isolation and validates remote staging proof.
    - For `production`: Deploys green candidate revisions (0% public traffic), executes green smoke checks, executes blue→green 100% traffic switch via `product_ops/deployment/bluegreen_release.py`, and updates scheduler trigger digests.
