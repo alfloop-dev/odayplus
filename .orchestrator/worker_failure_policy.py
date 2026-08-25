@@ -1283,6 +1283,12 @@ def review_churn_settings(config: dict[str, Any]) -> dict[str, Any]:
     settings.setdefault("reassign_after_reopens", 2)
     settings.setdefault("eligible_statuses", ["todo", "in_progress"])
     settings.setdefault("require_different_account_pool", True)
+    # Rotating owners answers "this agent could not pass review". It cannot
+    # answer "no agent can pass review from here", and the rotation had no
+    # terminating case: one live task reached 8 reopens and 20 dispatches,
+    # cycling owners against a gate that needed an authorized human action.
+    # Past this count the task stops consuming the fleet and waits for a human.
+    settings.setdefault("escalate_to_human_after_reopens", 6)
     return settings
 
 @_entrypoint
@@ -1775,6 +1781,15 @@ def reassign_tasks_after_review_churn(
         threshold = max(2, int(settings.get("reassign_after_reopens", 2) or 2))
     except (TypeError, ValueError):
         threshold = 2
+    try:
+        escalate_threshold = max(0, int(settings.get("escalate_to_human_after_reopens", 6) or 0))
+    except (TypeError, ValueError):
+        escalate_threshold = 6
+    # 0 disables escalation; anything lower than the rotation threshold would
+    # escalate before a single rotation was ever tried, which defeats the point
+    # of having a rotation at all.
+    if escalate_threshold and escalate_threshold < threshold:
+        escalate_threshold = threshold
     eligible_statuses = {str(value).strip().lower() for value in settings.get("eligible_statuses", [])}
     skipped = {str(value) for value in (skip_task_ids or set())}
     changed = False
@@ -1800,6 +1815,49 @@ def reassign_tasks_after_review_churn(
         owner = str(snapshot.get("owner") or "").strip()
         reviewer = str(snapshot.get("reviewer") or "").strip()
         if not owner or is_human_gate_agent(owner):
+            continue
+
+        # Terminating case for the rotation. Reassignment assumes a different
+        # agent can clear the review; when the blocker is external -- an
+        # unauthorized deploy, a suspended project, evidence only a human can
+        # produce -- every rotation burns a dispatch and returns to the same
+        # refusal. Handing the task to a human is the only move that changes
+        # the outcome, and `eligible_statuses` excludes `blocked`, so this
+        # fires once rather than every tick.
+        if escalate_threshold and reopen_count >= escalate_threshold:
+            escalation = (
+                f"Escalated to Human/Ops after {reopen_count} reviewer reopens: automated "
+                f"owner rotation is not clearing this review. Last owner {owner}, reviewer "
+                f"{reviewer or 'unassigned'}. A human decision or an authorized action is "
+                f"needed before further dispatch."
+            )
+            if not persist_task_reassignment(
+                config,
+                task_id=task_id,
+                new_owner=owner,
+                new_reviewer=reviewer,
+                message=escalation,
+                new_status="blocked",
+                new_waiting_for="Human/Ops",
+                task_updates={
+                    "review_churn_escalated_at_count": reopen_count,
+                    "review_churn_escalated_at": utc_now(),
+                },
+            ):
+                continue
+            write_activity_log(
+                config,
+                {
+                    "type": "review_churn_escalated_to_human",
+                    "task_id": task_id,
+                    "message": escalation,
+                    "review_reopen_count": reopen_count,
+                    "owner": owner,
+                    "reviewer": reviewer,
+                },
+            )
+            clear_task_failure_streaks_for_task(state, task_id)
+            changed = True
             continue
         owner_pool = agent_account_pool_id(config, owner)
         excluded_pools = {owner_pool} if settings.get("require_different_account_pool", True) and owner_pool else set()

@@ -160,6 +160,7 @@ _WORKSPACE_HELPER_FUNCTIONS = [
     "_record_worktree_lease_block",
     "_refresh_reused_worker_worktree",
     "_run_git_network_command",
+"_classify_processes_in_worktree",
 "_scan_process_paths_in_root",
 "_task_brief_context_candidates",
 "_task_id_slug",

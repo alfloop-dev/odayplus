@@ -86,5 +86,16 @@ mlruns/
 .orchestrator/*.jsonl
 .orchestrator/provider_capabilities.json
 
+# Runtime lock files. A worker that dies mid-write leaves its lock behind, and
+# because the lock was untracked-but-not-ignored it counted as dirt: it kept
+# the worktree permanently unclean, which blocks BOTH task finalize and
+# worktree reclaim. 23 worktrees on a live host were unreclaimable for this
+# single reason. Deliberately spelled out rather than `*.lock`, because
+# `uv.lock` is committed and must keep being tracked.
+ai-status.json.lock
+*.json.lock
+*.jsonl.lock
+.orchestrator/*.lock
+
 # Claude Code local permissions (machine-specific paths)
 .claude/settings.local.json

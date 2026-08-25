@@ -7279,6 +7279,91 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(event["type"], "review_churn_reassigned")
         self.assertNotEqual(event["from_owner_pool"], event["to_owner_pool"])
 
+    def _escalation_config(self, **churn_overrides) -> dict:
+        churn = {
+            "enabled": True,
+            "reassign_after_reopens": 2,
+            "require_different_account_pool": False,
+        }
+        churn.update(churn_overrides)
+        return {
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": churn,
+                "owner_fallbacks": {"Antigravity": ["Codex"]},
+            },
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity"},
+                "codex": {"display_name": "Codex", "provider": "codex"},
+                "claude": {"display_name": "Claude", "provider": "claude"},
+            },
+        }
+
+    def _churn_status(self, reopen_count: int) -> dict:
+        return {
+            "tasks": [
+                {
+                    "id": "P3-ESCALATE",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": reopen_count,
+                }
+            ]
+        }
+
+    def test_repeated_reopens_escalate_to_a_human_instead_of_rotating_again(self) -> None:
+        """Owner rotation has to terminate.
+
+        Rotating answers "this agent could not pass review"; it cannot answer
+        "no agent can pass review from here". A live task reached 8 reopens and
+        20 dispatches cycling owners against a gate that needed an authorized
+        human action, because nothing in the loop ever stopped rotating.
+        """
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(
+                self._escalation_config(escalate_to_human_after_reopens=6), {}, self._churn_status(6)
+            )
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_status"], "blocked")
+        self.assertEqual(kwargs["new_waiting_for"], "Human/Ops")
+        # The owner is kept: escalation is a handoff to a human, not one more
+        # rotation, and a reader needs to see who last held it.
+        self.assertEqual(kwargs["new_owner"], "Antigravity")
+        self.assertEqual(kwargs["task_updates"]["review_churn_escalated_at_count"], 6)
+        self.assertEqual(
+            write_activity_log.call_args.args[1]["type"], "review_churn_escalated_to_human"
+        )
+
+    def test_below_the_escalation_threshold_still_rotates_owners(self) -> None:
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            supervisor.reassign_tasks_after_review_churn(
+                self._escalation_config(escalate_to_human_after_reopens=6), {}, self._churn_status(2)
+            )
+
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+        self.assertEqual(write_activity_log.call_args.args[1]["type"], "review_churn_reassigned")
+
+    def test_escalation_can_be_disabled_with_zero(self) -> None:
+        """Zero opts a deployment out; rotation then keeps its old behaviour."""
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            supervisor.reassign_tasks_after_review_churn(
+                self._escalation_config(escalate_to_human_after_reopens=0), {}, self._churn_status(99)
+            )
+
+        self.assertEqual(persist.call_args.kwargs["new_status"], "todo")
+
     def test_review_churn_reassignment_is_idempotent_until_two_more_reopens(self) -> None:
         status = {
             "tasks": [
@@ -9116,6 +9201,117 @@ class PruneOrphanWorktreesTests(unittest.TestCase):
         ):
             result = supervisor.prune_orphan_worktrees(config, state)
         self.assertFalse(result)
+
+
+class PruneOrphanWorktreeAccountingTests(PruneOrphanWorktreesTests):
+    """A refused reclaim must say why it refused.
+
+    Every guard in `prune_orphan_worktrees` ends in a bare `continue`, and the
+    only log it emitted was the success one, so a pruner that examined 69
+    worktrees and reclaimed none logged exactly what an idle pruner logged. On
+    a live host that silence lasted until the disk hit 99%.
+
+    Subclasses the guard tests to inherit their registry/base isolation; the
+    inherited cases re-run here, which is cheap and keeps the two in step.
+    """
+
+    def _dirty_case(self, state: dict):
+        base = Path("/tmp/wt").resolve()
+        record_path = str(base / "task-x")
+        records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
+        dirty_status = subprocess.CompletedProcess(args=[], returncode=0, stdout=" M foo.py\n", stderr="")
+        runs = {
+            ("git", "branch", "--merged"): merged_proc,
+            ("git", "-C", record_path, "status", "--porcelain"): dirty_status,
+        }
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value=set()),
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ):
+            return supervisor.prune_orphan_worktrees(config, state)
+
+    def _live_process_case(self, state: dict, classify_result):
+        """A worktree nothing active claims, but something inside is running."""
+        base = Path("/tmp/wt").resolve()
+        record_path = str(base / "task-x")
+        records = [{"worktree": record_path, "branch": "refs/heads/task/X"}]
+        merged_proc = subprocess.CompletedProcess(args=[], returncode=0, stdout="task/X\n", stderr="")
+        runs = {("git", "branch", "--merged"): merged_proc}
+        config = {"worker_worktree_housekeeping": {"enabled": True, "tick_interval_seconds": 0}}
+        with (
+            mock.patch.object(supervisor, "worker_worktree_settings", return_value={"enabled": True, "root_configured": True, "git_network_timeout_seconds": 30}),
+            mock.patch.object(supervisor, "_worker_worktree_base_root", return_value=base),
+            mock.patch.object(supervisor, "config_path", return_value=Path("/repo/ai-status.json")),
+            mock.patch.object(supervisor, "_scan_process_paths_in_root", return_value={Path(record_path)}),
+            mock.patch.object(supervisor, "_classify_processes_in_worktree", return_value=classify_result),
+            mock.patch.object(supervisor, "_git_ref_exists", side_effect=lambda _root, ref: ref == "origin/dev"),
+            mock.patch.object(supervisor, "_git_worktree_records", return_value=records),
+            mock.patch.object(Path, "exists", return_value=True),
+            mock.patch.object(supervisor.subprocess, "run", side_effect=self._stub_subprocess_run(runs)),
+        ):
+            return supervisor.prune_orphan_worktrees(config, state)
+
+    def test_a_worktree_held_only_by_orphans_is_reported_as_reclaimable(self) -> None:
+        """An init-reparented holder means the owning worker is already gone.
+
+        Twelve pgserver instances outlived their workers by up to three days
+        here. Each had called `setsid()`, so no process group reached them, and
+        the pruner reported them the same way it reported genuinely busy trees.
+        """
+        state: dict = {}
+        self.assertFalse(self._live_process_case(state, ([4242], 0)))
+        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        self.assertEqual(scan["skipped"], {"live_process_orphaned": 1})
+        self.assertEqual(
+            scan["orphaned_worktrees"], [{"path": str(Path("/tmp/wt").resolve() / "task-x"), "pids": [4242]}]
+        )
+
+    def test_a_still_parented_holder_is_a_real_tenant_and_stays_opaque(self) -> None:
+        state: dict = {}
+        self.assertFalse(self._live_process_case(state, ([], 1)))
+        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        self.assertEqual(scan["skipped"], {"live_process": 1})
+        self.assertEqual(scan["orphaned_worktrees"], [])
+
+    def test_one_living_parent_disqualifies_the_whole_tree(self) -> None:
+        """Orphans alongside a live tenant must not be called reclaimable."""
+        state: dict = {}
+        self._live_process_case(state, ([4242], 1))
+        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        self.assertEqual(scan["skipped"], {"live_process": 1})
+        self.assertEqual(scan["orphaned_worktrees"], [])
+
+    def test_records_refusal_reasons_when_nothing_is_reclaimed(self) -> None:
+        state: dict = {}
+        self.assertFalse(self._dirty_case(state))
+        scan = state["worker_worktree_housekeeping"]["last_scan"]
+        self.assertEqual(scan["examined"], 1)
+        self.assertEqual(scan["removed"], 0)
+        self.assertEqual(scan["skipped"], {"dirty": 1})
+
+    def test_stall_marker_starts_on_the_first_fully_refused_tick(self) -> None:
+        state: dict = {}
+        self._dirty_case(state)
+        bucket = state["worker_worktree_housekeeping"]
+        self.assertTrue(bucket.get("stall_since"))
+        self.assertEqual(bucket.get("last_stall_signature"), "dirty=1")
+
+    def test_a_missing_activity_log_sink_does_not_break_the_reclaim(self) -> None:
+        """The counts live in state; the log is a convenience on top of them."""
+        state: dict = {}
+        with mock.patch.object(
+            supervisor, "write_activity_log", side_effect=KeyError("activity_log")
+        ):
+            self.assertFalse(self._dirty_case(state))
+        self.assertEqual(state["worker_worktree_housekeeping"]["last_scan"]["skipped"], {"dirty": 1})
 
 
 class ResolvePollIntervalTests(unittest.TestCase):

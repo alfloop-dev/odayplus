@@ -1840,6 +1840,10 @@ def worker_worktree_housekeeping_settings(config: dict[str, Any]) -> dict[str, A
         "enabled": bool(settings.get("enabled", True)),
         "tick_interval_seconds": int(settings.get("tick_interval_seconds", 600) or 0),
         "max_removals_per_tick": int(settings.get("max_removals_per_tick", 5)),
+        # How long a fully-refused reclaim may stay quiet before it is logged
+        # again. Only rate-limits the repeat: a change in the refusal mix still
+        # logs immediately.
+        "stall_log_interval_seconds": int(settings.get("stall_log_interval_seconds", 3600) or 0),
     }
 
 @_entrypoint
@@ -1874,6 +1878,60 @@ def _scan_process_paths_in_root(base_root: Path) -> set[Path]:
                 except OSError:
                     pass
     return referenced
+
+@_entrypoint
+def _classify_processes_in_worktree(worktree_path: Path) -> tuple[list[int], int]:
+    """Split processes referencing a worktree into (orphan pids, still-parented count).
+
+    "Orphan" here means PPid == 1: the process that started it is gone and init
+    adopted it. That is the judgment that makes reaping safe, and it is the one
+    that survives a child which called `setsid()`.
+
+    Process groups cannot answer this. The pgserver instances that kept
+    worktrees pinned on this host each ran as their own session leader
+    (`pid == pgid == sid`), so they had already escaped any group the worker
+    was killed through -- twelve of them outlived their workers by up to three
+    days. Reparenting to init is the one signal they could not escape.
+
+    A non-zero second element means something still has a living parent, so the
+    worktree is genuinely in use and must not be touched.
+    """
+    orphans: list[int] = []
+    still_parented = 0
+    wt_str = str(worktree_path)
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return ([], 1)  # Fail closed: unreadable /proc means "assume in use".
+    self_pid = os.getpid()
+    for entry in entries:
+        name = entry.name
+        if not name.isdigit() or int(name) == self_pid:
+            continue
+        try:
+            raw = (entry / "cmdline").read_bytes()
+        except OSError:
+            continue
+        if not raw:
+            continue
+        cmdline = raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore")
+        if wt_str not in cmdline:
+            continue
+        ppid = None
+        try:
+            for line in (entry / "status").read_text(errors="ignore").splitlines():
+                if line.startswith("PPid:"):
+                    ppid = int(line.split()[1])
+                    break
+        except (OSError, ValueError, IndexError):
+            still_parented += 1  # Unreadable state is not evidence of an orphan.
+            continue
+        if ppid == 1:
+            orphans.append(int(name))
+        else:
+            still_parented += 1
+    return (orphans, still_parented)
+
 
 @_entrypoint
 def prune_orphan_worktrees(
@@ -1936,6 +1994,18 @@ def prune_orphan_worktrees(
     max_removals = max(0, settings["max_removals_per_tick"])
     base_root_str = str(base_root)
     removed: list[str] = []
+    # Every guard below ends in a bare `continue`, and the only log this
+    # function ever wrote was the success one. "Examined 69 worktrees and
+    # refused all 69" and "there was nothing to examine" were therefore the
+    # same silence, which is how a pruner that had never reclaimed a single
+    # worktree kept looking healthy while the host filled to 99%. Counting the
+    # refusals costs nothing and is the difference between a stalled reclaim
+    # being visible and being invisible.
+    examined = 0
+    skipped: dict[str, int] = {}
+    repos_skipped: dict[str, int] = {}
+    capped = False
+    orphan_reports: list[tuple[str, list[int]]] = []
     # Pruning has the same authority boundary as leasing: each distinct local
     # checkout contributes its registry default branch and freshly fetched
     # immutable remote SHA.  Never use a developer's local dev/master/main as
@@ -1945,11 +2015,13 @@ def prune_orphan_worktrees(
     active_base_cache = base_cache if base_cache is not None else {}
     for repo in iter_local_repositories(config):
         if len(removed) >= max_removals:
+            capped = True
             break
         repo_root = repo.get("resolved_local_path")
         repo_id = str(repo.get("id") or "").strip()
         default_branch = str(repo.get("default_branch") or "").strip()
         if not isinstance(repo_root, Path) or not repo_id:
+            repos_skipped["unusable"] = repos_skipped.get("unusable", 0) + 1
             continue
         base, _base_error = resolve_worker_base(
             repo_root,
@@ -1959,6 +2031,12 @@ def prune_orphan_worktrees(
             network_timeout_seconds=float(worktree_settings["git_network_timeout_seconds"]),
         )
         if base is None:
+            # Counted separately from the per-worktree refusals. A repo whose
+            # base will not resolve is skipped whole, and folding that into the
+            # worktree tally reads as "4 of the 68 examined worktrees" when it
+            # actually means "4 repos, contributing an unknown number of
+            # worktrees, were never examined at all".
+            repos_skipped["base_unresolved"] = repos_skipped.get("base_unresolved", 0) + 1
             continue
         base_refs = [base.sha]
         merged_branches: set[str] = set()
@@ -1977,23 +2055,45 @@ def prune_orphan_worktrees(
 
         for record in _git_worktree_records(repo_root):
             if len(removed) >= max_removals:
+                capped = True
                 break
             wt_value = record.get("worktree")
             if not wt_value or not wt_value.startswith(base_root_str):
                 continue
+            # Only worktrees under the managed root are this function's
+            # business, so `examined` counts from here: anything earlier is a
+            # foreign checkout, not a reclaim candidate we declined.
+            examined += 1
             try:
                 wt_path = Path(wt_value).resolve()
             except OSError:
+                skipped["path_unresolvable"] = skipped.get("path_unresolvable", 0) + 1
                 continue
             if wt_path in claimed_paths:
+                skipped["claimed_by_active_worker"] = skipped.get("claimed_by_active_worker", 0) + 1
                 continue
             if any(str(live).startswith(str(wt_path)) or str(wt_path).startswith(str(live)) for live in live_paths):
+                # No ACTIVE worker claims this worktree, yet something inside is
+                # still running. Two very different situations look identical
+                # here, and conflating them is why twelve test databases
+                # outlived their workers by up to three days while the pruner
+                # reported a uniform "busy": either a real tenant is at work, or
+                # a settled worker leaked a child that now pins the worktree
+                # forever. Reparenting to init (PPid == 1) tells them apart.
+                orphan_pids, still_parented = _classify_processes_in_worktree(wt_path)
+                if orphan_pids and not still_parented:
+                    skipped["live_process_orphaned"] = skipped.get("live_process_orphaned", 0) + 1
+                    orphan_reports.append((str(wt_path), sorted(orphan_pids)))
+                else:
+                    skipped["live_process"] = skipped.get("live_process", 0) + 1
                 continue
             branch = _worktree_record_branch(record)
             if branch:
                 if branch not in merged_branches:
+                    skipped["branch_not_merged"] = skipped.get("branch_not_merged", 0) + 1
                     continue
             elif not _detached_head_is_merged(repo_root, wt_path, base_refs):
+                skipped["detached_head_not_merged"] = skipped.get("detached_head_not_merged", 0) + 1
                 continue
             status_proc = subprocess.run(
                 ["git", "-C", str(wt_path), "status", "--porcelain"],
@@ -2001,7 +2101,11 @@ def prune_orphan_worktrees(
                 text=True,
                 check=False,
             )
-            if status_proc.returncode != 0 or status_proc.stdout.strip():
+            if status_proc.returncode != 0:
+                skipped["status_query_failed"] = skipped.get("status_query_failed", 0) + 1
+                continue
+            if status_proc.stdout.strip():
+                skipped["dirty"] = skipped.get("dirty", 0) + 1
                 continue
             remove_proc = subprocess.run(
                 ["git", "-C", str(repo_root), "worktree", "remove", str(wt_path)],
@@ -2011,8 +2115,31 @@ def prune_orphan_worktrees(
             )
             if remove_proc.returncode == 0:
                 removed.append(str(wt_path))
+            else:
+                skipped["remove_failed"] = skipped.get("remove_failed", 0) + 1
+
+    # Durable per-tick reclaim accounting. This is cheap, it overwrites rather
+    # than accumulates, and it is what makes "the pruner is running but
+    # reclaiming nothing" a readable state instead of an inferred one.
+    bucket["last_scan"] = {
+        "at": bucket["last_run_at"],
+        "examined": examined,
+        "removed": len(removed),
+        "skipped": dict(sorted(skipped.items())),
+        "repos_skipped": dict(sorted(repos_skipped.items())),
+        "capped_at_max_removals": capped,
+        # Worktrees held only by init-reparented leftovers. Unlike the other
+        # refusals this one is actionable without waiting for anybody: the
+        # owning worker is already gone, so these pids and paths are what an
+        # operator needs to reclaim the space.
+        "orphaned_worktrees": [
+            {"path": path, "pids": pids} for path, pids in orphan_reports
+        ],
+    }
 
     if removed:
+        bucket.pop("stall_since", None)
+        bucket.pop("last_stall_log_at", None)
         write_activity_log(
             config,
             {
@@ -2021,6 +2148,56 @@ def prune_orphan_worktrees(
             },
         )
         return True
+
+    if examined or repos_skipped:
+        # Reclaimed nothing. One such tick is ordinary -- every worktree may
+        # legitimately be busy. A run of them means reclaim has stopped
+        # working, and that is the condition that silently filled this host's
+        # disk. Log it on a slow cadence, and again whenever the refusal mix
+        # changes, so the signal survives without flooding.
+        #
+        # `repos_skipped` alone is enough to report: if every repository fails
+        # to resolve, `examined` is 0 and this is the only thing that would
+        # distinguish a broken pruner from an empty one.
+        stall_interval = max(0, settings["stall_log_interval_seconds"])
+        signature = ",".join(
+            [f"{k}={v}" for k, v in sorted(skipped.items())]
+            + [f"repo:{k}={v}" for k, v in sorted(repos_skipped.items())]
+        )
+        bucket.setdefault("stall_since", bucket["last_run_at"])
+        last_logged_at = _parse_iso_utc(str(bucket.get("last_stall_log_at") or ""))
+        elapsed_ok = True
+        if last_logged_at is not None and stall_interval > 0:
+            elapsed_ok = (datetime.now(UTC) - last_logged_at).total_seconds() >= stall_interval
+        if elapsed_ok or bucket.get("last_stall_signature") != signature:
+            bucket["last_stall_log_at"] = bucket["last_run_at"]
+            bucket["last_stall_signature"] = signature
+            try:
+                write_activity_log(
+                    config,
+                    {
+                        "type": "worktree_prune_stalled",
+                        "message": (
+                            f"Reclaimed 0 of {examined} candidate worktree(s) since "
+                            f"{bucket.get('stall_since')}; refusals: {signature or 'none'}"
+                        ),
+                        "examined": examined,
+                        "skipped": dict(sorted(skipped.items())),
+                        "repos_skipped": dict(sorted(repos_skipped.items())),
+                        "orphaned_worktrees": [
+                            {"path": path, "pids": pids} for path, pids in orphan_reports
+                        ],
+                    },
+                )
+            except (KeyError, OSError):
+                # This log is diagnostic; `bucket["last_scan"]` above already
+                # carries the same counts durably. A caller with no activity-log
+                # path configured must still get its reclaim decision, so a
+                # missing sink degrades the diagnosis rather than the function.
+                pass
+        return False
+
+    bucket.pop("stall_since", None)
     return False
 
 class QuarantineOutcome(NamedTuple):
