@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+  "repository": "alfloop-dev/odayplus",
+  "audited_at": "2026-08-25T15:44:00Z",
+  "total_environments": 3,
+  "environments": [
+    {
+      "name": "dev",
+      "id": 17295066036,
+      "url": "https://api.github.com/repos/alfloop-dev/odayplus/environments/dev",
+      "protection_rules": [],
+      "deployment_branch_policy": null,
+      "can_admins_bypass": true,
+      "created_at": "2026-06-26T22:58:40Z",
+      "updated_at": "2026-06-26T22:58:40Z"
+    },
+    {
+      "name": "production",
+      "id": 20574639394,
+      "url": "https://api.github.com/repos/alfloop-dev/odayplus/environments/production",
+      "protection_rules": [
+        {
+          "id": 63664338,
+          "node_id": "GA_kwDOTFqC4s4Dy3DS",
+          "type": "required_reviewers",
+          "prevent_self_review": false,
+          "reviewers": [
+            {
+              "type": "User",
+              "reviewer": {
+                "login": "Alien-alfaloop",
+                "id": 122770408,
+                "node_id": "U_kgDOB1FT6A",
+                "avatar_url": "https://avatars.githubusercontent.com/u/122770408?v=4",
+                "gravatar_id": "",
+                "url": "https://api.github.com/users/Alien-alfaloop",
+                "html_url": "https://github.com/Alien-alfaloop",
+                "followers_url": "https://api.github.com/users/Alien-alfaloop/followers",
+                "following_url": "https://api.github.com/users/Alien-alfaloop/following{/other_user}",
+                "gists_url": "https://api.github.com/users/Alien-alfaloop/gists{/gist_id}",
+                "starred_url": "https://api.github.com/users/Alien-alfaloop/starred{/owner}{/repo}",
+                "subscriptions_url": "https://api.github.com/users/Alien-alfaloop/subscriptions",
+                "organizations_url": "https://api.github.com/users/Alien-alfaloop/orgs",
+                "repos_url": "https://api.github.com/users/Alien-alfaloop/repos",
+                "events_url": "https://api.github.com/users/Alien-alfaloop/events{/privacy}",
+                "received_events_url": "https://api.github.com/users/Alien-alfaloop/received_events",
+                "type": "User",
+                "user_view_type": "public",
+                "site_admin": false
+              }
+            },
+            {
+              "type": "User",
+              "reviewer": {
+                "login": "ajoe734",
+                "id": 169176954,
+                "node_id": "U_kgDOChVveg",
+                "avatar_url": "https://avatars.githubusercontent.com/u/169176954?v=4",
+                "gravatar_id": "",
+                "url": "https://api.github.com/users/ajoe734",
+                "html_url": "https://github.com/ajoe734",
+                "followers_url": "https://api.github.com/users/ajoe734/followers",
+                "following_url": "https://api.github.com/users/ajoe734/following{/other_user}",
+                "gists_url": "https://api.github.com/users/ajoe734/gists{/gist_id}",
+                "starred_url": "https://api.github.com/users/ajoe734/starred{/owner}{/repo}",
+                "subscriptions_url": "https://api.github.com/users/ajoe734/subscriptions",
+                "organizations_url": "https://api.github.com/users/ajoe734/orgs",
+                "repos_url": "https://api.github.com/users/ajoe734/repos",
+                "events_url": "https://api.github.com/users/ajoe734/events{/privacy}",
+                "received_events_url": "https://api.github.com/users/ajoe734/received_events",
+                "type": "User",
+                "user_view_type": "public",
+                "site_admin": false
+              }
+            }
+          ]
+        }
+      ],
+      "deployment_branch_policy": null,
+      "can_admins_bypass": true,
+      "created_at": "2026-08-25T15:41:19Z",
+      "updated_at": "2026-08-25T15:41:19Z"
+    },
+    {
+      "name": "staging",
+      "id": 17295059155,
+      "url": "https://api.github.com/repos/alfloop-dev/odayplus/environments/staging",
+      "protection_rules": [
+        {
+          "id": 63664350,
+          "node_id": "GA_kwDOTFqC4s4Dy3De",
+          "type": "required_reviewers",
+          "prevent_self_review": false,
+          "reviewers": [
+            {
+              "type": "User",
+              "reviewer": {
+                "login": "Alien-alfaloop",
+                "id": 122770408,
+                "node_id": "U_kgDOB1FT6A",
+                "avatar_url": "https://avatars.githubusercontent.com/u/122770408?v=4",
+                "gravatar_id": "",
+                "url": "https://api.github.com/users/Alien-alfaloop",
+                "html_url": "https://github.com/Alien-alfaloop",
+                "followers_url": "https://api.github.com/users/Alien-alfaloop/followers",
+                "following_url": "https://api.github.com/users/Alien-alfaloop/following{/other_user}",
+                "gists_url": "https://api.github.com/users/Alien-alfaloop/gists{/gist_id}",
+                "starred_url": "https://api.github.com/users/Alien-alfaloop/starred{/owner}{/repo}",
+                "subscriptions_url": "https://api.github.com/users/Alien-alfaloop/subscriptions",
+                "organizations_url": "https://api.github.com/users/Alien-alfaloop/orgs",
+                "repos_url": "https://api.github.com/users/Alien-alfaloop/repos",
+                "events_url": "https://api.github.com/users/Alien-alfaloop/events{/privacy}",
+                "received_events_url": "https://api.github.com/users/Alien-alfaloop/received_events",
+                "type": "User",
+                "user_view_type": "public",
+                "site_admin": false
+              }
+            },
+            {
+              "type": "User",
+              "reviewer": {
+                "login": "ajoe734",
+                "id": 169176954,
+                "node_id": "U_kgDOChVveg",
+                "avatar_url": "https://avatars.githubusercontent.com/u/169176954?v=4",
+                "gravatar_id": "",
+                "url": "https://api.github.com/users/ajoe734",
+                "html_url": "https://github.com/ajoe734",
+                "followers_url": "https://api.github.com/users/ajoe734/followers",
+                "following_url": "https://api.github.com/users/ajoe734/following{/other_user}",
+                "gists_url": "https://api.github.com/users/ajoe734/gists{/gist_id}",
+                "starred_url": "https://api.github.com/users/ajoe734/starred{/owner}{/repo}",
+                "subscriptions_url": "https://api.github.com/users/ajoe734/subscriptions",
+                "organizations_url": "https://api.github.com/users/ajoe734/orgs",
+                "repos_url": "https://api.github.com/users/ajoe734/repos",
+                "events_url": "https://api.github.com/users/ajoe734/events{/privacy}",
+                "received_events_url": "https://api.github.com/users/ajoe734/received_events",
+                "type": "User",
+                "user_view_type": "public",
+                "site_admin": false
+              }
+            }
+          ]
+        }
+      ],
+      "deployment_branch_policy": null,
+      "can_admins_bypass": true,
+      "created_at": "2026-06-26T22:58:23Z",
+      "updated_at": "2026-06-26T22:58:23Z"
+    }
+  ],
+  "protection_summary": {
+    "dev": "standard integration environment (no review gate required)",
+    "staging": "ephemeral rehearsal environment (required reviewers enabled: Alien-alfaloop, ajoe734)",
+    "production": "production environment (required reviewers enabled: Alien-alfaloop, ajoe734)"
+  }
+}

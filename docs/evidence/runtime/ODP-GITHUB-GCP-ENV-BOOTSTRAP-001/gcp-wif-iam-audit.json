@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+  "project_id": "odayplus-runtime-20260825",
+  "project_number": "767864276141",
+  "region": "asia-east1",
+  "audited_at": "2026-08-25T15:44:00Z",
+  "secret_values_redacted": true,
+  "workload_identity_pool": {
+    "description": "Keyless GitHub Actions identities for ODay Plus",
+    "displayName": "GitHub Actions",
+    "name": "projects/767864276141/locations/global/workloadIdentityPools/github-actions",
+    "state": "ACTIVE"
+  },
+  "workload_identity_provider": {
+    "attributeCondition": "assertion.repository == 'alfloop-dev/odayplus'",
+    "attributeMapping": {
+      "attribute.actor": "assertion.actor",
+      "attribute.aud": "assertion.aud",
+      "attribute.repository": "assertion.repository",
+      "google.subject": "assertion.sub"
+    },
+    "displayName": "ODay Plus GitHub provider",
+    "name": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+    "oidc": {
+      "issuerUri": "https://token.actions.githubusercontent.com"
+    },
+    "state": "ACTIVE"
+  },
+  "deployer_service_account": {
+    "email": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "iam_policy": {
+      "bindings": [
+        {
+          "members": [
+            "principalSet://iam.googleapis.com/projects/767864276141/locations/global/workloadIdentityPools/github-actions/attribute.repository/alfloop-dev/odayplus"
+          ],
+          "role": "roles/iam.workloadIdentityUser"
+        }
+      ],
+      "etag": "BwZZ1EpvPoI=",
+      "version": 1
+    }
+  },
+  "artifact_registry_repositories": [
+    {
+      "createTime": "2026-08-25T00:35:33.651836Z",
+      "description": "ODay Plus dev release images",
+      "format": "DOCKER",
+      "mode": "STANDARD_REPOSITORY",
+      "name": "projects/odayplus-runtime-20260825/locations/asia-east1/repositories/oday-plus-dev",
+      "satisfiesPzi": true,
+      "sizeBytes": "2309259926",
+      "updateTime": "2026-08-25T13:43:39.072823Z",
+      "vulnerabilityScanningConfig": {
+        "enablementState": "SCANNING_DISABLED",
+        "enablementStateReason": "API containerscanning.googleapis.com is not enabled.",
+        "lastEnableTime": "2026-08-25T00:35:21.008587346Z"
+      }
+    }
+  ],
+  "secret_manager_secret_references": [
+    {
+      "name": "oday-plus-dev-api-database-url-pg16",
+      "resource_id": "projects/767864276141/secrets/oday-plus-dev-api-database-url-pg16",
+      "created_at": "2026-08-25T00:44:08.074834Z"
+    },
+    {
+      "name": "oday-plus-dev-auth-principal-map",
+      "resource_id": "projects/767864276141/secrets/oday-plus-dev-auth-principal-map",
+      "created_at": "2026-08-25T00:37:27.283590Z"
+    },
+    {
+      "name": "oday-plus-dev-mlflow-backend-uri",
+      "resource_id": "projects/767864276141/secrets/oday-plus-dev-mlflow-backend-uri",
+      "created_at": "2026-08-25T00:44:10.447736Z"
+    },
+    {
+      "name": "oday-plus-dev-web-session-secret",
+      "resource_id": "projects/767864276141/secrets/oday-plus-dev-web-session-secret",
+      "created_at": "2026-08-25T00:37:29.729836Z"
+    }
+  ]
+}

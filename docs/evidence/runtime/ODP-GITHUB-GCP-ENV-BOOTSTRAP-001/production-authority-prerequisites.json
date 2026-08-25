@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-GITHUB-GCP-ENV-BOOTSTRAP-001",
+  "status": "blocked_pending_human_authority",
+  "blocking_reason": "Production environment requires dedicated human governance decisions and infrastructure provisioning before live rollout (EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md \u00a716). Auto-worker must fail-closed and avoid fictitious placeholder values.",
+  "human_authority_checklist": [
+    {
+      "id": "PROD-GCP-01",
+      "category": "GCP Project & Resource Naming",
+      "requirement": "Dedicated production GCP Project ID (or formal signoff on shared project partitioning), region selection (e.g. asia-east1), and resource naming conventions.",
+      "status": "pending_human_decision"
+    },
+    {
+      "id": "PROD-GCP-02",
+      "category": "WIF & IAM Service Accounts",
+      "requirement": "Production Workload Identity Pool provider attribute mapping to repository alfloop-dev/odayplus, production deployer SA with least-privilege Cloud Run & Secret Manager bindings, and runtime/scheduler service accounts.",
+      "status": "pending_human_decision"
+    },
+    {
+      "id": "PROD-GCP-03",
+      "category": "Cloud SQL & Secret Manager",
+      "requirement": "Production Cloud SQL PostgreSQL 16 instance with private IP / Cloud SQL Auth proxy, dedicated Secret Manager secrets (ODAY_DATABASE_URL_SECRET, ODP_AUTH_PRINCIPAL_MAP_SECRET, ODP_WEB_SESSION_SECRET_SECRET, ODP_WEB_OIDC_CLIENT_SECRET_SECRET).",
+      "status": "pending_human_decision"
+    },
+    {
+      "id": "PROD-GCP-04",
+      "category": "Web OAuth Client & Domain URLs",
+      "requirement": "Google Auth Platform Web application OAuth 2.0 Client ID & Secret configured with production authorized redirect URIs and custom serving domains (ODP_PROD_DEPLOY_URL, ODP_PROD_API_URL).",
+      "status": "pending_human_decision"
+    },
+    {
+      "id": "PROD-OPS-05",
+      "category": "Operations & Incident Governance",
+      "requirement": "Production watch window duration, SLO and rollback latency/error thresholds, and designated rollback/on-call owner assignment.",
+      "status": "pending_human_decision"
+    }
+  ]
+}
