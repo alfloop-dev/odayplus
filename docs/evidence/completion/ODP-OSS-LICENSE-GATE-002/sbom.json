@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:sha256-4635727c66e9956390d972d875d54731",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-23T09:40:08.242845+00:00",
+    "timestamp": "2026-08-25T10:53:36.555122+00:00",
     "tools": [
       {
         "vendor": "ODay Plus",
@@ -16,13 +16,13 @@
       "name": "oday-plus",
       "version": "0.1.0",
       "type": "application",
-      "purl": "pkg:generic/alfloop-dev/odayplus@ca7b3c205d4cf4e12e167b654d677784ec4653f4",
-      "bom-ref": "pkg:generic/alfloop-dev/odayplus@ca7b3c205d4cf4e12e167b654d677784ec4653f4"
+      "purl": "pkg:generic/alfloop-dev/odayplus@c856c1f30529fdf59c5b64894ebcd8e364a6c667",
+      "bom-ref": "pkg:generic/alfloop-dev/odayplus@c856c1f30529fdf59c5b64894ebcd8e364a6c667"
     },
     "properties": [
       {
         "name": "git-sha",
-        "value": "ca7b3c205d4cf4e12e167b654d677784ec4653f4"
+        "value": "c856c1f30529fdf59c5b64894ebcd8e364a6c667"
       },
       {
         "name": "sbom-hash",
@@ -30,7 +30,7 @@
       },
       {
         "name": "sbom-content-digest",
-        "value": "sha256:c7900906e79b5b758332a74d9f4c02235fda28734bdd156c727701e9671e0c14"
+        "value": "sha256:5c240dca6d44af9ec58cee5dde68e51e8c0f6dfa052b925c1420b61e4574ee27"
       },
       {
         "name": "container-base-images",
@@ -18796,7 +18796,7 @@
   ],
   "dependencies": [
     {
-      "ref": "pkg:generic/alfloop-dev/odayplus@ca7b3c205d4cf4e12e167b654d677784ec4653f4",
+      "ref": "pkg:generic/alfloop-dev/odayplus@c856c1f30529fdf59c5b64894ebcd8e364a6c667",
       "dependsOn": [
         "pkg:pypi/catboost@1.2.10",
         "pkg:pypi/cryptography@48.0.1",
@@ -18806,6 +18806,7 @@
         "pkg:pypi/duckdb@1.5.4",
         "pkg:pypi/evidently@0.7.21",
         "pkg:pypi/fastapi@0.138.1",
+        "pkg:pypi/google-auth@2.56.2",
         "pkg:pypi/google-cloud-storage@3.13.0",
         "pkg:pypi/great-expectations@1.19.0",
         "pkg:pypi/h3@4.5.0",
@@ -21750,6 +21751,7 @@
         "pkg:pypi/duckdb@1.5.4",
         "pkg:pypi/evidently@0.7.21",
         "pkg:pypi/fastapi@0.138.1",
+        "pkg:pypi/google-auth@2.56.2",
         "pkg:pypi/google-cloud-storage@3.13.0",
         "pkg:pypi/great-expectations@1.19.0",
         "pkg:pypi/h3@4.5.0",
