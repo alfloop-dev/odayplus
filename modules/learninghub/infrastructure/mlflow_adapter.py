@@ -17,6 +17,7 @@ from ..runtime import (
     LearningHubRuntimeConfigurationError,
     learninghub_production_required,
 )
+from .mlflow_cloud_run_auth import configure_cloud_run_mlflow_auth
 from .repositories import InMemoryLearningHubRepository, LearningHubRepository
 
 if TYPE_CHECKING:
@@ -83,6 +84,10 @@ class MlflowRegistryAdapter:
         configured_uri = self.tracking_uri or os.getenv("MLFLOW_TRACKING_URI")
         if production_required:
             _require_remote_tracking_uri(configured_uri)
+            if configured_uri and (urlparse(configured_uri).hostname or "").endswith(
+                ".run.app"
+            ):
+                configure_cloud_run_mlflow_auth(tracking_uri=configured_uri)
         if self.client is None:
             from mlflow.tracking import MlflowClient
 
