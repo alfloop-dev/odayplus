@@ -26,3 +26,15 @@ Terraform variable files, Docker compose, or CLI plan outputs.
 The target lifecycle, release gates, ephemeral staging isolation, production
 blue-green rollout, and Supervisor/Auto Worker task DAG are defined in
 [`EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`](EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md).
+
+## Unified Single-Path Runtime Release Pipeline
+
+The system uses a single CI/CD release workflow entrypoint (`.github/workflows/deploy-dev.yml`, named `Runtime Release`) to orchestrate releases across all environments:
+
+1. **Admission Gate**: Authoritative verifier (`delivery_toolchain/release/check_runtime_admission.py`) checks the Ed25519-signed Supervisor release lease and staged gate registry (`RELEASE_GATE_REGISTRY.json`) for the requested environment (`dev`, `staging`, `production`).
+2. **Build Once**: A dedicated `build` job executes once per release candidate SHA, running secret scanning, SAST (Bandit), SBOM generation, and container image builds/Cosign signing. The output immutable digests are shared across all deployment targets.
+3. **Deploy by Digest**:
+   - **`dev`**: Deploys immutable digests, executes migrations, runs live preflight, Cloud Run Job validations, and live E2E gate.
+   - **`staging`**: Provisions short-lived ephemeral staging instance with isolated database schema, tenant partitioning, and masked snapshot; verifies migration compatibility and remote staging proof; cleans up on release completion or holds up to 24h for debugging on failure.
+   - **`production`**: Deploys green revisions (0% public traffic), validates green smoke and IAM bindings, atomistically promotes traffic to green (100%), updates Cloud Scheduler targets to green digests, and arms fail-closed rollback primitives.
+

@@ -7,7 +7,7 @@ on:
         description: "Release environment"
         required: true
         type: choice
-        options: [dev, staging]
+        options: [dev, staging, production]
       release_sha:
         description: "Exact 40-character commit SHA to release"
         required: true
@@ -91,34 +91,121 @@ jobs:
         if: always()
         run: rm -f "${RUNNER_TEMP}/release-lease.json"
 
-  e2e-operational-evidence:
+  build:
     needs: admission
     runs-on: ubuntu-latest
+    env:
+      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+      GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+      API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+      WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+      WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+      SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+      ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
+      IMAGE_TAG: release-${{ inputs.release_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
 
       - name: Assert exact release SHA is checked out
-        env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
         run: |
           set -euo pipefail
           head_sha="$(git rev-parse HEAD)"
-          if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
-            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
+          if [ "${head_sha}" != "${ODAY_RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match ODAY_RELEASE_SHA (${ODAY_RELEASE_SHA})." >&2
             exit 1
           fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Run Secret Scan
+        run: python3 delivery_toolchain/security/secret_scan.py
+
+      - name: Run Python SAST Scan
+        run: python3 delivery_toolchain/security/sast_scan.py
+
+      - name: Generate SBOM
+        run: python3 delivery_toolchain/security/generate_sbom.py
+
+      # The preflight's repository capability checks import the real provider
+      # registry (httpx and friends), so the locked project environment must
+      # exist before it runs. `--frozen` keeps the resolution pinned to uv.lock.
+      - name: Install locked project dependencies
+        run: uv sync --frozen
 
       - name: Run E2E deployment health, backup, restore, and rollback proof
         run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
 
+      - name: Authenticate to Google Cloud (WIF)
+        if: ${{ env.HAS_WIF == 'true' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        if: ${{ env.HAS_WIF == 'true' }}
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Build, publish, and sign immutable container images
+        if: ${{ env.HAS_WIF == 'true' }}
+        run: |
+          set -euo pipefail
+          REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
+          REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
+          gcloud auth configure-docker "${REGISTRY_HOST}" --quiet
+
+          build_and_sign() {
+            local name="$1"
+            local image="$2"
+            local dockerfile="$3"
+            echo "Building immutable ${name} image..."
+            docker build \
+              --platform linux/amd64 \
+              --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+              --label "com.oday-plus.data-binding=live" \
+              -t "${image}" \
+              -f "${dockerfile}" \
+              .
+            docker push "${image}"
+            cosign sign --yes "${image}"
+            CI=true ./delivery_toolchain/security/sign_images.sh verify "${image}"
+          }
+
+          build_and_sign "API" "${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}" "infra/docker/api.Dockerfile"
+          build_and_sign "worker" "${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}" "infra/docker/worker.Dockerfile"
+          build_and_sign "scheduler" "${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}" "infra/docker/scheduler.Dockerfile"
+
+          echo "Building and publishing Web image..."
+          docker build \
+            --platform linux/amd64 \
+            --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+            --label "com.oday-plus.data-binding=live" \
+            -t "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}" \
+            -f infra/docker/web.Dockerfile \
+            .
+          docker push "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+          cosign sign --yes "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+          CI=true ./delivery_toolchain/security/sign_images.sh verify "${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+
   deploy:
-    needs: e2e-operational-evidence
+    needs: [admission, build]
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
-      url: ${{ inputs.environment == 'staging' && vars.ODP_STAGING_DEPLOY_URL || vars.ODP_DEV_DEPLOY_URL }}
+      url: ${{ inputs.environment == 'production' && vars.ODP_PROD_DEPLOY_URL || (inputs.environment == 'staging' && vars.ODP_STAGING_DEPLOY_URL || vars.ODP_DEV_DEPLOY_URL) }}
     env:
       HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -178,6 +265,9 @@ jobs:
       ODP_STAGING_DEPLOY_URL: ${{ vars.ODP_STAGING_DEPLOY_URL }}
       ODP_STAGING_API_URL: ${{ vars.ODP_STAGING_API_URL }}
       ODP_STAGING_SECRET_OWNER: ${{ vars.ODP_STAGING_SECRET_OWNER }}
+      ODP_PROD_DEPLOY_URL: ${{ vars.ODP_PROD_DEPLOY_URL }}
+      ODP_PROD_API_URL: ${{ vars.ODP_PROD_API_URL }}
+      ODP_DEPLOY_BY_DIGEST: "true"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -199,15 +289,6 @@ jobs:
 
       - name: Set up Python
         run: uv python install 3.12
-
-      - name: Run Secret Scan
-        run: python3 delivery_toolchain/security/secret_scan.py
-
-      - name: Run Python SAST Scan
-        run: python3 delivery_toolchain/security/sast_scan.py
-
-      - name: Generate SBOM
-        run: python3 delivery_toolchain/security/generate_sbom.py
 
       # The preflight's repository capability checks import the real provider
       # registry (httpx and friends), so the locked project environment must
@@ -239,9 +320,10 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Build, push, deploy, and verify Cloud Run
+      - name: Deploy Cloud Run by digest
         env:
-          IMAGE_TAG: ${{ inputs.environment }}-${{ inputs.release_sha }}
+          IMAGE_TAG: release-${{ inputs.release_sha }}
+          ODP_DEPLOY_BY_DIGEST: "true"
         run: ./product_ops/deployment/deploy_cloud_run_waji.sh
 
       - name: Verify configured staging authority endpoint
@@ -255,6 +337,18 @@ jobs:
             --expected-sha "$ODAY_RELEASE_SHA" \
             --correlation-id "corr-staging-${GITHUB_RUN_ID}" \
             --output ".odp_data/remote-staging-proof/staging-${GITHUB_RUN_ID}.json"
+
+      - name: Verify production blue-green deployment state
+        if: ${{ inputs.environment == 'production' }}
+        run: |
+          python3 product_ops/deployment/bluegreen_release.py capture-state \
+            --release-id "odp-${ODAY_RELEASE_SHA:0:12}" \
+            --api-service "${API_SERVICE}" \
+            --web-service "${WEB_SERVICE}" \
+            --project "${GCP_PROJECT}" \
+            --region "${GCP_REGION}" \
+            --output-state-file "${RUNNER_TEMP}/prod-bluegreen-state.json" \
+            --dry-run
 
       - name: Upload deployment validation reports
         if: always()

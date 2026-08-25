@@ -218,6 +218,10 @@ build_publish_sign() {
   local name="$1"
   local image="$2"
   local dockerfile="$3"
+  if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
+    echo "Deploy-by-digest: skipping build for ${name} image (${image})."
+    return 0
+  fi
   echo "Building and publishing ${name} image..."
   docker build \
     --platform linux/amd64 \
@@ -517,23 +521,27 @@ payload = {
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 
-echo "Building and publishing Web image..."
-docker build \
-  --platform linux/amd64 \
-  --build-arg "ODP_API_BASE_URL=${API_URL}" \
-  --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
-  --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
-  --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
-  --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
-  --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
-  --label "com.oday-plus.data-binding=live" \
-  -t "${WEB_IMAGE}" \
-  -f infra/docker/web.Dockerfile \
-  .
-docker push "${WEB_IMAGE}"
+if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
+  echo "Deploy-by-digest: skipping build for Web image (${WEB_IMAGE})."
+else
+  echo "Building and publishing Web image..."
+  docker build \
+    --platform linux/amd64 \
+    --build-arg "ODP_API_BASE_URL=${API_URL}" \
+    --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
+    --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
+    --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
+    --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
+    --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+    --label "com.oday-plus.data-binding=live" \
+    -t "${WEB_IMAGE}" \
+    -f infra/docker/web.Dockerfile \
+    .
+  docker push "${WEB_IMAGE}"
 
-cosign sign --yes "${WEB_IMAGE}"
-CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
+  cosign sign --yes "${WEB_IMAGE}"
+  CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
+fi
 
 echo "Deploying immutable Web candidate without production traffic..."
 gcloud run deploy "${WEB_SERVICE}" \

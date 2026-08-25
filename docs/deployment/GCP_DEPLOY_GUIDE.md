@@ -62,15 +62,19 @@ If the deployment runs and WIF variables (`GCP_WORKLOAD_IDENTITY_PROVIDER` and `
 
 ## Deployment Process Details
 
-1. **Build & Deploy API (`oday-api`)**:
-   - The API docker image is built using `infra/docker/api.Dockerfile` for the `linux/amd64` platform.
-   - The image is pushed to Artifact Registry: `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/oday-api:dev-<sha>`
-   - The service is deployed to Cloud Run with `ODP_ENV=dev`.
-2. **Build & Deploy Web (`oday-web`)**:
-   - The API Cloud Run URL is retrieved.
-   - The Web docker image is built using `infra/docker/web.Dockerfile`, baking the retrieved API URL into Next.js configuration using the `ODP_API_BASE_URL` build argument.
-   - The image is pushed to Artifact Registry: `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/oday-web:dev-<sha>`
-   - The service is deployed to Cloud Run.
-3. **Automated Smoke Checks**:
-   - Verify API `/health` returns `200`.
-   - Verify Web `/operator` returns `200`.
+1. **Build Once (`build` job)**:
+   - Container images for API (`infra/docker/api.Dockerfile`), Worker (`infra/docker/worker.Dockerfile`), Scheduler (`infra/docker/scheduler.Dockerfile`), and Web (`infra/docker/web.Dockerfile`) are built for `linux/amd64` using the exact release SHA.
+   - Images are pushed to Artifact Registry: `${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/<service>:release-<sha>`
+   - Images are signed with Cosign and verified against OCI signatures.
+   - Secret scan, SAST (Bandit), SBOM generation, and baseline E2E backup/restore proofs run in the build stage.
+
+2. **Deploy-by-Digest (`deploy` job)**:
+   - Deploys pre-built immutable image digests without rebuilding.
+   - For `dev`: Deploys API/Web services, Migration/Worker/Scheduler jobs, updates scheduler triggers, and runs live E2E acceptance gate.
+   - For `staging`: Provisions ephemeral staging with release-scoped isolation and validates remote staging proof.
+   - For `production`: Deploys green candidate revisions (0% public traffic), executes green smoke checks, executes blue→green 100% traffic switch via `product_ops/deployment/bluegreen_release.py`, and updates scheduler trigger digests.
+
+3. **Automated Smoke Checks & Receipts**:
+   - Verify API authenticated health checks.
+   - Verify Web operator console loads and authentication flows succeed.
+   - Redacted JSON validation receipts are published as workflow artifacts (`runtime-release-${environment}-validation`).

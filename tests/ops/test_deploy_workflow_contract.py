@@ -544,3 +544,58 @@ def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:
     assert len(checkout_steps) == 1
     assert checkout_steps[0].get("with", {}).get("fetch-depth") == 0
 
+
+def test_environment_inputs_support_dev_staging_production() -> None:
+    """The unified Runtime Release workflow must support dev, staging, and production."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    on_block = parsed.get("on") or parsed.get(True)
+    env_input = on_block["workflow_dispatch"]["inputs"]["environment"]
+    assert env_input["type"] == "choice"
+    assert set(env_input["options"]) == {"dev", "staging", "production"}
+
+
+def test_build_once_job_exists_and_precedes_deploy() -> None:
+    """A single build job must run once and precede the deploy job."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    jobs = parsed["jobs"]
+    assert "build" in jobs
+    assert "deploy" in jobs
+    deploy_needs = jobs["deploy"].get("needs", [])
+    if isinstance(deploy_needs, str):
+        deploy_needs = [deploy_needs]
+    assert "build" in deploy_needs
+
+    # Build job must perform secret scan, SAST scan, SBOM, and E2E operational proof
+    build_steps = jobs["build"]["steps"]
+    build_runs = [
+        step.get("run", "")
+        for step in build_steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+    assert any("secret_scan.py" in run for run in build_runs)
+    assert any("sast_scan.py" in run for run in build_runs)
+    assert any("generate_sbom.py" in run for run in build_runs)
+    assert any("verify_deployment_health_backup_rollback.py" in run for run in build_runs)
+
+
+def test_deploy_job_configures_deploy_by_digest() -> None:
+    """Deploy job must deploy by digest without rebuilding."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_env = parsed["jobs"]["deploy"]["env"]
+    assert deploy_env.get("ODP_DEPLOY_BY_DIGEST") == "true"
+
+
+def test_production_bluegreen_verification_gated_on_production_environment() -> None:
+    """Production blue-green verification runs in deploy job when environment is production."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    prod_steps = [
+        step
+        for step in deploy_steps
+        if isinstance(step, dict) and "bluegreen_release.py" in str(step.get("run", ""))
+    ]
+    assert len(prod_steps) == 1
+    step = prod_steps[0]
+    assert step.get("if") == "${{ inputs.environment == 'production' }}"
+
+
