@@ -28,7 +28,7 @@ gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup
 python3 delivery_toolchain/e2e/check_product_release_gate.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/check_product_closeout_action_matrix.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply
-python3 delivery_toolchain/e2e/check_release_fleet_dispatch_status.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py
 python3 delivery_toolchain/e2e/check_product_closeout_action.py --task <task-id> --actor <actor> --action-type <action-type>
 python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 ```
@@ -68,7 +68,7 @@ Human/Ops lifecycle action:
 ```bash
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply
 python3 delivery_toolchain/e2e/check_product_closeout_fleet_notification.py
-python3 delivery_toolchain/e2e/check_release_fleet_dispatch_status.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py
 ```
 
 ## Completed Closeouts

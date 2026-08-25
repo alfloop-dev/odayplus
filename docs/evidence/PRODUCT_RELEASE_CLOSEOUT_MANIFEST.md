@@ -51,7 +51,7 @@ The authoritative release target is draft release PR #82. Use PR #82
 | `ODP-FE-ASSET-001` | `waiting_for_review_after_handoff` | Codex2 | Review Asset/NetPlan evidence after Claude owner handoff | reviewer_status_closeout |
 | `ODP-FE-XCUT-DOMAIN-001` | `review_approved` | Claude | Finalize owner closeout to `done` after accepted `packages/ui-domain` export evidence | owner_status_closeout |
 | PR #82 | draft/open | Human/Ops and release owner | Keep draft until Human/Ops signoff and rollout target decision are recorded | release workflow |
-| External provider & staging readiness | `external_blocked` | Platform/Ops, Data Partnerships, Legal, Product Validation | Fulfill source activation receipts and ephemeral staging validation per `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md` before live provider or staging readiness | external proof closeout |
+| External provider & staging readiness | `external_blocked` | Platform/Ops, Data Partnerships, Legal, Product Validation | Fulfill source activation receipts and ephemeral staging validation per `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md` before live provider or staging readiness | provider_activation_staging_readiness |
 
 ## Completed Closeouts
 
@@ -92,10 +92,10 @@ Note: table blocking types use canonical queue values. The older prose labels
 - Run `python3 delivery_toolchain/e2e/check_product_closeout_fleet_notification.py`
   before owner/reviewer/Human-Ops lifecycle commands; PR #82 must have a
   product closeout fleet update for the current release target.
-- Run `python3 delivery_toolchain/e2e/check_release_fleet_dispatch_status.py` after
+- Run `python3 delivery_toolchain/e2e/check_product_release_gate.py` after
   refreshing issue and PR comments; this is the aggregate proof that the
-  current release candidate has been dispatched to external-proof and closeout
-  fleets with live GitHub surfaces synchronized.
+  current release candidate satisfies the single-path Runtime Release gate
+  with provider-activation receipts and ephemeral staging readiness verified.
 - Do not close reviewer-owned lanes by changing `ai-status.json` from an
   unassigned actor; use the named owner/reviewer lifecycle.
 - Do not run final `done` closeout from a thin or stale `main` checkout. Owner

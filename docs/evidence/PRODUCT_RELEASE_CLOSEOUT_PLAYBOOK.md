@@ -34,7 +34,7 @@ python3 -m pytest tests/e2e/test_frontend_execution_matrix_coverage.py
 python3 delivery_toolchain/e2e/check_product_release_gate.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/check_product_closeout_action_matrix.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/sync_product_closeout_fleet_comment.py --release-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)" --apply
-python3 delivery_toolchain/e2e/check_release_fleet_dispatch_status.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/check_product_closeout_action.py --task <task-id> --actor <Reviewer> --action-type reviewer_approve_or_reopen
 ```
 
@@ -70,7 +70,7 @@ git fetch origin dev
 gh pr view 82 --json headRefOid,isDraft,state,mergeStateStatus,statusCheckRollup,url
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/check_product_closeout_action_matrix.py
 python3 delivery_toolchain/e2e/check_product_closeout_fleet_notification.py
-python3 delivery_toolchain/e2e/check_release_fleet_dispatch_status.py
+python3 delivery_toolchain/e2e/check_product_release_gate.py
 PANTHEON_STATUS_ROOT=/home/lupin/oday-plus python3 delivery_toolchain/e2e/check_product_closeout_action.py --task <task-id> --actor <Owner> --action-type owner_done
 AI_NAME=<Owner> python3 scripts/ai_status.py done <task-id> "<finalization message>"
 ```
