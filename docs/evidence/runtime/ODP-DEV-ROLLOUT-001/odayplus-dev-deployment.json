@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "subsystem": "oday_plus",
+  "environment": "dev",
+  "release_id": "odp-20260730-001",
+  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "runtime_targets": {
+    "gcp_project_id": "odayplus-runtime-20260825",
+    "gcp_region": "asia-east1",
+    "gcp_ar_repo": "oday-plus-dev",
+    "gcp_cloud_sql_instance": "odayplus-runtime-20260825:asia-east1:oday-plus-dev-pg16",
+    "wif_provider": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+    "deployer_service_account": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+    "runtime_service_account": "oday-plus-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com"
+  },
+  "deployed_services_and_jobs": {
+    "api": {
+      "service_name": "oday-plus-dev-api",
+      "image_reference": "ghcr.io/alfloop-dev/odayplus-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "status": "READY",
+      "traffic_percent": 100
+    },
+    "web": {
+      "service_name": "oday-plus-dev-web",
+      "image_reference": "ghcr.io/alfloop-dev/odayplus-web@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "status": "READY",
+      "traffic_percent": 100
+    },
+    "migration": {
+      "job_name": "oday-plus-dev-migration",
+      "image_reference": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "status": "SUCCEEDED"
+    },
+    "worker": {
+      "job_name": "oday-plus-dev-worker",
+      "image_reference": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "schedule_name": "oday-plus-dev-worker-trigger",
+      "cron": "*/15 * * * *",
+      "status": "READY"
+    },
+    "scheduler": {
+      "job_name": "oday-plus-dev-scheduler",
+      "image_reference": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "schedule_name": "oday-plus-dev-scheduler-trigger",
+      "cron": "0 * * * *",
+      "time_zone": "Asia/Taipei",
+      "status": "READY"
+    }
+  },
+  "secret_values_redacted": true,
+  "secret_references": {
+    "ODAY_DATABASE_URL_SECRET": "oday-plus-dev-api-database-url-pg16",
+    "ODP_AUTH_PRINCIPAL_MAP_SECRET": "oday-plus-dev-auth-principal-map",
+    "ODP_WEB_SESSION_SECRET_SECRET": "oday-plus-dev-web-session-secret",
+    "ODP_WEB_OIDC_CLIENT_SECRET_SECRET": "oday-plus-dev-web-oidc-client-secret"
+  },
+  "verified_at": "2026-08-25T16:45:00Z",
+  "verified_by": "Antigravity3"
+}

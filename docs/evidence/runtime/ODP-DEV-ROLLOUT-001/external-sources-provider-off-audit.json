@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "title": "16 個第三方與外部資料來源預設關閉與 Default-Deny Egress 查核報告",
+  "environment": "dev",
+  "stage": "dev-verified",
+  "release_id": "odp-20260730-001",
+  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "manifest_expected_enabled": [],
+  "external_sources_expected_enabled_count": 0,
+  "total_sources_audited": 16,
+  "all_sources_disabled": true,
+  "zero_credentials_present": true,
+  "default_deny_egress_enforced": true,
+  "sources_inventory": [
+    {
+      "index": 1,
+      "source_id": "store_master_snapshot",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 2,
+      "source_id": "machine_master_snapshot",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 3,
+      "source_id": "machine_cycle_event",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 4,
+      "source_id": "machine_status_event",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 5,
+      "source_id": "transaction_event",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 6,
+      "source_id": "price_schedule_snapshot",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 7,
+      "source_id": "maintenance_work_order_event",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 8,
+      "source_id": "customer_service_case_event",
+      "category": "internal_operational",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 9,
+      "source_id": "poi_snapshot",
+      "provider_id": "poi.commercial_api",
+      "category": "external_enrichment",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 10,
+      "source_id": "geocode_result_snapshot",
+      "provider_id": "geocode.primary_api",
+      "category": "external_enrichment",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 11,
+      "source_id": "admin_boundary_snapshot",
+      "provider_id": "admin_boundary.official_dataset",
+      "category": "external_enrichment",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 12,
+      "source_id": "listing_raw_snapshot",
+      "provider_id": "listing.partner_feed",
+      "category": "external_feed",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 13,
+      "source_id": "competitor_store_snapshot",
+      "provider_id": "competitor.manual_source",
+      "category": "external_manual",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 14,
+      "source_id": "demographics_snapshot",
+      "category": "external_public_dataset",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 15,
+      "source_id": "weather_daily_snapshot",
+      "category": "external_public_dataset",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    },
+    {
+      "index": 16,
+      "source_id": "store_opening_authority_snapshot",
+      "provider_id": "store_opening_authority",
+      "category": "external_registry",
+      "status": "disabled",
+      "credentials_present": false,
+      "public_egress": "denied"
+    }
+  ],
+  "governance_note": "未取得逐來源授權收據前，所有來源保持 disabled 且無 credentials/egress。逐來源啟用屬於獨立之法律與營運核准流程。",
+  "verified_at": "2026-08-25T16:45:00Z",
+  "verified_by": "Antigravity3"
+}

@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "environment": "dev",
+  "stage": "dev-verified",
+  "release_id": "odp-20260730-001",
+  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+  "readback_status": "PASSED",
+  "reports": {
+    "cloud_run_preflight": {
+      "path": ".odp_data/deployment/cloud-run-preflight.json",
+      "status": "passed",
+      "checks_passed": [
+        "config:GCP_PROJECT",
+        "config:GCP_REGION",
+        "config:GCP_AR_REPO",
+        "config:API_SERVICE",
+        "config:WEB_SERVICE",
+        "config:MIGRATION_JOB",
+        "config:WORKER_JOB",
+        "config:SCHEDULER_JOB",
+        "secret-reference:ODAY_DATABASE_URL_SECRET",
+        "secret-reference:ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "secret-reference:ODP_WEB_SESSION_SECRET_SECRET",
+        "secret-reference:ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+        "runtime:ODP_REQUIRE_LIVE_DATA",
+        "runtime:ODP_DATA_BINDING_MODE",
+        "runtime:ODP_PRODUCT_MODE",
+        "repository:operator_bootstrap_data_source",
+        "repository:operator_production_wiring",
+        "repository:operator_fixture_wiring_blocked",
+        "repository:operator_tenant_scope_fail_closed",
+        "repository:operator_live_probe_contract"
+      ]
+    },
+    "cloud_run_smoke": {
+      "path": ".odp_data/deployment/cloud-run-smoke.json",
+      "status": "passed",
+      "endpoints_verified": [
+        "/health",
+        "/ready",
+        "/api/v1/openapi.json",
+        "/api/v1/health/data-mode",
+        "/api/v1/operator/intake/overview",
+        "/api/v1/operator/intake/submissions"
+      ],
+      "rbac_smoke_authenticated": true
+    },
+    "migration_compatibility": {
+      "path": ".odp_data/deployment/cloud-run-migration-compatibility.json",
+      "status": "passed",
+      "expand_schema_compatible": true,
+      "alembic_heads_verified": true,
+      "assisted_intake_001_to_004_verified": true
+    },
+    "jobs_validation": {
+      "migration_job": {
+        "path": ".odp_data/deployment/cloud-run-jobs/migration-validation.json",
+        "status": "passed",
+        "execution_state": "SUCCEEDED"
+      },
+      "worker_job": {
+        "path": ".odp_data/deployment/cloud-run-jobs/worker-validation.json",
+        "status": "passed",
+        "execution_state": "SUCCEEDED"
+      },
+      "scheduler_job": {
+        "path": ".odp_data/deployment/cloud-run-jobs/scheduler-validation.json",
+        "status": "passed",
+        "execution_state": "SUCCEEDED"
+      }
+    },
+    "live_e2e_gate": {
+      "path": ".odp_data/deployment/live-e2e-gate.json",
+      "status": "passed",
+      "flows_verified": [
+        "assisted_listing_intake_lifecycle",
+        "canonical_data_contract_conformance",
+        "operator_console_rbac_audit"
+      ]
+    }
+  },
+  "secret_values_redacted": true,
+  "verified_at": "2026-08-25T16:45:00Z",
+  "verified_by": "Antigravity3"
+}

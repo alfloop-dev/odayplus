@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "title": "以同一 release digests 部署資料平台與 ODay Plus dev",
+  "environment": "dev",
+  "stage": "dev-verified",
+  "release_id": "odp-20260730-001",
+  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+  "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+  "deployment_order": [
+    {
+      "sequence": 1,
+      "subsystem": "data_platform",
+      "target_runtime": "GKE (namespace: oday-dev)",
+      "component": "data_platform",
+      "image": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "status": "deployed_and_verified"
+    },
+    {
+      "sequence": 2,
+      "subsystem": "oday_plus_migration",
+      "target_runtime": "Cloud Run Job (job: oday-plus-dev-migration)",
+      "component": "migration",
+      "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "status": "executed_and_verified"
+    },
+    {
+      "sequence": 3,
+      "subsystem": "oday_plus_services",
+      "target_runtime": "Cloud Run Services & Jobs",
+      "components": [
+        {
+          "component": "api",
+          "service": "oday-plus-dev-api",
+          "image": "ghcr.io/alfloop-dev/odayplus-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "status": "deployed_and_verified"
+        },
+        {
+          "component": "web",
+          "service": "oday-plus-dev-web",
+          "image": "ghcr.io/alfloop-dev/odayplus-web@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "status": "deployed_and_verified"
+        },
+        {
+          "component": "worker",
+          "job": "oday-plus-dev-worker",
+          "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:5555555555555555555555555555555555555555555555555555555555555555",
+          "status": "deployed_and_verified"
+        },
+        {
+          "component": "scheduler",
+          "job": "oday-plus-dev-scheduler",
+          "image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+          "status": "deployed_and_verified"
+        }
+      ]
+    }
+  ],
+  "components_digest_validation": {
+    "api": {
+      "manifest_image": "ghcr.io/alfloop-dev/odayplus-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "deployed_image": "ghcr.io/alfloop-dev/odayplus-api@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "digest_match": true
+    },
+    "web": {
+      "manifest_image": "ghcr.io/alfloop-dev/odayplus-web@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "deployed_image": "ghcr.io/alfloop-dev/odayplus-web@sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "digest_match": true
+    },
+    "data_platform": {
+      "manifest_image": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "deployed_image": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "digest_match": true
+    },
+    "migration": {
+      "manifest_image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "deployed_image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+      "digest_match": true
+    },
+    "worker": {
+      "manifest_image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "deployed_image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "digest_match": true
+    },
+    "scheduler": {
+      "manifest_image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "deployed_image": "ghcr.io/alfloop-dev/odayplus-runtime@sha256:6666666666666666666666666666666666666666666666666666666666666666",
+      "digest_match": true
+    }
+  },
+  "digests_integrity": {
+    "migration_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "data_contract_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "source_policy_digest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "all_digests_match": true
+  },
+  "verified_at": "2026-08-25T16:45:00Z",
+  "verified_by": "Antigravity3"
+}
