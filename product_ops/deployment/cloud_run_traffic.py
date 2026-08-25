@@ -16,7 +16,32 @@ def _read_description(path: Path) -> dict[str, Any]:
     return payload
 
 
+def is_present(description: dict[str, Any]) -> bool:
+    """Return whether a captured service existed before the release.
+
+    Historical snapshots are raw ``gcloud run services describe`` payloads,
+    so the absence marker is deliberately opt-in.  This keeps every existing
+    rollback receipt valid while giving a first deployment an explicit state.
+    """
+
+    return description.get("exists") is not False
+
+
+def absent_snapshot(service: str) -> dict[str, Any]:
+    service = service.strip()
+    if not service:
+        raise ValueError("absent Cloud Run snapshot requires a service name")
+    return {
+        "schema_version": 1,
+        "kind": "cloud-run-service-traffic-snapshot",
+        "exists": False,
+        "service": service,
+    }
+
+
 def service_url(description: dict[str, Any]) -> str:
+    if not is_present(description):
+        return ""
     status = description.get("status")
     if not isinstance(status, dict):
         raise ValueError("Cloud Run service description is missing status")
@@ -82,13 +107,33 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "command",
-        choices=("service-url", "tagged-revision", "tagged-url", "restore-arg"),
+        choices=(
+            "exists",
+            "service-url",
+            "tagged-revision",
+            "tagged-url",
+            "restore-arg",
+            "write-absent",
+        ),
     )
     parser.add_argument("--description", required=True, type=Path)
+    parser.add_argument("--service")
     parser.add_argument("--tag")
     args = parser.parse_args()
 
+    if args.command == "write-absent":
+        if not args.service:
+            parser.error("--service is required for write-absent")
+        args.description.write_text(
+            json.dumps(absent_snapshot(args.service), sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return 0
+
     description = _read_description(args.description)
+    if args.command == "exists":
+        print("true" if is_present(description) else "false")
+        return 0
     if args.command == "service-url":
         print(service_url(description))
         return 0

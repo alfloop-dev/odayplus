@@ -358,6 +358,17 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
 # gate closed, before any candidate traffic and with the rollback trap armed.
 run_migration_compatibility_gate() {
   execute_job "migration" "${MIGRATION_CANDIDATE_JOB}"
+  if [ -z "${OLD_API_URL}" ] && [ -z "${OLD_WEB_URL}" ]; then
+    run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py bootstrap-compatibility \
+      --environment "${ODP_DEPLOY_ENV}" \
+      --release-sha "${ODAY_RELEASE_SHA}" \
+      --output "${MIGRATION_COMPAT_REPORT}"
+    return
+  fi
+  if [ -z "${OLD_API_URL}" ] || [ -z "${OLD_WEB_URL}" ]; then
+    echo "Error: bootstrap state is inconsistent; API and Web must both exist or both be absent." >&2
+    return 1
+  fi
   run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py compatibility-smoke \
     --api-url "${OLD_API_URL}" \
     --web-url "${OLD_WEB_URL}" \
