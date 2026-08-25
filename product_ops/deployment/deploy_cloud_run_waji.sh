@@ -82,7 +82,6 @@ run_locked_python product_ops/deployment/validate_cloud_run_live_deployment.py p
   --output "${PREFLIGHT_REPORT}"
 
 # No build, push, or Cloud Run mutation may occur above this line.
-IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
 REVISION_SUFFIX="release-${ODAY_RELEASE_SHA:0:12}"
 API_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
 WEB_REVISION_TAG="candidate-${ODAY_RELEASE_SHA:0:16}"
@@ -97,10 +96,24 @@ WORKER_CANDIDATE_JOB="$(release_job_name "${WORKER_JOB}")"
 SCHEDULER_CANDIDATE_JOB="$(release_job_name "${SCHEDULER_JOB}")"
 REGISTRY_HOST="${GCP_REGION}-docker.pkg.dev"
 REPO_PATH="${REGISTRY_HOST}/${GCP_PROJECT}/${GCP_AR_REPO}"
-API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
-WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
-WORKER_IMAGE="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
-SCHEDULER_IMAGE="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
+if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ]; then
+  : "${API_IMAGE:?Error: API_IMAGE is required for deploy-by-digest.}"
+  : "${WEB_IMAGE:?Error: WEB_IMAGE is required for deploy-by-digest.}"
+  : "${WORKER_IMAGE:?Error: WORKER_IMAGE is required for deploy-by-digest.}"
+  : "${SCHEDULER_IMAGE:?Error: SCHEDULER_IMAGE is required for deploy-by-digest.}"
+  for image in "${API_IMAGE}" "${WEB_IMAGE}" "${WORKER_IMAGE}" "${SCHEDULER_IMAGE}"; do
+    if [[ ! "${image}" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+      echo "Error: deploy-by-digest requires immutable image reference, got '${image}'." >&2
+      exit 1
+    fi
+  done
+else
+  IMAGE_TAG="${IMAGE_TAG:-${ODP_DEPLOY_ENV}-${ODAY_RELEASE_SHA}}"
+  API_IMAGE="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
+  WEB_IMAGE="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
+  WORKER_IMAGE="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
+  SCHEDULER_IMAGE="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
+fi
 
 echo "Deployment details:"
 echo "  Environment:      ${ODP_DEPLOY_ENV}"
@@ -218,6 +231,10 @@ build_publish_sign() {
   local name="$1"
   local image="$2"
   local dockerfile="$3"
+  if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
+    echo "Deploy-by-digest: skipping build for ${name} image (${image})."
+    return 0
+  fi
   echo "Building and publishing ${name} image..."
   docker build \
     --platform linux/amd64 \
@@ -517,23 +534,27 @@ payload = {
 json.dump(payload, open(sys.argv[1], "w", encoding="utf-8"), sort_keys=True)
 PY
 
-echo "Building and publishing Web image..."
-docker build \
-  --platform linux/amd64 \
-  --build-arg "ODP_API_BASE_URL=${API_URL}" \
-  --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
-  --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
-  --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
-  --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
-  --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
-  --label "com.oday-plus.data-binding=live" \
-  -t "${WEB_IMAGE}" \
-  -f infra/docker/web.Dockerfile \
-  .
-docker push "${WEB_IMAGE}"
+if [ "${ODP_DEPLOY_BY_DIGEST:-false}" = "true" ] || [ "${ODP_SKIP_BUILD:-false}" = "true" ]; then
+  echo "Deploy-by-digest: skipping build for Web image (${WEB_IMAGE})."
+else
+  echo "Building and publishing Web image..."
+  docker build \
+    --platform linux/amd64 \
+    --build-arg "ODP_API_BASE_URL=${API_URL}" \
+    --build-arg "ODAY_RELEASE_SHA=${ODAY_RELEASE_SHA}" \
+    --build-arg "ODP_REQUIRE_LIVE_DATA=${ODP_REQUIRE_LIVE_DATA}" \
+    --build-arg "ODP_DATA_BINDING_MODE=${ODP_DATA_BINDING_MODE}" \
+    --build-arg "ODP_PRODUCT_MODE=${ODP_PRODUCT_MODE}" \
+    --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+    --label "com.oday-plus.data-binding=live" \
+    -t "${WEB_IMAGE}" \
+    -f infra/docker/web.Dockerfile \
+    .
+  docker push "${WEB_IMAGE}"
 
-cosign sign --yes "${WEB_IMAGE}"
-CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
+  cosign sign --yes "${WEB_IMAGE}"
+  CI=true ./delivery_toolchain/security/sign_images.sh verify "${WEB_IMAGE}"
+fi
 
 echo "Deploying immutable Web candidate without production traffic..."
 gcloud run deploy "${WEB_SERVICE}" \

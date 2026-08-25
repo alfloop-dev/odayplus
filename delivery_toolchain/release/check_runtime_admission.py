@@ -86,10 +86,9 @@ from delivery_toolchain.release.release_manifest import load_manifest  # noqa: E
 DEFAULT_REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 DEFAULT_MANIFEST = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
 
-# The Runtime Release workflow deploys dev and ephemeral staging. Production
-# goes through the blue-green path, which is a different admission target and
-# is not reachable from this entrypoint.
-DEPLOYABLE_ENVIRONMENTS = ("dev", "staging")
+# The unified Runtime Release workflow deploys dev, ephemeral staging, and
+# production via single-path staged state machine.
+DEPLOYABLE_ENVIRONMENTS = ("dev", "staging", "production")
 PASSING_RECEIPT_RESULT = "pass"
 NOT_APPLICABLE_STATUS = "not-applicable"
 VERIFIER_NAME = "delivery_toolchain/release/check_runtime_admission.py"
@@ -106,10 +105,8 @@ def registry_admission_errors(
 ) -> list[str]:
     """Return why the staged gate registry does not admit *environment*.
 
-    `allowed_environments` narrows which targets the caller may ask about. The
-    Runtime Release workflow can only reach dev and staging; the Supervisor
-    issuer widens it so a production lease is refused by the gate stage rather
-    than by the entrypoint.
+    `allowed_environments` specifies the deployable environments admitted by
+    the Runtime Release workflow (dev, staging, production).
     """
 
     errors: list[str] = []

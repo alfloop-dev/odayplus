@@ -379,12 +379,22 @@ def test_no_go_is_blocked_even_when_all_receipts_exist() -> None:
     assert any("expected 'go'" in error for error in errors)
 
 
-def test_production_is_not_reachable_from_this_entrypoint() -> None:
+def test_production_is_admitted_when_staging_verified() -> None:
     registry = build_registry(
         stage="staging-verified", environment="staging", admission_target="production"
     )
+    for gate in registry["gates"]:
+        gate["stage"] = "staging-verified"
+        gate["environment"] = "staging"
+        gate["admission_target"] = "production"
     errors = registry_admission_errors(registry, **kwargs(environment="production"))
-    assert "environment must be one of ['dev', 'staging']" in errors
+    assert errors == []
+
+
+def test_invalid_environment_is_rejected() -> None:
+    registry = build_registry()
+    errors = registry_admission_errors(registry, **kwargs(environment="sandbox"))
+    assert "environment must be one of ['dev', 'staging', 'production']" in errors
 
 
 def test_gate_count_must_equal_seven() -> None:
@@ -466,7 +476,7 @@ def test_sha_mismatch_is_blocked() -> None:
 
 def test_invalid_environment_is_blocked() -> None:
     errors = registry_admission_errors(build_registry(), **kwargs(environment="wherever"))
-    assert "environment must be one of ['dev', 'staging']" in errors
+    assert "environment must be one of ['dev', 'staging', 'production']" in errors
 
 
 # --------------------------------------------------------------------------
