@@ -9,6 +9,22 @@ ODP_SCHEDULER_HELPER="${ODP_SCHEDULER_HELPER:-product_ops/deployment/cloud_sched
 capture_service_traffic() {
   local service="$1"
   local output="$2"
+  local existing
+  existing="$(gcloud run services list \
+    --region="${GCP_REGION}" \
+    --project="${GCP_PROJECT}" \
+    --filter="metadata.name=${service}" \
+    --format='value(metadata.name)')" || return 1
+  if [ -z "${existing}" ]; then
+    python3 "${ODP_TRAFFIC_HELPER}" write-absent \
+      --description="${output}" \
+      --service="${service}"
+    return
+  fi
+  if [ "${existing}" != "${service}" ]; then
+    echo "Error: Cloud Run service lookup for '${service}' was ambiguous: ${existing}" >&2
+    return 1
+  fi
   gcloud run services describe "${service}" \
     --region="${GCP_REGION}" \
     --project="${GCP_PROJECT}" \
@@ -19,6 +35,10 @@ capture_service_traffic() {
 
 service_snapshot_url() {
   local snapshot="$1"
+  if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then
+    printf ''
+    return
+  fi
   python3 "${ODP_TRAFFIC_HELPER}" service-url --description="${snapshot}"
 }
 
@@ -52,6 +72,27 @@ promote_service_traffic() {
 restore_service_traffic() {
   local service="$1"
   local snapshot="$2"
+  if [ "$(python3 "${ODP_TRAFFIC_HELPER}" exists --description="${snapshot}")" != "true" ]; then
+    local existing
+    existing="$(gcloud run services list \
+      --region="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" \
+      --filter="metadata.name=${service}" \
+      --format='value(metadata.name)')" || return 1
+    if [ -z "${existing}" ]; then
+      return 0
+    fi
+    if [ "${existing}" != "${service}" ]; then
+      echo "Error: Cloud Run rollback lookup for '${service}' was ambiguous: ${existing}" >&2
+      return 1
+    fi
+    echo "Deleting bootstrap candidate service ${service}; it did not exist before this release..." >&2
+    gcloud run services delete "${service}" \
+      --region="${GCP_REGION}" \
+      --project="${GCP_PROJECT}" \
+      --quiet
+    return
+  fi
   local traffic
   traffic="$(python3 "${ODP_TRAFFIC_HELPER}" restore-arg --description="${snapshot}")"
   echo "Restoring ${service} traffic to ${traffic}..." >&2

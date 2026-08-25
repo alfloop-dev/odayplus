@@ -2080,6 +2080,48 @@ def test_traffic_helper_resolves_tagged_revision_and_exact_restore_split() -> No
     assert traffic_helper.restore_traffic_argument(description) == "service-old=100"
 
 
+def test_traffic_helper_records_an_explicit_absent_bootstrap_snapshot() -> None:
+    snapshot = traffic_helper.absent_snapshot("oday-api")
+
+    assert snapshot == {
+        "schema_version": 1,
+        "kind": "cloud-run-service-traffic-snapshot",
+        "exists": False,
+        "service": "oday-api",
+    }
+    assert traffic_helper.is_present(snapshot) is False
+    assert traffic_helper.service_url(snapshot) == ""
+    assert traffic_helper.is_present(_traffic_description()) is True
+
+
+def test_bootstrap_compatibility_cli_writes_not_applicable_receipt(tmp_path: Path) -> None:
+    report_path = tmp_path / "cloud-run-bootstrap-compatibility.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(VALIDATOR_PATH),
+            "bootstrap-compatibility",
+            "--environment",
+            "dev",
+            "--release-sha",
+            EXPECTED_SHA,
+            "--output",
+            str(report_path),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["ok"] is True
+    assert report["bootstrap"] is True
+    assert report["previous_services"] == {"api": "absent", "web": "absent"}
+    assert report["secret_values_redacted"] is True
+
+
 def test_rollback_attempts_both_services_and_returns_nonzero_on_partial_failure(
     tmp_path: Path,
 ) -> None:
@@ -2131,6 +2173,57 @@ fi
     assert any("update-traffic api-service" in call for call in calls)
     assert any("update-traffic web-service" in call for call in calls)
     assert all("--to-revisions=service-old-a=80,service-old-b=20" in call for call in calls)
+
+
+def test_bootstrap_rollback_deletes_service_that_was_previously_absent(
+    tmp_path: Path,
+) -> None:
+    snapshot = tmp_path / "api.json"
+    snapshot.write_text(
+        json.dumps(traffic_helper.absent_snapshot("api-service")),
+        encoding="utf-8",
+    )
+
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        """#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GCLOUD_LOG}"
+if [ "${1:-} ${2:-} ${3:-}" = "run services list" ]; then
+  printf '%s\n' "api-service"
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+
+    command = (
+        f'source "{TRAFFIC_SHELL_HELPER}"\n'
+        f'restore_service_traffic "api-service" "{snapshot}"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-c", command],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "GCP_PROJECT": "test-project",
+            "GCP_REGION": "test-region",
+            "ODP_TRAFFIC_HELPER": str(TRAFFIC_HELPER_PATH),
+        },
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = gcloud_log.read_text(encoding="utf-8").splitlines()
+    assert any("run services list" in call for call in calls)
+    assert any("run services delete api-service" in call for call in calls)
+    assert all("update-traffic" not in call for call in calls)
 
 
 def test_scheduler_trigger_restore_uses_recorded_target_and_schedule(

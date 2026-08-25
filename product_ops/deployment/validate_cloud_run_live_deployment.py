@@ -3980,6 +3980,11 @@ def main() -> int:
     )
     compatibility_smoke.add_argument("--output", type=Path)
 
+    bootstrap_compatibility = subparsers.add_parser("bootstrap-compatibility")
+    bootstrap_compatibility.add_argument("--environment", required=True)
+    bootstrap_compatibility.add_argument("--release-sha", required=True)
+    bootstrap_compatibility.add_argument("--output", type=Path)
+
     jobs_smoke = subparsers.add_parser("jobs-smoke")
     jobs_smoke.add_argument(
         "--job-kind", required=True, choices=("migration", "worker", "scheduler")
@@ -4025,6 +4030,31 @@ def main() -> int:
             report=report,
             output=args.output,
             label="Cloud Run live deployment preflight",
+        )
+
+    if args.command == "bootstrap-compatibility":
+        sha_ok = bool(re.fullmatch(r"[0-9a-f]{40}", args.release_sha))
+        return _finalize(
+            checks=[
+                CheckResult(
+                    sha_ok,
+                    "compatibility:bootstrap",
+                    (
+                        "not applicable: no previous API/Web services exist"
+                        if sha_ok
+                        else "release SHA must be exactly 40 lowercase hexadecimal characters"
+                    ),
+                )
+            ],
+            report={
+                "environment": args.environment,
+                "release_sha": args.release_sha,
+                "bootstrap": True,
+                "previous_services": {"api": "absent", "web": "absent"},
+                "secret_values_redacted": True,
+            },
+            output=args.output,
+            label="Cloud Run bootstrap compatibility",
         )
 
     if args.command == "jobs-smoke":
