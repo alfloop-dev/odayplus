@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "environment": "dev",
+  "stage": "dev-verified",
+  "release_id": "odp-20260730-001",
+  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+  "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+  "receipts": [
+    {
+      "schema_version": 1,
+      "receipt_id": "ODP-DEV-DEPLOY-RECEIPT-001",
+      "receipt_kind": "deployment",
+      "release_id": "odp-20260730-001",
+      "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+      "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "environment": "dev",
+      "stage": "candidate-built",
+      "result": "pass",
+      "status": "passed",
+      "recorded_at": "2026-08-25T16:45:00Z",
+      "recorded_by": "Antigravity3",
+      "artifact": ".odp_data/deployment/cloud-run-smoke.json",
+      "artifacts": [
+        ".odp_data/deployment/cloud-run-smoke.json",
+        ".odp_data/deployment/cloud-run-preflight.json"
+      ],
+      "secret_values_redacted": true,
+      "redaction": {
+        "redacted_field_count": 0,
+        "redacted_fields": [],
+        "secret_values_redacted": true
+      },
+      "details": {
+        "deployment_target": "dev",
+        "services_deployed": [
+          "oday-plus-dev-api",
+          "oday-plus-dev-web",
+          "oday-plus-dev-worker",
+          "oday-plus-dev-scheduler"
+        ],
+        "image_digests_verified": true
+      }
+    },
+    {
+      "schema_version": 1,
+      "receipt_id": "ODP-DEV-VERIFICATION-RECEIPT-001",
+      "receipt_kind": "verification",
+      "release_id": "odp-20260730-001",
+      "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+      "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+      "release_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "environment": "dev",
+      "stage": "dev-verified",
+      "result": "pass",
+      "status": "passed",
+      "recorded_at": "2026-08-25T16:45:00Z",
+      "recorded_by": "Antigravity3",
+      "artifact": ".odp_data/deployment/live-e2e-gate.json",
+      "artifacts": [
+        ".odp_data/deployment/live-e2e-gate.json",
+        ".odp_data/deployment/cloud-run-migration-compatibility.json",
+        ".odp_data/deployment/cloud-run-jobs/migration-validation.json",
+        ".odp_data/deployment/cloud-run-jobs/worker-validation.json",
+        ".odp_data/deployment/cloud-run-jobs/scheduler-validation.json"
+      ],
+      "secret_values_redacted": true,
+      "redaction": {
+        "redacted_field_count": 0,
+        "redacted_fields": [],
+        "secret_values_redacted": true
+      },
+      "details": {
+        "verification_target": "dev",
+        "live_e2e_gate": "passed",
+        "contract_readback": "passed",
+        "migration_compatibility": "passed",
+        "jobs_validation": "passed",
+        "provider_off_readback": "passed"
+      }
+    }
+  ],
+  "secret_values_redacted": true,
+  "verified_at": "2026-08-25T16:45:00Z",
+  "verified_by": "Antigravity3"
+}

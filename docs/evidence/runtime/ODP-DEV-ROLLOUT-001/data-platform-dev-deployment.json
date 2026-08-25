@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-DEV-ROLLOUT-001",
+  "subsystem": "data_platform",
+  "environment": "dev",
+  "namespace": "oday-dev",
+  "cluster": "non-production-gke",
+  "release_id": "odp-20260730-001",
+  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "image_reference": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "cloud_sql_proxy_image": "gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "deployment_sequence_precedence": {
+    "rule": "data platform 先於 ODay Plus",
+    "precedence_order": 1,
+    "precedes_subsystems": [
+      "oday_plus_migration",
+      "oday_plus_api",
+      "oday_plus_web",
+      "oday_plus_worker",
+      "oday_plus_scheduler"
+    ],
+    "precedence_verified": true
+  },
+  "workloads": [
+    {
+      "name": "oday-data-platform-migrate-e496be62c47c",
+      "kind": "Job",
+      "execution_order": "00-migration",
+      "status": "PASSED",
+      "actions": [
+        "Alembic upgrade head (0001 -> 0002)",
+        "Assisted Listing Intake DDL stack (001 -> 004)",
+        "PostgreSQL runtime persistence migration (000008)",
+        "Create data_plane control schema",
+        "Assisted intake schema validation",
+        "Write odp_runtime.deployment_migration_receipts"
+      ],
+      "receipt_recorded": true
+    },
+    {
+      "name": "oday-data-platform-bounded-daily",
+      "kind": "CronJob",
+      "schedule": "0 1 * * *",
+      "time_zone": "Etc/UTC",
+      "concurrency_policy": "Forbid",
+      "requires_migration_receipt": true,
+      "status": "ACTIVE_BOUNDED",
+      "sources_loaded": [
+        "merchant",
+        "place",
+        "device",
+        "orders",
+        "ai_revenue_stats",
+        "campaign",
+        "product",
+        "products",
+        "promotions",
+        "ai_consumer_kmeans_v1"
+      ]
+    },
+    {
+      "name": "oday-data-platform-orders-history-e496be62c47c",
+      "kind": "Job",
+      "manual_only": true,
+      "suspend": true,
+      "hard_limit": "62-days,one-day-partitions,max-250000-per-partition"
+    },
+    {
+      "name": "oday-data-platform-trade-manual-e496be62c47c",
+      "kind": "Job",
+      "manual_only": true,
+      "suspend": true,
+      "hard_limit": "one-day,max-100000"
+    },
+    {
+      "name": "oday-data-platform-device-log-manual-e496be62c47c",
+      "kind": "Job",
+      "manual_only": true,
+      "suspend": true,
+      "hard_limit": "one-day,max-100000"
+    }
+  ],
+  "status_mapping_contract": {
+    "version": "fongniao-prod-observed-v1",
+    "path": "infra/k8s/data-platform/status_mapping.prod.json",
+    "secret_name": "oday-data-platform-status-mapping",
+    "verified": true
+  },
+  "secret_values_redacted": true,
+  "secret_references": [
+    "oday-data-platform-runtime:mongodb-uri",
+    "oday-data-platform-runtime:postgres-password",
+    "oday-data-platform-status-mapping:status_mapping.json"
+  ],
+  "verified_at": "2026-08-25T16:45:00Z",
+  "verified_by": "Antigravity3"
+}
