@@ -55,37 +55,14 @@ Release is blocked if any of these are true:
 | Product E2E report reviewed | Confirm every P0 row in `PRODUCT_E2E_READINESS_REPORT.md` has a test, data source, screenshot/trace, and audit/evidence id | pending-human |
 | CI release gate reviewed | Confirm GitHub `product-e2e-gate` ran `make product-release-gate` | pending-human |
 | Deterministic environment accepted | Confirm deterministic source stub is acceptable for PV readiness | pending-human |
-| Remote staging limitation accepted | Confirm live staging rollout remains conditional on staging host/url/secret owner configuration and `check_remote_staging_proof.py` evidence | pending-human |
-| External proof queue reviewed | Confirm `PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` remains open for provider credential/license/geocoder, remote live map endpoint, and remote staging proof | pending-human |
-| External proof handback format reviewed | Confirm fleets use `EXTERNAL_PROOF_HANDBACK_TEMPLATE.json` for redacted runtime proof artifacts and that `check_external_proof_handback_template.py` passes | pending-human |
-| External proof handback intake reviewed | Confirm `EXTERNAL_PROOF_HANDBACK_STATUS_BOARD.json` reflects pending/submitted/needs-revision/accepted state for #132-#138, that updates use `update_external_proof_handback_status_board.py`, and that `check_external_proof_handback_status_board.py` passes | pending-human |
-| External proof handback artifacts validated | For each submitted #132-#138 handback, run `python3 delivery_toolchain/e2e/check_external_proof_handback_artifact.py <handback.json> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` before accepting or closing the issue; the checker must verify required evidence, redaction, accepted attestation, and queue-required command fragments in `commands_run` | pending-human |
-| External proof handback bundle validated | After all #132-#138 handbacks are submitted, run `python3 delivery_toolchain/e2e/check_external_proof_handback_bundle.py <handback-dir-or-files> --expected-sha "$(gh pr view 82 --json headRefOid --jq .headRefOid)"` to prove the complete set is present, unique, accepted, and tied to the same release head | pending-human |
-| External proof issue sync reviewed | Run `python3 delivery_toolchain/e2e/check_external_proof_issue_sync.py --require-assignees` and confirm #132-#138 still have fleet routing, release authority, labels, and named assignees | pending-human |
-| External proof live blocker state reviewed | Run `python3 delivery_toolchain/e2e/check_external_proof_live_blockers.py --require-assignees` and confirm unaccepted #132-#138 handbacks still have open, labeled, assigned release-blocker issues | pending-human |
-| External proof fleet notification reviewed | Run `python3 delivery_toolchain/e2e/check_external_proof_fleet_notifications.py` and confirm #132-#138 have pickup comments for the current PR #82 `headRefOid` | pending-human |
-| External proof handback scan reviewed | Run `python3 delivery_toolchain/e2e/check_external_proof_issue_handback_scan.py --report --fail-on-escalation` and confirm #132-#138 show candidate handbacks only after the latest current-SHA pickup, with pickup age and escalation due state visible; overdue no-handback rows must block release-owner dispatch | pending-human |
-| External proof escalation reviewed | Run `python3 delivery_toolchain/e2e/sync_external_proof_escalation_comments.py --apply` only when the handback scan marks rows escalation due; use `--force --comment-dir <dir>` to render manual drafts without posting | pending-human |
-| Product go/no-go guard reviewed | Run `python3 delivery_toolchain/e2e/check_product_go_no_go.py` and confirm this packet still keeps live provider, live map, and remote staging proof conditional until #132-#138 are accepted | pending-human |
+| Remote staging & rollout governance | Confirm ephemeral staging rehearsal and production blue-green criteria in `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md` | pending-human |
+| External provider activation policy | Confirm third-party data providers remain runtime disabled with default-deny egress until formal provider activation receipts are approved | pending-human |
 | Final decision recorded | Human/Ops writes approved / approved-with-actions / rejected | pending-human |
 
-## External Proof Blocking Tasks
+## External Provider & Staging Rollout Controls
 
-These tasks must stay `external_blocked` in
-`PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json` until Product Validation accepts
-the redacted handback artifact for each issue and the full #132-#138 bundle
-passes `check_external_proof_handback_bundle.py` against PR #82 `headRefOid`.
-
-| Task | Issue | Owner | Reviewer | Blocking type | Completion rule |
-|---|---|---|---|---|---|
-| `ODP-EXT-PROD-001` | #132 | Platform/Ops | Product Validation | `provider_credentials` | Do not close from deterministic fixture or mock-live evidence; close only with environment-specific credential proof and redacted logs. |
-| `ODP-EXT-PROD-002` | #133 | Data Partnerships / Legal | Product Validation | `provider_license_and_snapshot` | Do not close until the production provider/license evidence is attached; mock-live provider proof is insufficient. |
-| `ODP-EXT-PROD-003` | #134 | Platform/Ops | Product Validation | `provider_geocoder` | Do not close from replay fixture alone; close only with redacted production geocoder proof. |
-| `ODP-MAP-STAGE-001` | #135 | Platform/Ops | Product Validation | `live_map_endpoint` | Do not close from local MapLibre/deck proof; close only with remote staging endpoint smoke. |
-| `ODP-MAP-STAGE-002` | #136 | Platform/Ops | Product Validation | `live_map_geocoder` | Do not close from local geocoder fallback proof; close only with remote staging geocoder smoke. |
-| `ODP-PV-STAGE-001` | #137 | Platform/Ops | Product Validation | `remote_staging_configuration` | Do not close until the checker passes against the configured remote staging target. |
-| `ODP-PV-STAGE-002` | #138 | Platform/Ops | Product Validation | `remote_staging_drill` | Do not close until staging smoke and staging or approved staging-equivalent drill artifacts are attached. |
+External source activation and staging rehearsals are governed by `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`. All 16 third-party data sources remain disabled until per-source human authorization receipts are recorded.
 
 ## Current Recommendation
 
-Approve PV product-E2E readiness and deterministic E2E deployment/backup/restore proof with an explicit action: configure a real staging target, deploy with `ODAY_RELEASE_SHA`, and pass `delivery_toolchain/e2e/check_remote_staging_proof.py` before claiming live remote staging rollout.
+Approve PV product-E2E readiness and deterministic E2E deployment/backup/restore proof with an explicit action: configure staging/production environments, deploy with immutable release manifest digests, and follow `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`.

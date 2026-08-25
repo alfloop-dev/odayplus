@@ -138,9 +138,11 @@ Git 歷史與 runbook 只用來確認使用情況，不作主要分類依據。
 
 - `delivery_toolchain/e2e/check_product_release_gate.py` 主要 subprocess 呼叫其他 checker，
   再掃描 workflow/docs token；它是 release governance aggregator，不是產品 runtime。
-- `delivery_toolchain/e2e/check_release_fleet_dispatch_status.py` 同樣聚合六個 checker 與報表。
-- external-proof 約二十支 CLI 共用同一 release queue/status/template；保留多個 CLI
-  是操作介面需求，但 JSON/GitHub/module/retry transport 不應各自重寫。
+- `delivery_toolchain/e2e/check_release_fleet_dispatch_status.py` was retired
+  (ODP-DEPLOY-DEAD-CODE-REMOVAL-001); its aggregate gate role is served by
+  `check_product_release_gate.py`.
+- The external-proof CLIs (~20 scripts) were retired along with the external-proof
+  fleet model; provider activation follows the ephemeral-staging Runtime Release path.
 
 ## 已確認且已修正的重複／錯誤機制
 

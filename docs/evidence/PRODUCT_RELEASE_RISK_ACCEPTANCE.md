@@ -39,22 +39,19 @@ proof below is captured and accepted.
 ## Residual Risks Explicitly Accepted (Deferred, Not Waived)
 
 The following three P0 live-evidence gaps remain open. They are accepted as
-**deferred to their tracked external-proof tasks** and must be closed with
+**deferred to controlled rollout execution** and must be closed with
 environment-specific live evidence before any production claim. They are
 **not** waived and must **not** be closed from deterministic fixtures or
 mock-live evidence.
 
 | Residual risk | Tracked closeout | Blocking type | Close only with |
 |---|---|---|---|
-| Live external provider proof (credentials / license / geocoder) | `ODP-EXT-PROD-001/002/003` — issues #132, #133, #134 | `external_blocked` | Redacted production credential/license/geocoder runtime proof |
-| Live map endpoint proof (remote tile + geocoder smoke) | `ODP-MAP-STAGE-001/002` — issues #135, #136 | `external_blocked` | Remote staging map endpoint + geocoder smoke |
-| Remote staging rollout proof | `ODP-PV-STAGE-001/002` — issues #137, #138 | `external_blocked` | Configured remote staging target passing `delivery_toolchain/e2e/check_remote_staging_proof.py` + staging drill |
+| Live external provider proof (credentials / license / geocoder) | Provider activation receipts | `external_blocked` | Redacted production credential/license/geocoder runtime proof |
+| Live map endpoint proof (remote tile + geocoder smoke) | Staging map rollout | `external_blocked` | Remote staging map endpoint + geocoder smoke |
+| Remote staging rollout proof | Staging rehearsal | `external_blocked` | Configured ephemeral staging target passing verification and drill |
 
-Live closeout state for all of the above is tracked in
-`docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`, and each redacted
-handback must pass
-`delivery_toolchain/e2e/check_external_proof_handback_bundle.py` against the release
-target PR #82 `headRefOid` before its issue may be closed.
+Live closeout state for all of the above is governed by
+`docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`.
 
 ## Automated Gate Posture (Deliberately Fail-Closed)
 
@@ -68,24 +65,19 @@ the gate green for the deferred live items.
   continues to fail-closed until the deferred live proof and closeout-queue
   reconciliation are satisfied. It is intentionally not overridden for this
   internal milestone.
-- `delivery_toolchain/e2e/check_product_go_no_go.py` verifies the go/no-go packet still
-  keeps live provider, live map, and remote staging **conditional** until
-  issues #132–#138 are accepted. This guard passing is the required proof that
-  this risk acceptance did not silently promote a live claim.
 
 ## Prohibited Claims Under This Decision
 
 - No statement that the platform is "production-ready" or generally available.
-- No closing of `ODP-EXT-PROD-*`, `ODP-MAP-STAGE-*`, or `ODP-PV-STAGE-*` from
-  deterministic or mock-live evidence.
+- No closing of provider/map/staging gaps from deterministic or mock-live evidence.
 - No promotion of the draft release (PR #82) as a live rollout without the
   live proof above and a fresh Human/Ops sign-off against the target release
   commit's GitHub checks.
 
 ## Required Follow-Up Before Any Production Claim
 
-1. Configure a real staging target and deploy with `ODAY_RELEASE_SHA`.
-2. Capture and accept the #132–#138 redacted live-proof handbacks.
+1. Configure ephemeral staging target and deploy with release manifest digests.
+2. Capture and accept the redacted live-proof receipts.
 3. Re-run `make product-release-gate` and confirm it passes on the target
    release commit (not a stale `dev` hash).
 4. Record a new Human/Ops go/no-go against that commit's attached checks.
@@ -94,10 +86,9 @@ the gate green for the deferred live items.
 
 - `docs/evidence/PRODUCT_E2E_READINESS_REPORT.md`
 - `docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`
-- `docs/evidence/PRODUCT_EXTERNAL_PROOF_CLOSEOUT_QUEUE.json`
+- `docs/deployment/EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN.md`
 - `docs/evidence/DEPLOYMENT_HEALTH_BACKUP_ROLLBACK_EVIDENCE.md`
 - `delivery_toolchain/e2e/check_product_release_gate.py`
-- `delivery_toolchain/e2e/check_product_go_no_go.py`
 
 ---
 
