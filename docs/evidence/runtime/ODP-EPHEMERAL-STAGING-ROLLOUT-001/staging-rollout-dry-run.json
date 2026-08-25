@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+  "environment": "staging",
+  "stage": "not-admitted",
+  "evidence_mode": "dry-run",
+  "evidence_status": "blocked",
+  "deployment_observed": false,
+  "release_manifest": {
+    "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+    "release_id": "odp-20260730-001",
+    "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+    "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+    "manifest_digest_recomputes": true,
+    "placeholder_digest_count": 11,
+    "placeholder_digest_fields": [
+      "components.api.image",
+      "components.web.image",
+      "components.data_platform.image",
+      "components.migration.image",
+      "components.worker.image",
+      "components.scheduler.image",
+      "migration_digest",
+      "data_contract_digest",
+      "source_policy_digest",
+      "sbom_refs[0]",
+      "signature_refs[0]"
+    ],
+    "candidate_is_current_dev": false
+  },
+  "deployment_path": {
+    "workflow": ".github/workflows/deploy-dev.yml",
+    "workflow_name": "Runtime Release",
+    "target_input": "staging",
+    "registry_pattern": "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/<service>@sha256:<64-hex>",
+    "configured_registry": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+    "staging_dispatch_observed": false,
+    "successful_staging_run": false,
+    "remote_staging_proof": null
+  },
+  "blockers": [
+    {
+      "id": "B1",
+      "severity": "blocking",
+      "summary": "The source release manifest contains placeholder digests.",
+      "required_action": "Build and sign the release once, then record the Artifact Registry digests returned by gcloud artifacts docker images describe."
+    },
+    {
+      "id": "B2",
+      "severity": "blocking",
+      "summary": "The prior evidence used ghcr.io references, but this repository deploys from Google Artifact Registry.",
+      "required_action": "Regenerate every deployment and receipt reference from the actual Runtime Release handoff."
+    },
+    {
+      "id": "B3",
+      "severity": "blocking",
+      "summary": "The source manifest candidate is stale and does not identify the current dev release.",
+      "required_action": "Create a new release manifest for the current candidate after a successful build."
+    },
+    {
+      "id": "B4",
+      "severity": "blocking",
+      "summary": "No successful staging workflow dispatch or remote staging proof was found for this task.",
+      "required_action": "Human/Ops must provide staging IAM, WIF, protected variables, and approval authority, then dispatch Runtime Release with environment=staging."
+    }
+  ],
+  "desired_state_not_observed": {
+    "data_platform_before_application": true,
+    "isolated_database_bucket_tenant_iam": true,
+    "migration_e2e_worker_scheduler_backup_restore_rollback": true,
+    "external_sources_expected_enabled": [],
+    "provider_credentials_present": false,
+    "public_egress": "default-deny",
+    "failure_retention_ttl_hours": 24,
+    "success_cleanup_owner": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001"
+  },
+  "required_human_actions": [
+    "Provision or confirm staging GCP resources, WIF, IAM, protected variables, and secret references.",
+    "Run the single Runtime Release workflow against staging and retain its run URL and receipt artifacts.",
+    "Re-run migration, E2E, worker/scheduler, backup/restore, rollback, provider-off, and TTL checks from that observed environment."
+  ],
+  "secret_values_redacted": true,
+  "recorded_at": "2026-08-25T17:51:25Z",
+  "recorded_by": "Codex2"
+}

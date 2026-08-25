@@ -15,6 +15,7 @@ from delivery_toolchain.release.migrate_gate_registry import (
 )
 from delivery_toolchain.release.release_manifest import (
     compute_manifest_digest,
+    is_placeholder_digest,
     validate_manifest,
 )
 
@@ -55,6 +56,13 @@ def test_manifest_candidate_sha_mutation_fails_closed() -> None:
         expected_candidate_sha="e496be62c47c45d758681b8a4d3abfae16f1c96d",
     )
     assert any("candidate_sha" in error for error in errors)
+
+
+def test_placeholder_digest_predicate_rejects_repeated_fixture_values() -> None:
+    assert is_placeholder_digest("sha256:" + "1" * 64)
+    assert is_placeholder_digest("registry.example/image@sha256:" + "ab" * 32)
+    assert not is_placeholder_digest("sha256:" + "0123456789abcdef" * 4)
+    assert not is_placeholder_digest("sha256:" + "g" * 64)
 
 
 def test_registry_stage_contract_breaks_closed() -> None:
