@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+  "release_id": "odp-20260730-001",
+  "release_hash": "8f54e6c3",
+  "release_label": "odp-20260730-001-8f54e6c3",
+  "tenant_id": "tenant-odp-20260730-001-8f54e6c3",
+  "owner_task": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+  "created_at": "2026-08-25T17:00:00Z",
+  "expires_at": "2026-08-26T17:00:00Z",
+  "ttl_hours": 24,
+  "lifecycle_governance": {
+    "failure_policy": "Retain resources for debugging up to 24 hours default TTL (maximum 168h extension with documented owner and reason). Never destroy failed staging immediately.",
+    "success_policy": "Retain verified staging resources in clean state awaiting production blue-green rollout and postdeploy closeout (ODP-POSTDEPLOY-WATCH-CLOSEOUT-001) before final destruction.",
+    "cleanup_targeting_rule": "Destructive cleanup operates ONLY via exact label matching (release_id, ephemeral=true, tenant); broad wildcards and namespace wipes are strictly forbidden.",
+    "orphan_scanner_status": "Orphan scanner verified active; hourly scanning detects expired TTL and alerts without colliding with active release leases."
+  },
+  "orphan_scan_dry_run_result": {
+    "scanned_at": "2026-08-25T17:15:00Z",
+    "project_id": "odayplus-runtime-20260825",
+    "total_scanned": 14,
+    "active_count": 14,
+    "expired_count": 0,
+    "orphan_count": 0,
+    "cleaned_count": 0,
+    "failed_cleanups": 0,
+    "expired_releases": [],
+    "orphan_resources": [],
+    "cleaned_resources": [],
+    "alerts": [],
+    "remediation_tasks": []
+  },
+  "secret_values_redacted": true,
+  "verified_at": "2026-08-25T17:15:00Z",
+  "verified_by": "Antigravity3"
+}
