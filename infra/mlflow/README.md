@@ -42,3 +42,10 @@ queries the registry and verifies access to the configured GCS bucket:
 ```bash
 python -m infra.mlflow.healthcheck --mode readiness
 ```
+
+## Cloud Run 容量下限
+
+使用預設的兩個 worker 時，Cloud Run 記憶體不得低於 `1Gi`。首次建立資料表時，
+兩個 MLflow worker 的實測尖峰會超過 `512Mi`；低於此值會在開始監聽連接埠後被
+平台終止。若要降低容量，必須先以壓力測試證明單 worker 能承受工作量，不能只
+縮小記憶體限制。
