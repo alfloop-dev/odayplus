@@ -6,6 +6,76 @@
   "evidence_mode": "dry-run",
   "evidence_status": "blocked",
   "deployment_observed": false,
+  "preflight_observed": true,
+  "preflight": {
+    "project": {
+      "project_id": "odayplus-runtime-20260825",
+      "lifecycle_state": "ACTIVE",
+      "billing_enabled": true,
+      "region": "asia-east1"
+    },
+    "authentication": {
+      "local_readback_succeeded": true,
+      "workflow_wif_variables_present": true,
+      "workflow_deployer_service_account_present": true,
+      "secret_values_read": false
+    },
+    "enabled_apis": [
+      "artifactregistry.googleapis.com",
+      "cloudscheduler.googleapis.com",
+      "compute.googleapis.com",
+      "container.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "pubsub.googleapis.com",
+      "run.googleapis.com",
+      "secretmanager.googleapis.com",
+      "sqladmin.googleapis.com",
+      "storage.googleapis.com"
+    ],
+    "artifact_registry": {
+      "repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+      "packages_observed": ["oday-data-platform", "oday-mlflow"],
+      "application_image_handoff_observed": false,
+      "data_platform_image_digests_observed": [
+        "sha256:0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593",
+        "sha256:22fd0ce1f5452e9fd2e83856b338fefbceae519aecd67a97099b7d7fe526ad6a",
+        "sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e",
+        "sha256:513185541b7dca920ea8e98221608e2f4fda4da04b81799febeda55897babeae",
+        "sha256:f1a37010b5541690780330a7626730ad0cda76e0636b296801c9175c45dd6aec"
+      ],
+      "application_images_are_release_handoff": false
+    },
+    "staging_foundation": {
+      "cloud_kms_api_enabled": false,
+      "cloud_kms_key_observed": false,
+      "cloud_sql_instances": ["oday-dev-sql"],
+      "isolated_staging_cloud_sql_instance_observed": false,
+      "cloud_run_services": ["oday-mlflow"],
+      "staging_cloud_run_services_observed": false,
+      "cloud_scheduler_jobs": [],
+      "staging_scheduler_observed": false,
+      "gke_cluster": "oday-emgi-gke",
+      "gke_cluster_location": "asia-east1-a",
+      "staging_namespace_observed": false,
+      "masked_snapshot_authority_observed": false
+    },
+    "github_staging_environment": {
+      "environment_observed": true,
+      "required_reviewers_observed": 2,
+      "wif_and_project_variables_observed": true,
+      "runtime_and_secret_reference_variables_complete": false,
+      "release_lease_public_key_observed": false,
+      "release_lease_state_dir_observed": false,
+      "secret_names_observed": []
+    },
+    "terraform_module_contract": {
+      "module_validate": "passed",
+      "module_requires_existing_kms_key": true,
+      "module_requires_existing_staging_cloud_sql_instance": true,
+      "apply_attempted": false
+    }
+  },
   "release_manifest": {
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
     "release_id": "odp-20260730-001",
@@ -36,7 +106,8 @@
     "configured_registry": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
     "staging_dispatch_observed": false,
     "successful_staging_run": false,
-    "remote_staging_proof": null
+    "remote_staging_proof": null,
+    "preflight_readback_only": true
   },
   "blockers": [
     {
@@ -61,7 +132,19 @@
       "id": "B4",
       "severity": "blocking",
       "summary": "No successful staging workflow dispatch or remote staging proof was found for this task.",
-      "required_action": "Human/Ops must provide staging IAM, WIF, protected variables, and approval authority, then dispatch Runtime Release with environment=staging."
+      "required_action": "Human/Ops must provide staging IAM, protected runtime variables, secret references, and approval authority, then dispatch Runtime Release with environment=staging."
+    },
+    {
+      "id": "B5",
+      "severity": "blocking",
+      "summary": "The authoritative staging foundation is incomplete: no Cloud KMS API/key, isolated staging Cloud SQL instance, staging namespace, or masked snapshot authority was observed.",
+      "required_action": "Complete the dependent staging bootstrap/IAC task and provide readback for the existing KMS key, isolated database target, masked snapshot, and staging namespace before any apply."
+    },
+    {
+      "id": "B6",
+      "severity": "blocking",
+      "summary": "Only data-platform and mlflow artifacts are present in the configured Artifact Registry; the four ODay Plus application image handoff digests were not observed.",
+      "required_action": "Run one authoritative Runtime Release build/sign handoff for the exact candidate and use its Artifact Registry API/Web/Worker/Scheduler digests; do not build per environment or hand-write references."
     }
   ],
   "desired_state_not_observed": {
@@ -75,11 +158,25 @@
     "success_cleanup_owner": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001"
   },
   "required_human_actions": [
-    "Provision or confirm staging GCP resources, WIF, IAM, protected variables, and secret references.",
-    "Run the single Runtime Release workflow against staging and retain its run URL and receipt artifacts.",
+    "Provision or confirm the staging foundation (KMS key, isolated Cloud SQL target, masked snapshot, staging namespace, IAM, and default-deny egress) and publish redacted readback.",
+    "Complete staging GitHub environment runtime variables, secret references, Supervisor lease verifier variables, and required approval authority.",
+    "Run one authoritative Runtime Release build/sign handoff for the exact candidate, then run the single Runtime Release workflow against staging and retain its run URL and receipt artifacts.",
     "Re-run migration, E2E, worker/scheduler, backup/restore, rollback, provider-off, and TTL checks from that observed environment."
   ],
+  "preflight_commands": [
+    "gcloud projects describe odayplus-runtime-20260825 --format=yaml(projectId,lifecycleState)",
+    "gcloud billing projects describe odayplus-runtime-20260825 --format=yaml(projectId,billingEnabled)",
+    "gcloud artifacts repositories list --project=odayplus-runtime-20260825 --location=asia-east1",
+    "gcloud artifacts packages list --project=odayplus-runtime-20260825 --location=asia-east1 --repository=oday-plus-dev",
+    "gcloud run services list --project=odayplus-runtime-20260825 --region=asia-east1",
+    "gcloud sql instances list --project=odayplus-runtime-20260825",
+    "gcloud scheduler jobs list --project=odayplus-runtime-20260825 --location=asia-east1",
+    "gcloud container clusters list --project=odayplus-runtime-20260825",
+    "gh variable list --env staging",
+    "gh secret list --env staging",
+    "terraform -chdir=infra/terraform/modules/ephemeral_staging validate"
+  ],
   "secret_values_redacted": true,
-  "recorded_at": "2026-08-25T17:51:25Z",
-  "recorded_by": "Codex2"
+  "recorded_at": "2026-08-25T23:52:48Z",
+  "recorded_by": "Codex"
 }
