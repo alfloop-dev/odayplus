@@ -1,66 +1,99 @@
 # GCP Cloud Run Deployment Reference Guide
 
-This document defines the configuration model, variable scopes, and credentials required for the automated deployment of ODay Plus API and Web services to GCP Cloud Run via GitHub Actions.
+This document defines the configuration model, variable scopes, environment protection rules, and credentials required for the automated deployment of ODay Plus API, Web, and background jobs to GCP Cloud Run via the unified Runtime Release GitHub Actions workflow (`.github/workflows/deploy-dev.yml`).
 
-## Required Variables and Secrets
+---
 
-The deployment pipeline is configured via GitHub Variables and Secrets, falling back to local environment variables during manual execution. If required configurations are missing, the pipeline will fail-closed immediately.
+## 1. Environment Topology & Protection Matrix
 
-### 1. Target Environment Variables (GitHub Variables)
+The ODay Plus delivery lifecycle uses three GitHub deployment environments, each with specific protection boundaries:
 
-| Variable Name | Scope | Description | Example Value |
+| Environment | Purpose | Lifecycle | Protection Rule | Required Reviewers |
+|---|---|---|---|---|
+| `dev` | Continuous integration, contract verification, live E2E | Permanent | None (automated CI/CD deploy on `dev` merge) | N/A |
+| `staging` | Ephemeral release rehearsal (migration, E2E, rollback drill) | Per-release ephemeral (auto-cleanup / 24h TTL) | `required_reviewers` | `Alien-alfaloop`, `ajoe734` |
+| `production` | Blue-green serving (0% green smoke → 100% traffic switch) | Permanent | `required_reviewers` | `Alien-alfaloop`, `ajoe734` |
+
+### GitHub Environment Reviewer Governance
+- **Staging & Production Review Rules**: Both environments require explicit review approval by authorized human operators before deployment jobs execute.
+- **Audited Reviewers**:
+  - `Alien-alfaloop` (ID: `122770408`)
+  - `ajoe734` (ID: `169176954`)
+- **Self-Review Prevention**: Can be configured per compliance policy. Live audit receipts are preserved in [`docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/github-environments-audit.json`](../evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/github-environments-audit.json).
+
+---
+
+## 2. Authentication Configuration (WIF Only)
+
+All deployment and build environments strictly require **Workload Identity Federation (WIF)**. Long-lived service account keys (`GCP_SA_KEY`) are prohibited by security policy, and no `GCP_SA_KEY` fallback path exists in `.github/workflows/deploy-dev.yml` or `product_ops/deployment/deploy_cloud_run_waji.sh`.
+
+### Keyless WIF Parameters (GitHub Variables)
+
+| Variable Name | Scope | Description | Canonical Value |
 |---|---|---|---|
-| `GCP_PROJECT_ID` | Repository / Environment | The GCP Project ID where resources are deployed. | `odayplus-runtime-20260825` |
-| `GCP_REGION` | Repository / Environment | The GCP target region. | `asia-east1` |
-| `GCP_AR_REPO` | Repository / Environment | The name of the GCP Artifact Registry repository. | `oday-plus-dev` |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Environment / Repo | Full resource name of the Workload Identity Provider. | `projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus` |
+| `GCP_SERVICE_ACCOUNT` | Environment / Repo | The deployment service account email to impersonate. | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` |
 
-### 2. Authentication Configuration (WIF only)
+### IAM Workload Identity Binding
+The deployer service account binds `roles/iam.workloadIdentityUser` to the GitHub repository subject set:
+```text
+principalSet://iam.googleapis.com/projects/767864276141/locations/global/workloadIdentityPools/github-actions/attribute.repository/alfloop-dev/odayplus
+```
 
-All deployment environments strictly require **Workload Identity Federation (WIF)**. Long-lived service account keys (`GCP_SA_KEY`) are prohibited by security policy, and no `GCP_SA_KEY` fallback path exists in `.github/workflows/deploy-dev.yml` or `product_ops/deployment/deploy_cloud_run_waji.sh`.
+---
 
-Configure the following **GitHub Variables**:
+## 3. Required Environment Variables & Secret References
 
-| Variable Name | Description | Example Value |
+The deployment pipeline is configured via GitHub Environment Variables and Secret Manager Secret References. If required configurations are missing, the pipeline will fail-closed immediately.
+
+### 3.1 Target GCP Environment Variables
+
+| Variable Name | Scope | Description | Example Value (`dev` / `staging`) |
+|---|---|---|---|
+| `GCP_PROJECT_ID` | Environment | GCP Project ID where resources are deployed. | `odayplus-runtime-20260825` |
+| `GCP_REGION` | Environment | GCP target deployment region. | `asia-east1` |
+| `GCP_AR_REPO` | Environment | GCP Artifact Registry Docker repository name. | `oday-plus-dev` |
+| `GCP_CLOUD_SQL_INSTANCE` | Environment | Cloud SQL instance connection string. | `odayplus-runtime-20260825:asia-east1:oday-dev-sql` |
+| `ODP_CLOUD_RUN_API_SERVICE` | Environment | API Cloud Run service name. | `oday-api` |
+| `ODP_CLOUD_RUN_WEB_SERVICE` | Environment | Web Cloud Run service name. | `oday-web` |
+| `ODP_CLOUD_RUN_MIGRATION_JOB` | Environment | Migration Cloud Run Job name. | `oday-migration` |
+| `ODP_CLOUD_RUN_WORKER_JOB` | Environment | Worker Cloud Run Job name. | `oday-worker` |
+| `ODP_CLOUD_RUN_SCHEDULER_JOB` | Environment | Scheduler Cloud Run Job name. | `oday-scheduler` |
+| `ODP_FORECAST_ENGINE` | Environment | Time-series forecasting engine. | `statsforecast` |
+| `ODP_FORECAST_MODEL` | Environment | Default forecasting model. | `seasonal_naive` |
+
+### 3.2 Secret Reference Governance (Zero Plaintext Secrets in GitHub)
+
+Secrets are never stored as plaintext strings in GitHub repository settings or workflow files. GitHub Environment Variables hold only the Secret Manager secret name/reference (`<secret-name>:latest`):
+
+| Variable Name | Secret Manager Secret Name | Secret Purpose |
 |---|---|---|
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | The full resource name of the Workload Identity Provider. | `projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus` |
-| `GCP_SERVICE_ACCOUNT` | The service account email to impersonate. | `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com` |
+| `ODAY_DATABASE_URL_SECRET` | `oday-plus-dev-api-database-url-pg16` | PostgreSQL connection string (`postgresql://...`) |
+| `ODP_AUTH_PRINCIPAL_MAP_SECRET` | `oday-plus-dev-auth-principal-map` | Subject & SA email to RBAC role mappings JSON |
+| `ODP_WEB_SESSION_SECRET_SECRET` | `oday-plus-dev-web-session-secret` | Web application session signing key |
+| `ODP_WEB_OIDC_CLIENT_SECRET_SECRET` | `oday-plus-dev-web-oidc-client-secret` | Google OAuth Web client secret |
 
 ---
 
-## Fail-Closed Mechanics
+## 4. Fail-Closed Mechanics & Human Authority Prerequisites
 
-目前正式的部署目標是 `odayplus-runtime-20260825`。`alfaloop-data-project`
-及其 service account、Cloud SQL、bucket、OAuth client、provider gateway URL
-均不得作為新 release 的 fallback。若新專案缺少必要資源，部署必須停止並回報
-缺口，不得跨專案讀取舊資源。
+### Current Project Baseline (`odayplus-runtime-20260825`)
+The active shared non-production runtime project is `odayplus-runtime-20260825`. Legacy projects (`alfaloop-data-project`, `alfaloop-data-project-2`) and their service accounts, Cloud SQL instances, buckets, and OAuth clients are deprecated and must not be used as fallback. If target project resources are missing, deployment aborts immediately.
 
-第三方 provider 不隨 runtime project 搬遷。新專案的來源啟用清單預設為空、
-不建立 provider credentials，也不開放 provider egress；後續只能透過逐來源核准
-流程啟用。
+### Third-Party Provider Gate
+Third-party external providers are disabled by default. The active provider list is empty, provider credentials are not provisioned, and default-deny egress is enforced. External provider enablement requires explicit source approval receipts.
 
-### 新 project 的 Web OAuth 人工作業
-
-一般 Google Auth Platform Web OAuth client 不能由部署 CLI 自動建立。請在
-`odayplus-runtime-20260825` 的 Google Auth Platform 建立「Web application」client，
-並設定：
-
-- Authorized JavaScript origin：`https://oday-web-767864276141.asia-east1.run.app`
-- Authorized redirect URI：`https://oday-web-767864276141.asia-east1.run.app/auth/callback`
-
-client ID 寫入 GitHub `dev` environment variable `ODP_WEB_OIDC_CLIENT_ID`；client
-secret 只能寫入新 project Secret Manager 的
-`oday-plus-dev-web-oidc-client-secret`，GitHub 只保存
-`oday-plus-dev-web-oidc-client-secret:latest` 這個 reference。不得把 client secret
-貼進 issue、PR、workflow log 或 repository。
-
-If the deployment runs and WIF variables (`GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT`) are not populated, or if any required target environment variables are missing, the deployment script and the CI/CD pipeline will fail-closed immediately:
-
-1. **Pre-flight Validation**: The workflow contains a `Validate GCP Deployment Variables` step that performs sanity checks and prints clear diagnostics.
-2. **Local Script Safety**: The script `product_ops/deployment/deploy_cloud_run_waji.sh` checks the same environment variables and aborts execution before building any Docker images.
+### Human Authority Prerequisites for Production
+In accordance with Rollout Plan §16, Auto-Workers must **fail-closed** and not invent fictitious or placeholder configurations for production. Live production deployment is blocked until human operators provision:
+1. **Dedicated Production GCP Project & Region**: Project creation, billing, and resource naming signoff.
+2. **Production WIF & Service Accounts**: Workload Identity Pool provider mapping and production runtime/deployer SAs.
+3. **Production Cloud SQL & Secrets**: Dedicated production database instance and populated Secret Manager secrets.
+4. **Production Web OAuth Client & Domains**: Google Auth Platform client with production authorized redirect URIs and custom domain URLs (`ODP_PROD_DEPLOY_URL`, `ODP_PROD_API_URL`).
+5. **Production Operations Policy**: Watch window duration, SLO error/latency rollback thresholds, and on-call operator assignment.
 
 ---
 
-## Deployment Process Details
+## 5. Deployment Process Details
 
 1. **Build Once (`build` job)**:
    - Container images for API (`infra/docker/api.Dockerfile`), Worker (`infra/docker/worker.Dockerfile`), Scheduler (`infra/docker/scheduler.Dockerfile`), and Web (`infra/docker/web.Dockerfile`) are built for `linux/amd64` using the exact release SHA.
@@ -73,10 +106,21 @@ If the deployment runs and WIF variables (`GCP_WORKLOAD_IDENTITY_PROVIDER` and `
    - The first environment dispatch leaves `api_image`, `web_image`, `worker_image`, and `scheduler_image` empty so the build job runs. Staging and production dispatches must pass all four exact references from the handoff artifact; supplying only some, a mutable tag, or a different reference is rejected before admission.
    - When the handoff is supplied, the build job is skipped and the deploy job passes those exact digest references to Cloud Run. The deploy script rejects tags in this mode and never rebuilds.
    - For `dev`: Deploys API/Web services, Migration/Worker/Scheduler jobs, updates scheduler triggers, and runs live E2E acceptance gate.
-   - For `staging`: Provisions ephemeral staging with release-scoped isolation and validates remote staging proof.
+   - For `staging`: Provisions ephemeral staging with release-scoped isolation (`staging_lifecycle.py`) and validates remote staging proof.
    - For `production`: Deploys green candidate revisions (0% public traffic), executes green smoke checks, executes blue→green 100% traffic switch via `product_ops/deployment/bluegreen_release.py`, and updates scheduler trigger digests.
 
 3. **Automated Smoke Checks & Receipts**:
    - Verify API authenticated health checks.
    - Verify Web operator console loads and authentication flows succeed.
    - Redacted JSON validation receipts are published as workflow artifacts (`runtime-release-${environment}-validation`).
+
+---
+
+## 6. Audit & Evidence Receipts
+
+Live configuration readbacks and proof artifacts for environment bootstrap are preserved under [`docs/evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/`](../evidence/runtime/ODP-GITHUB-GCP-ENV-BOOTSTRAP-001/):
+- `github-environments-audit.json`: Environment protection rules and reviewer user IDs.
+- `github-variables-audit.json`: Redacted audit of environment variables across `dev`, `staging`, and `production`.
+- `gcp-wif-iam-audit.json`: GCP WIF provider, IAM policy, and Secret Manager references.
+- `production-authority-prerequisites.json`: Human authority blocking condition checklist.
+
