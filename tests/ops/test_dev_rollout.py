@@ -4,15 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import pytest
 
 from delivery_toolchain.release.release_manifest import (
     compute_manifest_digest,
     load_manifest,
-    validate_manifest,
 )
 from delivery_toolchain.release.release_receipts import (
-    read_receipt,
     validate_receipt,
 )
 
