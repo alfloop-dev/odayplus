@@ -39,6 +39,8 @@ def test_dry_run_record_cannot_claim_staging_verified() -> None:
     assert record["deployment_path"]["staging_dispatch_observed"] is False
     assert record["deployment_path"]["successful_staging_run"] is False
     assert record["deployment_path"]["remote_staging_proof"] is None
+    assert "ghcr.io" not in record["deployment_path"]["configured_registry"]
+    assert record["deployment_path"]["configured_registry"].endswith("/oday-plus-dev")
     assert "staging-verified" not in json.dumps(record)
 
 

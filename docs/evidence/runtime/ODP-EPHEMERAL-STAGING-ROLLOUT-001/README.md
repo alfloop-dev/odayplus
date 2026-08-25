@@ -41,6 +41,16 @@ uv run --python 3.12 pytest tests/ops/test_staging_rollout.py tests/release/test
 
 前兩個查核顯示沒有可對應本 task 的成功 staging dispatch；本地測試驗證 dry-run record 不會被誤認為部署成功。實際重跑仍需要 Human/Ops authority，Auto Worker 不得自行填入 credentials 或偽造 deployment receipt。
 
+本次 remediation commit 的 focused verification：
+
+```text
+git diff --check
+uv run --python 3.12 ruff check delivery_toolchain/release/release_manifest.py tests/ops/test_staging_rollout.py tests/release/test_release_manifest.py
+uv run --python 3.12 pytest -q tests/ops/test_staging_rollout.py tests/release/test_release_manifest.py tests/release/test_runtime_admission.py tests/ops/test_dev_rollout.py
+```
+
+結果：ruff check 通過，56 tests passed；這些是本地 contract tests，不是 staging deployment proof。
+
 ## 產物
 
 - [`staging-rollout-dry-run.json`](staging-rollout-dry-run.json)：唯一的 dry-run / blocked / desired-state record。
