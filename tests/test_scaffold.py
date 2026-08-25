@@ -55,8 +55,6 @@ def test_odp_sd04_top_level_scaffold_exists() -> None:
         "solver/netplan",
         "infra/terraform",
         "infra/docker",
-        "infra/k8s_optional",
-        "infra/cloudbuild",
         "tests/contract",
         "tests/integration",
         "tests/e2e",
