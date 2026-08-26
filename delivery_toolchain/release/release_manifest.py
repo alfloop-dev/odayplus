@@ -23,6 +23,7 @@ SUPPORTED_SCHEMA_VERSIONS = (1,)
 SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
+RELEASE_STATUSES = frozenset({"ready", "blocked"})
 
 REQUIRED_FIELDS = (
     "schema_version",
@@ -163,6 +164,17 @@ def validate_manifest(
         ):
             errors.append(f"manifest.{field} must be a list of non-empty strings")
 
+    release_status = manifest.get("release_status")
+    if release_status is not None and release_status not in RELEASE_STATUSES:
+        errors.append(
+            f"manifest.release_status must be one of {sorted(RELEASE_STATUSES)}, "
+            f"got: {release_status!r}"
+        )
+    if release_status == "blocked":
+        blockers = manifest.get("blockers")
+        if not isinstance(blockers, list) or not blockers:
+            errors.append("blocked manifest must include a non-empty blockers list")
+
     if not is_valid_timestamp(manifest.get("created_at")):
         errors.append("manifest.created_at must be an RFC3339 timestamp with timezone")
     if not isinstance(manifest.get("created_by_workflow"), str) or not manifest.get(
@@ -184,6 +196,36 @@ def validate_manifest(
                 "manifest.manifest_digest does not match the digest recorded by the registry"
             )
 
+    return errors
+
+
+def validate_release_admission(manifest: Any) -> list[str]:
+    """Return why a structurally valid manifest cannot be deployed.
+
+    A blocked manifest is intentionally still hashable and reviewable: it is
+    the immutable record of what was observed and why release stopped.  It is
+    not, however, a deployable artifact.  Keeping this predicate separate from
+    ``validate_manifest`` lets auditors inspect a blocked candidate without
+    accidentally treating it as a successful release.
+    """
+
+    errors = validate_manifest(manifest)
+    if not isinstance(manifest, dict):
+        return errors
+    # Manifests created before the status field was introduced remain
+    # admissible when they contain the required immutable references.  New
+    # manifests must explicitly move to ``ready`` before deployment; a
+    # recorded ``blocked`` state can never be promoted implicitly.
+    release_status = manifest.get("release_status", "ready")
+    if release_status != "ready":
+        errors.append(
+            "release admission requires manifest.release_status='ready'; "
+            f"got {release_status!r}"
+        )
+    for field in ("sbom_refs", "signature_refs"):
+        refs = manifest.get(field)
+        if not isinstance(refs, list) or not refs:
+            errors.append(f"release admission requires non-empty manifest.{field}")
     return errors
 
 
@@ -291,6 +333,8 @@ __all__ = [
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
+    "RELEASE_STATUSES",
+    "validate_release_admission",
     "validate_manifest",
 ]
 
@@ -333,4 +377,3 @@ def main() -> int:
 if __name__ == "__main__":
     import sys
     sys.exit(main())
-

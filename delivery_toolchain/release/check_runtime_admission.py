@@ -83,7 +83,10 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
     load_lease,
     load_public_key,
 )
-from delivery_toolchain.release.release_manifest import load_manifest  # noqa: E402
+from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    load_manifest,
+    validate_release_admission,
+)
 
 DEFAULT_REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 DEFAULT_MANIFEST = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
@@ -394,6 +397,11 @@ def main(argv: list[str] | None = None) -> int:
     manifest, manifest_errors = load_manifest(
         args.manifest, expected_candidate_sha=expected_candidate_sha
     )
+    if manifest is not None:
+        admission_errors = validate_release_admission(manifest)
+        manifest_errors.extend(
+            error for error in admission_errors if error not in manifest_errors
+        )
     manifest_digest = manifest.get("manifest_digest") if manifest and not manifest_errors else None
 
     admitted, errors, receipt = admit_release(

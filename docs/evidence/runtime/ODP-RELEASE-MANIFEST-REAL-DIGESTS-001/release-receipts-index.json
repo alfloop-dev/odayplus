@@ -4,90 +4,15 @@
   "release_id": "odp-20260826-001",
   "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
   "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-  "manifest_digest": "sha256:f61d9af04cc7c6867b59303d939e3e2bd9e81f1a5c3f54a3c50f1e50a50f103b",
+  "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
   "environment": "dev",
-  "stage": "dev-verified",
-  "total_receipts": 2,
-  "receipts": [
-    {
-      "schema_version": 1,
-      "receipt_id": "ODP-RECEIPT-RELEASE-MANIFEST-REAL-DIGESTS-BUILD-001",
-      "receipt_kind": "verification",
-      "release_id": "odp-20260826-001",
-      "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-      "manifest_digest": "sha256:f61d9af04cc7c6867b59303d939e3e2bd9e81f1a5c3f54a3c50f1e50a50f103b",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-      "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-      "environment": "dev",
-      "stage": "candidate-built",
-      "result": "pass",
-      "status": "passed",
-      "recorded_at": "2026-08-26T12:00:00Z",
-      "recorded_by": "Antigravity",
-      "artifact": ".odp_data/deployment/cloud-run-preflight.json",
-      "artifacts": [
-        ".odp_data/deployment/cloud-run-preflight.json",
-        ".odp_data/deployment/cloud-run-smoke.json"
-      ],
-      "secret_values_redacted": true,
-      "redaction": {
-        "secret_values_redacted": true,
-        "redacted_field_count": 0,
-        "redacted_fields": []
-      },
-      "details": {
-        "check": "real_image_digests_and_manifest_sealing",
-        "components": [
-          "api",
-          "web",
-          "data_platform",
-          "migration",
-          "worker",
-          "scheduler"
-        ],
-        "registry": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
-        "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-        "manifest_digest": "sha256:f61d9af04cc7c6867b59303d939e3e2bd9e81f1a5c3f54a3c50f1e50a50f103b",
-        "verification": "all components resolved to immutable registry digests"
-      }
-    },
-    {
-      "schema_version": 1,
-      "receipt_id": "ODP-RECEIPT-RELEASE-MANIFEST-REAL-DIGESTS-VERIFY-001",
-      "receipt_kind": "verification",
-      "release_id": "odp-20260826-001",
-      "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-      "manifest_digest": "sha256:f61d9af04cc7c6867b59303d939e3e2bd9e81f1a5c3f54a3c50f1e50a50f103b",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-      "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-      "environment": "dev",
-      "stage": "dev-verified",
-      "result": "pass",
-      "status": "passed",
-      "recorded_at": "2026-08-26T12:00:00Z",
-      "recorded_by": "Antigravity",
-      "artifact": ".odp_data/deployment/live-e2e-gate.json",
-      "artifacts": [
-        ".odp_data/deployment/live-e2e-gate.json",
-        ".odp_data/deployment/cloud-run-migration-compatibility.json"
-      ],
-      "secret_values_redacted": true,
-      "redaction": {
-        "secret_values_redacted": true,
-        "redacted_field_count": 0,
-        "redacted_fields": []
-      },
-      "details": {
-        "check": "cyclonedx_sbom_and_image_signatures_verification",
-        "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-        "components_count": 775,
-        "sbom_digest": "sha256:fabf02cf4707cbd9bf5d4c67523ca4f5f7d87dbdbb2f347d43f03e25dc1258c3",
-        "oss_gate_status": "PASSED",
-        "signatures_verified": true
-      }
-    }
-  ],
+  "stage": "candidate-built",
+  "audit_status": "blocked",
+  "total_receipts": 0,
+  "receipts": [],
+  "deployment_success_receipt_emitted": false,
+  "blocker_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json",
   "secret_values_redacted": true,
-  "verified_at": "2026-08-26T12:00:00Z",
-  "verified_by": "Antigravity"
+  "verified_at": "2026-08-26T12:36:58Z",
+  "verified_by": "Codex2"
 }

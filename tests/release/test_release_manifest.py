@@ -16,6 +16,7 @@ from delivery_toolchain.release.migrate_gate_registry import (
 from delivery_toolchain.release.release_manifest import (
     compute_manifest_digest,
     validate_manifest,
+    validate_release_admission,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +56,27 @@ def test_manifest_candidate_sha_mutation_fails_closed() -> None:
         expected_candidate_sha="ace4265b5190c00c72846b637fc04850bacec77e",
     )
     assert any("candidate_sha" in error for error in errors)
+
+
+def test_blocked_manifest_is_reviewable_but_not_admissible() -> None:
+    manifest = load_manifest()
+    assert manifest["release_status"] == "blocked"
+    assert manifest["blockers"]
+    assert validate_manifest(manifest) == []
+
+    errors = validate_release_admission(manifest)
+    assert any("release_status='ready'" in error for error in errors)
+    assert any("non-empty manifest.sbom_refs" in error for error in errors)
+    assert any("non-empty manifest.signature_refs" in error for error in errors)
+
+
+def test_blocked_manifest_requires_blocker_record() -> None:
+    manifest = load_manifest()
+    manifest["blockers"] = []
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    errors = validate_manifest(manifest)
+    assert any("non-empty blockers list" in error for error in errors)
 
 
 def test_registry_stage_contract_breaks_closed() -> None:
