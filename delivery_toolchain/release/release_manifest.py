@@ -128,9 +128,18 @@ def validate_manifest(
             "the manifest is for a different candidate"
         )
 
+    # A candidate that never produced an image has no honest component list.
+    # Forcing one here is what makes a manifest quote a *previous* candidate's
+    # digests, so an empty component set is representable -- but only on a
+    # manifest that records why, and never on an admissible one.
     components = manifest.get("components")
-    if not isinstance(components, dict) or not components:
-        errors.append("manifest.components must be a non-empty object")
+    if not isinstance(components, dict):
+        errors.append("manifest.components must be an object")
+    elif not components and manifest.get("release_status") != "blocked":
+        errors.append(
+            "manifest.components must be a non-empty object unless the manifest "
+            "records release_status='blocked'"
+        )
     elif not all(isinstance(name, str) and name.strip() for name in components):
         errors.append("manifest.components names must be non-empty strings")
     else:
@@ -221,6 +230,15 @@ def validate_release_admission(manifest: Any) -> list[str]:
         errors.append(
             "release admission requires manifest.release_status='ready'; "
             f"got {release_status!r}"
+        )
+    # ``validate_manifest`` lets a blocked manifest carry no components. That
+    # relaxation must not travel into admission: a release with nothing to
+    # deploy is not a release, whatever its recorded status says.
+    components = manifest.get("components")
+    if not isinstance(components, dict) or not components:
+        errors.append(
+            "release admission requires at least one immutable component image "
+            "in manifest.components"
         )
     for field in ("sbom_refs", "signature_refs"):
         refs = manifest.get(field)
@@ -345,6 +363,8 @@ def _print_manifest_summary(manifest: dict[str, Any]) -> None:
     print(f"  Manifest digest: {manifest['manifest_digest']}")
     print(f"  Release status:  {manifest.get('release_status', 'ready')}")
     print(f"  Components:      {len(manifest['components'])}")
+    if not manifest["components"]:
+        print("    - (none: no candidate image is bound to this manifest)")
     for name, comp in manifest["components"].items():
         print(f"    - {name}: {comp['image']}")
 

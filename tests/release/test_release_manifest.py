@@ -14,6 +14,7 @@ from delivery_toolchain.release.migrate_gate_registry import (
     migrate_registry,
 )
 from delivery_toolchain.release.release_manifest import (
+    build_release_manifest,
     compute_manifest_digest,
     validate_manifest,
     validate_release_admission,
@@ -38,8 +39,34 @@ def test_manifest_digest_matches_canonical_payload() -> None:
     assert manifest["manifest_digest"] == compute_manifest_digest(manifest)
 
 
+def built_manifest(**overrides) -> dict:
+    """Build a self-sealed manifest that carries one immutable component.
+
+    The committed manifest is whatever the current candidate happens to be, and
+    a blocked candidate legitimately has no components at all.  Component-level
+    mutation coverage therefore builds its own subject instead of borrowing the
+    release of the day.
+    """
+
+    manifest = build_release_manifest(
+        release_id="odp-test-0001",
+        candidate_sha="1" * 40,
+        components={
+            "api": {
+                "image": "registry.example.invalid/odayplus/api@sha256:" + "a" * 64
+            }
+        },
+        sbom_refs=["oci://registry.example.invalid/odayplus/sbom@sha256:" + "b" * 64],
+        signature_refs=["oci://registry.example.invalid/odayplus/api@sha256:" + "c" * 64],
+        created_at="2026-08-26T00:00:00Z",
+        created_by_workflow="github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml",
+    )
+    manifest.update(overrides)
+    return manifest
+
+
 def test_manifest_component_tag_mutation_fails_closed() -> None:
-    manifest = load_manifest()
+    manifest = built_manifest()
     image = manifest["components"]["api"]["image"]
     manifest["components"]["api"]["image"] = image.replace("@sha256:", ":mutable@sha256:")
     # The image is still syntactically digest-pinned, but the recorded
@@ -48,12 +75,47 @@ def test_manifest_component_tag_mutation_fails_closed() -> None:
     assert any("manifest_digest" in error for error in errors)
 
 
+def test_blocked_manifest_may_record_that_no_candidate_image_exists() -> None:
+    """A candidate that never built must not have to quote someone else's digests."""
+
+    manifest = built_manifest(components={}, release_status="blocked")
+    manifest["blockers"] = [
+        {"id": "TEST-NO-IMAGE", "severity": "P0", "reason": "no candidate image"}
+    ]
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    assert validate_manifest(manifest) == []
+
+
+def test_empty_components_are_rejected_unless_the_manifest_is_blocked() -> None:
+    for status in ("ready", None):
+        manifest = built_manifest(components={})
+        if status is None:
+            manifest.pop("release_status", None)
+        else:
+            manifest["release_status"] = status
+        manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+        errors = validate_manifest(manifest)
+        assert any("manifest.components" in error for error in errors), (status, errors)
+
+
+def test_empty_components_are_never_admissible() -> None:
+    """Forcing the status to ready must not turn an empty release into a deployable one."""
+
+    manifest = built_manifest(components={}, release_status="ready")
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+
+    errors = validate_release_admission(manifest)
+    assert any("at least one immutable component image" in error for error in errors)
+
+
 def test_manifest_candidate_sha_mutation_fails_closed() -> None:
     manifest = load_manifest()
     manifest["candidate_sha"] = "0" * 40
     errors = validate_manifest(
         manifest,
-        expected_candidate_sha="ace4265b5190c00c72846b637fc04850bacec77e",
+        expected_candidate_sha="a027fa1c3935360e6fc4b3bd073cd91cbee07548",
     )
     assert any("candidate_sha" in error for error in errors)
 
