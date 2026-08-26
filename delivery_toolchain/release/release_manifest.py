@@ -339,10 +339,33 @@ __all__ = [
 ]
 
 
-def main() -> int:
+def _print_manifest_summary(manifest: dict[str, Any]) -> None:
+    print(f"  Release ID:      {manifest['release_id']}")
+    print(f"  Candidate SHA:   {manifest['candidate_sha']}")
+    print(f"  Manifest digest: {manifest['manifest_digest']}")
+    print(f"  Release status:  {manifest.get('release_status', 'ready')}")
+    print(f"  Components:      {len(manifest['components'])}")
+    for name, comp in manifest["components"].items():
+        print(f"    - {name}: {comp['image']}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Validate a release manifest and refuse to bless a non-admissible one.
+
+    The default mode answers the question an auditor actually has -- "may this
+    manifest be deployed?" -- not merely "is this file well formed?".  A
+    manifest that parses cleanly but records ``release_status='blocked'`` is a
+    NO-GO, so it must exit non-zero and must never print a success verdict;
+    otherwise this command becomes the same kind of fake green light the
+    release gates exist to eliminate.  Pure structural checking is still
+    available, but only when it is asked for explicitly.
+    """
+
     import argparse
 
-    parser = argparse.ArgumentParser(description="Validate or inspect an ODay Plus release manifest.")
+    parser = argparse.ArgumentParser(
+        description="Validate an ODay Plus release manifest and its admission status.",
+    )
     parser.add_argument(
         "--manifest",
         type=Path,
@@ -351,7 +374,15 @@ def main() -> int:
     )
     parser.add_argument("--expected-sha", type=str, default=None, help="Expected candidate SHA")
     parser.add_argument("--expected-digest", type=str, default=None, help="Expected manifest digest")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--structure-only",
+        action="store_true",
+        help=(
+            "Check schema and digest self-consistency only, without deciding "
+            "release admission. Never reports a deployable verdict."
+        ),
+    )
+    args = parser.parse_args(argv)
 
     manifest, errors = load_manifest(
         args.manifest,
@@ -359,18 +390,41 @@ def main() -> int:
         expected_digest=args.expected_digest,
     )
     if errors:
-        print(f"FAIL: {len(errors)} error(s) in release manifest {args.manifest}:")
+        print(f"INVALID: {len(errors)} structural error(s) in release manifest {args.manifest}:")
         for err in errors:
             print(f"  - {err}")
         return 1
 
-    print(f"PASS: Release manifest {args.manifest} is valid.")
-    print(f"  Release ID:     {manifest['release_id']}")
-    print(f"  Candidate SHA:  {manifest['candidate_sha']}")
-    print(f"  Manifest Digest:{manifest['manifest_digest']}")
-    print(f"  Components:     {len(manifest['components'])}")
-    for name, comp in manifest["components"].items():
-        print(f"    - {name}: {comp['image']}")
+    assert manifest is not None  # load_manifest reports an error when it is None
+
+    if args.structure_only:
+        print(f"STRUCTURE-OK: {args.manifest} is schema valid and digest self-consistent.")
+        print("  Release admission was NOT evaluated (--structure-only).")
+        _print_manifest_summary(manifest)
+        return 0
+
+    admission_errors = validate_release_admission(manifest)
+    if admission_errors:
+        print(f"BLOCKED: release manifest {args.manifest} is NOT admissible for deployment.")
+        _print_manifest_summary(manifest)
+        print(f"  Admission refused for {len(admission_errors)} reason(s):")
+        for err in admission_errors:
+            print(f"    - {err}")
+        blockers = manifest.get("blockers")
+        if isinstance(blockers, list) and blockers:
+            print(f"  Recorded blockers ({len(blockers)}):")
+            for blocker in blockers:
+                if isinstance(blocker, dict):
+                    print(
+                        f"    - [{blocker.get('severity', '?')}] "
+                        f"{blocker.get('id', '?')}: {blocker.get('reason', '')}"
+                    )
+                else:
+                    print(f"    - {blocker}")
+        return 1
+
+    print(f"ADMISSIBLE: release manifest {args.manifest} may be deployed.")
+    _print_manifest_summary(manifest)
     return 0
 
 
