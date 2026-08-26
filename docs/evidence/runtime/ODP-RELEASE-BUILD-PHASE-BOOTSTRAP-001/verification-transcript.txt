@@ -1,0 +1,51 @@
+ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 驗證逐字記錄
+產生時間 (UTC): 2026-08-26T16:21:33Z
+工作樹 HEAD: 5b4d879e2dff1b6096adf7bb11c6f06e6376af56
+分支: task/ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001
+未提交的追蹤檔案: 0
+
+每一段都記錄指令、合併後的 stdout/stderr 與 exit code。EXIT=0 才算通過。
+tests/e2e/test_release_gate_registry.py 的兩個 playwright 相依測試在本機
+baseline (7f3744ce) 也同樣失敗，屬環境差異，未列入本次差集。
+
+================================================================
+$ uv run --frozen --python 3.12 python -m pytest tests/ops/test_deploy_workflow_contract.py tests/release/ -q
+----------------------------------------------------------------
+........................................................................ [ 41%]
+........................................................................ [ 82%]
+...............................                                          [100%]
+EXIT=0
+
+================================================================
+$ uv run --frozen --python 3.12 python -m pytest tests/ops/ -q
+----------------------------------------------------------------
+........................................................................ [ 11%]
+........................................................................ [ 22%]
+........................................................................ [ 33%]
+........................................................................ [ 45%]
+........................................................................ [ 56%]
+........................................................................ [ 67%]
+........................................................................ [ 79%]
+........................................................................ [ 90%]
+.......................................................... [ 99%]
+..                                                                       [100%]
+=============================== warnings summary ===============================
+tests/ops/test_cloud_run_live_deployment.py::test_real_app_platform_health_job_queue_contract
+  /tmp/pantheon-worker-worktrees/pantheon/odp-release-build-phase-bootstrap-001/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+EXIT=0
+
+================================================================
+$ uv run --frozen --python 3.12 python -m ruff check delivery_toolchain/release/ tests/release/ tests/ops/test_deploy_workflow_contract.py
+----------------------------------------------------------------
+All checks passed!
+EXIT=0
+
+================================================================
+$ uv run --frozen --python 3.12 python -c import yaml;d=yaml.safe_load(open('.github/workflows/deploy-dev.yml'));print('jobs:',list(d['jobs']));print('needs:',{j:b.get('needs') for j,b in d['jobs'].items()})
+----------------------------------------------------------------
+jobs: ['release_phase', 'build', 'admission', 'deploy']
+needs: {'release_phase': None, 'build': 'release_phase', 'admission': ['release_phase', 'build'], 'deploy': ['release_phase', 'build', 'admission']}
+EXIT=0
