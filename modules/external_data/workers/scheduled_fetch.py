@@ -625,6 +625,12 @@ class ExternalFetchScheduler:
             )
 
         mode = external_provider_mode(self.env)
+        if mode is ExternalProviderMode.DISABLED:
+            raise ExternalFetchProviderConfigurationError(
+                provider_id,
+                "provider_mode_disabled",
+                "External provider fetch is disabled for this deployment.",
+            )
         if mode is not ExternalProviderMode.LIVE:
             return
         deploy_env = self.env.get(

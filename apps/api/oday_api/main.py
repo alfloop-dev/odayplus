@@ -426,6 +426,14 @@ else:
         ) -> dict[str, Any]:
             provider_configuration_valid = bool(provider_report["configuration_valid"])
             provider_connectivity_healthy = bool(provider_report["connectivity_healthy"])
+            # ``disabled`` is an intentional production state: the internal
+            # data platform may serve the application while all third-party
+            # connectors remain closed. It is runtime-ready but never live
+            # provider-ready, so provider-backed routes still fail closed.
+            provider_runtime_ready = (
+                (provider_mode == "live" and provider_configuration_valid and provider_connectivity_healthy)
+                or (provider_mode == "disabled" and provider_configuration_valid)
+            )
             provider_live_ready = (
                 provider_mode == "live"
                 and provider_configuration_valid
@@ -438,7 +446,7 @@ else:
             live_ready = (
                 production_persistence_supported
                 and persistence_reachable
-                and provider_live_ready
+                and provider_runtime_ready
                 and operator_repository_ready
             )
             model_blocking_reasons = (
@@ -453,7 +461,7 @@ else:
                         persistence_reachable=persistence_reachable
                     )
                 )
-                if not provider_live_ready:
+                if not provider_runtime_ready:
                     blocking_reasons.append("PROVIDER_NOT_LIVE")
                 if (
                     provider_mode == "live"
@@ -478,8 +486,8 @@ else:
                     "configurationValid": provider_configuration_valid,
                     "connectivityHealthy": provider_report["connectivity_healthy"],
                     "healthy": (
-                        provider_live_ready
-                        if provider_mode == "live" or require_live_data
+                        provider_runtime_ready
+                        if provider_mode in {"live", "disabled"} or require_live_data
                         else provider_configuration_valid
                     ),
                     "live": provider_live_ready,

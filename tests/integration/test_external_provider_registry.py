@@ -99,6 +99,21 @@ def test_fixture_mode_validates_without_provider_secrets(monkeypatch: pytest.Mon
     assert app.state.external_provider_validation.mode is ExternalProviderMode.FIXTURE
 
 
+def test_disabled_mode_is_valid_without_allowlist_or_provider_secrets() -> None:
+    result = validate_external_providers(
+        env={
+            LIVE_MODE_ENV_VAR: "disabled",
+            "ODP_DEPLOY_ENV": "production",
+        },
+        correlation_id="corr-disabled-1",
+    )
+
+    assert result.ok
+    assert result.mode is ExternalProviderMode.DISABLED
+    assert result.providers == ()
+    assert result.errors == ()
+
+
 def test_live_mode_fails_closed_when_required_credentials_are_missing() -> None:
     env = {LIVE_MODE_ENV_VAR: "live"}
 

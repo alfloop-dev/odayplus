@@ -261,6 +261,7 @@ class GateConfig:
     operator_subject: str = "live-e2e-gate"
     operator_tenant: str = ""
     required_provider_ids: tuple[str, ...] = DEFAULT_REQUIRED_PROVIDER_IDS
+    external_provider_mode: str = "live"
     worker_probe_provider_id: str = ""
     worker_deadline_seconds: float = 600.0
     poll_interval_seconds: float = 10.0
@@ -671,11 +672,17 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
         config.operator_role or f"missing {OPERATOR_ROLE_ENV}",
         "config",
     )
+    providers_disabled = (
+        config.external_provider_mode.strip().lower() == "disabled"
+        and not config.required_provider_ids
+    )
     _check(
         checks,
-        bool(config.required_provider_ids),
+        providers_disabled or bool(config.required_provider_ids),
         "config:required_providers",
-        ",".join(config.required_provider_ids) or "missing required provider ids",
+        "external providers disabled; no activation allowlist is expected"
+        if providers_disabled
+        else ",".join(config.required_provider_ids),
         "config",
     )
     _check(
@@ -696,20 +703,21 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
     # assertions would iterate an empty set and pass vacuously.
     _check(
         checks,
-        bool(config.snapshot_provider_ids),
+        providers_disabled or bool(config.snapshot_provider_ids),
         "config:snapshot_providers",
-        (
-            ",".join(config.snapshot_provider_ids)
-            or "no required provider can produce an ingestion run"
-        ),
+        "skipped while external providers are disabled"
+        if providers_disabled
+        else (",".join(config.snapshot_provider_ids) or "no required provider can produce an ingestion run"),
         "config",
     )
     _check(
         checks,
-        bool(config.probe_provider_id)
-        and config.probe_provider_id in config.snapshot_provider_ids,
+        providers_disabled
+        or (bool(config.probe_provider_id) and config.probe_provider_id in config.snapshot_provider_ids),
         "config:worker_probe_provider",
-        (
+        "skipped while external providers are disabled"
+        if providers_disabled
+        else (
             f"probeProvider={config.probe_provider_id or '<missing>'} "
             f"schedulable={','.join(config.snapshot_provider_ids) or 'none'}"
         ),
@@ -829,12 +837,21 @@ def _check_runtime_readiness(
         ),
         "postgresql",
     )
+    provider_disabled = (
+        config.external_provider_mode.strip().lower() == "disabled"
+        and provider.get("mode") == "disabled"
+        and provider.get("configurationValid") is True
+        and provider.get("live") is False
+    )
     _check(
         checks,
-        provider.get("mode") == "live"
-        and provider.get("configurationValid") is True
-        and provider.get("connectivityHealthy") is True
-        and provider.get("live") is True,
+        provider_disabled
+        or (
+            provider.get("mode") == "live"
+            and provider.get("configurationValid") is True
+            and provider.get("connectivityHealthy") is True
+            and provider.get("live") is True
+        ),
         "runtime:provider",
         (
             f"mode={provider.get('mode')} "
@@ -984,6 +1001,16 @@ def _check_provider_probe_evidence(
     always answers with a fresh probe, and a wall-clock comparison would only
     add a skew-driven way to fail a healthy release.
     """
+
+    if not config.required_provider_ids:
+        _check(
+            checks,
+            provider.get("mode") == "disabled",
+            "runtime:provider_probe",
+            "no provider probe is run while external providers are disabled",
+            "provider",
+        )
+        return
 
     evidence = _as_dict(provider.get("probeEvidence"))
     probes = evidence.get("probes")
@@ -1211,6 +1238,15 @@ def _latest_run_by_provider(items: Sequence[Any]) -> dict[str, dict[str, Any]]:
 def _check_source_data(
     response: HttpResponse, *, config: GateConfig, checks: list[CheckResult]
 ) -> None:
+    if not config.required_provider_ids:
+        _check(
+            checks,
+            True,
+            "data:ingestion_runs",
+            "external ingestion readback is skipped while providers are disabled",
+            "external-data",
+        )
+        return
     if response.failed or response.status != 200:
         _check(
             checks,
@@ -1379,6 +1415,20 @@ def _check_worker_and_audit(
     monotonic: Callable[[], float],
     sleep: Callable[[float], None],
 ) -> None:
+    if not config.required_provider_ids:
+        report["worker"] = {
+            "skipped": True,
+            "reason": "external providers disabled; scheduler leaves no external-fetch job",
+        }
+        _check(
+            checks,
+            True,
+            "worker:external_provider_disabled",
+            "worker external-fetch probe skipped because source activation is closed",
+            "worker",
+        )
+        return
+
     idempotency_key = f"live-e2e-{config.expected_sha[:12]}-{correlation_id}"
     body = _enqueue_body(config, idempotency_key)
     headers = {"idempotency-key": idempotency_key}
@@ -1619,6 +1669,7 @@ def evaluate_gate(
             "snapshot_provider_ids": list(config.snapshot_provider_ids),
             "enrichment_provider_ids": list(config.enrichment_provider_ids),
             "worker_probe_provider_id": config.probe_provider_id,
+            "external_provider_mode": config.external_provider_mode,
             "secret_values_redacted": True,
         },
     }
@@ -1760,6 +1811,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _required_providers(args: argparse.Namespace) -> tuple[str, ...]:
+    if os.environ.get("ODP_EXTERNAL_PROVIDER_MODE", "").strip().lower() == "disabled":
+        return ()
     if args.required_provider:
         return tuple(sorted({value.strip() for value in args.required_provider if value.strip()}))
     declared = os.environ.get(PRODUCTION_PROVIDER_IDS_ENV, "")
@@ -1781,6 +1834,7 @@ def main(argv: list[str] | None = None) -> int:
         operator_subject=args.operator_subject.strip(),
         operator_tenant=args.operator_tenant.strip(),
         required_provider_ids=_required_providers(args),
+        external_provider_mode=os.environ.get("ODP_EXTERNAL_PROVIDER_MODE", "live").strip().lower(),
         worker_probe_provider_id=args.worker_probe_provider.strip(),
         worker_deadline_seconds=args.worker_deadline_seconds,
         poll_interval_seconds=args.poll_interval_seconds,
