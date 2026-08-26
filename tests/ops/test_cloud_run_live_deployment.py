@@ -1924,7 +1924,8 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         assert "ODP_SCHEDULER_CRON" in text
         assert "ODP_PRODUCTION_PROVIDER_IDS" not in text
         assert "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in text
-        assert "ODP_EXTERNAL_PROVIDER_MODE" not in text
+        assert "ODP_EXTERNAL_PROVIDER_MODE" in text
+        assert "ODP_EXTERNAL_PROVIDER_MODE: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_STATUS: disabled" in text
         assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION_SECRET" not in text
         assert "validate_cloud_run_live_deployment.py preflight" in text
@@ -2028,7 +2029,7 @@ def test_deploy_script_preflights_before_build_and_uses_secret_references() -> N
     assert "restore_scheduler_trigger" in text
     assert "ODP_PRODUCTION_PROVIDER_IDS" not in text
     assert "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS" not in text
-    assert "ODP_EXTERNAL_PROVIDER_MODE" not in text
+    assert '"ODP_EXTERNAL_PROVIDER_MODE",' in text
     assert "ODP_COMPETITOR_MANUAL_SOURCE_ATTESTATION" not in text
     assert "oday-local" not in text
     assert "postgresql://" not in text

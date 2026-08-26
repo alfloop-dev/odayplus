@@ -16,6 +16,7 @@ from modules.external_data.connectors import (
 from modules.external_data.connectors.provider_registry import (
     LIVE_MODE_ENV_VAR,
     PRODUCTION_PROVIDER_IDS_ENV_VAR,
+    external_provider_mode,
 )
 
 REQUIRED_ENV_VARS = {
@@ -97,6 +98,21 @@ def test_fixture_mode_validates_without_provider_secrets(monkeypatch: pytest.Mon
     assert result.ok
     assert result.mode is ExternalProviderMode.FIXTURE
     assert app.state.external_provider_validation.mode is ExternalProviderMode.FIXTURE
+
+
+def test_disabled_mode_is_valid_without_allowlist_or_provider_secrets() -> None:
+    result = validate_external_providers(
+        env={
+            LIVE_MODE_ENV_VAR: "disabled",
+            "ODP_DEPLOY_ENV": "production",
+        },
+        correlation_id="corr-disabled-1",
+    )
+
+    assert result.ok
+    assert result.mode is ExternalProviderMode.DISABLED
+    assert result.providers == ()
+    assert result.errors == ()
 
 
 def test_live_mode_fails_closed_when_required_credentials_are_missing() -> None:
@@ -260,3 +276,40 @@ def test_downstream_export_flags_are_enforced_by_provider_license_metadata() -> 
     assert provider_export_allowed("listing.partner_feed") is False
     assert "audit_evidence" in provider_downstream_use_flags("admin_boundary.official_dataset")
     assert "manual_review" in provider_downstream_use_flags("competitor.manual_source")
+
+
+@pytest.mark.parametrize(
+    "garbage_mode",
+    ["garbage", "GARBAGE", "  unknown  ", "livee", "disabledd", "0", "true", "yes"],
+)
+def test_external_provider_mode_fails_closed_for_unknown_values(garbage_mode: str) -> None:
+    """Regression: unknown ODP_EXTERNAL_PROVIDER_MODE must return DISABLED, not ValueError.
+
+    A ValueError from external_provider_mode escapes _configuration_refusal's
+    try/except and crashes the worker with no FAILED/BLOCKED run or audit
+    receipt.  Fail-closed means unknown → disabled.
+    """
+    result = external_provider_mode({LIVE_MODE_ENV_VAR: garbage_mode})
+    assert result is ExternalProviderMode.DISABLED
+
+
+@pytest.mark.parametrize(
+    ("mode_value", "expected"),
+    [
+        ("fixture", ExternalProviderMode.FIXTURE),
+        ("fixtures", ExternalProviderMode.FIXTURE),
+        ("stub", ExternalProviderMode.FIXTURE),
+        ("live", ExternalProviderMode.LIVE),
+        ("disabled", ExternalProviderMode.DISABLED),
+        ("off", ExternalProviderMode.DISABLED),
+        ("none", ExternalProviderMode.DISABLED),
+        ("", ExternalProviderMode.FIXTURE),
+    ],
+)
+def test_external_provider_mode_known_values(
+    mode_value: str, expected: ExternalProviderMode
+) -> None:
+    """Known mode values still resolve correctly after the fail-closed change."""
+    result = external_provider_mode({LIVE_MODE_ENV_VAR: mode_value})
+    assert result is expected
+
