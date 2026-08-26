@@ -340,6 +340,75 @@ class GitHubBusCommandTests(unittest.TestCase):
         self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["state"], "open")
         self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["number"], 812)
 
+    def test_closed_review_bus_pr_is_reconciled_to_current_open_pr(self) -> None:
+        """A stale closed PR must not suppress adoption of the publisher PR."""
+
+        config = {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+        task = {
+            "id": "ODP-PR-STALE-REF-001",
+            "title": "Reconcile stale review reference",
+            "summary_zh": "reconcile me",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+        branch = "task/ODP-PR-STALE-REF-001"
+        title = f"[ReviewBus] {task['id']} {task['title']}"
+        body = "body\n"
+        pr_hash = json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "labels": ["pantheon-review"],
+                "branch": branch,
+                "base": "dev",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": 1018,
+                        "url": "https://example.test/pull/1018",
+                        "branch": branch,
+                        "state": "closed",
+                    },
+                    "last_review_hash": pr_hash,
+                }
+            }
+        }
+        found = {"number": 1019, "url": "https://example.test/pull/1019"}
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found) as find,
+            mock.patch.object(github_bus, "build_template_body", return_value=body),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+
+        self.assertTrue(changed)
+        find.assert_called_once_with("o/r", task["id"], branch, "dev")
+        self.assertEqual(edit.call_args.args[1], 1019)
+        review_pr = bus_state["tasks"][task["id"]]["review_pr"]
+        self.assertEqual(review_pr["number"], 1019)
+        self.assertEqual(review_pr["state"], "open")
+
     def test_upsert_review_pr_skips_unpublished_remote_branch(self) -> None:
         config = {
             "github_bus": {

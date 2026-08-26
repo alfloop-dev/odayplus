@@ -1071,11 +1071,12 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     body = build_template_body(config, "review_pr", variables)
     labels = list((config.get("github_bus", {}) or {}).get("labels", {}).get("review", []))
     pr_hash = json.dumps({"title": title, "body": body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha}, ensure_ascii=False, sort_keys=True)
-    if (
-        entry.get("last_review_hash") == pr_hash
-        and pr_ref
-        and pr_ref.get("state") != "missing_pr"
-    ):
+    # A previous ReviewBus record may point at a closed or superseded PR.  Do
+    # not let that stale identity suppress reconciliation: the publisher's
+    # task-scoped branch is authoritative, so discovery must run again and
+    # adopt the current open PR for the same branch/base pair.
+    pr_ref_is_open = isinstance(pr_ref, dict) and str(pr_ref.get("state") or "").lower() == "open"
+    if entry.get("last_review_hash") == pr_hash and pr_ref_is_open:
         return False
 
     has_diff = branch_has_diff(base, branch, expected_head_sha=head_sha)
@@ -1099,6 +1100,13 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             },
         )
         return True
+
+    # Never edit a closed PR or carry its number into auto-merge state.  A
+    # closed ReviewBus PR is only a historical pointer; find_existing_pr()
+    # below can adopt the publisher-created open PR without creating another
+    # PR path.
+    if isinstance(pr_ref, dict) and str(pr_ref.get("state") or "").lower() != "open":
+        pr_ref = None
 
     if pr_ref and pr_ref.get("number"):
         number = int(pr_ref["number"])
