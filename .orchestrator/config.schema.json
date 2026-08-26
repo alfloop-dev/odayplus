@@ -897,6 +897,10 @@
         },
         "stall_after_seconds": {
           "type": "integer"
+        },
+        "hard_inactivity_seconds": {
+          "description": "Terminate a worker that keeps heartbeating but has produced no storage I/O for this long. Counter-based stall detection cannot see a CLI blocked forever on a shell command, because such a process still burns CPU and keeps its sockets warm. Set to 0 to disable.",
+          "type": "number"
         }
       },
       "additionalProperties": false
