@@ -1,55 +1,55 @@
 {
   "schema_version": 1,
-  "release_id": "odp-20260826-001",
-  "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-  "components": {
-    "api": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7"
-    },
-    "web": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79"
-    },
-    "data_platform": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform@sha256:b9aa10b5334406aca653c68e128de8c85414cec27b49c0052f4dd0f293da3ea7"
-    },
-    "migration": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434"
-    },
-    "worker": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434"
-    },
-    "scheduler": {
-      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586"
-    }
-  },
+  "release_id": "odp-20260826-002",
+  "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+  "components": {},
   "migration_digest": "sha256:e860458dd1bb62f07460b0e32ccb92cfbce4d28b3102036a7b883f3db5318840",
   "data_contract_digest": "sha256:3ff542af6a09584cc60644f03e91f7d4fdb3ea75b8659e23af6b0a8e23376a44",
   "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
   "external_sources_expected_enabled": [],
   "sbom_refs": [],
   "signature_refs": [],
-  "created_at": "2026-08-26T12:36:58Z",
-  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml (no matching candidate run; release blocked)",
+  "created_at": "2026-08-26T14:42:37Z",
+  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml (Runtime Release; no run is bound to this candidate; release blocked)",
+  "manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
   "release_status": "blocked",
+  "supersedes": {
+    "release_id": "odp-20260826-001",
+    "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+    "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
+    "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/",
+    "reason": "Commits between ace4265b and a027fa1c touch non-evidence paths (delivery_toolchain and tests), so the superseded candidate is not an evidence-only ancestor of the current dev tip and its image digests must not be rebound to this candidate."
+  },
   "blockers": [
     {
-      "id": "ODP-RELEASE-MANIFEST-COSIGN-001",
+      "id": "ODP-RELEASE-MANIFEST-RERUN-IMAGES-002",
       "severity": "P0",
-      "reason": "No cosign verifier is installed in the audit environment and no candidate image signature artifact was found in Artifact Registry.",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/sbom-and-signature-verification.json"
+      "reason": "No container image is tagged release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 in asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev. All 11 candidate repository probes returned 'not found' with EXIT=1, so this candidate has no immutable image digest to bind.",
+      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-2"
     },
     {
-      "id": "ODP-RELEASE-MANIFEST-SBOM-001",
+      "id": "ODP-RELEASE-MANIFEST-RERUN-WORKFLOW-002",
       "severity": "P0",
-      "reason": "No candidate SBOM OCI artifact was found; the available local SBOM hash does not match the previously claimed digest.",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/sbom-and-signature-verification.json"
+      "reason": "GitHub Actions has no Runtime Release run bound to the candidate SHA; 'gh run list --workflow deploy-dev.yml --commit a027fa1c...' returned [] with EXIT=0. The workflow is workflow_dispatch-only at this SHA and its most recent runs (2026-08-20, push-triggered) all failed or were cancelled.",
+      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-3"
     },
     {
-      "id": "ODP-RELEASE-MANIFEST-WORKFLOW-001",
+      "id": "ODP-RELEASE-MANIFEST-RERUN-COSIGN-002",
       "severity": "P0",
-      "reason": "GitHub Actions has no Deploy Dev run for candidate SHA ace4265b5190c00c72846b637fc04850bacec77e; the release workflow provenance cannot be attested.",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json"
+      "reason": "cosign is not installed in the audit environment ('command -v cosign' EXIT=1) and no cosign signature artifact exists in the registry. delivery_toolchain/security/sign_images.sh verify refuses to simulate success and exits 1.",
+      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-4"
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-RERUN-SBOM-002",
+      "severity": "P0",
+      "reason": "No candidate-bound SBOM artifact exists. The shared SBOM repository probe and the cosign .sbom tag probe both returned 'not found' with EXIT=1, and syft is not installed ('command -v syft' EXIT=1).",
+      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-5"
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-RERUN-LEASE-CONFIG-002",
+      "severity": "P0",
+      "reason": "The GitHub 'dev' environment defines neither ODP_RELEASE_LEASE_STATE_URI nor ODP_RELEASE_LEASE_PUBLIC_KEY, and no repository-scope variable supplies them ('gh variable list --json name' returned [] at repository scope). The Runtime Release admission job requires a gs://bucket/prefix lease state URI, so a dev release cannot be admitted until the environment is configured. The staging and production environments do define both variables.",
+      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-6"
     }
-  ],
-  "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163"
+  ]
 }

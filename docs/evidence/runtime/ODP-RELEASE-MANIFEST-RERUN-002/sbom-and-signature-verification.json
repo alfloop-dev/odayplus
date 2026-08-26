@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-RERUN-002",
+  "release_id": "odp-20260826-002",
+  "manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
+  "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+  "observed_at": "2026-08-26T14:42:37Z",
+  "recorded_by": "Claude2",
+  "verdict": "UNVERIFIABLE",
+  "verdict_meaning": "Neither an SBOM nor a signature was verified. UNVERIFIABLE is not a soft pass; the manifest keeps sbom_refs and signature_refs empty and release_status='blocked'.",
+  "preconditions": {
+    "candidate_images_exist": false,
+    "note": "Cosign attaches signatures and SBOMs to an image digest under the sha256-<digest>.sig / .sbom tag convention. With no candidate image digest, no candidate-bound signature or SBOM artifact can exist even in principle. The probes below therefore establish absence at both levels: no artifact for this candidate, and no artifact for the superseded candidate's digest either."
+  },
+  "tooling": [
+    {
+      "tool": "cosign",
+      "command": "command -v cosign",
+      "command_exit_code": 1,
+      "observed": "not installed",
+      "transcript_ref": "release-candidate-transcript.txt#L225"
+    },
+    {
+      "tool": "syft",
+      "command": "command -v syft",
+      "command_exit_code": 1,
+      "observed": "not installed",
+      "transcript_ref": "release-candidate-transcript.txt#L231"
+    },
+    {
+      "tool": "docker buildx imagetools",
+      "command": "docker buildx version",
+      "command_exit_code": 0,
+      "observed": "github.com/docker/buildx v0.36.1",
+      "note": "Registry-side OCI distribution client used for every probe below; it is the substitute for 'gcloud artifacts docker images describe', which this worker's sandbox refuses before execution."
+    }
+  ],
+  "probes": [
+    {
+      "purpose": "candidate SBOM artifact in the shared sbom repository",
+      "command": "docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom:release-a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+      "command_exit_code": 1,
+      "observed": "not found",
+      "transcript_ref": "release-candidate-transcript.txt#L249"
+    },
+    {
+      "purpose": "cosign signature tag for the superseded candidate's API image digest",
+      "command": "docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:sha256-002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7.sig",
+      "command_exit_code": 1,
+      "observed": "not found",
+      "transcript_ref": "release-candidate-transcript.txt#L256"
+    },
+    {
+      "purpose": "cosign SBOM tag for the superseded candidate's API image digest",
+      "command": "docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:sha256-002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7.sbom",
+      "command_exit_code": 1,
+      "observed": "not found",
+      "transcript_ref": "release-candidate-transcript.txt#L263"
+    }
+  ],
+  "fail_closed_behaviour": {
+    "command": "env CI=true ./delivery_toolchain/security/sign_images.sh verify <candidate image>",
+    "command_exit_code": 1,
+    "observed": "Error: cosign is required for image signing/verification; refusing to simulate success.",
+    "transcript_ref": "release-candidate-transcript.txt#L237",
+    "meaning": "The signing helper emits no success wording when cosign is absent. This is the behaviour under test in tests/release/test_sign_images.py; it is a property of the helper, not evidence about any image."
+  },
+  "limitation": "This audit proves absence from the configured Artifact Registry using an unauthenticated-read OCI client. It cannot prove that no signature exists in some other registry or transparency log. Closing that would require cosign plus the hosted signing identity, which is exactly what blocker ODP-RELEASE-MANIFEST-RERUN-COSIGN-002 records as missing."
+}

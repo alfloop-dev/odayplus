@@ -21,9 +21,18 @@ record and the checklist is the explanation.
 
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
-`ace4265b5190c00c72846b637fc04850bacec77e`. Deterministic product-E2E readiness
+`a027fa1c3935360e6fc4b3bd073cd91cbee07548`. Deterministic product-E2E readiness
 (`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
 current state is `candidate-built` in `dev`, with admission target `dev`.
+
+The candidate was rebound from `ace4265b5190c00c72846b637fc04850bacec77e` by
+ODP-RELEASE-MANIFEST-RERUN-002; `registry.candidate_rebind` records that this
+was a mechanical rebind and that no gate was re-attested. `RELEASE_MANIFEST.json`
+for this candidate is `release_status: blocked` with an empty `components` map,
+because no image is tagged for the candidate SHA in Artifact Registry. An empty
+`components` map is only representable on a blocked manifest, and
+`validate_release_admission` refuses it regardless of the recorded status, so a
+candidate with nothing to deploy can never read as deployable.
 
 ## Gate 0-6
 

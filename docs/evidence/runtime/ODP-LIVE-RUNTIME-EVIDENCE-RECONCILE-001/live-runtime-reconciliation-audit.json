@@ -1,0 +1,634 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-LIVE-RUNTIME-EVIDENCE-RECONCILE-001",
+  "audit_type": "live_runtime_vs_historical_receipt_reconciliation",
+  "release_status": "blocked",
+  "deployment_success_claimed": false,
+  "historical_receipts_modified": false,
+  "generated_at": "2026-08-26T15:43:30Z",
+  "generated_by": "Claude2",
+  "readback_window_utc": {
+    "start_utc": "2026-08-26T15:42:02Z",
+    "end_utc": "2026-08-26T15:43:30Z"
+  },
+  "readback_identity": {
+    "gcloud_account": "deborah.lu@dev.cctech-support.com",
+    "gcloud_version": "580.0.0",
+    "note": "Read-only list and describe calls only. No deploy, mutate or delete command was issued, and no secret payload was read; only secret names were listed."
+  },
+  "repository_head": {
+    "origin_dev": "7f3744ce7413e4134b2c178060b1d919bee2bf0f",
+    "origin_main": "574dde52b56992b5088aedc74332e2e90fb40b44",
+    "candidate_drift_from_origin_dev": {
+      "e496be62c47c45d758681b8a4d3abfae16f1c96d": {
+        "commits_behind": 2145,
+        "source": "ODP-DEV-ROLLOUT-001 receipts"
+      },
+      "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3": {
+        "commits_behind": 36,
+        "source": "Artifact Registry release tag"
+      },
+      "ace4265b5190c00c72846b637fc04850bacec77e": {
+        "commits_behind": 9,
+        "source": "docs/evidence/gates/RELEASE_MANIFEST.json"
+      }
+    }
+  },
+  "readback_transcript": {
+    "path": "docs/evidence/runtime/ODP-LIVE-RUNTIME-EVIDENCE-RECONCILE-001/live-readback-transcript.txt",
+    "sha256": "sha256:d2ba796a39822bc003c73febdc6f5b209a9ea42658f9234e11789e27b95e7724",
+    "commands_executed": 52,
+    "section_index": {
+      "S0": {
+        "line": 12,
+        "title": "Toolchain and identity"
+      },
+      "S1": {
+        "line": 52,
+        "title": "Repository head under reconciliation"
+      },
+      "S2": {
+        "line": 98,
+        "title": "dev and staging project: Cloud Run services, jobs, scheduler"
+      },
+      "S3": {
+        "line": 132,
+        "title": "dev and staging project: Cloud SQL, Artifact Registry, secrets, buckets, IAM"
+      },
+      "S4": {
+        "line": 275,
+        "title": "production project"
+      },
+      "S5": {
+        "line": 387,
+        "title": "GKE data-platform surface"
+      },
+      "S6": {
+        "line": 454,
+        "title": "GitHub Runtime Release workflow history"
+      },
+      "S7": {
+        "line": 580,
+        "title": "GitHub deployment environments"
+      },
+      "S8": {
+        "line": 731,
+        "title": "Report paths referenced by the historical readback receipt"
+      }
+    },
+    "transcript_ref_convention": "Each reconciliation claim and blocker cites the transcript sections (S0-S8) holding its evidence; section_index maps each section to its line number.",
+    "nonzero_exit_commands": [
+      {
+        "section": "S5",
+        "command": "gcloud container clusters list --project odayplus-prod-20260826",
+        "exit": 1,
+        "meaning": "Kubernetes Engine API is not enabled in the production project."
+      },
+      {
+        "section": "S8",
+        "command": "ls -la .odp_data/deployment",
+        "exit": 2,
+        "meaning": "The report directory referenced by dev-integration-readback.json does not exist."
+      }
+    ]
+  },
+  "environments": {
+    "dev": {
+      "gcp_project_id": "odayplus-runtime-20260825",
+      "region": "asia-east1",
+      "github_environment": {
+        "name": "dev",
+        "protection_rules": []
+      },
+      "expected_workloads_from_github_env": {
+        "api_service": "oday-api",
+        "web_service": "oday-web",
+        "migration_job": "oday-migration",
+        "worker_job": "oday-worker",
+        "scheduler_job": "oday-scheduler",
+        "worker_trigger": "oday-worker-trigger",
+        "scheduler_trigger": "oday-scheduler-trigger"
+      },
+      "observed_cloud_run_services": [
+        "oday-mlflow"
+      ],
+      "observed_cloud_run_jobs": [],
+      "observed_cloud_scheduler_jobs": [],
+      "observed_cloud_sql_instances": [
+        "oday-dev-sql"
+      ],
+      "observed_secret_names": [
+        "oday-plus-dev-api-database-url-pg16",
+        "oday-plus-dev-auth-principal-map",
+        "oday-plus-dev-mlflow-backend-uri",
+        "oday-plus-dev-web-session-secret"
+      ],
+      "application_workloads_deployed": false,
+      "deployment_state": "not_deployed",
+      "notes": "Infrastructure (Cloud SQL, Artifact Registry, secrets, service accounts, WIF) is provisioned, but no ODay Plus API, Web, migration, worker or scheduler workload exists. Only the MLflow tracking service runs."
+    },
+    "staging": {
+      "gcp_project_id": "odayplus-runtime-20260825",
+      "region": "asia-east1",
+      "github_environment": {
+        "name": "staging",
+        "protection_rules": [
+          "required_reviewers"
+        ]
+      },
+      "expected_workloads_from_github_env": {
+        "api_service": "oday-staging-api",
+        "web_service": "oday-staging-web",
+        "migration_job": "oday-staging-migration",
+        "worker_job": "oday-staging-worker",
+        "scheduler_job": "oday-staging-scheduler",
+        "worker_trigger": "oday-staging-worker-trigger",
+        "scheduler_trigger": "oday-staging-scheduler-trigger"
+      },
+      "observed_cloud_run_services": [
+        "oday-staging-mlflow"
+      ],
+      "observed_cloud_run_jobs": [],
+      "observed_cloud_scheduler_jobs": [],
+      "observed_cloud_sql_instances": [
+        "oday-staging-sql"
+      ],
+      "observed_gke_namespace": {
+        "name": "oday-staging-8c72b54",
+        "age_at_readback": "14h",
+        "resources": "none; kubectl get all returned 'No resources found'"
+      },
+      "observed_secret_names": [
+        "oday-staging-auth-principal-map",
+        "oday-staging-database-url",
+        "oday-staging-mlflow-backend-uri",
+        "oday-staging-web-session-secret"
+      ],
+      "application_workloads_deployed": false,
+      "deployment_state": "not_deployed",
+      "notes": "Release-scoped images for candidates 8c72b54a and ace4265b exist in Artifact Registry and an empty ephemeral namespace oday-staging-8c72b54 exists, but no staging Cloud Run service or job is deployed. The most recent successful Deploy/Verify Staging run is 28325038545 at 2026-06-28T14:15:45Z, long before this project existed."
+    },
+    "production": {
+      "gcp_project_id": "odayplus-prod-20260826",
+      "project_create_time": "2026-08-26T00:45:38.960Z",
+      "region": "asia-east1",
+      "github_environment": {
+        "name": "production",
+        "protection_rules": [
+          "required_reviewers"
+        ],
+        "created_at": "2026-08-25T15:41:19Z"
+      },
+      "expected_workloads_from_github_env": {
+        "api_service": "oday-api",
+        "web_service": "oday-web",
+        "migration_job": "oday-migration",
+        "worker_job": "oday-worker",
+        "scheduler_job": "oday-scheduler",
+        "worker_trigger": "oday-worker-trigger",
+        "scheduler_trigger": "oday-scheduler-trigger"
+      },
+      "observed_cloud_run_services": [
+        "oday-prod-mlflow"
+      ],
+      "observed_cloud_run_jobs": [],
+      "observed_cloud_scheduler_jobs": [],
+      "observed_cloud_sql_instances": [
+        "oday-prod-sql"
+      ],
+      "observed_secret_names": [
+        "oday-prod-auth-principal-map",
+        "oday-prod-database-url",
+        "oday-prod-mlflow-backend-uri",
+        "oday-prod-web-session-secret"
+      ],
+      "observed_service_accounts": [
+        "github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com",
+        "oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com",
+        "oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com",
+        "oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com"
+      ],
+      "observed_workload_identity_pool": "projects/365886461656/locations/global/workloadIdentityPools/github-actions (ACTIVE)",
+      "application_workloads_deployed": false,
+      "deployment_state": "not_deployed",
+      "notes": "Production project, Cloud SQL, Artifact Registry (with release-8c72b54a tagged images already promoted), secrets, service accounts and WIF exist. No ODay Plus workload is deployed and no blue-green traffic split exists. The Kubernetes Engine API is not enabled in this project."
+    }
+  },
+  "artifact_registry": {
+    "dev_staging_repository": {
+      "name": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+      "create_time": "2026-08-25T00:35:33",
+      "image_names": [
+        "oday-data-platform",
+        "oday-mlflow",
+        "oday-staging-api",
+        "oday-staging-mlflow",
+        "oday-staging-scheduler",
+        "oday-staging-web",
+        "oday-staging-worker",
+        "odayplus-api",
+        "odayplus-runtime",
+        "odayplus-scheduler",
+        "odayplus-web",
+        "odayplus-worker"
+      ],
+      "release_tags_present": [
+        "release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+        "release-ace4265b5190c00c72846b637fc04850bacec77e",
+        "release-8c72b54"
+      ],
+      "release_tag_for_current_origin_dev": null,
+      "cosign_signed_image_names": [
+        "oday-data-platform"
+      ],
+      "note": "No image is named oday-api, oday-web, oday-migration, oday-worker or oday-scheduler, which are the exact names the dev GitHub environment configures. The odayplus-* image names carry the same digests as their oday-staging-* counterparts for candidate ace4265b."
+    },
+    "production_repository": {
+      "name": "asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus",
+      "create_time": "2026-08-26T00:47:44",
+      "image_names": [
+        "oday-api",
+        "oday-data-platform",
+        "oday-mlflow",
+        "oday-scheduler",
+        "oday-web",
+        "oday-worker"
+      ],
+      "release_tags_present": [
+        "release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+        "release-8c72b54"
+      ],
+      "release_tag_for_current_origin_dev": null,
+      "cosign_signed_image_names": [],
+      "note": "Candidate 8c72b54a images are promoted into the production repository but nothing consumes them; no production Cloud Run workload exists."
+    }
+  },
+  "github_runtime_release": {
+    "workflows": {
+      "dev": "deploy-dev.yml (Deploy Dev)",
+      "staging": "deploy-staging.yml (Deploy/Verify Staging)"
+    },
+    "deploy_dev_last_run": {
+      "id": 32359736962,
+      "created_at": "2026-08-20T10:36:14Z",
+      "conclusion": "failure"
+    },
+    "deploy_dev_last_success": {
+      "id": 29427386990,
+      "created_at": "2026-07-15T15:16:54Z",
+      "head_sha": "2eeb11f29551954adc9989614c852027b68a118e",
+      "commits_behind_origin_dev": 2991
+    },
+    "deploy_dev_recent_200_conclusions": {
+      "failure": 112,
+      "cancelled": 88,
+      "success": 0
+    },
+    "deploy_staging_last_success": {
+      "id": 28325038545,
+      "created_at": "2026-06-28T14:15:45Z",
+      "head_sha": "f4545810c9aa5b7908ef6d2674c27235980e0a00"
+    },
+    "runs_for_dev_rollout_candidate": {
+      "head_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+      "deploy_dev_runs": [
+        {
+          "id": 30459596361,
+          "created_at": "2026-07-29T14:10:58Z",
+          "conclusion": "failure",
+          "jobs": [
+            {
+              "name": "e2e-operational-evidence",
+              "conclusion": "success"
+            },
+            {
+              "name": "deploy",
+              "conclusion": "failure"
+            }
+          ],
+          "url": "https://github.com/alfloop-dev/odayplus/actions/runs/30459596361"
+        }
+      ]
+    },
+    "runs_for_release_manifest_candidate": {
+      "head_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "deploy_dev_runs": []
+    },
+    "runs_for_current_origin_dev": {
+      "head_sha": "7f3744ce7413e4134b2c178060b1d919bee2bf0f",
+      "deploy_dev_runs": []
+    }
+  },
+  "historical_receipt_reconciliation": [
+    {
+      "claim_id": "RC-001",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "runtime_targets.gcp_project_id",
+      "claimed_value": "odayplus-runtime-20260825",
+      "observed_value": "odayplus-runtime-20260825 exists and is reachable",
+      "verdict": "match",
+      "transcript_ref": "S2, S3"
+    },
+    {
+      "claim_id": "RC-002",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "runtime_targets.gcp_region",
+      "claimed_value": "asia-east1",
+      "observed_value": "asia-east1 is the only location holding project resources",
+      "verdict": "match",
+      "transcript_ref": "S2, S3"
+    },
+    {
+      "claim_id": "RC-003",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "runtime_targets.gcp_ar_repo",
+      "claimed_value": "oday-plus-dev",
+      "observed_value": "Artifact Registry repository oday-plus-dev exists (created 2026-08-25T00:35:33)",
+      "verdict": "match",
+      "transcript_ref": "S3"
+    },
+    {
+      "claim_id": "RC-004",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "runtime_targets.gcp_cloud_sql_instance",
+      "claimed_value": "odayplus-runtime-20260825:asia-east1:oday-plus-dev-pg16",
+      "observed_value": "Cloud SQL instances present: oday-dev-sql, oday-staging-sql. No instance named oday-plus-dev-pg16.",
+      "verdict": "mismatch",
+      "transcript_ref": "S3",
+      "note": "The dev GitHub environment configures GCP_CLOUD_SQL_INSTANCE=odayplus-runtime-20260825:asia-east1:oday-dev-sql, which contradicts the receipt."
+    },
+    {
+      "claim_id": "RC-005",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "runtime_targets.wif_provider",
+      "claimed_value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus",
+      "observed_value": "Identical value configured on the dev GitHub environment",
+      "verdict": "match",
+      "transcript_ref": "S7",
+      "note": "Config-level agreement only; the provider resource itself was not read in the dev/staging project."
+    },
+    {
+      "claim_id": "RC-006",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "runtime_targets.deployer_service_account",
+      "claimed_value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "observed_value": "Service account exists",
+      "verdict": "match",
+      "transcript_ref": "S3"
+    },
+    {
+      "claim_id": "RC-007",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "runtime_targets.runtime_service_account",
+      "claimed_value": "oday-plus-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "observed_value": "Not present. The dev runtime service account in the project is gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "verdict": "mismatch",
+      "transcript_ref": "S3",
+      "note": "The dev GitHub environment's ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT is gke-oday-dev-runtime@..., matching the live project, not the receipt."
+    },
+    {
+      "claim_id": "RC-008",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "deployed_services_and_jobs.api",
+      "claimed_value": "Cloud Run service oday-plus-dev-api, status READY, traffic_percent 100",
+      "observed_value": "Not present. The only Cloud Run services in the project across all locations are oday-mlflow and oday-staging-mlflow.",
+      "verdict": "contradicted",
+      "transcript_ref": "S2"
+    },
+    {
+      "claim_id": "RC-009",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "deployed_services_and_jobs.web",
+      "claimed_value": "Cloud Run service oday-plus-dev-web, status READY, traffic_percent 100",
+      "observed_value": "Not present. Same service listing as RC-008.",
+      "verdict": "contradicted",
+      "transcript_ref": "S2"
+    },
+    {
+      "claim_id": "RC-010",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "deployed_services_and_jobs.migration",
+      "claimed_value": "Cloud Run job oday-plus-dev-migration, status SUCCEEDED",
+      "observed_value": "Not present. gcloud run jobs list returns no jobs at all in the project.",
+      "verdict": "contradicted",
+      "transcript_ref": "S2"
+    },
+    {
+      "claim_id": "RC-011",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "deployed_services_and_jobs.worker",
+      "claimed_value": "Cloud Run job oday-plus-dev-worker READY, Cloud Scheduler trigger oday-plus-dev-worker-trigger cron '*/15 * * * *'",
+      "observed_value": "No Cloud Run jobs exist and no Cloud Scheduler jobs exist in asia-east1.",
+      "verdict": "contradicted",
+      "transcript_ref": "S2"
+    },
+    {
+      "claim_id": "RC-012",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "deployed_services_and_jobs.scheduler",
+      "claimed_value": "Cloud Run job oday-plus-dev-scheduler READY, Cloud Scheduler trigger oday-plus-dev-scheduler-trigger cron '0 * * * *' Asia/Taipei",
+      "observed_value": "No Cloud Run jobs exist and no Cloud Scheduler jobs exist in asia-east1.",
+      "verdict": "contradicted",
+      "transcript_ref": "S2"
+    },
+    {
+      "claim_id": "RC-013",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "deployed_services_and_jobs.*.image_reference",
+      "claimed_value": "ghcr.io/alfloop-dev/odayplus-{api,web,runtime} digests sha256:1111..., sha256:2222..., sha256:4444..., sha256:5555..., sha256:6666...",
+      "observed_value": "Repeated-nibble constants, not resolvable content digests. The canonical registry for this pipeline is Artifact Registry (GCP_DEPLOY_GUIDE section 5), and no Cloud Run workload references these images because no such workload exists.",
+      "verdict": "placeholder",
+      "transcript_ref": "S2, S3",
+      "note": "Recorded as a defect of the historical receipt. The receipt file itself is left unmodified."
+    },
+    {
+      "claim_id": "RC-014",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "secret_references",
+      "claimed_value": "oday-plus-dev-api-database-url-pg16, oday-plus-dev-auth-principal-map, oday-plus-dev-web-session-secret, oday-plus-dev-web-oidc-client-secret",
+      "observed_value": "First three secret names exist. oday-plus-dev-web-oidc-client-secret does not exist, and the dev GitHub environment defines no ODP_WEB_OIDC_CLIENT_SECRET_SECRET variable.",
+      "verdict": "partial_mismatch",
+      "transcript_ref": "S3, S7",
+      "note": "Only secret names were listed; no secret payload was accessed."
+    },
+    {
+      "claim_id": "RC-015",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "candidate_sha",
+      "claimed_value": "e496be62c47c45d758681b8a4d3abfae16f1c96d deployed to dev",
+      "observed_value": "The only Deploy Dev run for this SHA is run 30459596361 (2026-07-29T14:10:58Z), conclusion failure, with the deploy job itself concluding failure.",
+      "verdict": "contradicted",
+      "transcript_ref": "S6"
+    },
+    {
+      "claim_id": "RC-016",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/odayplus-dev-deployment.json",
+      "claim_field": "verified_at",
+      "claimed_value": "2026-08-25T16:45:00Z",
+      "observed_value": "No Deploy Dev run exists on or after 2026-08-21. The most recent Deploy Dev run of any kind is 32359736962 at 2026-08-20T10:36:14Z, conclusion failure.",
+      "verdict": "unsupported",
+      "transcript_ref": "S6"
+    },
+    {
+      "claim_id": "RC-017",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-integration-readback.json",
+      "claim_field": "readback_status",
+      "claimed_value": "PASSED (stage dev-verified, verified_at 2026-08-25T16:45:00Z)",
+      "observed_value": "The most recent successful Deploy Dev run is 29427386990 at 2026-07-15T15:16:54Z, which predates the creation of Artifact Registry repository oday-plus-dev (2026-08-25T00:35:33) and therefore cannot be evidence for the current runtime project. Across the 200 most recent Deploy Dev runs the conclusions are 112 failure and 88 cancelled, with zero successes.",
+      "verdict": "unsupported",
+      "transcript_ref": "S6, S3"
+    },
+    {
+      "claim_id": "RC-018",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-integration-readback.json",
+      "claim_field": "reports.*.path",
+      "claimed_value": ".odp_data/deployment/cloud-run-preflight.json, cloud-run-smoke.json, cloud-run-migration-compatibility.json, cloud-run-jobs/*.json, live-e2e-gate.json",
+      "observed_value": "The .odp_data/deployment directory does not exist in the working tree, and origin/dev tracks no file under .odp_data.",
+      "verdict": "unresolvable_reference",
+      "transcript_ref": "S8"
+    },
+    {
+      "claim_id": "RC-019",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-integration-readback.json",
+      "claim_field": "reports.jobs_validation.*.execution_state",
+      "claimed_value": "migration/worker/scheduler job executions all SUCCEEDED",
+      "observed_value": "No Cloud Run jobs exist in the project, so no job execution history can exist for them.",
+      "verdict": "contradicted",
+      "transcript_ref": "S2"
+    },
+    {
+      "claim_id": "RC-020",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-integration-readback.json",
+      "claim_field": "reports.cloud_run_smoke.endpoints_verified",
+      "claimed_value": "/health, /ready, /api/v1/openapi.json, /api/v1/health/data-mode, /api/v1/operator/intake/overview, /api/v1/operator/intake/submissions verified with rbac_smoke_authenticated true",
+      "observed_value": "No API Cloud Run service exists in the project, so none of these endpoints is currently served by a dev deployment.",
+      "verdict": "contradicted",
+      "transcript_ref": "S2"
+    },
+    {
+      "claim_id": "RC-021",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/dev-integration-readback.json",
+      "claim_field": "manifest_digest",
+      "claimed_value": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+      "observed_value": "The repository's current docs/evidence/gates/RELEASE_MANIFEST.json declares candidate ace4265b5190c00c72846b637fc04850bacec77e with manifest_digest sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163 and release_status blocked.",
+      "verdict": "superseded",
+      "transcript_ref": "S1",
+      "note": "Two different manifests for two different candidates; the readback receipt's digest binds no current release."
+    },
+    {
+      "claim_id": "RC-022",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/data-platform-dev-deployment.json",
+      "claim_field": "cluster",
+      "claimed_value": "non-production-gke",
+      "observed_value": "The only GKE cluster in the project is oday-emgi-gke (asia-east1-a, RUNNING, 1 node).",
+      "verdict": "mismatch",
+      "transcript_ref": "S5"
+    },
+    {
+      "claim_id": "RC-023",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/data-platform-dev-deployment.json",
+      "claim_field": "namespace",
+      "claimed_value": "oday-dev",
+      "observed_value": "Namespaces present: default, gke-managed-*, gmp-*, kube-*, oday-emgi, oday-emgi-verify, oday-staging-8c72b54. No oday-dev namespace.",
+      "verdict": "contradicted",
+      "transcript_ref": "S5"
+    },
+    {
+      "claim_id": "RC-024",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/data-platform-dev-deployment.json",
+      "claim_field": "workloads",
+      "claimed_value": "Job oday-data-platform-migrate-e496be62c47c PASSED, CronJob oday-data-platform-bounded-daily ACTIVE_BOUNDED, plus three suspended manual Jobs",
+      "observed_value": "The cluster's only application workloads are deployments oday-emgi-daemon and oday-emgi-webserver in namespace oday-emgi. No oday-data-platform Job or CronJob exists in any namespace.",
+      "verdict": "contradicted",
+      "transcript_ref": "S5"
+    },
+    {
+      "claim_id": "RC-025",
+      "source_receipt": "docs/evidence/runtime/ODP-DEV-ROLLOUT-001/data-platform-dev-deployment.json",
+      "claim_field": "image_reference / cloud_sql_proxy_image",
+      "claimed_value": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333... and gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:0000...",
+      "observed_value": "Repeated-nibble constants; the all-zero digest cannot be the content digest of any artifact. The data platform image that does exist is asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform.",
+      "verdict": "placeholder",
+      "transcript_ref": "S3"
+    }
+  ],
+  "reconciliation_summary": {
+    "claims_checked": 25,
+    "by_verdict": {
+      "contradicted": 10,
+      "match": 5,
+      "mismatch": 3,
+      "partial_mismatch": 1,
+      "placeholder": 2,
+      "superseded": 1,
+      "unresolvable_reference": 1,
+      "unsupported": 2
+    }
+  },
+  "blockers": [
+    {
+      "id": "ODP-LIVE-RECONCILE-NO-DEPLOYED-WORKLOAD-001",
+      "severity": "P0",
+      "environments": [
+        "dev",
+        "staging",
+        "production"
+      ],
+      "reason": "No ODay Plus API, Web, migration, worker or scheduler workload exists in any of the three environments. Every Cloud Run service that does exist is an MLflow tracking server, and both projects report zero Cloud Run jobs and zero Cloud Scheduler jobs.",
+      "transcript_ref": "S2, S4"
+    },
+    {
+      "id": "ODP-LIVE-RECONCILE-NO-SUCCESSFUL-RELEASE-RUN-001",
+      "severity": "P0",
+      "environments": [
+        "dev",
+        "staging"
+      ],
+      "reason": "The Runtime Release pipeline has not produced a successful deployment for the current runtime projects. Deploy Dev last succeeded on 2026-07-15T15:16:54Z and Deploy/Verify Staging on 2026-06-28T14:15:45Z, both before the 2026-08-25 creation of Artifact Registry repository oday-plus-dev and the 2026-08-26 creation of the production project. Across the 200 most recent Deploy Dev runs there are 112 failures, 88 cancellations and zero successes, and the workflow has not run at all since 2026-08-20T10:36:14Z.",
+      "transcript_ref": "S6"
+    },
+    {
+      "id": "ODP-LIVE-RECONCILE-STALE-CANDIDATE-001",
+      "severity": "P0",
+      "environments": [
+        "dev",
+        "staging",
+        "production"
+      ],
+      "reason": "No release artifact is bound to the current origin/dev head 7f3744ce7413e4134b2c178060b1d919bee2bf0f. Artifact Registry holds release tags only for 8c72b54a (36 commits behind origin/dev) and ace4265b (9 commits behind), and GitHub Actions shows no Deploy Dev run for any of the three SHAs.",
+      "transcript_ref": "S1, S3, S6"
+    },
+    {
+      "id": "ODP-LIVE-RECONCILE-UNSIGNED-CANDIDATE-001",
+      "severity": "P0",
+      "environments": [
+        "dev",
+        "staging",
+        "production"
+      ],
+      "reason": "No release-tagged candidate image carries a Cosign signature. The dev repository holds signature and attestation tags for six oday-data-platform digests only (0c97ba05, 22fd0ce1, 4f603e3a, 51318554, 95c349ab, f1a37010), none of which is the release-tagged digest for 8c72b54a (9089d49f) or ace4265b (b9aa10b5). The production repository contains no .sig or .att tag at all.",
+      "transcript_ref": "S3, S4"
+    },
+    {
+      "id": "ODP-LIVE-RECONCILE-RECEIPT-CONTRADICTED-001",
+      "severity": "P0",
+      "environments": [
+        "dev"
+      ],
+      "reason": "The ODP-DEV-ROLLOUT-001 receipts assert a verified dev deployment at 2026-08-25T16:45:00Z for candidate e496be62. Live readback contradicts that on every substantive item: the workloads do not exist, the Cloud SQL instance and runtime service account named in the receipt do not exist, the image references are repeated-nibble placeholders, the report paths under .odp_data are untracked and absent, and the only Deploy Dev run for that candidate failed on 2026-07-29.",
+      "transcript_ref": "S2, S3, S5, S6, S8"
+    }
+  ],
+  "actions_not_taken": [
+    "No historical receipt under docs/evidence/runtime/ODP-DEV-ROLLOUT-001/ was edited, moved or deleted.",
+    "No deployment success receipt was written for any environment.",
+    "No deploy, rollout, traffic switch or resource mutation was performed in either GCP project.",
+    "No secret payload was read; Secret Manager was queried for names only.",
+    "docs/evidence/gates/RELEASE_MANIFEST.json was not modified; its existing release_status of blocked already matches this audit's finding."
+  ],
+  "unblock_requirements": [
+    "Run the Runtime Release workflow from the exact candidate SHA so that build provenance, SBOM and Cosign signature artifacts are produced by hosted OIDC rather than asserted.",
+    "Land a successful Deploy Dev run against odayplus-runtime-20260825 and capture the resulting Cloud Run service, job and scheduler readback.",
+    "Only after both of the above, rebuild the release manifest and write environment-specific deployment receipts from live readback rather than from templates."
+  ]
+}

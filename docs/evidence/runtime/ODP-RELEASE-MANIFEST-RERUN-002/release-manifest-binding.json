@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-RERUN-002",
+  "release_id": "odp-20260826-002",
+  "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+  "candidate_ref": "origin/dev",
+  "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+  "manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
+  "release_status": "blocked",
+  "bound_at": "2026-08-26T14:42:37Z",
+  "bound_by": "Claude2",
+  "components": {
+    "count": 0,
+    "reason": "No release tag for the candidate SHA resolves in asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev. An empty component map is the only honest record; populating it with the superseded candidate's digests would bind this SHA to images built from different source.",
+    "probe_ref": "release-candidate-transcript.txt#L117",
+    "schema_rule": "delivery_toolchain/release/release_manifest.py permits an empty components map only when release_status is 'blocked', and validate_release_admission refuses an empty map regardless of the recorded status."
+  },
+  "supersedes": {
+    "release_id": "odp-20260826-001",
+    "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+    "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
+    "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/",
+    "why_rerun_was_required": "check_release_gate_registry.py --expected-sha a027fa1c... rejected the superseded candidate: it is an ancestor of the current tip, but the intervening commits touch delivery_toolchain/release/check_runtime_admission.py, delivery_toolchain/release/release_manifest.py, delivery_toolchain/security/sign_images.sh, docs/audits/code-boundary-inventory.csv, and five test files. That is not an evidence-only advance, so the old candidate's verified digests cannot carry forward.",
+    "preserved": "The superseded evidence directory is untouched. Its registry transcript remains the record of the six image digests that were verified for that candidate."
+  },
+  "digests_integrity": {
+    "migration_digest": "sha256:e860458dd1bb62f07460b0e32ccb92cfbce4d28b3102036a7b883f3db5318840",
+    "data_contract_digest": "sha256:3ff542af6a09584cc60644f03e91f7d4fdb3ea75b8659e23af6b0a8e23376a44",
+    "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
+    "computed_by": "delivery_toolchain/release/release_manifest.py build_release_manifest()",
+    "input_equivalence_check": {
+      "command": "git diff --name-only a027fa1c3935360e6fc4b3bd073cd91cbee07548 -- infra/db/migrations docs/data docs/security",
+      "command_exit_code": 0,
+      "observed": "no output",
+      "meaning": "The digest inputs in this task worktree are byte-identical to the candidate commit, so these three digests are the candidate's own and not an artifact of in-progress task edits."
+    }
+  },
+  "gate_registry_rebind": {
+    "registry_ref": "docs/evidence/gates/RELEASE_GATE_REGISTRY.json",
+    "from_candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+    "to_candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+    "decision": "no-go",
+    "gates_cleared": 0,
+    "receipts_added": 0,
+    "note": "Mechanical rebind. All seven gates were and remain 'blocked'; each gate's blocker text now names the current candidate. registry.candidate_rebind records re_attestation_required=true.",
+    "verification": {
+      "command": "python3 delivery_toolchain/e2e/check_release_gate_registry.py --expected-sha a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+      "command_exit_code": 0,
+      "observed": "RELEASE STATE: NO-GO / Release gate registry checks passed."
+    }
+  }
+}
