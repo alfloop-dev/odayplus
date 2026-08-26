@@ -138,6 +138,26 @@ test_a_substituted_digest_is_refused_and_the_lease_survives`）。
 4. GitHub `staging` / `production` environment 的 vars、secrets 與 required
    reviewers 仍屬 `ODP-GITHUB-GCP-ENV-BOOTSTRAP-001` 的範圍。
 
+## 已知未關閉的接點：`release_sha` 與 `candidate_sha` 的分離
+
+deploy dispatch 的 `release_sha` 是 workflow checkout 的 commit，admission 由此
+讀取 `docs/evidence/gates/RELEASE_MANIFEST.json`。但那份 manifest 記錄的是
+**build 當下**的 candidate SHA——manifest 內含由該 commit 建出的 image digest，
+所以它不可能被 commit 在那個 commit 上。因此 deploy 階段的 `release_sha` 必然是
+candidate 的後代（evidence-only commit），這正是
+`check_release_gate_registry.check_candidate_ancestry` 既有設計所允許的形狀。
+
+尚未處理的是：`deploy` job 目前把 `ODAY_RELEASE_SHA` 設成 `inputs.release_sha`，
+也就是 evidence commit，而不是 image 實際建出的 candidate SHA。兩者在
+`deploy_cloud_run_waji.sh` 的 `--expected-sha` 與 Cloud Run label 上會出現語意
+落差。
+
+本 task 刻意不動它，理由是它需要新增一個獨立的 `candidate_sha` input 並重新定義
+`check_runtime_admission.py --sha` 的語意，屬於
+`ODP-RUNTIME-RELEASE-SINGLE-PATH-001`（唯一管線整合）的介面決策，不應由
+build/admission 順序修正順手改掉。這裡明確記錄，避免它在第一次真實 deploy
+dispatch 時才被發現。
+
 ## 相關檔案
 
 - `.github/workflows/deploy-dev.yml`
