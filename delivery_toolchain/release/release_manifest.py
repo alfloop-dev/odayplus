@@ -51,6 +51,27 @@ def is_sha256_digest(value: Any) -> bool:
     return isinstance(value, str) and bool(SHA256_PATTERN.fullmatch(value))
 
 
+def is_placeholder_digest(value: Any) -> bool:
+    """Return whether an otherwise well-formed digest is an obvious fixture.
+
+    A digest made from one or two repeated hexadecimal characters can satisfy
+    the shape-only ``sha256:<64 hex>`` check while identifying no real image or
+    artifact.  Treating that pattern as a placeholder is deliberately a
+    separate predicate rather than part of manifest syntax validation: callers
+    that consume evidence can fail closed without changing the manifest schema.
+    """
+
+    if not isinstance(value, str):
+        return False
+    if "@sha256:" in value:
+        digest = value.rsplit("@sha256:", 1)[1]
+    elif value.startswith("sha256:"):
+        digest = value.removeprefix("sha256:")
+    else:
+        return False
+    return bool(re.fullmatch(r"[0-9a-f]{64}", digest)) and len(set(digest)) <= 2
+
+
 def canonical_payload(manifest: dict[str, Any]) -> dict[str, Any]:
     """Return the immutable payload used for manifest identity hashing."""
 

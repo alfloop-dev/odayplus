@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-EPHEMERAL-STAGING-ROLLOUT-001",
+  "environment": "staging",
+  "stage": "not-admitted",
+  "evidence_mode": "dry-run",
+  "evidence_status": "blocked",
+  "deployment_observed": false,
+  "preflight_observed": true,
+  "preflight": {
+    "project": {
+      "project_id": "odayplus-runtime-20260825",
+      "lifecycle_state": "ACTIVE",
+      "billing_enabled": true,
+      "region": "asia-east1"
+    },
+    "authentication": {
+      "local_readback_succeeded": true,
+      "workflow_wif_variables_present": true,
+      "workflow_deployer_service_account_present": true,
+      "secret_values_read": false
+    },
+    "enabled_apis": [
+      "artifactregistry.googleapis.com",
+      "cloudkms.googleapis.com",
+      "cloudscheduler.googleapis.com",
+      "compute.googleapis.com",
+      "container.googleapis.com",
+      "iam.googleapis.com",
+      "iamcredentials.googleapis.com",
+      "pubsub.googleapis.com",
+      "run.googleapis.com",
+      "secretmanager.googleapis.com",
+      "sqladmin.googleapis.com",
+      "storage.googleapis.com"
+    ],
+    "artifact_registry": {
+      "repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+      "packages_observed": ["oday-data-platform", "oday-mlflow"],
+      "application_image_handoff_observed": false,
+      "data_platform_image_digests_observed": [
+        "sha256:0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593",
+        "sha256:22fd0ce1f5452e9fd2e83856b338fefbceae519aecd67a97099b7d7fe526ad6a",
+        "sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e",
+        "sha256:513185541b7dca920ea8e98221608e2f4fda4da04b81799febeda55897babeae",
+        "sha256:f1a37010b5541690780330a7626730ad0cda76e0636b296801c9175c45dd6aec"
+      ],
+      "application_images_are_release_handoff": false
+    },
+    "staging_foundation": {
+      "cloud_kms_api_enabled": true,
+      "cloud_kms_key_observed": true,
+      "cloud_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
+      "cloud_sql_instances": ["oday-dev-sql", "oday-staging-sql"],
+      "staging_cloud_sql_state": "RUNNABLE",
+      "staging_cloud_sql_private_ip_observed": true,
+      "staging_database_observed": "oday",
+      "staging_database_user_observed": "oday_app",
+      "isolated_staging_cloud_sql_instance_observed": true,
+      "cloud_run_services": ["oday-mlflow"],
+      "staging_cloud_run_services_observed": false,
+      "cloud_scheduler_jobs": [],
+      "staging_scheduler_observed": false,
+      "gke_cluster": "oday-emgi-gke",
+      "gke_cluster_location": "asia-east1-a",
+      "staging_namespace_observed": true,
+      "staging_namespace": "oday-staging-8c72b54",
+      "staging_namespace_release_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+      "staging_namespace_workloads_observed": false,
+      "staging_namespace_default_deny_egress_observed": true,
+      "staging_namespace_default_deny_egress_policy": "default-deny-external-egress",
+      "staging_namespace_runtime_ksa_observed": true,
+      "staging_namespace_runtime_ksa": "oday-staging-runtime",
+      "staging_namespace_runtime_ksa_gsa_binding_observed": true,
+      "staging_runtime_gsa": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "staging_snapshot_bucket_observed": true,
+      "staging_snapshot_bucket": "gs://oday-staging-source-snapshots-odayplus-runtime-20260825",
+      "staging_snapshot_bucket_objects_observed": false,
+      "staging_snapshot_bucket_empty": true,
+      "staging_snapshot_bucket_default_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
+      "staging_snapshot_bucket_public_access_prevention": "enforced",
+      "staging_snapshot_bucket_retention_period_seconds": 86400,
+      "staging_snapshot_bucket_soft_delete_retention_seconds": 604800,
+      "staging_snapshot_bucket_uniform_access": true,
+      "staging_snapshot_bucket_versioning": true,
+      "masked_snapshot_authority_observed": false
+    },
+    "github_staging_environment": {
+      "environment_observed": true,
+      "required_reviewers_observed": 2,
+      "wif_and_project_variables_observed": true,
+      "runtime_and_secret_reference_variables_complete": false,
+      "release_lease_public_key_observed": false,
+      "release_lease_state_dir_observed": false,
+      "secret_names_observed": [],
+      "registered_workflows_observed": ["Deploy Dev", "Deploy/Verify Staging"],
+      "missing_runtime_release_variables": [
+        "MLFLOW_TRACKING_URI",
+        "ODP_AUTH_AUDIENCES",
+        "ODP_DEV_DEPLOY_URL",
+        "ODP_LIVE_E2E_DEPLOYMENT_MODE",
+        "ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS",
+        "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "ODP_PROD_API_URL",
+        "ODP_PROD_DEPLOY_URL",
+        "ODP_RELEASE_LEASE_PUBLIC_KEY",
+        "ODP_RELEASE_LEASE_STATE_DIR",
+        "ODP_STAGING_API_URL",
+        "ODP_STAGING_DEPLOY_URL",
+        "ODP_STAGING_SECRET_OWNER",
+        "ODP_WEB_OIDC_CLIENT_ID",
+        "ODP_WEB_OIDC_CLIENT_SECRET_SECRET"
+      ],
+      "runtime_release_workflow_registered": false
+    },
+    "terraform_module_contract": {
+      "module_validate": "passed_after_ephemeral_provider_init",
+      "module_requires_existing_kms_key": true,
+      "module_requires_existing_staging_cloud_sql_instance": true,
+      "apply_attempted": false
+    }
+  },
+  "latest_recheck": {
+    "recorded_at": "2026-08-26T01:18:58Z",
+    "origin_dev_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+    "registered_workflows_observed": ["Deploy Dev", "Deploy/Verify Staging"],
+    "runtime_release_workflow_registered": false,
+    "missing_runtime_release_variables_unchanged": true,
+    "secret_names_observed": [],
+    "artifact_registry_packages_observed": ["oday-data-platform", "oday-mlflow"],
+    "cloud_run_services_observed": ["oday-mlflow"],
+    "staging_snapshot_bucket_objects_observed": false,
+    "staging_scheduler_jobs_observed": [],
+    "staging_namespace_workloads_observed": false,
+    "deployment_observed": false,
+    "apply_or_deploy_attempted": false
+  },
+  "release_manifest": {
+    "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+    "release_id": "odp-20260730-001",
+    "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+    "current_origin_dev_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+    "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
+    "manifest_digest_recomputes": true,
+    "placeholder_digest_count": 11,
+    "placeholder_digest_fields": [
+      "components.api.image",
+      "components.web.image",
+      "components.data_platform.image",
+      "components.migration.image",
+      "components.worker.image",
+      "components.scheduler.image",
+      "migration_digest",
+      "data_contract_digest",
+      "source_policy_digest",
+      "sbom_refs[0]",
+      "signature_refs[0]"
+    ],
+    "candidate_is_current_dev": false
+  },
+  "deployment_path": {
+    "workflow": ".github/workflows/deploy-dev.yml",
+    "workflow_name": "Runtime Release",
+    "target_input": "staging",
+    "registry_pattern": "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/<service>@sha256:<64-hex>",
+    "configured_registry": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+    "runtime_release_workflow_registered": false,
+    "runtime_release_workflow_registration_detail": "origin/dev contains .github/workflows/deploy-dev.yml, but GitHub Actions exposes no registered Runtime Release workflow",
+    "staging_dispatch_observed": false,
+    "successful_staging_run": false,
+    "remote_staging_proof": null,
+    "preflight_readback_only": true
+  },
+  "blockers": [
+    {
+      "id": "B1",
+      "severity": "blocking",
+      "summary": "The source release manifest contains placeholder digests.",
+      "required_action": "Build and sign the release once, then record the Artifact Registry digests returned by gcloud artifacts docker images describe."
+    },
+    {
+      "id": "B2",
+      "severity": "blocking",
+      "summary": "The prior evidence used ghcr.io references, but this repository deploys from Google Artifact Registry.",
+      "required_action": "Regenerate every deployment and receipt reference from the actual Runtime Release handoff."
+    },
+    {
+      "id": "B3",
+      "severity": "blocking",
+      "summary": "The source manifest candidate is stale and does not identify the current dev release.",
+      "required_action": "Create a new release manifest for the current candidate after a successful build."
+    },
+    {
+      "id": "B4",
+      "severity": "blocking",
+      "summary": "Runtime Release is not registered in GitHub Actions, and no successful staging workflow dispatch or remote staging proof was found for this task.",
+      "required_action": "Human/Ops must publish the origin/dev Runtime Release workflow, provide protected runtime variables, lease authority, and approval authority, then dispatch it with environment=staging."
+    },
+    {
+      "id": "B5",
+      "severity": "blocking",
+      "summary": "The staging foundation is only partial: KMS, private RUNNABLE staging SQL, the snapshot bucket, namespace default-deny egress policy, and KSA/GSA workload identity binding are observed, but the bucket is empty and release-scoped snapshot/database/tenant/IAM ownership, application workloads, Cloud Run services, Scheduler jobs, and TTL are not.",
+      "required_action": "Complete the dependent staging bootstrap/IAC and masked snapshot materialization, then provide redacted readback for release-scoped bucket/database/tenant/IAM ownership, Cloud Run services, paused Scheduler jobs, and TTL before application deploy."
+    },
+    {
+      "id": "B6",
+      "severity": "blocking",
+      "summary": "Only data-platform and mlflow artifacts are present in the configured Artifact Registry; the four ODay Plus application image handoff digests were not observed.",
+      "required_action": "Run one authoritative Runtime Release build/sign handoff for the exact candidate and use its Artifact Registry API/Web/Worker/Scheduler digests; do not build per environment or hand-write references."
+    }
+  ],
+  "desired_state_not_observed": {
+    "data_platform_before_application": true,
+    "isolated_database_bucket_tenant_iam": true,
+    "migration_e2e_worker_scheduler_backup_restore_rollback": true,
+    "external_sources_expected_enabled": [],
+    "provider_credentials_present": false,
+    "public_egress": "default-deny",
+    "failure_retention_ttl_hours": 24,
+    "success_cleanup_owner": "ODP-POSTDEPLOY-WATCH-CLOSEOUT-001"
+  },
+  "required_human_actions": [
+    "Provision or confirm the staging foundation (KMS key, isolated Cloud SQL target, masked snapshot, staging namespace, IAM, and default-deny egress) and publish redacted readback.",
+    "Complete staging GitHub environment runtime variables, secret references, Supervisor lease verifier variables, register the Runtime Release workflow, and confirm required approval authority.",
+    "Run one authoritative Runtime Release build/sign handoff for the exact candidate, then run the single Runtime Release workflow against staging and retain its run URL and receipt artifacts.",
+    "Re-run migration, E2E, worker/scheduler, backup/restore, rollback, provider-off, and TTL checks from that observed environment."
+  ],
+  "preflight_commands": [
+    "gcloud projects describe odayplus-runtime-20260825 --format=yaml(projectId,lifecycleState)",
+    "gcloud billing projects describe odayplus-runtime-20260825 --format=yaml(projectId,billingEnabled)",
+    "gcloud artifacts repositories list --project=odayplus-runtime-20260825 --location=asia-east1",
+    "gcloud artifacts packages list --project=odayplus-runtime-20260825 --location=asia-east1 --repository=oday-plus-dev",
+    "gcloud run services list --project=odayplus-runtime-20260825 --region=asia-east1",
+    "gcloud sql instances list --project=odayplus-runtime-20260825",
+    "gcloud scheduler jobs list --project=odayplus-runtime-20260825 --location=asia-east1",
+    "gcloud container clusters list --project=odayplus-runtime-20260825",
+    "gcloud kms keys list --project=odayplus-runtime-20260825 --location=asia-east1 --keyring=oday-runtime",
+    "gcloud storage buckets describe gs://oday-staging-source-snapshots-odayplus-runtime-20260825",
+    "gcloud secrets list --project=odayplus-runtime-20260825",
+    "kubectl get namespace oday-staging-8c72b54 -o yaml",
+    "kubectl get all,networkpolicy,serviceaccount,role,rolebinding -n oday-staging-8c72b54 -o wide",
+    "gh variable list --env staging",
+    "gh secret list --env staging",
+    "gh workflow list --all",
+    "terraform -chdir=infra/terraform/modules/ephemeral_staging init -backend=false -input=false",
+    "terraform -chdir=infra/terraform/modules/ephemeral_staging validate"
+  ],
+  "secret_values_redacted": true,
+  "recorded_at": "2026-08-26T01:18:58Z",
+  "recorded_by": "Codex"
+}
