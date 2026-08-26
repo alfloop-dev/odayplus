@@ -20,13 +20,11 @@ from modules.external_data.connectors.provider_registry import (
     LIVE_MODE_ENV_VAR,
     ExternalProviderMode,
 )
-from modules.external_data.geo import GeoPipeline, NormalizedAddress, StaticGeocodeProvider
 from modules.external_data.providers import (
     ExternalProviderDisabledError,
     ListingPartnerFeedProvider,
     PrimaryGeocodeProvider,
 )
-
 
 INGESTION_TIME = datetime(2026, 8, 26, 6, 0, tzinfo=UTC)
 
@@ -203,7 +201,7 @@ class TestGeocodeDisabledModeNoContact:
     """PrimaryGeocodeProvider must refuse before reading credentials
     or calling the client when mode=disabled."""
 
-    def _normalized_address(self) -> NormalizedAddress:
+    def _normalized_address(self):  # -> NormalizedAddress
         from modules.external_data.geo import normalize_address
 
         return normalize_address("台北市大安區復興南路二段100號")
