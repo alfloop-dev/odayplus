@@ -645,6 +645,46 @@ def test_deploy_script_uses_digest_refs_for_every_cloud_run_target() -> None:
     assert "deploy-by-digest requires immutable image reference" in script
 
 
+def test_deploy_script_applies_optional_vpc_network_args_to_every_cloud_run_target() -> None:
+    """Every service/job must share the release entrypoint's VPC binding."""
+    script = _deploy_script_text()
+    network_args = '"${CLOUD_RUN_NETWORK_ARGS[@]}"'
+    targets = (
+        'gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}"',
+        'gcloud run deploy "${API_SERVICE}"',
+        'gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}"',
+        'gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}"',
+        'gcloud run deploy "${WEB_SERVICE}"',
+    )
+
+    assert script.count(network_args) == len(targets)
+    for target in targets:
+        start = script.index(target)
+        end = script.index("\n\n", start)
+        assert network_args in script[start:end], target
+
+
+def test_deploy_script_rejects_partial_or_invalid_vpc_config_before_cloud_run() -> None:
+    """Connector mistakes must fail before any Cloud Run mutation is possible."""
+    script = _deploy_script_text()
+    first_cloud_run_call = script.index("gcloud run ")
+    guard_end = script.index("CLOUD_RUN_NETWORK_ARGS=()")
+
+    assert "ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR" in script
+    assert "ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS" in script
+    assert "all|all-traffic|private-ranges-only" in script
+    assert guard_end < first_cloud_run_call
+
+
+def test_deploy_job_passes_optional_vpc_config_through_environment() -> None:
+    """The single Runtime Release entrypoint receives environment-scoped vars."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    deploy_env = parsed["jobs"]["deploy"]["env"]
+
+    assert deploy_env["ODP_CLOUD_RUN_VPC_CONNECTOR"] == "${{ vars.ODP_CLOUD_RUN_VPC_CONNECTOR }}"
+    assert deploy_env["ODP_CLOUD_RUN_VPC_EGRESS"] == "${{ vars.ODP_CLOUD_RUN_VPC_EGRESS }}"
+
+
 def test_production_bluegreen_verification_gated_on_production_environment() -> None:
     """Production blue-green verification runs in deploy job when environment is production."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
