@@ -33,10 +33,72 @@ def load_registry() -> dict:
     return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
 
 
+def blocked_manifest() -> dict:
+    """Return the committed manifest reduced to a blocked candidate.
+
+    The committed manifest tracks whichever candidate was last built, so its
+    ``release_status`` flips as releases come and go.  Deriving the blocked
+    shape here keeps the blocked-path assertions about the validator instead of
+    about today's release state.
+    """
+
+    manifest = load_manifest()
+    manifest["release_status"] = "blocked"
+    manifest["components"] = {}
+    manifest["sbom_refs"] = []
+    manifest["signature_refs"] = []
+    manifest["blockers"] = [
+        {
+            "id": "TEST-BLOCKER-001",
+            "severity": "P0",
+            "reason": "Synthetic blocker; this manifest never produced an artifact.",
+            "evidence_ref": "docs/evidence/gates/README.md",
+        }
+    ]
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
 def test_manifest_digest_matches_canonical_payload() -> None:
     manifest = load_manifest()
     assert validate_manifest(manifest) == []
     assert manifest["manifest_digest"] == compute_manifest_digest(manifest)
+
+
+def test_committed_manifest_and_registry_describe_one_candidate() -> None:
+    """The registry may only quote a manifest that agrees with it.
+
+    A registry that names one candidate while the manifest names another is the
+    drift the digest binding exists to catch, and it is exactly what a candidate
+    rebind gets wrong when the manifest is not regenerated with it.
+    """
+
+    manifest = load_manifest()
+    release = load_registry()["release"]
+
+    assert manifest["candidate_sha"] == release["candidate_sha"]
+    assert manifest["manifest_digest"] == release["manifest_digest"]
+
+
+def test_committed_manifest_is_honest_about_whether_it_has_an_artifact() -> None:
+    """Whichever state the candidate of the day is in, it must be consistent.
+
+    ``ready`` means the build really published immutable images plus SBOM and
+    signature references, so admission must fail for no artifact-shaped reason.
+    ``blocked`` means the opposite and must name why.  Nothing in between is a
+    representable release identity.
+    """
+
+    manifest = load_manifest()
+
+    if manifest.get("release_status", "ready") == "ready":
+        assert manifest["components"], "a ready manifest must have something to deploy"
+        assert manifest["sbom_refs"]
+        assert manifest["signature_refs"]
+        assert validate_release_admission(manifest) == []
+    else:
+        assert manifest["blockers"], "a blocked manifest must record why it is blocked"
+        assert validate_release_admission(manifest)
 
 
 def built_manifest(**overrides) -> dict:
@@ -115,14 +177,13 @@ def test_manifest_candidate_sha_mutation_fails_closed() -> None:
     manifest["candidate_sha"] = "0" * 40
     errors = validate_manifest(
         manifest,
-        expected_candidate_sha="a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+        expected_candidate_sha=load_registry()["release"]["candidate_sha"],
     )
     assert any("candidate_sha" in error for error in errors)
 
 
 def test_blocked_manifest_is_reviewable_but_not_admissible() -> None:
-    manifest = load_manifest()
-    assert manifest["release_status"] == "blocked"
+    manifest = blocked_manifest()
     assert manifest["blockers"]
     assert validate_manifest(manifest) == []
 
@@ -133,7 +194,7 @@ def test_blocked_manifest_is_reviewable_but_not_admissible() -> None:
 
 
 def test_blocked_manifest_requires_blocker_record() -> None:
-    manifest = load_manifest()
+    manifest = blocked_manifest()
     manifest["blockers"] = []
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
 
