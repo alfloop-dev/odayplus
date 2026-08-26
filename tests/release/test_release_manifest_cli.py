@@ -23,7 +23,7 @@ from delivery_toolchain.release.release_manifest import (
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "delivery_toolchain/release/release_manifest.py"
 MANIFEST_PATH = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
-CANDIDATE_SHA = "ace4265b5190c00c72846b637fc04850bacec77e"
+CANDIDATE_SHA = "a027fa1c3935360e6fc4b3bd073cd91cbee07548"
 
 # Word-boundary matched so that "INVALID:" does not read as a success verdict.
 SUCCESS_WORDING = re.compile(r"\bPASS(ED)?\b|\bVALID\b|is valid")
@@ -45,6 +45,11 @@ def ready_manifest(tmp_path: Path) -> Path:
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest["release_status"] = "ready"
     manifest.pop("blockers", None)
+    # The committed manifest is blocked and may legitimately carry no
+    # components; an admissible manifest always needs at least one.
+    manifest["components"] = {
+        "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "a" * 64}
+    }
     manifest["sbom_refs"] = ["oci://registry.example.invalid/odayplus/sbom@sha256:" + "b" * 64]
     manifest["signature_refs"] = ["oci://registry.example.invalid/odayplus/api@sha256:" + "c" * 64]
     manifest["manifest_digest"] = compute_manifest_digest(manifest)

@@ -12,17 +12,17 @@
     "re_attestation_required": true
   },
   "release": {
-    "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+    "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
     "candidate_ref": "origin/dev",
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
-    "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
+    "manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
     "stage": "candidate-built",
     "environment": "dev",
     "admission_target": "dev",
     "decision": "no-go",
     "decision_owner": "Human/Ops",
     "decision_date": "2026-07-30",
-    "decision_note": "NO-GO. No gate carries a passing receipt bound to the release candidate SHA. The P0 closeout program ODP-PLAN-GAP-CLOSEOUT-2026-07-30 is still open and ODP-PLAN-FINAL-GATE-AUDIT-001 has not run. Deterministic product-E2E readiness recorded in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is not release readiness."
+    "decision_note": "NO-GO. The release candidate was rebound to a027fa1c3935360e6fc4b3bd073cd91cbee07548 (the origin/dev tip) by ODP-RELEASE-MANIFEST-RERUN-002, and the manifest for that candidate records release_status='blocked' with five P0 blockers: no candidate image, no bound Runtime Release run, no cosign signature, no candidate SBOM, and a dev environment with no release-lease configuration. No gate carries a passing receipt bound to the release candidate SHA. Advancing the candidate re-opens every gate, so the 2026-07-30 Human/Ops NO-GO still stands rather than being superseded. The P0 closeout program ODP-PLAN-GAP-CLOSEOUT-2026-07-30 is still open and ODP-PLAN-FINAL-GATE-AUDIT-001 has not run. Deterministic product-E2E readiness recorded in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is not release readiness."
   },
   "gates": [
     {
@@ -33,8 +33,8 @@
       "owner": "Codex2",
       "reviewer": "Claude",
       "status": "blocked",
-      "status_date": "2026-07-30",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "status_date": "2026-08-26",
+      "release_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -64,7 +64,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Code Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e; a green CI run on an earlier commit is not a receipt for this candidate.",
+        "No Code Gate receipt is bound to release candidate a027fa1c3935360e6fc4b3bd073cd91cbee07548; a green CI run on an earlier commit is not a receipt for this candidate.",
         "ODP-PLAN-ENGINEERING-HARDENING-001 (OpenAPI, frontend dependency, and documentation hardening) is open."
       ]
     },
@@ -76,8 +76,8 @@
       "owner": "Claude",
       "reviewer": "Codex2",
       "status": "blocked",
-      "status_date": "2026-07-30",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "status_date": "2026-08-26",
+      "release_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -107,7 +107,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Contract Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.",
+        "No Contract Gate receipt is bound to release candidate a027fa1c3935360e6fc4b3bd073cd91cbee07548.",
         "ODP-PLAN-ENGINEERING-HARDENING-001 must close the OpenAPI and frontend dependency hardening gap before contract compatibility can be attested."
       ]
     },
@@ -119,8 +119,8 @@
       "owner": "Codex2",
       "reviewer": "Claude",
       "status": "blocked",
-      "status_date": "2026-07-30",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "status_date": "2026-08-26",
+      "release_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -151,7 +151,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Data Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.",
+        "No Data Gate receipt is bound to release candidate a027fa1c3935360e6fc4b3bd073cd91cbee07548.",
         "check_live_production_data.py has not been run against a live deployment of this candidate; deterministic fixtures and source stubs do not satisfy the Data Gate."
       ]
     },
@@ -163,8 +163,8 @@
       "owner": "Codex2",
       "reviewer": "Antigravity2",
       "status": "blocked",
-      "status_date": "2026-07-30",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "status_date": "2026-08-26",
+      "release_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -190,7 +190,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Model and Solver Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.",
+        "No Model and Solver Gate receipt is bound to release candidate a027fa1c3935360e6fc4b3bd073cd91cbee07548.",
         "ODP-PLAN-FORECAST-RELEASE-EVIDENCE-001 (ForecastOps formal model release evidence) is open.",
         "ODP-PLAN-SITESCORE-OUTCOME-001 and ODP-PLAN-AVM-OUTCOME-001 remain open; ForecastOps history and an approved production alias are still unverified.",
         "ODP-PLAN-SOLVER-RUNTIME-COMPAT-001, ODP-PLAN-HEATZONE-OUTCOME-001, and ODP-PLAN-NETPLAN-ACCEPTANCE-001 are archived done, but task completion is not an exact-candidate Gate 3 receipt or Human/Ops model approval."
@@ -204,8 +204,8 @@
       "owner": "Claude",
       "reviewer": "Antigravity2",
       "status": "blocked",
-      "status_date": "2026-07-30",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "status_date": "2026-08-26",
+      "release_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -231,7 +231,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Security and Privacy Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.",
+        "No Security and Privacy Gate receipt is bound to release candidate a027fa1c3935360e6fc4b3bd073cd91cbee07548.",
         "ODP-PLAN-OSS-LICENSE-GATE-001 and ODP-PLAN-DEFERRED-OSS-ADR-001 are archived done, but no exact-candidate Gate 4 receipt or Human/Ops legal approval is recorded."
       ]
     },
@@ -243,8 +243,8 @@
       "owner": "Codex2",
       "reviewer": "Human/Ops",
       "status": "blocked",
-      "status_date": "2026-07-30",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "status_date": "2026-08-26",
+      "release_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -279,7 +279,7 @@
       ],
       "receipts": [],
       "blockers": [
-        "No E2E, Performance and UAT Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.",
+        "No E2E, Performance and UAT Gate receipt is bound to release candidate a027fa1c3935360e6fc4b3bd073cd91cbee07548.",
         "ODP-PLAN-ACCEPTANCE-REAL-EXEC-001 and ODP-PLAN-CANONICAL-SHELL-LIVE-001 are archived done, but those implementation receipts do not prove this exact release candidate in staging or UAT.",
         "ODP-PLAN-LIVE-STAGING-PROOF-001 must produce exact-SHA live staging end-to-end proof.",
         "ODP-PLAN-UAT-SIGNOFF-001 (cross-role UAT defect closeout and formal sign-off) is open."
@@ -293,8 +293,8 @@
       "owner": "Claude",
       "reviewer": "Human/Ops",
       "status": "blocked",
-      "status_date": "2026-07-30",
-      "release_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "status_date": "2026-08-26",
+      "release_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
       "stage": "candidate-built",
       "environment": "dev",
       "admission_target": "dev",
@@ -336,11 +336,22 @@
       ],
       "receipts": [],
       "blockers": [
-        "No Ops, Release and Audit Gate receipt is bound to release candidate ace4265b5190c00c72846b637fc04850bacec77e.",
+        "No Ops, Release and Audit Gate receipt is bound to release candidate a027fa1c3935360e6fc4b3bd073cd91cbee07548.",
         "ODP-PLAN-OBSERVABILITY-LIVE-001 (production observability and on-call route) is open.",
         "Every Human/Ops row in docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md is still pending-human.",
         "ODP-PLAN-FINAL-GATE-AUDIT-001 has not re-run the Stage 0-7 / Gate 0-6 RTM audit."
       ]
     }
-  ]
+  ],
+  "candidate_rebind": {
+    "task_id": "ODP-RELEASE-MANIFEST-RERUN-002",
+    "rebound_at": "2026-08-26",
+    "from_candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+    "to_candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
+    "from_manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
+    "to_manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
+    "re_attestation_required": true,
+    "note": "Mechanical rebind only. No gate was re-attested, no receipt was added, and no status moved toward cleared. Each gate's status_date records the date its blocked state was re-confirmed against the new candidate; the underlying blockers are unchanged apart from the candidate SHA they name.",
+    "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt"
+  }
 }
