@@ -19,7 +19,15 @@
     "registry_artifact_lookup": {
       "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom@sha256:fabf02cf4707cbd9bf5d4c67523ca4f5f7d87dbdbb2f347d43f03e25dc1258c3",
       "result": "NOT_FOUND",
-      "command_exit_code": 1
+      "command_exit_code": 1,
+      "command": "docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom@sha256:fabf02cf4707cbd9bf5d4c67523ca4f5f7d87dbdbb2f347d43f03e25dc1258c3",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L459"
+    },
+    "per_image_attached_sbom_lookup": {
+      "command": "docker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sbom",
+      "result": "NOT_FOUND",
+      "command_exit_code": 1,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L459"
     }
   },
   "cosign_signatures": {
@@ -30,16 +38,35 @@
     "candidate_signature_lookup": {
       "result": "NOT_FOUND",
       "command_exit_code": 1,
-      "detail": "The previously recorded signature@sha256:<image-digest> references are not image artifacts in the configured repository."
+      "detail": "No cosign signature tag exists for any candidate image digest. cosign publishes a signature as a separate OCI artifact under the sha256-<digest>.sig tag; its absence means no signature was ever produced.",
+      "command": "docker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sig",
+      "queries_run": 5,
+      "queries_exit_zero": 0,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L432"
     },
     "certificate_identity_regexp": "https://github.com/alfloop-dev/.*",
     "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
-    "all_images_signed_and_verified": false
+    "all_images_signed_and_verified": false,
+    "cosign_binary_probe": {
+      "command": "command -v cosign",
+      "command_exit_code": 1,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L482"
+    },
+    "certificate_identity_regexp_note": "Recorded as the policy that a future signed release must satisfy. It was NOT evaluated here: no cosign binary and no signature artifact exist."
   },
   "blocker": {
     "id": "ODP-RELEASE-MANIFEST-COSIGN-SBOM-001",
     "severity": "P0",
     "reason": "No verifiable candidate SBOM or Cosign signature evidence exists; release admission is forbidden.",
     "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json"
+  },
+  "revalidation": {
+    "revalidated_at": "2026-08-26T13:20:07Z",
+    "revalidated_by": "Claude2",
+    "reason": "PR #1025 review required raw registry command output and exit codes; every registry claim below is now backed by a verbatim transcript entry instead of a prose conclusion.",
+    "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt",
+    "transcript_sha256": "sha256:e50ffbbffad302eea53f18fd34aacdc5ea7c4c54be914b7a11345a21c0d29ba1",
+    "query_tool": "docker buildx imagetools inspect (OCI distribution API against the same Artifact Registry host)",
+    "query_tool_note": "deploy-dev.yml uses 'gcloud artifacts docker images describe'. That command is refused before execution by this worker's sandbox classifier, so it produced no output and no exit code. The refusal is recorded verbatim in transcript section 4. Transcript section 6 records what corroborates these lookups (a RepoDigest under each manifest repository name, and registry 404s for absent references) and states the limit this transcript does not close on its own: an auditor wanting cache-independent confirmation should re-run section 1 from a host that never built these images."
   }
 }

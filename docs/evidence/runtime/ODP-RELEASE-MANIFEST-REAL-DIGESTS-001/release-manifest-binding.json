@@ -15,28 +15,36 @@
       "registry_digest": "sha256:002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7",
       "digest_match": true,
       "candidate_sha_label_match": true,
-      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED"
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L23",
+      "registry_query_exit_code": 0
     },
     "web": {
       "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79",
       "registry_digest": "sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79",
       "digest_match": true,
       "candidate_sha_label_match": true,
-      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED"
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L91",
+      "registry_query_exit_code": 0
     },
     "data_platform": {
       "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform@sha256:b9aa10b5334406aca653c68e128de8c85414cec27b49c0052f4dd0f293da3ea7",
       "registry_digest": "sha256:b9aa10b5334406aca653c68e128de8c85414cec27b49c0052f4dd0f293da3ea7",
       "digest_match": true,
       "candidate_sha_label_match": true,
-      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED"
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L159",
+      "registry_query_exit_code": 0
     },
     "migration": {
       "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
       "registry_digest": "sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
       "digest_match": true,
       "candidate_sha_label_match": true,
-      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED"
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L228",
+      "registry_query_exit_code": 0
     },
     "worker": {
       "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
@@ -44,14 +52,18 @@
       "digest_match": true,
       "candidate_sha_label_match": true,
       "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
-      "shared_image_with": "migration"
+      "shared_image_with": "migration",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L296",
+      "registry_query_exit_code": 0
     },
     "scheduler": {
       "registry_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586",
       "registry_digest": "sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586",
       "digest_match": true,
       "candidate_sha_label_match": true,
-      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED"
+      "verification_status": "RESOLVED_NOT_RELEASE_ATTESTED",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L364",
+      "registry_query_exit_code": 0
     }
   },
   "digests_integrity": {
@@ -72,6 +84,16 @@
     "fail_closed_on_missing_registry_or_oidc": true,
     "deployment_success_receipt_emitted": false,
     "status": "BLOCKED",
-    "blocker_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json"
+    "blocker_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json",
+    "registry_claims_backed_by_raw_transcript": true
+  },
+  "revalidation": {
+    "revalidated_at": "2026-08-26T13:20:07Z",
+    "revalidated_by": "Claude2",
+    "reason": "PR #1025 review required raw registry command output and exit codes; every registry claim below is now backed by a verbatim transcript entry instead of a prose conclusion.",
+    "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt",
+    "transcript_sha256": "sha256:e50ffbbffad302eea53f18fd34aacdc5ea7c4c54be914b7a11345a21c0d29ba1",
+    "query_tool": "docker buildx imagetools inspect (OCI distribution API against the same Artifact Registry host)",
+    "query_tool_note": "deploy-dev.yml uses 'gcloud artifacts docker images describe'. That command is refused before execution by this worker's sandbox classifier, so it produced no output and no exit code. The refusal is recorded verbatim in transcript section 4. Transcript section 6 records what corroborates these lookups (a RepoDigest under each manifest repository name, and registry 404s for absent references) and states the limit this transcript does not close on its own: an auditor wanting cache-independent confirmation should re-run section 1 from a host that never built these images."
   }
 }
