@@ -41,6 +41,24 @@ run_locked_python() {
 : "${ODP_FORECAST_MODEL:?Error: ODP_FORECAST_MODEL is required for live deployments.}"
 : "${ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT:?Error: ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT is required.}"
 
+# Private-IP Cloud SQL is used by isolated staging. Keep the connectivity
+# binding in this single release entrypoint so every service and job follows
+# the same path; if either half is missing, fail before any mutation.
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ] && [ -z "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_EGRESS is required with ODP_CLOUD_RUN_VPC_CONNECTOR." >&2
+  exit 1
+fi
+if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ] && [ -z "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
+  echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS." >&2
+  exit 1
+fi
+
+CLOUD_RUN_NETWORK_ARGS=()
+if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
+  CLOUD_RUN_NETWORK_ARGS+=("--vpc-connector=${ODP_CLOUD_RUN_VPC_CONNECTOR}")
+  CLOUD_RUN_NETWORK_ARGS+=("--vpc-egress=${ODP_CLOUD_RUN_VPC_EGRESS}")
+fi
+
 if [ -z "${ODP_SCHEDULED_INGESTION_TENANT_ID:-}" ] && [ -z "${ODP_TENANT_ID:-}" ]; then
   echo "Error: ODP_SCHEDULED_INGESTION_TENANT_ID or ODP_TENANT_ID is required." >&2
   exit 1
@@ -360,6 +378,7 @@ gcloud run jobs deploy "${MIGRATION_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=1800s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=migration,oday-data-binding=live" \
   --quiet
 
@@ -413,6 +432,7 @@ gcloud run deploy "${API_SERVICE}" \
   --set-secrets="${API_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${API_REVISION_TAG}" \
   --no-traffic \
   --allow-unauthenticated \
@@ -440,6 +460,7 @@ gcloud run jobs deploy "${SCHEDULER_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=0 \
   --task-timeout=600s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=scheduler,oday-data-binding=live" \
   --quiet
 
@@ -457,6 +478,7 @@ gcloud run jobs deploy "${WORKER_CANDIDATE_JOB}" \
   --tasks=1 \
   --max-retries=3 \
   --task-timeout=900s \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-runtime=worker,oday-data-binding=live" \
   --quiet
 
@@ -568,6 +590,7 @@ gcloud run deploy "${WEB_SERVICE}" \
   --set-secrets="${WEB_SECRET_BINDINGS}" \
   --labels="oday-release-sha=${ODAY_RELEASE_SHA},oday-data-binding=live" \
   --revision-suffix="${REVISION_SUFFIX}" \
+  "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${WEB_REVISION_TAG}" \
   --no-traffic \
   --allow-unauthenticated \
