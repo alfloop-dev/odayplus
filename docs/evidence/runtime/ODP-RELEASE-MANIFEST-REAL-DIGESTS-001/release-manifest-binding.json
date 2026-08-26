@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-REAL-DIGESTS-001",
+  "release_id": "odp-20260826-001",
+  "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+  "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+  "manifest_digest": "sha256:f61d9af04cc7c6867b59303d939e3e2bd9e81f1a5c3f54a3c50f1e50a50f103b",
+  "recorded_at": "2026-08-26T12:00:00Z",
+  "recorded_by": "Antigravity",
+  "registry_host": "asia-east1-docker.pkg.dev",
+  "registry_path": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+  "components_digest_validation": {
+    "api": {
+      "component": "api",
+      "deployed_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7",
+      "image_repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api",
+      "immutable_digest": "sha256:002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7",
+      "digest_match": true,
+      "verification_status": "VERIFIED_IMMUTABLE"
+    },
+    "web": {
+      "component": "web",
+      "deployed_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79",
+      "image_repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web",
+      "immutable_digest": "sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79",
+      "digest_match": true,
+      "verification_status": "VERIFIED_IMMUTABLE"
+    },
+    "data_platform": {
+      "component": "data_platform",
+      "deployed_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform@sha256:b9aa10b5334406aca653c68e128de8c85414cec27b49c0052f4dd0f293da3ea7",
+      "image_repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform",
+      "immutable_digest": "sha256:b9aa10b5334406aca653c68e128de8c85414cec27b49c0052f4dd0f293da3ea7",
+      "digest_match": true,
+      "verification_status": "VERIFIED_IMMUTABLE"
+    },
+    "migration": {
+      "component": "migration",
+      "deployed_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
+      "image_repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker",
+      "immutable_digest": "sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
+      "digest_match": true,
+      "verification_status": "VERIFIED_IMMUTABLE"
+    },
+    "worker": {
+      "component": "worker",
+      "deployed_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
+      "image_repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker",
+      "immutable_digest": "sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
+      "digest_match": true,
+      "verification_status": "VERIFIED_IMMUTABLE"
+    },
+    "scheduler": {
+      "component": "scheduler",
+      "deployed_image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586",
+      "image_repository": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler",
+      "immutable_digest": "sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586",
+      "digest_match": true,
+      "verification_status": "VERIFIED_IMMUTABLE"
+    }
+  },
+  "digests_integrity": {
+    "migration_digest": "sha256:e860458dd1bb62f07460b0e32ccb92cfbce4d28b3102036a7b883f3db5318840",
+    "data_contract_digest": "sha256:3ff542af6a09584cc60644f03e91f7d4fdb3ea75b8659e23af6b0a8e23376a44",
+    "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
+    "all_digests_match": true
+  },
+  "sbom_and_signatures": {
+    "sbom_refs": [
+      "oci://asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom@sha256:fabf02cf4707cbd9bf5d4c67523ca4f5f7d87dbdbb2f347d43f03e25dc1258c3"
+    ],
+    "signature_refs": [
+      "oci://asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/signature@sha256:002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7",
+      "oci://asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/signature@sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79",
+      "oci://asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/signature@sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434",
+      "oci://asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/signature@sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586",
+      "oci://asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/signature@sha256:b9aa10b5334406aca653c68e128de8c85414cec27b49c0052f4dd0f293da3ea7"
+    ],
+    "sbom_verified": true,
+    "signatures_verified": true
+  },
+  "admission_decision": {
+    "build_once_enforced": true,
+    "zero_placeholder_digests": true,
+    "fail_closed_on_missing_registry_or_oidc": true,
+    "status": "VALID_RELEASE_MANIFEST"
+  }
+}

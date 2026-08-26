@@ -26,7 +26,7 @@
 
 依據發布規劃 §4.3 與 §7.1，系統嚴格遵循資料平台先於應用程式的部署時序：
 1. **第一階段：資料平台（GKE `oday-dev` 命名空間）**
-   - 執行遷移作業 `oday-data-platform-migrate-e496be62c47c`（標註 `oday.plus/execution-order: 00-migration`），依序套用 Alembic `0001 -> 0002`、Assisted Listing Intake DDL `001 -> 004`、PostgreSQL 執行期遷移 `000008`、建立 `data_plane` 控制 Schema，並寫入持久化遷移收據 `odp_runtime.deployment_migration_receipts`。
+   - 執行遷移作業 `oday-data-platform-migrate-ace4265b5190`（標註 `oday.plus/execution-order: 00-migration`），依序套用 Alembic `0001 -> 0002`、Assisted Listing Intake DDL `001 -> 004`、PostgreSQL 執行期遷移 `000008`、建立 `data_plane` 控制 Schema，並寫入持久化遷移收據 `odp_runtime.deployment_migration_receipts`。
    - 部署有界每日定時作業 `oday-data-platform-bounded-daily`（CronJob: `0 1 * * *`），該作業以 Release SHA 與 Image Digest 驗證持久化遷移收據，無有效收據立即 Fail-Closed。
    - 手動暫停作業（`orders-history`, `trade-manual`, `device-log-manual`）保持 `suspend: true`。
 2. **第二階段：ODay Plus 應用系統（Cloud Run）**
@@ -42,7 +42,7 @@
 
 全數元件強制綁定不可變 Release Manifest 之 Exact SHA-256 Digest：
 - **Release ID**: `odp-20260730-001`
-- **Candidate Git SHA**: `e496be62c47c45d758681b8a4d3abfae16f1c96d`
+- **Candidate Git SHA**: `ace4265b5190c00c72846b637fc04850bacec77e`
 - **Manifest Digest**: `sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271`
 
 | 元件名稱 | Target Runtime | Deployed Image Digest | Manifest Image Digest | 比對結果 |

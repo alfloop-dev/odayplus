@@ -6,7 +6,7 @@
   "namespace": "oday-dev",
   "cluster": "non-production-gke",
   "release_id": "odp-20260730-001",
-  "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+  "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
   "image_reference": "ghcr.io/alfloop-dev/oday-data-platform@sha256:3333333333333333333333333333333333333333333333333333333333333333",
   "cloud_sql_proxy_image": "gcr.io/cloud-sql-connectors/cloud-sql-proxy@sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "deployment_sequence_precedence": {
@@ -23,7 +23,7 @@
   },
   "workloads": [
     {
-      "name": "oday-data-platform-migrate-e496be62c47c",
+      "name": "oday-data-platform-migrate-ace4265b5190",
       "kind": "Job",
       "execution_order": "00-migration",
       "status": "PASSED",
@@ -59,21 +59,21 @@
       ]
     },
     {
-      "name": "oday-data-platform-orders-history-e496be62c47c",
+      "name": "oday-data-platform-orders-history-ace4265b5190",
       "kind": "Job",
       "manual_only": true,
       "suspend": true,
       "hard_limit": "62-days,one-day-partitions,max-250000-per-partition"
     },
     {
-      "name": "oday-data-platform-trade-manual-e496be62c47c",
+      "name": "oday-data-platform-trade-manual-ace4265b5190",
       "kind": "Job",
       "manual_only": true,
       "suspend": true,
       "hard_limit": "one-day,max-100000"
     },
     {
-      "name": "oday-data-platform-device-log-manual-e496be62c47c",
+      "name": "oday-data-platform-device-log-manual-ace4265b5190",
       "kind": "Job",
       "manual_only": true,
       "suspend": true,

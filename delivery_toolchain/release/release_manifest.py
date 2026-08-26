@@ -209,11 +209,128 @@ def load_manifest(
     return (payload if isinstance(payload, dict) else None), errors
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over a sequence of file paths."""
+    h = hashlib.sha256()
+    for p in sorted(paths):
+        path_obj = Path(p)
+        if path_obj.is_file():
+            rel_path = path_obj.relative_to(root).as_posix().encode("utf-8")
+            h.update(rel_path)
+            h.update(b"\x00")
+            h.update(path_obj.read_bytes())
+            h.update(b"\x00")
+    return "sha256:" + h.hexdigest()
+
+
+def compute_migration_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over infra/db/migrations SQL files."""
+    migrations_dir = root / "infra/db/migrations"
+    return compute_file_set_digest(migrations_dir.glob("*.sql"), root=root)
+
+
+def compute_data_contract_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over docs/data contract files."""
+    data_dir = root / "docs/data"
+    return compute_file_set_digest(data_dir.glob("*"), root=root)
+
+
+def compute_source_policy_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over security/license policies."""
+    policy_files = [
+        root / "docs/security/license_policy.json",
+        root / "docs/security/license_exemptions.json",
+        root / "docs/security/release_bindings.json",
+    ]
+    return compute_file_set_digest(policy_files, root=root)
+
+
+def build_release_manifest(
+    *,
+    release_id: str,
+    candidate_sha: str,
+    components: dict[str, dict[str, str]],
+    sbom_refs: list[str],
+    signature_refs: list[str],
+    created_at: str,
+    created_by_workflow: str,
+    external_sources_expected_enabled: list[str] | None = None,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """Build and self-seal a canonical release manifest dictionary."""
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "release_id": release_id,
+        "candidate_sha": candidate_sha,
+        "components": components,
+        "migration_digest": compute_migration_digest(root=root),
+        "data_contract_digest": compute_data_contract_digest(root=root),
+        "source_policy_digest": compute_source_policy_digest(root=root),
+        "external_sources_expected_enabled": external_sources_expected_enabled or [],
+        "sbom_refs": sbom_refs,
+        "signature_refs": signature_refs,
+        "created_at": created_at,
+        "created_by_workflow": created_by_workflow,
+    }
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
 __all__ = [
+    "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
+    "build_release_manifest",
+    "compute_data_contract_digest",
+    "compute_file_set_digest",
     "compute_manifest_digest",
+    "compute_migration_digest",
+    "compute_source_policy_digest",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
     "validate_manifest",
 ]
+
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Validate or inspect an ODay Plus release manifest.")
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json",
+        help="Path to release manifest JSON",
+    )
+    parser.add_argument("--expected-sha", type=str, default=None, help="Expected candidate SHA")
+    parser.add_argument("--expected-digest", type=str, default=None, help="Expected manifest digest")
+    args = parser.parse_args()
+
+    manifest, errors = load_manifest(
+        args.manifest,
+        expected_candidate_sha=args.expected_sha,
+        expected_digest=args.expected_digest,
+    )
+    if errors:
+        print(f"FAIL: {len(errors)} error(s) in release manifest {args.manifest}:")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+
+    print(f"PASS: Release manifest {args.manifest} is valid.")
+    print(f"  Release ID:     {manifest['release_id']}")
+    print(f"  Candidate SHA:  {manifest['candidate_sha']}")
+    print(f"  Manifest Digest:{manifest['manifest_digest']}")
+    print(f"  Components:     {len(manifest['components'])}")
+    for name, comp in manifest["components"].items():
+        print(f"    - {name}: {comp['image']}")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())
+

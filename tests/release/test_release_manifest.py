@@ -52,7 +52,7 @@ def test_manifest_candidate_sha_mutation_fails_closed() -> None:
     manifest["candidate_sha"] = "0" * 40
     errors = validate_manifest(
         manifest,
-        expected_candidate_sha="e496be62c47c45d758681b8a4d3abfae16f1c96d",
+        expected_candidate_sha="ace4265b5190c00c72846b637fc04850bacec77e",
     )
     assert any("candidate_sha" in error for error in errors)
 
