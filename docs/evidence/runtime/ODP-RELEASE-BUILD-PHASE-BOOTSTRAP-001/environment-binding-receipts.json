@@ -1,0 +1,261 @@
+{
+  "evidence_kind": "runtime-release-environment-binding-transcript",
+  "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+  "verifier": "delivery_toolchain/release/check_release_environment.py",
+  "release_sha_under_test": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+  "說明": "以下每一筆都是實際執行 CLI 的逐字結果。變數值透過 process environment 傳入（不進 argv），收據只記錄 present/absent。exit_code=1 代表 fail closed。",
+  "secret_values_redacted": true,
+  "scenarios": [
+    {
+      "scenario": "unbound-build-job-sees-every-variable-empty-and-is-refused",
+      "為什麼重要": "這是修正前 build job 的真實狀態：沒有 environment 綁定時 GitHub 不會報錯，而是把每個 vars.* 展開成空字串。收據逐一列出缺少的變數名稱。",
+      "scope": "build",
+      "解析到的變數數": 0,
+      "必要變數總數": 9,
+      "command": "python3 delivery_toolchain/release/check_release_environment.py --scope build --environment dev --github-environment dev-build --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release 環境綁定檢查未通過：\n- build 階段在 GitHub environment `dev-build` 取不到必要變數：GCP_WORKLOAD_IDENTITY_PROVIDER、GCP_SERVICE_ACCOUNT、GCP_PROJECT_ID、GCP_REGION、GCP_AR_REPO、ODP_CLOUD_RUN_API_SERVICE、ODP_CLOUD_RUN_WEB_SERVICE、ODP_CLOUD_RUN_WORKER_JOB、ODP_CLOUD_RUN_SCHEDULER_JOB。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-environment-binding",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_environment.py",
+        "scope": "build",
+        "environment": "dev",
+        "github_environment": "dev-build",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "variables_resolved": {
+          "GCP_WORKLOAD_IDENTITY_PROVIDER": false,
+          "GCP_SERVICE_ACCOUNT": false,
+          "GCP_PROJECT_ID": false,
+          "GCP_REGION": false,
+          "GCP_AR_REPO": false,
+          "ODP_CLOUD_RUN_API_SERVICE": false,
+          "ODP_CLOUD_RUN_WEB_SERVICE": false,
+          "ODP_CLOUD_RUN_WORKER_JOB": false,
+          "ODP_CLOUD_RUN_SCHEDULER_JOB": false
+        },
+        "missing_variables": [
+          "GCP_WORKLOAD_IDENTITY_PROVIDER",
+          "GCP_SERVICE_ACCOUNT",
+          "GCP_PROJECT_ID",
+          "GCP_REGION",
+          "GCP_AR_REPO",
+          "ODP_CLOUD_RUN_API_SERVICE",
+          "ODP_CLOUD_RUN_WEB_SERVICE",
+          "ODP_CLOUD_RUN_WORKER_JOB",
+          "ODP_CLOUD_RUN_SCHEDULER_JOB"
+        ],
+        "blockers_zh_tw": [
+          "build 階段在 GitHub environment `dev-build` 取不到必要變數：GCP_WORKLOAD_IDENTITY_PROVIDER、GCP_SERVICE_ACCOUNT、GCP_PROJECT_ID、GCP_REGION、GCP_AR_REPO、ODP_CLOUD_RUN_API_SERVICE、ODP_CLOUD_RUN_WEB_SERVICE、ODP_CLOUD_RUN_WORKER_JOB、ODP_CLOUD_RUN_SCHEDULER_JOB。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。"
+        ],
+        "summary_zh_tw": "build 階段被拒絕：GitHub environment `dev-build` 缺少 9 個必要變數；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "unprovisioned-build-environment-is-refused-with-the-name-to-fix",
+      "為什麼重要": "GitHub 會為被引用但不存在的 environment 自動建立一個空的，所以「未佈建」看起來和「已綁定」一模一樣，直到有人讀一個變數為止。收據直接指名 dev-build，避免操作者跑去看有變數的 dev。",
+      "scope": "build",
+      "解析到的變數數": 7,
+      "必要變數總數": 9,
+      "command": "python3 delivery_toolchain/release/check_release_environment.py --scope build --environment dev --github-environment dev-build --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release 環境綁定檢查未通過：\n- build 階段在 GitHub environment `dev-build` 取不到必要變數：GCP_PROJECT_ID、GCP_AR_REPO。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-environment-binding",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_environment.py",
+        "scope": "build",
+        "environment": "dev",
+        "github_environment": "dev-build",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "variables_resolved": {
+          "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+          "GCP_SERVICE_ACCOUNT": true,
+          "GCP_PROJECT_ID": false,
+          "GCP_REGION": true,
+          "GCP_AR_REPO": false,
+          "ODP_CLOUD_RUN_API_SERVICE": true,
+          "ODP_CLOUD_RUN_WEB_SERVICE": true,
+          "ODP_CLOUD_RUN_WORKER_JOB": true,
+          "ODP_CLOUD_RUN_SCHEDULER_JOB": true
+        },
+        "missing_variables": [
+          "GCP_PROJECT_ID",
+          "GCP_AR_REPO"
+        ],
+        "blockers_zh_tw": [
+          "build 階段在 GitHub environment `dev-build` 取不到必要變數：GCP_PROJECT_ID、GCP_AR_REPO。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。"
+        ],
+        "summary_zh_tw": "build 階段被拒絕：GitHub environment `dev-build` 缺少 2 個必要變數；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "bound-build-environment-is-admitted-without-recording-any-value",
+      "為什麼重要": "變數齊備時通過，收據只記 present/absent。WIF provider 路徑與服務帳號可辨識雲端身分，不得進入可公開的收據。",
+      "scope": "build",
+      "解析到的變數數": 9,
+      "必要變數總數": 9,
+      "command": "python3 delivery_toolchain/release/check_release_environment.py --scope build --environment dev --github-environment dev-build --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --receipt <receipt>",
+      "exit_code": 0,
+      "stdout": "build 階段已綁定 GitHub environment `dev-build`，9 個必要環境變數全部解析成功。\n",
+      "stderr": "",
+      "receipt": {
+        "receipt_kind": "runtime-release-environment-binding",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_environment.py",
+        "scope": "build",
+        "environment": "dev",
+        "github_environment": "dev-build",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": true,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "variables_resolved": {
+          "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+          "GCP_SERVICE_ACCOUNT": true,
+          "GCP_PROJECT_ID": true,
+          "GCP_REGION": true,
+          "GCP_AR_REPO": true,
+          "ODP_CLOUD_RUN_API_SERVICE": true,
+          "ODP_CLOUD_RUN_WEB_SERVICE": true,
+          "ODP_CLOUD_RUN_WORKER_JOB": true,
+          "ODP_CLOUD_RUN_SCHEDULER_JOB": true
+        },
+        "missing_variables": [],
+        "blockers_zh_tw": [],
+        "summary_zh_tw": "build 階段已綁定 GitHub environment `dev-build`，9 個必要環境變數全部解析成功。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "admission-without-the-shared-lease-store-is-refused",
+      "為什麼重要": "admission 驗的是簽章與共用 lease 狀態；少了狀態來源就沒有可稽核的授權。",
+      "scope": "admission",
+      "解析到的變數數": 3,
+      "必要變數總數": 4,
+      "command": "python3 delivery_toolchain/release/check_release_environment.py --scope admission --environment production --github-environment production --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release 環境綁定檢查未通過：\n- admission 階段在 GitHub environment `production` 取不到必要變數：ODP_RELEASE_LEASE_STATE_URI。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-environment-binding",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_environment.py",
+        "scope": "admission",
+        "environment": "production",
+        "github_environment": "production",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "variables_resolved": {
+          "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+          "GCP_SERVICE_ACCOUNT": true,
+          "ODP_RELEASE_LEASE_PUBLIC_KEY": true,
+          "ODP_RELEASE_LEASE_STATE_URI": false
+        },
+        "missing_variables": [
+          "ODP_RELEASE_LEASE_STATE_URI"
+        ],
+        "blockers_zh_tw": [
+          "admission 階段在 GitHub environment `production` 取不到必要變數：ODP_RELEASE_LEASE_STATE_URI。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。"
+        ],
+        "summary_zh_tw": "admission 階段被拒絕：GitHub environment `production` 缺少 1 個必要變數；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "deploy-scope-requires-the-migration-job-the-build-scope-does-not",
+      "為什麼重要": "migration job 只在 deploy 被執行，從不被 build。在 build 階段要求它會是一道永遠不會擋到真問題的假閘。",
+      "scope": "deploy",
+      "解析到的變數數": 9,
+      "必要變數總數": 10,
+      "command": "python3 delivery_toolchain/release/check_release_environment.py --scope deploy --environment production --github-environment production --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release 環境綁定檢查未通過：\n- deploy 階段在 GitHub environment `production` 取不到必要變數：ODP_CLOUD_RUN_MIGRATION_JOB。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-environment-binding",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_environment.py",
+        "scope": "deploy",
+        "environment": "production",
+        "github_environment": "production",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:01+00:00",
+        "variables_resolved": {
+          "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+          "GCP_SERVICE_ACCOUNT": true,
+          "GCP_PROJECT_ID": true,
+          "GCP_REGION": true,
+          "GCP_AR_REPO": true,
+          "ODP_CLOUD_RUN_API_SERVICE": true,
+          "ODP_CLOUD_RUN_WEB_SERVICE": true,
+          "ODP_CLOUD_RUN_MIGRATION_JOB": false,
+          "ODP_CLOUD_RUN_WORKER_JOB": true,
+          "ODP_CLOUD_RUN_SCHEDULER_JOB": true
+        },
+        "missing_variables": [
+          "ODP_CLOUD_RUN_MIGRATION_JOB"
+        ],
+        "blockers_zh_tw": [
+          "deploy 階段在 GitHub environment `production` 取不到必要變數：ODP_CLOUD_RUN_MIGRATION_JOB。這通常代表該 environment 不存在、或存在但沒有設定這些變數（GitHub 會為未建立的 environment 自動建一個空的），而不是變數的值有問題；請到該 environment 補齊後重跑。"
+        ],
+        "summary_zh_tw": "deploy 階段被拒絕：GitHub environment `production` 缺少 1 個必要變數；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "a-job-with-no-environment-binding-at-all-is-refused",
+      "為什麼重要": "空的 github_environment 代表 job 根本沒綁；那是這一關存在的原因本身。",
+      "scope": "build",
+      "解析到的變數數": 9,
+      "必要變數總數": 9,
+      "command": "python3 delivery_toolchain/release/check_release_environment.py --scope build --environment dev --github-environment  --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release 環境綁定檢查未通過：\n- github_environment 不得為空；這個 job 沒有 `environment:` 綁定時，`vars.*` 會安靜地展開成空字串而不是報錯。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-environment-binding",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_environment.py",
+        "scope": "build",
+        "environment": "dev",
+        "github_environment": "",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:01+00:00",
+        "variables_resolved": {
+          "GCP_WORKLOAD_IDENTITY_PROVIDER": true,
+          "GCP_SERVICE_ACCOUNT": true,
+          "GCP_PROJECT_ID": true,
+          "GCP_REGION": true,
+          "GCP_AR_REPO": true,
+          "ODP_CLOUD_RUN_API_SERVICE": true,
+          "ODP_CLOUD_RUN_WEB_SERVICE": true,
+          "ODP_CLOUD_RUN_WORKER_JOB": true,
+          "ODP_CLOUD_RUN_SCHEDULER_JOB": true
+        },
+        "missing_variables": [],
+        "blockers_zh_tw": [
+          "github_environment 不得為空；這個 job 沒有 `environment:` 綁定時，`vars.*` 會安靜地展開成空字串而不是報錯。"
+        ],
+        "summary_zh_tw": "build 階段被拒絕：GitHub environment `` 缺少 0 個必要變數；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    }
+  ]
+}

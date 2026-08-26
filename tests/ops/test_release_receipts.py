@@ -122,13 +122,32 @@ def test_allowlist_matches_workflow_uploads_and_script_producers() -> None:
         for step in workflow["jobs"]["deploy"]["steps"]
         if str(step.get("uses", "")).startswith("actions/upload-artifact@")
     ]
-    assert len(upload_steps) == 1
+    validation_steps = [
+        step
+        for step in upload_steps
+        if "validation" in str(step["with"]["name"])
+    ]
+    assert len(validation_steps) == 1
     uploaded = {
         line.strip().replace("${{ github.run_id }}", "{run_id}")
-        for line in upload_steps[0]["with"]["path"].splitlines()
+        for line in validation_steps[0]["with"]["path"].splitlines()
         if line.strip()
     }
     assert uploaded == set(RUNTIME_RELEASE_ARTIFACT_ALLOWLIST)
+
+    # The allowlist governs deployment reports. Any *other* upload the deploy
+    # job makes -- the environment binding receipt, for one -- must come from
+    # the runner temp dir, so it cannot smuggle out a raw Cloud Run dump under
+    # a name the allowlist never had to approve.
+    for step in upload_steps:
+        if step in validation_steps:
+            continue
+        for line in str(step["with"]["path"]).splitlines():
+            if line.strip():
+                assert line.strip().startswith("${{ runner.temp }}/"), (
+                    f"{step['with']['name']} publishes {line.strip()} from outside "
+                    "the runner temp dir without an allowlist entry"
+                )
 
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     job_kinds = set(re.findall(r'^\s*execute_job "([a-z]+)"', script, flags=re.MULTILINE))

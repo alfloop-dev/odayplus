@@ -171,9 +171,14 @@ def run_admission(release: dict, **overrides) -> tuple[int, dict]:
     ]
     if "action" in overrides:
         argv += ["--action", overrides["action"]]
+    for name, image in (overrides.get("component_images") or {}).items():
+        argv += ["--component-image", f"{name}={image}"]
     code = main(argv)
     receipt = json.loads(release["receipt_path"].read_text(encoding="utf-8"))
     return code, receipt
+
+
+MANIFEST_API_IMAGE = "ghcr.io/example/api@sha256:" + "1" * 64
 
 
 def rewrite(path: Path, mutate) -> None:
@@ -558,3 +563,65 @@ def test_candidate_ancestry_real_git_not_an_ancestor_blocked(tmp_path: Path) -> 
         registry, release_sha=sha_b, environment="dev", root=repo
     )
     assert any("not an ancestor of expected SHA" in error for error in errors)
+
+
+# --------------------------------------------------------------------------
+# ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: the lease admits an artifact, not a
+# digest the caller chose.
+#
+# The deploy phase receives its image references as workflow inputs, so a lease
+# that only proves "this release may deploy to dev" would admit whatever image
+# the dispatcher typed. Binding the handoff back to `manifest.components` is
+# what makes build-once an enforced property.
+# --------------------------------------------------------------------------
+
+
+def test_the_manifests_own_image_is_admitted(release) -> None:
+    code, receipt = run_admission(
+        release, component_images={"api": MANIFEST_API_IMAGE}
+    )
+    assert code == 0
+    assert receipt["admitted"] is True
+    assert receipt["component_images"] == {"api": MANIFEST_API_IMAGE}
+
+
+def test_a_substituted_digest_is_refused_and_the_lease_survives(release) -> None:
+    """A lease spent on the wrong artifact would be worse than no lease."""
+
+    other = "ghcr.io/example/api@sha256:" + "9" * 64
+    code, receipt = run_admission(release, component_images={"api": other})
+    assert code == 1
+    assert receipt["admitted"] is False
+    assert any("did not build" in error for error in receipt["errors"])
+    assert release["store"].get(release["lease"]["lease_id"])["state"] == STATE_ISSUED
+
+
+def test_a_component_the_release_never_built_is_refused(release) -> None:
+    code, receipt = run_admission(
+        release,
+        component_images={"api": MANIFEST_API_IMAGE, "web": "ghcr.io/example/web@sha256:" + "2" * 64},
+    )
+    assert code == 1
+    assert any("manifest has no component 'web'" in error for error in receipt["errors"])
+
+
+def test_a_mutable_tag_is_never_an_admitted_artifact(release) -> None:
+    code, receipt = run_admission(release, component_images={"api": "ghcr.io/example/api:latest"})
+    assert code == 1
+    assert any("immutable @sha256 reference" in error for error in receipt["errors"])
+
+
+def test_a_component_binding_cannot_be_checked_against_an_unreadable_manifest(
+    release, tmp_path
+) -> None:
+    """A manifest that failed to load must refuse the binding, not skip it."""
+
+    broken = tmp_path / "broken-manifest.json"
+    broken.write_text("{not json", encoding="utf-8")
+    code, receipt = run_admission(
+        release,
+        manifest_path=broken,
+        component_images={"api": MANIFEST_API_IMAGE},
+    )
+    assert code == 1
+    assert receipt["admitted"] is False

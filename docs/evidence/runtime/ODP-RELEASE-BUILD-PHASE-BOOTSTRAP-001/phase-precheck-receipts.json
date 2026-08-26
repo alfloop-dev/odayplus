@@ -1,0 +1,232 @@
+{
+  "evidence_kind": "runtime-release-phase-precheck-transcript",
+  "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+  "verifier": "delivery_toolchain/release/check_release_phase.py",
+  "release_sha_under_test": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+  "說明": "以下每一筆都是實際執行 CLI 的逐字結果（argv、exit code、stdout/stderr 與收據），不是敘述性結論。exit_code=1 代表 fail closed。OIDC/環境變數的檢查已移到 check_release_environment.py，見 environment-binding-receipts.json。",
+  "secret_values_redacted": true,
+  "scenarios": [
+    {
+      "scenario": "build-phase-without-lease-is-admitted",
+      "為什麼重要": "build 階段不需要 lease 即可開始；這是打破循環依賴的前提。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase build --lease-supplied false --receipt <receipt>",
+      "exit_code": 0,
+      "stdout": "build 階段前置條件全部通過；release_sha=ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971、environment=dev。\n",
+      "stderr": "",
+      "receipt": {
+        "receipt_kind": "runtime-release-phase-precheck",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_phase.py",
+        "phase": "build",
+        "environment": "dev",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": true,
+        "checked_at": "2026-08-26T16:48:59+00:00",
+        "lease_supplied": false,
+        "image_handoff": {
+          "api": null,
+          "web": null,
+          "worker": null,
+          "scheduler": null
+        },
+        "blockers_zh_tw": [],
+        "summary_zh_tw": "build 階段前置條件全部通過；release_sha=ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971、environment=dev。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "build-phase-with-lease-is-refused",
+      "為什麼重要": "build 階段接受 lease 就等於要求 artifact 在被建立前先證明自己存在。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase build --lease-supplied true --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release build 階段前置檢查未通過：\n- build 階段不得帶入 Supervisor lease；lease 只授權 deploy 階段，在 build 階段接受 lease 會讓循環依賴重新出現。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-phase-precheck",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_phase.py",
+        "phase": "build",
+        "environment": "dev",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "lease_supplied": true,
+        "image_handoff": {
+          "api": null,
+          "web": null,
+          "worker": null,
+          "scheduler": null
+        },
+        "blockers_zh_tw": [
+          "build 階段不得帶入 Supervisor lease；lease 只授權 deploy 階段，在 build 階段接受 lease 會讓循環依賴重新出現。"
+        ],
+        "summary_zh_tw": "build 階段被拒絕，共 1 項阻擋原因；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "deploy-phase-without-handoff-is-refused",
+      "為什麼重要": "deploy 階段沒有 build-once handoff 時必須 fail closed，不得自行重建。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase deploy --lease-supplied true --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release deploy 階段前置檢查未通過：\n- deploy 階段缺少 build-once artifact handoff：api、web、worker、scheduler；deploy 階段不得重新 build，缺少 artifact 時必須 fail closed。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-phase-precheck",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_phase.py",
+        "phase": "deploy",
+        "environment": "dev",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "lease_supplied": true,
+        "image_handoff": {
+          "api": null,
+          "web": null,
+          "worker": null,
+          "scheduler": null
+        },
+        "blockers_zh_tw": [
+          "deploy 階段缺少 build-once artifact handoff：api、web、worker、scheduler；deploy 階段不得重新 build，缺少 artifact 時必須 fail closed。"
+        ],
+        "summary_zh_tw": "deploy 階段被拒絕，共 1 項阻擋原因；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "deploy-phase-without-lease-is-refused",
+      "為什麼重要": "lease 是 deploy 的唯一授權來源；缺少時一律拒絕。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase deploy --lease-supplied false --api-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:0000000000000000000000000000000000000000000000000000000000000000 --web-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:0000000000000000000000000000000000000000000000000000000000000000 --worker-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000 --scheduler-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:0000000000000000000000000000000000000000000000000000000000000000 --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release deploy 階段前置檢查未通過：\n- deploy 階段缺少簽章 Supervisor lease；沒有 lease 就沒有部署授權，一律 fail closed。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-phase-precheck",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_phase.py",
+        "phase": "deploy",
+        "environment": "dev",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "lease_supplied": false,
+        "image_handoff": {
+          "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "blockers_zh_tw": [
+          "deploy 階段缺少簽章 Supervisor lease；沒有 lease 就沒有部署授權，一律 fail closed。"
+        ],
+        "summary_zh_tw": "deploy 階段被拒絕，共 1 項阻擋原因；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "deploy-phase-with-mutable-tag-is-refused",
+      "為什麼重要": "可變 tag 無法證明部署的是被 lease 授權的那個 artifact。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase deploy --lease-supplied true --api-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:latest --web-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:0000000000000000000000000000000000000000000000000000000000000000 --worker-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000 --scheduler-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:0000000000000000000000000000000000000000000000000000000000000000 --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release deploy 階段前置檢查未通過：\n- api 的 image handoff 必須是 immutable @sha256 reference，實際值為 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:latest'；可變 tag 無法證明部署的是同一個 artifact。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-phase-precheck",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_phase.py",
+        "phase": "deploy",
+        "environment": "dev",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "lease_supplied": true,
+        "image_handoff": {
+          "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:latest",
+          "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "blockers_zh_tw": [
+          "api 的 image handoff 必須是 immutable @sha256 reference，實際值為 'asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api:latest'；可變 tag 無法證明部署的是同一個 artifact。"
+        ],
+        "summary_zh_tw": "deploy 階段被拒絕，共 1 項阻擋原因；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "branch-name-is-not-an-exact-release-sha",
+      "為什麼重要": "release 必須綁定 exact SHA；分支名稱會在 build 與 deploy 之間漂移。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha dev --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase build --lease-supplied false --receipt <receipt>",
+      "exit_code": 1,
+      "stdout": "",
+      "stderr": "Runtime Release build 階段前置檢查未通過：\n- release_sha 必須是 40 字元小寫 git SHA；不接受分支名稱或縮寫。\n",
+      "receipt": {
+        "receipt_kind": "runtime-release-phase-precheck",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_phase.py",
+        "phase": "build",
+        "environment": "dev",
+        "release_sha": "dev",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": false,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "lease_supplied": false,
+        "image_handoff": {
+          "api": null,
+          "web": null,
+          "worker": null,
+          "scheduler": null
+        },
+        "blockers_zh_tw": [
+          "release_sha 必須是 40 字元小寫 git SHA；不接受分支名稱或縮寫。"
+        ],
+        "summary_zh_tw": "build 階段被拒絕，共 1 項阻擋原因；此階段不得繼續執行。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "deploy-phase-with-complete-handoff-and-lease-is-admitted",
+      "為什麼重要": "handoff 齊備且 immutable、lease 在場時，deploy 階段才通過。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase deploy --lease-supplied true --api-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:0000000000000000000000000000000000000000000000000000000000000000 --web-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:0000000000000000000000000000000000000000000000000000000000000000 --worker-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000 --scheduler-image asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:0000000000000000000000000000000000000000000000000000000000000000 --receipt <receipt>",
+      "exit_code": 0,
+      "stdout": "deploy 階段前置條件全部通過；release_sha=ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971、environment=dev。\n",
+      "stderr": "",
+      "receipt": {
+        "receipt_kind": "runtime-release-phase-precheck",
+        "schema_version": 1,
+        "verifier": "delivery_toolchain/release/check_release_phase.py",
+        "phase": "deploy",
+        "environment": "dev",
+        "release_sha": "ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971",
+        "task_id": "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
+        "admitted": true,
+        "checked_at": "2026-08-26T16:49:00+00:00",
+        "lease_supplied": true,
+        "image_handoff": {
+          "api": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "web": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "worker": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "scheduler": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "blockers_zh_tw": [],
+        "summary_zh_tw": "deploy 階段前置條件全部通過；release_sha=ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971、environment=dev。",
+        "secret_values_redacted": true
+      }
+    },
+    {
+      "scenario": "the-input-gate-no-longer-accepts-an-oidc-verdict",
+      "為什麼重要": "這一關的 job 沒有 environment 綁定，讀不到 vars.*。舊版把 HAS_WIF 傳進來，在未綁定的 job 裡恆為 false，於是每一次 dispatch 都被判缺少 OIDC。旗標移除後，這個誤判在介面層就不可能再發生。",
+      "command": "python3 delivery_toolchain/release/check_release_phase.py --environment dev --release-sha ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971 --task-id ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 --phase build --lease-supplied false --oidc-configured true --receipt <receipt>",
+      "exit_code": 2,
+      "stdout": "",
+      "stderr": "usage: check_release_phase.py [-h] --phase PHASE --environment ENVIRONMENT\n                              --release-sha RELEASE_SHA [--task-id TASK_ID]\n                              [--api-image API_IMAGE] [--web-image WEB_IMAGE]\n                              [--worker-image WORKER_IMAGE]\n                              [--scheduler-image SCHEDULER_IMAGE]\n                              [--lease-supplied LEASE_SUPPLIED]\n                              [--receipt RECEIPT]\ncheck_release_phase.py: error: unrecognized arguments: --oidc-configured true\n",
+      "receipt": null
+    }
+  ]
+}
