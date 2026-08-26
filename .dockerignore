@@ -19,3 +19,12 @@ ai-task-archive
 archive
 *.zip
 *.log
+
+# ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: Runtime Release stages its receipts
+# under `.odp_data/release/` inside the checkout, and the build job writes the
+# environment-binding receipt before `docker build`. Those receipts carry a
+# `checked_at` timestamp, so leaving them in the context would give every re-run
+# of the same release SHA a different image digest -- and a Supervisor lease is
+# bound to the `manifest_digest` derived from those digests. `.odp_data/` is the
+# runtime data tree in general: none of it belongs in an image.
+.odp_data
