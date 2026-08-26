@@ -371,6 +371,7 @@ class GitHubBusCommandTests(unittest.TestCase):
                 "labels": ["pantheon-review"],
                 "branch": branch,
                 "base": "dev",
+                "head_sha": "a" * 40,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -408,6 +409,84 @@ class GitHubBusCommandTests(unittest.TestCase):
         review_pr = bus_state["tasks"][task["id"]]["review_pr"]
         self.assertEqual(review_pr["number"], 1019)
         self.assertEqual(review_pr["state"], "open")
+
+    def test_skipped_no_commits_is_suppressed_on_consecutive_poll(self) -> None:
+        """skipped_no_commits must not trigger re-evaluation when the hash matches.
+
+        Regression: the original ``state != "open"`` guard treated every
+        non-open state as stale, so ``skipped_no_commits`` forced
+        ``branch_has_diff`` to run again and appended a duplicate
+        ``github_review_pr_skipped`` log entry on every poll cycle (~30 s).
+        """
+
+        config = {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+        task = {
+            "id": "ODP-SKIP-NO-COMMITS-001",
+            "title": "Suppress no-commit skip",
+            "summary_zh": "suppress me",
+            "status": "review",
+            "owner": "Codex",
+            "reviewer": "Claude",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+        branch = "task/ODP-SKIP-NO-COMMITS-001"
+        head_sha = "b" * 40
+        body = "body\n"
+        title = f"[ReviewBus] {task['id']} {task['title']}"
+        pr_hash = json.dumps(
+            {
+                "title": title,
+                "body": body,
+                "labels": ["pantheon-review"],
+                "branch": branch,
+                "base": "dev",
+                "head_sha": head_sha,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": None,
+                        "url": None,
+                        "title": title,
+                        "branch": branch,
+                        "state": "skipped_no_commits",
+                        "head_sha": head_sha,
+                        "remote_ref": f"refs/heads/{branch}",
+                    },
+                    "last_review_hash": pr_hash,
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=head_sha),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=head_sha),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=False) as diff,
+            mock.patch.object(github_bus, "build_template_body", return_value=body),
+            mock.patch.object(github_bus, "write_activity_log") as log,
+        ):
+            changed = github_bus.upsert_review_pr(
+                config, bus_state, {"tasks": []}, "o/r", task
+            )
+
+        # The suppression guard must fire and return False immediately; neither
+        # branch_has_diff nor write_activity_log should be called.
+        self.assertFalse(changed)
+        diff.assert_not_called()
+        log.assert_not_called()
 
     def test_upsert_review_pr_skips_unpublished_remote_branch(self) -> None:
         config = {

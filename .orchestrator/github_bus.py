@@ -1075,8 +1075,15 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     # not let that stale identity suppress reconciliation: the publisher's
     # task-scoped branch is authoritative, so discovery must run again and
     # adopt the current open PR for the same branch/base pair.
-    pr_ref_is_open = isinstance(pr_ref, dict) and str(pr_ref.get("state") or "").lower() == "open"
-    if entry.get("last_review_hash") == pr_hash and pr_ref_is_open:
+    #
+    # Only explicitly stale states bypass the suppression.  Using `state !=
+    # "open"` would also match transient states like `skipped_no_commits` and
+    # `skipped_unpublished_branch`, forcing re-evaluation every poll cycle and
+    # spamming repeated `github_review_pr_skipped` log entries.
+    _STALE_PR_STATES = frozenset({"missing_pr", "closed", "merged"})
+    pr_ref_state = str((pr_ref or {}).get("state") or "").lower()
+    pr_ref_is_stale = isinstance(pr_ref, dict) and pr_ref_state in _STALE_PR_STATES
+    if entry.get("last_review_hash") == pr_hash and not pr_ref_is_stale:
         return False
 
     has_diff = branch_has_diff(base, branch, expected_head_sha=head_sha)
@@ -1101,11 +1108,13 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         )
         return True
 
-    # Never edit a closed PR or carry its number into auto-merge state.  A
-    # closed ReviewBus PR is only a historical pointer; find_existing_pr()
-    # below can adopt the publisher-created open PR without creating another
-    # PR path.
-    if isinstance(pr_ref, dict) and str(pr_ref.get("state") or "").lower() != "open":
+    # Never edit a closed or merged PR or carry its number into auto-merge
+    # state.  A stale ReviewBus PR is only a historical pointer;
+    # find_existing_pr() below can adopt the publisher-created open PR without
+    # creating another PR path.  Use the same enumerated stale set as the
+    # suppression guard above to avoid nullifying transient states that may
+    # carry useful context (e.g. skipped_no_commits).
+    if isinstance(pr_ref, dict) and pr_ref_state in _STALE_PR_STATES:
         pr_ref = None
 
     if pr_ref and pr_ref.get("number"):
