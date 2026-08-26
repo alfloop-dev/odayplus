@@ -18,9 +18,16 @@
 * ``deploy``：不再 build。它必須帶入 build 階段產出的四個 immutable image
   reference，以及一張只授權 ``deploy`` 動作的簽章 Supervisor lease。
 
-這個模組是兩個階段共用的 fail-closed 前置檢查。缺少 artifact、缺少 lease、
-缺少 OIDC/WIF 時一律拒絕，並輸出中文收據；收據只記錄 lease 是否存在，永遠
-不記錄 lease 內容本身。
+這個模組是兩個階段共用的 fail-closed **輸入形狀**檢查：phase 是否合法、
+release_sha 是否為 exact SHA、handoff 是否齊備且 immutable、lease 該不該在。
+缺少任何一項一律拒絕並輸出中文收據；收據只記錄 lease 是否存在，永遠不記錄
+lease 內容本身。
+
+OIDC/WIF 與其他環境級變數**不在這裡檢查**。跑這個檢查的 job 刻意不綁定任何
+GitHub environment（綁上去會把部署核准拉進純輸入驗證），而沒有綁定時
+``vars.GCP_WORKLOAD_IDENTITY_PROVIDER`` 只會展開成空字串——在這裡讀它，得到的
+永遠是「缺少 OIDC」，與實際設定無關。那一關屬於真的綁了 environment 的 job，
+見 ``delivery_toolchain/release/check_release_environment.py``。
 """
 
 from __future__ import annotations
@@ -53,7 +60,6 @@ def phase_errors(
     environment: str,
     images: dict[str, str],
     lease_supplied: bool,
-    oidc_configured: bool,
 ) -> list[str]:
     """回傳所有阻擋這個階段開始執行的理由（中文）；空 list 代表通過。"""
 
@@ -67,12 +73,6 @@ def phase_errors(
 
     if not environment.strip():
         errors.append("environment 不得為空；部署目標必須明確。")
-
-    if not oidc_configured:
-        errors.append(
-            "缺少 OIDC/WIF 設定（GCP_WORKLOAD_IDENTITY_PROVIDER 與 GCP_SERVICE_ACCOUNT）；"
-            "沒有聯合身分就沒有可稽核的雲端身分，一律 fail closed。"
-        )
 
     supplied = {name: value for name, value in images.items() if value.strip()}
 
@@ -125,7 +125,6 @@ def build_receipt(
     task_id: str,
     images: dict[str, str],
     lease_supplied: bool,
-    oidc_configured: bool,
     errors: list[str],
     checked_at: datetime,
 ) -> dict[str, Any]:
@@ -154,7 +153,6 @@ def build_receipt(
         "checked_at": checked_at.astimezone(UTC).replace(microsecond=0).isoformat(),
         # lease 只記錄「有沒有帶」。內容、簽章與 nonce 都不進收據。
         "lease_supplied": lease_supplied,
-        "oidc_configured": oidc_configured,
         "image_handoff": {
             name: (images.get(name, "").strip() or None) for name in HANDOFF_COMPONENTS
         },
@@ -190,13 +188,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument(f"--{name}-image", default="")
     # lease 只以「有沒有帶」的形式傳入，避免把簽章文件放進 argv。
     parser.add_argument("--lease-supplied", default="false")
-    parser.add_argument("--oidc-configured", default="false")
     parser.add_argument("--receipt", type=Path, default=None)
     args = parser.parse_args(argv)
 
     images = {name: getattr(args, f"{name}_image") or "" for name in HANDOFF_COMPONENTS}
     lease_supplied = _boolean(args.lease_supplied)
-    oidc_configured = _boolean(args.oidc_configured)
 
     errors = phase_errors(
         phase=args.phase,
@@ -204,7 +200,6 @@ def main(argv: list[str] | None = None) -> int:
         environment=args.environment,
         images=images,
         lease_supplied=lease_supplied,
-        oidc_configured=oidc_configured,
     )
     receipt = build_receipt(
         phase=args.phase,
@@ -213,7 +208,6 @@ def main(argv: list[str] | None = None) -> int:
         task_id=args.task_id,
         images=images,
         lease_supplied=lease_supplied,
-        oidc_configured=oidc_configured,
         errors=errors,
         checked_at=datetime.now(UTC),
     )

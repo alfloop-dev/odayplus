@@ -3,8 +3,12 @@
 The point of the phase split is that a build must be reachable without a lease,
 and a deploy must be unreachable without one. These tests hold both halves: a
 lease offered to the build phase is a refusal (accepting it would put the
-circular dependency back), and a missing artifact, missing lease, or missing
-OIDC configuration refuses rather than degrading.
+circular dependency back), and a missing artifact or a missing lease refuses
+rather than degrading.
+
+Environment-scoped configuration is deliberately *not* asserted here. The job
+that runs this precheck binds no GitHub environment, so it cannot observe
+`vars.*` at all; that check lives in `test_release_environment_precheck.py`.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from delivery_toolchain.release import check_release_phase
 from delivery_toolchain.release.check_release_phase import (
     HANDOFF_COMPONENTS,
     main,
@@ -37,7 +42,6 @@ def errors_for(**overrides) -> list[str]:
         "environment": "dev",
         "images": images(),
         "lease_supplied": True,
-        "oidc_configured": True,
     }
     kwargs.update(overrides)
     return phase_errors(**kwargs)
@@ -119,14 +123,31 @@ def test_a_deploy_phase_never_falls_back_to_building() -> None:
 
 
 @pytest.mark.parametrize("phase", ["build", "deploy"])
-def test_missing_oidc_configuration_refuses_either_phase(phase: str) -> None:
-    errors = errors_for(
-        phase=phase,
-        images=images() if phase == "deploy" else dict.fromkeys(HANDOFF_COMPONENTS, ""),
-        lease_supplied=phase == "deploy",
-        oidc_configured=False,
+def test_the_input_gate_never_judges_environment_scoped_configuration(phase: str) -> None:
+    """An unbound job reading `vars.*` would refuse every run, correct or not.
+
+    `HAS_WIF` used to be derived here from `vars.GCP_WORKLOAD_IDENTITY_PROVIDER`
+    inside a job with no `environment:` binding, where it can only ever expand
+    to the empty string -- making "缺少 OIDC" an unconditional verdict on a
+    correctly configured repository. The check moved to the jobs that are
+    actually bound; this module must not grow it back.
+    """
+
+    source = Path(check_release_phase.__file__).read_text(encoding="utf-8")
+    body = source.split('"""', 2)[-1]
+    assert "GCP_WORKLOAD_IDENTITY_PROVIDER" not in body
+    assert "oidc" not in body.lower()
+
+    assert (
+        errors_for(
+            phase=phase,
+            images=images()
+            if phase == "deploy"
+            else dict.fromkeys(HANDOFF_COMPONENTS, ""),
+            lease_supplied=phase == "deploy",
+        )
+        == []
     )
-    assert any("缺少 OIDC/WIF 設定" in error for error in errors)
 
 
 def test_a_branch_name_is_not_an_exact_release_sha() -> None:
@@ -161,8 +182,6 @@ def test_a_refusal_still_writes_a_zh_tw_receipt(tmp_path: Path) -> None:
         "ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001",
         "--lease-supplied",
         "false",
-        "--oidc-configured",
-        "true",
     )
     assert code == 1
     assert receipt["admitted"] is False
@@ -186,8 +205,6 @@ def test_the_receipt_records_lease_presence_but_never_the_lease(tmp_path: Path) 
         SHA,
         "--lease-supplied",
         "true",
-        "--oidc-configured",
-        "true",
     )
     assert code == 1
     assert receipt["lease_supplied"] is True
@@ -207,8 +224,6 @@ def test_an_admitted_build_phase_receipt_names_no_handoff(tmp_path: Path) -> Non
         SHA,
         "--lease-supplied",
         "false",
-        "--oidc-configured",
-        "true",
     )
     assert code == 0
     assert receipt["admitted"] is True
@@ -234,8 +249,6 @@ def test_an_admitted_deploy_receipt_names_the_exact_artifacts(tmp_path: Path) ->
         "--scheduler-image",
         built["scheduler"],
         "--lease-supplied",
-        "true",
-        "--oidc-configured",
         "true",
     )
     assert code == 0

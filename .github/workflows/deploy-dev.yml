@@ -20,12 +20,31 @@ name: Runtime Release
 #              authorises this exact manifest/environment/action, and deploys
 #              by digest. It never builds.
 #
-# The build phase deliberately carries no `environment:` binding. GitHub
-# environment approval and the Supervisor lease are both *deploy* authority; a
-# build that had to consume either could never produce the evidence they are
-# checked against. What constrains the build instead is that it may only publish
-# immutable, signed, SHA-labelled artifacts, and refuses to move an existing
-# release tag.
+# Both phases need environment-scoped GitHub variables: this repository has no
+# repository-level Actions variables at all, so `vars.GCP_PROJECT_ID` and
+# friends resolve only inside a job that carries an `environment:` binding.
+# Without one they do not error -- they expand to the empty string, which is how
+# a build silently produces `-docker.pkg.dev//` image references and how
+# `HAS_WIF` reads as false on a correctly configured repository.
+#
+# The build phase cannot bind to the deploy environment, though: `staging` and
+# `production` both carry `required_reviewers`, so binding there would demand a
+# human deploy approval before a build could start -- and the build is what
+# produces the manifest that approval and the Supervisor lease are checked
+# against. So the two authorities get separate environments:
+#
+#   build   -> `<environment>-build`, same variables, no deployment approval.
+#   deploy  -> `<environment>`, approval plus the signed Supervisor lease.
+#
+# `release_phase` validates input *shape* only and binds nothing on purpose;
+# binding it would pull a deploy approval in front of plain input validation.
+# That is also why it no longer reads `vars.*`: an unbound job cannot observe
+# them, so anything it concluded from them would be about the binding, not the
+# configuration. `check_release_environment.py` makes that observation inside
+# each bound job instead.
+#
+# What constrains the build beyond that is that it may only publish immutable,
+# signed, SHA-labelled artifacts, and refuses to move an existing release tag.
 on:
   workflow_dispatch:
     inputs:
@@ -94,8 +113,8 @@ jobs:
   release_phase:
     name: Validate release phase inputs
     runs-on: ubuntu-latest
-    env:
-      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+    # No `environment:` and no `vars.*` by design -- see the header. This job is
+    # pure input validation and must stay reachable without a deploy approval.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -115,7 +134,7 @@ jobs:
       # The lease reaches this step only as a presence bit. Nothing here reads
       # its contents, and the receipt records `lease_supplied` rather than the
       # document, so a refusal is publishable without redaction.
-      - name: Validate phase, artifact handoff, and OIDC preconditions
+      - name: Validate phase and artifact handoff preconditions
         env:
           RELEASE_PHASE: ${{ inputs.phase }}
           RELEASE_ENVIRONMENT: ${{ inputs.environment }}
@@ -143,7 +162,6 @@ jobs:
             --worker-image "${WORKER_IMAGE_INPUT}" \
             --scheduler-image "${SCHEDULER_IMAGE_INPUT}" \
             --lease-supplied "${lease_supplied}" \
-            --oidc-configured "${HAS_WIF}" \
             --receipt "${RUNNER_TEMP}/release-phase-receipt.json"
 
       - name: Publish release phase receipt
@@ -164,6 +182,11 @@ jobs:
     needs: release_phase
     if: ${{ inputs.phase == 'build' && inputs.api_image == '' && inputs.web_image == '' && inputs.worker_image == '' && inputs.scheduler_image == '' }}
     runs-on: ubuntu-latest
+    # The build-scoped twin of the target environment. It carries the same GCP
+    # variables and no deployment approval, so a build can resolve the registry
+    # it publishes to without consuming the authority that admits a deploy.
+    environment:
+      name: ${{ inputs.environment }}-build
     outputs:
       api_image: ${{ steps.publish-images.outputs.api_image }}
       web_image: ${{ steps.publish-images.outputs.web_image }}
@@ -172,7 +195,6 @@ jobs:
       manifest_digest: ${{ steps.handoff.outputs.manifest_digest }}
       release_id: ${{ steps.handoff.outputs.release_id }}
     env:
-      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
@@ -200,6 +222,39 @@ jobs:
             exit 1
           fi
 
+      # First real gate in the build phase. If `<environment>-build` does not
+      # exist, GitHub silently creates an empty one rather than failing, so an
+      # unprovisioned environment looks exactly like a bound one until a
+      # variable is read. This refuses there, in zh-TW, naming what to add.
+      - name: 確認 build 階段已綁定 environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+          ODP_CLOUD_RUN_API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+          ODP_CLOUD_RUN_WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+          ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+          ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope build \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}-build" \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RUNNER_TEMP}/release-environment-receipt.json"
+
+      - name: Publish build environment binding receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-environment-receipt-${{ inputs.environment }}-build
+          path: ${{ runner.temp }}/release-environment-receipt.json
+          if-no-files-found: warn
+
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
@@ -226,23 +281,16 @@ jobs:
       - name: Run E2E deployment health, backup, restore, and rollback proof
         run: python3 delivery_toolchain/e2e/verify_deployment_health_backup_rollback.py
 
-      - name: Validate WIF authentication for the build
-        run: |
-          set -euo pipefail
-          if [ "${HAS_WIF}" != "true" ]; then
-            echo "Error: Workload Identity Federation variables are required for the build." >&2
-            exit 1
-          fi
-
+      # Unconditional: the binding gate above already refused if the WIF
+      # variables were unresolvable, so a skip here could only mean the build
+      # continuing without a cloud identity.
       - name: Authenticate to Google Cloud (WIF)
-        if: ${{ env.HAS_WIF == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
       - name: Set up Cloud SDK
-        if: ${{ env.HAS_WIF == 'true' }}
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Install Cosign
@@ -419,11 +467,9 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
-    env:
-      # The admission job is itself protected by the selected GitHub
-      # environment. Keep the WIF check here, before any lease-state access,
-      # so hosted admission cannot accidentally use ambient/local credentials.
-      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+    # The admission job is itself protected by the selected GitHub environment.
+    # Its variable-binding gate runs before any lease-state access, so hosted
+    # admission cannot accidentally use ambient/local credentials.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -472,15 +518,39 @@ jobs:
             fi
           done
 
-      - name: Validate WIF and shared lease store configuration
+      # `release_phase` is unbound and can no longer speak for OIDC, so each
+      # bound job proves its own variables resolved before it authenticates.
+      - name: 確認 admission 階段已綁定 environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
+          ODP_RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+        run: |
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope admission \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}" \
+            --release-sha "${{ inputs.release_sha }}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RUNNER_TEMP}/release-environment-receipt.json"
+
+      - name: Publish admission environment binding receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-environment-receipt-${{ inputs.environment }}-admission
+          path: ${{ runner.temp }}/release-environment-receipt.json
+          if-no-files-found: warn
+
+      # The binding gate covers variable presence; this covers the one shape
+      # requirement it cannot express -- lease state must be shared, not local.
+      - name: Validate shared lease store configuration
         env:
           RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
         run: |
           set -euo pipefail
-          if [ "${HAS_WIF}" != "true" ]; then
-            echo "Error: Workload Identity Federation variables are required for durable lease admission." >&2
-            exit 1
-          fi
           if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
             echo "Error: durable lease admission requires a shared gs://bucket/prefix state URI." >&2
             exit 1
@@ -561,7 +631,6 @@ jobs:
       name: ${{ inputs.environment }}
       url: ${{ inputs.environment == 'production' && vars.ODP_PROD_DEPLOY_URL || (inputs.environment == 'staging' && vars.ODP_STAGING_DEPLOY_URL || vars.ODP_DEV_DEPLOY_URL) }}
     env:
-      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
@@ -659,19 +728,49 @@ jobs:
       - name: Install locked project dependencies
         run: uv sync --frozen
 
-      - name: Validate WIF authentication and live runtime preflight
+      # `release_phase` is unbound and can no longer speak for OIDC, so each
+      # bound job proves its own variables resolved before it authenticates.
+      - name: 確認 deploy 階段已綁定 environment 且變數齊備
+        env:
+          GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          GCP_AR_REPO: ${{ vars.GCP_AR_REPO }}
+          ODP_CLOUD_RUN_API_SERVICE: ${{ vars.ODP_CLOUD_RUN_API_SERVICE }}
+          ODP_CLOUD_RUN_WEB_SERVICE: ${{ vars.ODP_CLOUD_RUN_WEB_SERVICE }}
+          ODP_CLOUD_RUN_MIGRATION_JOB: ${{ vars.ODP_CLOUD_RUN_MIGRATION_JOB }}
+          ODP_CLOUD_RUN_WORKER_JOB: ${{ vars.ODP_CLOUD_RUN_WORKER_JOB }}
+          ODP_CLOUD_RUN_SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
         run: |
-          if [ "${HAS_WIF}" != "true" ]; then
-            echo "Error: Workload Identity Federation variables are required." >&2
-            exit 1
-          fi
+          set -euo pipefail
+          python3 delivery_toolchain/release/check_release_environment.py \
+            --scope deploy \
+            --environment "${{ inputs.environment }}" \
+            --github-environment "${{ inputs.environment }}" \
+            --release-sha "${{ inputs.release_sha }}" \
+            --task-id "${{ inputs.task_id }}" \
+            --receipt "${RUNNER_TEMP}/release-environment-receipt.json"
+
+      - name: Publish deploy environment binding receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-environment-receipt-${{ inputs.environment }}-deploy
+          path: ${{ runner.temp }}/release-environment-receipt.json
+          if-no-files-found: warn
+
+      - name: Run the live runtime preflight
+        run: |
           uv run --frozen python product_ops/deployment/validate_cloud_run_live_deployment.py preflight \
             --environment "${ODP_DEPLOY_ENV}" \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --output .odp_data/deployment/cloud-run-preflight.json
 
+      # Unconditional: the binding gate above already refused if the WIF
+      # variables were unresolvable, so a skip here could only mean deploying
+      # without a cloud identity.
       - name: Authenticate to Google Cloud (WIF)
-        if: ${{ env.HAS_WIF == 'true' }}
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}

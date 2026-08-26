@@ -1908,7 +1908,13 @@ def test_workflows_do_not_reference_secrets_in_step_if() -> None:
         text = workflow.read_text(encoding="utf-8")
         if_lines = [line for line in text.splitlines() if line.strip().startswith("if:")]
         assert all("secrets." not in line for line in if_lines)
-        assert "env.HAS_WIF" in text
+        # Federated identity used to be asserted here as `env.HAS_WIF`, a
+        # var-derived boolean that also gated the auth steps via `if:`. In a
+        # job with no `environment:` binding that boolean is always false, so
+        # the guard skipped authentication instead of refusing. The presence
+        # check now runs as a fail-closed step inside each bound job.
+        assert "delivery_toolchain/release/check_release_environment.py" in text
+        assert "env.HAS_WIF" not in text
         assert "GCP_SA_KEY" not in text
         assert "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT" in text
         assert 'ODP_REQUIRE_LIVE_DATA: "true"' in text

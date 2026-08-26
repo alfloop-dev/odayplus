@@ -20,6 +20,56 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_DIR = ROOT / ".github/workflows"
+RELEASE_WORKFLOW = WORKFLOW_DIR / "deploy-dev.yml"
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from delivery_toolchain.release.check_release_environment import (  # noqa: E402
+    REQUIRED_VARIABLES,
+)
+
+# Which GitHub environment each job binds to, and why it is that one.
+#
+# `staging` and `production` both carry `required_reviewers`. Binding the build
+# phase to them would demand a human deploy approval before the build that
+# produces the manifest that approval is granted against -- which is the
+# circular dependency this workflow exists to remove, re-entered through the
+# approval gate instead of the lease. The build therefore binds to a
+# build-scoped twin: same variables, no deployment approval.
+BUILD_ENVIRONMENT = "${{ inputs.environment }}-build"
+DEPLOY_ENVIRONMENT = "${{ inputs.environment }}"
+
+JOB_ENVIRONMENT_BINDINGS = {
+    "build": (BUILD_ENVIRONMENT, "build"),
+    "admission": (DEPLOY_ENVIRONMENT, "admission"),
+    "deploy": (DEPLOY_ENVIRONMENT, "deploy"),
+}
+
+# The one job that must stay unbound: binding it would put a deploy approval in
+# front of plain input validation, and a run that is going to be refused for a
+# malformed SHA should not spend a reviewer's attention first.
+UNBOUND_JOB = "release_phase"
+
+BINDING_GATE_SCRIPT = "delivery_toolchain/release/check_release_environment.py"
+
+
+def _release_jobs() -> dict:
+    return yaml.safe_load(RELEASE_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+
+
+def _job_steps(job: dict) -> list[dict]:
+    return [step for step in job.get("steps", []) if isinstance(step, dict)]
+
+
+def _binding_gate_index(job: dict) -> int:
+    """Index of the step that proves this job's environment variables resolved."""
+
+    return next(
+        index
+        for index, step in enumerate(_job_steps(job))
+        if BINDING_GATE_SCRIPT in str(step.get("run", ""))
+    )
 DEPLOY_SCRIPT = ROOT / "product_ops/deployment/deploy_cloud_run_waji.sh"
 VALIDATOR_PATH = ROOT / "product_ops/deployment/validate_cloud_run_live_deployment.py"
 
@@ -563,16 +613,14 @@ def test_admission_uses_protected_wif_and_shared_gcs_lease_state() -> None:
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
     admission = parsed["jobs"]["admission"]
     assert admission["environment"] == {"name": "${{ inputs.environment }}"}
-    assert admission["env"]["HAS_WIF"] == (
-        "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}"
-    )
 
     steps = admission["steps"]
+    binding_index = _binding_gate_index(admission)
     validate_index = next(
         index
         for index, step in enumerate(steps)
         if isinstance(step, dict)
-        and step.get("name") == "Validate WIF and shared lease store configuration"
+        and step.get("name") == "Validate shared lease store configuration"
     )
     auth_index = next(
         index
@@ -586,7 +634,7 @@ def test_admission_uses_protected_wif_and_shared_gcs_lease_state() -> None:
         for index, step in enumerate(steps)
         if isinstance(step, dict) and step.get("name") == "Validate supervisor release admission"
     )
-    assert validate_index < auth_index < admission_index
+    assert binding_index < validate_index < auth_index < admission_index
 
     validation = steps[validate_index]
     assert validation["env"]["RELEASE_LEASE_STATE_URI"] == "${{ vars.ODP_RELEASE_LEASE_STATE_URI }}"
@@ -800,11 +848,15 @@ def test_every_job_is_gated_on_the_fail_closed_phase_check() -> None:
     for job_id in ("build", "admission", "deploy"):
         assert "release_phase" in _needs(jobs[job_id]), f"{job_id} bypasses the phase check"
 
-    check = _named_step(jobs["release_phase"], "Validate phase, artifact handoff, and OIDC preconditions")
+    check = _named_step(jobs["release_phase"], "Validate phase and artifact handoff preconditions")
     run = check["run"]
     assert "delivery_toolchain/release/check_release_phase.py" in run
-    # OIDC and lease presence are inputs to the refusal, not assumptions.
-    assert "--oidc-configured" in run
+    # Lease presence is an input to the refusal, not an assumption. OIDC is
+    # not: this job is unbound, so it cannot observe `vars.*` and anything it
+    # concluded from them would describe the binding, not the configuration.
+    # `test_the_binding_gate_runs_before_the_job_touches_google_cloud` holds
+    # that half, inside the jobs that are bound.
+    assert "--oidc-configured" not in run
     assert "--lease-supplied" in run
     assert "--receipt" in run
     # The lease reaches the precheck as a presence bit. Everything after the
@@ -891,3 +943,140 @@ def test_the_build_phase_signs_and_attests_every_published_image() -> None:
     assert 'resolve_supply_chain_ref "${digest_ref}" att' in run
     assert "no Cosign signature artifact resolves" in run
     assert "no SBOM attestation artifact resolves" in run
+
+
+# --------------------------------------------------------------------------
+# GitHub environment binding
+#
+# This repository has zero repository-level Actions variables: `GCP_PROJECT_ID`,
+# `GCP_AR_REPO` and the WIF pair exist only under the `dev` / `staging` /
+# `production` environments. GitHub injects those into `vars.*` only for a job
+# that carries an `environment:` binding, and an unbound job does not fail --
+# `vars.X` expands to the empty string. So a missing binding is invisible in the
+# YAML and produces a job that authenticates with nothing and publishes to
+# `-docker.pkg.dev//`.
+# --------------------------------------------------------------------------
+
+
+def test_every_job_that_reads_environment_variables_binds_an_environment() -> None:
+    unbound = []
+    for job_id, job in _release_jobs().items():
+        if "vars." not in yaml.safe_dump(job, allow_unicode=True):
+            continue
+        if not job.get("environment"):
+            unbound.append(job_id)
+    assert unbound == [], (
+        f"{unbound} read `vars.*` with no `environment:` binding; those expand to "
+        "the empty string rather than failing"
+    )
+
+
+def test_the_input_shape_gate_stays_unbound_and_reads_no_variables() -> None:
+    """Input validation must be reachable without spending a deploy approval."""
+
+    job = _release_jobs()[UNBOUND_JOB]
+    assert "environment" not in job
+    assert "vars." not in yaml.safe_dump(job, allow_unicode=True)
+
+
+@pytest.mark.parametrize(
+    ("job_id", "expected_environment"),
+    [(job_id, binding) for job_id, (binding, _) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_each_phase_binds_to_its_own_authority_environment(
+    job_id: str, expected_environment: str
+) -> None:
+    job = _release_jobs()[job_id]
+    assert job["environment"]["name"] == expected_environment
+
+
+def test_the_build_phase_does_not_bind_to_the_deploy_environment() -> None:
+    """Otherwise a staging/production build waits on a `required_reviewers` gate."""
+
+    jobs = _release_jobs()
+    assert jobs["build"]["environment"]["name"] != jobs["deploy"]["environment"]["name"]
+    assert jobs["build"]["environment"]["name"].endswith("-build")
+
+
+@pytest.mark.parametrize(
+    ("job_id", "scope"),
+    [(job_id, scope) for job_id, (_, scope) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_the_binding_gate_exposes_exactly_the_variables_its_scope_requires(
+    job_id: str, scope: str
+) -> None:
+    """The gate reads `os.environ`, so a variable the step forgets reads as missing.
+
+    Tying the step's `env:` block to the module's own required set is what keeps
+    a newly required variable from silently passing the gate it was added to.
+    """
+
+    job = _release_jobs()[job_id]
+    step = _job_steps(job)[_binding_gate_index(job)]
+    assert set(step["env"]) == set(REQUIRED_VARIABLES[scope])
+    for name in REQUIRED_VARIABLES[scope]:
+        assert step["env"][name] == "${{ vars." + name + " }}"
+
+
+@pytest.mark.parametrize(
+    ("job_id", "scope"),
+    [(job_id, scope) for job_id, (_, scope) in JOB_ENVIRONMENT_BINDINGS.items()],
+)
+def test_the_binding_gate_declares_the_environment_the_job_binds_to(
+    job_id: str, scope: str
+) -> None:
+    job = _release_jobs()[job_id]
+    step = _job_steps(job)[_binding_gate_index(job)]
+    run = step["run"]
+    assert f"--scope {scope}" in run
+    binding = JOB_ENVIRONMENT_BINDINGS[job_id][0]
+    assert f'--github-environment "{binding}"' in run
+    assert "--receipt" in run, "a refusal with no receipt is not evidence"
+
+
+@pytest.mark.parametrize("job_id", sorted(JOB_ENVIRONMENT_BINDINGS))
+def test_the_binding_gate_runs_before_the_job_touches_google_cloud(
+    job_id: str,
+) -> None:
+    job = _release_jobs()[job_id]
+    steps = _job_steps(job)
+    gate_index = _binding_gate_index(job)
+    cloud_indexes = [
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("google-github-actions/")
+    ]
+    assert cloud_indexes, f"{job_id} was expected to authenticate to Google Cloud"
+    assert gate_index < min(cloud_indexes)
+
+
+def test_no_step_is_skipped_on_a_variable_derived_condition() -> None:
+    """A `vars.`-derived `if:` turns a missing binding into a silent success.
+
+    The old shape guarded the auth and gcloud steps on `env.HAS_WIF == 'true'`,
+    which was itself derived from `vars.*`. In an unbound job that condition is
+    always false, so the build would skip authentication and carry on rather
+    than refuse.
+    """
+
+    offenders = []
+    for job_id, job in _release_jobs().items():
+        for step in _job_steps(job):
+            condition = str(step.get("if", ""))
+            if "HAS_WIF" in condition or "vars." in condition:
+                offenders.append(f"{job_id}:{step.get('name', step.get('uses'))}")
+    assert offenders == []
+
+
+def test_the_build_phase_publishes_its_binding_receipt() -> None:
+    """The refusal has to leave the runner, or it is not auditable evidence."""
+
+    job = _release_jobs()["build"]
+    upload = next(
+        step
+        for step in _job_steps(job)
+        if str(step.get("uses", "")).startswith("actions/upload-artifact")
+        and "environment" in str(step.get("with", {}).get("name", ""))
+    )
+    assert upload["if"] == "always()", "a receipt only kept on success proves nothing"
+    assert "release-environment-receipt" in upload["with"]["name"]
