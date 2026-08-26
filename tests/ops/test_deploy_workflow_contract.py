@@ -545,6 +545,47 @@ def test_admission_job_checkout_has_unshallow_fetch_depth() -> None:
     assert checkout_steps[0].get("with", {}).get("fetch-depth") == 0
 
 
+def test_admission_uses_protected_wif_and_shared_gcs_lease_state() -> None:
+    """Hosted admission must not fall back to runner-local credentials/state."""
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    admission = parsed["jobs"]["admission"]
+    assert admission["environment"] == {"name": "${{ inputs.environment }}"}
+    assert admission["env"]["HAS_WIF"] == (
+        "${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}"
+    )
+
+    steps = admission["steps"]
+    validate_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
+        and step.get("name") == "Validate WIF and shared lease store configuration"
+    )
+    auth_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict)
+        and step.get("uses") == "google-github-actions/auth@v2"
+        and "durable lease admission" in step.get("name", "")
+    )
+    admission_index = next(
+        index
+        for index, step in enumerate(steps)
+        if isinstance(step, dict) and step.get("name") == "Validate supervisor release admission"
+    )
+    assert validate_index < auth_index < admission_index
+
+    validation = steps[validate_index]
+    assert validation["env"]["RELEASE_LEASE_STATE_URI"] == "${{ vars.ODP_RELEASE_LEASE_STATE_URI }}"
+    assert "requires a shared gs://bucket/prefix state URI" in validation["run"]
+
+    admission_run = steps[admission_index]["run"]
+    assert "RELEASE_LEASE_STATE_URI" in admission_run
+    assert "ODP_RELEASE_LEASE_STATE_DIR" not in "\n".join(
+        str(step) for step in steps if isinstance(step, dict)
+    )
+
+
 def test_environment_inputs_support_dev_staging_production() -> None:
     """The unified Runtime Release workflow must support dev, staging, and production."""
     parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
