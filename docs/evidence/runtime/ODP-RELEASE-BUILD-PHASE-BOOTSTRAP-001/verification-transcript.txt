@@ -1,8 +1,8 @@
 ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001 驗證逐字記錄
-產生時間 (UTC): 2026-08-26T16:50:50Z
-工作樹 HEAD: ddb0c0a45b1fe8191c06e5ddfa3eaeb68f847971
+產生時間 (UTC): 2026-08-26T16:54:59Z
+工作樹 HEAD: 60058610dd1d8289b6332a32b6a75e1019c7bf90
 分支: task/ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001
-未提交的追蹤檔案: 2
+未提交的追蹤檔案: 0
 
 每一段都記錄指令、合併後的 stdout/stderr 與 exit code。EXIT=0 才算通過。
 tests/e2e/test_release_gate_registry.py 的兩個 playwright 相依測試在本機
