@@ -229,6 +229,45 @@ def validate_release_admission(manifest: Any) -> list[str]:
     return errors
 
 
+def component_binding_errors(manifest: Any, images: dict[str, str]) -> list[str]:
+    """Return why *images* are not the artifacts this manifest identifies.
+
+    A lease authorises deploying *a release*, not *any image*.  The Runtime
+    Release deploy phase receives its image references as workflow inputs, so
+    without this check a valid lease would admit an arbitrary digest that the
+    build phase never produced, signed, or recorded an SBOM for.  Binding the
+    handoff back to ``manifest.components`` is what makes "build once, deploy
+    that exact artifact" an enforced property rather than a convention.
+    """
+
+    if not isinstance(manifest, dict):
+        return ["manifest must be a JSON object"]
+    components = manifest.get("components")
+    if not isinstance(components, dict) or not components:
+        return ["manifest.components must be a non-empty object"]
+
+    errors: list[str] = []
+    for name in sorted(images):
+        image = images[name]
+        if not isinstance(image, str) or not IMAGE_DIGEST_PATTERN.fullmatch(image):
+            errors.append(
+                f"handoff image for {name!r} must be an immutable @sha256 reference"
+            )
+            continue
+        component = components.get(name)
+        if not isinstance(component, dict):
+            errors.append(
+                f"manifest has no component {name!r}; this release never built that artifact"
+            )
+            continue
+        if component.get("image") != image:
+            errors.append(
+                f"handoff image for {name!r} is not the image recorded by the manifest; "
+                "the deploy would run an artifact this release did not build"
+            )
+    return errors
+
+
 def load_manifest(
     path: Path,
     *,
@@ -300,9 +339,16 @@ def build_release_manifest(
     created_at: str,
     created_by_workflow: str,
     external_sources_expected_enabled: list[str] | None = None,
+    release_status: str | None = None,
     root: Path = ROOT,
 ) -> dict[str, Any]:
-    """Build and self-seal a canonical release manifest dictionary."""
+    """Build and self-seal a canonical release manifest dictionary.
+
+    ``release_status`` is omitted by default so an existing manifest digest is
+    unchanged by this parameter's introduction.  A build phase that has already
+    published signed images and an SBOM passes ``"ready"`` explicitly; nothing
+    may promote a manifest to ``ready`` implicitly.
+    """
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "release_id": release_id,
@@ -317,6 +363,8 @@ def build_release_manifest(
         "created_at": created_at,
         "created_by_workflow": created_by_workflow,
     }
+    if release_status is not None:
+        manifest["release_status"] = release_status
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
     return manifest
 
@@ -330,6 +378,7 @@ __all__ = [
     "compute_manifest_digest",
     "compute_migration_digest",
     "compute_source_policy_digest",
+    "component_binding_errors",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",

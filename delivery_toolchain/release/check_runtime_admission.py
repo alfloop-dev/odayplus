@@ -27,6 +27,15 @@ for every environment made staging evidence a prerequisite for creating staging
 (EPHEMERAL_STAGING_PRODUCTION_ROLLOUT_PLAN §6.1); admission is evaluated against
 the gates bound to the requested `admission_target` instead.
 
+A lease authorises the *deploy* phase only, and it is verified after the build
+phase has already published the artifact it names. Requiring a lease before the
+build made the manifest a precondition of producing the manifest, so the release
+could never leave `blocked`; the Runtime Release workflow now runs
+build -> admission -> deploy, and `--component-image` binds the image references
+the deploy phase was handed back to `manifest.components`. Without that binding a
+valid lease would admit any digest, and "build once, deploy that exact artifact"
+would be a convention rather than a control.
+
 Two responsibilities deliberately stay outside this check. GitHub environment
 approval is the human production gate, and the workflow `concurrency` group is
 same-environment mutual exclusion. A lease is not a substitute for either, and
@@ -84,6 +93,7 @@ from delivery_toolchain.release.release_lease import (  # noqa: E402
     load_public_key,
 )
 from delivery_toolchain.release.release_manifest import (  # noqa: E402
+    component_binding_errors,
     load_manifest,
     validate_release_admission,
 )
@@ -256,8 +266,10 @@ def admit_release(
     task_id: str,
     public_key: Any,
     state_store: LeaseStateStore,
+    manifest: Any = None,
     manifest_digest: str | None = None,
     manifest_errors: list[str] | None = None,
+    component_images: dict[str, str] | None = None,
     allowed_action: str = DEFAULT_ACTION,
     consumed_by: str,
     root: Path = ROOT,
@@ -266,6 +278,14 @@ def admit_release(
     """Run the whole admission decision and consume the lease when it passes."""
 
     extra = list(manifest_errors or [])
+    if component_images:
+        # A manifest that failed to load is `None` here, and binding against it
+        # reports an error rather than silently skipping the check.
+        extra.extend(
+            error
+            for error in component_binding_errors(manifest, component_images)
+            if error not in extra
+        )
     extra.extend(
         registry_admission_errors(
             registry,
@@ -349,6 +369,17 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Ed25519 verification key; defaults to the ODP_RELEASE_LEASE_PUBLIC_KEY env var.",
     )
+    parser.add_argument(
+        "--component-image",
+        action="append",
+        default=[],
+        metavar="NAME=REF",
+        help=(
+            "Immutable image reference the deploy phase was handed for one manifest "
+            "component, e.g. api=repo/api@sha256:... . Repeat per component; each one "
+            "must equal the image recorded by manifest.components."
+        ),
+    )
     parser.add_argument("--action", default=DEFAULT_ACTION)
     parser.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
@@ -404,6 +435,13 @@ def main(argv: list[str] | None = None) -> int:
         )
     manifest_digest = manifest.get("manifest_digest") if manifest and not manifest_errors else None
 
+    component_images: dict[str, str] = {}
+    for raw in args.component_image:
+        name, _, ref = str(raw).partition("=")
+        if not name.strip() or not ref.strip():
+            return fail([f"--component-image expects NAME=REF, got: {raw!r}"])
+        component_images[name.strip()] = ref.strip()
+
     admitted, errors, receipt = admit_release(
         registry,
         lease,
@@ -412,12 +450,17 @@ def main(argv: list[str] | None = None) -> int:
         task_id=args.task_id,
         public_key=public_key,
         state_store=state_store,
+        manifest=manifest,
         manifest_digest=manifest_digest,
         manifest_errors=manifest_errors,
+        component_images=component_images,
         allowed_action=args.action,
         consumed_by=_consumer_label(args.environment, args.release_sha),
         now=now,
     )
+    # Digests are not secrets, and an admission receipt that does not say which
+    # artifact was admitted cannot be audited against what actually deployed.
+    receipt["component_images"] = dict(sorted(component_images.items()))
     if not admitted:
         return _blocked(errors, receipt, args.receipt)
 
