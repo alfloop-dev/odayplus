@@ -41,11 +41,13 @@ to keep secret, and one it does not have to share at all:
 
 * `ODP_RELEASE_LEASE_PUBLIC_KEY` (repository variable) - the Ed25519
   verification key. It cannot sign, so it is a variable rather than a secret.
-* `--lease-state-dir` / `ODP_RELEASE_LEASE_STATE_DIR` - the Supervisor's durable
-  lease state. It must already exist and must be the same store the Supervisor
-  wrote to at issuance. A hosted runner that cannot reach it cannot admit a
-  release, which is the intended failure: consuming a lease in a directory that
-  disappears with the runner does not stop a replay anywhere that matters.
+* `--lease-state-dir` / `ODP_RELEASE_LEASE_STATE_URI` - the Supervisor's durable
+  lease state. Hosted admission passes a `gs://bucket/prefix` URI, and the
+  workflow rejects local paths before authentication. It must already exist and
+  must be the same store the Supervisor wrote to at issuance. A hosted runner
+  that cannot reach it cannot admit, which is the intended failure: consuming a
+  lease in a directory that disappears with the runner does not stop a replay
+  anywhere that matters.
 * the private key, which stays with the Supervisor and is never needed here.
 """
 

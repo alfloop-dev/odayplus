@@ -55,6 +55,11 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}
+    env:
+      # The admission job is itself protected by the selected GitHub
+      # environment. Keep the WIF check here, before any lease-state access,
+      # so hosted admission cannot accidentally use ambient/local credentials.
+      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -105,7 +110,21 @@ jobs:
             done
           fi
 
-      - name: Authenticate to Google Cloud for durable lease admission
+      - name: Validate WIF and shared lease store configuration
+        env:
+          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+        run: |
+          set -euo pipefail
+          if [ "${HAS_WIF}" != "true" ]; then
+            echo "Error: Workload Identity Federation variables are required for durable lease admission." >&2
+            exit 1
+          fi
+          if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
+            echo "Error: durable lease admission requires a shared gs://bucket/prefix state URI." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud for durable lease admission (WIF)
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -117,8 +136,8 @@ jobs:
       # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
       # Ed25519 verification key and is deliberately a var, not a secret: it
       # cannot sign, so publishing it grants nothing. The GCS state URI is the
-      # one Supervisor-owned CAS store shared with this hosted runner; a local
-      # runner directory is never accepted as a substitute.
+      # one Supervisor-owned CAS store shared with this hosted runner; the
+      # validation above rejects a local runner directory as a substitute.
       - name: Validate supervisor release admission
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
