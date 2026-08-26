@@ -120,6 +120,21 @@
       "apply_attempted": false
     }
   },
+  "latest_recheck": {
+    "recorded_at": "2026-08-26T01:18:58Z",
+    "origin_dev_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+    "registered_workflows_observed": ["Deploy Dev", "Deploy/Verify Staging"],
+    "runtime_release_workflow_registered": false,
+    "missing_runtime_release_variables_unchanged": true,
+    "secret_names_observed": [],
+    "artifact_registry_packages_observed": ["oday-data-platform", "oday-mlflow"],
+    "cloud_run_services_observed": ["oday-mlflow"],
+    "staging_snapshot_bucket_objects_observed": false,
+    "staging_scheduler_jobs_observed": [],
+    "staging_namespace_workloads_observed": false,
+    "deployment_observed": false,
+    "apply_or_deploy_attempted": false
+  },
   "release_manifest": {
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
     "release_id": "odp-20260730-001",
@@ -231,6 +246,6 @@
     "terraform -chdir=infra/terraform/modules/ephemeral_staging validate"
   ],
   "secret_values_redacted": true,
-  "recorded_at": "2026-08-26T01:11:53Z",
+  "recorded_at": "2026-08-26T01:18:58Z",
   "recorded_by": "Codex"
 }

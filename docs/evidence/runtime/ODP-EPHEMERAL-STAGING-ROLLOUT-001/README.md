@@ -17,6 +17,8 @@
 - GitHub `staging` environment 有 2 位 required reviewers 與基本 WIF/project vars，但 GitHub Actions 目前註冊的是 `Deploy Dev` / `Deploy/Verify Staging`，沒有註冊 source manifest 所稱的 `Runtime Release`；仍缺 admission lease verifier vars、15 個 Runtime Release vars 與所有 environment secrets；
 - 在真實 digest、成功 workflow run、隔離 foundation、masked snapshot 與 staging authority 到位前，所有 migration、E2E、job、backup/restore、rollback、provider-off、TTL 結果都必須保持未觀測。
 
+截至 2026-08-26 01:18:58Z 的 task-scoped 唯讀重查確認上述 blocker 沒有漂移：`origin/dev` 仍為 `8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3`；Actions 仍只有 `Deploy Dev` / `Deploy/Verify Staging`；staging environment 仍沒有 15 個 Runtime Release variables、lease authority 或 environment secrets；Artifact Registry 仍只有 `oday-data-platform` / `oday-mlflow`，Cloud Run 仍只有 `oday-mlflow`；snapshot bucket object listing、Scheduler jobs 與 staging namespace workloads 仍為空。這次重查仍未執行 apply、deploy 或 rehearsal。
+
 ## Blockers 與解除條件
 
 | Blocker | 解除條件 |
@@ -43,6 +45,12 @@ gh workflow list --all
 gh run list --workflow .github/workflows/deploy-dev.yml --limit 20
 gh run list --workflow 'Deploy/Verify Staging' --limit 50
 gh run list --workflow 'Deploy Dev' --limit 50
+git ls-remote origin refs/heads/dev refs/heads/task/ODP-EPHEMERAL-STAGING-ROLLOUT-001
+gh workflow list --all --json name,path,state
+gh variable list --env staging --json name,value
+gh secret list --env staging --json name,updatedAt
+gcloud artifacts packages list --project=odayplus-runtime-20260825 --location=asia-east1 --repository=oday-plus-dev --format='table(name)'
+gcloud run services list --project=odayplus-runtime-20260825 --region=asia-east1 --format='table(metadata.name,status.url)'
 gcloud kms keys list --project=odayplus-runtime-20260825 --location=asia-east1 --keyring=oday-runtime
 gcloud storage buckets describe gs://oday-staging-source-snapshots-odayplus-runtime-20260825
 gcloud storage ls --recursive gs://oday-staging-source-snapshots-odayplus-runtime-20260825
@@ -61,6 +69,8 @@ uv run --python 3.12 pytest tests/ops/test_staging_rollout.py tests/release/test
 ```
 
 本輪 GCP project/billing、Artifact Registry、Cloud Run、Cloud SQL、Scheduler、GKE namespace/policy/KSA、KMS、snapshot bucket/object listing、GSA IAM binding、Secret Manager metadata、GitHub environment/workflow/variable/secret metadata 與 Terraform module contract readback 已執行；沒有可對應本 task 的成功 staging dispatch。bucket 存在但 object listing 為空，不能視為 masked snapshot authority。直接執行 `terraform validate` 在未初始化 provider cache 的隔離 worktree 先回報缺少 provider，改用 ephemeral `TF_DATA_DIR` 初始化後 validate 通過；這是本地工具環境差異，不是 staging apply 證據。實際重跑仍需要 Human/Ops authority，Auto Worker 不得自行填入 credentials、建立依賴 task 的長期 foundation，或偽造 deployment receipt。
+
+上述 01:18:58Z 重查只讀取 GitHub/GCP/GKE metadata 與 object listing；沒有讀取 secret value，也沒有因環境變數存在就推定 runtime authority 已完成。最新結果已同步記錄於 [`staging-rollout-dry-run.json`](staging-rollout-dry-run.json) 的 `latest_recheck`，仍不可升格為 `staging-verified`。
 
 本次 remediation commit 的 focused verification：
 
