@@ -67,8 +67,22 @@
       "staging_namespace": "oday-staging-8c72b54",
       "staging_namespace_release_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
       "staging_namespace_workloads_observed": false,
-      "staging_namespace_default_deny_egress_observed": false,
-      "staging_snapshot_bucket_observed": false,
+      "staging_namespace_default_deny_egress_observed": true,
+      "staging_namespace_default_deny_egress_policy": "default-deny-external-egress",
+      "staging_namespace_runtime_ksa_observed": true,
+      "staging_namespace_runtime_ksa": "oday-staging-runtime",
+      "staging_namespace_runtime_ksa_gsa_binding_observed": true,
+      "staging_runtime_gsa": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
+      "staging_snapshot_bucket_observed": true,
+      "staging_snapshot_bucket": "gs://oday-staging-source-snapshots-odayplus-runtime-20260825",
+      "staging_snapshot_bucket_objects_observed": false,
+      "staging_snapshot_bucket_empty": true,
+      "staging_snapshot_bucket_default_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
+      "staging_snapshot_bucket_public_access_prevention": "enforced",
+      "staging_snapshot_bucket_retention_period_seconds": 86400,
+      "staging_snapshot_bucket_soft_delete_retention_seconds": 604800,
+      "staging_snapshot_bucket_uniform_access": true,
+      "staging_snapshot_bucket_versioning": true,
       "masked_snapshot_authority_observed": false
     },
     "github_staging_environment": {
@@ -79,6 +93,7 @@
       "release_lease_public_key_observed": false,
       "release_lease_state_dir_observed": false,
       "secret_names_observed": [],
+      "registered_workflows_observed": ["Deploy Dev", "Deploy/Verify Staging"],
       "missing_runtime_release_variables": [
         "MLFLOW_TRACKING_URI",
         "ODP_AUTH_AUDIENCES",
@@ -169,8 +184,8 @@
     {
       "id": "B5",
       "severity": "blocking",
-      "summary": "The staging foundation is only partial: KMS, private RUNNABLE staging SQL, and an empty release-labelled namespace are observed, but the snapshot bucket, release workloads, default-deny egress policy, Cloud Run services, and Scheduler jobs are not.",
-      "required_action": "Complete the dependent staging bootstrap/IAC apply and provide redacted readback for the masked snapshot bucket, release-scoped bucket/database/tenant/IAM, namespace egress policy, Cloud Run services, paused Scheduler jobs, and ownership TTL before application deploy."
+      "summary": "The staging foundation is only partial: KMS, private RUNNABLE staging SQL, the snapshot bucket, namespace default-deny egress policy, and KSA/GSA workload identity binding are observed, but the bucket is empty and release-scoped snapshot/database/tenant/IAM ownership, application workloads, Cloud Run services, Scheduler jobs, and TTL are not.",
+      "required_action": "Complete the dependent staging bootstrap/IAC and masked snapshot materialization, then provide redacted readback for release-scoped bucket/database/tenant/IAM ownership, Cloud Run services, paused Scheduler jobs, and TTL before application deploy."
     },
     {
       "id": "B6",
@@ -216,6 +231,6 @@
     "terraform -chdir=infra/terraform/modules/ephemeral_staging validate"
   ],
   "secret_values_redacted": true,
-  "recorded_at": "2026-08-25T23:52:48Z",
+  "recorded_at": "2026-08-26T01:11:53Z",
   "recorded_by": "Codex"
 }
