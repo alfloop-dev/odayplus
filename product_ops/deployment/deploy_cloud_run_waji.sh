@@ -52,6 +52,17 @@ if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ] && [ -z "${ODP_CLOUD_RUN_VPC_CONNECTOR
   echo "Error: ODP_CLOUD_RUN_VPC_CONNECTOR is required with ODP_CLOUD_RUN_VPC_EGRESS." >&2
   exit 1
 fi
+if [ -n "${ODP_CLOUD_RUN_VPC_EGRESS:-}" ]; then
+  case "${ODP_CLOUD_RUN_VPC_EGRESS}" in
+    all|all-traffic|private-ranges-only)
+      ;;
+    *)
+      echo "Error: unsupported ODP_CLOUD_RUN_VPC_EGRESS '${ODP_CLOUD_RUN_VPC_EGRESS}'. " \
+        "Expected all, all-traffic, or private-ranges-only." >&2
+      exit 1
+      ;;
+  esac
+fi
 
 CLOUD_RUN_NETWORK_ARGS=()
 if [ -n "${ODP_CLOUD_RUN_VPC_CONNECTOR:-}" ]; then
