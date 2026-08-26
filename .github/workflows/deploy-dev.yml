@@ -105,6 +105,34 @@ permissions:
   packages: write
   id-token: write
 
+# ODP-RELEASE-WORKFLOW-DISPATCH-PARSER-001: receipt staging is workspace-relative
+# because the alternative did not compile.
+#
+# The previous shape staged the build handoff at
+# `jobs.build.env.HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff`.
+# GitHub does not offer the `runner` context to `jobs.<job_id>.env` -- that key
+# is evaluated before a runner has been assigned to the job -- so the whole file
+# stopped compiling and `Runtime Release` could not be dispatched at all.
+#
+# That failure is silent in review. `${{ runner.temp }}` reads as correct, it is
+# genuinely valid one level down in `jobs.<job_id>.steps.*`, and the only signal
+# GitHub emits is a `failure` run carrying zero jobs and no logs, created for a
+# `push` this workflow has no trigger for.
+#
+# Staging under the checkout removes the expression rather than relocating it:
+# the path needs no context at all, `.odp_data/` is git-ignored and excluded from
+# every image build context, and each receipt writer creates its own parent.
+# `.odp_data/release/` is disjoint from `.odp_data/deployment/`, where
+# `deploy_cloud_run_waji.sh` leaves the raw `gcloud ... describe` dumps that must
+# never be uploaded.
+#
+# The signed lease document deliberately stays in `${RUNNER_TEMP}`. It is a
+# credential, not a receipt, and it must not land where an artifact upload can
+# reach it. `${RUNNER_TEMP}` in a `run:` block is a shell variable expanded by
+# bash, not a workflow expression, so it was never part of this defect.
+env:
+  RELEASE_RECEIPT_DIR: .odp_data/release
+
 jobs:
   # Fail closed before anything is built, authenticated, or deployed. This is
   # the one place that states what each phase requires, and it produces a
@@ -162,14 +190,14 @@ jobs:
             --worker-image "${WORKER_IMAGE_INPUT}" \
             --scheduler-image "${SCHEDULER_IMAGE_INPUT}" \
             --lease-supplied "${lease_supplied}" \
-            --receipt "${RUNNER_TEMP}/release-phase-receipt.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/release-phase-receipt.json"
 
       - name: Publish release phase receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-phase-receipt-${{ inputs.environment }}-${{ inputs.phase }}
-          path: ${{ runner.temp }}/release-phase-receipt.json
+          path: .odp_data/release/release-phase-receipt.json
           if-no-files-found: warn
 
   # Build once, for one exact SHA, with no lease. Re-running this phase for the
@@ -207,7 +235,7 @@ jobs:
       # `generate_sbom.py` writes here by default; it is the CycloneDX document
       # attested onto every published image below.
       SBOM_PATH: docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json
-      HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff
+      HANDOFF_DIR: .odp_data/release/runtime-release-handoff
     steps:
       - uses: actions/checkout@v4
         with:
@@ -245,14 +273,14 @@ jobs:
             --github-environment "${{ inputs.environment }}-build" \
             --release-sha "${ODAY_RELEASE_SHA}" \
             --task-id "${{ inputs.task_id }}" \
-            --receipt "${RUNNER_TEMP}/release-environment-receipt.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
 
       - name: Publish build environment binding receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-environment-receipt-${{ inputs.environment }}-build
-          path: ${{ runner.temp }}/release-environment-receipt.json
+          path: .odp_data/release/release-environment-receipt.json
           if-no-files-found: warn
 
       - name: Install uv
@@ -445,14 +473,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: runtime-release-images-${{ inputs.release_sha }}
-          path: ${{ runner.temp }}/runtime-release-handoff/runtime-release-images.json
+          path: .odp_data/release/runtime-release-handoff/runtime-release-images.json
           if-no-files-found: error
 
       - name: Publish candidate release manifest
         uses: actions/upload-artifact@v4
         with:
           name: runtime-release-manifest-${{ inputs.release_sha }}
-          path: ${{ runner.temp }}/runtime-release-handoff/RELEASE_MANIFEST.json
+          path: .odp_data/release/runtime-release-handoff/RELEASE_MANIFEST.json
           if-no-files-found: error
 
   # Deploy authority. This runs only in the deploy phase, and only after a build
@@ -534,14 +562,14 @@ jobs:
             --github-environment "${{ inputs.environment }}" \
             --release-sha "${{ inputs.release_sha }}" \
             --task-id "${{ inputs.task_id }}" \
-            --receipt "${RUNNER_TEMP}/release-environment-receipt.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
 
       - name: Publish admission environment binding receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-environment-receipt-${{ inputs.environment }}-admission
-          path: ${{ runner.temp }}/release-environment-receipt.json
+          path: .odp_data/release/release-environment-receipt.json
           if-no-files-found: warn
 
       # The binding gate covers variable presence; this covers the one shape
@@ -602,7 +630,7 @@ jobs:
             --component-image "scheduler=${SCHEDULER_IMAGE_INPUT}" \
             --lease-file "${RUNNER_TEMP}/release-lease.json" \
             --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
-            --receipt "${RUNNER_TEMP}/release-admission-receipt.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/release-admission-receipt.json"
 
       # The receipt is the audit trail for the admission decision. It carries
       # digests of the nonce and signature rather than the values, so it is safe
@@ -612,7 +640,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: release-admission-receipt-${{ inputs.environment }}
-          path: ${{ runner.temp }}/release-admission-receipt.json
+          path: .odp_data/release/release-admission-receipt.json
           if-no-files-found: warn
 
       - name: Discard the lease document from the runner
@@ -750,14 +778,14 @@ jobs:
             --github-environment "${{ inputs.environment }}" \
             --release-sha "${{ inputs.release_sha }}" \
             --task-id "${{ inputs.task_id }}" \
-            --receipt "${RUNNER_TEMP}/release-environment-receipt.json"
+            --receipt "${RELEASE_RECEIPT_DIR}/release-environment-receipt.json"
 
       - name: Publish deploy environment binding receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-environment-receipt-${{ inputs.environment }}-deploy
-          path: ${{ runner.temp }}/release-environment-receipt.json
+          path: .odp_data/release/release-environment-receipt.json
           if-no-files-found: warn
 
       - name: Run the live runtime preflight
