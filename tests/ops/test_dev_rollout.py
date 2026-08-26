@@ -51,7 +51,6 @@ def test_manifest_integrity_and_component_digests_match() -> None:
 
     computed_digest = compute_manifest_digest(current_manifest)
     assert current_manifest["manifest_digest"] == computed_digest
-    assert current_manifest["release_status"] == "blocked"
 
     binding = json.loads(MANIFEST_BINDING_PATH.read_text(encoding="utf-8"))
     assert binding["release_id"] == "odp-20260730-001"
@@ -87,11 +86,23 @@ def test_historical_release_receipts_keep_their_original_identity() -> None:
 
 
 def test_current_manifest_does_not_claim_historical_deployment_success() -> None:
+    """The candidate of the day must not inherit the 2026-07-30 rollout's identity.
+
+    The current manifest legitimately moves between ``blocked`` and ``ready`` as
+    builds land, so pinning its status here would only re-assert today's release
+    state.  What must never change is that it is a *different* release from the
+    historical one: a newer candidate cannot borrow that deployment's evidence.
+    """
+
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    assert manifest["release_status"] == "blocked"
-    assert manifest["sbom_refs"] == []
-    assert manifest["signature_refs"] == []
-    assert manifest["blockers"]
+    binding = json.loads(MANIFEST_BINDING_PATH.read_text(encoding="utf-8"))
+
+    assert manifest["candidate_sha"] != HISTORICAL_CANDIDATE_SHA
+    assert manifest["manifest_digest"] != HISTORICAL_MANIFEST_DIGEST
+    assert manifest["release_id"] != binding["release_id"]
+
+    if manifest.get("release_status", "ready") == "blocked":
+        assert manifest["blockers"], "a blocked manifest must record why it is blocked"
 
 
 def test_historical_binding_preserves_its_own_digest_inputs() -> None:

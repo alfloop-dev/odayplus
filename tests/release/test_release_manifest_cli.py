@@ -23,7 +23,10 @@ from delivery_toolchain.release.release_manifest import (
 ROOT = Path(__file__).resolve().parents[2]
 CLI = ROOT / "delivery_toolchain/release/release_manifest.py"
 MANIFEST_PATH = ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json"
-CANDIDATE_SHA = "a027fa1c3935360e6fc4b3bd073cd91cbee07548"
+# Derived from the committed manifest: the candidate is rebound every time a
+# build publishes a new one, and a pinned literal would fail the suite for a
+# rebind rather than for a CLI regression.
+CANDIDATE_SHA = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))["candidate_sha"]
 
 # Word-boundary matched so that "INVALID:" does not read as a success verdict.
 SUCCESS_WORDING = re.compile(r"\bPASS(ED)?\b|\bVALID\b|is valid")
@@ -39,29 +42,69 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def write_manifest(tmp_path: Path, manifest: dict, name: str) -> Path:
+    assert validate_manifest(manifest) == []
+    path = tmp_path / name
+    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 def ready_manifest(tmp_path: Path) -> Path:
     """Write a synthetic admissible manifest for the positive-path assertion."""
 
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     manifest["release_status"] = "ready"
     manifest.pop("blockers", None)
-    # The committed manifest is blocked and may legitimately carry no
-    # components; an admissible manifest always needs at least one.
+    # Synthetic references keep the positive path independent of whichever
+    # artifact the current candidate happens to have published.
     manifest["components"] = {
         "api": {"image": "registry.example.invalid/odayplus/api@sha256:" + "a" * 64}
     }
     manifest["sbom_refs"] = ["oci://registry.example.invalid/odayplus/sbom@sha256:" + "b" * 64]
     manifest["signature_refs"] = ["oci://registry.example.invalid/odayplus/api@sha256:" + "c" * 64]
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
-    assert validate_manifest(manifest) == []
-
-    path = tmp_path / "ready-manifest.json"
-    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    return path
+    return write_manifest(tmp_path, manifest, "ready-manifest.json")
 
 
-def test_blocked_manifest_exits_non_zero_without_success_wording() -> None:
-    result = run_cli("--manifest", str(MANIFEST_PATH), "--expected-sha", CANDIDATE_SHA)
+BLOCKERS = [
+    {
+        "id": "TEST-BLOCKER-001",
+        "severity": "P0",
+        "reason": "Synthetic blocker; this candidate never produced an image.",
+        "evidence_ref": "docs/evidence/gates/README.md",
+    },
+    {
+        "id": "TEST-BLOCKER-002",
+        "severity": "P0",
+        "reason": "Synthetic blocker; no Cosign signature exists for this candidate.",
+        "evidence_ref": "docs/evidence/gates/README.md",
+    },
+]
+
+
+def blocked_manifest(tmp_path: Path) -> Path:
+    """Write a synthetic blocked manifest for the fail-closed assertions.
+
+    The committed manifest tracks the candidate of the day and flips between
+    ``ready`` and ``blocked`` as builds land, so deriving the blocked subject
+    here keeps these assertions about the CLI's refusal wording rather than
+    about today's release state.
+    """
+
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    manifest["release_status"] = "blocked"
+    manifest["components"] = {}
+    manifest["sbom_refs"] = []
+    manifest["signature_refs"] = []
+    manifest["blockers"] = BLOCKERS
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return write_manifest(tmp_path, manifest, "blocked-manifest.json")
+
+
+def test_blocked_manifest_exits_non_zero_without_success_wording(tmp_path: Path) -> None:
+    path = blocked_manifest(tmp_path)
+
+    result = run_cli("--manifest", str(path), "--expected-sha", CANDIDATE_SHA)
 
     assert result.returncode != 0
     found = SUCCESS_WORDING.search(result.stdout)
@@ -69,18 +112,19 @@ def test_blocked_manifest_exits_non_zero_without_success_wording() -> None:
     assert "BLOCKED:" in result.stdout
 
 
-def test_blocked_manifest_reports_each_recorded_blocker() -> None:
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-    result = run_cli("--manifest", str(MANIFEST_PATH))
+def test_blocked_manifest_reports_each_recorded_blocker(tmp_path: Path) -> None:
+    path = blocked_manifest(tmp_path)
+
+    result = run_cli("--manifest", str(path))
 
     assert result.returncode != 0
     assert "release_status='ready'" in result.stdout
-    for blocker in manifest["blockers"]:
+    for blocker in BLOCKERS:
         assert blocker["id"] in result.stdout
 
 
-def test_structure_only_never_reports_a_deployable_verdict() -> None:
-    result = run_cli("--manifest", str(MANIFEST_PATH), "--structure-only")
+def test_structure_only_never_reports_a_deployable_verdict(tmp_path: Path) -> None:
+    result = run_cli("--manifest", str(blocked_manifest(tmp_path)), "--structure-only")
 
     # Structural checking still succeeds on a blocked manifest -- that is the
     # whole point of keeping the blocked record hashable and reviewable.
@@ -99,6 +143,22 @@ def test_ready_manifest_reports_admissible(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "ADMISSIBLE:" in result.stdout
     assert "BLOCKED:" not in result.stdout
+
+
+def test_committed_manifest_verifies_against_its_own_candidate() -> None:
+    """The committed manifest must survive the command an auditor actually runs.
+
+    ``--structure-only`` is the read-only form: it re-derives the manifest digest
+    from the file and binds it to the candidate SHA, without expressing any view
+    on whether the release may be deployed.
+    """
+
+    result = run_cli(
+        "--manifest", str(MANIFEST_PATH), "--expected-sha", CANDIDATE_SHA, "--structure-only"
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "STRUCTURE-OK:" in result.stdout
 
 
 def test_missing_manifest_fails_closed(tmp_path: Path) -> None:

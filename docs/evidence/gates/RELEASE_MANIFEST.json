@@ -1,55 +1,43 @@
 {
-  "schema_version": 1,
-  "release_id": "odp-20260826-002",
-  "candidate_sha": "a027fa1c3935360e6fc4b3bd073cd91cbee07548",
-  "components": {},
-  "migration_digest": "sha256:e860458dd1bb62f07460b0e32ccb92cfbce4d28b3102036a7b883f3db5318840",
-  "data_contract_digest": "sha256:3ff542af6a09584cc60644f03e91f7d4fdb3ea75b8659e23af6b0a8e23376a44",
-  "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824",
-  "external_sources_expected_enabled": [],
-  "sbom_refs": [],
-  "signature_refs": [],
-  "created_at": "2026-08-26T14:42:37Z",
-  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml (Runtime Release; no run is bound to this candidate; release blocked)",
-  "manifest_digest": "sha256:18582f5600585d6c492690fa1ed013f2d9b0fefd395a132f36325ecabe1eb1e2",
-  "release_status": "blocked",
-  "supersedes": {
-    "release_id": "odp-20260826-001",
-    "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
-    "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
-    "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/",
-    "reason": "Commits between ace4265b and a027fa1c touch non-evidence paths (delivery_toolchain and tests), so the superseded candidate is not an evidence-only ancestor of the current dev tip and its image digests must not be rebound to this candidate."
-  },
-  "blockers": [
-    {
-      "id": "ODP-RELEASE-MANIFEST-RERUN-IMAGES-002",
-      "severity": "P0",
-      "reason": "No container image is tagged release-a027fa1c3935360e6fc4b3bd073cd91cbee07548 in asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev. All 11 candidate repository probes returned 'not found' with EXIT=1, so this candidate has no immutable image digest to bind.",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-2"
+  "candidate_sha": "ebc4fca5c2dd5871275aee39a18406dd67464f04",
+  "components": {
+    "api": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:ac085f14e958ae85befa8edf9476a6a6c55c74dadcf308f610e5c4078b17b4c6"
     },
-    {
-      "id": "ODP-RELEASE-MANIFEST-RERUN-WORKFLOW-002",
-      "severity": "P0",
-      "reason": "GitHub Actions has no Runtime Release run bound to the candidate SHA; 'gh run list --workflow deploy-dev.yml --commit a027fa1c...' returned [] with EXIT=0. The workflow is workflow_dispatch-only at this SHA and its most recent runs (2026-08-20, push-triggered) all failed or were cancelled.",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-3"
+    "migration": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:27109e8066e5d08ca766a9c85498a95125ff843c52f43d3dfbd74c656f08ecce",
+      "shares_image_with": "worker"
     },
-    {
-      "id": "ODP-RELEASE-MANIFEST-RERUN-COSIGN-002",
-      "severity": "P0",
-      "reason": "cosign is not installed in the audit environment ('command -v cosign' EXIT=1) and no cosign signature artifact exists in the registry. delivery_toolchain/security/sign_images.sh verify refuses to simulate success and exits 1.",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-4"
+    "scheduler": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:9a56f306ba2df547196f1e742397646a3db4231aca65cd9af39635b92d18766e"
     },
-    {
-      "id": "ODP-RELEASE-MANIFEST-RERUN-SBOM-002",
-      "severity": "P0",
-      "reason": "No candidate-bound SBOM artifact exists. The shared SBOM repository probe and the cosign .sbom tag probe both returned 'not found' with EXIT=1, and syft is not installed ('command -v syft' EXIT=1).",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-5"
+    "web": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:4222c0429385e9883446d3ca7f0826b68e3d93e25f4efb26a846a64e843dae37"
     },
-    {
-      "id": "ODP-RELEASE-MANIFEST-RERUN-LEASE-CONFIG-002",
-      "severity": "P0",
-      "reason": "The GitHub 'dev' environment defines neither ODP_RELEASE_LEASE_STATE_URI nor ODP_RELEASE_LEASE_PUBLIC_KEY, and no repository-scope variable supplies them ('gh variable list --json name' returned [] at repository scope). The Runtime Release admission job requires a gs://bucket/prefix lease state URI, so a dev release cannot be admitted until the environment is configured. The staging and production environments do define both variables.",
-      "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-RERUN-002/release-candidate-transcript.txt#section-6"
+    "worker": {
+      "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:27109e8066e5d08ca766a9c85498a95125ff843c52f43d3dfbd74c656f08ecce"
     }
-  ]
+  },
+  "created_at": "2026-08-26T18:50:50+00:00",
+  "created_by_workflow": "github://alfloop-dev/odayplus/.github/workflows/deploy-dev.yml@ebc4fca5c2dd5871275aee39a18406dd67464f04",
+  "data_contract_digest": "sha256:3ff542af6a09584cc60644f03e91f7d4fdb3ea75b8659e23af6b0a8e23376a44",
+  "external_sources_expected_enabled": [],
+  "manifest_digest": "sha256:fa2f52220951dc89c56b41b7f0fd61280ce00a028709d2124ceefcdc55f24de9",
+  "migration_digest": "sha256:e860458dd1bb62f07460b0e32ccb92cfbce4d28b3102036a7b883f3db5318840",
+  "release_id": "odp-ebc4fca5c2dd",
+  "release_status": "ready",
+  "sbom_refs": [
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:5384be8688c48ff05e8936b59ae1febe21016ece780d49bab265ff3384824d95",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:819dd2d3b77d2099bf9664fc973d38e6bc1378b58f5e9786c6cd7aadfd5c76af",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:b7d4dd7c67ccdf4716d425f4cb66d05e719a9b88aa0c50732fdb9b3170a2679a",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:9f8fca07ede80d1ecff3c61199033877a45c0e1656cabe2337365864d2f1d7a4"
+  ],
+  "schema_version": 1,
+  "signature_refs": [
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-api@sha256:dd62a2d9466b2d388d7ed3c86d506b51e81084ee32080af72846d0124505fffa",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-scheduler@sha256:4e6688cb45e1b73890790b3f85e183ba43afb2cb58478cd012684f195dbc8783",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-web@sha256:21e194a647a6c2c776f8d8953290af48909323a6bee5b53939e55bc4d8f8fb9b",
+    "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-worker@sha256:dfd3a4925935dbcd2a493c93c4470d5ad2df081382301d864730300f73cec389"
+  ],
+  "source_policy_digest": "sha256:0a34bb128b5b5b26201b7f014f4b4f8e631e841c8f205f38dfc09c9eb682d824"
 }
