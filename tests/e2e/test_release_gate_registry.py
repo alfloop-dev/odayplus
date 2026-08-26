@@ -31,7 +31,7 @@ PRODUCT_GATE = ROOT / "delivery_toolchain/e2e/check_product_release_gate.py"
 REGISTRY = ROOT / "docs/evidence/gates/RELEASE_GATE_REGISTRY.json"
 REGISTRY_README = ROOT / "docs/evidence/gates/README.md"
 
-CANDIDATE_SHA = "e496be62c47c45d758681b8a4d3abfae16f1c96d"
+CANDIDATE_SHA = "ace4265b5190c00c72846b637fc04850bacec77e"
 OTHER_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 

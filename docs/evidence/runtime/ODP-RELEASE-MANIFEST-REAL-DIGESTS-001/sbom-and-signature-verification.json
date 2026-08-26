@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-REAL-DIGESTS-001",
+  "release_id": "odp-20260826-001",
+  "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
+  "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+  "verified_at": "2026-08-26T12:36:58Z",
+  "verifier": "Codex2",
+  "verification_status": "BLOCKED",
+  "sbom": {
+    "available": false,
+    "format": "CycloneDX 1.5 JSON (required)",
+    "sbom_refs": [],
+    "local_file_checked": "docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json",
+    "local_file_sha256": "sha256:3dd49805c8b46b3c4ec0b85ce59eeb246ab9bfd43b0be33f0dd6c662a516d4a2",
+    "declared_file_content_digest": "sha256:5c240dca6d44af9ec58cee5dde68e51e8c0f6dfa052b925c1420b61e4574ee27",
+    "local_file_hash_matches_declared_digest": false,
+    "candidate_sha_binding": false,
+    "registry_artifact_lookup": {
+      "reference": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom@sha256:fabf02cf4707cbd9bf5d4c67523ca4f5f7d87dbdbb2f347d43f03e25dc1258c3",
+      "result": "NOT_FOUND",
+      "command_exit_code": 1,
+      "command": "docker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom@sha256:fabf02cf4707cbd9bf5d4c67523ca4f5f7d87dbdbb2f347d43f03e25dc1258c3",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L459"
+    },
+    "per_image_attached_sbom_lookup": {
+      "command": "docker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sbom",
+      "result": "NOT_FOUND",
+      "command_exit_code": 1,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L459"
+    }
+  },
+  "cosign_signatures": {
+    "available": false,
+    "signature_verifier": "delivery_toolchain/security/sign_images.sh verify",
+    "cosign_binary": "not-installed",
+    "signature_refs": [],
+    "candidate_signature_lookup": {
+      "result": "NOT_FOUND",
+      "command_exit_code": 1,
+      "detail": "No cosign signature tag exists for any candidate image digest. cosign publishes a signature as a separate OCI artifact under the sha256-<digest>.sig tag; its absence means no signature was ever produced.",
+      "command": "docker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sig",
+      "queries_run": 5,
+      "queries_exit_zero": 0,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L432"
+    },
+    "certificate_identity_regexp": "https://github.com/alfloop-dev/.*",
+    "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+    "all_images_signed_and_verified": false,
+    "cosign_binary_probe": {
+      "command": "command -v cosign",
+      "command_exit_code": 1,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L482"
+    },
+    "certificate_identity_regexp_note": "Recorded as the policy that a future signed release must satisfy. It was NOT evaluated here: no cosign binary and no signature artifact exist."
+  },
+  "blocker": {
+    "id": "ODP-RELEASE-MANIFEST-COSIGN-SBOM-001",
+    "severity": "P0",
+    "reason": "No verifiable candidate SBOM or Cosign signature evidence exists; release admission is forbidden.",
+    "evidence_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json"
+  },
+  "revalidation": {
+    "revalidated_at": "2026-08-26T13:20:07Z",
+    "revalidated_by": "Claude2",
+    "reason": "PR #1025 review required raw registry command output and exit codes; every registry claim below is now backed by a verbatim transcript entry instead of a prose conclusion.",
+    "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt",
+    "transcript_sha256": "sha256:e50ffbbffad302eea53f18fd34aacdc5ea7c4c54be914b7a11345a21c0d29ba1",
+    "query_tool": "docker buildx imagetools inspect (OCI distribution API against the same Artifact Registry host)",
+    "query_tool_note": "deploy-dev.yml uses 'gcloud artifacts docker images describe'. That command is refused before execution by this worker's sandbox classifier, so it produced no output and no exit code. The refusal is recorded verbatim in transcript section 4. Transcript section 6 records what corroborates these lookups (a RepoDigest under each manifest repository name, and registry 404s for absent references) and states the limit this transcript does not close on its own: an auditor wanting cache-independent confirmation should re-run section 1 from a host that never built these images."
+  }
+}

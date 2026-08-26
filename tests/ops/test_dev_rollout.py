@@ -23,6 +23,12 @@ DEV_INTEGRATION_READBACK_PATH = EVIDENCE_DIR / "dev-integration-readback.json"
 EXTERNAL_SOURCES_AUDIT_PATH = EVIDENCE_DIR / "external-sources-provider-off-audit.json"
 RECEIPTS_INDEX_PATH = EVIDENCE_DIR / "release-receipts-index.json"
 
+# ODP-DEV-ROLLOUT-001 is a historical deployment record. Advancing the
+# canonical release manifest must not rewrite that record or make it claim a
+# newer candidate than the one it actually deployed.
+HISTORICAL_CANDIDATE_SHA = "e496be62c47c45d758681b8a4d3abfae16f1c96d"
+HISTORICAL_MANIFEST_DIGEST = "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271"
+
 
 def test_evidence_files_exist() -> None:
     assert EVIDENCE_DIR.is_dir()
@@ -39,31 +45,60 @@ def test_evidence_files_exist() -> None:
 
 
 def test_manifest_integrity_and_component_digests_match() -> None:
-    manifest, errors = load_manifest(MANIFEST_PATH)
+    current_manifest, errors = load_manifest(MANIFEST_PATH)
     assert errors == [], f"Manifest validation errors: {errors}"
-    assert manifest is not None
+    assert current_manifest is not None
 
-    computed_digest = compute_manifest_digest(manifest)
-    assert manifest["manifest_digest"] == computed_digest
+    computed_digest = compute_manifest_digest(current_manifest)
+    assert current_manifest["manifest_digest"] == computed_digest
+    assert current_manifest["release_status"] == "blocked"
 
     binding = json.loads(MANIFEST_BINDING_PATH.read_text(encoding="utf-8"))
-    assert binding["release_id"] == manifest["release_id"]
-    assert binding["candidate_sha"] == manifest["candidate_sha"]
-    assert binding["manifest_digest"] == manifest["manifest_digest"]
+    assert binding["release_id"] == "odp-20260730-001"
+    assert binding["candidate_sha"] == HISTORICAL_CANDIDATE_SHA
+    assert binding["manifest_digest"] == HISTORICAL_MANIFEST_DIGEST
 
-    # All components defined in the manifest must match the deployed binding
-    expected_components = ("api", "web", "data_platform", "migration", "worker", "scheduler")
-    for component_name in expected_components:
-        assert component_name in manifest["components"]
-        assert component_name in binding["components_digest_validation"]
-        manifest_image = manifest["components"][component_name]["image"]
-        deployed_image = binding["components_digest_validation"][component_name]["deployed_image"]
-        assert manifest_image == deployed_image
-        assert binding["components_digest_validation"][component_name]["digest_match"] is True
+    assert binding["components_digest_validation"]
 
-    assert binding["digests_integrity"]["migration_digest"] == manifest["migration_digest"]
-    assert binding["digests_integrity"]["data_contract_digest"] == manifest["data_contract_digest"]
-    assert binding["digests_integrity"]["source_policy_digest"] == manifest["source_policy_digest"]
+
+def test_historical_dev_rollout_is_not_rebound_to_current_manifest() -> None:
+    binding = json.loads(MANIFEST_BINDING_PATH.read_text(encoding="utf-8"))
+    assert binding["candidate_sha"] == HISTORICAL_CANDIDATE_SHA
+    assert binding["manifest_digest"] == HISTORICAL_MANIFEST_DIGEST
+    assert binding["manifest_digest"] != json.loads(
+        MANIFEST_PATH.read_text(encoding="utf-8")
+    )["manifest_digest"]
+
+
+def test_historical_release_receipts_keep_their_original_identity() -> None:
+    receipts_data = json.loads(RECEIPTS_INDEX_PATH.read_text(encoding="utf-8"))
+    assert receipts_data["candidate_sha"] == HISTORICAL_CANDIDATE_SHA
+    assert receipts_data["manifest_digest"] == HISTORICAL_MANIFEST_DIGEST
+    assert receipts_data["receipts"]
+
+    for receipt in receipts_data["receipts"]:
+        errors = validate_receipt(
+            receipt,
+            expected_release_id=receipts_data["release_id"],
+            expected_candidate_sha=HISTORICAL_CANDIDATE_SHA,
+            expected_manifest_digest=HISTORICAL_MANIFEST_DIGEST,
+        )
+        assert errors == [], f"Receipt {receipt.get('receipt_id')} validation errors: {errors}"
+
+
+def test_current_manifest_does_not_claim_historical_deployment_success() -> None:
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    assert manifest["release_status"] == "blocked"
+    assert manifest["sbom_refs"] == []
+    assert manifest["signature_refs"] == []
+    assert manifest["blockers"]
+
+
+def test_historical_binding_preserves_its_own_digest_inputs() -> None:
+    binding = json.loads(MANIFEST_BINDING_PATH.read_text(encoding="utf-8"))
+    assert binding["digests_integrity"]["migration_digest"].startswith("sha256:")
+    assert binding["digests_integrity"]["data_contract_digest"].startswith("sha256:")
+    assert binding["digests_integrity"]["source_policy_digest"].startswith("sha256:")
     assert binding["digests_integrity"]["all_digests_match"] is True
 
 
@@ -150,7 +185,6 @@ def test_sixteen_sources_disabled_and_zero_credentials() -> None:
 
 
 def test_release_receipts_conformance_and_redaction() -> None:
-    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     receipts_data = json.loads(RECEIPTS_INDEX_PATH.read_text(encoding="utf-8"))
     assert receipts_data["environment"] == "dev"
     assert receipts_data["stage"] == "dev-verified"
@@ -159,9 +193,9 @@ def test_release_receipts_conformance_and_redaction() -> None:
     for receipt in receipts_data["receipts"]:
         errors = validate_receipt(
             receipt,
-            expected_release_id=manifest["release_id"],
-            expected_candidate_sha=manifest["candidate_sha"],
-            expected_manifest_digest=manifest["manifest_digest"],
+            expected_release_id=receipts_data["release_id"],
+            expected_candidate_sha=HISTORICAL_CANDIDATE_SHA,
+            expected_manifest_digest=HISTORICAL_MANIFEST_DIGEST,
         )
         assert errors == [], f"Receipt {receipt.get('receipt_id')} validation errors: {errors}"
         assert receipt["secret_values_redacted"] is True

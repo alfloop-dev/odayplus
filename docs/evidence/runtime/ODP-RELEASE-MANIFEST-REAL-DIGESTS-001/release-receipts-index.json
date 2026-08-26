@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-REAL-DIGESTS-001",
+  "release_id": "odp-20260826-001",
+  "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+  "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
+  "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
+  "environment": "dev",
+  "stage": "candidate-built",
+  "audit_status": "blocked",
+  "total_receipts": 0,
+  "receipts": [],
+  "deployment_success_receipt_emitted": false,
+  "blocker_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json",
+  "secret_values_redacted": true,
+  "verified_at": "2026-08-26T12:36:58Z",
+  "verified_by": "Codex2",
+  "revalidation": {
+    "revalidated_at": "2026-08-26T13:20:07Z",
+    "revalidated_by": "Claude2",
+    "reason": "PR #1025 review required raw registry command output and exit codes; every registry claim below is now backed by a verbatim transcript entry instead of a prose conclusion.",
+    "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt",
+    "transcript_sha256": "sha256:e50ffbbffad302eea53f18fd34aacdc5ea7c4c54be914b7a11345a21c0d29ba1",
+    "query_tool": "docker buildx imagetools inspect (OCI distribution API against the same Artifact Registry host)",
+    "query_tool_note": "deploy-dev.yml uses 'gcloud artifacts docker images describe'. That command is refused before execution by this worker's sandbox classifier, so it produced no output and no exit code. The refusal is recorded verbatim in transcript section 4. Transcript section 6 records what corroborates these lookups (a RepoDigest under each manifest repository name, and registry 404s for absent references) and states the limit this transcript does not close on its own: an auditor wanting cache-independent confirmation should re-run section 1 from a host that never built these images."
+  },
+  "evidence_files": [
+    "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/README.md",
+    "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt",
+    "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/image-build-and-digest-audit.json",
+    "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-blocker.json",
+    "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-manifest-binding.json",
+    "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/sbom-and-signature-verification.json",
+    "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/release-receipts-index.json"
+  ]
+}

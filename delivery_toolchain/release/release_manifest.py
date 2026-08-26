@@ -23,6 +23,7 @@ SUPPORTED_SCHEMA_VERSIONS = (1,)
 SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
+RELEASE_STATUSES = frozenset({"ready", "blocked"})
 
 REQUIRED_FIELDS = (
     "schema_version",
@@ -163,6 +164,17 @@ def validate_manifest(
         ):
             errors.append(f"manifest.{field} must be a list of non-empty strings")
 
+    release_status = manifest.get("release_status")
+    if release_status is not None and release_status not in RELEASE_STATUSES:
+        errors.append(
+            f"manifest.release_status must be one of {sorted(RELEASE_STATUSES)}, "
+            f"got: {release_status!r}"
+        )
+    if release_status == "blocked":
+        blockers = manifest.get("blockers")
+        if not isinstance(blockers, list) or not blockers:
+            errors.append("blocked manifest must include a non-empty blockers list")
+
     if not is_valid_timestamp(manifest.get("created_at")):
         errors.append("manifest.created_at must be an RFC3339 timestamp with timezone")
     if not isinstance(manifest.get("created_by_workflow"), str) or not manifest.get(
@@ -184,6 +196,36 @@ def validate_manifest(
                 "manifest.manifest_digest does not match the digest recorded by the registry"
             )
 
+    return errors
+
+
+def validate_release_admission(manifest: Any) -> list[str]:
+    """Return why a structurally valid manifest cannot be deployed.
+
+    A blocked manifest is intentionally still hashable and reviewable: it is
+    the immutable record of what was observed and why release stopped.  It is
+    not, however, a deployable artifact.  Keeping this predicate separate from
+    ``validate_manifest`` lets auditors inspect a blocked candidate without
+    accidentally treating it as a successful release.
+    """
+
+    errors = validate_manifest(manifest)
+    if not isinstance(manifest, dict):
+        return errors
+    # Manifests created before the status field was introduced remain
+    # admissible when they contain the required immutable references.  New
+    # manifests must explicitly move to ``ready`` before deployment; a
+    # recorded ``blocked`` state can never be promoted implicitly.
+    release_status = manifest.get("release_status", "ready")
+    if release_status != "ready":
+        errors.append(
+            "release admission requires manifest.release_status='ready'; "
+            f"got {release_status!r}"
+        )
+    for field in ("sbom_refs", "signature_refs"):
+        refs = manifest.get(field)
+        if not isinstance(refs, list) or not refs:
+            errors.append(f"release admission requires non-empty manifest.{field}")
     return errors
 
 
@@ -209,11 +251,183 @@ def load_manifest(
     return (payload if isinstance(payload, dict) else None), errors
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
+def compute_file_set_digest(paths: Any, *, root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over a sequence of file paths."""
+    h = hashlib.sha256()
+    for p in sorted(paths):
+        path_obj = Path(p)
+        if path_obj.is_file():
+            rel_path = path_obj.relative_to(root).as_posix().encode("utf-8")
+            h.update(rel_path)
+            h.update(b"\x00")
+            h.update(path_obj.read_bytes())
+            h.update(b"\x00")
+    return "sha256:" + h.hexdigest()
+
+
+def compute_migration_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over infra/db/migrations SQL files."""
+    migrations_dir = root / "infra/db/migrations"
+    return compute_file_set_digest(migrations_dir.glob("*.sql"), root=root)
+
+
+def compute_data_contract_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over docs/data contract files."""
+    data_dir = root / "docs/data"
+    return compute_file_set_digest(data_dir.glob("*"), root=root)
+
+
+def compute_source_policy_digest(root: Path = ROOT) -> str:
+    """Compute deterministic SHA-256 digest over security/license policies."""
+    policy_files = [
+        root / "docs/security/license_policy.json",
+        root / "docs/security/license_exemptions.json",
+        root / "docs/security/release_bindings.json",
+    ]
+    return compute_file_set_digest(policy_files, root=root)
+
+
+def build_release_manifest(
+    *,
+    release_id: str,
+    candidate_sha: str,
+    components: dict[str, dict[str, str]],
+    sbom_refs: list[str],
+    signature_refs: list[str],
+    created_at: str,
+    created_by_workflow: str,
+    external_sources_expected_enabled: list[str] | None = None,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    """Build and self-seal a canonical release manifest dictionary."""
+    manifest: dict[str, Any] = {
+        "schema_version": 1,
+        "release_id": release_id,
+        "candidate_sha": candidate_sha,
+        "components": components,
+        "migration_digest": compute_migration_digest(root=root),
+        "data_contract_digest": compute_data_contract_digest(root=root),
+        "source_policy_digest": compute_source_policy_digest(root=root),
+        "external_sources_expected_enabled": external_sources_expected_enabled or [],
+        "sbom_refs": sbom_refs,
+        "signature_refs": signature_refs,
+        "created_at": created_at,
+        "created_by_workflow": created_by_workflow,
+    }
+    manifest["manifest_digest"] = compute_manifest_digest(manifest)
+    return manifest
+
+
 __all__ = [
+    "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
+    "build_release_manifest",
+    "compute_data_contract_digest",
+    "compute_file_set_digest",
     "compute_manifest_digest",
+    "compute_migration_digest",
+    "compute_source_policy_digest",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
+    "RELEASE_STATUSES",
+    "validate_release_admission",
     "validate_manifest",
 ]
+
+
+def _print_manifest_summary(manifest: dict[str, Any]) -> None:
+    print(f"  Release ID:      {manifest['release_id']}")
+    print(f"  Candidate SHA:   {manifest['candidate_sha']}")
+    print(f"  Manifest digest: {manifest['manifest_digest']}")
+    print(f"  Release status:  {manifest.get('release_status', 'ready')}")
+    print(f"  Components:      {len(manifest['components'])}")
+    for name, comp in manifest["components"].items():
+        print(f"    - {name}: {comp['image']}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Validate a release manifest and refuse to bless a non-admissible one.
+
+    The default mode answers the question an auditor actually has -- "may this
+    manifest be deployed?" -- not merely "is this file well formed?".  A
+    manifest that parses cleanly but records ``release_status='blocked'`` is a
+    NO-GO, so it must exit non-zero and must never print a success verdict;
+    otherwise this command becomes the same kind of fake green light the
+    release gates exist to eliminate.  Pure structural checking is still
+    available, but only when it is asked for explicitly.
+    """
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Validate an ODay Plus release manifest and its admission status.",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=ROOT / "docs/evidence/gates/RELEASE_MANIFEST.json",
+        help="Path to release manifest JSON",
+    )
+    parser.add_argument("--expected-sha", type=str, default=None, help="Expected candidate SHA")
+    parser.add_argument("--expected-digest", type=str, default=None, help="Expected manifest digest")
+    parser.add_argument(
+        "--structure-only",
+        action="store_true",
+        help=(
+            "Check schema and digest self-consistency only, without deciding "
+            "release admission. Never reports a deployable verdict."
+        ),
+    )
+    args = parser.parse_args(argv)
+
+    manifest, errors = load_manifest(
+        args.manifest,
+        expected_candidate_sha=args.expected_sha,
+        expected_digest=args.expected_digest,
+    )
+    if errors:
+        print(f"INVALID: {len(errors)} structural error(s) in release manifest {args.manifest}:")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+
+    assert manifest is not None  # load_manifest reports an error when it is None
+
+    if args.structure_only:
+        print(f"STRUCTURE-OK: {args.manifest} is schema valid and digest self-consistent.")
+        print("  Release admission was NOT evaluated (--structure-only).")
+        _print_manifest_summary(manifest)
+        return 0
+
+    admission_errors = validate_release_admission(manifest)
+    if admission_errors:
+        print(f"BLOCKED: release manifest {args.manifest} is NOT admissible for deployment.")
+        _print_manifest_summary(manifest)
+        print(f"  Admission refused for {len(admission_errors)} reason(s):")
+        for err in admission_errors:
+            print(f"    - {err}")
+        blockers = manifest.get("blockers")
+        if isinstance(blockers, list) and blockers:
+            print(f"  Recorded blockers ({len(blockers)}):")
+            for blocker in blockers:
+                if isinstance(blocker, dict):
+                    print(
+                        f"    - [{blocker.get('severity', '?')}] "
+                        f"{blocker.get('id', '?')}: {blocker.get('reason', '')}"
+                    )
+                else:
+                    print(f"    - {blocker}")
+        return 1
+
+    print(f"ADMISSIBLE: release manifest {args.manifest} may be deployed.")
+    _print_manifest_summary(manifest)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

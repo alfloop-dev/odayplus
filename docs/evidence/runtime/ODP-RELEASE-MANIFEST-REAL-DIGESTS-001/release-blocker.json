@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "task_id": "ODP-RELEASE-MANIFEST-REAL-DIGESTS-001",
+  "release_id": "odp-20260826-001",
+  "manifest_digest": "sha256:adff34e123c70d2d94030dbef0172c4effd9d4ead51438d09441fa309e196163",
+  "candidate_sha": "ace4265b5190c00c72846b637fc04850bacec77e",
+  "observed_at": "2026-08-26T12:36:58Z",
+  "recorded_by": "Codex2",
+  "status": "blocked",
+  "deployment_success_receipt_emitted": false,
+  "checks": {
+    "latest_dev": {
+      "command": "git fetch --no-tags origin dev; git rev-parse origin/dev",
+      "observed": "ace4265b5190c00c72846b637fc04850bacec77e",
+      "result": "PASS"
+    },
+    "registry_image_digests": {
+      "command": "docker buildx imagetools inspect <registry>/<repo>:release-ace4265b5190c00c72846b637fc04850bacec77e  # 6 components\ndocker buildx imagetools inspect --raw <registry>/<repo>@sha256:<digest>  # 6 components",
+      "command_exit_code": 0,
+      "queries_run": 12,
+      "queries_exit_zero": 12,
+      "observed": "Every release tag resolved to exactly the digest recorded in RELEASE_MANIFEST.json, and every digest reference was addressable. Raw output per query is in transcript section 1; the recomputed cross-check table is in transcript section 5.",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L23",
+      "result": "PASS"
+    },
+    "oci_source_revision": {
+      "command": "docker buildx imagetools inspect --format '{{json .Image.Config.Labels}}' <registry>/<repo>@sha256:<digest>  # 6 components",
+      "command_exit_code": 0,
+      "queries_run": 6,
+      "queries_exit_zero": 6,
+      "observed": "All six image configs carry org.opencontainers.image.revision=ace4265b5190c00c72846b637fc04850bacec77e. Raw label JSON per component is in transcript section 1.",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L23",
+      "result": "PASS"
+    },
+    "build_provenance": {
+      "command": "docker buildx imagetools inspect --raw <image>@<digest>",
+      "observed": "All six OCI indexes contain a BuildKit attestation manifest with an in-toto SLSA provenance layer.",
+      "result": "PARTIAL",
+      "limitation": "No GitHub Actions Deploy Dev run exists for this candidate, so workflow/OIDC build provenance is not independently attested here.",
+      "command_exit_code": 0,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L23"
+    },
+    "github_actions_release_run": {
+      "command": "gh run list --repo alfloop-dev/odayplus --workflow deploy-dev.yml --commit ace4265b5190c00c72846b637fc04850bacec77e --json databaseId,headSha,status,conclusion",
+      "observed": "[]  (no run bound to the candidate SHA)",
+      "result": "BLOCKED",
+      "command_exit_code": 0,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L505"
+    },
+    "cosign_tool": {
+      "command": "command -v cosign",
+      "observed": "not-installed",
+      "result": "BLOCKED",
+      "command_exit_code": 1,
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L482"
+    },
+    "signature_artifacts": {
+      "command": "docker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sig  # cosign signature tag convention, 5 distinct images",
+      "command_exit_code": 1,
+      "queries_run": 5,
+      "queries_exit_zero": 0,
+      "observed": "All five probes returned 'not found'. No cosign signature artifact exists for any candidate image. Raw errors are in transcript section 2.",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L432",
+      "result": "BLOCKED"
+    },
+    "sbom_artifact": {
+      "command": "docker buildx imagetools inspect --raw <registry>/<repo>:sha256-<image-digest>.sbom\ndocker buildx imagetools inspect --raw asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/sbom@sha256:fabf02cf4707cbd9bf5d4c67523ca4f5f7d87dbdbb2f347d43f03e25dc1258c3",
+      "command_exit_code": 1,
+      "queries_run": 3,
+      "queries_exit_zero": 0,
+      "observed": "All probes returned 'not found'. The fabf02cf digest a previous manifest revision claimed as an OCI SBOM artifact is a content-derived hash and is not present in the registry. Raw errors are in transcript section 3.",
+      "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt#L459",
+      "result": "BLOCKED"
+    }
+  },
+  "blockers": [
+    {
+      "id": "ODP-RELEASE-MANIFEST-WORKFLOW-001",
+      "severity": "P0",
+      "category": "workflow-provenance",
+      "message": "No Deploy Dev workflow run is bound to the candidate SHA; do not claim a release workflow produced these images."
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-SBOM-001",
+      "severity": "P0",
+      "category": "sbom",
+      "message": "The candidate SBOM OCI artifact is absent and the available file hash is not the previously claimed digest."
+    },
+    {
+      "id": "ODP-RELEASE-MANIFEST-COSIGN-001",
+      "severity": "P0",
+      "category": "signature",
+      "message": "Cosign is unavailable in this environment and no candidate signature artifacts exist in the configured registry."
+    }
+  ],
+  "next_action": "Run the single Runtime Release workflow from the exact candidate SHA with hosted OIDC and cosign installed, publish SBOM and signatures, then rerun this audit.",
+  "revalidation": {
+    "revalidated_at": "2026-08-26T13:20:07Z",
+    "revalidated_by": "Claude2",
+    "reason": "PR #1025 review required raw registry command output and exit codes; every registry claim below is now backed by a verbatim transcript entry instead of a prose conclusion.",
+    "transcript_ref": "docs/evidence/runtime/ODP-RELEASE-MANIFEST-REAL-DIGESTS-001/registry-digest-transcript.txt",
+    "transcript_sha256": "sha256:e50ffbbffad302eea53f18fd34aacdc5ea7c4c54be914b7a11345a21c0d29ba1",
+    "query_tool": "docker buildx imagetools inspect (OCI distribution API against the same Artifact Registry host)",
+    "query_tool_note": "deploy-dev.yml uses 'gcloud artifacts docker images describe'. That command is refused before execution by this worker's sandbox classifier, so it produced no output and no exit code. The refusal is recorded verbatim in transcript section 4. Transcript section 6 records what corroborates these lookups (a RepoDigest under each manifest repository name, and registry 404s for absent references) and states the limit this transcript does not close on its own: an auditor wanting cache-independent confirmation should re-run section 1 from a host that never built these images."
+  }
+}

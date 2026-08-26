@@ -22,6 +22,13 @@ fi
 
 COMMAND="$1"
 
+require_cosign() {
+  if ! command -v cosign >/dev/null 2>&1; then
+    echo "Error: cosign is required for image signing/verification; refusing to simulate success." >&2
+    return 1
+  fi
+}
+
 case "$COMMAND" in
   sign)
     if [ $# -lt 2 ]; then
@@ -29,15 +36,13 @@ case "$COMMAND" in
       usage
     fi
     IMAGE="$2"
+    require_cosign
     echo "Signing image: ${IMAGE}..."
-    if [ "${CI:-false}" = "true" ] || command -v cosign >/dev/null 2>&1; then
-      # Keyless signing via GitHub Actions OIDC
-      echo "Running: cosign sign --yes ${IMAGE}"
-      cosign sign --yes "${IMAGE}"
-    else
-      # Local signing using developer key or dry run
-      echo "Running in local/test mode: cosign sign --key cosign.key ${IMAGE} (simulated)"
-    fi
+    # Keyless signing via GitHub Actions OIDC (or an explicitly configured
+    # cosign mode). Missing cosign must fail before any success text is
+    # emitted; a local simulation is not release evidence.
+    echo "Running: cosign sign --yes ${IMAGE}"
+    cosign sign --yes "${IMAGE}"
     echo "Signature generated and attached successfully."
     ;;
 
@@ -47,13 +52,10 @@ case "$COMMAND" in
       usage
     fi
     IMAGE="$2"
+    require_cosign
     echo "Verifying image signature: ${IMAGE}..."
-    if [ "${CI:-false}" = "true" ] || command -v cosign >/dev/null 2>&1; then
-      echo "Running: cosign verify --certificate-identity-regexp 'https://github.com/alfloop-dev/.*' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' ${IMAGE}"
-      cosign verify --certificate-identity-regexp 'https://github.com/alfloop-dev/.*' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' "${IMAGE}"
-    else
-      echo "Simulating verification for local testing: signature exists and matches release authority."
-    fi
+    echo "Running: cosign verify --certificate-identity-regexp 'https://github.com/alfloop-dev/.*' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' ${IMAGE}"
+    cosign verify --certificate-identity-regexp 'https://github.com/alfloop-dev/.*' --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' "${IMAGE}"
     echo "Verification PASSED."
     ;;
 

@@ -21,7 +21,7 @@ record and the checklist is the explanation.
 
 **NO-GO.** All seven gates are `blocked`, none carries a receipt, and
 `release.decision` is `no-go` against candidate SHA
-`e496be62c47c45d758681b8a4d3abfae16f1c96d`. Deterministic product-E2E readiness
+`ace4265b5190c00c72846b637fc04850bacec77e`. Deterministic product-E2E readiness
 (`docs/evidence/PRODUCT_RELEASE_GO_NO_GO.md`) is not release readiness. The
 current state is `candidate-built` in `dev`, with admission target `dev`.
 
