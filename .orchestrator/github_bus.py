@@ -977,9 +977,41 @@ def upsert_coordination_issue(config: dict[str, Any], bus_state: dict[str, Any],
     return True
 
 
+# ReviewBus PR states that no longer identify a live, editable PR.  Anything
+# else (including the transient ``skipped_*`` states) is a usable pointer and
+# must not be treated as stale, or every poll cycle would re-evaluate the task
+# and re-append ``github_review_pr_skipped`` log entries.
+STALE_REVIEW_PR_STATES = frozenset({"missing_pr", "closed", "merged"})
+
+
+def review_pr_ref_is_stale(pr_ref: Any) -> bool:
+    """Return True when ``pr_ref`` points at a PR that can no longer be edited.
+
+    ``poll_pr_reviews`` copies GitHub's own casing into ``pr_ref["state"]``
+    (``OPEN``/``CLOSED``/``MERGED``), while the ReviewBus writes its own states
+    in lowercase, so the comparison is case-insensitive.
+    """
+
+    if not isinstance(pr_ref, dict):
+        return False
+    return str(pr_ref.get("state") or "").lower() in STALE_REVIEW_PR_STATES
+
+
 def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str, task: dict[str, Any]) -> bool:
     entry = task_bus_entry(bus_state, task["id"])
     pr_ref = entry.get("review_pr")
+    # Resolve staleness once, before any branch of this function can read
+    # ``pr_ref``.  A closed/merged/missing PR is only a historical pointer: the
+    # task-scoped branch is authoritative, so the number must be dropped here
+    # rather than after the skip paths.  Otherwise the ``skipped_*`` branches
+    # below copy the dead number into a state that no longer looks stale, and
+    # the next poll edits the closed PR again -- which is what strands an
+    # approved task outside auto-merge.  ``find_existing_pr()`` re-adopts the
+    # current open PR for the same branch/base pair; no second merge path is
+    # introduced.
+    pr_ref_is_stale = review_pr_ref_is_stale(pr_ref)
+    if pr_ref_is_stale:
+        pr_ref = None
     branch = review_branch_for_task(config, status, task)
     if not branch:
         skip_hash = json.dumps({"state": "skipped_no_branch", "task_id": task["id"], "status": task.get("status")}, ensure_ascii=False, sort_keys=True)
@@ -1071,11 +1103,10 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
     body = build_template_body(config, "review_pr", variables)
     labels = list((config.get("github_bus", {}) or {}).get("labels", {}).get("review", []))
     pr_hash = json.dumps({"title": title, "body": body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha}, ensure_ascii=False, sort_keys=True)
-    if (
-        entry.get("last_review_hash") == pr_hash
-        and pr_ref
-        and pr_ref.get("state") != "missing_pr"
-    ):
+    # Key the suppression on the staleness flag captured before ``pr_ref`` was
+    # nulled out.  Reading the (now ``None``) ref here would make a stale entry
+    # look like a first-ever sync and re-suppress on an unchanged hash.
+    if entry.get("last_review_hash") == pr_hash and not pr_ref_is_stale:
         return False
 
     has_diff = branch_has_diff(base, branch, expected_head_sha=head_sha)
