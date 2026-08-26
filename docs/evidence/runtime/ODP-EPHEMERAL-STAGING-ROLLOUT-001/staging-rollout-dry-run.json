@@ -22,6 +22,7 @@
     },
     "enabled_apis": [
       "artifactregistry.googleapis.com",
+      "cloudkms.googleapis.com",
       "cloudscheduler.googleapis.com",
       "compute.googleapis.com",
       "container.googleapis.com",
@@ -47,17 +48,27 @@
       "application_images_are_release_handoff": false
     },
     "staging_foundation": {
-      "cloud_kms_api_enabled": false,
-      "cloud_kms_key_observed": false,
-      "cloud_sql_instances": ["oday-dev-sql"],
-      "isolated_staging_cloud_sql_instance_observed": false,
+      "cloud_kms_api_enabled": true,
+      "cloud_kms_key_observed": true,
+      "cloud_kms_key": "projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-runtime/cryptoKeys/runtime",
+      "cloud_sql_instances": ["oday-dev-sql", "oday-staging-sql"],
+      "staging_cloud_sql_state": "RUNNABLE",
+      "staging_cloud_sql_private_ip_observed": true,
+      "staging_database_observed": "oday",
+      "staging_database_user_observed": "oday_app",
+      "isolated_staging_cloud_sql_instance_observed": true,
       "cloud_run_services": ["oday-mlflow"],
       "staging_cloud_run_services_observed": false,
       "cloud_scheduler_jobs": [],
       "staging_scheduler_observed": false,
       "gke_cluster": "oday-emgi-gke",
       "gke_cluster_location": "asia-east1-a",
-      "staging_namespace_observed": false,
+      "staging_namespace_observed": true,
+      "staging_namespace": "oday-staging-8c72b54",
+      "staging_namespace_release_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
+      "staging_namespace_workloads_observed": false,
+      "staging_namespace_default_deny_egress_observed": false,
+      "staging_snapshot_bucket_observed": false,
       "masked_snapshot_authority_observed": false
     },
     "github_staging_environment": {
@@ -67,10 +78,28 @@
       "runtime_and_secret_reference_variables_complete": false,
       "release_lease_public_key_observed": false,
       "release_lease_state_dir_observed": false,
-      "secret_names_observed": []
+      "secret_names_observed": [],
+      "missing_runtime_release_variables": [
+        "MLFLOW_TRACKING_URI",
+        "ODP_AUTH_AUDIENCES",
+        "ODP_DEV_DEPLOY_URL",
+        "ODP_LIVE_E2E_DEPLOYMENT_MODE",
+        "ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS",
+        "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
+        "ODP_PROD_API_URL",
+        "ODP_PROD_DEPLOY_URL",
+        "ODP_RELEASE_LEASE_PUBLIC_KEY",
+        "ODP_RELEASE_LEASE_STATE_DIR",
+        "ODP_STAGING_API_URL",
+        "ODP_STAGING_DEPLOY_URL",
+        "ODP_STAGING_SECRET_OWNER",
+        "ODP_WEB_OIDC_CLIENT_ID",
+        "ODP_WEB_OIDC_CLIENT_SECRET_SECRET"
+      ],
+      "runtime_release_workflow_registered": false
     },
     "terraform_module_contract": {
-      "module_validate": "passed",
+      "module_validate": "passed_after_ephemeral_provider_init",
       "module_requires_existing_kms_key": true,
       "module_requires_existing_staging_cloud_sql_instance": true,
       "apply_attempted": false
@@ -80,6 +109,7 @@
     "manifest_ref": "docs/evidence/gates/RELEASE_MANIFEST.json",
     "release_id": "odp-20260730-001",
     "candidate_sha": "e496be62c47c45d758681b8a4d3abfae16f1c96d",
+    "current_origin_dev_sha": "8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3",
     "manifest_digest": "sha256:23a6d45acc00d10540bd536574a2f0da85bce1bb583f55d997c03b597411b271",
     "manifest_digest_recomputes": true,
     "placeholder_digest_count": 11,
@@ -104,6 +134,8 @@
     "target_input": "staging",
     "registry_pattern": "${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GCP_AR_REPO}/<service>@sha256:<64-hex>",
     "configured_registry": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev",
+    "runtime_release_workflow_registered": false,
+    "runtime_release_workflow_registration_detail": "origin/dev contains .github/workflows/deploy-dev.yml, but GitHub Actions exposes no registered Runtime Release workflow",
     "staging_dispatch_observed": false,
     "successful_staging_run": false,
     "remote_staging_proof": null,
@@ -131,14 +163,14 @@
     {
       "id": "B4",
       "severity": "blocking",
-      "summary": "No successful staging workflow dispatch or remote staging proof was found for this task.",
-      "required_action": "Human/Ops must provide staging IAM, protected runtime variables, secret references, and approval authority, then dispatch Runtime Release with environment=staging."
+      "summary": "Runtime Release is not registered in GitHub Actions, and no successful staging workflow dispatch or remote staging proof was found for this task.",
+      "required_action": "Human/Ops must publish the origin/dev Runtime Release workflow, provide protected runtime variables, lease authority, and approval authority, then dispatch it with environment=staging."
     },
     {
       "id": "B5",
       "severity": "blocking",
-      "summary": "The authoritative staging foundation is incomplete: no Cloud KMS API/key, isolated staging Cloud SQL instance, staging namespace, or masked snapshot authority was observed.",
-      "required_action": "Complete the dependent staging bootstrap/IAC task and provide readback for the existing KMS key, isolated database target, masked snapshot, and staging namespace before any apply."
+      "summary": "The staging foundation is only partial: KMS, private RUNNABLE staging SQL, and an empty release-labelled namespace are observed, but the snapshot bucket, release workloads, default-deny egress policy, Cloud Run services, and Scheduler jobs are not.",
+      "required_action": "Complete the dependent staging bootstrap/IAC apply and provide redacted readback for the masked snapshot bucket, release-scoped bucket/database/tenant/IAM, namespace egress policy, Cloud Run services, paused Scheduler jobs, and ownership TTL before application deploy."
     },
     {
       "id": "B6",
@@ -159,7 +191,7 @@
   },
   "required_human_actions": [
     "Provision or confirm the staging foundation (KMS key, isolated Cloud SQL target, masked snapshot, staging namespace, IAM, and default-deny egress) and publish redacted readback.",
-    "Complete staging GitHub environment runtime variables, secret references, Supervisor lease verifier variables, and required approval authority.",
+    "Complete staging GitHub environment runtime variables, secret references, Supervisor lease verifier variables, register the Runtime Release workflow, and confirm required approval authority.",
     "Run one authoritative Runtime Release build/sign handoff for the exact candidate, then run the single Runtime Release workflow against staging and retain its run URL and receipt artifacts.",
     "Re-run migration, E2E, worker/scheduler, backup/restore, rollback, provider-off, and TTL checks from that observed environment."
   ],
@@ -172,8 +204,15 @@
     "gcloud sql instances list --project=odayplus-runtime-20260825",
     "gcloud scheduler jobs list --project=odayplus-runtime-20260825 --location=asia-east1",
     "gcloud container clusters list --project=odayplus-runtime-20260825",
+    "gcloud kms keys list --project=odayplus-runtime-20260825 --location=asia-east1 --keyring=oday-runtime",
+    "gcloud storage buckets describe gs://oday-staging-source-snapshots-odayplus-runtime-20260825",
+    "gcloud secrets list --project=odayplus-runtime-20260825",
+    "kubectl get namespace oday-staging-8c72b54 -o yaml",
+    "kubectl get all,networkpolicy,serviceaccount,role,rolebinding -n oday-staging-8c72b54 -o wide",
     "gh variable list --env staging",
     "gh secret list --env staging",
+    "gh workflow list --all",
+    "terraform -chdir=infra/terraform/modules/ephemeral_staging init -backend=false -input=false",
     "terraform -chdir=infra/terraform/modules/ephemeral_staging validate"
   ],
   "secret_values_redacted": true,
