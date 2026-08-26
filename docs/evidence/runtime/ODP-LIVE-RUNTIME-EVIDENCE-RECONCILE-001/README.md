@@ -2,7 +2,7 @@
 
 ## 結論
 
-以 2026-08-26T15:37:23Z–15:38:33Z 之間對 GCP 與 GitHub 的實際讀取結果核對，
+以 2026-08-26T15:42:02Z–15:43:30Z 之間對 GCP 與 GitHub 的實際讀取結果核對，
 **dev、staging、production 三個環境都沒有任何 ODay Plus 應用工作負載在執行**。
 兩個專案的 Cloud Run 服務清單只有 MLflow tracking server，Cloud Run jobs 與
 Cloud Scheduler jobs 都是空的。
@@ -33,17 +33,17 @@ Cloud Scheduler jobs 都是空的。
 
 | 項目 | 值 |
 |---|---|
-| 讀取視窗（UTC） | 2026-08-26T15:37:23Z – 2026-08-26T15:38:33Z |
+| 讀取視窗（UTC） | 2026-08-26T15:42:02Z – 2026-08-26T15:43:30Z |
 | gcloud 身分 | `deborah.lu@dev.cctech-support.com`（gcloud 580.0.0） |
 | dev / staging 專案 | `odayplus-runtime-20260825` |
 | production 專案 | `odayplus-prod-20260826` |
 | region | `asia-east1` |
 | 當時 `origin/dev` | `7f3744ce7413e4134b2c178060b1d919bee2bf0f` |
 | 當時 `origin/main` | `574dde52b56992b5088aedc74332e2e90fb40b44` |
-| 執行指令數 | 50，全部為 read-only 的 list / describe / view |
+| 執行指令數 | 52，全部為 read-only 的 list / describe / view |
 
 只讀取 Secret Manager 的**名稱**，沒有讀任何 secret 內容；沒有執行任何
-deploy、traffic switch、建立或刪除資源的指令。50 筆中只有 2 筆非零 exit，
+deploy、traffic switch、建立或刪除資源的指令。52 筆中只有 2 筆非零 exit，
 兩筆本身都是結論的一部分：
 
 - `EXIT=1`（transcript `S5`）：production 專案未啟用 Kubernetes Engine API。
@@ -186,7 +186,7 @@ python3 -c "import json;d=json.load(open('docs/evidence/runtime/ODP-LIVE-RUNTIME
 
 | 檔案 | SHA-256 |
 |---|---|
-| `live-readback-transcript.txt` | `sha256:70cdc7ad02dfb06945495aef59b82d36c62697d64d4e8f634ec8b85c80b23290` |
+| `live-readback-transcript.txt` | `sha256:d2ba796a39822bc003c73febdc6f5b209a9ea42658f9234e11789e27b95e7724` |
 
 `live-runtime-reconciliation-audit.json` 的 `readback_transcript.sha256`
 必須等於上表的值；不相等就代表 transcript 被改過，該 audit 不可採信。

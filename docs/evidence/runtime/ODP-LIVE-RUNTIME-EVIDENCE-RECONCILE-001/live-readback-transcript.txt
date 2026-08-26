@@ -1,5 +1,5 @@
 ODP-LIVE-RUNTIME-EVIDENCE-RECONCILE-001 live readback transcript
-collector_start_utc=2026-08-26T15:37:23Z
+collector_start_utc=2026-08-26T15:42:02Z
 dev_staging_project=odayplus-runtime-20260825
 production_project=odayplus-prod-20260826
 region=asia-east1
@@ -13,7 +13,7 @@ S0 Toolchain and identity
 ===============================================================
 
 --- gcloud version
-START_UTC=2026-08-26T15:37:23Z
+START_UTC=2026-08-26T15:42:02Z
 CMD=gcloud version
 Google Cloud SDK 580.0.0
 alpha 2026.08.07
@@ -26,18 +26,18 @@ gke-gcloud-auth-plugin 0.5.18
 gsutil 5.37
 kubectl 1.35.6
 preview 2026.08.07
-END_UTC=2026-08-26T15:37:24Z
+END_UTC=2026-08-26T15:42:03Z
 EXIT=0
 
 --- active gcloud account
-START_UTC=2026-08-26T15:37:24Z
+START_UTC=2026-08-26T15:42:03Z
 CMD=gcloud config get-value account
 deborah.lu@dev.cctech-support.com
-END_UTC=2026-08-26T15:37:25Z
+END_UTC=2026-08-26T15:42:04Z
 EXIT=0
 
 --- gh auth status
-START_UTC=2026-08-26T15:37:25Z
+START_UTC=2026-08-26T15:42:04Z
 CMD=gh auth status
 github.com
   ✓ Logged in to github.com account ajoe734 (/home/lupin/.config/gh/hosts.yml)
@@ -45,7 +45,7 @@ github.com
   - Git operations protocol: https
   - Token: gho_************************************
   - Token scopes: 'gist', 'read:org', 'repo', 'workflow'
-END_UTC=2026-08-26T15:37:26Z
+END_UTC=2026-08-26T15:42:04Z
 EXIT=0
 
 ===============================================================
@@ -53,45 +53,45 @@ S1 Repository head under reconciliation
 ===============================================================
 
 --- current origin/dev
-START_UTC=2026-08-26T15:37:26Z
+START_UTC=2026-08-26T15:42:04Z
 CMD=git rev-parse origin/dev
 7f3744ce7413e4134b2c178060b1d919bee2bf0f
-END_UTC=2026-08-26T15:37:26Z
+END_UTC=2026-08-26T15:42:05Z
 EXIT=0
 
 --- current origin/main
-START_UTC=2026-08-26T15:37:26Z
+START_UTC=2026-08-26T15:42:05Z
 CMD=git rev-parse origin/main
 574dde52b56992b5088aedc74332e2e90fb40b44
-END_UTC=2026-08-26T15:37:26Z
+END_UTC=2026-08-26T15:42:05Z
 EXIT=0
 
 --- commits from historical dev-rollout candidate e496be62 to origin/dev
-START_UTC=2026-08-26T15:37:26Z
+START_UTC=2026-08-26T15:42:05Z
 CMD=git rev-list --count e496be62c47c45d758681b8a4d3abfae16f1c96d..origin/dev
 2145
-END_UTC=2026-08-26T15:37:26Z
+END_UTC=2026-08-26T15:42:05Z
 EXIT=0
 
 --- commits from release manifest candidate ace4265b to origin/dev
-START_UTC=2026-08-26T15:37:26Z
+START_UTC=2026-08-26T15:42:05Z
 CMD=git rev-list --count ace4265b5190c00c72846b637fc04850bacec77e..origin/dev
 9
-END_UTC=2026-08-26T15:37:26Z
+END_UTC=2026-08-26T15:42:05Z
 EXIT=0
 
 --- commits from staging build candidate 8c72b54a to origin/dev
-START_UTC=2026-08-26T15:37:26Z
+START_UTC=2026-08-26T15:42:05Z
 CMD=git rev-list --count 8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3..origin/dev
 36
-END_UTC=2026-08-26T15:37:26Z
+END_UTC=2026-08-26T15:42:05Z
 EXIT=0
 
 --- commits from last successful Deploy Dev candidate 2eeb11f2 to origin/dev
-START_UTC=2026-08-26T15:37:26Z
+START_UTC=2026-08-26T15:42:05Z
 CMD=git rev-list --count 2eeb11f29551954adc9989614c852027b68a118e..origin/dev
 2991
-END_UTC=2026-08-26T15:37:26Z
+END_UTC=2026-08-26T15:42:05Z
 EXIT=0
 
 ===============================================================
@@ -99,33 +99,33 @@ S2 dev and staging project: Cloud Run services, jobs, scheduler
 ===============================================================
 
 --- Cloud Run services, all locations
-START_UTC=2026-08-26T15:37:26Z
+START_UTC=2026-08-26T15:42:05Z
 CMD=gcloud run services list --project odayplus-runtime-20260825 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\,status.conditions\[0\].status\,spec.template.spec.containers\[0\].image\)
 oday-mlflow	asia-east1	True	asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow@sha256:da3cbc2b0625f3a398901db30fd1e45d416cbcd2d9981f6072234a673c65fbf9
 oday-staging-mlflow	asia-east1	True	asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6
-END_UTC=2026-08-26T15:37:28Z
+END_UTC=2026-08-26T15:42:07Z
 EXIT=0
 
 --- Cloud Run services, raw count
-START_UTC=2026-08-26T15:37:28Z
+START_UTC=2026-08-26T15:42:07Z
 CMD=gcloud run services list --project odayplus-runtime-20260825 --format=value\(metadata.name\)
 oday-mlflow
 oday-staging-mlflow
-END_UTC=2026-08-26T15:37:30Z
+END_UTC=2026-08-26T15:42:10Z
 EXIT=0
 
 --- Cloud Run jobs, all locations
-START_UTC=2026-08-26T15:37:30Z
+START_UTC=2026-08-26T15:42:10Z
 CMD=gcloud run jobs list --project odayplus-runtime-20260825 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\)
 
-END_UTC=2026-08-26T15:37:32Z
+END_UTC=2026-08-26T15:42:12Z
 EXIT=0
 
 --- Cloud Scheduler jobs
-START_UTC=2026-08-26T15:37:32Z
+START_UTC=2026-08-26T15:42:12Z
 CMD=gcloud scheduler jobs list --project odayplus-runtime-20260825 --location asia-east1 --format=value\(name\,schedule\,state\)
 
-END_UTC=2026-08-26T15:37:33Z
+END_UTC=2026-08-26T15:42:14Z
 EXIT=0
 
 ===============================================================
@@ -133,24 +133,24 @@ S3 dev and staging project: Cloud SQL, Artifact Registry, secrets, buckets, IAM
 ===============================================================
 
 --- Cloud SQL instances
-START_UTC=2026-08-26T15:37:33Z
+START_UTC=2026-08-26T15:42:14Z
 CMD=gcloud sql instances list --project odayplus-runtime-20260825 --format=value\(name\,databaseVersion\,region\,state\)
 oday-dev-sql	POSTGRES_16	asia-east1	RUNNABLE
 oday-staging-sql	POSTGRES_16	asia-east1	RUNNABLE
-END_UTC=2026-08-26T15:37:34Z
+END_UTC=2026-08-26T15:42:15Z
 EXIT=0
 
 --- Artifact Registry repositories
-START_UTC=2026-08-26T15:37:34Z
+START_UTC=2026-08-26T15:42:15Z
 CMD=gcloud artifacts repositories list --project odayplus-runtime-20260825 --format=value\(name\,format\,createTime\)
 Listing items under project odayplus-runtime-20260825, across all locations.
 
 oday-plus-dev	DOCKER	2026-08-25T00:35:33
-END_UTC=2026-08-26T15:37:40Z
+END_UTC=2026-08-26T15:42:23Z
 EXIT=0
 
 --- Artifact Registry images with tags
-START_UTC=2026-08-26T15:37:40Z
+START_UTC=2026-08-26T15:42:23Z
 CMD=gcloud artifacts docker images list asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev --include-tags --format=value\(package\,version\,tags\)
 Listing items under project odayplus-runtime-20260825, location asia-east1, repository oday-plus-dev.
 
@@ -226,11 +226,11 @@ asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-web	s
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:0b25b929db1724aecba1649d31493ec303bda57541f49d74a31c44606068829a
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434	release-ace4265b5190c00c72846b637fc04850bacec77e
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:dc2932c6b7bfccbbb217b730dd91ddfcbb3fd6f48b260b738301c5f41f628219
-END_UTC=2026-08-26T15:37:42Z
+END_UTC=2026-08-26T15:42:26Z
 EXIT=0
 
 --- Secret Manager secret names
-START_UTC=2026-08-26T15:37:42Z
+START_UTC=2026-08-26T15:42:26Z
 CMD=gcloud secrets list --project odayplus-runtime-20260825 --format=value\(name\)
 oday-plus-dev-api-database-url-pg16
 oday-plus-dev-auth-principal-map
@@ -240,11 +240,11 @@ oday-staging-auth-principal-map
 oday-staging-database-url
 oday-staging-mlflow-backend-uri
 oday-staging-web-session-secret
-END_UTC=2026-08-26T15:37:43Z
+END_UTC=2026-08-26T15:42:28Z
 EXIT=0
 
 --- Cloud Storage buckets
-START_UTC=2026-08-26T15:37:43Z
+START_UTC=2026-08-26T15:42:28Z
 CMD=gcloud storage buckets list --project odayplus-runtime-20260825 --format=value\(name\)
 oday-dev-source-snapshots-odayplus-runtime-20260825
 oday-staging-source-snapshots-odayplus-runtime-20260825
@@ -252,11 +252,11 @@ odayplus-runtime-20260825-emgi
 odayplus-runtime-20260825-model-artifacts
 odayplus-runtime-20260825-release-leases
 odayplus-runtime-20260825-staging-mlflow-artifacts
-END_UTC=2026-08-26T15:37:45Z
+END_UTC=2026-08-26T15:42:30Z
 EXIT=0
 
 --- service accounts
-START_UTC=2026-08-26T15:37:45Z
+START_UTC=2026-08-26T15:42:30Z
 CMD=gcloud iam service-accounts list --project odayplus-runtime-20260825 --format=value\(email\)
 oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
 767864276141-compute@developer.gserviceaccount.com
@@ -268,7 +268,7 @@ cd-gke-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com
 oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
 gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
 oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com
-END_UTC=2026-08-26T15:37:47Z
+END_UTC=2026-08-26T15:42:33Z
 EXIT=0
 
 ===============================================================
@@ -276,51 +276,51 @@ S4 production project
 ===============================================================
 
 --- project metadata
-START_UTC=2026-08-26T15:37:47Z
+START_UTC=2026-08-26T15:42:33Z
 CMD=gcloud projects describe odayplus-prod-20260826 --format=value\(projectId\,projectNumber\,createTime\,lifecycleState\)
 odayplus-prod-20260826	365886461656	2026-08-26T00:45:38.960Z	ACTIVE
-END_UTC=2026-08-26T15:37:49Z
+END_UTC=2026-08-26T15:42:34Z
 EXIT=0
 
 --- Cloud Run services, all locations
-START_UTC=2026-08-26T15:37:49Z
+START_UTC=2026-08-26T15:42:34Z
 CMD=gcloud run services list --project odayplus-prod-20260826 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\,status.conditions\[0\].status\,spec.template.spec.containers\[0\].image\)
 oday-prod-mlflow	asia-east1	True	asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6
-END_UTC=2026-08-26T15:37:51Z
+END_UTC=2026-08-26T15:42:37Z
 EXIT=0
 
 --- Cloud Run jobs, all locations
-START_UTC=2026-08-26T15:37:51Z
+START_UTC=2026-08-26T15:42:37Z
 CMD=gcloud run jobs list --project odayplus-prod-20260826 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\)
 
-END_UTC=2026-08-26T15:37:53Z
+END_UTC=2026-08-26T15:42:39Z
 EXIT=0
 
 --- Cloud Scheduler jobs
-START_UTC=2026-08-26T15:37:53Z
+START_UTC=2026-08-26T15:42:39Z
 CMD=gcloud scheduler jobs list --project odayplus-prod-20260826 --location asia-east1 --format=value\(name\,schedule\,state\)
 
-END_UTC=2026-08-26T15:37:54Z
+END_UTC=2026-08-26T15:42:41Z
 EXIT=0
 
 --- Cloud SQL instances
-START_UTC=2026-08-26T15:37:54Z
+START_UTC=2026-08-26T15:42:41Z
 CMD=gcloud sql instances list --project odayplus-prod-20260826 --format=value\(name\,databaseVersion\,region\,state\)
 oday-prod-sql	POSTGRES_16	asia-east1	RUNNABLE
-END_UTC=2026-08-26T15:37:55Z
+END_UTC=2026-08-26T15:42:43Z
 EXIT=0
 
 --- Artifact Registry repositories
-START_UTC=2026-08-26T15:37:55Z
+START_UTC=2026-08-26T15:42:43Z
 CMD=gcloud artifacts repositories list --project odayplus-prod-20260826 --format=value\(name\,format\,createTime\)
 Listing items under project odayplus-prod-20260826, across all locations.
 
 oday-plus	DOCKER	2026-08-26T00:47:44
-END_UTC=2026-08-26T15:38:00Z
+END_UTC=2026-08-26T15:42:49Z
 EXIT=0
 
 --- Artifact Registry images with tags
-START_UTC=2026-08-26T15:38:00Z
+START_UTC=2026-08-26T15:42:49Z
 CMD=gcloud artifacts docker images list asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus --include-tags --format=value\(package\,version\,tags\)
 Listing items under project odayplus-prod-20260826, location asia-east1, repository oday-plus.
 
@@ -342,45 +342,45 @@ asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-web	sha256:c292a
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:886e6b184dcfcaee7b24df1c0f0bf1b68f9eae399dbebca6527773e7e8591c6e	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:bd766fe2f66058a2fcf0687abab6a4a4699d73c1532dd3f97f082142a9cbf923
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:dfd7961547fd20efa807d8433e75ba59d510b7b02aa8dba37a0dcb0f17074a86
-END_UTC=2026-08-26T15:38:02Z
+END_UTC=2026-08-26T15:42:52Z
 EXIT=0
 
 --- Secret Manager secret names
-START_UTC=2026-08-26T15:38:02Z
+START_UTC=2026-08-26T15:42:52Z
 CMD=gcloud secrets list --project odayplus-prod-20260826 --format=value\(name\)
 oday-prod-auth-principal-map
 oday-prod-database-url
 oday-prod-mlflow-backend-uri
 oday-prod-web-session-secret
-END_UTC=2026-08-26T15:38:03Z
+END_UTC=2026-08-26T15:42:53Z
 EXIT=0
 
 --- service accounts
-START_UTC=2026-08-26T15:38:03Z
+START_UTC=2026-08-26T15:42:53Z
 CMD=gcloud iam service-accounts list --project odayplus-prod-20260826 --format=value\(email\)
 oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com
 365886461656-compute@developer.gserviceaccount.com
 github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com
 oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com
 oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com
-END_UTC=2026-08-26T15:38:05Z
+END_UTC=2026-08-26T15:42:56Z
 EXIT=0
 
 --- workload identity pools
-START_UTC=2026-08-26T15:38:05Z
+START_UTC=2026-08-26T15:42:56Z
 CMD=gcloud iam workload-identity-pools list --project odayplus-prod-20260826 --location global --format=value\(name\,state\)
 projects/365886461656/locations/global/workloadIdentityPools/github-actions	ACTIVE
-END_UTC=2026-08-26T15:38:08Z
+END_UTC=2026-08-26T15:42:59Z
 EXIT=0
 
 --- Cloud Storage buckets
-START_UTC=2026-08-26T15:38:08Z
+START_UTC=2026-08-26T15:42:59Z
 CMD=gcloud storage buckets list --project odayplus-prod-20260826 --format=value\(name\)
 odayplus-prod-20260826-artifacts
 odayplus-prod-20260826-mlflow-artifacts
 odayplus-prod-20260826-release-leases
 odayplus-prod-20260826-source-snapshots
-END_UTC=2026-08-26T15:38:10Z
+END_UTC=2026-08-26T15:43:01Z
 EXIT=0
 
 ===============================================================
@@ -388,21 +388,21 @@ S5 GKE data-platform surface
 ===============================================================
 
 --- GKE clusters in dev and staging project
-START_UTC=2026-08-26T15:38:10Z
+START_UTC=2026-08-26T15:43:01Z
 CMD=gcloud container clusters list --project odayplus-runtime-20260825 --format=value\(name\,location\,status\,currentNodeCount\)
 oday-emgi-gke	asia-east1-a	RUNNING	1
-END_UTC=2026-08-26T15:38:13Z
+END_UTC=2026-08-26T15:43:04Z
 EXIT=0
 
 --- GKE clusters in production project
-START_UTC=2026-08-26T15:38:13Z
+START_UTC=2026-08-26T15:43:04Z
 CMD=gcloud container clusters list --project odayplus-prod-20260826 --format=value\(name\,location\,status\)
 ERROR: (gcloud.container.clusters.list) ResponseError: code=403, message=Kubernetes Engine API has not been used in project odayplus-prod-20260826 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/container.googleapis.com/overview?project=odayplus-prod-20260826 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry. This command is authenticated as deborah.lu@dev.cctech-support.com which is the active account specified by the [core/account] property.
-END_UTC=2026-08-26T15:38:14Z
+END_UTC=2026-08-26T15:43:06Z
 EXIT=1
 
 --- namespaces
-START_UTC=2026-08-26T15:38:14Z
+START_UTC=2026-08-26T15:43:06Z
 CMD=kubectl get ns
 NAME                                STATUS   AGE
 default                             Active   28h
@@ -418,11 +418,11 @@ kube-system                         Active   28h
 oday-emgi                           Active   28h
 oday-emgi-verify                    Active   28h
 oday-staging-8c72b54                Active   14h
-END_UTC=2026-08-26T15:38:14Z
+END_UTC=2026-08-26T15:43:08Z
 EXIT=0
 
 --- deployments, jobs and cronjobs across all namespaces
-START_UTC=2026-08-26T15:38:14Z
+START_UTC=2026-08-26T15:43:08Z
 CMD=kubectl get deploy\,job\,cronjob -A
 NAMESPACE     NAME                                                 READY   UP-TO-DATE   AVAILABLE   AGE
 gmp-system    deployment.apps/gmp-operator                         1/1     1            1           28h
@@ -440,14 +440,14 @@ kube-system   deployment.apps/l7-default-backend                   1/1     1    
 kube-system   deployment.apps/metrics-server-v1.35.1               1/1     1            1           28h
 oday-emgi     deployment.apps/oday-emgi-daemon                     1/1     1            1           26h
 oday-emgi     deployment.apps/oday-emgi-webserver                  1/1     1            1           26h
-END_UTC=2026-08-26T15:38:15Z
+END_UTC=2026-08-26T15:43:08Z
 EXIT=0
 
 --- all resources in ephemeral staging namespace oday-staging-8c72b54
-START_UTC=2026-08-26T15:38:15Z
+START_UTC=2026-08-26T15:43:08Z
 CMD=kubectl get all -n oday-staging-8c72b54
 No resources found in oday-staging-8c72b54 namespace.
-END_UTC=2026-08-26T15:38:15Z
+END_UTC=2026-08-26T15:43:08Z
 EXIT=0
 
 ===============================================================
@@ -455,7 +455,7 @@ S6 GitHub Runtime Release workflow history
 ===============================================================
 
 --- workflow inventory
-START_UTC=2026-08-26T15:38:16Z
+START_UTC=2026-08-26T15:43:08Z
 CMD=gh workflow list --all
 Agent boundary inventory refresh	active	334992973
 Agent EMGI multi-repo routing patch	active	334989588
@@ -470,11 +470,11 @@ External Proof Follow-up	active	311232629
 Merge queue review gate	active	328600036
 Promote dev to main	active	302984646
 Tooling scope review gate	active	334274367
-END_UTC=2026-08-26T15:38:16Z
+END_UTC=2026-08-26T15:43:09Z
 EXIT=0
 
 --- Deploy Dev, 20 most recent runs
-START_UTC=2026-08-26T15:38:16Z
+START_UTC=2026-08-26T15:43:09Z
 CMD=gh run list --workflow deploy-dev.yml --limit 20 --json databaseId\,createdAt\,event\,status\,conclusion\,headSha --jq .\[\]\|\[.databaseId\,.createdAt\,.event\,.status\,.conclusion\,.headSha\]\|@tsv
 32359736962	2026-08-20T10:36:14Z	push	completed	failure	208262cf372af0527d2a27adca8e1810f9bf7ccb
 32359586288	2026-08-20T10:34:23Z	push	completed	cancelled	55fe2275be9442ada3bfe1012c74efca1b8b038d
@@ -496,62 +496,84 @@ CMD=gh run list --workflow deploy-dev.yml --limit 20 --json databaseId\,createdA
 32222295912	2026-08-19T06:10:25Z	push	completed	cancelled	bb3e9b618104c27d85401977516c5b3cc5b1a7c7
 32222236088	2026-08-19T06:09:33Z	push	completed	cancelled	134717e955bf6d45204d09133bd0dda289018533
 32210130570	2026-08-19T02:52:51Z	push	completed	failure	cfd38e30c0266994be8789110c29fb4af17ad769
-END_UTC=2026-08-26T15:38:17Z
+END_UTC=2026-08-26T15:43:11Z
 EXIT=0
 
 --- Deploy Dev, conclusion histogram over the 200 most recent runs
-START_UTC=2026-08-26T15:38:17Z
+START_UTC=2026-08-26T15:43:11Z
 CMD=gh run list --workflow deploy-dev.yml --limit 200 --json conclusion --jq \[.\[\].conclusion\]\|group_by\(.\)\|map\(\{conclusion:.\[0\]\,count:length\}\)
 [{"conclusion":"cancelled","count":88},{"conclusion":"failure","count":112}]
-END_UTC=2026-08-26T15:38:24Z
+END_UTC=2026-08-26T15:43:18Z
 EXIT=0
 
---- Deploy Dev, most recent successful run
-START_UTC=2026-08-26T15:38:24Z
+--- Deploy Dev, five most recent successful runs
+START_UTC=2026-08-26T15:43:18Z
+CMD=gh run list --workflow deploy-dev.yml --status success --limit 5 --json databaseId\,createdAt\,headSha\,conclusion --jq .\[\]\|\[.databaseId\,.createdAt\,.headSha\,.conclusion\]\|@tsv
+29427386990	2026-07-15T15:16:54Z	2eeb11f29551954adc9989614c852027b68a118e	success
+29422457750	2026-07-15T14:11:33Z	c64d7ce53ec4139b2cb61666da4efcdc27cb1b60	success
+29418097074	2026-07-15T13:10:28Z	da92ed96c01769c88142ddb31ce86d5a7ae7e75d	success
+29414196581	2026-07-15T12:09:49Z	a6b939d9ce347e76735366491fdcbf7ec08bd0d2	success
+29411250366	2026-07-15T11:19:54Z	034ad3a5a30579eb6c6f9eea578e2c76f1845114	success
+END_UTC=2026-08-26T15:43:19Z
+EXIT=0
+
+--- Deploy/Verify Staging, five most recent successful runs
+START_UTC=2026-08-26T15:43:19Z
+CMD=gh run list --workflow deploy-staging.yml --status success --limit 5 --json databaseId\,createdAt\,headSha\,conclusion --jq .\[\]\|\[.databaseId\,.createdAt\,.headSha\,.conclusion\]\|@tsv
+28325038545	2026-06-28T14:15:45Z	f4545810c9aa5b7908ef6d2674c27235980e0a00	success
+28315303034	2026-06-28T07:35:37Z	0d586739c5bba9914b086a653895249852b06cb1	success
+28311612289	2026-06-28T04:42:26Z	f1f4da7fc10a3e2e7ccbdf768b23a89e2ee25c50	success
+28311313552	2026-06-28T04:28:06Z	86d03fa3964a364167201ae7e905451f7cbed7e6	success
+28311091353	2026-06-28T04:17:24Z	3dd4b01dfc7457b0a87c530747f3b5026e8d6002	success
+END_UTC=2026-08-26T15:43:20Z
+EXIT=0
+
+--- Deploy Dev, most recent successful run, full head SHA
+START_UTC=2026-08-26T15:43:20Z
 CMD=gh run view 29427386990 --json databaseId\,headSha\,createdAt\,conclusion --jq \[.databaseId\,.headSha\,.createdAt\,.conclusion\]\|@tsv
 29427386990	2eeb11f29551954adc9989614c852027b68a118e	2026-07-15T15:16:54Z	success
-END_UTC=2026-08-26T15:38:25Z
+END_UTC=2026-08-26T15:43:21Z
 EXIT=0
 
---- Deploy/Verify Staging, most recent successful run
-START_UTC=2026-08-26T15:38:25Z
+--- Deploy/Verify Staging, most recent successful run, full head SHA
+START_UTC=2026-08-26T15:43:21Z
 CMD=gh run view 28325038545 --json databaseId\,headSha\,createdAt\,conclusion --jq \[.databaseId\,.headSha\,.createdAt\,.conclusion\]\|@tsv
 28325038545	f4545810c9aa5b7908ef6d2674c27235980e0a00	2026-06-28T14:15:45Z	success
-END_UTC=2026-08-26T15:38:26Z
+END_UTC=2026-08-26T15:43:22Z
 EXIT=0
 
 --- all runs for historical dev-rollout candidate e496be62
-START_UTC=2026-08-26T15:38:26Z
+START_UTC=2026-08-26T15:43:22Z
 CMD=gh run list --commit e496be62c47c45d758681b8a4d3abfae16f1c96d --limit 20 --json databaseId\,workflowName\,createdAt\,status\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.status\,.conclusion\]\|@tsv
 30461269657	CI	2026-07-29T14:31:13Z	completed	success
 30459597503	CI	2026-07-29T14:10:59Z	completed	success
 30459596361	Deploy Dev	2026-07-29T14:10:58Z	completed	failure
-END_UTC=2026-08-26T15:38:27Z
+END_UTC=2026-08-26T15:43:23Z
 EXIT=0
 
 --- job-level result of the only Deploy Dev run for e496be62
-START_UTC=2026-08-26T15:38:27Z
+START_UTC=2026-08-26T15:43:23Z
 CMD=gh run view 30459596361 --json databaseId\,workflowName\,headSha\,conclusion\,createdAt\,updatedAt\,url\,jobs --jq \{id:.databaseId\,workflow:.workflowName\,sha:.headSha\,conclusion:.conclusion\,created:.createdAt\,updated:.updatedAt\,url:.url\,jobs:\[.jobs\[\]\|\{name:.name\,conclusion:.conclusion\}\]\}
 {"conclusion":"failure","created":"2026-07-29T14:10:58Z","id":30459596361,"jobs":[{"conclusion":"success","name":"e2e-operational-evidence"},{"conclusion":"failure","name":"deploy"}],"sha":"e496be62c47c45d758681b8a4d3abfae16f1c96d","updated":"2026-07-29T14:28:42Z","url":"https://github.com/alfloop-dev/odayplus/actions/runs/30459596361","workflow":"Deploy Dev"}
-END_UTC=2026-08-26T15:38:28Z
+END_UTC=2026-08-26T15:43:24Z
 EXIT=0
 
 --- all runs for release manifest candidate ace4265b
-START_UTC=2026-08-26T15:38:28Z
+START_UTC=2026-08-26T15:43:24Z
 CMD=gh run list --commit ace4265b5190c00c72846b637fc04850bacec77e --limit 20 --json databaseId\,workflowName\,createdAt\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.conclusion\]\|@tsv
 32955847448	CI	2026-08-26T09:58:42Z	success
 32954507422	Merge queue review gate	2026-08-26T09:43:22Z	success
 32954507360	CI	2026-08-26T09:43:22Z	success
-END_UTC=2026-08-26T15:38:29Z
+END_UTC=2026-08-26T15:43:25Z
 EXIT=0
 
 --- all runs for current origin/dev 7f3744ce
-START_UTC=2026-08-26T15:38:29Z
+START_UTC=2026-08-26T15:43:25Z
 CMD=gh run list --commit 7f3744ce7413e4134b2c178060b1d919bee2bf0f --limit 20 --json databaseId\,workflowName\,createdAt\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.conclusion\]\|@tsv
 32983717012	CI	2026-08-26T15:00:07Z	success
 32983311527	Merge queue review gate	2026-08-26T14:56:09Z	success
 32983311594	CI	2026-08-26T14:56:09Z	success
-END_UTC=2026-08-26T15:38:30Z
+END_UTC=2026-08-26T15:43:26Z
 EXIT=0
 
 ===============================================================
@@ -559,16 +581,16 @@ S7 GitHub deployment environments
 ===============================================================
 
 --- environment protection rules
-START_UTC=2026-08-26T15:38:30Z
+START_UTC=2026-08-26T15:43:26Z
 CMD=gh api repos/alfloop-dev/odayplus/environments --jq .environments\[\]\|\[.name\,\(\[.protection_rules\[\]\?.type\]\|join\(\"\,\"\)\)\,.created_at\]\|@tsv
 dev		2026-06-26T22:58:40Z
 production	required_reviewers	2026-08-25T15:41:19Z
 staging	required_reviewers	2026-06-26T22:58:23Z
-END_UTC=2026-08-26T15:38:31Z
+END_UTC=2026-08-26T15:43:27Z
 EXIT=0
 
 --- dev environment variables
-START_UTC=2026-08-26T15:38:31Z
+START_UTC=2026-08-26T15:43:27Z
 CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv
 GCP_AR_REPO	oday-plus-dev
 GCP_CLOUD_SQL_INSTANCE	odayplus-runtime-20260825:asia-east1:oday-dev-sql
@@ -610,11 +632,11 @@ ODP_TENANT_ID	a11ce505-70bc-56d9-8564-ad22efa23c9e
 ODP_WEB_OIDC_ISSUER	https://accounts.google.com
 ODP_WEB_SESSION_SECRET_SECRET	oday-plus-dev-web-session-secret:latest
 ODP_WORKER_CRON	*/5 * * * *
-END_UTC=2026-08-26T15:38:31Z
+END_UTC=2026-08-26T15:43:28Z
 EXIT=0
 
 --- staging environment variables
-START_UTC=2026-08-26T15:38:31Z
+START_UTC=2026-08-26T15:43:28Z
 CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv
 GCP_AR_REPO	oday-plus-dev
 GCP_CLOUD_SQL_INSTANCE	odayplus-runtime-20260825:asia-east1:oday-staging-sql
@@ -658,11 +680,11 @@ ODP_TENANT_ID	a11ce505-70bc-56d9-8564-ad22efa23c9e
 ODP_WEB_OIDC_ISSUER	https://accounts.google.com
 ODP_WEB_SESSION_SECRET_SECRET	oday-staging-web-session-secret:1
 ODP_WORKER_CRON	*/5 * * * *
-END_UTC=2026-08-26T15:38:32Z
+END_UTC=2026-08-26T15:43:29Z
 EXIT=0
 
 --- production environment variables
-START_UTC=2026-08-26T15:38:32Z
+START_UTC=2026-08-26T15:43:29Z
 CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv
 GCP_AR_REPO	oday-plus
 GCP_CLOUD_SQL_INSTANCE	odayplus-prod-20260826:asia-east1:oday-prod-sql
@@ -702,7 +724,7 @@ ODP_TENANT_ID	09eff6f8-2a1f-48e5-ad17-d822258804f2
 ODP_WEB_OIDC_ISSUER	https://accounts.google.com
 ODP_WEB_SESSION_SECRET_SECRET	oday-prod-web-session-secret:1
 ODP_WORKER_CRON	*/5 * * * *
-END_UTC=2026-08-26T15:38:33Z
+END_UTC=2026-08-26T15:43:30Z
 EXIT=0
 
 ===============================================================
@@ -710,17 +732,17 @@ S8 Report paths referenced by the historical readback receipt
 ===============================================================
 
 --- working tree path referenced by dev-integration-readback.json
-START_UTC=2026-08-26T15:38:33Z
+START_UTC=2026-08-26T15:43:30Z
 CMD=ls -la .odp_data/deployment
 ls: cannot access '.odp_data/deployment': No such file or directory
-END_UTC=2026-08-26T15:38:33Z
+END_UTC=2026-08-26T15:43:30Z
 EXIT=2
 
 --- files tracked under .odp_data in origin/dev
-START_UTC=2026-08-26T15:38:33Z
+START_UTC=2026-08-26T15:43:30Z
 CMD=git ls-tree -r --name-only origin/dev -- .odp_data
 
-END_UTC=2026-08-26T15:38:33Z
+END_UTC=2026-08-26T15:43:30Z
 EXIT=0
 
-collector_end_utc=2026-08-26T15:38:33Z
+collector_end_utc=2026-08-26T15:43:30Z

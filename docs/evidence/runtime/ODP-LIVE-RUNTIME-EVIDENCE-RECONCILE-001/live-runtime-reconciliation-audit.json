@@ -5,11 +5,11 @@
   "release_status": "blocked",
   "deployment_success_claimed": false,
   "historical_receipts_modified": false,
-  "generated_at": "2026-08-26T15:38:33Z",
+  "generated_at": "2026-08-26T15:43:30Z",
   "generated_by": "Claude2",
   "readback_window_utc": {
-    "start_utc": "2026-08-26T15:37:23Z",
-    "end_utc": "2026-08-26T15:38:33Z"
+    "start_utc": "2026-08-26T15:42:02Z",
+    "end_utc": "2026-08-26T15:43:30Z"
   },
   "readback_identity": {
     "gcloud_account": "deborah.lu@dev.cctech-support.com",
@@ -36,8 +36,8 @@
   },
   "readback_transcript": {
     "path": "docs/evidence/runtime/ODP-LIVE-RUNTIME-EVIDENCE-RECONCILE-001/live-readback-transcript.txt",
-    "sha256": "sha256:70cdc7ad02dfb06945495aef59b82d36c62697d64d4e8f634ec8b85c80b23290",
-    "commands_executed": 50,
+    "sha256": "sha256:d2ba796a39822bc003c73febdc6f5b209a9ea42658f9234e11789e27b95e7724",
+    "commands_executed": 52,
     "section_index": {
       "S0": {
         "line": 12,
@@ -68,11 +68,11 @@
         "title": "GitHub Runtime Release workflow history"
       },
       "S7": {
-        "line": 558,
+        "line": 580,
         "title": "GitHub deployment environments"
       },
       "S8": {
-        "line": 709,
+        "line": 731,
         "title": "Report paths referenced by the historical readback receipt"
       }
     },
