@@ -1,8 +1,40 @@
 name: Runtime Release
 
+# One workflow, two explicit phases.
+#
+# ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: `admission` used to run *before*
+# `build`. The Supervisor lease admission verifies against `manifest_digest`,
+# and the manifest names the component image digests, the SBOM, and the Cosign
+# signatures -- none of which exist until a build has published them. So the
+# release could not build without a lease, and could not obtain a lease without
+# having built: `docs/evidence/gates/RELEASE_MANIFEST.json` sat at `blocked`
+# with exactly those three P0 blockers recorded.
+#
+# The fix is an ordering fix, not a second pipeline:
+#
+#   build   -> publishes the immutable artifact handoff for an exact release
+#              SHA. Needs OIDC/WIF and nothing else; it must not require or
+#              accept a lease, because it is what produces the evidence a lease
+#              is issued against.
+#   deploy  -> takes that handoff back as input, proves the Supervisor lease
+#              authorises this exact manifest/environment/action, and deploys
+#              by digest. It never builds.
+#
+# The build phase deliberately carries no `environment:` binding. GitHub
+# environment approval and the Supervisor lease are both *deploy* authority; a
+# build that had to consume either could never produce the evidence they are
+# checked against. What constrains the build instead is that it may only publish
+# immutable, signed, SHA-labelled artifacts, and refuses to move an existing
+# release tag.
 on:
   workflow_dispatch:
     inputs:
+      phase:
+        description: "Release phase: build the artifact handoff, or deploy one already built"
+        required: true
+        type: choice
+        options: [build, deploy]
+        default: build
       environment:
         description: "Release environment"
         required: true
@@ -17,32 +49,36 @@ on:
         required: true
         type: string
       release_lease:
-        description: "Base64-encoded signed Supervisor release lease document (JSON)"
-        required: true
+        description: "Base64-encoded signed Supervisor release lease (deploy phase only; empty to build)"
+        required: false
+        default: ""
         type: string
       api_image:
-        description: "Immutable API image reference from the first build (repo/service@sha256:...)"
+        description: "Immutable API image reference from the build phase (repo/service@sha256:...)"
         required: false
         default: ""
         type: string
       web_image:
-        description: "Immutable Web image reference from the first build (repo/service@sha256:...)"
+        description: "Immutable Web image reference from the build phase (repo/service@sha256:...)"
         required: false
         default: ""
         type: string
       worker_image:
-        description: "Immutable Worker image reference from the first build (repo/service@sha256:...)"
+        description: "Immutable Worker image reference from the build phase (repo/service@sha256:...)"
         required: false
         default: ""
         type: string
       scheduler_image:
-        description: "Immutable Scheduler image reference from the first build (repo/service@sha256:...)"
+        description: "Immutable Scheduler image reference from the build phase (repo/service@sha256:...)"
         required: false
         default: ""
         type: string
 
+# Deploys of one environment stay mutually exclusive. The phase is part of the
+# key so a long build does not hold the deploy lane for an already-built
+# release; a build cannot mutate a running environment, only publish artifacts.
 concurrency:
-  group: runtime-release-${{ inputs.environment }}
+  group: runtime-release-${{ inputs.environment }}-${{ inputs.phase }}
   cancel-in-progress: false
 
 permissions:
@@ -51,20 +87,19 @@ permissions:
   id-token: write
 
 jobs:
-  admission:
+  # Fail closed before anything is built, authenticated, or deployed. This is
+  # the one place that states what each phase requires, and it produces a
+  # zh-TW receipt for the refusal so a blocked release says why in the language
+  # the release evidence is written in.
+  release_phase:
+    name: Validate release phase inputs
     runs-on: ubuntu-latest
-    environment:
-      name: ${{ inputs.environment }}
     env:
-      # The admission job is itself protected by the selected GitHub
-      # environment. Keep the WIF check here, before any lease-state access,
-      # so hosted admission cannot accidentally use ambient/local credentials.
       HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.release_sha }}
-          fetch-depth: 0
 
       - name: Assert exact release SHA is checked out
         env:
@@ -77,111 +112,65 @@ jobs:
             exit 1
           fi
 
-      - name: Validate immutable image handoff
+      # The lease reaches this step only as a presence bit. Nothing here reads
+      # its contents, and the receipt records `lease_supplied` rather than the
+      # document, so a refusal is publishable without redaction.
+      - name: Validate phase, artifact handoff, and OIDC preconditions
         env:
+          RELEASE_PHASE: ${{ inputs.phase }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_TASK_ID: ${{ inputs.task_id }}
+          RELEASE_LEASE: ${{ inputs.release_lease }}
           API_IMAGE_INPUT: ${{ inputs.api_image }}
           WEB_IMAGE_INPUT: ${{ inputs.web_image }}
           WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
           SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
         run: |
           set -euo pipefail
-          values=(
-            "${API_IMAGE_INPUT}"
-            "${WEB_IMAGE_INPUT}"
-            "${WORKER_IMAGE_INPUT}"
-            "${SCHEDULER_IMAGE_INPUT}"
-          )
-          filled=0
-          for value in "${values[@]}"; do
-            if [ -n "${value}" ]; then
-              filled=$((filled + 1))
-            fi
-          done
-          if [ "${filled}" -ne 0 ] && [ "${filled}" -ne 4 ]; then
-            echo "Error: api_image, web_image, worker_image, and scheduler_image must be supplied together." >&2
-            exit 1
+          if [ -n "${RELEASE_LEASE}" ]; then
+            lease_supplied=true
+          else
+            lease_supplied=false
           fi
-          if [ "${filled}" -eq 4 ]; then
-            for image in "${values[@]}"; do
-              if [[ ! "${image}" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
-                echo "Error: image handoff must use an immutable @sha256 reference: ${image}" >&2
-                exit 1
-              fi
-            done
-          fi
-
-      - name: Validate WIF and shared lease store configuration
-        env:
-          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
-        run: |
-          set -euo pipefail
-          if [ "${HAS_WIF}" != "true" ]; then
-            echo "Error: Workload Identity Federation variables are required for durable lease admission." >&2
-            exit 1
-          fi
-          if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
-            echo "Error: durable lease admission requires a shared gs://bucket/prefix state URI." >&2
-            exit 1
-          fi
-
-      - name: Authenticate to Google Cloud for durable lease admission (WIF)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
-      - name: Set up Cloud SDK for durable lease admission
-        uses: google-github-actions/setup-gcloud@v2
-
-      # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
-      # Ed25519 verification key and is deliberately a var, not a secret: it
-      # cannot sign, so publishing it grants nothing. The GCS state URI is the
-      # one Supervisor-owned CAS store shared with this hosted runner; the
-      # validation above rejects a local runner directory as a substitute.
-      - name: Validate supervisor release admission
-        env:
-          RELEASE_SHA: ${{ inputs.release_sha }}
-          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
-          RELEASE_TASK_ID: ${{ inputs.task_id }}
-          RELEASE_LEASE: ${{ inputs.release_lease }}
-          ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
-          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
-        run: |
-          set -euo pipefail
-          umask 077
-          printf '%s' "${RELEASE_LEASE}" | base64 -d > "${RUNNER_TEMP}/release-lease.json"
-          python3 delivery_toolchain/release/check_runtime_admission.py \
-            --sha "${RELEASE_SHA}" \
+          python3 delivery_toolchain/release/check_release_phase.py \
+            --phase "${RELEASE_PHASE}" \
             --environment "${RELEASE_ENVIRONMENT}" \
+            --release-sha "${RELEASE_SHA}" \
             --task-id "${RELEASE_TASK_ID}" \
-            --lease-file "${RUNNER_TEMP}/release-lease.json" \
-            --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
-            --receipt "${RUNNER_TEMP}/release-admission-receipt.json"
+            --api-image "${API_IMAGE_INPUT}" \
+            --web-image "${WEB_IMAGE_INPUT}" \
+            --worker-image "${WORKER_IMAGE_INPUT}" \
+            --scheduler-image "${SCHEDULER_IMAGE_INPUT}" \
+            --lease-supplied "${lease_supplied}" \
+            --oidc-configured "${HAS_WIF}" \
+            --receipt "${RUNNER_TEMP}/release-phase-receipt.json"
 
-      # The receipt is the audit trail for the admission decision. It carries
-      # digests of the nonce and signature rather than the values, so it is safe
-      # to publish whether or not the release was admitted.
-      - name: Publish release admission receipt
+      - name: Publish release phase receipt
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: release-admission-receipt-${{ inputs.environment }}
-          path: ${{ runner.temp }}/release-admission-receipt.json
+          name: release-phase-receipt-${{ inputs.environment }}-${{ inputs.phase }}
+          path: ${{ runner.temp }}/release-phase-receipt.json
           if-no-files-found: warn
 
-      - name: Discard the lease document from the runner
-        if: always()
-        run: rm -f "${RUNNER_TEMP}/release-lease.json"
-
+  # Build once, for one exact SHA, with no lease. Re-running this phase for the
+  # same SHA must reproduce the same handoff byte for byte -- a lease already
+  # issued against `manifest_digest` would otherwise stop verifying after a
+  # re-run. That is why the manifest is derived only from the release SHA's tree
+  # and from digests already in the registry: no run id, no wall-clock time.
   build:
-    needs: admission
-    if: ${{ inputs.api_image == '' && inputs.web_image == '' && inputs.worker_image == '' && inputs.scheduler_image == '' }}
+    name: Build once and publish the immutable artifact handoff
+    needs: release_phase
+    if: ${{ inputs.phase == 'build' && inputs.api_image == '' && inputs.web_image == '' && inputs.worker_image == '' && inputs.scheduler_image == '' }}
     runs-on: ubuntu-latest
     outputs:
       api_image: ${{ steps.publish-images.outputs.api_image }}
       web_image: ${{ steps.publish-images.outputs.web_image }}
       worker_image: ${{ steps.publish-images.outputs.worker_image }}
       scheduler_image: ${{ steps.publish-images.outputs.scheduler_image }}
+      manifest_digest: ${{ steps.handoff.outputs.manifest_digest }}
+      release_id: ${{ steps.handoff.outputs.release_id }}
     env:
       HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
       GCP_PROJECT: ${{ vars.GCP_PROJECT_ID }}
@@ -193,6 +182,10 @@ jobs:
       SCHEDULER_JOB: ${{ vars.ODP_CLOUD_RUN_SCHEDULER_JOB }}
       ODAY_RELEASE_SHA: ${{ inputs.release_sha }}
       IMAGE_TAG: release-${{ inputs.release_sha }}
+      # `generate_sbom.py` writes here by default; it is the CycloneDX document
+      # attested onto every published image below.
+      SBOM_PATH: docs/evidence/completion/ODP-PGAP-SUPPLY-001/sbom.json
+      HANDOFF_DIR: ${{ runner.temp }}/runtime-release-handoff
     steps:
       - uses: actions/checkout@v4
         with:
@@ -255,7 +248,7 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Build, publish, and sign immutable container images
+      - name: Build, publish, sign, and attest immutable container images
         id: publish-images
         run: |
           set -euo pipefail
@@ -274,101 +267,295 @@ jobs:
             printf '%s@%s' "${image%:*}" "${digest}"
           }
 
+          # Cosign publishes the signature and the CycloneDX SBOM attestation as
+          # OCI artifacts tagged off the image digest. Resolving those tags back
+          # to their own immutable digests is what makes them references an
+          # auditor can actually fetch. ODP-RELEASE-MANIFEST-COSIGN-001 and
+          # ODP-RELEASE-MANIFEST-SBOM-001 were raised because nothing published
+          # them; a tag that does not resolve now fails the build instead of
+          # producing a manifest that claims evidence it cannot hand over.
+          resolve_supply_chain_ref() {
+            local digest_ref="$1"
+            local suffix="$2"
+            local repo="${digest_ref%@*}"
+            local hex="${digest_ref##*@sha256:}"
+            resolve_image_digest "${repo}:sha256-${hex}.${suffix}"
+          }
+
           api_tagged="${REPO_PATH}/${API_SERVICE}:${IMAGE_TAG}"
           web_tagged="${REPO_PATH}/${WEB_SERVICE}:${IMAGE_TAG}"
           worker_tagged="${REPO_PATH}/${WORKER_JOB}:${IMAGE_TAG}"
           scheduler_tagged="${REPO_PATH}/${SCHEDULER_JOB}:${IMAGE_TAG}"
-          api_existing="$(resolve_image_digest "${api_tagged}" || true)"
-          web_existing="$(resolve_image_digest "${web_tagged}" || true)"
-          worker_existing="$(resolve_image_digest "${worker_tagged}" || true)"
-          scheduler_existing="$(resolve_image_digest "${scheduler_tagged}" || true)"
+
+          declare -A resolved=()
           existing_count=0
-          for image in "${api_existing}" "${web_existing}" "${worker_existing}" "${scheduler_existing}"; do
-            if [ -n "${image}" ]; then
+          for entry in "api=${api_tagged}" "web=${web_tagged}" "worker=${worker_tagged}" "scheduler=${scheduler_tagged}"; do
+            name="${entry%%=*}"
+            tagged="${entry#*=}"
+            found="$(resolve_image_digest "${tagged}" || true)"
+            if [ -n "${found}" ]; then
+              resolved["${name}"]="${found}"
               existing_count=$((existing_count + 1))
             fi
           done
-          if [ "${existing_count}" -eq 4 ]; then
-            echo "Immutable images already exist for ${ODAY_RELEASE_SHA}; reusing their digests."
-            CI=true ./delivery_toolchain/security/sign_images.sh verify "${api_existing}"
-            CI=true ./delivery_toolchain/security/sign_images.sh verify "${web_existing}"
-            CI=true ./delivery_toolchain/security/sign_images.sh verify "${worker_existing}"
-            CI=true ./delivery_toolchain/security/sign_images.sh verify "${scheduler_existing}"
-            printf 'api_image=%s\n' "${api_existing}" >> "${GITHUB_OUTPUT}"
-            printf 'web_image=%s\n' "${web_existing}" >> "${GITHUB_OUTPUT}"
-            printf 'worker_image=%s\n' "${worker_existing}" >> "${GITHUB_OUTPUT}"
-            printf 'scheduler_image=%s\n' "${scheduler_existing}" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          if [ "${existing_count}" -ne 0 ]; then
+
+          if [ "${existing_count}" -ne 0 ] && [ "${existing_count}" -ne 4 ]; then
             echo "Error: release image tag set is incomplete; refusing to rebuild or move an existing tag." >&2
             exit 1
           fi
 
-          build_and_sign() {
-            local name="$1"
-            local image="$2"
-            local dockerfile="$3"
-            local output_key="$4"
-            echo "Building immutable ${name} image..."
-            docker build \
-              --platform linux/amd64 \
-              --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
-              --label "com.oday-plus.data-binding=live" \
-              -t "${image}" \
-              -f "${dockerfile}" \
-              .
-            docker push "${image}"
-            cosign sign --yes "${image}"
-            CI=true ./delivery_toolchain/security/sign_images.sh verify "${image}"
-            local digest
-            digest="$(resolve_image_digest "${image}")"
-            printf '%s=%s\n' "${output_key}" "${digest}" >> "${GITHUB_OUTPUT}"
-          }
+          if [ "${existing_count}" -eq 4 ]; then
+            # Re-running this phase must reproduce the first run's handoff. Verify
+            # what is already published; do not sign or attest again, because a
+            # second attestation would change the attestation digest and with it
+            # the manifest digest an issued lease is bound to.
+            echo "Immutable images already exist for ${ODAY_RELEASE_SHA}; reusing their digests."
+            for name in api web worker scheduler; do
+              CI=true ./delivery_toolchain/security/sign_images.sh verify "${resolved[${name}]}"
+            done
+          else
+            build_publish_sign_attest() {
+              local name="$1"
+              local tagged="$2"
+              local dockerfile="$3"
+              echo "Building immutable ${name} image..."
+              docker build \
+                --platform linux/amd64 \
+                --label "org.opencontainers.image.revision=${ODAY_RELEASE_SHA}" \
+                --label "com.oday-plus.data-binding=live" \
+                -t "${tagged}" \
+                -f "${dockerfile}" \
+                .
+              docker push "${tagged}"
+              cosign sign --yes "${tagged}"
+              CI=true ./delivery_toolchain/security/sign_images.sh verify "${tagged}"
+              local digest_ref
+              digest_ref="$(resolve_image_digest "${tagged}")"
+              cosign attest --yes --type cyclonedx --predicate "${SBOM_PATH}" "${digest_ref}"
+              resolved["${name}"]="${digest_ref}"
+            }
 
-          build_and_sign "API" "${api_tagged}" "infra/docker/api.Dockerfile" api_image
-          build_and_sign "worker" "${worker_tagged}" "infra/docker/worker.Dockerfile" worker_image
-          build_and_sign "scheduler" "${scheduler_tagged}" "infra/docker/scheduler.Dockerfile" scheduler_image
-          build_and_sign "Web" "${web_tagged}" "infra/docker/web.Dockerfile" web_image
+            build_publish_sign_attest api "${api_tagged}" infra/docker/api.Dockerfile
+            build_publish_sign_attest worker "${worker_tagged}" infra/docker/worker.Dockerfile
+            build_publish_sign_attest scheduler "${scheduler_tagged}" infra/docker/scheduler.Dockerfile
+            build_publish_sign_attest web "${web_tagged}" infra/docker/web.Dockerfile
+          fi
 
-      - name: Write immutable image handoff
+          signature_refs=()
+          sbom_refs=()
+          for name in api web worker scheduler; do
+            digest_ref="${resolved[${name}]}"
+            printf '%s_image=%s\n' "${name}" "${digest_ref}" >> "${GITHUB_OUTPUT}"
+            if ! signature_ref="$(resolve_supply_chain_ref "${digest_ref}" sig)"; then
+              echo "Error: no Cosign signature artifact resolves for ${digest_ref}." >&2
+              exit 1
+            fi
+            if ! sbom_ref="$(resolve_supply_chain_ref "${digest_ref}" att)"; then
+              echo "Error: no SBOM attestation artifact resolves for ${digest_ref}." >&2
+              exit 1
+            fi
+            signature_refs+=("${signature_ref}")
+            sbom_refs+=("${sbom_ref}")
+          done
+          printf 'signature_refs=%s\n' "${signature_refs[*]}" >> "${GITHUB_OUTPUT}"
+          printf 'sbom_refs=%s\n' "${sbom_refs[*]}" >> "${GITHUB_OUTPUT}"
+
+      # This is the handoff a Supervisor lease is issued against: the candidate
+      # release manifest whose `manifest_digest` the deploy phase must match.
+      - name: Write the build-once artifact handoff
+        id: handoff
         env:
           API_IMAGE: ${{ steps.publish-images.outputs.api_image }}
           WEB_IMAGE: ${{ steps.publish-images.outputs.web_image }}
           WORKER_IMAGE: ${{ steps.publish-images.outputs.worker_image }}
           SCHEDULER_IMAGE: ${{ steps.publish-images.outputs.scheduler_image }}
-          HANDOFF_PATH: ${{ runner.temp }}/runtime-release-images.json
+          SBOM_REFS: ${{ steps.publish-images.outputs.sbom_refs }}
+          SIGNATURE_REFS: ${{ steps.publish-images.outputs.signature_refs }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-
-          images = {
-              "api": os.environ["API_IMAGE"],
-              "web": os.environ["WEB_IMAGE"],
-              "worker": os.environ["WORKER_IMAGE"],
-              "scheduler": os.environ["SCHEDULER_IMAGE"],
-          }
-          if any(not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image) for image in images.values()):
-              raise SystemExit("build did not produce four immutable image references")
-          Path(os.environ["HANDOFF_PATH"]).write_text(
-              json.dumps(images, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-          )
-          PY
+          mkdir -p "${HANDOFF_DIR}"
+          refs=()
+          for ref in ${SBOM_REFS}; do
+            refs+=(--sbom-ref "${ref}")
+          done
+          for ref in ${SIGNATURE_REFS}; do
+            refs+=(--signature-ref "${ref}")
+          done
+          python3 delivery_toolchain/release/build_release_handoff.py \
+            --release-sha "${ODAY_RELEASE_SHA}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --component "api=${API_IMAGE}" \
+            --component "web=${WEB_IMAGE}" \
+            --component "worker=${WORKER_IMAGE}" \
+            --component "scheduler=${SCHEDULER_IMAGE}" \
+            "${refs[@]}" \
+            --images-output "${HANDOFF_DIR}/runtime-release-images.json" \
+            --manifest-output "${HANDOFF_DIR}/RELEASE_MANIFEST.json" \
+            --github-output "${GITHUB_OUTPUT}"
 
       - name: Publish immutable image handoff
         uses: actions/upload-artifact@v4
         with:
           name: runtime-release-images-${{ inputs.release_sha }}
-          path: ${{ runner.temp }}/runtime-release-images.json
+          path: ${{ runner.temp }}/runtime-release-handoff/runtime-release-images.json
           if-no-files-found: error
 
+      - name: Publish candidate release manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-release-manifest-${{ inputs.release_sha }}
+          path: ${{ runner.temp }}/runtime-release-handoff/RELEASE_MANIFEST.json
+          if-no-files-found: error
+
+  # Deploy authority. This runs only in the deploy phase, and only after a build
+  # phase has already published the manifest the lease is bound to -- `needs:
+  # build` records that ordering even though the two phases never run in the
+  # same dispatch. Reversing it is what created the circular dependency this
+  # task exists to remove.
+  admission:
+    name: Verify the Supervisor lease authorises this deploy
+    needs: [release_phase, build]
+    if: ${{ always() && needs.release_phase.result == 'success' && needs.build.result == 'skipped' && inputs.phase == 'deploy' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+    env:
+      # The admission job is itself protected by the selected GitHub
+      # environment. Keep the WIF check here, before any lease-state access,
+      # so hosted admission cannot accidentally use ambient/local credentials.
+      HAS_WIF: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && vars.GCP_SERVICE_ACCOUNT != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Assert exact release SHA is checked out
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          if [ "${head_sha}" != "${RELEASE_SHA}" ]; then
+            echo "Error: checked out HEAD (${head_sha}) does not match inputs.release_sha (${RELEASE_SHA})." >&2
+            exit 1
+          fi
+
+      - name: Validate immutable image handoff
+        env:
+          API_IMAGE_INPUT: ${{ inputs.api_image }}
+          WEB_IMAGE_INPUT: ${{ inputs.web_image }}
+          WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
+          SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+        run: |
+          set -euo pipefail
+          values=(
+            "${API_IMAGE_INPUT}"
+            "${WEB_IMAGE_INPUT}"
+            "${WORKER_IMAGE_INPUT}"
+            "${SCHEDULER_IMAGE_INPUT}"
+          )
+          filled=0
+          for value in "${values[@]}"; do
+            if [ -n "${value}" ]; then
+              filled=$((filled + 1))
+            fi
+          done
+          if [ "${filled}" -ne 4 ]; then
+            echo "Error: api_image, web_image, worker_image, and scheduler_image must be supplied together." >&2
+            exit 1
+          fi
+          for image in "${values[@]}"; do
+            if [[ ! "${image}" =~ ^[^[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+              echo "Error: image handoff must use an immutable @sha256 reference: ${image}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Validate WIF and shared lease store configuration
+        env:
+          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+        run: |
+          set -euo pipefail
+          if [ "${HAS_WIF}" != "true" ]; then
+            echo "Error: Workload Identity Federation variables are required for durable lease admission." >&2
+            exit 1
+          fi
+          if [[ ! "${RELEASE_LEASE_STATE_URI}" =~ ^gs://[^/]+/.+ ]]; then
+            echo "Error: durable lease admission requires a shared gs://bucket/prefix state URI." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud for durable lease admission (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK for durable lease admission
+        uses: google-github-actions/setup-gcloud@v2
+
+      # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
+      # Ed25519 verification key and is deliberately a var, not a secret: it
+      # cannot sign, so publishing it grants nothing. The GCS state URI is the
+      # one Supervisor-owned CAS store shared with this hosted runner; the
+      # validation above rejects a local runner directory as a substitute.
+      #
+      # `--action deploy` and `--component-image` are what keep the lease narrow:
+      # it authorises deploying *these* artifacts, and the images handed back
+      # from the build phase must be the ones `manifest.components` records.
+      # Without that binding a valid lease would admit any digest at all.
+      - name: Validate supervisor release admission
+        env:
+          RELEASE_SHA: ${{ inputs.release_sha }}
+          RELEASE_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_TASK_ID: ${{ inputs.task_id }}
+          RELEASE_LEASE: ${{ inputs.release_lease }}
+          ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
+          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
+          API_IMAGE_INPUT: ${{ inputs.api_image }}
+          WEB_IMAGE_INPUT: ${{ inputs.web_image }}
+          WORKER_IMAGE_INPUT: ${{ inputs.worker_image }}
+          SCHEDULER_IMAGE_INPUT: ${{ inputs.scheduler_image }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "${RELEASE_LEASE}" | base64 -d > "${RUNNER_TEMP}/release-lease.json"
+          python3 delivery_toolchain/release/check_runtime_admission.py \
+            --sha "${RELEASE_SHA}" \
+            --environment "${RELEASE_ENVIRONMENT}" \
+            --task-id "${RELEASE_TASK_ID}" \
+            --action deploy \
+            --component-image "api=${API_IMAGE_INPUT}" \
+            --component-image "web=${WEB_IMAGE_INPUT}" \
+            --component-image "worker=${WORKER_IMAGE_INPUT}" \
+            --component-image "scheduler=${SCHEDULER_IMAGE_INPUT}" \
+            --lease-file "${RUNNER_TEMP}/release-lease.json" \
+            --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
+            --receipt "${RUNNER_TEMP}/release-admission-receipt.json"
+
+      # The receipt is the audit trail for the admission decision. It carries
+      # digests of the nonce and signature rather than the values, so it is safe
+      # to publish whether or not the release was admitted.
+      - name: Publish release admission receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-admission-receipt-${{ inputs.environment }}
+          path: ${{ runner.temp }}/release-admission-receipt.json
+          if-no-files-found: warn
+
+      - name: Discard the lease document from the runner
+        if: always()
+        run: rm -f "${RUNNER_TEMP}/release-lease.json"
+
+  # Deploy by digest only. The build phase is `skipped` here by construction --
+  # its `if` requires `phase == 'build'` -- so this job has nothing to rebuild
+  # and no path back into a build. It runs the artifacts admission just bound.
   deploy:
-    needs: [admission, build]
-    if: ${{ always() && needs.admission.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    name: Deploy the admitted artifact by immutable digest
+    needs: [release_phase, build, admission]
+    if: ${{ always() && needs.release_phase.result == 'success' && needs.admission.result == 'success' && needs.build.result == 'skipped' }}
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment }}

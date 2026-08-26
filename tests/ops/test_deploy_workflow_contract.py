@@ -143,6 +143,19 @@ def _parsed(workflow: DeployWorkflow) -> dict:
     return yaml.safe_load(workflow.path.read_text(encoding="utf-8"))
 
 
+def _needs(job: dict) -> list[str]:
+    needs = job.get("needs", [])
+    return [needs] if isinstance(needs, str) else list(needs)
+
+
+def _named_step(job: dict, name: str) -> dict:
+    return next(
+        step
+        for step in job["steps"]
+        if isinstance(step, dict) and step.get("name") == name
+    )
+
+
 @pytest.mark.parametrize("workflow", DEPLOY_WORKFLOWS, ids=str)
 def test_tenant_variables_pass_through_without_placeholder_defaults(
     workflow: DeployWorkflow,
@@ -601,10 +614,7 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
     jobs = parsed["jobs"]
     assert "build" in jobs
     assert "deploy" in jobs
-    deploy_needs = jobs["deploy"].get("needs", [])
-    if isinstance(deploy_needs, str):
-        deploy_needs = [deploy_needs]
-    assert "build" in deploy_needs
+    assert "build" in _needs(jobs["deploy"])
 
     # Build job must perform secret scan, SAST scan, SBOM, and E2E operational proof
     build_steps = jobs["build"]["steps"]
@@ -630,6 +640,10 @@ def test_build_once_job_exists_and_precedes_deploy() -> None:
         "web_image",
         "worker_image",
         "scheduler_image",
+        # The manifest the Supervisor issues a lease against is a build output,
+        # because nothing before the build can know it.
+        "manifest_digest",
+        "release_id",
     }
 
     deploy_if = jobs["deploy"].get("if", "")
@@ -738,3 +752,142 @@ def test_production_bluegreen_verification_gated_on_production_environment() -> 
     assert len(prod_steps) == 1
     step = prod_steps[0]
     assert step.get("if") == "${{ inputs.environment == 'production' }}"
+
+
+# --------------------------------------------------------------------------
+# ODP-RELEASE-BUILD-PHASE-BOOTSTRAP-001: build-once and admission ordering
+#
+# `admission` used to be `build`'s parent. Because the lease is bound to a
+# `manifest_digest`, and the manifest names image digests, SBOM refs, and Cosign
+# signature refs that only a build produces, that ordering made the release
+# unable to build without a lease and unable to earn a lease without building.
+# These tests hold the ordering that removes the cycle, and the bindings that
+# keep the split from turning "build once" into "deploy anything".
+# --------------------------------------------------------------------------
+
+
+def test_the_lease_is_verified_after_the_build_not_before() -> None:
+    """Admission must never be a precondition of producing its own evidence."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+
+    assert "admission" not in _needs(jobs["build"]), (
+        "the build phase must not depend on lease admission; requiring a lease to "
+        "produce the manifest the lease is bound to is the circular dependency"
+    )
+    assert "build" in _needs(jobs["admission"]), (
+        "admission must be ordered after the build phase that publishes the "
+        "manifest it verifies"
+    )
+    assert "admission" in _needs(jobs["deploy"])
+
+    # Admission is deploy authority, so it runs in the deploy phase only.
+    admission_if = jobs["admission"].get("if", "")
+    assert "inputs.phase == 'deploy'" in admission_if
+    assert "needs.build.result == 'skipped'" in admission_if
+
+    # And the build phase runs only when asked to build.
+    assert "inputs.phase == 'build'" in jobs["build"].get("if", "")
+
+
+def test_every_job_is_gated_on_the_fail_closed_phase_check() -> None:
+    """One precheck, ahead of every build, credential, and deployment step."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+
+    assert "release_phase" in jobs
+    assert _needs(jobs["release_phase"]) == [], "the phase check must run first"
+    for job_id in ("build", "admission", "deploy"):
+        assert "release_phase" in _needs(jobs[job_id]), f"{job_id} bypasses the phase check"
+
+    check = _named_step(jobs["release_phase"], "Validate phase, artifact handoff, and OIDC preconditions")
+    run = check["run"]
+    assert "delivery_toolchain/release/check_release_phase.py" in run
+    # OIDC and lease presence are inputs to the refusal, not assumptions.
+    assert "--oidc-configured" in run
+    assert "--lease-supplied" in run
+    assert "--receipt" in run
+    # The lease reaches the precheck as a presence bit. Everything after the
+    # script name is argv, and a signed lease in argv is readable from the
+    # process table, so the document itself must not appear there.
+    invocation = run.split("check_release_phase.py", 1)[1]
+    assert "RELEASE_LEASE" not in invocation
+    assert "--lease-file" not in invocation
+
+
+def test_the_lease_input_is_optional_so_the_build_phase_can_run_without_one() -> None:
+    """A required lease input would re-impose the cycle at the form level."""
+
+    parsed = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))
+    inputs = parsed.get("on", parsed.get(True))["workflow_dispatch"]["inputs"]
+
+    assert inputs["release_lease"]["required"] is False
+    assert inputs["release_lease"]["default"] == ""
+
+    phase = inputs["phase"]
+    assert phase["type"] == "choice"
+    assert set(phase["options"]) == {"build", "deploy"}
+
+
+def test_admission_binds_the_handoff_images_to_the_manifest() -> None:
+    """A lease admits this release's artifacts, not any digest presented."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    step = _named_step(jobs["admission"], "Validate supervisor release admission")
+    run = step["run"]
+
+    assert "--action deploy" in run, "the lease must authorise the deploy action explicitly"
+    for component in ("api", "web", "worker", "scheduler"):
+        assert f'--component-image "{component}=${{{component.upper()}_IMAGE_INPUT}}"' in run, (
+            f"{component}'s handoff image is not bound back to manifest.components"
+        )
+
+
+def test_the_build_phase_publishes_the_artifact_handoff_it_hands_forward() -> None:
+    """The handoff is an artifact of the build, not a promise about it."""
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    steps = jobs["build"]["steps"]
+
+    handoff = _named_step(jobs["build"], "Write the build-once artifact handoff")
+    run = handoff["run"]
+    assert "delivery_toolchain/release/build_release_handoff.py" in run
+    for component in ("api", "web", "worker", "scheduler"):
+        assert f'--component "{component}=' in run
+    assert "--sbom-ref" in run
+    assert "--signature-ref" in run
+    assert "--manifest-output" in run
+    assert "--images-output" in run
+
+    # Both halves of the handoff leave the run, or a later deploy phase has
+    # nothing to be dispatched with.
+    uploaded = [
+        str(step.get("with", {}).get("path", ""))
+        for step in steps
+        if isinstance(step, dict) and str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    ]
+    assert any("runtime-release-images.json" in path for path in uploaded)
+    assert any("RELEASE_MANIFEST.json" in path for path in uploaded)
+
+
+def test_the_build_phase_signs_and_attests_every_published_image() -> None:
+    """`sbom_refs` / `signature_refs` must name artifacts that were published.
+
+    ODP-RELEASE-MANIFEST-COSIGN-001 and ODP-RELEASE-MANIFEST-SBOM-001 were
+    raised because the manifest claimed supply-chain evidence that had never
+    been pushed anywhere. The build resolves both back through the registry, so
+    an unresolvable reference fails the build instead of reaching the manifest.
+    """
+
+    jobs = yaml.safe_load((WORKFLOW_DIR / "deploy-dev.yml").read_text(encoding="utf-8"))["jobs"]
+    run = _named_step(
+        jobs["build"], "Build, publish, sign, and attest immutable container images"
+    )["run"]
+
+    assert "cosign sign --yes" in run
+    assert "cosign attest --yes --type cyclonedx" in run
+    assert "resolve_supply_chain_ref" in run
+    assert 'resolve_supply_chain_ref "${digest_ref}" sig' in run
+    assert 'resolve_supply_chain_ref "${digest_ref}" att' in run
+    assert "no Cosign signature artifact resolves" in run
+    assert "no SBOM attestation artifact resolves" in run
