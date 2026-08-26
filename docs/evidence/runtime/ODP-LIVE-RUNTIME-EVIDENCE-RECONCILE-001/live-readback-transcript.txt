@@ -1,18 +1,20 @@
 ODP-LIVE-RUNTIME-EVIDENCE-RECONCILE-001 live readback transcript
-collector_start_utc=2026-08-26T15:28:38Z
+collector_start_utc=2026-08-26T15:37:23Z
 dev_staging_project=odayplus-runtime-20260825
 production_project=odayplus-prod-20260826
 region=asia-east1
-Every block below records the exact command, merged stdout/stderr, and exit code.
-No block is a prose summary. Secret VALUES are never read; only secret NAMES are listed.
+Every block records the exact command, merged stdout/stderr, and exit code.
+No block is a prose summary. Trailing whitespace is stripped per line; nothing else is altered.
+Secret VALUES are never read. Secret Manager is queried for names only.
+Every command is read-only: list, describe, view or a local git query.
 
 ===============================================================
-§0 Toolchain and identity
+S0 Toolchain and identity
 ===============================================================
 
 --- gcloud version
-START_UTC=2026-08-26T15:28:38Z
-CMD=gcloud version 
+START_UTC=2026-08-26T15:37:23Z
+CMD=gcloud version
 Google Cloud SDK 580.0.0
 alpha 2026.08.07
 beta 2026.08.07
@@ -24,487 +26,212 @@ gke-gcloud-auth-plugin 0.5.18
 gsutil 5.37
 kubectl 1.35.6
 preview 2026.08.07
-END_UTC=2026-08-26T15:28:39Z
+END_UTC=2026-08-26T15:37:24Z
 EXIT=0
 
 --- active gcloud account
-START_UTC=2026-08-26T15:28:39Z
-CMD=gcloud config get-value account 
+START_UTC=2026-08-26T15:37:24Z
+CMD=gcloud config get-value account
 deborah.lu@dev.cctech-support.com
-END_UTC=2026-08-26T15:28:40Z
+END_UTC=2026-08-26T15:37:25Z
 EXIT=0
 
 --- gh auth status
-START_UTC=2026-08-26T15:28:40Z
-CMD=gh auth status 
+START_UTC=2026-08-26T15:37:25Z
+CMD=gh auth status
 github.com
   ✓ Logged in to github.com account ajoe734 (/home/lupin/.config/gh/hosts.yml)
   - Active account: true
   - Git operations protocol: https
   - Token: gho_************************************
   - Token scopes: 'gist', 'read:org', 'repo', 'workflow'
-END_UTC=2026-08-26T15:28:40Z
+END_UTC=2026-08-26T15:37:26Z
 EXIT=0
 
 ===============================================================
-§1 Repository head under reconciliation
+S1 Repository head under reconciliation
 ===============================================================
 
 --- current origin/dev
-START_UTC=2026-08-26T15:28:40Z
-CMD=git rev-parse origin/dev 
+START_UTC=2026-08-26T15:37:26Z
+CMD=git rev-parse origin/dev
 7f3744ce7413e4134b2c178060b1d919bee2bf0f
-END_UTC=2026-08-26T15:28:40Z
+END_UTC=2026-08-26T15:37:26Z
 EXIT=0
 
 --- current origin/main
-START_UTC=2026-08-26T15:28:40Z
-CMD=git rev-parse origin/main 
+START_UTC=2026-08-26T15:37:26Z
+CMD=git rev-parse origin/main
 574dde52b56992b5088aedc74332e2e90fb40b44
-END_UTC=2026-08-26T15:28:40Z
+END_UTC=2026-08-26T15:37:26Z
 EXIT=0
 
 --- commits from historical dev-rollout candidate e496be62 to origin/dev
-START_UTC=2026-08-26T15:28:40Z
-CMD=git rev-list --count e496be62c47c45d758681b8a4d3abfae16f1c96d..origin/dev 
+START_UTC=2026-08-26T15:37:26Z
+CMD=git rev-list --count e496be62c47c45d758681b8a4d3abfae16f1c96d..origin/dev
 2145
-END_UTC=2026-08-26T15:28:40Z
+END_UTC=2026-08-26T15:37:26Z
 EXIT=0
 
 --- commits from release manifest candidate ace4265b to origin/dev
-START_UTC=2026-08-26T15:28:40Z
-CMD=git rev-list --count ace4265b5190c00c72846b637fc04850bacec77e..origin/dev 
+START_UTC=2026-08-26T15:37:26Z
+CMD=git rev-list --count ace4265b5190c00c72846b637fc04850bacec77e..origin/dev
 9
-END_UTC=2026-08-26T15:28:41Z
+END_UTC=2026-08-26T15:37:26Z
 EXIT=0
 
 --- commits from staging build candidate 8c72b54a to origin/dev
-START_UTC=2026-08-26T15:28:41Z
-CMD=git rev-list --count 8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3..origin/dev 
+START_UTC=2026-08-26T15:37:26Z
+CMD=git rev-list --count 8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3..origin/dev
 36
-END_UTC=2026-08-26T15:28:41Z
+END_UTC=2026-08-26T15:37:26Z
+EXIT=0
+
+--- commits from last successful Deploy Dev candidate 2eeb11f2 to origin/dev
+START_UTC=2026-08-26T15:37:26Z
+CMD=git rev-list --count 2eeb11f29551954adc9989614c852027b68a118e..origin/dev
+2991
+END_UTC=2026-08-26T15:37:26Z
 EXIT=0
 
 ===============================================================
-§2 dev/staging project: Cloud Run services and jobs
+S2 dev and staging project: Cloud Run services, jobs, scheduler
 ===============================================================
 
 --- Cloud Run services, all locations
-START_UTC=2026-08-26T15:28:41Z
-CMD=gcloud run services list --project odayplus-runtime-20260825 --format=json 
-[
-  {
-    "apiVersion": "serving.knative.dev/v1",
-    "kind": "Service",
-    "metadata": {
-      "annotations": {
-        "run.googleapis.com/client-name": "gcloud",
-        "run.googleapis.com/client-version": "580.0.0",
-        "run.googleapis.com/ingress": "all",
-        "run.googleapis.com/ingress-status": "all",
-        "run.googleapis.com/maxScale": "2",
-        "run.googleapis.com/operation-id": "51071aeb-5baa-4659-8c60-8501643102b1",
-        "run.googleapis.com/urls": "[\"https://oday-mlflow-767864276141.asia-east1.run.app\",\"https://oday-mlflow-2l6wuyl67q-de.a.run.app\"]",
-        "serving.knative.dev/creator": "deborah.lu@dev.cctech-support.com",
-        "serving.knative.dev/lastModifier": "deborah.lu@dev.cctech-support.com"
-      },
-      "creationTimestamp": "2026-08-25T10:28:00.218501Z",
-      "generation": 3,
-      "labels": {
-        "cloud.googleapis.com/location": "asia-east1"
-      },
-      "name": "oday-mlflow",
-      "namespace": "767864276141",
-      "resourceVersion": "AAZZ3JzuIIQ",
-      "selfLink": "/apis/serving.knative.dev/v1/namespaces/767864276141/services/oday-mlflow",
-      "uid": "073c6252-4286-4471-ad6d-a0fc5b3a42b3"
-    },
-    "spec": {
-      "template": {
-        "metadata": {
-          "annotations": {
-            "autoscaling.knative.dev/maxScale": "20",
-            "run.googleapis.com/client-name": "gcloud",
-            "run.googleapis.com/client-version": "580.0.0",
-            "run.googleapis.com/cloudsql-instances": "odayplus-runtime-20260825:asia-east1:oday-dev-sql",
-            "run.googleapis.com/startup-cpu-boost": "true"
-          },
-          "labels": {
-            "client.knative.dev/nonce": "cpslufatcd",
-            "run.googleapis.com/startupProbeType": "Default"
-          }
-        },
-        "spec": {
-          "containerConcurrency": 80,
-          "containers": [
-            {
-              "env": [
-                {
-                  "name": "MLFLOW_DEFAULT_ARTIFACT_ROOT",
-                  "value": "gs://odayplus-runtime-20260825-model-artifacts/mlflow"
-                },
-                {
-                  "name": "MLFLOW_ALLOWED_HOSTS",
-                  "value": "oday-mlflow-767864276141.asia-east1.run.app,oday-mlflow-2l6wuyl67q-de.a.run.app"
-                },
-                {
-                  "name": "MLFLOW_TRACKING_URI",
-                  "value": "https://oday-mlflow-767864276141.asia-east1.run.app"
-                },
-                {
-                  "name": "ODP_MLFLOW_CLOUD_SQL_INSTANCE",
-                  "value": "odayplus-runtime-20260825:asia-east1:oday-dev-sql"
-                },
-                {
-                  "name": "MLFLOW_WORKERS",
-                  "value": "2"
-                },
-                {
-                  "name": "MLFLOW_BACKEND_STORE_URI",
-                  "valueFrom": {
-                    "secretKeyRef": {
-                      "key": "latest",
-                      "name": "oday-plus-dev-mlflow-backend-uri"
-                    }
-                  }
-                }
-              ],
-              "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow@sha256:da3cbc2b0625f3a398901db30fd1e45d416cbcd2d9981f6072234a673c65fbf9",
-              "ports": [
-                {
-                  "containerPort": 5000,
-                  "name": "http1"
-                }
-              ],
-              "resources": {
-                "limits": {
-                  "cpu": "1",
-                  "memory": "1Gi"
-                }
-              },
-              "startupProbe": {
-                "failureThreshold": 1,
-                "periodSeconds": 240,
-                "tcpSocket": {
-                  "port": 5000
-                },
-                "timeoutSeconds": 240
-              }
-            }
-          ],
-          "serviceAccountName": "gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
-          "timeoutSeconds": 300
-        }
-      },
-      "traffic": [
-        {
-          "latestRevision": true,
-          "percent": 100
-        }
-      ]
-    },
-    "status": {
-      "address": {
-        "url": "https://oday-mlflow-2l6wuyl67q-de.a.run.app"
-      },
-      "conditions": [
-        {
-          "lastTransitionTime": "2026-08-25T10:32:00.792708Z",
-          "status": "True",
-          "type": "Ready"
-        },
-        {
-          "lastTransitionTime": "2026-08-25T10:31:30.174892Z",
-          "status": "True",
-          "type": "ConfigurationsReady"
-        },
-        {
-          "lastTransitionTime": "2026-08-25T10:32:00.762639Z",
-          "status": "True",
-          "type": "RoutesReady"
-        }
-      ],
-      "latestCreatedRevisionName": "oday-mlflow-00003-h4p",
-      "latestReadyRevisionName": "oday-mlflow-00003-h4p",
-      "observedGeneration": 3,
-      "traffic": [
-        {
-          "latestRevision": true,
-          "percent": 100,
-          "revisionName": "oday-mlflow-00003-h4p"
-        }
-      ],
-      "url": "https://oday-mlflow-2l6wuyl67q-de.a.run.app"
-    }
-  },
-  {
-    "apiVersion": "serving.knative.dev/v1",
-    "kind": "Service",
-    "metadata": {
-      "annotations": {
-        "run.googleapis.com/client-name": "gcloud",
-        "run.googleapis.com/client-version": "580.0.0",
-        "run.googleapis.com/ingress": "all",
-        "run.googleapis.com/ingress-status": "all",
-        "run.googleapis.com/maxScale": "2",
-        "run.googleapis.com/operation-id": "b54051c9-ff7c-4d63-8bc2-a1a9751f0346",
-        "run.googleapis.com/urls": "[\"https://oday-staging-mlflow-767864276141.asia-east1.run.app\",\"https://oday-staging-mlflow-2l6wuyl67q-de.a.run.app\"]",
-        "serving.knative.dev/creator": "deborah.lu@dev.cctech-support.com",
-        "serving.knative.dev/lastModifier": "deborah.lu@dev.cctech-support.com"
-      },
-      "creationTimestamp": "2026-08-26T02:26:02.961213Z",
-      "generation": 3,
-      "labels": {
-        "cloud.googleapis.com/location": "asia-east1"
-      },
-      "name": "oday-staging-mlflow",
-      "namespace": "767864276141",
-      "resourceVersion": "AAZZ6g3TRtY",
-      "selfLink": "/apis/serving.knative.dev/v1/namespaces/767864276141/services/oday-staging-mlflow",
-      "uid": "e106cd4e-dbbe-4eea-afd3-68f0f93c8091"
-    },
-    "spec": {
-      "template": {
-        "metadata": {
-          "annotations": {
-            "autoscaling.knative.dev/maxScale": "20",
-            "run.googleapis.com/client-name": "gcloud",
-            "run.googleapis.com/client-version": "580.0.0",
-            "run.googleapis.com/cloudsql-instances": "odayplus-runtime-20260825:asia-east1:oday-staging-sql",
-            "run.googleapis.com/startup-cpu-boost": "true",
-            "run.googleapis.com/vpc-access-connector": "oday-staging-vpc",
-            "run.googleapis.com/vpc-access-egress": "private-ranges-only"
-          },
-          "labels": {
-            "client.knative.dev/nonce": "axczaazwtm",
-            "run.googleapis.com/startupProbeType": "Default"
-          }
-        },
-        "spec": {
-          "containerConcurrency": 80,
-          "containers": [
-            {
-              "env": [
-                {
-                  "name": "MLFLOW_BACKEND_STORE_URI",
-                  "valueFrom": {
-                    "secretKeyRef": {
-                      "key": "1",
-                      "name": "oday-staging-mlflow-backend-uri"
-                    }
-                  }
-                },
-                {
-                  "name": "MLFLOW_DEFAULT_ARTIFACT_ROOT",
-                  "value": "gs://odayplus-runtime-20260825-staging-mlflow-artifacts/mlflow"
-                },
-                {
-                  "name": "MLFLOW_TRACKING_URI",
-                  "value": "https://oday-staging-mlflow-767864276141.asia-east1.run.app"
-                },
-                {
-                  "name": "MLFLOW_ALLOWED_HOSTS",
-                  "value": "oday-staging-mlflow-767864276141.asia-east1.run.app"
-                },
-                {
-                  "name": "ODP_MLFLOW_CLOUD_SQL_INSTANCE",
-                  "value": "odayplus-runtime-20260825:asia-east1:oday-staging-sql"
-                },
-                {
-                  "name": "MLFLOW_WORKERS",
-                  "value": "2"
-                }
-              ],
-              "image": "asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6",
-              "ports": [
-                {
-                  "containerPort": 5000,
-                  "name": "http1"
-                }
-              ],
-              "resources": {
-                "limits": {
-                  "cpu": "1",
-                  "memory": "2Gi"
-                }
-              },
-              "startupProbe": {
-                "failureThreshold": 1,
-                "periodSeconds": 240,
-                "tcpSocket": {
-                  "port": 5000
-                },
-                "timeoutSeconds": 240
-              }
-            }
-          ],
-          "serviceAccountName": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com",
-          "timeoutSeconds": 300
-        }
-      },
-      "traffic": [
-        {
-          "latestRevision": true,
-          "percent": 100
-        }
-      ]
-    },
-    "status": {
-      "address": {
-        "url": "https://oday-staging-mlflow-2l6wuyl67q-de.a.run.app"
-      },
-      "conditions": [
-        {
-          "lastTransitionTime": "2026-08-26T02:34:09.433302Z",
-          "status": "True",
-          "type": "Ready"
-        },
-        {
-          "lastTransitionTime": "2026-08-26T02:33:33.065946Z",
-          "status": "True",
-          "type": "ConfigurationsReady"
-        },
-        {
-          "lastTransitionTime": "2026-08-26T02:34:09.410741Z",
-          "status": "True",
-          "type": "RoutesReady"
-        }
-      ],
-      "latestCreatedRevisionName": "oday-staging-mlflow-00003-bm6",
-      "latestReadyRevisionName": "oday-staging-mlflow-00003-bm6",
-      "observedGeneration": 3,
-      "traffic": [
-        {
-          "latestRevision": true,
-          "percent": 100,
-          "revisionName": "oday-staging-mlflow-00003-bm6"
-        }
-      ],
-      "url": "https://oday-staging-mlflow-2l6wuyl67q-de.a.run.app"
-    }
-  }
-]
-END_UTC=2026-08-26T15:28:43Z
+START_UTC=2026-08-26T15:37:26Z
+CMD=gcloud run services list --project odayplus-runtime-20260825 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\,status.conditions\[0\].status\,spec.template.spec.containers\[0\].image\)
+oday-mlflow	asia-east1	True	asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow@sha256:da3cbc2b0625f3a398901db30fd1e45d416cbcd2d9981f6072234a673c65fbf9
+oday-staging-mlflow	asia-east1	True	asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6
+END_UTC=2026-08-26T15:37:28Z
+EXIT=0
+
+--- Cloud Run services, raw count
+START_UTC=2026-08-26T15:37:28Z
+CMD=gcloud run services list --project odayplus-runtime-20260825 --format=value\(metadata.name\)
+oday-mlflow
+oday-staging-mlflow
+END_UTC=2026-08-26T15:37:30Z
 EXIT=0
 
 --- Cloud Run jobs, all locations
-START_UTC=2026-08-26T15:28:43Z
-CMD=gcloud run jobs list --project odayplus-runtime-20260825 --format=json 
-[]
-END_UTC=2026-08-26T15:28:44Z
+START_UTC=2026-08-26T15:37:30Z
+CMD=gcloud run jobs list --project odayplus-runtime-20260825 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\)
+
+END_UTC=2026-08-26T15:37:32Z
 EXIT=0
 
 --- Cloud Scheduler jobs
-START_UTC=2026-08-26T15:28:44Z
-CMD=gcloud scheduler jobs list --project odayplus-runtime-20260825 --location asia-east1 --format=json 
-[]
-END_UTC=2026-08-26T15:28:46Z
+START_UTC=2026-08-26T15:37:32Z
+CMD=gcloud scheduler jobs list --project odayplus-runtime-20260825 --location asia-east1 --format=value\(name\,schedule\,state\)
+
+END_UTC=2026-08-26T15:37:33Z
 EXIT=0
 
 ===============================================================
-§3 dev/staging project: Cloud SQL, Artifact Registry, secrets, buckets
+S3 dev and staging project: Cloud SQL, Artifact Registry, secrets, buckets, IAM
 ===============================================================
 
 --- Cloud SQL instances
-START_UTC=2026-08-26T15:28:46Z
-CMD=gcloud sql instances list --project odayplus-runtime-20260825 --format=value\(name\,databaseVersion\,region\,state\) 
+START_UTC=2026-08-26T15:37:33Z
+CMD=gcloud sql instances list --project odayplus-runtime-20260825 --format=value\(name\,databaseVersion\,region\,state\)
 oday-dev-sql	POSTGRES_16	asia-east1	RUNNABLE
 oday-staging-sql	POSTGRES_16	asia-east1	RUNNABLE
-END_UTC=2026-08-26T15:28:47Z
+END_UTC=2026-08-26T15:37:34Z
 EXIT=0
 
 --- Artifact Registry repositories
-START_UTC=2026-08-26T15:28:47Z
-CMD=gcloud artifacts repositories list --project odayplus-runtime-20260825 --format=value\(name\,format\,createTime\) 
+START_UTC=2026-08-26T15:37:34Z
+CMD=gcloud artifacts repositories list --project odayplus-runtime-20260825 --format=value\(name\,format\,createTime\)
 Listing items under project odayplus-runtime-20260825, across all locations.
 
 oday-plus-dev	DOCKER	2026-08-25T00:35:33
-END_UTC=2026-08-26T15:28:52Z
+END_UTC=2026-08-26T15:37:40Z
 EXIT=0
 
 --- Artifact Registry images with tags
-START_UTC=2026-08-26T15:28:52Z
-CMD=gcloud artifacts docker images list asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev --include-tags --format=value\(package\,version\,tags\) 
+START_UTC=2026-08-26T15:37:40Z
+CMD=gcloud artifacts docker images list asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev --include-tags --format=value\(package\,version\,tags\)
 Listing items under project odayplus-runtime-20260825, location asia-east1, repository oday-plus-dev.
 
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593	908c916e6239bf839ac028116d00eb5f15173ec5
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:2034cd642c6ef0ded35874f9dcebb5b9c0a22556f626adcfe0d9c4181cf0de40	sha256-513185541b7dca920ea8e98221608e2f4fda4da04b81799febeda55897babeae.att
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:22fd0ce1f5452e9fd2e83856b338fefbceae519aecd67a97099b7d7fe526ad6a	4d694e3be3487ea5877ce5e323cffc32180d33f2
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:2eb25d33b21ca82adaf6c20921b8b5e241b36eb5b353bb8cbeebce07238de143	sha256-4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e.att
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:3cf4e48ace79b3580e60ec5bcf6e908a9d09d5d7833e446eb3ce97427875a786	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:3cf4e48ace79b3580e60ec5bcf6e908a9d09d5d7833e446eb3ce97427875a786
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:3f7f06c1f9339676d82467f94e4c724aaee986199b8ed0eda8d37c2792f53a46	sha256-95c349abac48316f9b5b922344dc969853160667478cfa72c34d3c1fc38bdf32.att
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:458132f164bd5edf5196245daefbf832b6b6ba704570a66eb3a0db3f59cfbc3f	sha256-95c349abac48316f9b5b922344dc969853160667478cfa72c34d3c1fc38bdf32.sig
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e	571fd34e588b64942ea6541fce34de7e7e039335
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:513185541b7dca920ea8e98221608e2f4fda4da04b81799febeda55897babeae	4d694e3be348,6c34de60dd6be5ee0dff2c9160b570d108a9c2a5
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:56db77f0413af5ea80b5a577cf6e6fed6bdcf480dd01ef15706347887e2599f4	sha256-0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593.sig
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:6f61995bea05182b8e5684468f4c995cb777ed57cce4f71a71d37edb3ffafcfd	sha256-f1a37010b5541690780330a7626730ad0cda76e0636b296801c9175c45dd6aec.sig
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:773546199b8cb4cc222d9ca1cda5bd58ea123e1b6e6551064e628c65edeb3ce4	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:773546199b8cb4cc222d9ca1cda5bd58ea123e1b6e6551064e628c65edeb3ce4
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:8bce6c40f751eae1db9cc503facef0f7fa8e9db4535f493de6e60166204492b2	sha256-f1a37010b5541690780330a7626730ad0cda76e0636b296801c9175c45dd6aec.att
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:8f335fccdeec31043e01d4c0949315c617e682161eb262364972a8e025ece02d	sha256-0c97ba05aeaa7763786a3297d825d2fbc8ee8515ac82fcaabc69e302fc057593.att
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:9089d49f38b69032f2dadc7f3c958a8388723e64d03f9aebcc1d6d8362e20d55	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:95c349abac48316f9b5b922344dc969853160667478cfa72c34d3c1fc38bdf32	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:95c349abac48316f9b5b922344dc969853160667478cfa72c34d3c1fc38bdf32
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:b9aa10b5334406aca653c68e128de8c85414cec27b49c0052f4dd0f293da3ea7	release-ace4265b5190c00c72846b637fc04850bacec77e
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:ba936c24aa7846d010590aee984e84e5eedc3b01431101578e965da8cbfee756	sha256-22fd0ce1f5452e9fd2e83856b338fefbceae519aecd67a97099b7d7fe526ad6a.sig
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:bf6cd4b82f04711603d27199403db9eacdb336b721ac6e384f6cfebbdaf98dcb	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:bf6cd4b82f04711603d27199403db9eacdb336b721ac6e384f6cfebbdaf98dcb
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:c41e27deaf6a181b16b78df72b64c9295c03a8d78eaa944503d429c0a9c5565a	sha256-4f603e3acff7a35876fd59593e6725ee0b00226e546b0694eb5e80a12b097e9e.sig
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:c9ed591ed100bfe1d108219547bbef8cd8ae1b9927a8bb5068227c0da0c01a0c	sha256-22fd0ce1f5452e9fd2e83856b338fefbceae519aecd67a97099b7d7fe526ad6a.att
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:d4873ddbbb91c9595b77550898d822af5a65de0adfab1b303a43c5179d3fe090	sha256-513185541b7dca920ea8e98221608e2f4fda4da04b81799febeda55897babeae.sig
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:e7bb3944e4be92a05d26178d946fddf15093e1f2d83c4bacac7617712f549766	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:e7bb3944e4be92a05d26178d946fddf15093e1f2d83c4bacac7617712f549766
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-data-platform	sha256:f1a37010b5541690780330a7626730ad0cda76e0636b296801c9175c45dd6aec	2a3e7f3c95429f2d6489699eb24b25bafa5b1162
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow	sha256:21d60d29615467d0a5191b336268fe321da274428137287c8ad847dfcaffa2c9	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow	sha256:21d60d29615467d0a5191b336268fe321da274428137287c8ad847dfcaffa2c9
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow	sha256:da3cbc2b0625f3a398901db30fd1e45d416cbcd2d9981f6072234a673c65fbf9	bootstrap-82ed6a05cf67
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow	sha256:e39f9a154abf7dca66f9f704f87697994b4e2131270cf5b86ad4eb6f473f7ea6	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-mlflow	sha256:e39f9a154abf7dca66f9f704f87697994b4e2131270cf5b86ad4eb6f473f7ea6
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7	release-ace4265b5190c00c72846b637fc04850bacec77e
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:14424bc0a71047bb1d60d7fbd5dfc5b9d1f59a853ab7af95ea19c0d2024d42ca	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:6892a80ffd8d4e676d0443d527ceb12252157795a73dad78c35e7c1a1ee755de	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:b2f04cef1c431c09924a3cd9988b9f3227e430989532a4a6fa08637927e40791	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:d835a7aa11f79f928c9c0f0e029dd6c700d83ddf5e3f39816a028c99ea971a33	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:fbbd40c3cb0735c6437699853648c4e2dc9f2f5972afc05524dada6a04148080	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow	sha256:3e7bea31e17114f6d1b4571d2d32fe392a3c7358fdb233271ab30d77097b187f	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow	sha256:4124080ad10d906c53931b688ef148a8fce68c6bec9060d0e56e87ddc43afee0	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:6892a80ffd8d4e676d0443d527ceb12252157795a73dad78c35e7c1a1ee755de
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:b2f04cef1c431c09924a3cd9988b9f3227e430989532a4a6fa08637927e40791
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:d835a7aa11f79f928c9c0f0e029dd6c700d83ddf5e3f39816a028c99ea971a33
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-api	sha256:fbbd40c3cb0735c6437699853648c4e2dc9f2f5972afc05524dada6a04148080
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow	sha256:3e7bea31e17114f6d1b4571d2d32fe392a3c7358fdb233271ab30d77097b187f
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow	sha256:4124080ad10d906c53931b688ef148a8fce68c6bec9060d0e56e87ddc43afee0
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-mlflow	sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6	release-8c72b54
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:0950fbc065976e0c15b0fcce715f4dec8bfdb84ee5d7d93aec3e74986e146a78	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:102005b6afee1bccb1c3227333b59919002fe00eb8b9c522f76935a2b58590f1	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:57221c98b90679786e03f838307b78ceee420a32c9db7bb382111485f37c88d5	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:102005b6afee1bccb1c3227333b59919002fe00eb8b9c522f76935a2b58590f1
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:57221c98b90679786e03f838307b78ceee420a32c9db7bb382111485f37c88d5
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586	release-ace4265b5190c00c72846b637fc04850bacec77e
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:97fdffbe3e1eb17fa7a9f1b6959efc3e39913d77c794b5102faf7eff4e624d84	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:d32fe2fd20b7c85c835f5db81037991658300c5d2315034b8863e1e1d8a56ad5	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:0070d7ef8e045a70fa679d5caea913150d9a3d26754f3f5d123cf76d474a5a74	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:03a961d10abb7d1c70e5bd0bb4006aa119d65c6571f81461dfe61e06c4fb350c	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:7d8b89536b3a9d36db6f5e6f32154081b8ef966b2684d3bd4bf35c8d0a187e96	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:9f3fbcc34d18d7a528b47583da2967fdaa081a565fe1b6d3056925e3d33a985d	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:97fdffbe3e1eb17fa7a9f1b6959efc3e39913d77c794b5102faf7eff4e624d84
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-scheduler	sha256:d32fe2fd20b7c85c835f5db81037991658300c5d2315034b8863e1e1d8a56ad5
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:0070d7ef8e045a70fa679d5caea913150d9a3d26754f3f5d123cf76d474a5a74
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:03a961d10abb7d1c70e5bd0bb4006aa119d65c6571f81461dfe61e06c4fb350c
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:7d8b89536b3a9d36db6f5e6f32154081b8ef966b2684d3bd4bf35c8d0a187e96
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:9f3fbcc34d18d7a528b47583da2967fdaa081a565fe1b6d3056925e3d33a985d
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:c292a516d9f1bbf796990d317c57ca5a525eef781d4b114617abe4f590374b29	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-web	sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79	release-ace4265b5190c00c72846b637fc04850bacec77e
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:0b25b929db1724aecba1649d31493ec303bda57541f49d74a31c44606068829a	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:0b25b929db1724aecba1649d31493ec303bda57541f49d74a31c44606068829a
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:5778032b84acad8a06cce863f0150221f21e16cf1aff4cb7a89225aeab20aa09	test-push
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434	release-ace4265b5190c00c72846b637fc04850bacec77e
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:886e6b184dcfcaee7b24df1c0f0bf1b68f9eae399dbebca6527773e7e8591c6e	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:bc15220a9034dd6cd37279f70eb44cfa4e362903260e53f4bc1c86cd2df32218	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:bd766fe2f66058a2fcf0687abab6a4a4699d73c1532dd3f97f082142a9cbf923	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:dc2932c6b7bfccbbb217b730dd91ddfcbb3fd6f48b260b738301c5f41f628219	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:dfd7961547fd20efa807d8433e75ba59d510b7b02aa8dba37a0dcb0f17074a86	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:e287d5c508df1e3ea71d7eb180fc19a82d642519a3d29323bd365a02d21c1552	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:bc15220a9034dd6cd37279f70eb44cfa4e362903260e53f4bc1c86cd2df32218
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:bd766fe2f66058a2fcf0687abab6a4a4699d73c1532dd3f97f082142a9cbf923
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:dc2932c6b7bfccbbb217b730dd91ddfcbb3fd6f48b260b738301c5f41f628219
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:dfd7961547fd20efa807d8433e75ba59d510b7b02aa8dba37a0dcb0f17074a86
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/oday-staging-worker	sha256:e287d5c508df1e3ea71d7eb180fc19a82d642519a3d29323bd365a02d21c1552
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-api	sha256:002d43d0b6ea180946df2f1bfc4ff15a9eb8fc2abfbd49b89055a696a6986ce7	release-ace4265b5190c00c72846b637fc04850bacec77e
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-api	sha256:b2f04cef1c431c09924a3cd9988b9f3227e430989532a4a6fa08637927e40791	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-api	sha256:fbbd40c3cb0735c6437699853648c4e2dc9f2f5972afc05524dada6a04148080	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-runtime	sha256:0b25b929db1724aecba1649d31493ec303bda57541f49d74a31c44606068829a	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-api	sha256:b2f04cef1c431c09924a3cd9988b9f3227e430989532a4a6fa08637927e40791
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-api	sha256:fbbd40c3cb0735c6437699853648c4e2dc9f2f5972afc05524dada6a04148080
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-runtime	sha256:0b25b929db1724aecba1649d31493ec303bda57541f49d74a31c44606068829a
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-runtime	sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434	release-ace4265b5190c00c72846b637fc04850bacec77e
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-runtime	sha256:dc2932c6b7bfccbbb217b730dd91ddfcbb3fd6f48b260b738301c5f41f628219	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-scheduler	sha256:102005b6afee1bccb1c3227333b59919002fe00eb8b9c522f76935a2b58590f1	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-runtime	sha256:dc2932c6b7bfccbbb217b730dd91ddfcbb3fd6f48b260b738301c5f41f628219
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-scheduler	sha256:102005b6afee1bccb1c3227333b59919002fe00eb8b9c522f76935a2b58590f1
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-scheduler	sha256:5922f88105ef9d9c5a1a1228e64b18dda5e8e3cdb42603bf39822b53a8c5e586	release-ace4265b5190c00c72846b637fc04850bacec77e
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-scheduler	sha256:97fdffbe3e1eb17fa7a9f1b6959efc3e39913d77c794b5102faf7eff4e624d84	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-web	sha256:03a961d10abb7d1c70e5bd0bb4006aa119d65c6571f81461dfe61e06c4fb350c	
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-web	sha256:9f3fbcc34d18d7a528b47583da2967fdaa081a565fe1b6d3056925e3d33a985d	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-scheduler	sha256:97fdffbe3e1eb17fa7a9f1b6959efc3e39913d77c794b5102faf7eff4e624d84
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-web	sha256:03a961d10abb7d1c70e5bd0bb4006aa119d65c6571f81461dfe61e06c4fb350c
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-web	sha256:9f3fbcc34d18d7a528b47583da2967fdaa081a565fe1b6d3056925e3d33a985d
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-web	sha256:e4595a35aa68537e0e560ac45263ebfaadc19939942a86635eeb6a5bacfb0a79	release-ace4265b5190c00c72846b637fc04850bacec77e
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:0b25b929db1724aecba1649d31493ec303bda57541f49d74a31c44606068829a	
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:0b25b929db1724aecba1649d31493ec303bda57541f49d74a31c44606068829a
 asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:73edc2bf000668b1bbd8e7b6cd3f270f6a517ddddbec7758d15d4e8bc9422434	release-ace4265b5190c00c72846b637fc04850bacec77e
-asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:dc2932c6b7bfccbbb217b730dd91ddfcbb3fd6f48b260b738301c5f41f628219	
-END_UTC=2026-08-26T15:28:53Z
+asia-east1-docker.pkg.dev/odayplus-runtime-20260825/oday-plus-dev/odayplus-worker	sha256:dc2932c6b7bfccbbb217b730dd91ddfcbb3fd6f48b260b738301c5f41f628219
+END_UTC=2026-08-26T15:37:42Z
 EXIT=0
 
 --- Secret Manager secret names
-START_UTC=2026-08-26T15:28:53Z
-CMD=gcloud secrets list --project odayplus-runtime-20260825 --format=value\(name\) 
+START_UTC=2026-08-26T15:37:42Z
+CMD=gcloud secrets list --project odayplus-runtime-20260825 --format=value\(name\)
 oday-plus-dev-api-database-url-pg16
 oday-plus-dev-auth-principal-map
 oday-plus-dev-mlflow-backend-uri
@@ -513,314 +240,170 @@ oday-staging-auth-principal-map
 oday-staging-database-url
 oday-staging-mlflow-backend-uri
 oday-staging-web-session-secret
-END_UTC=2026-08-26T15:28:55Z
+END_UTC=2026-08-26T15:37:43Z
 EXIT=0
 
 --- Cloud Storage buckets
-START_UTC=2026-08-26T15:28:55Z
-CMD=gcloud storage buckets list --project odayplus-runtime-20260825 --format=value\(name\) 
+START_UTC=2026-08-26T15:37:43Z
+CMD=gcloud storage buckets list --project odayplus-runtime-20260825 --format=value\(name\)
 oday-dev-source-snapshots-odayplus-runtime-20260825
 oday-staging-source-snapshots-odayplus-runtime-20260825
 odayplus-runtime-20260825-emgi
 odayplus-runtime-20260825-model-artifacts
 odayplus-runtime-20260825-release-leases
 odayplus-runtime-20260825-staging-mlflow-artifacts
-END_UTC=2026-08-26T15:28:57Z
+END_UTC=2026-08-26T15:37:45Z
+EXIT=0
+
+--- service accounts
+START_UTC=2026-08-26T15:37:45Z
+CMD=gcloud iam service-accounts list --project odayplus-runtime-20260825 --format=value\(email\)
+oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
+767864276141-compute@developer.gserviceaccount.com
+gke-oday-emgi-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
+ci-image-publisher@odayplus-runtime-20260825.iam.gserviceaccount.com
+github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com
+oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
+cd-gke-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com
+oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
+gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
+oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com
+END_UTC=2026-08-26T15:37:47Z
 EXIT=0
 
 ===============================================================
-§4 production project
+S4 production project
 ===============================================================
 
 --- project metadata
-START_UTC=2026-08-26T15:28:57Z
-CMD=gcloud projects describe odayplus-prod-20260826 --format=json 
-{
-  "createTime": "2026-08-26T00:45:38.960Z",
-  "labels": {
-    "application": "oday-plus",
-    "environment": "prod",
-    "managed-by": "codex"
-  },
-  "lifecycleState": "ACTIVE",
-  "name": "ODay Plus Production",
-  "parent": {
-    "id": "1064164192528",
-    "type": "organization"
-  },
-  "projectId": "odayplus-prod-20260826",
-  "projectNumber": "365886461656"
-}
-END_UTC=2026-08-26T15:28:59Z
+START_UTC=2026-08-26T15:37:47Z
+CMD=gcloud projects describe odayplus-prod-20260826 --format=value\(projectId\,projectNumber\,createTime\,lifecycleState\)
+odayplus-prod-20260826	365886461656	2026-08-26T00:45:38.960Z	ACTIVE
+END_UTC=2026-08-26T15:37:49Z
 EXIT=0
 
 --- Cloud Run services, all locations
-START_UTC=2026-08-26T15:28:59Z
-CMD=gcloud run services list --project odayplus-prod-20260826 --format=json 
-[
-  {
-    "apiVersion": "serving.knative.dev/v1",
-    "kind": "Service",
-    "metadata": {
-      "annotations": {
-        "run.googleapis.com/client-name": "gcloud",
-        "run.googleapis.com/client-version": "580.0.0",
-        "run.googleapis.com/ingress": "all",
-        "run.googleapis.com/ingress-status": "all",
-        "run.googleapis.com/maxScale": "2",
-        "run.googleapis.com/operation-id": "84a91a5e-7958-40b5-b8e7-b0f572792b84",
-        "run.googleapis.com/urls": "[\"https://oday-prod-mlflow-365886461656.asia-east1.run.app\",\"https://oday-prod-mlflow-icm6xhajsa-de.a.run.app\"]",
-        "serving.knative.dev/creator": "deborah.lu@dev.cctech-support.com",
-        "serving.knative.dev/lastModifier": "deborah.lu@dev.cctech-support.com"
-      },
-      "creationTimestamp": "2026-08-26T02:21:37.224832Z",
-      "generation": 3,
-      "labels": {
-        "cloud.googleapis.com/location": "asia-east1"
-      },
-      "name": "oday-prod-mlflow",
-      "namespace": "365886461656",
-      "resourceVersion": "AAZZ6esweOM",
-      "selfLink": "/apis/serving.knative.dev/v1/namespaces/365886461656/services/oday-prod-mlflow",
-      "uid": "ecafcb7c-4d9a-4f74-8531-1f547533ae71"
-    },
-    "spec": {
-      "template": {
-        "metadata": {
-          "annotations": {
-            "autoscaling.knative.dev/maxScale": "20",
-            "run.googleapis.com/client-name": "gcloud",
-            "run.googleapis.com/client-version": "580.0.0",
-            "run.googleapis.com/cloudsql-instances": "odayplus-prod-20260826:asia-east1:oday-prod-sql",
-            "run.googleapis.com/startup-cpu-boost": "true"
-          },
-          "labels": {
-            "client.knative.dev/nonce": "vubuqcklio",
-            "run.googleapis.com/startupProbeType": "Default"
-          }
-        },
-        "spec": {
-          "containerConcurrency": 80,
-          "containers": [
-            {
-              "env": [
-                {
-                  "name": "MLFLOW_BACKEND_STORE_URI",
-                  "valueFrom": {
-                    "secretKeyRef": {
-                      "key": "1",
-                      "name": "oday-prod-mlflow-backend-uri"
-                    }
-                  }
-                },
-                {
-                  "name": "MLFLOW_DEFAULT_ARTIFACT_ROOT",
-                  "value": "gs://odayplus-prod-20260826-mlflow-artifacts/mlflow"
-                },
-                {
-                  "name": "MLFLOW_TRACKING_URI",
-                  "value": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
-                },
-                {
-                  "name": "MLFLOW_ALLOWED_HOSTS",
-                  "value": "oday-prod-mlflow-icm6xhajsa-de.a.run.app"
-                },
-                {
-                  "name": "ODP_MLFLOW_CLOUD_SQL_INSTANCE",
-                  "value": "odayplus-prod-20260826:asia-east1:oday-prod-sql"
-                },
-                {
-                  "name": "MLFLOW_WORKERS",
-                  "value": "2"
-                }
-              ],
-              "image": "asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6",
-              "ports": [
-                {
-                  "containerPort": 5000,
-                  "name": "http1"
-                }
-              ],
-              "resources": {
-                "limits": {
-                  "cpu": "1",
-                  "memory": "2Gi"
-                }
-              },
-              "startupProbe": {
-                "failureThreshold": 1,
-                "periodSeconds": 240,
-                "tcpSocket": {
-                  "port": 5000
-                },
-                "timeoutSeconds": 240
-              }
-            }
-          ],
-          "serviceAccountName": "oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com",
-          "timeoutSeconds": 300
-        }
-      },
-      "traffic": [
-        {
-          "latestRevision": true,
-          "percent": 100
-        }
-      ]
-    },
-    "status": {
-      "address": {
-        "url": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
-      },
-      "conditions": [
-        {
-          "lastTransitionTime": "2026-08-26T02:24:28.338403Z",
-          "status": "True",
-          "type": "Ready"
-        },
-        {
-          "lastTransitionTime": "2026-08-26T02:23:56.306047Z",
-          "status": "True",
-          "type": "ConfigurationsReady"
-        },
-        {
-          "lastTransitionTime": "2026-08-26T02:24:28.310720Z",
-          "status": "True",
-          "type": "RoutesReady"
-        }
-      ],
-      "latestCreatedRevisionName": "oday-prod-mlflow-00003-pf8",
-      "latestReadyRevisionName": "oday-prod-mlflow-00003-pf8",
-      "observedGeneration": 3,
-      "traffic": [
-        {
-          "latestRevision": true,
-          "percent": 100,
-          "revisionName": "oday-prod-mlflow-00003-pf8"
-        }
-      ],
-      "url": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
-    }
-  }
-]
-END_UTC=2026-08-26T15:29:00Z
+START_UTC=2026-08-26T15:37:49Z
+CMD=gcloud run services list --project odayplus-prod-20260826 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\,status.conditions\[0\].status\,spec.template.spec.containers\[0\].image\)
+oday-prod-mlflow	asia-east1	True	asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow@sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6
+END_UTC=2026-08-26T15:37:51Z
 EXIT=0
 
 --- Cloud Run jobs, all locations
-START_UTC=2026-08-26T15:29:00Z
-CMD=gcloud run jobs list --project odayplus-prod-20260826 --format=json 
-[]
-END_UTC=2026-08-26T15:29:03Z
+START_UTC=2026-08-26T15:37:51Z
+CMD=gcloud run jobs list --project odayplus-prod-20260826 --format=value\(metadata.name\,metadata.labels\[\'cloud.googleapis.com/location\'\]\)
+
+END_UTC=2026-08-26T15:37:53Z
 EXIT=0
 
 --- Cloud Scheduler jobs
-START_UTC=2026-08-26T15:29:03Z
-CMD=gcloud scheduler jobs list --project odayplus-prod-20260826 --location asia-east1 --format=json 
-[]
-END_UTC=2026-08-26T15:29:04Z
+START_UTC=2026-08-26T15:37:53Z
+CMD=gcloud scheduler jobs list --project odayplus-prod-20260826 --location asia-east1 --format=value\(name\,schedule\,state\)
+
+END_UTC=2026-08-26T15:37:54Z
 EXIT=0
 
 --- Cloud SQL instances
-START_UTC=2026-08-26T15:29:04Z
-CMD=gcloud sql instances list --project odayplus-prod-20260826 --format=value\(name\,databaseVersion\,region\,state\) 
+START_UTC=2026-08-26T15:37:54Z
+CMD=gcloud sql instances list --project odayplus-prod-20260826 --format=value\(name\,databaseVersion\,region\,state\)
 oday-prod-sql	POSTGRES_16	asia-east1	RUNNABLE
-END_UTC=2026-08-26T15:29:05Z
+END_UTC=2026-08-26T15:37:55Z
 EXIT=0
 
 --- Artifact Registry repositories
-START_UTC=2026-08-26T15:29:05Z
-CMD=gcloud artifacts repositories list --project odayplus-prod-20260826 --format=value\(name\,format\,createTime\) 
+START_UTC=2026-08-26T15:37:55Z
+CMD=gcloud artifacts repositories list --project odayplus-prod-20260826 --format=value\(name\,format\,createTime\)
 Listing items under project odayplus-prod-20260826, across all locations.
 
 oday-plus	DOCKER	2026-08-26T00:47:44
-END_UTC=2026-08-26T15:29:10Z
+END_UTC=2026-08-26T15:38:00Z
 EXIT=0
 
 --- Artifact Registry images with tags
-START_UTC=2026-08-26T15:29:10Z
-CMD=gcloud artifacts docker images list asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus --include-tags --format=value\(package\,version\,tags\) 
+START_UTC=2026-08-26T15:38:00Z
+CMD=gcloud artifacts docker images list asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus --include-tags --format=value\(package\,version\,tags\)
 Listing items under project odayplus-prod-20260826, location asia-east1, repository oday-plus.
 
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-api	sha256:14424bc0a71047bb1d60d7fbd5dfc5b9d1f59a853ab7af95ea19c0d2024d42ca	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-api	sha256:6892a80ffd8d4e676d0443d527ceb12252157795a73dad78c35e7c1a1ee755de	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-api	sha256:d835a7aa11f79f928c9c0f0e029dd6c700d83ddf5e3f39816a028c99ea971a33	
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-api	sha256:6892a80ffd8d4e676d0443d527ceb12252157795a73dad78c35e7c1a1ee755de
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-api	sha256:d835a7aa11f79f928c9c0f0e029dd6c700d83ddf5e3f39816a028c99ea971a33
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-data-platform	sha256:9089d49f38b69032f2dadc7f3c958a8388723e64d03f9aebcc1d6d8362e20d55	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-data-platform	sha256:bf6cd4b82f04711603d27199403db9eacdb336b721ac6e384f6cfebbdaf98dcb	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-data-platform	sha256:e7bb3944e4be92a05d26178d946fddf15093e1f2d83c4bacac7617712f549766	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow	sha256:3e7bea31e17114f6d1b4571d2d32fe392a3c7358fdb233271ab30d77097b187f	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow	sha256:4124080ad10d906c53931b688ef148a8fce68c6bec9060d0e56e87ddc43afee0	
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-data-platform	sha256:bf6cd4b82f04711603d27199403db9eacdb336b721ac6e384f6cfebbdaf98dcb
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-data-platform	sha256:e7bb3944e4be92a05d26178d946fddf15093e1f2d83c4bacac7617712f549766
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow	sha256:3e7bea31e17114f6d1b4571d2d32fe392a3c7358fdb233271ab30d77097b187f
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow	sha256:4124080ad10d906c53931b688ef148a8fce68c6bec9060d0e56e87ddc43afee0
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-mlflow	sha256:69700d5f66cb99f381ff7d437ad5b9e4e5bbdaa741128484e825f5cbea32cfb6	release-8c72b54
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-scheduler	sha256:0950fbc065976e0c15b0fcce715f4dec8bfdb84ee5d7d93aec3e74986e146a78	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-scheduler	sha256:57221c98b90679786e03f838307b78ceee420a32c9db7bb382111485f37c88d5	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-scheduler	sha256:d32fe2fd20b7c85c835f5db81037991658300c5d2315034b8863e1e1d8a56ad5	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-web	sha256:0070d7ef8e045a70fa679d5caea913150d9a3d26754f3f5d123cf76d474a5a74	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-web	sha256:7d8b89536b3a9d36db6f5e6f32154081b8ef966b2684d3bd4bf35c8d0a187e96	
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-scheduler	sha256:57221c98b90679786e03f838307b78ceee420a32c9db7bb382111485f37c88d5
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-scheduler	sha256:d32fe2fd20b7c85c835f5db81037991658300c5d2315034b8863e1e1d8a56ad5
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-web	sha256:0070d7ef8e045a70fa679d5caea913150d9a3d26754f3f5d123cf76d474a5a74
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-web	sha256:7d8b89536b3a9d36db6f5e6f32154081b8ef966b2684d3bd4bf35c8d0a187e96
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-web	sha256:c292a516d9f1bbf796990d317c57ca5a525eef781d4b114617abe4f590374b29	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
 asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:886e6b184dcfcaee7b24df1c0f0bf1b68f9eae399dbebca6527773e7e8591c6e	release-8c72b54a9fb2a0853ac17b89e51f30ef5eb969f3
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:bd766fe2f66058a2fcf0687abab6a4a4699d73c1532dd3f97f082142a9cbf923	
-asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:dfd7961547fd20efa807d8433e75ba59d510b7b02aa8dba37a0dcb0f17074a86	
-END_UTC=2026-08-26T15:29:12Z
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:bd766fe2f66058a2fcf0687abab6a4a4699d73c1532dd3f97f082142a9cbf923
+asia-east1-docker.pkg.dev/odayplus-prod-20260826/oday-plus/oday-worker	sha256:dfd7961547fd20efa807d8433e75ba59d510b7b02aa8dba37a0dcb0f17074a86
+END_UTC=2026-08-26T15:38:02Z
 EXIT=0
 
 --- Secret Manager secret names
-START_UTC=2026-08-26T15:29:12Z
-CMD=gcloud secrets list --project odayplus-prod-20260826 --format=value\(name\) 
+START_UTC=2026-08-26T15:38:02Z
+CMD=gcloud secrets list --project odayplus-prod-20260826 --format=value\(name\)
 oday-prod-auth-principal-map
 oday-prod-database-url
 oday-prod-mlflow-backend-uri
 oday-prod-web-session-secret
-END_UTC=2026-08-26T15:29:13Z
+END_UTC=2026-08-26T15:38:03Z
 EXIT=0
 
 --- service accounts
-START_UTC=2026-08-26T15:29:13Z
-CMD=gcloud iam service-accounts list --project odayplus-prod-20260826 --format=value\(email\) 
+START_UTC=2026-08-26T15:38:03Z
+CMD=gcloud iam service-accounts list --project odayplus-prod-20260826 --format=value\(email\)
 oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com
 365886461656-compute@developer.gserviceaccount.com
 github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com
 oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com
 oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com
-END_UTC=2026-08-26T15:29:15Z
+END_UTC=2026-08-26T15:38:05Z
 EXIT=0
 
 --- workload identity pools
-START_UTC=2026-08-26T15:29:15Z
-CMD=gcloud iam workload-identity-pools list --project odayplus-prod-20260826 --location global --format=value\(name\,state\) 
+START_UTC=2026-08-26T15:38:05Z
+CMD=gcloud iam workload-identity-pools list --project odayplus-prod-20260826 --location global --format=value\(name\,state\)
 projects/365886461656/locations/global/workloadIdentityPools/github-actions	ACTIVE
-END_UTC=2026-08-26T15:29:17Z
+END_UTC=2026-08-26T15:38:08Z
 EXIT=0
 
 --- Cloud Storage buckets
-START_UTC=2026-08-26T15:29:17Z
-CMD=gcloud storage buckets list --project odayplus-prod-20260826 --format=value\(name\) 
+START_UTC=2026-08-26T15:38:08Z
+CMD=gcloud storage buckets list --project odayplus-prod-20260826 --format=value\(name\)
 odayplus-prod-20260826-artifacts
 odayplus-prod-20260826-mlflow-artifacts
 odayplus-prod-20260826-release-leases
 odayplus-prod-20260826-source-snapshots
-END_UTC=2026-08-26T15:29:19Z
+END_UTC=2026-08-26T15:38:10Z
 EXIT=0
 
 ===============================================================
-§5 GKE data-platform surface (dev/staging project)
+S5 GKE data-platform surface
 ===============================================================
 
---- GKE clusters
-START_UTC=2026-08-26T15:29:19Z
-CMD=gcloud container clusters list --project odayplus-runtime-20260825 --format=value\(name\,location\,status\,currentNodeCount\) 
+--- GKE clusters in dev and staging project
+START_UTC=2026-08-26T15:38:10Z
+CMD=gcloud container clusters list --project odayplus-runtime-20260825 --format=value\(name\,location\,status\,currentNodeCount\)
 oday-emgi-gke	asia-east1-a	RUNNING	1
-END_UTC=2026-08-26T15:29:21Z
+END_UTC=2026-08-26T15:38:13Z
 EXIT=0
 
 --- GKE clusters in production project
-START_UTC=2026-08-26T15:29:21Z
-CMD=gcloud container clusters list --project odayplus-prod-20260826 --format=value\(name\,location\,status\) 
+START_UTC=2026-08-26T15:38:13Z
+CMD=gcloud container clusters list --project odayplus-prod-20260826 --format=value\(name\,location\,status\)
 ERROR: (gcloud.container.clusters.list) ResponseError: code=403, message=Kubernetes Engine API has not been used in project odayplus-prod-20260826 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/container.googleapis.com/overview?project=odayplus-prod-20260826 then retry. If you enabled this API recently, wait a few minutes for the action to propagate to our systems and retry. This command is authenticated as deborah.lu@dev.cctech-support.com which is the active account specified by the [core/account] property.
-END_UTC=2026-08-26T15:29:22Z
+END_UTC=2026-08-26T15:38:14Z
 EXIT=1
 
 --- namespaces
-START_UTC=2026-08-26T15:29:22Z
-CMD=kubectl get ns 
+START_UTC=2026-08-26T15:38:14Z
+CMD=kubectl get ns
 NAME                                STATUS   AGE
 default                             Active   28h
 gke-managed-cim                     Active   28h
@@ -835,12 +418,12 @@ kube-system                         Active   28h
 oday-emgi                           Active   28h
 oday-emgi-verify                    Active   28h
 oday-staging-8c72b54                Active   14h
-END_UTC=2026-08-26T15:29:23Z
+END_UTC=2026-08-26T15:38:14Z
 EXIT=0
 
---- deployments, jobs, cronjobs across all namespaces
-START_UTC=2026-08-26T15:29:23Z
-CMD=kubectl get deploy\,job\,cronjob -A 
+--- deployments, jobs and cronjobs across all namespaces
+START_UTC=2026-08-26T15:38:14Z
+CMD=kubectl get deploy\,job\,cronjob -A
 NAMESPACE     NAME                                                 READY   UP-TO-DATE   AVAILABLE   AGE
 gmp-system    deployment.apps/gmp-operator                         1/1     1            1           28h
 gmp-system    deployment.apps/rule-evaluator                       0/0     0            0           28h
@@ -857,23 +440,23 @@ kube-system   deployment.apps/l7-default-backend                   1/1     1    
 kube-system   deployment.apps/metrics-server-v1.35.1               1/1     1            1           28h
 oday-emgi     deployment.apps/oday-emgi-daemon                     1/1     1            1           26h
 oday-emgi     deployment.apps/oday-emgi-webserver                  1/1     1            1           26h
-END_UTC=2026-08-26T15:29:23Z
+END_UTC=2026-08-26T15:38:15Z
 EXIT=0
 
 --- all resources in ephemeral staging namespace oday-staging-8c72b54
-START_UTC=2026-08-26T15:29:23Z
-CMD=kubectl get all -n oday-staging-8c72b54 
+START_UTC=2026-08-26T15:38:15Z
+CMD=kubectl get all -n oday-staging-8c72b54
 No resources found in oday-staging-8c72b54 namespace.
-END_UTC=2026-08-26T15:29:23Z
+END_UTC=2026-08-26T15:38:15Z
 EXIT=0
 
 ===============================================================
-§6 GitHub Runtime Release workflow history
+S6 GitHub Runtime Release workflow history
 ===============================================================
 
 --- workflow inventory
-START_UTC=2026-08-26T15:29:23Z
-CMD=gh workflow list --all 
+START_UTC=2026-08-26T15:38:16Z
+CMD=gh workflow list --all
 Agent boundary inventory refresh	active	334992973
 Agent EMGI multi-repo routing patch	active	334989588
 Agent EMGI Ruff fix	active	334994974
@@ -887,12 +470,12 @@ External Proof Follow-up	active	311232629
 Merge queue review gate	active	328600036
 Promote dev to main	active	302984646
 Tooling scope review gate	active	334274367
-END_UTC=2026-08-26T15:29:24Z
+END_UTC=2026-08-26T15:38:16Z
 EXIT=0
 
---- Deploy Dev: 20 most recent runs
-START_UTC=2026-08-26T15:29:24Z
-CMD=gh run list --workflow deploy-dev.yml --limit 20 --json databaseId\,createdAt\,event\,status\,conclusion\,headSha --jq .\[\]\|\[.databaseId\,.createdAt\,.event\,.status\,.conclusion\,.headSha\]\|@tsv 
+--- Deploy Dev, 20 most recent runs
+START_UTC=2026-08-26T15:38:16Z
+CMD=gh run list --workflow deploy-dev.yml --limit 20 --json databaseId\,createdAt\,event\,status\,conclusion\,headSha --jq .\[\]\|\[.databaseId\,.createdAt\,.event\,.status\,.conclusion\,.headSha\]\|@tsv
 32359736962	2026-08-20T10:36:14Z	push	completed	failure	208262cf372af0527d2a27adca8e1810f9bf7ccb
 32359586288	2026-08-20T10:34:23Z	push	completed	cancelled	55fe2275be9442ada3bfe1012c74efca1b8b038d
 32341943807	2026-08-20T06:59:26Z	push	completed	failure	56a2b4a55504c1690ff5f99fdb0a8af2d1e186c2
@@ -913,88 +496,80 @@ CMD=gh run list --workflow deploy-dev.yml --limit 20 --json databaseId\,createdA
 32222295912	2026-08-19T06:10:25Z	push	completed	cancelled	bb3e9b618104c27d85401977516c5b3cc5b1a7c7
 32222236088	2026-08-19T06:09:33Z	push	completed	cancelled	134717e955bf6d45204d09133bd0dda289018533
 32210130570	2026-08-19T02:52:51Z	push	completed	failure	cfd38e30c0266994be8789110c29fb4af17ad769
-END_UTC=2026-08-26T15:29:25Z
+END_UTC=2026-08-26T15:38:17Z
 EXIT=0
 
---- Deploy Dev: conclusion histogram over the 200 most recent runs
-START_UTC=2026-08-26T15:29:25Z
-CMD=gh run list --workflow deploy-dev.yml --limit 200 --json conclusion --jq \[.\[\].conclusion\]\|group_by\(.\)\|map\(\{conclusion:.\[0\]\,count:length\}\) 
+--- Deploy Dev, conclusion histogram over the 200 most recent runs
+START_UTC=2026-08-26T15:38:17Z
+CMD=gh run list --workflow deploy-dev.yml --limit 200 --json conclusion --jq \[.\[\].conclusion\]\|group_by\(.\)\|map\(\{conclusion:.\[0\]\,count:length\}\)
 [{"conclusion":"cancelled","count":88},{"conclusion":"failure","count":112}]
-END_UTC=2026-08-26T15:29:35Z
+END_UTC=2026-08-26T15:38:24Z
 EXIT=0
 
---- Deploy Dev: most recent successful runs
-START_UTC=2026-08-26T15:29:35Z
-CMD=gh run list --workflow deploy-dev.yml --status success --limit 5 --json databaseId\,createdAt\,headSha --jq .\[\]\|\[.databaseId\,.createdAt\,.headSha\]\|@tsv 
-29427386990	2026-07-15T15:16:54Z	2eeb11f29551954adc9989614c852027b68a118e
-29422457750	2026-07-15T14:11:33Z	c64d7ce53ec4139b2cb61666da4efcdc27cb1b60
-29418097074	2026-07-15T13:10:28Z	da92ed96c01769c88142ddb31ce86d5a7ae7e75d
-29414196581	2026-07-15T12:09:49Z	a6b939d9ce347e76735366491fdcbf7ec08bd0d2
-29411250366	2026-07-15T11:19:54Z	034ad3a5a30579eb6c6f9eea578e2c76f1845114
-END_UTC=2026-08-26T15:29:36Z
+--- Deploy Dev, most recent successful run
+START_UTC=2026-08-26T15:38:24Z
+CMD=gh run view 29427386990 --json databaseId\,headSha\,createdAt\,conclusion --jq \[.databaseId\,.headSha\,.createdAt\,.conclusion\]\|@tsv
+29427386990	2eeb11f29551954adc9989614c852027b68a118e	2026-07-15T15:16:54Z	success
+END_UTC=2026-08-26T15:38:25Z
 EXIT=0
 
---- Deploy/Verify Staging: most recent successful runs
-START_UTC=2026-08-26T15:29:36Z
-CMD=gh run list --workflow deploy-staging.yml --status success --limit 5 --json databaseId\,createdAt\,headSha --jq .\[\]\|\[.databaseId\,.createdAt\,.headSha\]\|@tsv 
-28325038545	2026-06-28T14:15:45Z	f4545810c9aa5b7908ef6d2674c27235980e0a00
-28315303034	2026-06-28T07:35:37Z	0d586739c5bba9914b086a653895249852b06cb1
-28311612289	2026-06-28T04:42:26Z	f1f4da7fc10a3e2e7ccbdf768b23a89e2ee25c50
-28311313552	2026-06-28T04:28:06Z	86d03fa3964a364167201ae7e905451f7cbed7e6
-28311091353	2026-06-28T04:17:24Z	3dd4b01dfc7457b0a87c530747f3b5026e8d6002
-END_UTC=2026-08-26T15:29:37Z
+--- Deploy/Verify Staging, most recent successful run
+START_UTC=2026-08-26T15:38:25Z
+CMD=gh run view 28325038545 --json databaseId\,headSha\,createdAt\,conclusion --jq \[.databaseId\,.headSha\,.createdAt\,.conclusion\]\|@tsv
+28325038545	f4545810c9aa5b7908ef6d2674c27235980e0a00	2026-06-28T14:15:45Z	success
+END_UTC=2026-08-26T15:38:26Z
 EXIT=0
 
---- runs for historical dev-rollout candidate e496be62
-START_UTC=2026-08-26T15:29:37Z
-CMD=gh run list --commit e496be62c47c45d758681b8a4d3abfae16f1c96d --limit 20 --json databaseId\,workflowName\,createdAt\,status\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.status\,.conclusion\]\|@tsv 
+--- all runs for historical dev-rollout candidate e496be62
+START_UTC=2026-08-26T15:38:26Z
+CMD=gh run list --commit e496be62c47c45d758681b8a4d3abfae16f1c96d --limit 20 --json databaseId\,workflowName\,createdAt\,status\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.status\,.conclusion\]\|@tsv
 30461269657	CI	2026-07-29T14:31:13Z	completed	success
 30459597503	CI	2026-07-29T14:10:59Z	completed	success
 30459596361	Deploy Dev	2026-07-29T14:10:58Z	completed	failure
-END_UTC=2026-08-26T15:29:38Z
+END_UTC=2026-08-26T15:38:27Z
 EXIT=0
 
 --- job-level result of the only Deploy Dev run for e496be62
-START_UTC=2026-08-26T15:29:38Z
-CMD=gh run view 30459596361 --json databaseId\,workflowName\,headSha\,conclusion\,createdAt\,updatedAt\,url\,jobs --jq \{id:.databaseId\,workflow:.workflowName\,sha:.headSha\,conclusion:.conclusion\,created:.createdAt\,updated:.updatedAt\,url:.url\,jobs:\[.jobs\[\]\|\{name:.name\,conclusion:.conclusion\}\]\} 
+START_UTC=2026-08-26T15:38:27Z
+CMD=gh run view 30459596361 --json databaseId\,workflowName\,headSha\,conclusion\,createdAt\,updatedAt\,url\,jobs --jq \{id:.databaseId\,workflow:.workflowName\,sha:.headSha\,conclusion:.conclusion\,created:.createdAt\,updated:.updatedAt\,url:.url\,jobs:\[.jobs\[\]\|\{name:.name\,conclusion:.conclusion\}\]\}
 {"conclusion":"failure","created":"2026-07-29T14:10:58Z","id":30459596361,"jobs":[{"conclusion":"success","name":"e2e-operational-evidence"},{"conclusion":"failure","name":"deploy"}],"sha":"e496be62c47c45d758681b8a4d3abfae16f1c96d","updated":"2026-07-29T14:28:42Z","url":"https://github.com/alfloop-dev/odayplus/actions/runs/30459596361","workflow":"Deploy Dev"}
-END_UTC=2026-08-26T15:29:40Z
+END_UTC=2026-08-26T15:38:28Z
 EXIT=0
 
---- runs for release manifest candidate ace4265b
-START_UTC=2026-08-26T15:29:40Z
-CMD=gh run list --commit ace4265b5190c00c72846b637fc04850bacec77e --limit 20 --json databaseId\,workflowName\,createdAt\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.conclusion\]\|@tsv 
+--- all runs for release manifest candidate ace4265b
+START_UTC=2026-08-26T15:38:28Z
+CMD=gh run list --commit ace4265b5190c00c72846b637fc04850bacec77e --limit 20 --json databaseId\,workflowName\,createdAt\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.conclusion\]\|@tsv
 32955847448	CI	2026-08-26T09:58:42Z	success
 32954507422	Merge queue review gate	2026-08-26T09:43:22Z	success
 32954507360	CI	2026-08-26T09:43:22Z	success
-END_UTC=2026-08-26T15:29:41Z
+END_UTC=2026-08-26T15:38:29Z
 EXIT=0
 
---- runs for current origin/dev 7f3744ce
-START_UTC=2026-08-26T15:29:41Z
-CMD=gh run list --commit 7f3744ce7413e4134b2c178060b1d919bee2bf0f --limit 20 --json databaseId\,workflowName\,createdAt\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.conclusion\]\|@tsv 
+--- all runs for current origin/dev 7f3744ce
+START_UTC=2026-08-26T15:38:29Z
+CMD=gh run list --commit 7f3744ce7413e4134b2c178060b1d919bee2bf0f --limit 20 --json databaseId\,workflowName\,createdAt\,conclusion --jq .\[\]\|\[.databaseId\,.workflowName\,.createdAt\,.conclusion\]\|@tsv
 32983717012	CI	2026-08-26T15:00:07Z	success
 32983311527	Merge queue review gate	2026-08-26T14:56:09Z	success
 32983311594	CI	2026-08-26T14:56:09Z	success
-END_UTC=2026-08-26T15:29:42Z
+END_UTC=2026-08-26T15:38:30Z
 EXIT=0
 
 ===============================================================
-§7 GitHub deployment environments
+S7 GitHub deployment environments
 ===============================================================
 
 --- environment protection rules
-START_UTC=2026-08-26T15:29:42Z
-CMD=gh api repos/alfloop-dev/odayplus/environments --jq .environments\[\]\|\{name:.name\,protection:\[.protection_rules\[\]\?.type\]\,created:.created_at\} 
-{"created":"2026-06-26T22:58:40Z","name":"dev","protection":[]}
-{"created":"2026-08-25T15:41:19Z","name":"production","protection":["required_reviewers"]}
-{"created":"2026-06-26T22:58:23Z","name":"staging","protection":["required_reviewers"]}
-END_UTC=2026-08-26T15:29:42Z
+START_UTC=2026-08-26T15:38:30Z
+CMD=gh api repos/alfloop-dev/odayplus/environments --jq .environments\[\]\|\[.name\,\(\[.protection_rules\[\]\?.type\]\|join\(\"\,\"\)\)\,.created_at\]\|@tsv
+dev		2026-06-26T22:58:40Z
+production	required_reviewers	2026-08-25T15:41:19Z
+staging	required_reviewers	2026-06-26T22:58:23Z
+END_UTC=2026-08-26T15:38:31Z
 EXIT=0
 
---- dev environment variables (names and values; no secrets are exposed here)
-START_UTC=2026-08-26T15:29:42Z
-CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv 
+--- dev environment variables
+START_UTC=2026-08-26T15:38:31Z
+CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/dev/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv
 GCP_AR_REPO	oday-plus-dev
 GCP_CLOUD_SQL_INSTANCE	odayplus-runtime-20260825:asia-east1:oday-dev-sql
 GCP_PROJECT_ID	odayplus-runtime-20260825
@@ -1035,12 +610,12 @@ ODP_TENANT_ID	a11ce505-70bc-56d9-8564-ad22efa23c9e
 ODP_WEB_OIDC_ISSUER	https://accounts.google.com
 ODP_WEB_SESSION_SECRET_SECRET	oday-plus-dev-web-session-secret:latest
 ODP_WORKER_CRON	*/5 * * * *
-END_UTC=2026-08-26T15:29:43Z
+END_UTC=2026-08-26T15:38:31Z
 EXIT=0
 
 --- staging environment variables
-START_UTC=2026-08-26T15:29:43Z
-CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv 
+START_UTC=2026-08-26T15:38:31Z
+CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/staging/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv
 GCP_AR_REPO	oday-plus-dev
 GCP_CLOUD_SQL_INSTANCE	odayplus-runtime-20260825:asia-east1:oday-staging-sql
 GCP_PROJECT_ID	odayplus-runtime-20260825
@@ -1083,12 +658,12 @@ ODP_TENANT_ID	a11ce505-70bc-56d9-8564-ad22efa23c9e
 ODP_WEB_OIDC_ISSUER	https://accounts.google.com
 ODP_WEB_SESSION_SECRET_SECRET	oday-staging-web-session-secret:1
 ODP_WORKER_CRON	*/5 * * * *
-END_UTC=2026-08-26T15:29:44Z
+END_UTC=2026-08-26T15:38:32Z
 EXIT=0
 
 --- production environment variables
-START_UTC=2026-08-26T15:29:44Z
-CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv 
+START_UTC=2026-08-26T15:38:32Z
+CMD=gh api --paginate repos/alfloop-dev/odayplus/environments/production/variables\?per_page=100 --jq .variables\[\]\|\[.name\,.value\]\|@tsv
 GCP_AR_REPO	oday-plus
 GCP_CLOUD_SQL_INSTANCE	odayplus-prod-20260826:asia-east1:oday-prod-sql
 GCP_PROJECT_ID	odayplus-prod-20260826
@@ -1127,77 +702,25 @@ ODP_TENANT_ID	09eff6f8-2a1f-48e5-ad17-d822258804f2
 ODP_WEB_OIDC_ISSUER	https://accounts.google.com
 ODP_WEB_SESSION_SECRET_SECRET	oday-prod-web-session-secret:1
 ODP_WORKER_CRON	*/5 * * * *
-END_UTC=2026-08-26T15:29:45Z
+END_UTC=2026-08-26T15:38:33Z
 EXIT=0
 
-collector_end_utc=2026-08-26T15:29:45Z
-
 ===============================================================
-§8 Service accounts and receipt-referenced report paths
+S8 Report paths referenced by the historical readback receipt
 ===============================================================
 
---- dev/staging project service accounts
-START_UTC=2026-08-26T15:31:01Z
-CMD=gcloud iam service-accounts list --project odayplus-runtime-20260825 --format=value\(email\) 
-oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
-767864276141-compute@developer.gserviceaccount.com
-gke-oday-emgi-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
-ci-image-publisher@odayplus-runtime-20260825.iam.gserviceaccount.com
-github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com
-oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
-cd-gke-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com
-oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com
-gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com
-oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com
-END_UTC=2026-08-26T15:31:04Z
-EXIT=0
-
---- repository paths referenced by dev-integration-readback.json reports
-START_UTC=2026-08-26T15:31:04Z
-CMD=ls -la .odp_data/deployment 
+--- working tree path referenced by dev-integration-readback.json
+START_UTC=2026-08-26T15:38:33Z
+CMD=ls -la .odp_data/deployment
 ls: cannot access '.odp_data/deployment': No such file or directory
-END_UTC=2026-08-26T15:31:04Z
+END_UTC=2026-08-26T15:38:33Z
 EXIT=2
 
---- tracked files under .odp_data in origin/dev
-START_UTC=2026-08-26T15:31:04Z
-CMD=git ls-tree -r --name-only origin/dev -- .odp_data 
+--- files tracked under .odp_data in origin/dev
+START_UTC=2026-08-26T15:38:33Z
+CMD=git ls-tree -r --name-only origin/dev -- .odp_data
 
-END_UTC=2026-08-26T15:31:04Z
+END_UTC=2026-08-26T15:38:33Z
 EXIT=0
 
-collector2_end_utc=2026-08-26T15:31:04Z
-
-===============================================================
-§9 Full head SHAs of the last successful deployment runs
-===============================================================
-
---- Deploy Dev last success, full head SHA
-START_UTC=2026-08-26T15:33:44Z
-CMD=gh run view 29427386990 --json databaseId\,headSha\,createdAt\,conclusion --jq \[.databaseId\,.headSha\,.createdAt\,.conclusion\]\|@tsv 
-29427386990	2eeb11f29551954adc9989614c852027b68a118e	2026-07-15T15:16:54Z	success
-END_UTC=2026-08-26T15:33:45Z
-EXIT=0
-
---- Deploy/Verify Staging last success, full head SHA
-START_UTC=2026-08-26T15:33:45Z
-CMD=gh run view 28325038545 --json databaseId\,headSha\,createdAt\,conclusion --jq \[.databaseId\,.headSha\,.createdAt\,.conclusion\]\|@tsv 
-28325038545	f4545810c9aa5b7908ef6d2674c27235980e0a00	2026-06-28T14:15:45Z	success
-END_UTC=2026-08-26T15:33:45Z
-EXIT=0
-
---- is the last Deploy Dev success an ancestor of origin/dev
-START_UTC=2026-08-26T15:33:45Z
-CMD=git merge-base --is-ancestor 2eeb11f29551954adc9989614c852027b68a118e origin/dev 
-
-END_UTC=2026-08-26T15:33:45Z
-EXIT=0
-
---- commits from last Deploy Dev success to origin/dev
-START_UTC=2026-08-26T15:33:45Z
-CMD=git rev-list --count 2eeb11f29551954adc9989614c852027b68a118e..origin/dev 
-2991
-END_UTC=2026-08-26T15:33:45Z
-EXIT=0
-
-collector3_end_utc=2026-08-26T15:33:45Z
+collector_end_utc=2026-08-26T15:38:33Z
