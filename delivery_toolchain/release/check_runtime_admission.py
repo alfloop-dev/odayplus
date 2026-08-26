@@ -335,8 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--lease-state-dir",
         required=True,
-        type=Path,
-        help="Durable Supervisor lease state directory. Must already exist.",
+        type=str,
+        help="Durable Supervisor lease state directory or gs://bucket/prefix. Must already exist.",
     )
     parser.add_argument(
         "--public-key-file",

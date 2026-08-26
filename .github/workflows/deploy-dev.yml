@@ -53,6 +53,8 @@ permissions:
 jobs:
   admission:
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -103,12 +105,20 @@ jobs:
             done
           fi
 
+      - name: Authenticate to Google Cloud for durable lease admission
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK for durable lease admission
+        uses: google-github-actions/setup-gcloud@v2
+
       # The lease is the authorisation. `ODP_RELEASE_LEASE_PUBLIC_KEY` is the
       # Ed25519 verification key and is deliberately a var, not a secret: it
-      # cannot sign, so publishing it grants nothing. `ODP_RELEASE_LEASE_STATE_DIR`
-      # must resolve to the Supervisor's durable lease state on this runner;
-      # admission fails closed when it does not, because a lease consumed
-      # against a directory the Supervisor cannot see has not been consumed.
+      # cannot sign, so publishing it grants nothing. The GCS state URI is the
+      # one Supervisor-owned CAS store shared with this hosted runner; a local
+      # runner directory is never accepted as a substitute.
       - name: Validate supervisor release admission
         env:
           RELEASE_SHA: ${{ inputs.release_sha }}
@@ -116,7 +126,7 @@ jobs:
           RELEASE_TASK_ID: ${{ inputs.task_id }}
           RELEASE_LEASE: ${{ inputs.release_lease }}
           ODP_RELEASE_LEASE_PUBLIC_KEY: ${{ vars.ODP_RELEASE_LEASE_PUBLIC_KEY }}
-          RELEASE_LEASE_STATE_DIR: ${{ vars.ODP_RELEASE_LEASE_STATE_DIR }}
+          RELEASE_LEASE_STATE_URI: ${{ vars.ODP_RELEASE_LEASE_STATE_URI }}
         run: |
           set -euo pipefail
           umask 077
@@ -126,7 +136,7 @@ jobs:
             --environment "${RELEASE_ENVIRONMENT}" \
             --task-id "${RELEASE_TASK_ID}" \
             --lease-file "${RUNNER_TEMP}/release-lease.json" \
-            --lease-state-dir "${RELEASE_LEASE_STATE_DIR}" \
+            --lease-state-dir "${RELEASE_LEASE_STATE_URI}" \
             --receipt "${RUNNER_TEMP}/release-admission-receipt.json"
 
       # The receipt is the audit trail for the admission decision. It carries
