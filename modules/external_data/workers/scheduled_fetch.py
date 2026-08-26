@@ -678,6 +678,18 @@ class ExternalFetchScheduler:
             self._assert_provider_schedulable_and_selected(provider_id)
         except ExternalFetchProviderConfigurationError as exc:
             return exc
+        except Exception as exc:
+            # Any unexpected error (e.g. ValueError from
+            # external_provider_mode) must be converted into a proper
+            # configuration refusal so run_once always produces a
+            # FAILED/BLOCKED run with an audit receipt.  Letting it bubble
+            # up would crash the worker without recording a scheduler run,
+            # breaking the fail-closed contract.
+            return ExternalFetchProviderConfigurationError(
+                provider_id,
+                PROVIDER_MODE_DISABLED_REASON_CODE,
+                f"Configuration check failed: {type(exc).__name__}: {exc}",
+            )
         return None
 
     def _assert_provider_schedulable_and_selected(self, provider_id: str) -> None:

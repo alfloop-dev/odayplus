@@ -333,7 +333,15 @@ def external_provider_mode(env: Mapping[str, str] | None = None) -> ExternalProv
         return ExternalProviderMode.LIVE
     if normalized in {"disabled", "off", "none"}:
         return ExternalProviderMode.DISABLED
-    raise ValueError(f"{LIVE_MODE_ENV_VAR} must be fixture, live, or disabled; got {raw!r}")
+    # Fail-closed: an unrecognised value disables every third-party source
+    # rather than raising ValueError.  A ValueError escapes
+    # _configuration_refusal()'s try/except (it only catches
+    # ExternalFetchProviderConfigurationError), so the scheduler produces no
+    # FAILED/BLOCKED run and no audit receipt — breaking the fail-closed
+    # worker contract.  Treating the unknown value as DISABLED ensures the
+    # run records the deterministic refusal and the live E2E gate can assert
+    # the expected reason code on the resulting blocked receipt.
+    return ExternalProviderMode.DISABLED
 
 
 def validate_external_providers(

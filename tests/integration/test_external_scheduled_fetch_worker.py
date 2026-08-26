@@ -575,3 +575,62 @@ def test_provider_failure_still_opens_the_circuit() -> None:
     assert store.circuit_open_until(
         "listing.partner_feed", datetime(2026, 7, 29, 1, 9, tzinfo=UTC)
     ) is not None
+
+
+@pytest.mark.parametrize(
+    "garbage_mode",
+    ["garbage", "GARBAGE", "  unknown  ", "livee", "disabledd", "0", "true", "yes"],
+)
+def test_unknown_provider_mode_fails_closed_as_disabled(garbage_mode: str) -> None:
+    """Regression: ODP_EXTERNAL_PROVIDER_MODE=garbage must not crash the worker.
+
+    Before the fix, ``external_provider_mode()`` raised ``ValueError`` for
+    unrecognised values.  The ``ValueError`` escaped
+    ``_configuration_refusal()``'s ``except ExternalFetchProviderConfigurationError``
+    and crashed the worker without producing a FAILED/BLOCKED scheduler run or
+    audit receipt, breaking the fail-closed worker contract.
+
+    Codex reproduced this with ``ODP_EXTERNAL_PROVIDER_MODE=garbage`` (review of
+    HEAD b056d92d).
+    """
+    provider = CountingProvider()
+    scheduler = ExternalFetchScheduler(
+        provider_factories={"listing.partner_feed": lambda: provider},
+        env={"ODP_EXTERNAL_PROVIDER_MODE": garbage_mode},
+    )
+
+    run = scheduler.run_once(
+        ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="live-e2e-gate"),
+        scheduled_at=datetime(2026, 6, 28, 10, tzinfo=UTC),
+    )
+
+    assert run.status == "FAILED"
+    assert run.data_status == "BLOCKED"
+    assert run.alerts[0].reason_code == "provider_mode_disabled"
+    assert run.source_snapshot_ids == ()
+    assert provider.calls == 0
+
+
+def test_unknown_provider_mode_does_not_contact_provider_factory() -> None:
+    """Regression: unknown mode must not instantiate or call any provider factory."""
+    factory_calls = 0
+
+    def provider_factory() -> CountingProvider:
+        nonlocal factory_calls
+        factory_calls += 1
+        return CountingProvider()
+
+    scheduler = ExternalFetchScheduler(
+        provider_factories={"listing.partner_feed": provider_factory},
+        env={"ODP_EXTERNAL_PROVIDER_MODE": "garbage"},
+    )
+
+    run = scheduler.run_once(
+        ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="live-e2e-gate"),
+        scheduled_at=datetime(2026, 6, 28, 10, tzinfo=UTC),
+    )
+
+    assert run.status == "FAILED"
+    assert run.alerts[0].reason_code == "provider_mode_disabled"
+    assert factory_calls == 0
+
