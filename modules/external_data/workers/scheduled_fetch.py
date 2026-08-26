@@ -281,6 +281,11 @@ class InMemoryExternalFetchStateStore:
             self._circuit_open_until.pop(provider_id, None)
         return None
 
+    def clear_resilience_state(self, provider_id: str) -> None:
+        """Forget the health verdict for a provider this deployment stopped calling."""
+        self._consecutive_failures.pop(provider_id, None)
+        self._circuit_open_until.pop(provider_id, None)
+
 
 class DurableExternalFetchStateStore:
     """Durable-state interface using SqliteDocumentStore (ODP-PV-009)."""
@@ -345,6 +350,11 @@ class DurableExternalFetchStateStore:
             self._store.put(self._circuit_open_until_collection, provider_id, None)
         return None
 
+    def clear_resilience_state(self, provider_id: str) -> None:
+        """Forget the health verdict for a provider this deployment stopped calling."""
+        self._store.put(self._consecutive_failures_collection, provider_id, 0)
+        self._store.put(self._circuit_open_until_collection, provider_id, None)
+
 
 class TenantScopedExternalFetchStateStore:
     """Tenant-partitioned view over any fetch state store.
@@ -407,6 +417,9 @@ class TenantScopedExternalFetchStateStore:
     def circuit_open_until(self, provider_id: str, at: datetime) -> datetime | None:
         return self._inner.circuit_open_until(self._scope(provider_id), at)
 
+    def clear_resilience_state(self, provider_id: str) -> None:
+        self._inner.clear_resilience_state(self._scope(provider_id))
+
 
 class ExternalFetchScheduler:
     def __init__(
@@ -445,7 +458,31 @@ class ExternalFetchScheduler:
 
         corr = correlation_id or new_correlation_id()
         started_at = effective_end
-        circuit_open_until = self.state_store.circuit_open_until(spec.provider_id, effective_end)
+
+        # A deterministic deployment-configuration refusal outranks provider
+        # health. The circuit records how the provider behaved while this
+        # deployment still called it; consulting it first lets that stale
+        # verdict overwrite the reason the fetch is refused *now*. The reason
+        # code is load-bearing: the worker treats "provider_mode_disabled" and
+        # "provider_not_selected" as terminal and succeeds the job, while an
+        # unrecognised "circuit_open" makes it retry -- forever, because the
+        # schedule re-enqueues a provider this release never contacts -- and
+        # the live E2E gate asserts the disabled reason code on the receipt.
+        configuration_error = self._configuration_refusal(spec.provider_id)
+        if configuration_error is not None and configuration_error.code == (
+            PROVIDER_MODE_DISABLED_REASON_CODE
+        ):
+            # Every third-party source is closed, so no fetch can prove this
+            # provider healthy again and the cooldown would run down over a
+            # window with zero traffic. Drop the verdict so turning sources back
+            # on starts deterministically instead of inheriting the circuit the
+            # last fetching release left behind.
+            self.state_store.clear_resilience_state(spec.provider_id)
+        circuit_open_until = (
+            None
+            if configuration_error is not None
+            else self.state_store.circuit_open_until(spec.provider_id, effective_end)
+        )
         if circuit_open_until is not None:
             alert = _alert(
                 provider_id=spec.provider_id,
@@ -471,7 +508,8 @@ class ExternalFetchScheduler:
             )
 
         try:
-            self._assert_provider_schedulable_and_selected(spec.provider_id)
+            if configuration_error is not None:
+                raise configuration_error
             provider = self._provider_for(spec.provider_id)
             result = provider.fetch_and_ingest(ingestion_time=effective_end, correlation_id=corr)
             raw_snapshot_id = str(result.raw_snapshot.snapshot_id)
@@ -626,6 +664,21 @@ class ExternalFetchScheduler:
             "provider_factory_missing",
             "Scheduled fetch provider has no registered runtime factory.",
         )
+
+    def _configuration_refusal(
+        self, provider_id: str
+    ) -> ExternalFetchProviderConfigurationError | None:
+        """Return the deployment-configuration refusal for this provider, if any.
+
+        Evaluated before the circuit so the refusal reason survives into the
+        blocked run; raised from inside ``run_once``'s try block so it takes the
+        same failure path as every other fail-closed rejection.
+        """
+        try:
+            self._assert_provider_schedulable_and_selected(provider_id)
+        except ExternalFetchProviderConfigurationError as exc:
+            return exc
+        return None
 
     def _assert_provider_schedulable_and_selected(self, provider_id: str) -> None:
         definitions = {

@@ -93,6 +93,135 @@ def test_disabled_provider_mode_blocks_before_factory_or_credential_access() -> 
     assert provider.calls == 0
 
 
+def _circuit_opened_by_real_provider_failures(
+    store: InMemoryExternalFetchStateStore,
+    spec: ExternalFetchJobSpec,
+    policy: ExternalFetchResiliencePolicy,
+) -> datetime:
+    """Open the circuit the way production does: repeated live provider faults."""
+    live = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={
+            "listing.partner_feed": lambda: CountingProvider(
+                exception=ListingProviderRateLimitError("429 rate limited")
+            )
+        },
+        resilience_policy=policy,
+        env={"ODP_EXTERNAL_PROVIDER_MODE": "live", "ODP_DEPLOY_ENV": "dev"},
+    )
+    for minute in range(policy.max_consecutive_failures):
+        live.run_once(spec, scheduled_at=datetime(2026, 7, 29, 1, minute, tzinfo=UTC))
+    open_until = store.circuit_open_until(
+        spec.provider_id, datetime(2026, 7, 29, 1, 5, tzinfo=UTC)
+    )
+    assert open_until is not None
+    return open_until
+
+
+def test_disabled_mode_outranks_a_circuit_opened_before_sources_were_closed() -> None:
+    """Closing every third-party source must not report the old health verdict.
+
+    The circuit was opened by the release that still fetched. Reading it first
+    makes the run say "circuit_open", which the worker does not recognise as
+    terminal (it retries a provider this release never contacts) and which the
+    live E2E gate rejects because it asserts the disabled reason code on the
+    blocked receipt.
+    """
+    store = InMemoryExternalFetchStateStore()
+    policy = ExternalFetchResiliencePolicy(max_consecutive_failures=2)
+    spec = ExternalFetchJobSpec(
+        provider_id="listing.partner_feed",
+        schedule_id="live-e2e-gate",
+    )
+    open_until = _circuit_opened_by_real_provider_failures(store, spec, policy)
+    inside_cooldown = open_until - timedelta(minutes=1)
+
+    provider = CountingProvider()
+    disabled = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={"listing.partner_feed": lambda: provider},
+        resilience_policy=policy,
+        env={"ODP_EXTERNAL_PROVIDER_MODE": "disabled"},
+    )
+
+    run = disabled.run_once(spec, scheduled_at=inside_cooldown)
+
+    assert run.status == "FAILED"
+    assert run.data_status == "BLOCKED"
+    assert run.alerts[0].reason_code == "provider_mode_disabled"
+    assert run.source_snapshot_ids == ()
+    assert provider.calls == 0
+    # No fetch can prove the provider healthy again while sources are closed,
+    # so the stale verdict is dropped rather than counted down over a window
+    # with zero traffic.
+    assert store.circuit_open_until("listing.partner_feed", inside_cooldown) is None
+
+
+def test_reopening_sources_after_a_disabled_window_fetches_immediately() -> None:
+    """Switching back to live must not inherit the pre-shutdown circuit."""
+    store = InMemoryExternalFetchStateStore()
+    policy = ExternalFetchResiliencePolicy(max_consecutive_failures=2)
+    spec = ExternalFetchJobSpec(
+        provider_id="listing.partner_feed",
+        schedule_id="hourly-listing",
+    )
+    open_until = _circuit_opened_by_real_provider_failures(store, spec, policy)
+    inside_cooldown = open_until - timedelta(minutes=5)
+
+    ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={"listing.partner_feed": lambda: CountingProvider()},
+        resilience_policy=policy,
+        env={"ODP_EXTERNAL_PROVIDER_MODE": "disabled"},
+    ).run_once(spec, scheduled_at=inside_cooldown)
+
+    recovered = CountingProvider(observed_at=inside_cooldown.isoformat())
+    relive = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={"listing.partner_feed": lambda: recovered},
+        resilience_policy=policy,
+        env={"ODP_EXTERNAL_PROVIDER_MODE": "live", "ODP_DEPLOY_ENV": "dev"},
+    )
+
+    run = relive.run_once(spec, scheduled_at=inside_cooldown + timedelta(minutes=1))
+
+    assert run.status == "SUCCEEDED"
+    assert recovered.calls == 1
+
+
+def test_provider_not_selected_outranks_the_circuit_without_erasing_it() -> None:
+    """The ordering rule is about the reason code, not about forgiving faults.
+
+    An allowlist decision only says this deployment does not run the provider;
+    unlike closing every source it says nothing about the recorded health
+    verdict, so the circuit stays for whoever does run it.
+    """
+    store = InMemoryExternalFetchStateStore()
+    policy = ExternalFetchResiliencePolicy(max_consecutive_failures=2)
+    spec = ExternalFetchJobSpec(
+        provider_id="listing.partner_feed",
+        schedule_id="hourly-listing",
+    )
+    open_until = _circuit_opened_by_real_provider_failures(store, spec, policy)
+    inside_cooldown = open_until - timedelta(minutes=1)
+
+    deselected = ExternalFetchScheduler(
+        state_store=store,
+        provider_factories={"listing.partner_feed": lambda: CountingProvider()},
+        resilience_policy=policy,
+        env={
+            "ODP_EXTERNAL_PROVIDER_MODE": "live",
+            "ODP_DEPLOY_ENV": "dev",
+            "ODP_PRODUCTION_PROVIDER_IDS": "poi.commercial_api",
+        },
+    )
+
+    run = deselected.run_once(spec, scheduled_at=inside_cooldown)
+
+    assert run.alerts[0].reason_code == "provider_not_selected"
+    assert store.circuit_open_until("listing.partner_feed", inside_cooldown) == open_until
+
+
 def test_backfill_is_idempotent_for_same_windows() -> None:
     provider = CountingProvider()
     scheduler = ExternalFetchScheduler(

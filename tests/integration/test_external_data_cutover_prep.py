@@ -675,6 +675,59 @@ def test_worker_reads_provider_off_through_the_consumer_boundary() -> None:
     assert PROVIDER_MODE_DISABLED_REASON_CODE == "provider_mode_disabled"
 
 
+def test_disabled_worker_is_terminal_even_with_an_open_circuit(monkeypatch) -> None:
+    """A circuit left open by the last fetching release must not resurrect retries.
+
+    ``ODP_EXTERNAL_PROVIDER_MODE=disabled`` is the operator closing every
+    third-party source. The scheduler must answer with the reason code the
+    worker recognises as terminal; answering with the stale ``circuit_open``
+    health verdict instead makes the worker raise a retryable failure on a
+    provider this release never contacts, and the schedule re-enqueues it every
+    tick.
+    """
+    from datetime import UTC, datetime
+
+    from apps.worker.oday_worker import handlers
+    from modules.external_data.workers.scheduled_fetch import (
+        PROVIDER_MODE_DISABLED_REASON_CODE,
+        ExternalFetchResiliencePolicy,
+        TenantScopedExternalFetchStateStore,
+    )
+
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "disabled")
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_PLATFORM_PRIMARY)
+    monkeypatch.delenv(KILL_SWITCH_ENV, raising=False)
+
+    persistence = build_persistence(mode="memory")
+    # Namespaced through the production wrapper rather than a hand-built key, so
+    # the test opens exactly the circuit the handler's scheduler will read.
+    scoped = TenantScopedExternalFetchStateStore(
+        persistence.external_fetch_state_store, "tenant-cutover"
+    )
+    policy = ExternalFetchResiliencePolicy()
+    # The handler runs at wall-clock "now", so the cooldown has to start there
+    # for the circuit to still be open when the run happens.
+    opened_at = datetime.now(UTC)
+    for _ in range(policy.max_consecutive_failures):
+        scoped.record_failure("listing.partner_feed", at=opened_at, policy=policy)
+    assert scoped.circuit_open_until("listing.partner_feed", opened_at) is not None
+
+    handlers.handle_external_fetch(_external_fetch_job(), persistence)
+
+    records = [
+        record
+        for record in persistence.ingestion_run_store.list_runs()
+        if record.provider_id == "listing.partner_feed"
+    ]
+    assert len(records) == 1
+    assert records[0].status == "FAILED"
+    assert records[0].data_status == "BLOCKED"
+    assert [alert["reason_code"] for alert in records[0].alerts] == [
+        PROVIDER_MODE_DISABLED_REASON_CODE
+    ]
+    assert scoped.circuit_open_until("listing.partner_feed", datetime.now(UTC)) is None
+
+
 def test_external_fetch_stays_registered_after_cutover(monkeypatch) -> None:
     """An unregistered type would retry to an opaque 'unknown job type' instead
     of dead-lettering on the first attempt with the operator's reason."""
