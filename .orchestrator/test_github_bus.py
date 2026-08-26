@@ -488,6 +488,179 @@ class GitHubBusCommandTests(unittest.TestCase):
         diff.assert_not_called()
         log.assert_not_called()
 
+    def _stale_ref_config(self) -> dict:
+        return {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            }
+        }
+
+    def _stale_ref_task(self, task_id: str, title: str) -> dict:
+        return {
+            "id": task_id,
+            "title": title,
+            "summary_zh": "reconcile me",
+            "status": "review_approved",
+            "owner": "Codex",
+            "reviewer": "Codex",
+            "depends_on": [],
+            "artifacts": [],
+            "next": "ready",
+        }
+
+    def test_stale_pr_number_is_not_carried_into_no_commits_skip(self) -> None:
+        """A closed PR number must not survive the ``skipped_no_commits`` path.
+
+        Regression: the stale null-out used to sit *after* the skip paths, so a
+        poll that found no commits ahead of the base copied the dead PR number
+        into ``state: skipped_no_commits`` -- a state that no longer looks
+        stale.  The next poll (new head_sha, so the hash guard does not fire)
+        then edited the CLOSED PR again and auto-merge stranded the task.
+        """
+
+        config = self._stale_ref_config()
+        task = self._stale_ref_task("ODP-PR-STALE-SKIP-001", "Stale ref meets empty branch")
+        branch = "task/ODP-PR-STALE-SKIP-001"
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": 1018,
+                        "url": "https://example.test/pull/1018",
+                        "branch": branch,
+                        "state": "closed",
+                    },
+                    "last_review_hash": "stale-hash",
+                }
+            }
+        }
+        found = {"number": 1019, "url": "https://example.test/pull/1019"}
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", side_effect=["a" * 40, "c" * 40]),
+            mock.patch.object(github_bus, "remote_branch_head_sha", side_effect=["a" * 40, "c" * 40]),
+            mock.patch.object(github_bus, "branch_has_diff", side_effect=[False, True]),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found),
+            mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            first = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+            skipped = bus_state["tasks"][task["id"]]["review_pr"]
+            # The dead number must be dropped here, not merely ignored later.
+            self.assertEqual(skipped["state"], "skipped_no_commits")
+            self.assertIsNone(skipped["number"])
+            self.assertIsNone(skipped["url"])
+
+            second = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+
+        self.assertTrue(first)
+        self.assertTrue(second)
+        # The closed PR must never be edited; only the adopted open PR is.
+        edited_numbers = [call.args[1] for call in edit.call_args_list]
+        self.assertEqual(edited_numbers, [1019])
+        review_pr = bus_state["tasks"][task["id"]]["review_pr"]
+        self.assertEqual(review_pr["number"], 1019)
+        self.assertEqual(review_pr["state"], "open")
+
+    def test_stale_pr_number_is_not_carried_into_unpublished_skip(self) -> None:
+        """Same carry-over hazard on the ``skipped_unpublished_branch`` path."""
+
+        config = self._stale_ref_config()
+        task = self._stale_ref_task("ODP-PR-STALE-SKIP-002", "Stale ref meets unpushed branch")
+        branch = "task/ODP-PR-STALE-SKIP-002"
+        bus_state = {
+            "tasks": {
+                task["id"]: {
+                    "review_pr": {
+                        "number": 1018,
+                        "url": "https://example.test/pull/1018",
+                        "branch": branch,
+                        "state": "merged",
+                    },
+                    "last_review_hash": "stale-hash",
+                }
+            }
+        }
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=None),
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(config, bus_state, {"tasks": []}, "o/r", task)
+
+        self.assertTrue(changed)
+        review_pr = bus_state["tasks"][task["id"]]["review_pr"]
+        self.assertEqual(review_pr["state"], "skipped_unpublished_branch")
+        self.assertIsNone(review_pr["number"])
+        self.assertIsNone(review_pr["url"])
+
+    def test_github_cased_pr_states_are_treated_as_stale(self) -> None:
+        """``poll_pr_reviews`` writes GitHub's casing into ``pr_ref["state"]``.
+
+        ``pr view --json state`` returns ``OPEN``/``CLOSED``/``MERGED``, so a
+        lowercase-only membership test would silently keep editing a dead PR.
+        """
+
+        for github_state in ("CLOSED", "MERGED"):
+            with self.subTest(state=github_state):
+                self.assertTrue(
+                    github_bus.review_pr_ref_is_stale({"number": 1018, "state": github_state})
+                )
+
+                config = self._stale_ref_config()
+                task = self._stale_ref_task(
+                    "ODP-PR-STALE-CASE-001", "Uppercase stale state"
+                )
+                branch = "task/ODP-PR-STALE-CASE-001"
+                bus_state = {
+                    "tasks": {
+                        task["id"]: {
+                            "review_pr": {
+                                "number": 1018,
+                                "url": "https://example.test/pull/1018",
+                                "branch": branch,
+                                "state": github_state,
+                            },
+                            "last_review_hash": "stale-hash",
+                        }
+                    }
+                }
+                found = {"number": 1019, "url": "https://example.test/pull/1019"}
+
+                with (
+                    mock.patch.object(github_bus, "review_branch_for_task", return_value=branch),
+                    mock.patch.object(github_bus, "branch_head_sha", return_value="a" * 40),
+                    mock.patch.object(github_bus, "remote_branch_head_sha", return_value="a" * 40),
+                    mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+                    mock.patch.object(github_bus, "find_existing_pr", return_value=found) as find,
+                    mock.patch.object(github_bus, "build_template_body", return_value="body\n"),
+                    mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+                    mock.patch.object(github_bus, "write_activity_log"),
+                ):
+                    changed = github_bus.upsert_review_pr(
+                        config, bus_state, {"tasks": []}, "o/r", task
+                    )
+
+                self.assertTrue(changed)
+                find.assert_called_once_with("o/r", task["id"], branch, "dev")
+                self.assertEqual(edit.call_args.args[1], 1019)
+                self.assertEqual(bus_state["tasks"][task["id"]]["review_pr"]["number"], 1019)
+
+    def test_open_and_skipped_states_are_not_treated_as_stale(self) -> None:
+        """Only dead-PR states are stale; live and transient ones are not."""
+
+        for state in ("open", "OPEN", "skipped_no_commits", "skipped_unpublished_branch", "skipped_no_branch"):
+            with self.subTest(state=state):
+                self.assertFalse(github_bus.review_pr_ref_is_stale({"number": 7, "state": state}))
+        self.assertFalse(github_bus.review_pr_ref_is_stale(None))
+        self.assertFalse(github_bus.review_pr_ref_is_stale({}))
+
     def test_upsert_review_pr_skips_unpublished_remote_branch(self) -> None:
         config = {
             "github_bus": {
