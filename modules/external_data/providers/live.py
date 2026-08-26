@@ -157,6 +157,31 @@ class ExternalDatasetProviderStaleError(ExternalDatasetProviderResponseError):
     """Raised when the provider observation exceeds the configured freshness SLA."""
 
 
+class ExternalProviderDisabledError(RuntimeError):
+    """Raised when a provider adapter is invoked while mode is DISABLED.
+
+    Disabled mode means no credential may be read, no client may be
+    constructed, and no external fetch may be attempted.  This error is the
+    adapter-level fail-closed complement to the scheduler-level gate; it
+    closes the direct-adapter bypass identified during review.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_id: str,
+        correlation_id: str,
+    ) -> None:
+        self.provider_id = provider_id
+        self.correlation_id = correlation_id
+        self.code = "provider_disabled"
+        super().__init__(
+            f"External provider is disabled; no credential, client, or fetch "
+            f"is permitted (provider_id={provider_id}, "
+            f"correlation_id={correlation_id}, code=provider_disabled)"
+        )
+
+
 @dataclass(frozen=True, repr=False)
 class ExternalDatasetCredentialValue:
     env_var: str
@@ -940,6 +965,11 @@ class PrimaryGeocodeProvider:
     def _default_client(self, replay_fixture_path: Path | str) -> GeocodeClient:
         if self.mode is ExternalProviderMode.FIXTURE:
             return GeocodeFixtureReplayClient(replay_fixture_path)
+        if self.mode is ExternalProviderMode.DISABLED:
+            # Disabled mode must not read endpoint env vars or create a live
+            # HTTP client.  Return a fixture replay as a no-op placeholder;
+            # _credential_or_raise() will refuse before any call is made.
+            return GeocodeFixtureReplayClient(replay_fixture_path)
         return HttpGeocodeClient(str(self.env.get(GEOCODE_ENDPOINT_ENV_VAR, "")))
 
     def _credential_or_raise(
@@ -948,6 +978,11 @@ class PrimaryGeocodeProvider:
     ) -> GeocodeProviderCredentialValue | None:
         if self.mode is ExternalProviderMode.FIXTURE:
             return None
+        if self.mode is ExternalProviderMode.DISABLED:
+            raise ExternalProviderDisabledError(
+                provider_id=self.provider.provider_id,
+                correlation_id=correlation_id,
+            )
         credential = _required_geocode_credential(self.provider)
         value = self.env.get(credential.env_var, "")
         if _is_missing_or_placeholder(value):
@@ -1018,6 +1053,11 @@ class ListingPartnerFeedProvider:
     ) -> ListingFeedIngestionResult:
         corr = correlation_id or new_correlation_id()
         fetched_at = ingestion_time or datetime.now(UTC)
+        if self.mode is ExternalProviderMode.DISABLED:
+            raise ExternalProviderDisabledError(
+                provider_id=self.provider.provider_id,
+                correlation_id=corr,
+            )
         assert_listing_provider_selected(
             env=self.env,
             mode=self.mode,
@@ -1065,6 +1105,11 @@ class ListingPartnerFeedProvider:
     def _default_client(self, replay_fixture_path: Path | str) -> ListingFeedClient:
         if self.mode is ExternalProviderMode.FIXTURE:
             return ListingFixtureReplayClient(replay_fixture_path)
+        if self.mode is ExternalProviderMode.DISABLED:
+            # Disabled mode must not read endpoint env vars or create a live
+            # HTTP client.  Return a fixture replay as a no-op placeholder;
+            # fetch_and_ingest() will refuse before any call is made.
+            return ListingFixtureReplayClient(replay_fixture_path)
         return HttpListingFeedClient(str(self.env.get(LISTING_FEED_ENDPOINT_ENV_VAR, "")))
 
     def _credential_or_raise(
@@ -1073,6 +1118,11 @@ class ListingPartnerFeedProvider:
     ) -> ListingProviderCredentialValue | None:
         if self.mode is ExternalProviderMode.FIXTURE:
             return None
+        if self.mode is ExternalProviderMode.DISABLED:
+            raise ExternalProviderDisabledError(
+                provider_id=self.provider.provider_id,
+                correlation_id=correlation_id,
+            )
         credential = _required_listing_credential(self.provider)
         value = self.env.get(credential.env_var, "")
         if _is_missing_or_placeholder(value):
@@ -2173,6 +2223,7 @@ __all__ = [
     "ExternalDatasetProviderChecksumError",
     "ExternalDatasetProviderConfigError",
     "ExternalDatasetProviderError",
+    "ExternalProviderDisabledError",
     "ExternalDatasetProviderRateLimitError",
     "ExternalDatasetProviderResponseError",
     "ExternalDatasetProviderStaleError",

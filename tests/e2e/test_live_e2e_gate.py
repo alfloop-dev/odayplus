@@ -236,6 +236,42 @@ def readiness_payload() -> dict[str, Any]:
     }
 
 
+def disabled_readiness_payload() -> dict[str, Any]:
+    """The ``details.provider`` block a consumer-only release actually serves.
+
+    This is not a hand-shaped guess: ``test_disabled_readiness_provider_block_\
+matches_the_real_api`` builds the real FastAPI app with
+    ``ODP_EXTERNAL_PROVIDER_MODE=disabled`` and asserts this dict is equal to
+    what ``GET /readiness`` returns, field for field. If the API changes the
+    disabled provider report, that test fails here rather than letting the gate
+    pass against a fixture the deployment no longer matches.
+    """
+
+    payload = deepcopy(readiness_payload())
+    provider = payload["details"]["provider"]
+    provider.update(
+        {
+            "mode": "disabled",
+            "configurationValid": True,
+            "connectivityHealthy": False,
+            "healthy": True,
+            "live": False,
+            "probeEvidence": {
+                "status": "disabled",
+                "mode": "disabled",
+                "configuration_valid": True,
+                "connectivity_healthy": False,
+                "required_provider_ids": [],
+                "checked_at": None,
+                "expires_at": None,
+                "probes": [],
+                "configuration_errors": [],
+            },
+        }
+    )
+    return payload
+
+
 def governed_disabled_capability(service: str) -> dict[str, Any]:
     """Return a fully-evidenced governed-disabled capability record.
 
@@ -331,6 +367,27 @@ def ingestion_payload() -> dict[str, Any]:
     return {"items": runs, "count": len(runs)}
 
 
+def disabled_ingestion_payload() -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "run_id": "run-provider-disabled-20260726",
+                "provider_id": gate.DISABLED_WORKER_PROBE_PROVIDER_ID,
+                "schedule_id": "live-e2e-gate",
+                "trigger": "scheduled",
+                "status": "FAILED",
+                "data_status": "BLOCKED",
+                "completed_at": "2026-07-26T14:00:00+00:00",
+                "raw_snapshot_id": "",
+                "canonical_snapshot_id": "",
+                "source_snapshot_ids": [],
+                "alerts": [{"reason_code": "provider_mode_disabled"}],
+            }
+        ],
+        "count": 1,
+    }
+
+
 def enqueue_payload(
     *, created: bool = True, status: str = "queued", job_id: str = JOB_ID
 ) -> dict[str, Any]:
@@ -389,6 +446,20 @@ def jobs_enqueue_route() -> Any:
         created = key not in issued
         issued[key] = job_id
         return response(202, enqueue_payload(created=created, job_id=job_id))
+
+    return handler
+
+
+def disabled_jobs_enqueue_route() -> Any:
+    issued: set[str] = set()
+
+    def handler(body: Any, headers: Any) -> Any:
+        del headers
+        request = body if isinstance(body, dict) else {}
+        key = str(request.get("idempotency_key") or "")
+        created = key not in issued
+        issued.add(key)
+        return response(202, enqueue_payload(created=created, job_id=JOB_ID))
 
     return handler
 
@@ -477,6 +548,20 @@ def live_routes(**overrides: Any) -> dict[str, Any]:
     return routes
 
 
+def disabled_routes(**overrides: Any) -> dict[str, Any]:
+    routes = live_routes(
+        **{
+            "anon GET /readiness": response(200, disabled_readiness_payload()),
+            "GET /api/v1/external-data/ingestion-runs?limit=100": response(
+                200, disabled_ingestion_payload()
+            ),
+            "POST /api/v1/jobs": disabled_jobs_enqueue_route(),
+        }
+    )
+    routes.update(overrides)
+    return routes
+
+
 def config(**overrides: Any) -> Any:
     values: dict[str, Any] = {
         "api_url": API_URL,
@@ -495,6 +580,15 @@ def config(**overrides: Any) -> Any:
     }
     values.update(overrides)
     return gate.GateConfig(**values)
+
+
+def disabled_config(**overrides: Any) -> Any:
+    values = {
+        "external_provider_mode": "disabled",
+        "required_provider_ids": (),
+    }
+    values.update(overrides)
+    return config(**values)
 
 
 def passing_web_http() -> Any:
@@ -545,6 +639,149 @@ def test_fully_live_deployment_passes() -> None:
     assert all(check.ok for check in checks)
     assert report["worker"]["terminal_status"] == "succeeded"
     assert report["inputs"]["secret_values_redacted"] is True
+
+
+def test_disabled_deployment_still_proves_worker_lifecycle_and_blocked_receipt() -> None:
+    driver = FakeWorkerDriver()
+    checks, report = run_gate(
+        disabled_routes(), cfg=disabled_config(), worker_driver=driver
+    )
+
+    assert report["ok"] is True, report["blockers"]
+    assert all(check.ok for check in checks)
+    assert report["worker"]["terminal_status"] == "succeeded"
+    assert driver.calls == 1
+    names = {check.name for check in checks}
+    # Disabled mode is a no-fetch receipt, not a skipped worker lifecycle.
+    assert "worker:terminal_disabled" in names
+    # ...and it is not an exemption from the data-binding contract either.
+    assert "data:no_surrogate_markers" in names
+
+
+def _disabled_readiness_from_the_real_app(monkeypatch: Any) -> dict[str, Any]:
+    """Boot the deployed API in consumer-only mode and read `/readiness` for real.
+
+    The counterpart of `_live_readiness_details_from_the_real_app`. Nothing here
+    is fabricated: the provider report is the one `provider_health` builds and
+    the readiness handler publishes, so a shape change in either fails here
+    instead of quietly passing against a fixture.
+    """
+    from fastapi.testclient import TestClient
+
+    # Import before ODP_REQUIRE_LIVE_DATA is set: apps.api.oday_api.main builds
+    # a module-level app at import time, and that build fail-closes on a
+    # non-production persistence bundle.
+    monkeypatch.delenv("ODP_REQUIRE_LIVE_DATA", raising=False)
+    from apps.api.oday_api.main import create_app
+    from shared.infrastructure.persistence.factory import _memory_bundle
+
+    # The real switch, not an injected double: this test exists to prove the
+    # deployment env var the rollout plan sets produces the disabled contract.
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "disabled")
+    monkeypatch.delenv("ODP_PRODUCTION_PROVIDER_IDS", raising=False)
+    monkeypatch.setenv("ODP_REQUIRE_LIVE_DATA", "true")
+
+    app = create_app(persistence=_memory_bundle())
+    return TestClient(app).get("/readiness").json()["details"]
+
+
+def test_disabled_ingestion_history_still_fails_on_surrogate_markers() -> None:
+    """A consumer-only release still may not serve placeholder ingestion data.
+
+    The disabled branch of ``_check_source_data`` returns early, so this is the
+    regression that keeps ``data:no_surrogate_markers`` on that path.
+    """
+    payload = disabled_ingestion_payload()
+    payload["items"][0]["schedule_id"] = "fixture-live-e2e-gate"
+    routes = disabled_routes(
+        **{
+            "GET /api/v1/external-data/ingestion-runs?limit=100": response(
+                200, payload
+            )
+        }
+    )
+
+    _, report = run_gate(routes, cfg=disabled_config())
+
+    assert report["ok"] is False
+    assert "data:no_surrogate_markers" in blocker_names(report)
+
+
+def test_disabled_readiness_provider_block_matches_the_real_api(
+    monkeypatch: Any,
+) -> None:
+    """Bind the gate's disabled assertions to the payload the API really serves.
+
+    Every other disabled-mode test here drives the gate from a fixture. A
+    fixture can drift from the deployment it stands in for -- and a drifted
+    fixture makes the gate look proven while the real release is unchecked.
+    """
+    real_provider = _disabled_readiness_from_the_real_app(monkeypatch)["provider"]
+
+    assert real_provider == disabled_readiness_payload()["details"]["provider"]
+    # The exact fields the gate reads, spelled out so a rename fails loudly.
+    assert real_provider["mode"] == "disabled"
+    assert real_provider["configurationValid"] is True
+    assert real_provider["connectivityHealthy"] is False
+    assert real_provider["live"] is False
+    assert real_provider["healthy"] is True
+    assert real_provider["probeEvidence"]["status"] == "disabled"
+    assert real_provider["probeEvidence"]["required_provider_ids"] == []
+    assert real_provider["probeEvidence"]["probes"] == []
+
+    assert gate._disabled_provider_runtime_confirmed(disabled_config(), real_provider)
+
+    # Splice the real provider block into an otherwise-live deployment: the
+    # whole gate must still pass, so the disabled contract is proven end to end
+    # rather than only at the predicate.
+    payload = readiness_payload()
+    payload["details"]["provider"] = deepcopy(real_provider)
+    checks, report = run_gate(
+        disabled_routes(**{"anon GET /readiness": response(200, payload)}),
+        cfg=disabled_config(),
+    )
+    assert report["ok"] is True, report["blockers"]
+    assert all(check.ok for check in checks)
+
+
+def test_real_api_disabled_mode_does_not_block_readiness_on_provider(
+    monkeypatch: Any,
+) -> None:
+    """Disabled is a governed runtime state, not a provider outage.
+
+    ``PROVIDER_NOT_LIVE`` must not appear: a consumer-only release is allowed to
+    serve, and the remaining blockers must be the genuinely unmet ones.
+    """
+    data = _disabled_readiness_from_the_real_app(monkeypatch)["data"]
+
+    assert "PROVIDER_NOT_LIVE" not in data["blockingReasons"]
+    assert set(data["blockingReasons"]) == {
+        "MEMORY_PERSISTENCE",
+        "OPERATOR_LIVE_REPOSITORY_UNAVAILABLE",
+    }
+
+
+def test_gate_disabled_reason_code_matches_the_scheduler_constant() -> None:
+    """The gate is a standalone script, so it pins the shared string by test."""
+    from modules.external_data.workers.scheduled_fetch import (
+        PROVIDER_MODE_DISABLED_REASON_CODE,
+    )
+
+    assert gate.PROVIDER_MODE_DISABLED_REASON_CODE == PROVIDER_MODE_DISABLED_REASON_CODE
+
+
+def test_disabled_gate_does_not_skip_when_runtime_reports_live() -> None:
+    driver = FakeWorkerDriver()
+    checks, report = run_gate(
+        live_routes(), cfg=disabled_config(), worker_driver=driver
+    )
+
+    assert report["ok"] is False
+    assert "runtime:provider_mode_alignment" in blocker_names(report)
+    assert "worker:provider_mode_alignment" in blocker_names(report)
+    # A mismatched runtime is fail-closed: it is not allowed to dispatch an
+    # external-fetch probe under the wrong semantics.
+    assert driver.calls == 0
 
 
 def test_report_never_contains_the_bearer_token() -> None:
