@@ -164,6 +164,7 @@ _GOVERNED_DISABLED_TEXT_FIELDS = (
 PRODUCTION_ALIAS = "production"
 
 WORKER_PROBE_JOB_TYPE = "external-fetch"
+DISABLED_WORKER_PROBE_PROVIDER_ID = "listing.partner_feed"
 
 DEPENDENCY_ACTIONS: Mapping[str, str] = {
     "config": (
@@ -306,7 +307,14 @@ class GateConfig:
         if self.worker_probe_provider_id:
             return self.worker_probe_provider_id
         snapshot = self.snapshot_provider_ids
-        return snapshot[0] if snapshot else ""
+        if snapshot:
+            return snapshot[0]
+        if self.external_provider_mode.strip().lower() == "disabled":
+            # The disabled-mode probe is deliberately a known, schedulable
+            # provider name. The worker records a BLOCKED receipt before any
+            # factory/credential access; it is not an activation request.
+            return DISABLED_WORKER_PROBE_PROVIDER_ID
+        return ""
 
 
 @dataclass
@@ -672,9 +680,14 @@ def validate_config(config: GateConfig) -> list[CheckResult]:
         config.operator_role or f"missing {OPERATOR_ROLE_ENV}",
         "config",
     )
-    providers_disabled = (
-        config.external_provider_mode.strip().lower() == "disabled"
-        and not config.required_provider_ids
+    provider_mode = config.external_provider_mode.strip().lower()
+    providers_disabled = provider_mode == "disabled" and not config.required_provider_ids
+    _check(
+        checks,
+        provider_mode in {"live", "disabled"},
+        "config:external_provider_mode",
+        provider_mode or "missing external provider mode",
+        "config",
     )
     _check(
         checks,
@@ -780,6 +793,21 @@ def _check_release_binding(
     )
 
 
+def _disabled_provider_runtime_confirmed(
+    config: GateConfig, provider: Mapping[str, Any]
+) -> bool:
+    """Return true only when the served runtime proves consumer-only mode."""
+
+    return (
+        config.external_provider_mode.strip().lower() == "disabled"
+        and not config.required_provider_ids
+        and str(provider.get("mode") or "").strip().lower() == "disabled"
+        and provider.get("configurationValid") is True
+        and provider.get("connectivityHealthy") is False
+        and provider.get("live") is False
+    )
+
+
 def _check_runtime_readiness(
     response: HttpResponse, *, config: GateConfig, checks: list[CheckResult]
 ) -> None:
@@ -837,11 +865,17 @@ def _check_runtime_readiness(
         ),
         "postgresql",
     )
-    provider_disabled = (
-        config.external_provider_mode.strip().lower() == "disabled"
-        and provider.get("mode") == "disabled"
-        and provider.get("configurationValid") is True
-        and provider.get("live") is False
+    provider_disabled = _disabled_provider_runtime_confirmed(config, provider)
+    _check(
+        checks,
+        str(provider.get("mode") or "").strip().lower()
+        == config.external_provider_mode.strip().lower(),
+        "runtime:provider_mode_alignment",
+        (
+            f"configured={config.external_provider_mode or '<missing>'} "
+            f"runtime={provider.get('mode') or '<missing>'}"
+        ),
+        "provider",
     )
     _check(
         checks,
@@ -1003,11 +1037,26 @@ def _check_provider_probe_evidence(
     """
 
     if not config.required_provider_ids:
+        evidence = _as_dict(provider.get("probeEvidence"))
+        probes = evidence.get("probes")
+        probes = probes if isinstance(probes, list) else []
+        no_provider_probe_attempts = not probes and not evidence.get("required_provider_ids")
         _check(
             checks,
-            provider.get("mode") == "disabled",
+            _disabled_provider_runtime_confirmed(config, provider)
+            and no_provider_probe_attempts,
             "runtime:provider_probe",
-            "no provider probe is run while external providers are disabled",
+            (
+                "no provider probe is run while external providers are disabled"
+                if _disabled_provider_runtime_confirmed(config, provider)
+                and no_provider_probe_attempts
+                else (
+                    f"mode={provider.get('mode')} "
+                    f"configurationValid={provider.get('configurationValid')} "
+                    f"requiredProviderIds={evidence.get('required_provider_ids')} "
+                    f"probeCount={len(probes)}"
+                )
+            ),
             "provider",
         )
         return
@@ -1236,14 +1285,52 @@ def _latest_run_by_provider(items: Sequence[Any]) -> dict[str, dict[str, Any]]:
 
 
 def _check_source_data(
-    response: HttpResponse, *, config: GateConfig, checks: list[CheckResult]
+    response: HttpResponse,
+    *,
+    config: GateConfig,
+    provider: Mapping[str, Any],
+    checks: list[CheckResult],
 ) -> None:
     if not config.required_provider_ids:
+        disabled = _disabled_provider_runtime_confirmed(config, provider)
+        if response.failed or response.status != 200:
+            _check(
+                checks,
+                False,
+                "data:ingestion_runs",
+                _failure_detail(response),
+                _dependency_for(response, "external-data"),
+            )
+            return
+        items = response.payload.get("items")
+        items = items if isinstance(items, list) else []
+        blocked = [
+            item
+            for item in items
+            if isinstance(item, dict)
+            and item.get("provider_id") == config.probe_provider_id
+            and str(item.get("status") or "").upper() == "FAILED"
+            and str(item.get("data_status") or "").upper() == "BLOCKED"
+            and not item.get("raw_snapshot_id")
+            and not item.get("canonical_snapshot_id")
+            and any(
+                isinstance(alert, dict)
+                and alert.get("reason_code") == "provider_mode_disabled"
+                for alert in (item.get("alerts") or [])
+            )
+        ]
         _check(
             checks,
-            True,
+            disabled and bool(blocked),
             "data:ingestion_runs",
-            "external ingestion readback is skipped while providers are disabled",
+            (
+                "disabled provider receipt is blocked with no snapshot written"
+                if disabled and blocked
+                else (
+                    f"runtime provider disabled={disabled} "
+                    f"blockedReceipts={len(blocked)} items={len(items)}"
+                )
+            ),
             "external-data",
         )
         return
@@ -1412,21 +1499,37 @@ def _check_worker_and_audit(
     correlation_id: str,
     checks: list[CheckResult],
     report: dict[str, Any],
+    provider: Mapping[str, Any],
     monotonic: Callable[[], float],
     sleep: Callable[[float], None],
 ) -> None:
-    if not config.required_provider_ids:
-        report["worker"] = {
-            "skipped": True,
-            "reason": "external providers disabled; scheduler leaves no external-fetch job",
-        }
+    runtime_provider_mode = str(provider.get("mode") or "").strip().lower()
+    configured_provider_mode = config.external_provider_mode.strip().lower()
+    if runtime_provider_mode != configured_provider_mode:
         _check(
             checks,
-            True,
-            "worker:external_provider_disabled",
-            "worker external-fetch probe skipped because source activation is closed",
+            False,
+            "worker:provider_mode_alignment",
+            (
+                f"configured={configured_provider_mode or '<missing>'} "
+                f"runtime={runtime_provider_mode or '<missing>'}; "
+                "worker probe was not dispatched"
+            ),
             "worker",
         )
+        report["worker"] = {"skipped": False, "dispatched": False}
+        return
+
+    providers_disabled = _disabled_provider_runtime_confirmed(config, provider)
+    if not config.required_provider_ids and not providers_disabled:
+        _check(
+            checks,
+            False,
+            "worker:provider_mode_alignment",
+            "gate requested disabled provider mode but runtime did not confirm it; worker probe was not dispatched",
+            "worker",
+        )
+        report["worker"] = {"skipped": False, "dispatched": False}
         return
 
     idempotency_key = f"live-e2e-{config.expected_sha[:12]}-{correlation_id}"
@@ -1547,15 +1650,17 @@ def _check_worker_and_audit(
         sleep=sleep,
     )
 
+    terminal_check = "worker:terminal_disabled" if providers_disabled else "worker:terminal_success"
     _check(
         checks,
         status_value == "succeeded",
-        "worker:terminal_success",
+        terminal_check,
         f"{last_detail} deadline={config.worker_deadline_seconds}s",
         "worker",
     )
     if isinstance(report.get("worker"), dict):
         report["worker"]["terminal_status"] = status_value or None
+        report["worker"]["expected_terminal_status"] = "succeeded"
         report["worker"]["ingestion_probe_provider_ids"] = list(config.snapshot_provider_ids)
 
     for provider_id, provider_job_id, initial_status in secondary_jobs:
@@ -1680,11 +1785,14 @@ def evaluate_gate(
             config=config,
             checks=checks,
         )
+        readiness_response = http.request("GET", "/readiness", authenticated=False)
         _check_runtime_readiness(
-            http.request("GET", "/readiness", authenticated=False),
+            readiness_response,
             config=config,
             checks=checks,
         )
+        runtime_details = _as_dict(readiness_response.payload.get("details"))
+        runtime_provider = _as_dict(runtime_details.get("provider"))
         _check_authenticated_operator(http=http, config=config, checks=checks)
         # A missing/unusable web client is a blocker, not a silently skipped
         # check: the protected-route assertion is part of the release contract.
@@ -1713,12 +1821,14 @@ def evaluate_gate(
             correlation_id=correlation_id,
             checks=checks,
             report=report,
+            provider=runtime_provider,
             monotonic=monotonic,
             sleep=sleep,
         )
         _check_source_data(
             http.request("GET", "/api/v1/external-data/ingestion-runs?limit=100"),
             config=config,
+            provider=runtime_provider,
             checks=checks,
         )
 

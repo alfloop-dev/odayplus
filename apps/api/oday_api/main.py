@@ -319,6 +319,17 @@ else:
                 ],
             }
             if provider_mode != "live":
+                if provider_mode == "disabled":
+                    # Disabled is a healthy consumer-only configuration, not a
+                    # live-provider connectivity result. Keep the explicit
+                    # false connectivity signal so readiness cannot confuse it
+                    # with an activated source.
+                    base_report.update(
+                        {
+                            "status": "disabled",
+                            "connectivity_healthy": False,
+                        }
+                    )
                 return configuration_valid, base_report, configuration_errors
             if not configuration_valid:
                 return False, base_report, configuration_errors
@@ -707,7 +718,12 @@ else:
                 or bool(modes["persistence"]["production_persistence_supported"])
             )
             provider_ready = provider_ok and (
-                not require_live_data or bool(modes["provider"]["live"])
+                not require_live_data
+                or bool(modes["provider"]["live"])
+                or (
+                    provider_mode == "disabled"
+                    and bool(modes["provider"]["healthy"])
+                )
             )
             live_gate_ok = not require_live_data or bool(modes["data"]["liveReady"])
             overall_ok = persistence_ok and provider_ready and live_gate_ok
@@ -768,7 +784,12 @@ else:
                 or bool(modes["persistence"]["production_persistence_supported"])
             )
             provider_ready = provider_ok and (
-                not require_live_data or bool(modes["provider"]["live"])
+                not require_live_data
+                or bool(modes["provider"]["live"])
+                or (
+                    provider_mode == "disabled"
+                    and bool(modes["provider"]["healthy"])
+                )
             )
             live_gate_ok = not require_live_data or bool(modes["data"]["liveReady"])
             if require_live_data and not modes["persistence"]["production_persistence_supported"]:

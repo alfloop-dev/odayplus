@@ -253,6 +253,32 @@ def test_deselected_provider_fetch_stays_auditable_as_a_blocked_run(monkeypatch)
     ) is None
 
 
+def test_disabled_provider_fetch_stays_auditable_without_cutover_failure(
+    monkeypatch,
+) -> None:
+    """Provider-off is a successful worker drain with a blocked no-fetch receipt."""
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "disabled")
+    monkeypatch.setenv("ODP_DEPLOY_ENV", "production")
+    # Consumer-only releases normally use PLATFORM_PRIMARY. Provider-off must
+    # take precedence so the probe still reaches the scheduler's blocked path.
+    monkeypatch.delenv(FACADE_MODE_ENV, raising=False)
+    bundle = build_persistence()
+    job, _ = bundle.job_queue.enqueue(
+        JobRequest(job_type="external-fetch", payload=dict(SCHEDULED_FETCH_PAYLOAD)),
+        correlation_id="corr-provider-disabled",
+    )
+    monkeypatch.setattr(entrypoint, "bootstrap_runtime", lambda: bundle)
+
+    assert entrypoint.run_worker(max_jobs=1, require_job=True) == 0
+    persisted = bundle.job_queue.get(job.job_id)
+    assert persisted is not None
+    assert persisted.status == JobStatus.SUCCEEDED
+    runs = bundle.ingestion_run_store.list_runs(provider_id="listing.partner_feed")
+    assert [run.status for run in runs] == ["FAILED"]
+    assert runs[0].alerts[0]["reason_code"] == "provider_mode_disabled"
+    assert runs[0].source_snapshot_ids == ()
+
+
 def test_worker_dead_letters_unregistered_provider_on_the_first_attempt(
     monkeypatch,
 ) -> None:

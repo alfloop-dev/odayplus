@@ -236,6 +236,29 @@ def readiness_payload() -> dict[str, Any]:
     }
 
 
+def disabled_readiness_payload() -> dict[str, Any]:
+    payload = deepcopy(readiness_payload())
+    provider = payload["details"]["provider"]
+    provider.update(
+        {
+            "mode": "disabled",
+            "configurationValid": True,
+            "connectivityHealthy": False,
+            "healthy": True,
+            "live": False,
+            "probeEvidence": {
+                "status": "unhealthy",
+                "mode": "disabled",
+                "configuration_valid": True,
+                "connectivity_healthy": False,
+                "required_provider_ids": [],
+                "probes": [],
+            },
+        }
+    )
+    return payload
+
+
 def governed_disabled_capability(service: str) -> dict[str, Any]:
     """Return a fully-evidenced governed-disabled capability record.
 
@@ -331,6 +354,27 @@ def ingestion_payload() -> dict[str, Any]:
     return {"items": runs, "count": len(runs)}
 
 
+def disabled_ingestion_payload() -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "run_id": "run-provider-disabled-20260726",
+                "provider_id": gate.DISABLED_WORKER_PROBE_PROVIDER_ID,
+                "schedule_id": "live-e2e-gate",
+                "trigger": "scheduled",
+                "status": "FAILED",
+                "data_status": "BLOCKED",
+                "completed_at": "2026-07-26T14:00:00+00:00",
+                "raw_snapshot_id": "",
+                "canonical_snapshot_id": "",
+                "source_snapshot_ids": [],
+                "alerts": [{"reason_code": "provider_mode_disabled"}],
+            }
+        ],
+        "count": 1,
+    }
+
+
 def enqueue_payload(
     *, created: bool = True, status: str = "queued", job_id: str = JOB_ID
 ) -> dict[str, Any]:
@@ -389,6 +433,20 @@ def jobs_enqueue_route() -> Any:
         created = key not in issued
         issued[key] = job_id
         return response(202, enqueue_payload(created=created, job_id=job_id))
+
+    return handler
+
+
+def disabled_jobs_enqueue_route() -> Any:
+    issued: set[str] = set()
+
+    def handler(body: Any, headers: Any) -> Any:
+        del headers
+        request = body if isinstance(body, dict) else {}
+        key = str(request.get("idempotency_key") or "")
+        created = key not in issued
+        issued.add(key)
+        return response(202, enqueue_payload(created=created, job_id=JOB_ID))
 
     return handler
 
@@ -477,6 +535,20 @@ def live_routes(**overrides: Any) -> dict[str, Any]:
     return routes
 
 
+def disabled_routes(**overrides: Any) -> dict[str, Any]:
+    routes = live_routes(
+        **{
+            "anon GET /readiness": response(200, disabled_readiness_payload()),
+            "GET /api/v1/external-data/ingestion-runs?limit=100": response(
+                200, disabled_ingestion_payload()
+            ),
+            "POST /api/v1/jobs": disabled_jobs_enqueue_route(),
+        }
+    )
+    routes.update(overrides)
+    return routes
+
+
 def config(**overrides: Any) -> Any:
     values: dict[str, Any] = {
         "api_url": API_URL,
@@ -495,6 +567,15 @@ def config(**overrides: Any) -> Any:
     }
     values.update(overrides)
     return gate.GateConfig(**values)
+
+
+def disabled_config(**overrides: Any) -> Any:
+    values = {
+        "external_provider_mode": "disabled",
+        "required_provider_ids": (),
+    }
+    values.update(overrides)
+    return config(**values)
 
 
 def passing_web_http() -> Any:
@@ -545,6 +626,34 @@ def test_fully_live_deployment_passes() -> None:
     assert all(check.ok for check in checks)
     assert report["worker"]["terminal_status"] == "succeeded"
     assert report["inputs"]["secret_values_redacted"] is True
+
+
+def test_disabled_deployment_still_proves_worker_lifecycle_and_blocked_receipt() -> None:
+    driver = FakeWorkerDriver()
+    checks, report = run_gate(
+        disabled_routes(), cfg=disabled_config(), worker_driver=driver
+    )
+
+    assert report["ok"] is True, report["blockers"]
+    assert all(check.ok for check in checks)
+    assert report["worker"]["terminal_status"] == "succeeded"
+    assert driver.calls == 1
+    # Disabled mode is a no-fetch receipt, not a skipped worker lifecycle.
+    assert "worker:terminal_disabled" in {check.name for check in checks}
+
+
+def test_disabled_gate_does_not_skip_when_runtime_reports_live() -> None:
+    driver = FakeWorkerDriver()
+    checks, report = run_gate(
+        live_routes(), cfg=disabled_config(), worker_driver=driver
+    )
+
+    assert report["ok"] is False
+    assert "runtime:provider_mode_alignment" in blocker_names(report)
+    assert "worker:provider_mode_alignment" in blocker_names(report)
+    # A mismatched runtime is fail-closed: it is not allowed to dispatch an
+    # external-fetch probe under the wrong semantics.
+    assert driver.calls == 0
 
 
 def test_report_never_contains_the_bearer_token() -> None:

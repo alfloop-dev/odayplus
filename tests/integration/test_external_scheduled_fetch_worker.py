@@ -74,6 +74,25 @@ def test_scheduled_fetch_creates_durable_snapshot_ids_and_watermark() -> None:
     assert provider.calls == 1
 
 
+def test_disabled_provider_mode_blocks_before_factory_or_credential_access() -> None:
+    provider = CountingProvider()
+    scheduler = ExternalFetchScheduler(
+        provider_factories={"listing.partner_feed": lambda: provider},
+        env={"ODP_EXTERNAL_PROVIDER_MODE": "disabled"},
+    )
+
+    run = scheduler.run_once(
+        ExternalFetchJobSpec(provider_id="listing.partner_feed", schedule_id="live-e2e-gate"),
+        scheduled_at=datetime(2026, 6, 28, 10, tzinfo=UTC),
+    )
+
+    assert run.status == "FAILED"
+    assert run.data_status == "BLOCKED"
+    assert run.alerts[0].reason_code == "provider_mode_disabled"
+    assert run.source_snapshot_ids == ()
+    assert provider.calls == 0
+
+
 def test_backfill_is_idempotent_for_same_windows() -> None:
     provider = CountingProvider()
     scheduler = ExternalFetchScheduler(

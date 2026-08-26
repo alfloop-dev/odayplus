@@ -52,6 +52,7 @@ CONFIGURATION_REASON_CODES = frozenset(
         "provider_not_registered",
         "provider_not_schedulable",
         "provider_factory_missing",
+        "provider_mode_disabled",
         "live_mode_required",
         "missing_endpoint",
         "missing_credential",
@@ -722,7 +723,7 @@ def _provider_failure_code(exc: Exception) -> str:
         return "timeout"
     if "server" in code or "5xx" in message:
         return "server_error"
-    if code in {"provider_allowlist_required", "provider_not_selected"}:
+    if code in {"provider_allowlist_required", "provider_not_selected", "provider_mode_disabled"}:
         return code
     if code in {
         "provider_not_registered",

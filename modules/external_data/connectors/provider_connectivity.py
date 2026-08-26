@@ -136,6 +136,24 @@ def probe_external_provider_connectivity(
     )
     started_at = _as_utc(now_fn())
     expires_at = started_at + timedelta(seconds=max_age_seconds)
+
+    # Disabled is a valid, explicit consumer-only configuration. It must not
+    # manufacture failed probe entries for providers that this deployment is
+    # forbidden to contact; an empty evidence set is the receipt of "no probe
+    # attempted". The runtime readiness layer still reports connectivity as
+    # false so disabled cannot be mistaken for live provider readiness.
+    if validation.mode is ExternalProviderMode.DISABLED:
+        return ProviderConnectivityResult(
+            mode=validation.mode,
+            correlation_id=corr,
+            configuration_valid=True,
+            connectivity_healthy=False,
+            checked_at=started_at,
+            expires_at=expires_at,
+            required_provider_ids=(),
+            probes=(),
+        )
+
     providers = {provider.provider_id: provider for provider in validation.providers}
     errors_by_provider = _configuration_errors_by_provider(validation)
 
