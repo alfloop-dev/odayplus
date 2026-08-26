@@ -63,6 +63,26 @@ CONFIGURATION_REASON_CODES = frozenset(
 #: deployment. Unlike its siblings above this is a *decision*, not a fault.
 PROVIDER_NOT_SELECTED_REASON_CODE = "provider_not_selected"
 
+#: Every third-party source is closed for this deployment. Like
+#: :data:`PROVIDER_NOT_SELECTED_REASON_CODE` this is a governed decision rather
+#: than a fault, and it is the reason code the whole release shares: the
+#: scheduler raises it, the worker recognises it, and the live E2E gate asserts
+#: it on the resulting blocked receipt.
+PROVIDER_MODE_DISABLED_REASON_CODE = "provider_mode_disabled"
+
+
+def external_provider_fetch_disabled(env: Mapping[str, str] | None = None) -> bool:
+    """Return true when this deployment runs with all third-party sources off.
+
+    This module is the scheduled-fetch boundary that product consumers
+    (``apps/*``) are allowed to import. Consumers must not reach into
+    ``connectors.provider_registry`` themselves -- the EMGI consumer boundary
+    forbids it -- so the disabled-mode question is answered here, from the same
+    switch the scheduler itself reads.
+    """
+
+    return external_provider_mode(env) is ExternalProviderMode.DISABLED
+
 
 class ExternalFetchProviderConfigurationError(RuntimeError):
     """Fail-closed scheduler registration/selection error."""
@@ -629,7 +649,7 @@ class ExternalFetchScheduler:
         if mode is ExternalProviderMode.DISABLED:
             raise ExternalFetchProviderConfigurationError(
                 provider_id,
-                "provider_mode_disabled",
+                PROVIDER_MODE_DISABLED_REASON_CODE,
                 "External provider fetch is disabled for this deployment.",
             )
         if mode is not ExternalProviderMode.LIVE:
@@ -723,7 +743,11 @@ def _provider_failure_code(exc: Exception) -> str:
         return "timeout"
     if "server" in code or "5xx" in message:
         return "server_error"
-    if code in {"provider_allowlist_required", "provider_not_selected", "provider_mode_disabled"}:
+    if code in {
+        "provider_allowlist_required",
+        PROVIDER_NOT_SELECTED_REASON_CODE,
+        PROVIDER_MODE_DISABLED_REASON_CODE,
+    }:
         return code
     if code in {
         "provider_not_registered",
@@ -789,6 +813,7 @@ def _ensure_utc(value: datetime) -> datetime:
 
 __all__ = [
     "CONFIGURATION_REASON_CODES",
+    "PROVIDER_MODE_DISABLED_REASON_CODE",
     "PROVIDER_NOT_SELECTED_REASON_CODE",
     "ExternalFetchJobSpec",
     "ExternalFetchAlert",
@@ -801,6 +826,7 @@ __all__ = [
     "TenantScopedExternalFetchStateStore",
     "SourceFreshnessEvidence",
     "default_external_fetch_provider_factories",
+    "external_provider_fetch_disabled",
     "freshness_evidence_from_run",
     "run_external_fetch_backfill",
     "write_external_fetch_lineage_evidence",

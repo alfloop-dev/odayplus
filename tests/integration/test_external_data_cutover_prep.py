@@ -627,6 +627,54 @@ def test_worker_dead_letters_rather_than_retrying_an_unreadable_mode(monkeypatch
     assert FACADE_MODE_ENV in str(excinfo.value)
 
 
+def test_provider_off_overrides_the_unrelated_cutover_switch(monkeypatch) -> None:
+    """Provider-off is authoritative: it must not dead-letter as "decommissioned".
+
+    The market-data cutover switch and the third-party provider switch answer
+    different questions. With providers disabled the worker still has to produce
+    an auditable blocked receipt, so it must proceed past the cutover gate
+    instead of failing the job for an unrelated reason.
+    """
+    from apps.worker.oday_worker import handlers
+
+    monkeypatch.setenv("ODP_EXTERNAL_PROVIDER_MODE", "disabled")
+    monkeypatch.setenv(FACADE_MODE_ENV, CUTOVER_MODE_PLATFORM_PRIMARY)
+    monkeypatch.delenv(KILL_SWITCH_ENV, raising=False)
+
+    with pytest.raises(AssertionError) as excinfo:
+        handlers.handle_external_fetch(_external_fetch_job(), _ExplodingPersistence())
+
+    assert "must not touch persistence" in str(excinfo.value)
+
+
+def test_worker_reads_provider_off_through_the_consumer_boundary() -> None:
+    """``apps/`` may not import ``connectors.provider_registry`` directly.
+
+    ``delivery_toolchain/governance/emgi-consumer-boundary.json`` lists that
+    module in ``forbidden_direct_reference_patterns``: producer internals are
+    owned by alfloop-dev/oday-data-platform. The disabled-mode question is
+    answered through ``workers.scheduled_fetch``, which is the surface product
+    code is allowed to depend on.
+    """
+    from pathlib import Path
+
+    from modules.external_data.workers.scheduled_fetch import (
+        PROVIDER_MODE_DISABLED_REASON_CODE,
+        external_provider_fetch_disabled,
+    )
+
+    repo_root = Path(__file__).resolve().parents[2]
+    source = (repo_root / "apps/worker/oday_worker/handlers.py").read_text(
+        encoding="utf-8"
+    )
+    assert "modules.external_data.connectors" not in source
+    assert "external_provider_fetch_disabled" in source
+
+    assert external_provider_fetch_disabled({"ODP_EXTERNAL_PROVIDER_MODE": "disabled"})
+    assert not external_provider_fetch_disabled({"ODP_EXTERNAL_PROVIDER_MODE": "live"})
+    assert PROVIDER_MODE_DISABLED_REASON_CODE == "provider_mode_disabled"
+
+
 def test_external_fetch_stays_registered_after_cutover(monkeypatch) -> None:
     """An unregistered type would retry to an opaque 'unknown job type' instead
     of dead-lettering on the first attempt with the operator's reason."""

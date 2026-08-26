@@ -165,6 +165,11 @@ PRODUCTION_ALIAS = "production"
 
 WORKER_PROBE_JOB_TYPE = "external-fetch"
 DISABLED_WORKER_PROBE_PROVIDER_ID = "listing.partner_feed"
+#: Mirrors ``scheduled_fetch.PROVIDER_MODE_DISABLED_REASON_CODE``. This gate is
+#: a standalone script that runs against a deployed release without importing
+#: the application, so the shared contract is the string itself; the value is
+#: pinned by tests/e2e/test_live_e2e_gate.py against the module constant.
+PROVIDER_MODE_DISABLED_REASON_CODE = "provider_mode_disabled"
 
 DEPENDENCY_ACTIONS: Mapping[str, str] = {
     "config": (
@@ -1291,19 +1296,21 @@ def _check_source_data(
     provider: Mapping[str, Any],
     checks: list[CheckResult],
 ) -> None:
+    if response.failed or response.status != 200:
+        _check(
+            checks,
+            False,
+            "data:ingestion_runs",
+            _failure_detail(response),
+            _dependency_for(response, "external-data"),
+        )
+        return
+
+    items = response.payload.get("items")
+    items = items if isinstance(items, list) else []
+
     if not config.required_provider_ids:
         disabled = _disabled_provider_runtime_confirmed(config, provider)
-        if response.failed or response.status != 200:
-            _check(
-                checks,
-                False,
-                "data:ingestion_runs",
-                _failure_detail(response),
-                _dependency_for(response, "external-data"),
-            )
-            return
-        items = response.payload.get("items")
-        items = items if isinstance(items, list) else []
         blocked = [
             item
             for item in items
@@ -1315,7 +1322,7 @@ def _check_source_data(
             and not item.get("canonical_snapshot_id")
             and any(
                 isinstance(alert, dict)
-                and alert.get("reason_code") == "provider_mode_disabled"
+                and alert.get("reason_code") == PROVIDER_MODE_DISABLED_REASON_CODE
                 for alert in (item.get("alerts") or [])
             )
         ]
@@ -1333,19 +1340,12 @@ def _check_source_data(
             ),
             "external-data",
         )
-        return
-    if response.failed or response.status != 200:
-        _check(
-            checks,
-            False,
-            "data:ingestion_runs",
-            _failure_detail(response),
-            _dependency_for(response, "external-data"),
-        )
+        # The disabled branch still runs ``data:no_surrogate_markers``: a
+        # consumer-only release must prove the ingestion-run history it serves
+        # carries no placeholder/surrogate values, exactly like a live one.
+        _check_no_surrogate_markers(response, checks=checks)
         return
 
-    items = response.payload.get("items")
-    items = items if isinstance(items, list) else []
     _check(
         checks,
         bool(items),
@@ -1424,6 +1424,14 @@ def _check_source_data(
             ),
             "object-store",
         )
+
+    _check_no_surrogate_markers(response, checks=checks)
+
+
+def _check_no_surrogate_markers(
+    response: HttpResponse, *, checks: list[CheckResult]
+) -> None:
+    """Assert the served ingestion-run history carries no surrogate values."""
 
     markers = find_surrogate_values(response.payload)
     _check(
