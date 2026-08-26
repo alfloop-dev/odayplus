@@ -342,6 +342,90 @@ def test_admission_refuses_a_state_directory_that_does_not_exist(tmp_path: Path)
     assert "refusing to create a throwaway store" in str(excinfo.value)
 
 
+def test_gcs_state_store_uses_generation_cas(monkeypatch, keys) -> None:
+    """Hosted admission and Supervisor share one remote, replay-safe store."""
+
+    class NotFound(Exception):
+        pass
+
+    class PreconditionFailed(Exception):
+        pass
+
+    records: dict[str, tuple[str, int]] = {}
+
+    class Blob:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.generation: int | None = None
+
+        def reload(self) -> None:
+            if self.name not in records:
+                raise NotFound()
+            self.generation = records[self.name][1]
+
+        def download_as_text(self, *, if_generation_match: int) -> str:
+            payload, generation = records[self.name]
+            if generation != if_generation_match:
+                raise PreconditionFailed()
+            return payload
+
+        def upload_from_string(self, payload: str, **kwargs) -> None:
+            expected = kwargs["if_generation_match"]
+            current = records.get(self.name)
+            if expected == 0:
+                if current is not None:
+                    raise PreconditionFailed()
+                generation = 1
+            else:
+                if current is None or current[1] != expected:
+                    raise PreconditionFailed()
+                generation = expected + 1
+            records[self.name] = (payload, generation)
+
+    class Bucket:
+        def exists(self) -> bool:
+            return True
+
+        def blob(self, name: str) -> Blob:
+            return Blob(name)
+
+    class Client:
+        def bucket(self, name: str) -> Bucket:
+            assert name == "lease-bucket"
+            return Bucket()
+
+    from google.cloud import storage
+
+    monkeypatch.setattr(storage, "Client", Client)
+    private_key, _ = keys
+    store = LeaseStateStore("gs://lease-bucket/release-leases")
+    lease = issued(private_key, store)
+    assert store.get(lease["lease_id"])["state"] == STATE_ISSUED
+    store.consume(lease, consumed_by="gha:staging")
+    assert store.get(lease["lease_id"])["state"] == STATE_CONSUMED
+    with pytest.raises(LeaseStateError, match="replay"):
+        store.consume(lease, consumed_by="gha:staging-replay")
+
+
+def test_gcs_state_store_fails_closed_when_bucket_is_missing(monkeypatch) -> None:
+    class Bucket:
+        def exists(self) -> bool:
+            return False
+
+        def blob(self, _name: str):
+            raise AssertionError("missing bucket must not be used")
+
+    class Client:
+        def bucket(self, _name: str) -> Bucket:
+            return Bucket()
+
+    from google.cloud import storage
+
+    monkeypatch.setattr(storage, "Client", Client)
+    with pytest.raises(LeaseStateError, match="bucket does not exist"):
+        LeaseStateStore("gs://missing-bucket/leases", require_existing=True)
+
+
 def test_a_blocked_release_does_not_burn_the_lease(keys, store) -> None:
     """Gate failures must not consume a lease that could never have admitted."""
 
