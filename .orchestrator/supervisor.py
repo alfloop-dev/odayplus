@@ -1712,7 +1712,7 @@ def build_request(
         agent_id=logical_agent["id"],
     )
     metadata = dict(event.get("metadata", {}) or {})
-    model_preference = resolve_agent_model_preference(config, agent)
+    model_preference = resolve_agent_model_preference(config, logical_agent)
     if model_preference and "model_preference" not in metadata:
         metadata["model_preference"] = model_preference
     logical_agent_id = normalize_agent_id(str(logical_agent.get("id") or event.get("target_agent") or ""))

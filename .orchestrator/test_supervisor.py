@@ -2782,6 +2782,10 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
                                 "primary_model": "gemini-logical-model",
                                 "fallback_model": "claude-logical-model",
                             },
+                            "model_policy": {
+                                "enabled": True,
+                                "standard_model": "gemini-logical-model",
+                            },
                         },
                     },
                 },
