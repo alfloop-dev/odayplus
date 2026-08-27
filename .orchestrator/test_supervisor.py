@@ -395,6 +395,50 @@ class AccountPoolSchedulingTests(unittest.TestCase):
             self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "antigravity"), 2)
             self.assertEqual(state["account_pool_runtime"]["antigravity_main"]["state"], "healthy")
 
+    def test_account_pool_runtime_state_and_concurrency_when_provider_auth_false(self) -> None:
+        config = self._config()
+        config["account_pools"]["claude_main"] = {"max_concurrent": 2, "state": "healthy"}
+        config["agents"]["claude"] = {
+            "id": "claude", "display_name": "Claude", "provider": "claude", "account_pool": "claude_main"
+        }
+        config["agents"]["claude_slot_1"] = {
+            "id": "claude_slot_1", "display_name": "claude_slot_1", "provider": "claude",
+            "account_pool": "claude_main", "dispatch_slot_for_pool": "claude_main", "slot_id": "claude_slot_1"
+        }
+        config["agents"]["claude_slot_2"] = {
+            "id": "claude_slot_2", "display_name": "claude_slot_2", "provider": "claude",
+            "account_pool": "claude_main", "dispatch_slot_for_pool": "claude_main", "slot_id": "claude_slot_2"
+        }
+        unauth_report = {
+            "providers": {"claude": {"auth_ready": False, "local_cli_worker_supported": False, "supports_auto_approve": False}},
+            "agent_adapters": {
+                "claude": {"can_auto_deliver": False, "notes": "Claude CLI is installed but not authenticated, so delivery falls back to the workspace inbox path."},
+                "claude_slot_1": {"can_auto_deliver": False, "notes": "Claude CLI is installed but not authenticated, so delivery falls back to the workspace inbox path."},
+                "claude_slot_2": {"can_auto_deliver": False, "notes": "Claude CLI is installed but not authenticated, so delivery falls back to the workspace inbox path."},
+            },
+        }
+        state: dict[str, Any] = {"workers": {}}
+        lifecycle, entry = supervisor.account_pool_runtime_state(config, state, "claude", provider_report=unauth_report)
+        self.assertIn(lifecycle, {"auth_blocked", "inbox_fallback", "unavailable"})
+        self.assertEqual(entry.get("effective_concurrency"), 0)
+        self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "claude", provider_report=unauth_report), 0)
+        block_reason = supervisor.account_pool_dispatch_block_reason(config, "claude", runtime_state=state, provider_report=unauth_report)
+        self.assertIsNotNone(block_reason)
+
+        # When provider report becomes healthy, pool recovers automatically
+        auth_report = {
+            "providers": {"claude": {"auth_ready": True, "local_cli_worker_supported": True, "supports_auto_approve": True}},
+            "agent_adapters": {
+                "claude": {"can_auto_deliver": True, "supported": True},
+                "claude_slot_1": {"can_auto_deliver": True, "supported": True},
+                "claude_slot_2": {"can_auto_deliver": True, "supported": True},
+            },
+        }
+        lifecycle_ok, entry_ok = supervisor.account_pool_runtime_state(config, state, "claude", provider_report=auth_report)
+        self.assertEqual(lifecycle_ok, "healthy")
+        self.assertEqual(entry_ok.get("effective_concurrency"), 2)
+        self.assertEqual(supervisor.account_pool_effective_concurrency(config, state, "claude", provider_report=auth_report), 2)
+
     def test_reviewer_failover_excludes_owner_and_exhausted_pool(self) -> None:
         config = self._config()
         config["account_pools"]["codex_pool"] = {"max_concurrent": 1, "state": "healthy"}
@@ -16259,6 +16303,34 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
             supervisor.reconcile_capacity_controller(config, state)
             sidecar_tasks = [t for t in tasks if t.get("task_class") == "sidecar"]
             self.assertEqual(len(sidecar_tasks), 0)
+
+    def test_reconcile_capacity_controller_injects_provider_report_into_capacity_truth(self) -> None:
+        tasks = [
+            {"id": "DEP-001", "status": "done"},
+            {"id": "RUNNABLE-001", "status": "todo", "owner": "claude", "depends_on": ["DEP-001"]},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+        provider_report = {
+            "providers": {
+                "claude": {"auth_ready": False, "local_cli_worker_supported": False},
+                "codex": {"auth_ready": True, "local_cli_worker_supported": True},
+            },
+            "agent_adapters": {
+                "claude": {"can_auto_deliver": False},
+                "codex": {"can_auto_deliver": True, "supported": True},
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}):
+            changed = supervisor.reconcile_capacity_controller(config, state, provider_report=provider_report)
+            self.assertTrue(changed)
+            controller = state.get("capacity_controller", {})
+            snapshot = controller.get("snapshot", {})
+            # 2 slots configured (claude slot-0, codex slot-1), claude unauth -> effective slot_total is 1
+            self.assertEqual(snapshot.get("configured_slot_total"), 2)
+            self.assertEqual(snapshot.get("slot_total"), 1)
+            self.assertEqual(snapshot.get("available_slots"), 1)
 
 
 class WorkerPromptContractTests(unittest.TestCase):
