@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 from datetime import UTC, datetime, timedelta
@@ -29,6 +30,32 @@ HARD_GATE_MARKERS = {
     "legal",
 }
 DEFAULT_SIDECAR_CATALOG = Path(__file__).with_name("sidecar_catalog.json")
+MAX_SIDECAR_ID_LENGTH = 48
+
+
+def build_sidecar_task_id(parent_id: str, kind: str) -> str:
+    """Build a deterministic, bounded sidecar task ID (at most 48 characters).
+
+    If {parent_id}-SIDECAR-{kind_slug} fits within 48 characters, it remains
+    unchanged to preserve existing short sidecar IDs. Otherwise, the -SIDECAR-
+    marker is preserved with a truncated parent prefix and an 8-character
+    collision-resistant SHA-256 digest of the canonical parent:kind signature.
+    """
+    parent = str(parent_id or "").strip()
+    clean_kind = str(kind or "").strip()
+    kind_slug = clean_kind.replace("_", "-").upper()
+    raw_id = f"{parent}-SIDECAR-{kind_slug}"
+    if len(raw_id) <= MAX_SIDECAR_ID_LENGTH:
+        return raw_id
+
+    digest = hashlib.sha256(f"{parent}:{clean_kind}".encode()).hexdigest()[:8].upper()
+    marker = "-SIDECAR-"
+    max_parent_len = MAX_SIDECAR_ID_LENGTH - len(marker) - len(digest)
+    parent_prefix = parent[:max_parent_len].rstrip("-")
+    return f"{parent_prefix}{marker}{digest}"
+
+
+sidecar_task_id = build_sidecar_task_id
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -388,8 +415,7 @@ def sidecar_candidates(
             ).lower()
             if parent_status == "blocked" and any(marker in prose for marker in HARD_GATE_MARKERS):
                 continue
-            kind_slug = kind.replace("_", "-").upper()
-            sidecar_id = f"{parent_id}-SIDECAR-{kind_slug}"
+            sidecar_id = build_sidecar_task_id(parent_id, kind)
             variables = {
                 "parent_task_id": parent_id,
                 "sidecar_task_id": sidecar_id,
