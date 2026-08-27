@@ -896,6 +896,35 @@ class DetectWorkerFailureTests(unittest.TestCase):
 
         self.assertIsNone(supervisor.detect_worker_failure(worker))
 
+    def test_cloud_run_api_quota_exceeded_in_source_or_diff_ignored(self) -> None:
+        """Regression test: Cloud Run API quota exceeded from test/source/diff must not be detected as worker failure."""
+        for text in (
+            "Cloud Run API quota exceeded\n",
+            "+ raise Exception('Cloud Run API quota exceeded')\n",
+            "assert 'Cloud Run API quota exceeded' in str(exc)\n",
+            "google.api_core.exceptions.ResourceExhausted: 429 Quota exceeded for quota metric 'Cloud Run API quota exceeded'\n",
+        ):
+            worker = self._worker_for_log(text)
+            self.assertIsNone(supervisor.detect_worker_failure(worker), f"Failed for: {text}")
+
+    def test_completed_and_zero_exit_worker_ignores_log_tail(self) -> None:
+        """Completed or exit_code 0 worker must return None and never establish provider pause."""
+        worker = self._worker_for_log("402 You have no quota\nERROR: You've hit your usage limit.\n")
+        worker["status"] = "completed"
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+        worker["status"] = "running"
+        worker["exit_code"] = 0
+        worker["runner_status"] = "completed"
+        self.assertIsNone(supervisor.detect_worker_failure(worker))
+
+    def test_classifies_cloud_run_quota_exceeded_as_terminal_not_provider_quota(self) -> None:
+        config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
+        worker = {"provider": "codex"}
+        res = supervisor.classify_worker_failure(config, worker, "Cloud Run API quota exceeded")
+        self.assertEqual(res["kind"], "terminal")
+        self.assertFalse(supervisor.should_pause_dispatch_for_failure_kind(res["kind"]))
+
     def test_classifies_gemini_capacity_failure(self) -> None:
         config = {"worker_retry": {"transient_error_patterns": ["429", "resource_exhausted", "rate limit"]}}
         worker = {"provider": "gemini"}
@@ -9151,6 +9180,62 @@ class RuntimeLeaseReconciliationTests(unittest.TestCase):
             write_failure_evidence.assert_not_called()
             mark_provider_dispatch_paused.assert_not_called()
 
+    def test_reconcile_runtime_signal_termination_skips_log_without_marking_success(self) -> None:
+        """A SIGTERM marker suppresses stale quota text but cannot complete the worker."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            config = self._config(root)
+            task = {
+                "id": "OPS-LEASE-SIGTERM",
+                "status": "in_progress",
+                "owner": "Codex",
+                "reviewer": "Claude",
+                "depends_on": [],
+            }
+            (root / "ai-status.json").write_text(json.dumps({"tasks": [task]}), encoding="utf-8")
+            (root / "event-queue.jsonl").write_text(
+                json.dumps({"event_id": "evt-sigterm", "task_id": task["id"], "target_agent": "codex"}) + "\n",
+                encoding="utf-8",
+            )
+            log_path = root / "codex.log"
+            log_path.write_text("ERROR: You've hit your usage limit.\n", encoding="utf-8")
+            state = {
+                "queue": {"events": {"evt-sigterm": {"status": "started", "run_id": "codex-run-sigterm"}}},
+                "provider_guardrails": {"dispatch_pauses": {}},
+                "workers": {
+                    "codex-run-sigterm": {
+                        "run_id": "codex-run-sigterm",
+                        "status": "running",
+                        "provider": "codex",
+                        "agent_id": "codex",
+                        "task_id": task["id"],
+                        "queue_event_id": "evt-sigterm",
+                        "pid": 987654,
+                        "log_path": str(log_path),
+                        "runner_status": "completed",
+                        "exit_code": 0,
+                        "runner_signal": 15,
+                    }
+                },
+            }
+
+            with (
+                mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+                mock.patch.object(supervisor, "write_failure_evidence") as write_failure_evidence,
+                mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mark_provider_dispatch_paused,
+                mock.patch.object(supervisor, "write_activity_log"),
+            ):
+                changed = supervisor.reconcile_runtime_on_boot(config, state)
+
+            self.assertTrue(changed)
+            worker = state["workers"]["codex-run-sigterm"]
+            self.assertEqual(worker["status"], "failed")
+            self.assertNotEqual(worker["status"], "completed")
+            self.assertEqual(state["queue"]["events"]["evt-sigterm"]["status"], "failed")
+            self.assertEqual(state["provider_guardrails"]["dispatch_pauses"], {})
+            write_failure_evidence.assert_not_called()
+            mark_provider_dispatch_paused.assert_not_called()
+
     def test_reconcile_runtime_uses_log_failure_for_missing_process_quota(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -10697,8 +10782,9 @@ class ReviewHeadFreezeTests(unittest.TestCase):
             "approved_head": "1111111122222222333333334444444455555555",
         }
         ai_status.clear_ai_status_caches()
-        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="7777777722222222333333334444444455555555"):
-            with unittest.mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"):
+        with unittest.mock.patch("ai_status.resolve_task_sha", return_value="7777777722222222333333334444444455555555"), \
+             unittest.mock.patch("ai_status.task_repository_slug_safe", return_value="alfloop-dev/odayplus"), \
+             unittest.mock.patch("ai_status.get_repository_slug_safe", return_value="alfloop-dev/odayplus"):
                 with unittest.mock.patch("subprocess.run") as mock_run:
                     mock_run.return_value.returncode = 0
                     ai_status.emit_task_review_status_check(task, "review_approved")
@@ -11253,6 +11339,33 @@ class SuccessfulWorkerPostconditionTests(unittest.TestCase):
         self.assertEqual(worker["reassigned_to"], "Antigravity5")
         self.assertEqual(state["provider_guardrails"]["task_failure_streaks"][streak_key]["count"], 2)
         reassign.assert_called_once()
+
+    def test_poll_signal_termination_skips_log_without_marking_success(self) -> None:
+        task = self._task()
+        worker = self._worker(task)
+        worker.update({"runner_status": "completed", "exit_code": 0, "runner_signal": 15})
+        state = {
+            "queue": {"events": {worker["queue_event_id"]: {"status": "started"}}},
+            "workers": {worker["run_id"]: worker},
+            "provider_guardrails": {"dispatch_pauses": {}},
+        }
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value={"tasks": [task]}),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=False),
+            mock.patch.object(supervisor, "detect_worker_failure", wraps=supervisor.detect_worker_failure) as detect_worker_failure,
+            mock.patch.object(supervisor, "mark_provider_dispatch_paused") as mark_provider_dispatch_paused,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(self.config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "failed")
+        self.assertNotEqual(worker["status"], "completed")
+        detect_worker_failure.assert_called_once()
+        mark_provider_dispatch_paused.assert_not_called()
 
     def test_owner_ready_note_without_handoff_is_no_progress_even_with_new_head(self) -> None:
         task = self._task(next_step="Implementation complete; ready for independent review")
@@ -12117,6 +12230,7 @@ class SupervisorFailureLoopCoverageTests(unittest.TestCase):
                 mock.patch.object(ai_status, "ORCHESTRATOR_STATE_FILE", runtime_file),
                 mock.patch.object(ai_status, "DASHBOARD_BUNDLE_FILE", tmp_root / "dashboard-bundle.json"),
                 mock.patch.object(ai_status, "resolve_task_sha", return_value=sha),
+                mock.patch.object(ai_status, "task_repository_slug_safe", return_value="alfloop-dev/odayplus"),
                 mock.patch.object(ai_status, "get_repository_slug_safe", return_value="alfloop-dev/odayplus"),
                 mock.patch.object(ai_status, "sync_all", side_effect=lambda state_arg: ai_status.save_state(state_arg)),
                 mock.patch.object(ai_status.subprocess, "run", side_effect=fake_post),

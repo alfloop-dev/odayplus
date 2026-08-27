@@ -224,10 +224,12 @@ _FAILURE_HELPER_FUNCTIONS = [
 "is_captured_orchestrator_record",
 "is_claude_provider",
 "is_claude_session_limit_banner",
+"is_cloud_run_quota_error",
 "is_human_gate_agent",
 "is_provider_config_failure_kind",
 "is_provider_unavailable_failure_kind",
 "is_retryable_capacity_failure_kind",
+"is_structured_successful_worker",
 "is_terminal_quota_failure_kind",
 "is_tool_command_output_failure_line",
 "is_transient_infra_reason",
@@ -277,6 +279,8 @@ _FAILURE_HELPER_FUNCTIONS = [
 "review_churn_settings",
 "worker_retry_settings",
 "worker_runner_succeeded",
+"worker_log_scan_should_be_skipped",
+"worker_was_terminated",
 "worker_runtime_metrics_bucket",
 "worker_runtime_settings",
 "worker_supports_approval_resume",
@@ -463,6 +467,7 @@ WORKER_FAILURE_PATTERNS = (
     re.compile(r'"error"\s*:\s*"authentication_failed"', re.IGNORECASE),
     re.compile(r"quota exceeded", re.IGNORECASE),
     re.compile(r"free daily quota has been reached", re.IGNORECASE),
+    re.compile(r"free tier quota exceeded", re.IGNORECASE),
     re.compile(r"you have no quota", re.IGNORECASE),
     re.compile(r"^Failed to authenticate\b", re.IGNORECASE),
     re.compile(r"\bnot authenticated\b", re.IGNORECASE),
@@ -494,6 +499,9 @@ WORKER_FAILURE_FALSE_POSITIVE_PATTERNS = (
     ),
     re.compile(r"^-\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\s+·\s+", re.IGNORECASE),
     re.compile(r"\bauto-reassigned\b.*\bafter repeated\b", re.IGNORECASE),
+    re.compile(r"\bcloud\s+run\b.*\bquota\b", re.IGNORECASE),
+    re.compile(r"^[+-]\s+.*"),
+    re.compile(r"^\s*(?:raise|assert|except|def|return|self\.assert)\b", re.IGNORECASE),
 )
 SEARCH_RESULT_JSON_FIELD_PATTERN = re.compile(
     r"^(?:[^:\s][^:]*:)?\d+[:-]\s*\"[A-Za-z0-9_]+\"\s*:\s*",
@@ -3121,7 +3129,7 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             if expired_lease
             else "Worker process missing during supervisor boot reconciliation."
         )
-        runner_succeeded = worker_runner_succeeded(worker)
+        runner_succeeded = is_structured_successful_worker(worker)
         if runner_succeeded and (worker_is_discussion_planning(worker) or worker_is_coordination_dispatch(worker)):
             worker["status"] = "completed"
             worker["last_event_at"] = worker.get("runner_finished_at") or utc_now()
