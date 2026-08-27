@@ -373,11 +373,12 @@ def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any])
                     "message": "Expired helper execution lease released back to its canonical owner.",
                 },
             )
+    runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
     controller, state_changed = capacity_controller.evaluate_chair(
-        config, state, tasks, runnable_predicate=task_is_runnable
+        config, state, tasks, runnable_tasks=runnable_task_ids
     )
     additions = capacity_controller.sidecar_candidates(
-        config, state, tasks, runnable_predicate=task_is_runnable
+        config, state, tasks, runnable_tasks=runnable_task_ids
     )
     if additions:
         known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
@@ -3856,10 +3857,23 @@ def _task_resolver(
 ) -> TaskResolver:
     if isinstance(task_lookup, TaskResolver):
         return task_lookup
-    try:
-        return TaskResolver(task_lookup, task_id_field=task_id_field)
-    except TypeError:
-        return TaskResolver(task_lookup)
+    if task_id_field != "id" and task_lookup is not None:
+        # TaskResolver's iterable form is intentionally legacy-id based. Build
+        # the same canonical map the Dispatcher builds before handing it the
+        # lookup, so a legacy ``id`` cannot satisfy a custom ``taskId`` dep.
+        if isinstance(task_lookup, dict):
+            task_lookup = {
+                str(task_id).strip(): task
+                for task_id, task in task_lookup.items()
+                if str(task_id).strip() and isinstance(task, dict)
+            }
+        else:
+            task_lookup = {
+                str(task.get(task_id_field) or "").strip(): task
+                for task in task_lookup
+                if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
+            }
+    return TaskResolver(task_lookup)
 
 
 def dependencies_satisfied(
@@ -3876,19 +3890,14 @@ def dependencies_satisfied(
     return True
 
 
-def task_is_runnable(
+def _dispatcher_owner_execution_priority(
     config: dict[str, Any],
     task: dict[str, Any],
-    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None = None,
-) -> bool:
-    """Authoritative predicate for whether a task represents dispatchable execution work.
-
-    Excludes human gates, non-dispatchable tasks, sidecars, review/finalize governance states,
-    blocked tasks, unsatisfied dependencies, missing/invalid task IDs, and unassigned or
-    unregistered owners.
-    """
+    task_map: dict[str, dict[str, Any]],
+) -> int | None:
+    """Ask the existing Dispatcher whether owner execution is dispatchable."""
     if not isinstance(task, dict):
-        return False
+        return None
 
     schema = config.get("schema", {}) or {}
     task_id_field = schema.get("task_id_field", "id")
@@ -3896,49 +3905,93 @@ def task_is_runnable(
 
     task_id = str(task.get(task_id_field) or "").strip()
     if not task_id:
-        return False
+        return None
 
-    if bool(task.get("non_dispatchable")):
-        return False
+    if bool(task.get("non_dispatchable")) or task_is_human_gate(task) or task_is_sidecar(task):
+        return None
 
     owner = str(task.get(owner_field) or "").strip()
     waiting_for = str(task.get("waiting_for") or "").strip()
     if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
-        return False
-    if task_is_human_gate(task):
-        return False
-    if task_is_sidecar(task):
-        return False
+        return None
+
+    if not owner or not agent_can_take_task(config, owner, task):
+        return None
 
     settings_map = ready_dispatch_settings(config)
-    owned_statuses = normalized_status_set(
-        settings_map.get("owned_statuses"), ["in_progress", "todo"]
-    )
-    status = str(task.get("status") or "").strip().lower()
-    if status not in owned_statuses:
-        return False
-
     dependency_done_statuses = normalized_status_set(
         settings_map.get("dependency_done_statuses"), ["done"]
     )
-    if task_lookup is not None:
-        resolver = _task_resolver(task_lookup, task_id_field=task_id_field)
-        if not dependencies_satisfied(task, resolver, dependency_done_statuses, task_id_field=task_id_field):
-            return False
+    priority = dispatch_engine.dispatch_priority_for_task(
+        config,
+        task,
+        owner,
+        task_map=task_map,
+        dependencies_done_statuses=dependency_done_statuses,
+    )
+    return priority if priority in {2, 3} else None
 
-    if owner in {"AUTO_ASSIGN", "DIFFERENT_AGENT_REQUIRED"}:
-        return True
 
-    if not owner:
-        helper_settings = settings_map.get("helper_execution_lease", {}) or {}
-        if helper_settings.get("enabled", True):
-            claim = task.get("helper_execution_lease") or {}
-            claimed_by = str(claim.get("claimed_by") or "").strip()
-            if claimed_by and dispatch_engine.helper_claim_is_live(claim) and agent_can_take_task(config, claimed_by, task):
-                return True
+def canonical_dispatchable_task_ids(
+    config: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> set[str]:
+    """Return canonical owner-execution task IDs from Dispatcher truth.
+
+    This is deliberately a projection of ``dispatch_priority_for_task`` rather
+    than a second eligibility implementation. Priorities 2 and 3 are the
+    Dispatcher's in-progress and ready owner actions; review/finalize and
+    helper-only actions are not Capacity Chair canonical work.
+    """
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    task_map = {
+        str(task.get(task_id_field) or "").strip(): task
+        for task in tasks
+        if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
+    }
+    return {
+        task_id
+        for task_id, task in task_map.items()
+        if _dispatcher_owner_execution_priority(config, task, task_map) is not None
+    }
+
+
+def task_is_runnable(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_lookup: TaskResolver | dict[str, dict[str, Any]] | list[dict[str, Any]] | None = None,
+) -> bool:
+    """Compatibility predicate backed by the existing Dispatcher decision."""
+    if not isinstance(task, dict):
+        return False
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    task_id = str(task.get(task_id_field) or "").strip()
+    if not task_id:
         return False
 
-    return agent_can_take_task(config, owner, task)
+    if task_lookup is None:
+        task_map = {task_id: task}
+    elif isinstance(task_lookup, TaskResolver):
+        task_map = task_lookup.active_task_map()
+        task_map.setdefault(task_id, task)
+    elif isinstance(task_lookup, dict):
+        task_map = {
+            str(key).strip(): value
+            for key, value in task_lookup.items()
+            if str(key).strip() and isinstance(value, dict)
+        }
+        task_map.setdefault(task_id, task)
+    else:
+        task_map = {
+            str(item.get(task_id_field) or "").strip(): item
+            for item in task_lookup
+            if isinstance(item, dict) and str(item.get(task_id_field) or "").strip()
+        }
+        task_map.setdefault(task_id, task)
+
+    return _dispatcher_owner_execution_priority(config, task, task_map) is not None
 
 
 is_task_runnable = task_is_runnable

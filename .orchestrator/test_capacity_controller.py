@@ -38,6 +38,10 @@ def config(slot_count: int = 8) -> dict:
     }
 
 
+def canonical_runnable_ids(cfg: dict, tasks: list[dict]) -> set[str]:
+    return supervisor.canonical_dispatchable_task_ids(cfg, tasks)
+
+
 def test_chair_never_approves_sidecars_while_canonical_work_is_runnable() -> None:
     runtime_state = {
         "capacity_controller": {
@@ -47,13 +51,13 @@ def test_chair_never_approves_sidecars_while_canonical_work_is_runnable() -> Non
     tasks = [{"id": "CANON-001", "status": "todo", "owner": "Claude"}]
 
     controller, changed = capacity_controller.evaluate_chair(
-        config(), runtime_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW
+        config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW
     )
 
     assert changed is True
     assert controller["chair_decision"]["approve_helper_wave"] is True
     assert controller["chair_decision"]["sidecar_wave"]["approved"] is False
-    assert capacity_controller.sidecar_candidates(config(), runtime_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW) == []
+    assert capacity_controller.sidecar_candidates(config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW) == []
 
 
 def test_chair_approves_bounded_sidecars_after_sustained_idle_capacity() -> None:
@@ -70,8 +74,8 @@ def test_chair_approves_bounded_sidecars_after_sustained_idle_capacity() -> None
         {"id": "HARD-GATE", "status": "blocked", "blocked_reason": "manual approval required", "owner": "Human/Ops"}
     )
 
-    capacity_controller.evaluate_chair(config(), runtime_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW)
-    candidates = capacity_controller.sidecar_candidates(config(), runtime_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW)
+    capacity_controller.evaluate_chair(config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW)
+    candidates = capacity_controller.sidecar_candidates(config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW)
 
     # Eight slots at a 25% cap permits two sidecars, even though the wave cap is three.
     assert len(candidates) == 2
@@ -93,7 +97,7 @@ def test_sidecar_wave_requires_a_current_chair_decision() -> None:
         }
     }
 
-    assert capacity_controller.sidecar_candidates(config(), expired_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW) == []
+    assert capacity_controller.sidecar_candidates(config(), expired_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW) == []
 
 
 def test_expired_helper_execution_leases_are_reported_without_changing_owner() -> None:
@@ -124,12 +128,12 @@ def test_capacity_snapshot_excludes_human_gate_non_dispatchable_review_and_block
         {"id": "APPROVED-001", "status": "review_approved", "owner": "Claude", "reviewer": "Codex"},
         {"id": "UNSAT-DEP-001", "status": "todo", "owner": "Claude", "depends_on": ["NON-EXISTENT-DEP"]},
     ]
-    snapshot = capacity_controller.capacity_snapshot(config(), {}, tasks, runnable_predicate=supervisor.task_is_runnable)
+    snapshot = capacity_controller.capacity_snapshot(config(), {}, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks))
     assert snapshot["runnable_tasks"] == 0
 
     runtime_state: dict = {}
     controller, changed = capacity_controller.evaluate_chair(
-        config(), runtime_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW
+        config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW
     )
     decision = controller.get("chair_decision") or {}
     assert "runnable_work_without_active_workers" not in decision.get("reasons", [])
@@ -198,7 +202,7 @@ def test_current_active_tasks_regression_fixture_runnable_is_zero() -> None:
         },
     ]
 
-    snapshot = capacity_controller.capacity_snapshot(config(), {}, tasks, runnable_predicate=supervisor.task_is_runnable)
+    snapshot = capacity_controller.capacity_snapshot(config(), {}, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks))
     assert snapshot["runnable_tasks"] == 0, f"Expected 0 runnable tasks, got {snapshot['runnable_tasks']}"
 
     runtime_state = {
@@ -207,7 +211,7 @@ def test_current_active_tasks_regression_fixture_runnable_is_zero() -> None:
         }
     }
     controller, changed = capacity_controller.evaluate_chair(
-        config(), runtime_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW
+        config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW
     )
     decision = controller.get("chair_decision") or {}
     assert decision["sidecar_wave"]["approved"] is True
@@ -219,7 +223,7 @@ def test_runnable_todo_task_approves_helper_wave_when_slots_available() -> None:
         {"id": "DEP-DONE", "status": "done"},
         {"id": "CANON-RUNNABLE-001", "status": "todo", "owner": "Claude", "depends_on": ["DEP-DONE"]},
     ]
-    snapshot = capacity_controller.capacity_snapshot(config(), {}, tasks, runnable_predicate=supervisor.task_is_runnable)
+    snapshot = capacity_controller.capacity_snapshot(config(), {}, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks))
     assert snapshot["runnable_tasks"] == 1
 
     runtime_state = {
@@ -228,7 +232,7 @@ def test_runnable_todo_task_approves_helper_wave_when_slots_available() -> None:
         }
     }
     controller, changed = capacity_controller.evaluate_chair(
-        config(), runtime_state, tasks, runnable_predicate=supervisor.task_is_runnable, now=NOW
+        config(), runtime_state, tasks, runnable_tasks=canonical_runnable_ids(config(), tasks), now=NOW
     )
     decision = controller.get("chair_decision") or {}
     assert decision["approve_helper_wave"] is True
@@ -256,7 +260,7 @@ def test_capacity_snapshot_with_custom_schema_and_invalid_task_id_or_owner() -> 
         # Missing assignee
         {"taskId": "T-4", "status": "todo"},
     ]
-    snapshot = capacity_controller.capacity_snapshot(cfg, {}, tasks, runnable_predicate=supervisor.task_is_runnable)
+    snapshot = capacity_controller.capacity_snapshot(cfg, {}, tasks, runnable_tasks=canonical_runnable_ids(cfg, tasks))
     assert snapshot["runnable_tasks"] == 1
 
 
@@ -275,7 +279,7 @@ def test_capacity_and_supervisor_dispatch_share_identical_runnable_truth() -> No
         {"id": "", "status": "todo", "owner": "Claude"},
         {"id": "T-UNKNOWN-OWNER", "status": "todo", "owner": "MysteryAgent"},
     ]
-    # Evaluate predicate on every single task
+    # Evaluate the same Dispatcher-backed projection used by Supervisor.
     resolver = supervisor.TaskResolver(tasks)
     pred_results = {
         task.get("id"): supervisor.task_is_runnable(cfg, task, task_lookup=resolver)
@@ -293,8 +297,38 @@ def test_capacity_and_supervisor_dispatch_share_identical_runnable_truth() -> No
     assert pred_results[""] is False
     assert pred_results["T-UNKNOWN-OWNER"] is False
 
-    # Snapshot counted runnable tasks must exactly match predicate truth count
-    snapshot = capacity_controller.capacity_snapshot(cfg, {}, tasks, runnable_predicate=supervisor.task_is_runnable)
+    runnable_ids = canonical_runnable_ids(cfg, tasks)
+    assert runnable_ids == {"T-VALID-TODO", "T-VALID-INPROG"}
+
+    # Snapshot consumes the exact Dispatcher-backed task-id set.
+    snapshot = capacity_controller.capacity_snapshot(cfg, {}, tasks, runnable_tasks=runnable_ids)
     expected_count = sum(1 for v in pred_results.values() if v is True)
     assert snapshot["runnable_tasks"] == expected_count == 2
 
+
+def test_custom_schema_dependency_requires_canonical_dependency_id() -> None:
+    cfg = config()
+    cfg["schema"] = {
+        "tasks_path": "items",
+        "task_id_field": "taskId",
+        "assignee_field": "assignee",
+    }
+    runnable = {
+        "taskId": "RUN",
+        "status": "todo",
+        "assignee": "Claude",
+        "depends_on": ["DEP"],
+    }
+    # The legacy id is deliberately present but is not the configured task ID.
+    legacy_dependency = {"id": "DEP", "status": "done"}
+    tasks = [runnable, legacy_dependency]
+
+    assert supervisor.task_is_runnable(cfg, runnable, task_lookup=tasks) is False
+    assert canonical_runnable_ids(cfg, tasks) == set()
+    snapshot = capacity_controller.capacity_snapshot(
+        cfg,
+        {},
+        tasks,
+        runnable_tasks=canonical_runnable_ids(cfg, tasks),
+    )
+    assert snapshot["runnable_tasks"] == 0

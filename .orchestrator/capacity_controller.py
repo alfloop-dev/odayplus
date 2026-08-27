@@ -12,8 +12,6 @@ if str(THIS_DIR) not in sys.path:
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
-from task_archive import TaskResolver
-
 ACTIVE_WORKER_STATUSES = {
     "running",
     "waiting_approval",
@@ -85,34 +83,21 @@ def configured_slots(config: dict[str, Any]) -> int:
 
 
 def _count_runnable_tasks(
-    config: dict[str, Any],
-    tasks: list[dict[str, Any]],
-    runnable_predicate: Any = None,
+    _config: dict[str, Any],
+    _tasks: list[dict[str, Any]],
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
 ) -> int:
+    """Consume the Supervisor's already-computed canonical runnable set.
+
+    Capacity Chair deliberately has no task eligibility predicate of its own.
+    The Dispatcher owns that truth; Supervisor passes either its count or the
+    exact task-id set produced by the Dispatcher so this module cannot drift
+    into a second scheduler.
+    """
     if isinstance(runnable_tasks, int):
         return max(0, runnable_tasks)
     if isinstance(runnable_tasks, (list, tuple, set)):
         return len(runnable_tasks)
-    if callable(runnable_predicate):
-        schema = config.get("schema", {}) or {}
-        task_id_field = schema.get("task_id_field", "id")
-        resolver = TaskResolver(tasks, task_id_field=task_id_field)
-        count = 0
-        for task in tasks:
-            if not isinstance(task, dict):
-                continue
-            try:
-                if runnable_predicate(config, task, resolver):
-                    count += 1
-            except TypeError:
-                try:
-                    if runnable_predicate(config, task):
-                        count += 1
-                except TypeError:
-                    if runnable_predicate(task):
-                        count += 1
-        return count
     return 0
 
 
@@ -121,7 +106,6 @@ def capacity_snapshot(
     runtime_state: dict[str, Any],
     tasks: list[dict[str, Any]],
     *,
-    runnable_predicate: Any = None,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
 ) -> dict[str, Any]:
     slot_total = configured_slots(config)
@@ -133,7 +117,6 @@ def capacity_snapshot(
     runnable_count = _count_runnable_tasks(
         config,
         tasks,
-        runnable_predicate=runnable_predicate,
         runnable_tasks=runnable_tasks,
     )
     active_sidecars = sum(
@@ -178,7 +161,6 @@ def evaluate_chair(
     runtime_state: dict[str, Any],
     tasks: list[dict[str, Any]],
     *,
-    runnable_predicate: Any = None,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
     now: datetime | None = None,
 ) -> tuple[dict[str, Any], bool]:
@@ -188,7 +170,6 @@ def evaluate_chair(
         config,
         runtime_state,
         tasks,
-        runnable_predicate=runnable_predicate,
         runnable_tasks=runnable_tasks,
     )
     controller = runtime_state.setdefault("capacity_controller", {})
@@ -268,7 +249,6 @@ def sidecar_candidates(
     runtime_state: dict[str, Any],
     tasks: list[dict[str, Any]],
     *,
-    runnable_predicate: Any = None,
     runnable_tasks: int | list[dict[str, Any]] | set[str] | None = None,
     now: datetime | None = None,
 ) -> list[dict[str, Any]]:
@@ -290,7 +270,6 @@ def sidecar_candidates(
         config,
         runtime_state,
         tasks,
-        runnable_predicate=runnable_predicate,
         runnable_tasks=runnable_tasks,
     )
     max_by_ratio = max(0, int(snapshot["slot_total"] * float(cfg["max_capacity_ratio"])))

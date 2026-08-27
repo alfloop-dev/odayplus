@@ -30,26 +30,19 @@
 
 ## 2. 修復架構與設計
 
-沿用 Supervisor 現有派發與依賴真實來源（`supervisor.py`、`dispatch_policy.py`、`task_archive.TaskResolver`、`worker_failure_policy.py`），實現單一權威來源（Single Source of Truth），徹底消除第二套規則與循環 import：
+沿用 Supervisor 現有 Dispatcher 與依賴真實來源（`dispatch_engine.dispatch_priority_for_task`、`dispatch_policy.py`、`task_archive.TaskResolver`、`worker_failure_policy.py`），實現單一權威來源（Single Source of Truth），徹底消除第二套規則與循環 import：
 
-1. **單一權威述詞 `supervisor.task_is_runnable`**：
-   - 定義於 `supervisor.py`，作為唯一的 runnable 判定真值。
+1. **沿用 Dispatcher 的 canonical owner-execution truth**：
+   - `supervisor.canonical_dispatchable_task_ids` 呼叫既有 `dispatch_engine.dispatch_priority_for_task`，只投影 Dispatcher 的 owner `in_progress`/`todo` 優先級 2/3，不複製第三套 eligibility 規則。
    - 支援動態 schema 設定：`task_id_field = schema.get("task_id_field", "id")` 與 `owner_field = schema.get("assignee_field", "owner")`。
-   - 排除無效或空白 task ID（`not task_id`）。
-   - 排除 `non_dispatchable: True`。
-   - 排除 Human Gate 任務（`task_is_human_gate(task)`、`is_human_gate_agent(owner)`、`is_human_gate_agent(waiting_for)`）。
-   - 排除 Sidecar 輔助任務（`task_is_sidecar(task)`，確保只計入 canonical product work）。
-   - 限制狀態必須在 owner 可執行狀態集（`owned_statuses`，預設 `{"todo", "in_progress"}`），排除 `review`、`review_approved`、`blocked` 等治理與阻塞狀態。
-   - 透過 `TaskResolver` 與 `dependencies_satisfied` 驗證 `depends_on` 依賴是否皆已達 `done` 狀態。
-   - 驗證 owner 是否為可派發代理人（`agent_can_take_task`），排除未知、無效或非注冊代理人。支援 `AUTO_ASSIGN` 與活耀的 `helper_execution_lease`。
+   - 在投影邊界排除無效或空白 task ID、`non_dispatchable`、Human/Ops gate、sidecar 與治理/阻塞狀態；owner eligibility 仍由既有 `agent_can_take_task` 與 Dispatcher 判斷。
+   - 自訂 schema 的 active task lookup 先以 canonical task ID 建 map，再交給 `TaskResolver`；缺少 `taskId` 的 legacy `id` 不得滿足依賴。
 
 2. **Capacity Chair 純消費模式（Zero Duplicate Rules / No Reverse Imports）**：
    - `capacity_controller.py` 徹底移除 `_supervisor_module()` 與任何對 `supervisor.py` 的反向匯入。
-   - `capacity_snapshot`、`evaluate_chair`、`sidecar_candidates` 接收 Supervisor 傳入的 `runnable_predicate`（或已計算之 runnable 結果），不再維護獨立的可派發規則。
-   - `supervisor.reconcile_capacity_controller` 統一將權威述詞 `task_is_runnable` 傳入 Capacity Controller，確保兩者判定永遠一致。
-
-3. **TaskResolver 擴展支援**：
-   - `task_archive.TaskResolver` 支援傳入 `task_id_field`，確保自訂 schema 下的任務能正確建立 lookup 與解析依賴。
+   - `capacity_controller.py` 徹底移除 `TaskResolver` 與任何對 `supervisor.py` 的反向匯入。
+   - `capacity_snapshot`、`evaluate_chair`、`sidecar_candidates` 只接收 Supervisor 傳入的 runnable task count/ID set，不再維護獨立的可派發規則。
+   - `supervisor.reconcile_capacity_controller` 先計算 canonical task ID set，再餵 Capacity Chair，確保 snapshot、sidecar decision 與 Dispatcher 判定一致。
 
 ---
 
@@ -74,14 +67,14 @@ python3 -m pytest .orchestrator/test_supervisor.py -k capacity -q
 9. `test_capacity_and_supervisor_dispatch_share_identical_runnable_truth`：驗證 Capacity snapshot 與 Supervisor dispatcher 權威述詞判定完全一致。
 10. `CapacityControllerReconciliationTests`：驗證 Supervisor 層級的 `reconcile_capacity_controller` 狀態與決策寫入一致性。
 11. `test_task_is_runnable_respects_custom_schema_and_excludes_invalid_id_or_owner`：驗證 Supervisor 權威述詞在自訂 schema 與未知 owner 下的精確行為。
-12. `test_task_is_runnable_excludes_non_execution_states_and_unsatisfied_dependencies`：驗證非執行狀態與未滿足依賴在 Supervisor 權威述詞下的排除。
+12. `test_task_is_runnable_excludes_non_execution_states_and_unsatisfied_dependencies`：驗證非執行狀態與未滿足依賴在 Supervisor Dispatcher-backed predicate 下的排除。
+13. `test_custom_schema_dependency_requires_canonical_dependency_id`：驗證 custom `taskId` schema 下缺少 `taskId` 的 legacy dependency 不得滿足依賴。
 
 ### 3.3 測試輸出實錄
 ```text
-.orchestrator/test_capacity_controller.py .........                       [100%]
+.orchestrator/test_capacity_controller.py ..........                      [100%]
 .orchestrator/test_supervisor.py ............                             [100%]
 
-============================== 21 passed in 7.85s ===============================
+============================== 22 passed ==============================
 ```
-全部 21 項相關測試 100% 通過，且代碼邊界檢查（`check_code_boundaries.py`）982 個檔案完全通過。
-
+全部 22 項相關測試 100% 通過；另已確認 `git diff --check` 通過，未修改 forbidden 的 Dispatcher 實作檔。
