@@ -1,6 +1,9 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  # Backend declaration supports 2-phase bootstrap:
+  # Phase 1: terraform init -backend=false (initial creation using local state)
+  # Phase 2: terraform init -migrate-state -backend-config=... (migrate state to the new GCS bucket)
   backend "gcs" {}
 
   required_providers {
@@ -60,7 +63,7 @@ resource "google_storage_bucket" "terraform_state" {
   location                    = var.region
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
-  force_destroy               = !local.is_prod
+  force_destroy               = false # Control-plane state buckets must NEVER allow force destroy in any environment
   labels                      = local.labels
 
   versioning {
@@ -86,6 +89,10 @@ resource "google_storage_bucket" "terraform_state" {
     action {
       type = "Delete"
     }
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 
   depends_on = [google_kms_crypto_key_iam_member.state_backend_gcs]
