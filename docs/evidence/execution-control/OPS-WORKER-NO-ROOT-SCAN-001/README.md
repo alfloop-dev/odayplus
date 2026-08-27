@@ -6,7 +6,7 @@
 在 Pantheon 自動化 Worker 叢集中，Auto Worker 被喚醒並派發至隔離的 per-task git worktree 執行任務。當任務驗證需要特定測試工具（例如 `pytest` 或其他相依套件）而該工具未直接安裝於系統預設 Python（`/usr/bin/python3`）時，部分 LLM Worker 可能會嘗試在整個主機檔案系統執行 `find /`、`rg /` 或 `grep -r /` 來尋找工具執行檔或虛擬環境。
 
 ### 根因與危害
-1. **全系統搜尋造成龐大資源浪費與逾時**：在根目錄 `/` 執行全系統掃描會遍歷所有掛載點、proc、sys 與大量檔案，導致極高磁碟 I/O 與 CPU 負擔， Worker 容易因此 stall 或耗盡租約逾時。
+1. **全系統搜尋造成龐大資源浪費與逾時**：在根目錄 `/` 執行全系統掃描會遍歷所有掛載點、proc、sys 與大量檔案，導致極高磁碟 I/O 與 CPU 負擔，Worker 容易因此 stall 或耗盡租約逾時。
 2. **缺乏明確的 Prompt 規範與工具回退契約**：既有 Worker 喚醒 Prompt 未明確規範工具搜尋邊界，未強制要求在工具缺失時使用任務已宣告的 verification 命令或專案既有的 `uv run`（例如 `uv run pytest`）。
 
 ---
@@ -16,12 +16,12 @@
 依據任務 Brief 與驗收標準，本任務嚴格沿用既有 Worker Prompt 與 Verification 契約，不新增任何外部 wrapper、watchdog、timeout 或平行執行機制：
 
 1. **Worker Wakeup Prompt 契約強化**：
-   - 在標準喚醒範本（`.orchestrator/templates/wakeup.txt`）中加入明確防護條款：
+   - 在唯一標準喚醒範本（`.orchestrator/templates/wakeup.txt`）中加入明確防護條款：
      - **明確禁止**：嚴禁執行 `find /`、`rg /` 等全系統（root-wide）搜尋尋找測試工具或檔案。
      - **指定正則路徑**：若工具或依賴缺失，只使用任務 verification 已宣告命令或專案既有 `uv run`（例如 `uv run pytest ...`），或回報 blocker，不得自行掃描主機檔案系統。
 2. **單一控制面與派發整合**：
-   - 確保所有派發原因（包含 `owned_ready_dispatch`、`owned_in_progress_dispatch`、`review_ready_dispatch`、`owned_finalize_dispatch`、`helper_claim_dispatch` 等）在渲染 Worker 提示訊息時均具備該禁止與指引條款。
-   - 在 `.orchestrator/supervisor.py` 中導入 `render_wakeup_message`，維持單一控制面介面一致性。
+   - 確保所有派發原因（包含 `owned_ready_dispatch`、`owned_in_progress_dispatch`、`review_ready_dispatch`、`owned_finalize_dispatch`、`helper_claim_dispatch` 等）在透過 `watch_events.render_wakeup_message` 渲染 Worker 提示訊息時均具備該禁止與指引條款。
+   - 不在 `supervisor.py` 新增無謂的 re-export import，保持控制面簡潔單純。
 3. **聚焦 Regression 測試保護**：
    - 在 `.orchestrator/test_supervisor.py` 中新增 `WorkerPromptContractTests`，驗證 Prompt 渲染合約：
      - 驗證 Prompt 包含 `find /`、`rg /`、`全系統`、`root-wide` 之禁止文字。

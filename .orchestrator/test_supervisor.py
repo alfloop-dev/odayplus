@@ -35,6 +35,7 @@ os.environ["ORCH_STATUS_ROOT"] = str(_TEST_STATUS_ROOT)
 import ai_status
 import runtime_state
 import supervisor
+import watch_events
 import worker_failure_policy
 
 
@@ -15239,11 +15240,11 @@ class WorkerPromptContractTests(unittest.TestCase):
             "reason": "owned_in_progress_dispatch",
             "context_files": ["AI_COLLABORATION_GUIDE.md"],
             "task": {
-                "artifacts": [".orchestrator/supervisor.py"],
+                "artifacts": [".orchestrator/templates/wakeup.txt"],
                 "verification": ["python3 -m pytest .orchestrator/test_supervisor.py -k worker_prompt -q"],
             },
         }
-        rendered = supervisor.render_wakeup_message(self.config, event, "antigravity4")
+        rendered = watch_events.render_wakeup_message(self.config, event, "antigravity4")
         self.assertIn("find /", rendered)
         self.assertIn("rg /", rendered)
         self.assertIn("全系統", rendered)
@@ -15266,9 +15267,9 @@ class WorkerPromptContractTests(unittest.TestCase):
                     "task_id": "OPS-WORKER-NO-ROOT-SCAN-001",
                     "reason": reason,
                     "context_files": ["AI_COLLABORATION_GUIDE.md"],
-                    "task": {"artifacts": [".orchestrator/supervisor.py"]},
+                    "task": {"artifacts": [".orchestrator/templates/wakeup.txt"]},
                 }
-                rendered = supervisor.render_wakeup_message(self.config, event, "antigravity4")
+                rendered = watch_events.render_wakeup_message(self.config, event, "antigravity4")
                 self.assertIn("find /", rendered)
                 self.assertIn("rg /", rendered)
                 self.assertIn("uv run", rendered)
