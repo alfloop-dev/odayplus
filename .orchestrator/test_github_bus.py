@@ -2383,5 +2383,224 @@ class GhBinaryResolutionTests(unittest.TestCase):
                 self.assertIsNone(github_bus.resolve_gh_binary())
 
 
+class ReconcilePrBodyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.template = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# Pantheon Review Bus\n\n"
+            "## 任務資訊\n"
+            "- 任務 ID: `OPS-REVIEW-PR-BODY-PRESERVE-001`\n"
+            "- 標題: 保留人工整理的繁中 PR body，避免 Review Bus 狀態同步覆寫\n"
+            "- 狀態: `review`\n"
+            "- 負責人: `Antigravity3`\n"
+            "- 評審人: `Codex2`\n\n"
+            "## 審查範圍\n"
+            "- `.orchestrator/github_bus.py`\n\n"
+            "## 分支資訊\n"
+            "- 來源分支: `task/OPS-REVIEW-PR-BODY-PRESERVE-001`\n"
+            "- 目標分支: `dev`\n\n"
+            "## 下一步\n"
+            "ready for review\n\n"
+            "## 行動審查指南\n"
+            "請使用 GitHub Mobile PR 審查動作：\n"
+            "- `Approve`\n\n"
+            "Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。\n"
+            f"{github_bus.BUS_END_MARKER}\n"
+        )
+
+    def test_reconcile_empty_or_none_uses_template(self) -> None:
+        self.assertEqual(github_bus.reconcile_pr_body(None, self.template), self.template.strip() + "\n")
+        self.assertEqual(github_bus.reconcile_pr_body("", self.template), self.template.strip() + "\n")
+        self.assertEqual(github_bus.reconcile_pr_body("   \n\t  ", self.template), self.template.strip() + "\n")
+
+    def test_preserves_custom_human_body_without_markers(self) -> None:
+        human_body = (
+            "# 繁中 PR 說明\n"
+            "這是一份由開發者人工整理的繁體中文 PR 說明。\n\n"
+            "## 改動細節\n"
+            "- 項目 1: 修正 Review Bus 覆寫問題\n"
+            "- 項目 2: 支援 PR body 保留\n"
+        )
+        reconciled = github_bus.reconcile_pr_body(human_body, self.template)
+        self.assertTrue(reconciled.startswith(human_body.strip()))
+        self.assertIn("---", reconciled)
+        self.assertIn(github_bus.COMMENT_MARKER, reconciled)
+        self.assertIn(github_bus.BUS_END_MARKER, reconciled)
+
+    def test_reconcile_is_strictly_idempotent(self) -> None:
+        human_body = (
+            "# 繁中 PR 說明\n"
+            "人工撰寫內容\n"
+        )
+        first_pass = github_bus.reconcile_pr_body(human_body, self.template)
+        second_pass = github_bus.reconcile_pr_body(first_pass, self.template)
+        third_pass = github_bus.reconcile_pr_body(second_pass, self.template)
+        self.assertEqual(first_pass, second_pass)
+        self.assertEqual(second_pass, third_pass)
+
+    def test_updates_bus_block_while_preserving_prefix_content(self) -> None:
+        prefix = (
+            "# 繁中 PR 說明\n"
+            "人工撰寫內容\n\n"
+            "---\n"
+        )
+        old_body = prefix + self.template
+        updated_template = self.template.replace("狀態: `review`", "狀態: `review_approved`")
+        reconciled = github_bus.reconcile_pr_body(old_body, updated_template)
+        self.assertTrue(reconciled.startswith("# 繁中 PR 說明\n人工撰寫內容"))
+        self.assertIn("狀態: `review_approved`", reconciled)
+        self.assertNotIn("狀態: `review`\n", reconciled)
+
+    def test_preserves_suffix_content_below_bus_block(self) -> None:
+        suffix = "\n\n---\n## 補充說明\n下方人工整理筆記\n"
+        old_body = self.template + suffix
+        updated_template = self.template.replace("狀態: `review`", "狀態: `done`")
+        reconciled = github_bus.reconcile_pr_body(old_body, updated_template)
+        self.assertIn("狀態: `done`", reconciled)
+        self.assertTrue(reconciled.endswith("## 補充說明\n下方人工整理筆記\n"))
+
+    def test_preserves_both_prefix_and_suffix_content(self) -> None:
+        prefix = "## 上方筆記\n前置說明\n\n---\n"
+        suffix = "\n\n---\n## 下方筆記\n後置說明\n"
+        old_body = prefix + self.template + suffix
+        updated_template = self.template.replace("狀態: `review`", "狀態: `review_approved`")
+        reconciled = github_bus.reconcile_pr_body(old_body, updated_template)
+        self.assertTrue(reconciled.startswith("## 上方筆記\n前置說明"))
+        self.assertIn("狀態: `review_approved`", reconciled)
+        self.assertTrue(reconciled.endswith("## 下方筆記\n後置說明\n"))
+
+    def test_handles_legacy_bus_template_without_end_marker(self) -> None:
+        legacy_template = (
+            f"{github_bus.COMMENT_MARKER}\n"
+            "# Pantheon Review Bus\n\n"
+            "## Task\n"
+            "- ID: `LIN-001`\n\n"
+            "## Mobile Review Guidance\n"
+            "The orchestrator polls review results and writes them back into `ai-status.json`.\n"
+        )
+        custom_suffix = "\n\n## 人工自訂備註\n這是舊範本下方新增的自訂內容\n"
+        old_body = legacy_template + custom_suffix
+        reconciled = github_bus.reconcile_pr_body(old_body, self.template)
+        self.assertIn(github_bus.BUS_END_MARKER, reconciled)
+        self.assertIn("## 人工自訂備註\n這是舊範本下方新增的自訂內容", reconciled)
+
+    def test_chinese_review_template_rendering(self) -> None:
+        config = {
+            "github_bus": {
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"}
+            }
+        }
+        variables = {
+            "marker": github_bus.COMMENT_MARKER,
+            "task_id": "OPS-REVIEW-PR-BODY-PRESERVE-001",
+            "task_title": "保留人工整理的繁中 PR body",
+            "task_summary": "修正 Review Bus 覆寫問題",
+            "task_status": "review",
+            "task_owner": "Antigravity3",
+            "task_reviewer": "Codex2",
+            "depends_on": "OPS-AGY-HARD-TIMEOUT-2H-001",
+            "next_step": "ready for review",
+            "artifacts": "- `.orchestrator/github_bus.py`",
+            "branch": "task/OPS-REVIEW-PR-BODY-PRESERVE-001",
+            "base_branch": "dev",
+        }
+        rendered = github_bus.build_template_body(config, "review_pr", variables)
+        self.assertTrue(rendered.startswith(github_bus.COMMENT_MARKER))
+        self.assertTrue(rendered.strip().endswith(github_bus.BUS_END_MARKER))
+        self.assertIn("## 任務資訊", rendered)
+        self.assertIn("- 任務 ID: `OPS-REVIEW-PR-BODY-PRESERVE-001`", rendered)
+        self.assertIn("- 標題: 保留人工整理的繁中 PR body", rendered)
+        self.assertIn("- 摘要: 修正 Review Bus 覆寫問題", rendered)
+        self.assertIn("- 狀態: `review`", rendered)
+        self.assertIn("- 負責人: `Antigravity3`", rendered)
+        self.assertIn("- 評審人: `Codex2`", rendered)
+        self.assertIn("- 依賴任務: OPS-AGY-HARD-TIMEOUT-2H-001", rendered)
+        self.assertIn("## 審查範圍", rendered)
+        self.assertIn("## 分支資訊", rendered)
+        self.assertIn("- 來源分支: `task/OPS-REVIEW-PR-BODY-PRESERVE-001`", rendered)
+        self.assertIn("- 目標分支: `dev`", rendered)
+        self.assertIn("## 下一步", rendered)
+        self.assertIn("## 行動審查指南", rendered)
+        self.assertIn("Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。", rendered)
+
+
+class UpsertReviewPrPreserveBodyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        github_bus.clear_remote_branch_snapshot_cache()
+        self.config = {
+            "github_bus": {
+                "default_branch": "dev",
+                "labels": {"review": ["pantheon-review"]},
+                "templates": {"review_pr": ".orchestrator/templates/github_review_pr.md"},
+            },
+            "branch_workflow": {"enabled": True, "task_pr": {"target_branch": "dev"}},
+        }
+        self.task = {
+            "id": "OPS-REVIEW-PR-BODY-PRESERVE-001",
+            "title": "保留人工整理的繁中 PR body",
+            "summary_zh": "修正 Review Bus 每次 reconcile 都覆寫既有 PR body 的行為",
+            "status": "review",
+            "owner": "Antigravity3",
+            "reviewer": "Codex2",
+            "depends_on": [],
+            "artifacts": [".orchestrator/github_bus.py"],
+            "next": "ready for review",
+        }
+        self.branch = "task/OPS-REVIEW-PR-BODY-PRESERVE-001"
+        self.head_sha = "e" * 40
+
+    def test_upsert_review_pr_preserves_human_body_on_reconcile(self) -> None:
+        human_body = (
+            "# 繁中 PR 說明\n"
+            "人工撰寫的詳細改動說明。\n"
+        )
+        found_pr = {
+            "number": 1050,
+            "url": "https://github.com/alfloop-dev/odayplus/pull/1050",
+            "title": f"[ReviewBus] {self.task['id']} {self.task['title']}",
+            "headRefName": self.branch,
+            "baseRefName": "dev",
+            "state": "OPEN",
+            "body": human_body,
+        }
+        bus_state = {"tasks": {}}
+
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=self.branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found_pr),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            changed = github_bus.upsert_review_pr(self.config, bus_state, {"tasks": []}, "o/r", self.task)
+
+        self.assertTrue(changed)
+        edit.assert_called_once()
+        edited_body = edit.call_args.args[3]
+        self.assertTrue(edited_body.startswith(human_body.strip()))
+        self.assertIn("---", edited_body)
+        self.assertIn("## 任務資訊", edited_body)
+        self.assertIn(github_bus.COMMENT_MARKER, edited_body)
+        self.assertIn(github_bus.BUS_END_MARKER, edited_body)
+
+        # Reconcile consecutive run without change must be idempotent
+        found_pr["body"] = edited_body
+        with (
+            mock.patch.object(github_bus, "review_branch_for_task", return_value=self.branch),
+            mock.patch.object(github_bus, "branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "remote_branch_head_sha", return_value=self.head_sha),
+            mock.patch.object(github_bus, "branch_has_diff", return_value=True),
+            mock.patch.object(github_bus, "find_existing_pr", return_value=found_pr),
+            mock.patch.object(github_bus, "edit_pull_request_rest") as edit_again,
+            mock.patch.object(github_bus, "write_activity_log"),
+        ):
+            consecutive_changed = github_bus.upsert_review_pr(self.config, bus_state, {"tasks": []}, "o/r", self.task)
+
+        self.assertFalse(consecutive_changed)
+        edit_again.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

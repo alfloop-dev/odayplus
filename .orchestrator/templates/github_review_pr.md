@@ -1,29 +1,30 @@
 {{marker}}
 # Pantheon Review Bus
 
-## Task
-- ID: `{{task_id}}`
-- Title: {{task_title}}
-- Summary: {{task_summary}}
-- Status: `{{task_status}}`
-- Owner: `{{task_owner}}`
-- Reviewer: `{{task_reviewer}}`
-- Depends On: {{depends_on}}
+## 任務資訊
+- 任務 ID: `{{task_id}}`
+- 標題: {{task_title}}
+- 摘要: {{task_summary}}
+- 狀態: `{{task_status}}`
+- 負責人: `{{task_owner}}`
+- 評審人: `{{task_reviewer}}`
+- 依賴任務: {{depends_on}}
 
-## Review Scope
+## 審查範圍
 {{artifacts}}
 
-## Branching
-- Head Branch: `{{branch}}`
-- Base Branch: `{{base_branch}}`
+## 分支資訊
+- 來源分支: `{{branch}}`
+- 目標分支: `{{base_branch}}`
 
-## Next Step
+## 下一步
 {{next_step}}
 
-## Mobile Review Guidance
-Use GitHub Mobile PR review actions:
+## 行動審查指南
+請使用 GitHub Mobile PR 審查動作：
 - `Approve`
 - `Request changes`
 - `Comment`
 
-The orchestrator polls review results and writes them back into `ai-status.json`.
+Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。
+<!-- /pantheon-bus -->

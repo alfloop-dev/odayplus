@@ -46,6 +46,8 @@ from runtime_state import enqueue_event
 from watch_events import render_wakeup_message
 
 COMMENT_MARKER = "<!-- pantheon-bus -->"
+BUS_START_MARKER = "<!-- pantheon-bus -->"
+BUS_END_MARKER = "<!-- /pantheon-bus -->"
 MAX_PROCESSED_IDS = 2000
 # remote -> (snapshot_expires_at, refs, last_successful_probe_at), monotonic seconds.
 _REMOTE_BRANCH_SNAPSHOTS: dict[str, tuple[float, frozenset[str], float]] = {}
@@ -705,7 +707,7 @@ def find_existing_pr(repo: str, task_id: str, branch: str | None, base: str | No
     targeted the promotion branch.
     """
 
-    fields = "number,title,url,headRefName,baseRefName,state"
+    fields = "number,title,url,headRefName,baseRefName,state,body"
 
     def base_matches(candidate: dict[str, Any]) -> bool:
         if not base:
@@ -997,6 +999,82 @@ def review_pr_ref_is_stale(pr_ref: Any) -> bool:
     return str(pr_ref.get("state") or "").lower() in STALE_REVIEW_PR_STATES
 
 
+def reconcile_pr_body(existing_body: str | None, bus_template_body: str) -> str:
+    """Reconcile an existing PR body with the governed ReviewBus metadata block.
+
+    If the existing PR body contains custom content (e.g. human-written notes,
+    task_finalize details), that content is preserved. The ReviewBus metadata
+    block (bounded by `<!-- pantheon-bus -->` and `<!-- /pantheon-bus -->`) is
+    updated in place or appended cleanly.
+    """
+    clean_template = bus_template_body.strip()
+    if not clean_template:
+        return (existing_body or "").strip() + ("\n" if existing_body else "")
+
+    if not existing_body or not existing_body.strip():
+        return clean_template + "\n"
+
+    existing_stripped = existing_body.strip()
+
+    # Case 1: Existing body already contains both start and end markers
+    if COMMENT_MARKER in existing_body and BUS_END_MARKER in existing_body:
+        start_idx = existing_body.find(COMMENT_MARKER)
+        end_idx = existing_body.find(BUS_END_MARKER) + len(BUS_END_MARKER)
+        prefix = existing_body[:start_idx]
+        suffix = existing_body[end_idx:]
+
+        has_prefix = bool(prefix.strip())
+        has_suffix = bool(suffix.strip())
+
+        if has_prefix and has_suffix:
+            return f"{prefix.rstrip()}\n\n{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
+        elif has_prefix:
+            return f"{prefix.rstrip()}\n\n{clean_template}".strip() + "\n"
+        elif has_suffix:
+            return f"{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
+        else:
+            return clean_template + "\n"
+
+    # Case 2: Existing body contains start marker but no end marker (legacy template or unclosed block)
+    if COMMENT_MARKER in existing_body and BUS_END_MARKER not in existing_body:
+        start_idx = existing_body.find(COMMENT_MARKER)
+        prefix = existing_body[:start_idx]
+        remainder = existing_body[start_idx:]
+
+        legacy_end_patterns = [
+            "The orchestrator polls review results and writes them back into `ai-status.json`.",
+            "Orchestrator 會輪詢審查結果並自動同步回寫至 `ai-status.json`。",
+            "ai-status.json`.",
+            "ai-status.json`",
+        ]
+        end_match_idx = -1
+        for pat in legacy_end_patterns:
+            pos = remainder.find(pat)
+            if pos != -1:
+                end_match_idx = pos + len(pat)
+                break
+
+        if end_match_idx != -1:
+            suffix = remainder[end_match_idx:]
+        else:
+            suffix = ""
+
+        has_prefix = bool(prefix.strip())
+        has_suffix = bool(suffix.strip())
+
+        if has_prefix and has_suffix:
+            return f"{prefix.rstrip()}\n\n{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
+        elif has_prefix:
+            return f"{prefix.rstrip()}\n\n{clean_template}".strip() + "\n"
+        elif has_suffix:
+            return f"{clean_template}\n\n{suffix.lstrip()}".strip() + "\n"
+        else:
+            return clean_template + "\n"
+
+    # Case 3: Existing body does not contain COMMENT_MARKER (e.g. human description or task_finalize output)
+    return f"{existing_stripped}\n\n---\n\n{clean_template}".strip() + "\n"
+
+
 def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: dict[str, Any], repo: str, task: dict[str, Any]) -> bool:
     entry = task_bus_entry(bus_state, task["id"])
     pr_ref = entry.get("review_pr")
@@ -1100,13 +1178,22 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         "branch": branch,
         "base_branch": base,
     }
-    body = build_template_body(config, "review_pr", variables)
+    template_body = build_template_body(config, "review_pr", variables)
     labels = list((config.get("github_bus", {}) or {}).get("labels", {}).get("review", []))
-    pr_hash = json.dumps({"title": title, "body": body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha}, ensure_ascii=False, sort_keys=True)
-    # Key the suppression on the staleness flag captured before ``pr_ref`` was
-    # nulled out.  Reading the (now ``None``) ref here would make a stale entry
-    # look like a first-ever sync and re-suppress on an unchanged hash.
-    if entry.get("last_review_hash") == pr_hash and not pr_ref_is_stale:
+
+    # Fast suppression check for open PR with cached body or raw template body
+    raw_template_hash = json.dumps({"title": title, "body": template_body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha}, ensure_ascii=False, sort_keys=True)
+    cached_body = (pr_ref or {}).get("body")
+    if cached_body:
+        cached_final_body = reconcile_pr_body(cached_body, template_body)
+        cached_hash = json.dumps({"title": title, "body": cached_final_body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha}, ensure_ascii=False, sort_keys=True)
+    else:
+        cached_hash = raw_template_hash
+
+    if (entry.get("last_review_hash") in (cached_hash, raw_template_hash)) and not pr_ref_is_stale and (pr_ref or {}).get("state") == "open":
+        return False
+
+    if entry.get("last_review_hash") == raw_template_hash and not pr_ref_is_stale and (pr_ref or {}).get("state") == "skipped_no_commits":
         return False
 
     has_diff = branch_has_diff(base, branch, expected_head_sha=head_sha)
@@ -1120,7 +1207,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
             "head_sha": head_sha,
             "remote_ref": remote_ref,
         }
-        entry["last_review_hash"] = pr_hash
+        entry["last_review_hash"] = raw_template_hash
         write_activity_log(
             config,
             {
@@ -1131,41 +1218,53 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         )
         return True
 
-    if pr_ref and pr_ref.get("number"):
-        number = int(pr_ref["number"])
-        edit_pull_request_rest(repo, number, title, body, labels)
-        pr = dict(pr_ref)
+    found = find_existing_pr(repo, task["id"], branch, base)
+    if not found and pr_ref and pr_ref.get("number"):
+        found = pr_ref
+
+    if found:
+        number = int(found["number"])
+        existing_body = found.get("body") or (pr_ref or {}).get("body") or ""
+        final_body = reconcile_pr_body(existing_body, template_body)
+        pr_hash = json.dumps(
+            {"title": title, "body": final_body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        if entry.get("last_review_hash") == pr_hash and not pr_ref_is_stale and (pr_ref or {}).get("number") == number and (pr_ref or {}).get("state") == "open":
+            return False
+        edit_pull_request_rest(repo, number, title, final_body, labels)
+        pr = {"number": number, "url": found.get("url") or (pr_ref or {}).get("url"), "title": title, "headRefName": branch, "body": final_body}
     else:
-        found = find_existing_pr(repo, task["id"], branch, base)
-        if found:
-            number = int(found["number"])
-            edit_pull_request_rest(repo, number, title, body, labels)
-            pr = {"number": number, "url": found.get("url"), "title": title, "headRefName": branch}
-        else:
-            entry["review_pr"] = {
-                "number": None,
-                "url": None,
-                "title": title,
-                "branch": branch,
-                "state": "missing_pr",
-                "head_sha": head_sha,
-                "remote_ref": remote_ref,
-                "last_remote_branch_check_at": utc_now(),
-            }
-            entry["last_review_hash"] = pr_hash
-            write_activity_log(
-                config,
-                {
-                    "type": "github_review_pr_missing",
-                    "task_id": task["id"],
-                    "message": (
-                        f"Review task has published branch `{branch}` but no open PR against "
-                        f"`{base}`. Run task_finalize.sh; GitHubBus will not create a second PR path."
-                    ),
-                    "github_repo": repo,
-                },
-            )
-            return True
+        pr_hash = json.dumps(
+            {"title": title, "body": template_body, "labels": labels, "branch": branch, "base": base, "head_sha": head_sha},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        entry["review_pr"] = {
+            "number": None,
+            "url": None,
+            "title": title,
+            "branch": branch,
+            "state": "missing_pr",
+            "head_sha": head_sha,
+            "remote_ref": remote_ref,
+            "last_remote_branch_check_at": utc_now(),
+        }
+        entry["last_review_hash"] = pr_hash
+        write_activity_log(
+            config,
+            {
+                "type": "github_review_pr_missing",
+                "task_id": task["id"],
+                "message": (
+                    f"Review task has published branch `{branch}` but no open PR against "
+                    f"`{base}`. Run task_finalize.sh; GitHubBus will not create a second PR path."
+                ),
+                "github_repo": repo,
+            },
+        )
+        return True
 
     entry["review_pr"] = {
         "number": pr.get("number"),
@@ -1176,6 +1275,7 @@ def upsert_review_pr(config: dict[str, Any], bus_state: dict[str, Any], status: 
         "head_sha": head_sha,
         "remote_ref": remote_ref,
         "last_remote_branch_check_at": utc_now(),
+        "body": final_body,
     }
     entry["last_review_hash"] = pr_hash
     write_activity_log(
