@@ -1,800 +1,1009 @@
 {
   "evidence_kind": "github-environments-audit",
   "task_id": "ODP-GITHUB-GCP-ENV-LIVE-DRIFT-REMEDIATION-001",
-  "timestamp_utc": "2026-08-27T05:23:37.748501+00:00",
+  "timestamp_utc": "2026-08-27T05:32:24.163966+00:00",
   "repository": "alfloop-dev/odayplus",
+  "api_pagination_notice": "GitHub API /environments/{environment}/variables endpoint paginates by default (10-30 items per page). Full live readback requires --paginate flag (e.g. gh api --paginate repos/alfloop-dev/odayplus/environments/{env}/variables?per_page=100).",
   "environments": {
     "dev": {
       "name": "dev",
-      "protection_rules": [],
-      "variables_count": 41,
+      "total_variables": 41,
+      "required_reviewers": [],
       "variables": [
         {
           "name": "GCP_AR_REPO",
-          "value": "oday-plus-dev"
+          "present": true,
+          "value_sha256": "19a0fb5097276d28187f3506faceebfb7f3333ee24646ae6d07873334bd473a2",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_CLOUD_SQL_INSTANCE",
-          "value": "odayplus-runtime-20260825:asia-east1:oday-dev-sql"
+          "present": true,
+          "value_sha256": "5ab42da62c231e1e84d75a98c447c07de1fdbfe0c12fe7564291c1e977ff6e4c",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_PROJECT_ID",
-          "value": "odayplus-runtime-20260825"
+          "present": true,
+          "value_sha256": "ffd423cf0af4a8512fd7b0058445bdf8f303e516aea4b72a95266e5d7d5263d9",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_REGION",
-          "value": "asia-east1"
+          "present": true,
+          "value_sha256": "16f73642591ed27a35f67a23d072bf9ae8e746e36f8df9c5ff22f04124a2ce99",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_SERVICE_ACCOUNT",
-          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "cf0921eb1fb5c454a01a7407529a878a63be13d3992f44299534903979e4c4d9",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
-          "value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus"
+          "present": true,
+          "value_sha256": "48669f3cb8ed7f9db57e34ca38e3b38fd8283daa7e1a11eb26a31d81457f2666",
+          "classification": "gcp_core"
         },
         {
           "name": "MLFLOW_TRACKING_URI",
-          "value": "https://oday-mlflow-767864276141.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "0cfc6f27b8eb84e96d5d1b55688464840ad31b08e0d48a2b1ed55327666af486",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODAY_DATABASE_URL_SECRET",
-          "value": "oday-plus-dev-api-database-url-pg16:latest"
+          "present": true,
+          "value_sha256": "3fa652a145dc3f42943000ce9c973343d6c33d8bf8c1dc51a0b96c3fd499e86c",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_AUTH_AUDIENCES",
-          "value": "https://oday-api-767864276141.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "8110f5490f4e4599be791490c4277180cea604a1d3fcfc2207ae2fb2e2b9268a",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_ISSUER",
-          "value": "https://accounts.google.com"
+          "present": true,
+          "value_sha256": "89a8000a68d759c68bfaeab5056d67342e97643511923e63702da58a9aac8f38",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_JWKS_URI",
-          "value": "https://www.googleapis.com/oauth2/v3/certs"
+          "present": true,
+          "value_sha256": "2648cd7d39447e7c906508512b00b87952006a21a0b6f034e663dea6a434e542",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
-          "value": "oday-plus-dev-auth-principal-map:latest"
+          "present": true,
+          "value_sha256": "1081e2f85726f63677682bee5bacd172e1150e2f8c506ea7df6803696f9fe8b7",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
-          "value": "{\"106898637126232088368\":[\"operations_manager\",\"model_owner\",\"data_owner\"]}"
+          "present": true,
+          "value_sha256": "0157d40dd1bc17d9c0d16ea1ced7da2d4b78cd3bbda5d37aacf05d4a55ad1af2",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_CLOUD_RUN_API_SERVICE",
-          "value": "oday-api"
+          "present": true,
+          "value_sha256": "994bc598a9f87d10257688c395bfc0da060918ba22694e49a2a0e0e566d0c19b",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_MIGRATION_JOB",
-          "value": "oday-migration"
+          "present": true,
+          "value_sha256": "888a4ce3facd7cf1724f56631b302e5d84ca19b6c2a00c9e20ca966a58a2b732",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
-          "value": "gke-oday-dev-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "b01027fe3380792d9df235941c3c408b9196a15e089a1e7d3efc346509734e05",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
-          "value": "oday-scheduler"
+          "present": true,
+          "value_sha256": "70c945b82cb001ebfdffb2c8447940227d438c6bac870df5049d1c7f96a7e2c3",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_WEB_SERVICE",
-          "value": "oday-web"
+          "present": true,
+          "value_sha256": "ccd4cc91886855d279bcdd41b043adf311879fc192e3a475113139abfa5b99d5",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_WORKER_JOB",
-          "value": "oday-worker"
+          "present": true,
+          "value_sha256": "c5a71075f6e390761f98ebf70685cc49b716909c5441cd344f9401e53a913046",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
-          "value": "oday-scheduler-trigger"
+          "present": true,
+          "value_sha256": "39b14ef9323f49405297211a288568b03bb6faf8c89d7cb8933b9be3608887cd",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
-          "value": "oday-dev-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "a7069dee3386cefeeeacef640af68a391cc2c9a39f4f1287f40a8920c8d9ceb4",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
-          "value": "oday-worker-trigger"
+          "present": true,
+          "value_sha256": "f6d695530fbfa809389050cdd88c488c10a22936346d828a082babbec9ba67a6",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_DEV_DEPLOY_URL",
-          "value": "https://oday-web-767864276141.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "d1e746d6e7cb68dd6fe0993f85f70a8bb71ff47d14887623e2fd406960e09ab3",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_EXTERNAL_PROVIDER_PROBE_TIMEOUT_SECONDS",
-          "value": "3.0"
+          "present": true,
+          "value_sha256": "a416ea84421fa7e1351582da48235bac88380a337ec5cb5a9239dc7d57908b4b",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_FORECAST_ENGINE",
-          "value": "statsforecast"
+          "present": true,
+          "value_sha256": "0dfda32cc7d56f2f2cb1f50dfc610107df455686397cd06fd0e3b7f6ebd8603d",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_FORECAST_MODEL",
-          "value": "seasonal_naive"
+          "present": true,
+          "value_sha256": "fef0a35e894bcafdca32638f3b419ca32cf8a0945f3e4379d3d7355c222ccf7f",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
-          "value": "https://oday-mlflow-767864276141.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "0cfc6f27b8eb84e96d5d1b55688464840ad31b08e0d48a2b1ed55327666af486",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_ROLE",
-          "value": "operations_manager,model_owner,data_owner"
+          "present": true,
+          "value_sha256": "e452f329ff950c53bec6534a7a25006db015a0db327b009dac0037699535eb07",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
-          "value": "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "7957c4185434170243f3d36c630f74daa5db1b97e40b8ec224edc0b7e9cd9868",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_SUBJECT",
-          "value": "106898637126232088368"
+          "present": true,
+          "value_sha256": "c68da243d6d0a7663a6b3a45249e805601c16bb4b36798d37324abfda4da9aaf",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
-          "value": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEALXw9mhsGBUq8v3yo4PifucIbSsnNd8/spPYX5imy5C4=\n-----END PUBLIC KEY-----"
+          "present": true,
+          "value_sha256": "06be9e93ea7b9f70993f5781f4fcab7a88836f9e3f2b4bb839c5b36b2c2e422e",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_RELEASE_LEASE_STATE_URI",
-          "value": "gs://odayplus-runtime-20260825-release-leases/leases"
+          "present": true,
+          "value_sha256": "92e5263b798e1d818c4694b325aae0f20596bbd867fab4bdf2da86c248eb0684",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_SCHEDULED_INGESTION_TENANT_ID",
-          "value": "a11ce505-70bc-56d9-8564-ad22efa23c9e"
+          "present": true,
+          "value_sha256": "da57d47ac40b5f8fa57ac349b3b1a154b3b64d4e807c142a1e9ba1bdef834b5b",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_SCHEDULER_CRON",
-          "value": "0 * * * *"
+          "present": true,
+          "value_sha256": "98913f9446172179ab75586bb01cfc7714bb7dd6331be4eb02e78fcb3fb10f29",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_SCHEDULER_TIME_ZONE",
-          "value": "Asia/Taipei"
+          "present": true,
+          "value_sha256": "2feef03a36ac28b23bbb36c290fe9016e8183f565034641a22ec31185386469d",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_SNAPSHOT_BUCKET",
-          "value": "oday-dev-source-snapshots-odayplus-runtime-20260825"
+          "present": true,
+          "value_sha256": "21ce7c2a9b97bdcf2704af72f63d6b71ce2b38c776aa2051fba30f368c2075f5",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_TENANT_ID",
-          "value": "a11ce505-70bc-56d9-8564-ad22efa23c9e"
+          "present": true,
+          "value_sha256": "da57d47ac40b5f8fa57ac349b3b1a154b3b64d4e807c142a1e9ba1bdef834b5b",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
-          "value": "oday-dev-web-oidc-client-secret"
+          "present": true,
+          "value_sha256": "879128f4bd5264a8b233ac30b8dcfc489a7d1a52f140f4bff580cdda5605a537",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_WEB_OIDC_ISSUER",
-          "value": "https://accounts.google.com"
+          "present": true,
+          "value_sha256": "89a8000a68d759c68bfaeab5056d67342e97643511923e63702da58a9aac8f38",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_WEB_SESSION_SECRET_SECRET",
-          "value": "oday-plus-dev-web-session-secret:latest"
+          "present": true,
+          "value_sha256": "9b8fb3da9abcb1cb1f40c4367c53d85142928e887729ec8dff628a10def38610",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_WORKER_CRON",
-          "value": "*/5 * * * *"
+          "present": true,
+          "value_sha256": "f9c7d85929d778680a374b59e37d4eda3e19bc9ad173fcd332ac332826c1dd82",
+          "classification": "cloud_scheduler"
         }
       ]
     },
     "staging": {
       "name": "staging",
-      "protection_rules": [
-        {
-          "id": 63664350,
-          "node_id": "GA_kwDOTFqC4s4Dy3De",
-          "type": "required_reviewers",
-          "prevent_self_review": false,
-          "reviewers": [
-            {
-              "type": "User",
-              "reviewer": {
-                "login": "Alien-alfaloop",
-                "id": 122770408,
-                "node_id": "U_kgDOB1FT6A",
-                "avatar_url": "https://avatars.githubusercontent.com/u/122770408?v=4",
-                "gravatar_id": "",
-                "url": "https://api.github.com/users/Alien-alfaloop",
-                "html_url": "https://github.com/Alien-alfaloop",
-                "followers_url": "https://api.github.com/users/Alien-alfaloop/followers",
-                "following_url": "https://api.github.com/users/Alien-alfaloop/following{/other_user}",
-                "gists_url": "https://api.github.com/users/Alien-alfaloop/gists{/gist_id}",
-                "starred_url": "https://api.github.com/users/Alien-alfaloop/starred{/owner}{/repo}",
-                "subscriptions_url": "https://api.github.com/users/Alien-alfaloop/subscriptions",
-                "organizations_url": "https://api.github.com/users/Alien-alfaloop/orgs",
-                "repos_url": "https://api.github.com/users/Alien-alfaloop/repos",
-                "events_url": "https://api.github.com/users/Alien-alfaloop/events{/privacy}",
-                "received_events_url": "https://api.github.com/users/Alien-alfaloop/received_events",
-                "type": "User",
-                "user_view_type": "public",
-                "site_admin": false
-              }
-            },
-            {
-              "type": "User",
-              "reviewer": {
-                "login": "ajoe734",
-                "id": 169176954,
-                "node_id": "U_kgDOChVveg",
-                "avatar_url": "https://avatars.githubusercontent.com/u/169176954?v=4",
-                "gravatar_id": "",
-                "url": "https://api.github.com/users/ajoe734",
-                "html_url": "https://github.com/ajoe734",
-                "followers_url": "https://api.github.com/users/ajoe734/followers",
-                "following_url": "https://api.github.com/users/ajoe734/following{/other_user}",
-                "gists_url": "https://api.github.com/users/ajoe734/gists{/gist_id}",
-                "starred_url": "https://api.github.com/users/ajoe734/starred{/owner}{/repo}",
-                "subscriptions_url": "https://api.github.com/users/ajoe734/subscriptions",
-                "organizations_url": "https://api.github.com/users/ajoe734/orgs",
-                "repos_url": "https://api.github.com/users/ajoe734/repos",
-                "events_url": "https://api.github.com/users/ajoe734/events{/privacy}",
-                "received_events_url": "https://api.github.com/users/ajoe734/received_events",
-                "type": "User",
-                "user_view_type": "public",
-                "site_admin": false
-              }
-            }
-          ]
-        }
+      "total_variables": 47,
+      "required_reviewers": [
+        "Alien-alfaloop",
+        "ajoe734"
       ],
-      "variables_count": 47,
       "variables": [
         {
           "name": "GCP_AR_REPO",
-          "value": "oday-plus-dev"
+          "present": true,
+          "value_sha256": "19a0fb5097276d28187f3506faceebfb7f3333ee24646ae6d07873334bd473a2",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_CLOUD_SQL_INSTANCE",
-          "value": "odayplus-runtime-20260825:asia-east1:oday-staging-sql"
+          "present": true,
+          "value_sha256": "b2f0fd0cf19f30868aa5790d3ce87a35d0ed91b465dfe62bb8874a4fac7e2869",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_PROJECT_ID",
-          "value": "odayplus-runtime-20260825"
+          "present": true,
+          "value_sha256": "ffd423cf0af4a8512fd7b0058445bdf8f303e516aea4b72a95266e5d7d5263d9",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_REGION",
-          "value": "asia-east1"
+          "present": true,
+          "value_sha256": "16f73642591ed27a35f67a23d072bf9ae8e746e36f8df9c5ff22f04124a2ce99",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_SERVICE_ACCOUNT",
-          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "cf0921eb1fb5c454a01a7407529a878a63be13d3992f44299534903979e4c4d9",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
-          "value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus"
+          "present": true,
+          "value_sha256": "48669f3cb8ed7f9db57e34ca38e3b38fd8283daa7e1a11eb26a31d81457f2666",
+          "classification": "gcp_core"
         },
         {
           "name": "MLFLOW_TRACKING_URI",
-          "value": "https://oday-staging-mlflow-767864276141.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "3dee338291ae1e3aac7893bda73ad5137e0e77900bcf0b332799760bffb894de",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODAY_DATABASE_URL_SECRET",
-          "value": "oday-staging-database-url:1"
+          "present": true,
+          "value_sha256": "3f7ad2ab5457a9b8329c401c64502aa519d0d821e0cd8dd4c5d997bb93d1abd6",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_AUTH_AUDIENCES",
-          "value": "https://oday-staging-api-767864276141.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "6403a7052ec6637c7ac72bdd474541d572e8070161d7115681f80f76559d8e96",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_ISSUER",
-          "value": "https://accounts.google.com"
+          "present": true,
+          "value_sha256": "89a8000a68d759c68bfaeab5056d67342e97643511923e63702da58a9aac8f38",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_JWKS_URI",
-          "value": "https://www.googleapis.com/oauth2/v3/certs"
+          "present": true,
+          "value_sha256": "2648cd7d39447e7c906508512b00b87952006a21a0b6f034e663dea6a434e542",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
-          "value": "oday-staging-auth-principal-map:1"
+          "present": true,
+          "value_sha256": "ef3b7979bf5279bb022f570c82e759e25313f9a47b63b88ad08cd592e85cf621",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
-          "value": "{\"106898637126232088368\":[\"operations_manager\",\"model_owner\",\"data_owner\"]}"
+          "present": true,
+          "value_sha256": "0157d40dd1bc17d9c0d16ea1ced7da2d4b78cd3bbda5d37aacf05d4a55ad1af2",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_CLOUD_RUN_API_SERVICE",
-          "value": "oday-staging-api"
+          "present": true,
+          "value_sha256": "a6cdc27a54d69e51e3784bacce90427cad290dde8dbe5d21ce4ee58aa972df4a",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_MIGRATION_JOB",
-          "value": "oday-staging-migration"
+          "present": true,
+          "value_sha256": "8261abd3d1898f02f0713441e8a4b1177cccaea495df62bfec131f8395071559",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
-          "value": "oday-staging-runtime@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "9caa83347c76abea353cf7118a2fd4d778752efa64f30c79e5c5099146defee1",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
-          "value": "oday-staging-scheduler"
+          "present": true,
+          "value_sha256": "b5cd0c0761982d61dc47c9b6a9290327c4c54aa820127242581338ec41829850",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_VPC_CONNECTOR",
-          "value": "projects/odayplus-runtime-20260825/locations/asia-east1/connectors/oday-staging-vpc"
+          "present": true,
+          "value_sha256": "2152d8cf9f91c08c2c540d7563d92133766a3157895044dd54a7d0b59e2d6489",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_VPC_EGRESS",
-          "value": "private-ranges-only"
+          "present": true,
+          "value_sha256": "822f057cd330fd9d60ff77832be8a86dec429d881f00f5123cbd2f53b7c595e7",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_WEB_SERVICE",
-          "value": "oday-staging-web"
+          "present": true,
+          "value_sha256": "bddcf8ae97ad65c3f81cce5f86adc68d612653e701f152ec723020af4d22b9a8",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_WORKER_JOB",
-          "value": "oday-staging-worker"
+          "present": true,
+          "value_sha256": "54f7a0c563234c85386254a5573d4eb215c65450bc7a97aceace7ede32d2fa2e",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
-          "value": "oday-staging-scheduler-trigger"
+          "present": true,
+          "value_sha256": "ef2a8fe8a9371e5cb07639aa96e084a4fd408f47b9e84c248421295949ae822c",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
-          "value": "oday-staging-scheduler@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "cb2da38879649d7354cff14f531e942cdb236160bff315ec96b96713da1cd509",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
-          "value": "oday-staging-worker-trigger"
+          "present": true,
+          "value_sha256": "ae75c3fd8462ed067a6a9a59466e5cfab9e68885a1ae93c952bcfd24846499d3",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_EXTERNAL_PROVIDER_MODE",
-          "value": "disabled"
+          "present": true,
+          "value_sha256": "17eb3c0168d0d7b21ede5481150f17233427d89833ec121b4dbc4fb96cfab71e",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_FORECAST_ENGINE",
-          "value": "statsforecast"
+          "present": true,
+          "value_sha256": "0dfda32cc7d56f2f2cb1f50dfc610107df455686397cd06fd0e3b7f6ebd8603d",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_FORECAST_MODEL",
-          "value": "seasonal_naive"
+          "present": true,
+          "value_sha256": "fef0a35e894bcafdca32638f3b419ca32cf8a0945f3e4379d3d7355c222ccf7f",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_LIVE_E2E_DEPLOYMENT_MODE",
-          "value": "staging"
+          "present": true,
+          "value_sha256": "e919a75364398a449f860aeadddc57fa0502145a4e63959ddb33c417a48dc0da",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS",
-          "value": "600"
+          "present": true,
+          "value_sha256": "284b7e6d788f363f910f7beb1910473e23ce9d6c871f1ce0f31f22a982d48ad4",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
-          "value": "https://oday-staging-mlflow-767864276141.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "3dee338291ae1e3aac7893bda73ad5137e0e77900bcf0b332799760bffb894de",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_ROLE",
-          "value": "operations_manager,model_owner,data_owner"
+          "present": true,
+          "value_sha256": "e452f329ff950c53bec6534a7a25006db015a0db327b009dac0037699535eb07",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
-          "value": "oday-dev-smoke-operator@odayplus-runtime-20260825.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "7957c4185434170243f3d36c630f74daa5db1b97e40b8ec224edc0b7e9cd9868",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_SUBJECT",
-          "value": "106898637126232088368"
+          "present": true,
+          "value_sha256": "c68da243d6d0a7663a6b3a45249e805601c16bb4b36798d37324abfda4da9aaf",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
-          "value": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEALXw9mhsGBUq8v3yo4PifucIbSsnNd8/spPYX5imy5C4=\n-----END PUBLIC KEY-----"
+          "present": true,
+          "value_sha256": "06be9e93ea7b9f70993f5781f4fcab7a88836f9e3f2b4bb839c5b36b2c2e422e",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_RELEASE_LEASE_STATE_URI",
-          "value": "gs://odayplus-runtime-20260825-release-leases/leases"
+          "present": true,
+          "value_sha256": "92e5263b798e1d818c4694b325aae0f20596bbd867fab4bdf2da86c248eb0684",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_SCHEDULED_INGESTION_TENANT_ID",
-          "value": "a11ce505-70bc-56d9-8564-ad22efa23c9e"
+          "present": true,
+          "value_sha256": "da57d47ac40b5f8fa57ac349b3b1a154b3b64d4e807c142a1e9ba1bdef834b5b",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_SCHEDULER_CRON",
-          "value": "0 * * * *"
+          "present": true,
+          "value_sha256": "98913f9446172179ab75586bb01cfc7714bb7dd6331be4eb02e78fcb3fb10f29",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_SCHEDULER_TIME_ZONE",
-          "value": "Asia/Taipei"
+          "present": true,
+          "value_sha256": "2feef03a36ac28b23bbb36c290fe9016e8183f565034641a22ec31185386469d",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_SNAPSHOT_BUCKET",
-          "value": "oday-staging-source-snapshots-odayplus-runtime-20260825"
+          "present": true,
+          "value_sha256": "2abc9567b6e1d4da2831f0cad20d7746aeb7445aaeee518081491c12c3be2b97",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_STAGING_API_URL",
-          "value": "https://api-staging.oday-plus.com.tw"
+          "present": true,
+          "value_sha256": "478640b64ea2529a233ba1a7a3a21ef69980c828932471f5830bfdfc881bce9a",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_STAGING_DEPLOY_URL",
-          "value": "https://console-staging.oday-plus.com.tw"
+          "present": true,
+          "value_sha256": "89a68307a0f6f0f7b6eaddcf7c25475a79180edacee83d11082e61d2b495a6a0",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_STAGING_SECRET_OWNER",
-          "value": "Platform/Ops"
+          "present": true,
+          "value_sha256": "ddd94c373ba14c6fa67a648a475d1cfa3eebae4b95e3140dfd147337d8d0349b",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_TENANT_ID",
-          "value": "a11ce505-70bc-56d9-8564-ad22efa23c9e"
+          "present": true,
+          "value_sha256": "da57d47ac40b5f8fa57ac349b3b1a154b3b64d4e807c142a1e9ba1bdef834b5b",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
-          "value": "oday-staging-web-oidc-client-secret"
+          "present": true,
+          "value_sha256": "962b1700a14fe1c420f316fa97c679bbe118b4ea76c9e31b6705e6cc06277cae",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_WEB_OIDC_ISSUER",
-          "value": "https://accounts.google.com"
+          "present": true,
+          "value_sha256": "89a8000a68d759c68bfaeab5056d67342e97643511923e63702da58a9aac8f38",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_WEB_SESSION_SECRET_SECRET",
-          "value": "oday-staging-web-session-secret:1"
+          "present": true,
+          "value_sha256": "cdf32c196d0d59d8916677f6b9ecfd8746cf7b84bcafff42644f725976efc782",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_WORKER_CRON",
-          "value": "*/5 * * * *"
+          "present": true,
+          "value_sha256": "f9c7d85929d778680a374b59e37d4eda3e19bc9ad173fcd332ac332826c1dd82",
+          "classification": "cloud_scheduler"
         }
       ]
     },
     "production": {
       "name": "production",
-      "protection_rules": [
-        {
-          "id": 63664338,
-          "node_id": "GA_kwDOTFqC4s4Dy3DS",
-          "type": "required_reviewers",
-          "prevent_self_review": false,
-          "reviewers": [
-            {
-              "type": "User",
-              "reviewer": {
-                "login": "Alien-alfaloop",
-                "id": 122770408,
-                "node_id": "U_kgDOB1FT6A",
-                "avatar_url": "https://avatars.githubusercontent.com/u/122770408?v=4",
-                "gravatar_id": "",
-                "url": "https://api.github.com/users/Alien-alfaloop",
-                "html_url": "https://github.com/Alien-alfaloop",
-                "followers_url": "https://api.github.com/users/Alien-alfaloop/followers",
-                "following_url": "https://api.github.com/users/Alien-alfaloop/following{/other_user}",
-                "gists_url": "https://api.github.com/users/Alien-alfaloop/gists{/gist_id}",
-                "starred_url": "https://api.github.com/users/Alien-alfaloop/starred{/owner}{/repo}",
-                "subscriptions_url": "https://api.github.com/users/Alien-alfaloop/subscriptions",
-                "organizations_url": "https://api.github.com/users/Alien-alfaloop/orgs",
-                "repos_url": "https://api.github.com/users/Alien-alfaloop/repos",
-                "events_url": "https://api.github.com/users/Alien-alfaloop/events{/privacy}",
-                "received_events_url": "https://api.github.com/users/Alien-alfaloop/received_events",
-                "type": "User",
-                "user_view_type": "public",
-                "site_admin": false
-              }
-            },
-            {
-              "type": "User",
-              "reviewer": {
-                "login": "ajoe734",
-                "id": 169176954,
-                "node_id": "U_kgDOChVveg",
-                "avatar_url": "https://avatars.githubusercontent.com/u/169176954?v=4",
-                "gravatar_id": "",
-                "url": "https://api.github.com/users/ajoe734",
-                "html_url": "https://github.com/ajoe734",
-                "followers_url": "https://api.github.com/users/ajoe734/followers",
-                "following_url": "https://api.github.com/users/ajoe734/following{/other_user}",
-                "gists_url": "https://api.github.com/users/ajoe734/gists{/gist_id}",
-                "starred_url": "https://api.github.com/users/ajoe734/starred{/owner}{/repo}",
-                "subscriptions_url": "https://api.github.com/users/ajoe734/subscriptions",
-                "organizations_url": "https://api.github.com/users/ajoe734/orgs",
-                "repos_url": "https://api.github.com/users/ajoe734/repos",
-                "events_url": "https://api.github.com/users/ajoe734/events{/privacy}",
-                "received_events_url": "https://api.github.com/users/ajoe734/received_events",
-                "type": "User",
-                "user_view_type": "public",
-                "site_admin": false
-              }
-            }
-          ]
-        }
+      "total_variables": 44,
+      "required_reviewers": [
+        "Alien-alfaloop",
+        "ajoe734"
       ],
-      "variables_count": 44,
       "variables": [
         {
           "name": "GCP_AR_REPO",
-          "value": "oday-plus"
+          "present": true,
+          "value_sha256": "59838a2d018d7f775540ced68688fe12f845456d0b6b9603d5f5ce88c9700334",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_CLOUD_SQL_INSTANCE",
-          "value": "odayplus-prod-20260826:asia-east1:oday-prod-sql"
+          "present": true,
+          "value_sha256": "81d2998143374cfd589230d86ef7ceea6fb253f289d9219310dfe19d224fe28c",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_PROJECT_ID",
-          "value": "odayplus-prod-20260826"
+          "present": true,
+          "value_sha256": "e13975e7ae9210fdb0f16f29862dd920e77aafb9a2d7ede6b3fd55f667c86b23",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_REGION",
-          "value": "asia-east1"
+          "present": true,
+          "value_sha256": "16f73642591ed27a35f67a23d072bf9ae8e746e36f8df9c5ff22f04124a2ce99",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_SERVICE_ACCOUNT",
-          "value": "github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "bc5a3ff312124200b101a07bf39e3b9c9a948238485719a0b10ed8f9dc092b9a",
+          "classification": "gcp_core"
         },
         {
           "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
-          "value": "projects/365886461656/locations/global/workloadIdentityPools/github-actions/providers/odayplus"
+          "present": true,
+          "value_sha256": "750ad700f674bc88d33a57a99df0fa9db7e70533efac2c032ac6945213018250",
+          "classification": "gcp_core"
         },
         {
           "name": "MLFLOW_TRACKING_URI",
-          "value": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
+          "present": true,
+          "value_sha256": "4fc5568a4e617a011c65f519cf2d044cfe4a6a3fdc4c95a037b523c95818b221",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODAY_DATABASE_URL_SECRET",
-          "value": "oday-prod-database-url:1"
+          "present": true,
+          "value_sha256": "515107b1ea461b77bbd6efdd6783fd2b04d4c78866badc0b7a5ed3720b90c0d7",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_AUTH_AUDIENCES",
-          "value": "https://oday-api-365886461656.asia-east1.run.app"
+          "present": true,
+          "value_sha256": "3a9cceacab4bfc203188f67499c4e2d0106e39f84138c8bbb024da9f03abf581",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_ISSUER",
-          "value": "https://accounts.google.com"
+          "present": true,
+          "value_sha256": "89a8000a68d759c68bfaeab5056d67342e97643511923e63702da58a9aac8f38",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_JWKS_URI",
-          "value": "https://www.googleapis.com/oauth2/v3/certs"
+          "present": true,
+          "value_sha256": "2648cd7d39447e7c906508512b00b87952006a21a0b6f034e663dea6a434e542",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
-          "value": "oday-prod-auth-principal-map:1"
+          "present": true,
+          "value_sha256": "19c7298730105ef3ab5f4764717cc83d6576737f232b06b00096dc74012f07d0",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_AUTH_SUBJECT_ROLE_BINDINGS",
-          "value": "{\"115219773121101906030\":[\"operations_manager\",\"model_owner\",\"data_owner\"]}"
+          "present": true,
+          "value_sha256": "50d7859ed661eba90a73dbd603cbefac4e92774b6876d8ad7436ae114e596818",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_CLOUD_RUN_API_SERVICE",
-          "value": "oday-api"
+          "present": true,
+          "value_sha256": "994bc598a9f87d10257688c395bfc0da060918ba22694e49a2a0e0e566d0c19b",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_MIGRATION_JOB",
-          "value": "oday-migration"
+          "present": true,
+          "value_sha256": "888a4ce3facd7cf1724f56631b302e5d84ca19b6c2a00c9e20ca966a58a2b732",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_RUNTIME_SERVICE_ACCOUNT",
-          "value": "oday-prod-runtime@odayplus-prod-20260826.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "9c61dfd3fc4a7073f6972c4c0c164326f9261a86cd8612f80cbfd2ee0510d459",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
-          "value": "oday-scheduler"
+          "present": true,
+          "value_sha256": "70c945b82cb001ebfdffb2c8447940227d438c6bac870df5049d1c7f96a7e2c3",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_WEB_SERVICE",
-          "value": "oday-web"
+          "present": true,
+          "value_sha256": "ccd4cc91886855d279bcdd41b043adf311879fc192e3a475113139abfa5b99d5",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_RUN_WORKER_JOB",
-          "value": "oday-worker"
+          "present": true,
+          "value_sha256": "c5a71075f6e390761f98ebf70685cc49b716909c5441cd344f9401e53a913046",
+          "classification": "cloud_run"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_SCHEDULER_TRIGGER",
-          "value": "oday-scheduler-trigger"
+          "present": true,
+          "value_sha256": "39b14ef9323f49405297211a288568b03bb6faf8c89d7cb8933b9be3608887cd",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_SERVICE_ACCOUNT",
-          "value": "oday-prod-scheduler@odayplus-prod-20260826.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "a15291115d21bc77de17e309235fe88ab79bef80033d93b4e2e782e9a4deb759",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_CLOUD_SCHEDULER_WORKER_TRIGGER",
-          "value": "oday-worker-trigger"
+          "present": true,
+          "value_sha256": "f6d695530fbfa809389050cdd88c488c10a22936346d828a082babbec9ba67a6",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_EXTERNAL_PROVIDER_MODE",
-          "value": "disabled"
+          "present": true,
+          "value_sha256": "17eb3c0168d0d7b21ede5481150f17233427d89833ec121b4dbc4fb96cfab71e",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_FORECAST_ENGINE",
-          "value": "statsforecast"
+          "present": true,
+          "value_sha256": "0dfda32cc7d56f2f2cb1f50dfc610107df455686397cd06fd0e3b7f6ebd8603d",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_FORECAST_MODEL",
-          "value": "seasonal_naive"
+          "present": true,
+          "value_sha256": "fef0a35e894bcafdca32638f3b419ca32cf8a0945f3e4379d3d7355c222ccf7f",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_LIVE_E2E_DEPLOYMENT_MODE",
-          "value": "production"
+          "present": true,
+          "value_sha256": "ab8e18ef4ebebeddc0b3152ce9c9006e14fc05242e3fc9ce32246ea6a9543074",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_LIVE_E2E_WORKER_DEADLINE_SECONDS",
-          "value": "600"
+          "present": true,
+          "value_sha256": "284b7e6d788f363f910f7beb1910473e23ce9d6c871f1ce0f31f22a982d48ad4",
+          "classification": "runtime_config"
         },
         {
           "name": "ODP_MLFLOW_CLOUD_RUN_AUDIENCE",
-          "value": "https://oday-prod-mlflow-icm6xhajsa-de.a.run.app"
+          "present": true,
+          "value_sha256": "4fc5568a4e617a011c65f519cf2d044cfe4a6a3fdc4c95a037b523c95818b221",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_ROLE",
-          "value": "operations_manager,model_owner,data_owner"
+          "present": true,
+          "value_sha256": "e452f329ff950c53bec6534a7a25006db015a0db327b009dac0037699535eb07",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_SERVICE_ACCOUNT",
-          "value": "oday-prod-smoke-operator@odayplus-prod-20260826.iam.gserviceaccount.com"
+          "present": true,
+          "value_sha256": "8c37d4dbef36eb626ae8e4b1db730c3f1d4fab13a1159080e5e9ccef34a08ebe",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_OPERATOR_SMOKE_SUBJECT",
-          "value": "115219773121101906030"
+          "present": true,
+          "value_sha256": "513461310f602d296236e2a8a7c3b5284b0fb7af1978b437a82466bdd72f97f6",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_PROD_API_URL",
-          "value": "https://api.oday-plus.com.tw"
+          "present": true,
+          "value_sha256": "6d151893fbfa04a0b2523ea9307f64af41f9773217105dc4735128799638d97c",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_PROD_DEPLOY_URL",
-          "value": "https://console.oday-plus.com.tw"
+          "present": true,
+          "value_sha256": "2e3d0e0a6620bdc05c34c52a2e8ce9303bb246ba943fec8fbd09caafaae6b374",
+          "classification": "endpoints_and_deploy"
         },
         {
           "name": "ODP_RELEASE_LEASE_PUBLIC_KEY",
-          "value": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEALXw9mhsGBUq8v3yo4PifucIbSsnNd8/spPYX5imy5C4=\n-----END PUBLIC KEY-----"
+          "present": true,
+          "value_sha256": "06be9e93ea7b9f70993f5781f4fcab7a88836f9e3f2b4bb839c5b36b2c2e422e",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_RELEASE_LEASE_STATE_URI",
-          "value": "gs://odayplus-prod-20260826-release-leases/leases"
+          "present": true,
+          "value_sha256": "a997e248efd82d01258e80ebdbce88fecf0ee9e407dc705d54d3061edaae5505",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_SCHEDULED_INGESTION_TENANT_ID",
-          "value": "09eff6f8-2a1f-48e5-ad17-d822258804f2"
+          "present": true,
+          "value_sha256": "c853c405be2ad347e105970e4904d180a7080193806e7b9255731ace48cecc4b",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_SCHEDULER_CRON",
-          "value": "0 * * * *"
+          "present": true,
+          "value_sha256": "98913f9446172179ab75586bb01cfc7714bb7dd6331be4eb02e78fcb3fb10f29",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_SCHEDULER_TIME_ZONE",
-          "value": "Asia/Taipei"
+          "present": true,
+          "value_sha256": "2feef03a36ac28b23bbb36c290fe9016e8183f565034641a22ec31185386469d",
+          "classification": "cloud_scheduler"
         },
         {
           "name": "ODP_SNAPSHOT_BUCKET",
-          "value": "odayplus-prod-20260826-source-snapshots"
+          "present": true,
+          "value_sha256": "4fcb9c4a2e45833d857796a131c8ddf76cabf3f7895d5803379a6f847451db25",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_TENANT_ID",
-          "value": "09eff6f8-2a1f-48e5-ad17-d822258804f2"
+          "present": true,
+          "value_sha256": "c853c405be2ad347e105970e4904d180a7080193806e7b9255731ace48cecc4b",
+          "classification": "storage_and_state"
         },
         {
           "name": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
-          "value": "oday-prod-web-oidc-client-secret"
+          "present": true,
+          "value_sha256": "26fffb96c94b075dff0a3d7d40fefda15130b0a3377b9c64eb464b2980766222",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_WEB_OIDC_ISSUER",
-          "value": "https://accounts.google.com"
+          "present": true,
+          "value_sha256": "89a8000a68d759c68bfaeab5056d67342e97643511923e63702da58a9aac8f38",
+          "classification": "auth_and_iam"
         },
         {
           "name": "ODP_WEB_SESSION_SECRET_SECRET",
-          "value": "oday-prod-web-session-secret:1"
+          "present": true,
+          "value_sha256": "bbb7ee0e8c92eca61c63c44ba908b437b00630efa8e90327e7340324e8aff8ba",
+          "classification": "secret_reference"
         },
         {
           "name": "ODP_WORKER_CRON",
-          "value": "*/5 * * * *"
+          "present": true,
+          "value_sha256": "f9c7d85929d778680a374b59e37d4eda3e19bc9ad173fcd332ac332826c1dd82",
+          "classification": "cloud_scheduler"
         }
       ]
+    }
+  },
+  "secret_manager_references": {
+    "dev": [
+      {
+        "env_var_name": "ODAY_DATABASE_URL_SECRET",
+        "secret_name": "oday-plus-dev-api-database-url-pg16",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "secret_name": "oday-plus-dev-auth-principal-map",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "secret_name": "oday-plus-dev-web-session-secret",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+        "secret_name": "oday-dev-web-oidc-client-secret",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 0,
+        "versions": [],
+        "classification": "oauth_client_secret_reference",
+        "fail_closed_gate": "0_versions_waiting_for_human_ops"
+      }
+    ],
+    "staging": [
+      {
+        "env_var_name": "ODAY_DATABASE_URL_SECRET",
+        "secret_name": "oday-staging-database-url",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "secret_name": "oday-staging-auth-principal-map",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "secret_name": "oday-staging-web-session-secret",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+        "secret_name": "oday-staging-web-oidc-client-secret",
+        "project": "odayplus-runtime-20260825",
+        "present": true,
+        "version_count": 0,
+        "versions": [],
+        "classification": "oauth_client_secret_reference",
+        "fail_closed_gate": "0_versions_waiting_for_human_ops"
+      }
+    ],
+    "production": [
+      {
+        "env_var_name": "ODAY_DATABASE_URL_SECRET",
+        "secret_name": "oday-prod-database-url",
+        "project": "odayplus-prod-20260826",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_AUTH_PRINCIPAL_MAP_SECRET",
+        "secret_name": "oday-prod-auth-principal-map",
+        "project": "odayplus-prod-20260826",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_WEB_SESSION_SECRET_SECRET",
+        "secret_name": "oday-prod-web-session-secret",
+        "project": "odayplus-prod-20260826",
+        "present": true,
+        "version_count": 1,
+        "versions": [
+          {
+            "version": "1",
+            "state": "ENABLED"
+          }
+        ],
+        "classification": "secret_reference"
+      },
+      {
+        "env_var_name": "ODP_WEB_OIDC_CLIENT_SECRET_SECRET",
+        "secret_name": "oday-prod-web-oidc-client-secret",
+        "project": "odayplus-prod-20260826",
+        "present": true,
+        "version_count": 0,
+        "versions": [],
+        "classification": "oauth_client_secret_reference",
+        "fail_closed_gate": "0_versions_waiting_for_human_ops"
+      }
+    ]
+  },
+  "oauth_client_id_status": {
+    "dev": {
+      "name": "ODP_WEB_OIDC_CLIENT_ID",
+      "present": false,
+      "status": "FAIL_CLOSED_MISSING_PENDING_HUMAN_OPS"
     },
-    "dev-build": {
-      "name": "dev-build",
-      "protection_rules": [],
-      "variables_count": 9,
-      "variables": [
-        {
-          "name": "GCP_AR_REPO",
-          "value": "oday-plus-dev"
-        },
-        {
-          "name": "GCP_PROJECT_ID",
-          "value": "odayplus-runtime-20260825"
-        },
-        {
-          "name": "GCP_REGION",
-          "value": "asia-east1"
-        },
-        {
-          "name": "GCP_SERVICE_ACCOUNT",
-          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
-        },
-        {
-          "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
-          "value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_API_SERVICE",
-          "value": "oday-api"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
-          "value": "oday-scheduler"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_WEB_SERVICE",
-          "value": "oday-web"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_WORKER_JOB",
-          "value": "oday-worker"
-        }
-      ]
+    "staging": {
+      "name": "ODP_WEB_OIDC_CLIENT_ID",
+      "present": false,
+      "status": "FAIL_CLOSED_MISSING_PENDING_HUMAN_OPS"
     },
-    "staging-build": {
-      "name": "staging-build",
-      "protection_rules": [],
-      "variables_count": 9,
-      "variables": [
-        {
-          "name": "GCP_AR_REPO",
-          "value": "oday-plus-dev"
-        },
-        {
-          "name": "GCP_PROJECT_ID",
-          "value": "odayplus-runtime-20260825"
-        },
-        {
-          "name": "GCP_REGION",
-          "value": "asia-east1"
-        },
-        {
-          "name": "GCP_SERVICE_ACCOUNT",
-          "value": "github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
-        },
-        {
-          "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
-          "value": "projects/767864276141/locations/global/workloadIdentityPools/github-actions/providers/odayplus"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_API_SERVICE",
-          "value": "oday-staging-api"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
-          "value": "oday-staging-scheduler"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_WEB_SERVICE",
-          "value": "oday-staging-web"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_WORKER_JOB",
-          "value": "oday-staging-worker"
-        }
-      ]
-    },
-    "production-build": {
-      "name": "production-build",
-      "protection_rules": [],
-      "variables_count": 9,
-      "variables": [
-        {
-          "name": "GCP_AR_REPO",
-          "value": "oday-plus"
-        },
-        {
-          "name": "GCP_PROJECT_ID",
-          "value": "odayplus-prod-20260826"
-        },
-        {
-          "name": "GCP_REGION",
-          "value": "asia-east1"
-        },
-        {
-          "name": "GCP_SERVICE_ACCOUNT",
-          "value": "github-deployer@odayplus-prod-20260826.iam.gserviceaccount.com"
-        },
-        {
-          "name": "GCP_WORKLOAD_IDENTITY_PROVIDER",
-          "value": "projects/365886461656/locations/global/workloadIdentityPools/github-actions/providers/odayplus"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_API_SERVICE",
-          "value": "oday-api"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_SCHEDULER_JOB",
-          "value": "oday-scheduler"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_WEB_SERVICE",
-          "value": "oday-web"
-        },
-        {
-          "name": "ODP_CLOUD_RUN_WORKER_JOB",
-          "value": "oday-worker"
-        }
-      ]
+    "production": {
+      "name": "ODP_WEB_OIDC_CLIENT_ID",
+      "present": false,
+      "status": "FAIL_CLOSED_MISSING_PENDING_HUMAN_OPS"
     }
   }
 }
