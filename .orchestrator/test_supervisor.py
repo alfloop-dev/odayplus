@@ -14790,6 +14790,138 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
             )
 
 
+class CapacityControllerReconciliationTests(unittest.TestCase):
+    def _config(self) -> dict[str, Any]:
+        return {
+            "schema": {"tasks_path": "tasks"},
+            "agents": {
+                "claude": {"slot_id": "slot-0"},
+                "codex": {"slot_id": "slot-1"},
+            },
+            "capacity_controller": {
+                "enabled": True,
+                "chair_interval_seconds": 1800,
+                "stall_window_seconds": 300,
+                "underutilization_window_seconds": 600,
+                "coordination_reserved_slots": 1,
+                "sidecars": {
+                    "enabled": True,
+                    "max_new_per_wave": 3,
+                    "max_active": 4,
+                    "max_capacity_ratio": 0.25,
+                    "ttl_seconds": 7200,
+                },
+            },
+        }
+
+    def test_capacity_reconcile_with_blocked_and_human_gate_tasks_does_not_flag_stalled_runnable_work(self) -> None:
+        tasks = [
+            {"id": "HG-001", "status": "todo", "owner": "Human/Ops", "task_class": "human_gate"},
+            {"id": "BLOCKED-001", "status": "blocked", "owner": "codex", "waiting_for": "Human/Ops"},
+            {"id": "DEP-BLOCKED-001", "status": "todo", "owner": "claude", "depends_on": ["BLOCKED-001"]},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+            self.assertTrue(changed)
+            controller = state.get("capacity_controller", {})
+            snapshot = controller.get("snapshot", {})
+            self.assertEqual(snapshot.get("runnable_tasks"), 0)
+            self.assertIsNone(controller.get("stall_since"))
+            decision = controller.get("chair_decision", {})
+            self.assertNotIn("runnable_work_without_active_workers", decision.get("reasons", []))
+
+    def test_capacity_reconcile_with_runnable_task_updates_snapshot_truth(self) -> None:
+        tasks = [
+            {"id": "DEP-001", "status": "done"},
+            {"id": "RUNNABLE-001", "status": "todo", "owner": "claude", "depends_on": ["DEP-001"]},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+            self.assertTrue(changed)
+            controller = state.get("capacity_controller", {})
+            snapshot = controller.get("snapshot", {})
+            self.assertEqual(snapshot.get("runnable_tasks"), 1)
+            decision = controller.get("chair_decision", {})
+            self.assertTrue(decision.get("approve_helper_wave"))
+
+    def test_canonical_dispatchable_task_ids_respects_custom_schema_and_excludes_invalid_id_or_owner(self) -> None:
+        config = self._config()
+        config["schema"] = {
+            "tasks_path": "items",
+            "task_id_field": "taskId",
+            "assignee_field": "assignee",
+        }
+        # Valid task
+        task_valid = {"taskId": "T-001", "status": "todo", "assignee": "claude"}
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [task_valid]), {"T-001"})
+
+        # Missing or empty task ID
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"status": "todo", "assignee": "claude"}]), set())
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"taskId": "", "status": "todo", "assignee": "claude"}]), set())
+
+        # Human/Ops assignee
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"taskId": "T-002", "status": "todo", "assignee": "Human/Ops"}]), set())
+
+        # Unknown assignee not in agents
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"taskId": "T-003", "status": "todo", "assignee": "UnknownWorker"}]), set())
+
+        # Missing assignee
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"taskId": "T-004", "status": "todo"}]), set())
+
+    def test_canonical_dispatchable_task_ids_excludes_non_execution_states_and_unsatisfied_dependencies(self) -> None:
+        config = self._config()
+        dep_done = {"id": "DEP-DONE", "status": "done"}
+        dep_todo = {"id": "DEP-TODO", "status": "todo", "owner": "claude"}
+
+        # Non-dispatchable
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"id": "ND-1", "status": "todo", "owner": "claude", "non_dispatchable": True}]), set())
+
+        # Human gate and sidecars
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"id": "HG-1", "status": "todo", "owner": "claude", "task_class": "human_gate"}]), set())
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"id": "SC-1", "status": "todo", "owner": "claude", "task_class": "sidecar"}]), set())
+
+        # Review and review_approved states
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"id": "REV-1", "status": "review", "owner": "claude", "reviewer": "codex"}]), set())
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"id": "APP-1", "status": "review_approved", "owner": "claude"}]), set())
+
+        # Blocked state
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [{"id": "BLK-1", "status": "blocked", "owner": "claude"}]), set())
+
+        # Dependency satisfaction
+        task_with_done_dep = {"id": "T-1", "status": "todo", "owner": "claude", "depends_on": ["DEP-DONE"]}
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [task_with_done_dep, dep_done]), {"T-1"})
+
+        task_with_pending_dep = {"id": "T-2", "status": "todo", "owner": "claude", "depends_on": ["DEP-TODO"]}
+        self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [task_with_pending_dep, dep_todo]), {"DEP-TODO"})
+
+    def test_capacity_reconcile_does_not_create_sidecars_when_runnable_task_appears_during_active_approval(self) -> None:
+        tasks = [
+            {"id": "BLOCKED-001", "status": "blocked", "owner": "claude", "blocked_reason": "upstream defect"},
+            {"id": "RUN-001", "status": "todo", "owner": "claude"},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {
+            "workers": {},
+            "capacity_controller": {
+                "chair_decision": {
+                    "issued_at": "2026-08-20T11:50:00Z",
+                    "valid_until": "2026-08-20T12:30:00Z",
+                    "sidecar_wave": {"approved": True},
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}):
+            supervisor.reconcile_capacity_controller(config, state)
+            sidecar_tasks = [t for t in tasks if t.get("task_class") == "sidecar"]
+            self.assertEqual(len(sidecar_tasks), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
