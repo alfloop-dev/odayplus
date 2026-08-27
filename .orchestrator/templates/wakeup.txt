@@ -17,6 +17,7 @@
 狀態更新只能使用 `AI_NAME={{target_agent_display_name}} "$PANTHEON_STATUS_ROOT/scripts/ai-status.sh" ...`，確保程式與資料都來自 live canonical status root。
 不要用臨時 Python/heredoc 直接改 `ai-status.json`、`current-work.md` 或 `ai-activity-log.jsonl`。
 你在 background auto worker 裡執行，請不要使用 `git add -p`、`git add -i`、`git commit --interactive`、`git rebase -i` 或其他需要人工輸入的互動式命令。
+嚴禁執行 `find /`、`rg /` 等全系統（root-wide）搜尋尋找測試工具或檔案；若工具或依賴缺失，只使用任務 verification 已宣告命令或專案既有 `uv run`（例如 `uv run pytest ...`），不自行掃描主機檔案系統。
 {{lifecycle_guardrails}}
 {{sidecar_guardrails}}
 
