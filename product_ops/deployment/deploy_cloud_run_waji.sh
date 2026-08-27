@@ -447,7 +447,7 @@ gcloud run deploy "${API_SERVICE}" \
   "${CLOUD_RUN_NETWORK_ARGS[@]}" \
   --tag="${API_REVISION_TAG}" \
   --no-traffic \
-  --allow-unauthenticated \
+  --no-allow-unauthenticated \
   --quiet
 
 gcloud run services describe "${API_SERVICE}" \
