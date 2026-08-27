@@ -19,13 +19,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = (1,)
+SUPPORTED_SCHEMA_VERSIONS = (1, 2)
+CURRENT_SCHEMA_VERSION = 2
 SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_DIGEST_PATTERN = re.compile(r"^.+@sha256:[0-9a-f]{64}$")
 RELEASE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$")
 RELEASE_STATUSES = frozenset({"ready", "blocked"})
 
-REQUIRED_FIELDS = (
+REQUIRED_FIELDS_V1 = (
     "schema_version",
     "release_id",
     "candidate_sha",
@@ -40,6 +41,14 @@ REQUIRED_FIELDS = (
     "created_by_workflow",
     "manifest_digest",
 )
+
+REQUIRED_FIELDS_V2 = REQUIRED_FIELDS_V1 + (
+    "data_snapshot",
+    "rollback_release",
+)
+
+REQUIRED_FIELDS = REQUIRED_FIELDS_V1
+SNAPSHOT_FIELDS = ("id", "uri", "content_sha256", "data_contract_digest", "masked")
 
 
 def is_exact_sha(value: Any) -> bool:
@@ -85,6 +94,41 @@ def is_valid_timestamp(value: Any) -> bool:
     return parsed.tzinfo is not None
 
 
+def _snapshot_errors(snapshot: Any, *, label: str) -> list[str]:
+    """Validate a snapshot pointer that is embedded in a release identity."""
+
+    if not isinstance(snapshot, dict):
+        return [f"{label} must be an object"]
+
+    errors: list[str] = []
+    for field in SNAPSHOT_FIELDS:
+        if field not in snapshot:
+            errors.append(f"{label} missing required field: {field}")
+    if "id" in snapshot and (
+        not isinstance(snapshot["id"], str) or not snapshot["id"].strip()
+    ):
+        errors.append(f"{label}.id must be a non-empty string")
+    if "uri" in snapshot and (
+        not isinstance(snapshot["uri"], str) or not snapshot["uri"].strip()
+    ):
+        errors.append(f"{label}.uri must be a non-empty string")
+    if "content_sha256" in snapshot and not is_sha256_digest(
+        snapshot["content_sha256"]
+    ):
+        errors.append(
+            f"{label}.content_sha256 must be a sha256:<64 lowercase hex> digest"
+        )
+    if "data_contract_digest" in snapshot and not is_sha256_digest(
+        snapshot["data_contract_digest"]
+    ):
+        errors.append(
+            f"{label}.data_contract_digest must be a sha256:<64 lowercase hex> digest"
+        )
+    if "masked" in snapshot and snapshot["masked"] is not True:
+        errors.append(f"{label}.masked must be True")
+    return errors
+
+
 def validate_manifest(
     manifest: Any,
     *,
@@ -102,16 +146,21 @@ def validate_manifest(
     if not isinstance(manifest, dict):
         return ["manifest must be a JSON object"]
 
-    for field in REQUIRED_FIELDS:
-        if field not in manifest:
-            errors.append(f"manifest missing required field: {field}")
-
     version = manifest.get("schema_version")
     if isinstance(version, bool) or version not in SUPPORTED_SCHEMA_VERSIONS:
         errors.append(
             f"manifest.schema_version must be one of {list(SUPPORTED_SCHEMA_VERSIONS)}, "
             f"got: {version!r}"
         )
+        required_fields = REQUIRED_FIELDS_V1
+    elif version == 2:
+        required_fields = REQUIRED_FIELDS_V2
+    else:
+        required_fields = REQUIRED_FIELDS_V1
+
+    for field in required_fields:
+        if field not in manifest:
+            errors.append(f"manifest missing required field: {field}")
 
     release_id = manifest.get("release_id")
     if not isinstance(release_id, str) or not RELEASE_ID_PATTERN.fullmatch(release_id):
@@ -191,6 +240,80 @@ def validate_manifest(
     ).strip():
         errors.append("manifest.created_by_workflow must be a non-empty workflow reference")
 
+    # Validate data_snapshot if present. Schema v2 makes this field required;
+    # v1 keeps it optional so historical manifests remain auditable.
+    data_snapshot = manifest.get("data_snapshot")
+    if data_snapshot is not None:
+        errors.extend(_snapshot_errors(data_snapshot, label="manifest.data_snapshot"))
+        if (
+            isinstance(data_snapshot, dict)
+            and is_sha256_digest(data_snapshot.get("data_contract_digest"))
+            and is_sha256_digest(manifest.get("data_contract_digest"))
+            and data_snapshot["data_contract_digest"] != manifest["data_contract_digest"]
+        ):
+            errors.append(
+                "manifest.data_snapshot.data_contract_digest does not match "
+                "manifest.data_contract_digest"
+            )
+
+    # Validate rollback_release if present
+    rollback_release = manifest.get("rollback_release")
+    if rollback_release is not None:
+        if not isinstance(rollback_release, dict):
+            errors.append("manifest.rollback_release must be an object")
+        else:
+            for rb_field in ("release_id", "candidate_sha", "manifest_digest", "components"):
+                if rb_field not in rollback_release:
+                    errors.append(f"manifest.rollback_release missing required field: {rb_field}")
+            rb_release_id = rollback_release.get("release_id")
+            if not isinstance(rb_release_id, str) or not RELEASE_ID_PATTERN.fullmatch(rb_release_id):
+                errors.append("manifest.rollback_release.release_id must be a stable release identifier")
+            rb_candidate_sha = rollback_release.get("candidate_sha")
+            if not is_exact_sha(rb_candidate_sha):
+                errors.append("manifest.rollback_release.candidate_sha must be an exact 40-character lowercase git SHA")
+            elif rb_candidate_sha == candidate_sha:
+                errors.append("manifest.rollback_release.candidate_sha must not match current candidate_sha; rollback must be a distinct release candidate")
+            rb_digest = rollback_release.get("manifest_digest")
+            if not is_sha256_digest(rb_digest):
+                errors.append("manifest.rollback_release.manifest_digest must be a sha256:<64 lowercase hex> digest")
+
+            rb_components = rollback_release.get("components")
+            if not isinstance(rb_components, dict) or not rb_components:
+                errors.append("manifest.rollback_release.components must be a non-empty object")
+            else:
+                for req_comp in ("api", "web"):
+                    if req_comp not in rb_components:
+                        errors.append(f"manifest.rollback_release.components missing required component: {req_comp!r}")
+                for name, comp in rb_components.items():
+                    label = f"manifest.rollback_release.components[{name!r}]"
+                    if isinstance(comp, dict):
+                        img = comp.get("image")
+                    elif isinstance(comp, str):
+                        img = comp
+                    else:
+                        errors.append(f"{label} must be an object or string reference")
+                        continue
+                    if not isinstance(img, str) or not IMAGE_DIGEST_PATTERN.fullmatch(img):
+                        errors.append(f"{label}.image must be an immutable image reference with @sha256 digest")
+
+            snapshot_key = next(
+                (
+                    key
+                    for key in ("data_snapshot", "snapshot_pointer", "snapshot")
+                    if key in rollback_release
+                ),
+                None,
+            )
+            if snapshot_key is None:
+                errors.append("manifest.rollback_release missing required data_snapshot pointer")
+            else:
+                errors.extend(
+                    _snapshot_errors(
+                        rollback_release[snapshot_key],
+                        label="manifest.rollback_release.data_snapshot",
+                    )
+                )
+
     recorded_digest = manifest.get("manifest_digest")
     if not is_sha256_digest(recorded_digest):
         errors.append("manifest.manifest_digest must be a sha256:<64 lowercase hex> digest")
@@ -244,6 +367,16 @@ def validate_release_admission(manifest: Any) -> list[str]:
         refs = manifest.get(field)
         if not isinstance(refs, list) or not refs:
             errors.append(f"release admission requires non-empty manifest.{field}")
+
+    # Staging and production admission require data snapshot and rollback release bindings (fail closed)
+    if manifest.get("data_snapshot") is None:
+        errors.append(
+            "release admission requires manifest.data_snapshot with masked=true and verified content sha256"
+        )
+    if manifest.get("rollback_release") is None:
+        errors.append(
+            "release admission requires manifest.rollback_release with verified candidate sha and components"
+        )
     return errors
 
 
@@ -356,8 +489,11 @@ def build_release_manifest(
     signature_refs: list[str],
     created_at: str,
     created_by_workflow: str,
+    data_snapshot: dict[str, Any] | None = None,
+    rollback_release: dict[str, Any] | None = None,
     external_sources_expected_enabled: list[str] | None = None,
     release_status: str | None = None,
+    schema_version: int = CURRENT_SCHEMA_VERSION,
     root: Path = ROOT,
 ) -> dict[str, Any]:
     """Build and self-seal a canonical release manifest dictionary.
@@ -368,7 +504,7 @@ def build_release_manifest(
     may promote a manifest to ``ready`` implicitly.
     """
     manifest: dict[str, Any] = {
-        "schema_version": 1,
+        "schema_version": schema_version,
         "release_id": release_id,
         "candidate_sha": candidate_sha,
         "components": components,
@@ -381,28 +517,114 @@ def build_release_manifest(
         "created_at": created_at,
         "created_by_workflow": created_by_workflow,
     }
+    if data_snapshot is not None:
+        manifest["data_snapshot"] = data_snapshot
+    if rollback_release is not None:
+        manifest["rollback_release"] = rollback_release
     if release_status is not None:
         manifest["release_status"] = release_status
     manifest["manifest_digest"] = compute_manifest_digest(manifest)
     return manifest
 
 
+def extract_rollback_release_binding(prev_manifest: dict[str, Any]) -> dict[str, Any]:
+    """Extract verifiable rollback binding from an approved previous manifest."""
+    admission_errors = validate_release_admission(prev_manifest)
+    if admission_errors:
+        raise ValueError(
+            "Cannot extract rollback binding from a non-admissible manifest: "
+            + "; ".join(admission_errors)
+        )
+    components = prev_manifest.get("components", {})
+    rb_components = {}
+    for name, comp in components.items():
+        if isinstance(comp, dict):
+            item = {"image": comp.get("image", "")}
+            if "shares_image_with" in comp:
+                item["shares_image_with"] = comp["shares_image_with"]
+            rb_components[name] = item
+        else:
+            rb_components[name] = {"image": str(comp)}
+
+    prev_snapshot = (
+        prev_manifest.get("data_snapshot")
+        or prev_manifest.get("snapshot_pointer")
+        or prev_manifest.get("snapshot")
+    )
+    if not isinstance(prev_snapshot, dict):
+        raise ValueError("Cannot extract rollback binding from manifest without data_snapshot")
+
+    return {
+        "release_id": prev_manifest["release_id"],
+        "candidate_sha": prev_manifest["candidate_sha"],
+        "manifest_digest": prev_manifest["manifest_digest"],
+        "components": rb_components,
+        "data_snapshot": copy.deepcopy(prev_snapshot),
+    }
+
+
+def validate_rollback_manifest(
+    prev_manifest: Any,
+    *,
+    current_candidate_sha: str | None = None,
+    current_release_id: str | None = None,
+) -> list[str]:
+    """Validate an entire admissible previous manifest before extracting it."""
+    if not isinstance(prev_manifest, dict):
+        return ["rollback manifest must be a JSON object"]
+
+    errors = validate_manifest(prev_manifest)
+    errors.extend(
+        err for err in validate_release_admission(prev_manifest) if err not in errors
+    )
+
+    candidate_sha = prev_manifest.get("candidate_sha")
+    if current_candidate_sha and candidate_sha == current_candidate_sha:
+        errors.append(
+            "rollback candidate_sha must not match current candidate_sha; "
+            "rollback target must be a distinct release candidate"
+        )
+
+    release_id = prev_manifest.get("release_id")
+    if current_release_id and release_id == current_release_id:
+        errors.append(
+            "rollback release_id must not match current release_id; "
+            "rollback target must be a distinct release"
+        )
+
+    snap = prev_manifest.get("data_snapshot")
+    if not isinstance(snap, dict) or not snap:
+        errors.append(
+            "rollback manifest missing required data_snapshot; "
+            "cannot use legacy or snapshot-less manifest as rollback evidence"
+        )
+    return errors
+
+
 __all__ = [
+    "CURRENT_SCHEMA_VERSION",
+    "RELEASE_ID_PATTERN",
+    "RELEASE_STATUSES",
+    "REQUIRED_FIELDS",
+    "REQUIRED_FIELDS_V1",
+    "REQUIRED_FIELDS_V2",
+    "SNAPSHOT_FIELDS",
     "ROOT",
     "SUPPORTED_SCHEMA_VERSIONS",
     "build_release_manifest",
+    "component_binding_errors",
     "compute_data_contract_digest",
     "compute_file_set_digest",
     "compute_manifest_digest",
     "compute_migration_digest",
     "compute_source_policy_digest",
-    "component_binding_errors",
+    "extract_rollback_release_binding",
     "is_exact_sha",
     "is_sha256_digest",
     "load_manifest",
-    "RELEASE_STATUSES",
-    "validate_release_admission",
     "validate_manifest",
+    "validate_release_admission",
+    "validate_rollback_manifest",
 ]
 
 
@@ -411,11 +633,17 @@ def _print_manifest_summary(manifest: dict[str, Any]) -> None:
     print(f"  Candidate SHA:   {manifest['candidate_sha']}")
     print(f"  Manifest digest: {manifest['manifest_digest']}")
     print(f"  Release status:  {manifest.get('release_status', 'ready')}")
-    print(f"  Components:      {len(manifest['components'])}")
-    if not manifest["components"]:
+    print(f"  Components:      {len(manifest.get('components', {}))}")
+    if not manifest.get("components"):
         print("    - (none: no candidate image is bound to this manifest)")
-    for name, comp in manifest["components"].items():
+    for name, comp in (manifest.get("components") or {}).items():
         print(f"    - {name}: {comp['image']}")
+    if "data_snapshot" in manifest and isinstance(manifest["data_snapshot"], dict):
+        snap = manifest["data_snapshot"]
+        print(f"  Data Snapshot:   {snap.get('id')} ({snap.get('uri')}) [masked={snap.get('masked')}]")
+    if "rollback_release" in manifest and isinstance(manifest["rollback_release"], dict):
+        rb = manifest["rollback_release"]
+        print(f"  Rollback Target: {rb.get('release_id')} ({rb.get('candidate_sha')})")
 
 
 def main(argv: list[str] | None = None) -> int:

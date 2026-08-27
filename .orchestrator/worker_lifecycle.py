@@ -822,6 +822,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 # Grace exhausted: the worker is not exiting on its own, so fall
                 # through and reclaim it as before.
             worker.pop("supersede_deferred_since", None)
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                worker,
+                task=task_map.get(str(worker.get("task_id") or "")),
+                trigger="worker_superseded:assignment_moved",
+            )
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
@@ -855,6 +862,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and worker.get("status") in active_statuses
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
+            if not worker_can_be_preempted(config, worker, task_map, state, now=now):
+                continue
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                worker,
+                task=task_map.get(str(worker.get("task_id") or "")),
+                trigger="preempted_priority_escalation",
+            )
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
@@ -1161,7 +1177,28 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                     changed = True
             continue
 
-        failure_reason = None if worker_runner_succeeded(worker) else detect_worker_failure(worker)
+        runner_succeeded = is_structured_successful_worker(worker)
+        current_task = task_map.get(worker.get("task_id"), {})
+        terminal_statuses = {
+            str(value).lower()
+            for value in ready_dispatch_settings(config).get(
+                "worker_terminal_statuses", ["done", "review_approved"]
+            )
+        }
+        success_outcome = (
+            successful_worker_exit_outcome(
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if runner_succeeded
+            else None
+        )
+        # A structured zero-exit runner may legitimately skip log-based failure
+        # detection even when it has not satisfied the task postcondition yet.
+        # Keep failure-scan eligibility separate from the completion outcome so
+        # the no-progress path below can still record and reassign the task.
+        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -1284,7 +1321,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             continue
 
         if worker.get("status") not in {"completed", "failed", "manual_pending"}:
-            if worker_is_discussion_planning(worker):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_discussion_planning(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)
@@ -1304,7 +1346,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
-            if worker_is_coordination_dispatch(worker):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_coordination_dispatch(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)
@@ -1329,12 +1376,16 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
             }
             current_task = task_map.get(worker.get("task_id"), {})
-            success_outcome = successful_worker_exit_outcome(
-                worker,
-                current_task,
-                terminal_statuses=terminal_statuses,
+            success_outcome = (
+                successful_worker_exit_outcome(
+                    worker,
+                    current_task,
+                    terminal_statuses=terminal_statuses,
+                )
+                if runner_succeeded
+                else None
             )
-            if success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
+            if runner_succeeded and success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}:
                 request_snapshot = worker.get("request_snapshot")
                 raw_dispatch_reason = (
                     request_snapshot.get("reason")
