@@ -353,11 +353,14 @@ def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any])
     status = load_status(config)
     schema = config.get("schema", {}) or {}
     tasks_path = schema.get("tasks_path", "tasks")
+    task_id_field = schema.get("task_id_field", "id")
     tasks = [task for task in status.get(tasks_path, []) if isinstance(task, dict)]
-    expired_claim_ids = set(capacity_controller.expired_helper_claim_task_ids(tasks))
+    expired_claim_ids = set(
+        capacity_controller.expired_helper_claim_task_ids(tasks, task_id_field=task_id_field)
+    )
     if expired_claim_ids:
         for task in tasks:
-            if str(task.get("id") or "") in expired_claim_ids:
+            if str(task.get(task_id_field) or task.get("id") or "") in expired_claim_ids:
                 task.pop("helper_execution_lease", None)
         if not commit_canonical_task_transition(config, status):
             return False
@@ -370,11 +373,16 @@ def reconcile_capacity_controller(config: dict[str, Any], state: dict[str, Any])
                     "message": "Expired helper execution lease released back to its canonical owner.",
                 },
             )
-    controller, state_changed = capacity_controller.evaluate_chair(config, state, tasks)
-    additions = capacity_controller.sidecar_candidates(config, state, tasks)
+    runnable_task_ids = canonical_dispatchable_task_ids(config, tasks)
+    controller, state_changed = capacity_controller.evaluate_chair(
+        config, state, tasks, runnable_tasks=runnable_task_ids
+    )
+    additions = capacity_controller.sidecar_candidates(
+        config, state, tasks, runnable_tasks=runnable_task_ids
+    )
     if additions:
-        known = {str(task.get("id") or "") for task in tasks}
-        additions = [task for task in additions if str(task.get("id") or "") not in known]
+        known = {str(task.get(task_id_field) or task.get("id") or "") for task in tasks}
+        additions = [task for task in additions if str(task.get(task_id_field) or task.get("id") or "") not in known]
     if additions:
         status.setdefault(tasks_path, []).extend(additions)
         if not commit_canonical_task_transition(config, status):
@@ -3856,6 +3864,73 @@ def dependencies_satisfied(task: dict[str, Any], task_lookup: TaskResolver | dic
         if dep_status not in done_statuses or not resolver.dependency_satisfied(dep_id):
             return False
     return True
+
+
+def _dispatcher_owner_execution_priority(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+) -> int | None:
+    """Ask the existing Dispatcher whether owner execution is dispatchable."""
+    if not isinstance(task, dict):
+        return None
+
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    owner_field = schema.get("assignee_field", "owner")
+
+    task_id = str(task.get(task_id_field) or "").strip()
+    if not task_id:
+        return None
+
+    if bool(task.get("non_dispatchable")) or task_is_human_gate(task) or task_is_sidecar(task):
+        return None
+
+    owner = str(task.get(owner_field) or "").strip()
+    waiting_for = str(task.get("waiting_for") or "").strip()
+    if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
+        return None
+
+    if not owner or not agent_can_take_task(config, owner, task):
+        return None
+
+    settings_map = ready_dispatch_settings(config)
+    dependency_done_statuses = normalized_status_set(
+        settings_map.get("dependency_done_statuses"), ["done"]
+    )
+    priority = dispatch_engine.dispatch_priority_for_task(
+        config,
+        task,
+        owner,
+        task_map=task_map,
+        dependencies_done_statuses=dependency_done_statuses,
+    )
+    return priority if priority in {2, 3} else None
+
+
+def canonical_dispatchable_task_ids(
+    config: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> set[str]:
+    """Return canonical owner-execution task IDs from Dispatcher truth.
+
+    This is deliberately a projection of ``dispatch_priority_for_task`` rather
+    than a second eligibility implementation. Priorities 2 and 3 are the
+    Dispatcher's in-progress and ready owner actions; review/finalize and
+    helper-only actions are not Capacity Chair canonical work.
+    """
+    schema = config.get("schema", {}) or {}
+    task_id_field = schema.get("task_id_field", "id")
+    task_map = {
+        str(task.get(task_id_field) or "").strip(): task
+        for task in tasks
+        if isinstance(task, dict) and str(task.get(task_id_field) or "").strip()
+    }
+    return {
+        task_id
+        for task_id, task in task_map.items()
+        if _dispatcher_owner_execution_priority(config, task, task_map) is not None
+    }
 
 
 def task_dependency_signature(task: dict[str, Any], task_lookup: TaskResolver | dict[str, dict[str, Any]]) -> str:
