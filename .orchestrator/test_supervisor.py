@@ -7506,6 +7506,9 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(kwargs["new_owner"], "Antigravity")
         self.assertEqual(kwargs["new_status"], "todo")
         self.assertEqual(kwargs["task_updates"]["review_churn_epoch_failed_owners"], ["Codex2"])
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+        self.assertEqual(event["epoch_failed_owners"], ["Codex2"])
 
     def test_reassign_review_skips_paused_reviewer_candidates(self) -> None:
         config = {
