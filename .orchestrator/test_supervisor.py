@@ -14790,6 +14790,67 @@ class PreserveOnWorkerDeathTests(unittest.TestCase):
             )
 
 
+class CapacityControllerReconciliationTests(unittest.TestCase):
+    def _config(self) -> dict[str, Any]:
+        return {
+            "schema": {"tasks_path": "tasks"},
+            "agents": {
+                "claude": {"slot_id": "slot-0"},
+                "codex": {"slot_id": "slot-1"},
+            },
+            "capacity_controller": {
+                "enabled": True,
+                "chair_interval_seconds": 1800,
+                "stall_window_seconds": 300,
+                "underutilization_window_seconds": 600,
+                "coordination_reserved_slots": 1,
+                "sidecars": {
+                    "enabled": True,
+                    "max_new_per_wave": 3,
+                    "max_active": 4,
+                    "max_capacity_ratio": 0.25,
+                    "ttl_seconds": 7200,
+                },
+            },
+        }
+
+    def test_capacity_reconcile_with_blocked_and_human_gate_tasks_does_not_flag_stalled_runnable_work(self) -> None:
+        tasks = [
+            {"id": "HG-001", "status": "todo", "owner": "Human/Ops", "task_class": "human_gate"},
+            {"id": "BLOCKED-001", "status": "blocked", "owner": "codex", "waiting_for": "Human/Ops"},
+            {"id": "DEP-BLOCKED-001", "status": "todo", "owner": "claude", "depends_on": ["BLOCKED-001"]},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+            self.assertTrue(changed)
+            controller = state.get("capacity_controller", {})
+            snapshot = controller.get("snapshot", {})
+            self.assertEqual(snapshot.get("runnable_tasks"), 0)
+            self.assertIsNone(controller.get("stall_since"))
+            decision = controller.get("chair_decision", {})
+            self.assertNotIn("runnable_work_without_active_workers", decision.get("reasons", []))
+
+    def test_capacity_reconcile_with_runnable_task_updates_snapshot_truth(self) -> None:
+        tasks = [
+            {"id": "DEP-001", "status": "done"},
+            {"id": "RUNNABLE-001", "status": "todo", "owner": "claude", "depends_on": ["DEP-001"]},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {"workers": {}}
+
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}):
+            changed = supervisor.reconcile_capacity_controller(config, state)
+            self.assertTrue(changed)
+            controller = state.get("capacity_controller", {})
+            snapshot = controller.get("snapshot", {})
+            self.assertEqual(snapshot.get("runnable_tasks"), 1)
+            decision = controller.get("chair_decision", {})
+            self.assertTrue(decision.get("approve_helper_wave"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -1,9 +1,21 @@
-from __future__ import annotations
-
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+THIS_DIR = Path(__file__).resolve().parent
+ROOT_DIR = THIS_DIR.parent
+SCRIPTS_DIR = ROOT_DIR / "scripts"
+if str(THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(THIS_DIR))
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from common import normalize_agent_id
+from dispatch_policy import normalized_status_set, ready_dispatch_settings
+from task_archive import TaskResolver
+from worker_failure_policy import agent_can_take_task, is_human_gate_agent
 
 ACTIVE_WORKER_STATUSES = {
     "running",
@@ -13,7 +25,7 @@ ACTIVE_WORKER_STATUSES = {
     "manual_pending",
     "stalled",
 }
-RUNNABLE_TASK_STATUSES = {"todo", "in_progress", "review", "review_approved"}
+RUNNABLE_TASK_STATUSES = {"todo", "in_progress"}
 HARD_GATE_MARKERS = {
     "human gate",
     "manual approval",
@@ -23,6 +35,11 @@ HARD_GATE_MARKERS = {
     "legal",
 }
 DEFAULT_SIDECAR_CATALOG = Path(__file__).with_name("sidecar_catalog.json")
+
+
+def _supervisor_module():
+    import supervisor
+    return supervisor
 
 
 def _parse_iso(value: Any) -> datetime | None:
@@ -76,6 +93,53 @@ def configured_slots(config: dict[str, Any]) -> int:
     )
 
 
+def is_task_runnable(
+    config: dict[str, Any],
+    task: dict[str, Any],
+    resolver: TaskResolver | dict[str, dict[str, Any]] | None = None,
+) -> bool:
+    if not isinstance(task, dict):
+        return False
+    if task.get("non_dispatchable"):
+        return False
+
+    owner = str(task.get("owner") or "").strip()
+    waiting_for = str(task.get("waiting_for") or "").strip()
+    if is_human_gate_agent(owner) or is_human_gate_agent(waiting_for):
+        return False
+
+    sv = _supervisor_module()
+    if sv.task_is_human_gate(task):
+        return False
+    if sv.task_is_sidecar(task):
+        return False
+
+    settings_map = ready_dispatch_settings(config)
+    owned_statuses = normalized_status_set(
+        settings_map.get("owned_statuses"), ["in_progress", "todo"]
+    )
+    status = str(task.get("status") or "").lower()
+    if status not in owned_statuses:
+        return False
+
+    dependency_done_statuses = normalized_status_set(
+        settings_map.get("dependency_done_statuses"), ["done"]
+    )
+    if resolver is not None and not sv.dependencies_satisfied(
+        task, resolver, dependency_done_statuses
+    ):
+        return False
+
+    if owner and owner not in {"AUTO_ASSIGN", "DIFFERENT_AGENT_REQUIRED"}:
+        agents = config.get("agents", {}) or {}
+        norm_owner = normalize_agent_id(owner)
+        if norm_owner in agents or any(normalize_agent_id(k) == norm_owner for k in agents):
+            if not agent_can_take_task(config, owner, task):
+                return False
+
+    return True
+
+
 def capacity_snapshot(
     config: dict[str, Any],
     runtime_state: dict[str, Any],
@@ -87,11 +151,11 @@ def capacity_snapshot(
         for worker in (runtime_state.get("workers", {}) or {}).values()
         if str(worker.get("status") or "").lower() in ACTIVE_WORKER_STATUSES
     ]
+    resolver = TaskResolver(tasks)
     runnable = [
         task
         for task in tasks
-        if str(task.get("status") or "").lower() in RUNNABLE_TASK_STATUSES
-        and not task.get("non_dispatchable")
+        if is_task_runnable(config, task, resolver=resolver)
     ]
     active_sidecars = sum(
         1
