@@ -27,6 +27,8 @@
 
 以下項目皆以 metadata readback 驗證，未讀取任何 secret value：
 
+- [`gcp-metadata-live-audit.json`](gcp-metadata-live-audit.json) 保存本次 GCP live readback；pre-existing dependencies 逐項為 `PASS`，rollout 尚未建立的 Cloud Run services/jobs 與 Scheduler targets 逐項標為 `ABSENT_PREDEPLOY`。
+
 - dev、staging、production 的 project、region、Artifact Registry、RUNNABLE Cloud SQL。
 - deploy service account、runtime service account、scheduler service account、operator smoke service account。
 - Workload Identity Federation provider。
@@ -35,6 +37,8 @@
 - database URL、principal map、Web session 三類非 OAuth secret reference 都指向 `ENABLED` version。
 - 三個 OAuth secret containers 都存在但仍為 0 versions。
 - 三個 environments 都仍沒有 `ODP_WEB_OIDC_CLIENT_ID`。
+
+本次 readback 也確認 `ODP_EXTERNAL_PROVIDER_MODE` 不存在於三個 GitHub environments；唯一 provider-off authority 仍是 `.github/workflows/deploy-dev.yml` 的 Runtime Release job 注入 `disabled`，沒有新增第二個 environment 開關。
 
 Cloud Run API、Web、migration、worker 與 scheduler 目前均是正確的部署目標名稱，但服務／工作本身尚未建立；這是 rollout 前狀態，不宣稱它們已部署。
 
