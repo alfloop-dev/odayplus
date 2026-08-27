@@ -351,3 +351,35 @@ def test_custom_schema_sidecar_parent_requires_canonical_task_id() -> None:
         )
         == []
     )
+
+
+def test_sidecar_candidates_fail_closed_when_runnable_work_appears_during_valid_approval() -> None:
+    """Regression test: sidecar_candidates must fail closed when canonical runnable work exists,
+
+    even if chair_decision was previously approved and is still within valid_until.
+    """
+    runtime_state = {
+        "capacity_controller": {
+            "chair_decision": {
+                "issued_at": "2026-08-20T11:50:00Z",
+                "valid_until": "2026-08-20T12:30:00Z",
+                "sidecar_wave": {"approved": True},
+            }
+        }
+    }
+    tasks = [
+        {"id": "BLOCKED-1", "status": "blocked", "blocked_reason": "upstream API defect", "owner": "Claude"},
+        {"id": "RUN-1", "status": "todo", "owner": "Claude"},
+    ]
+    cfg = config()
+    runnable_ids = canonical_runnable_ids(cfg, tasks)
+    assert runnable_ids == {"RUN-1"}
+
+    candidates = capacity_controller.sidecar_candidates(
+        cfg,
+        runtime_state,
+        tasks,
+        runnable_tasks=runnable_ids,
+        now=NOW,
+    )
+    assert candidates == []

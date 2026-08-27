@@ -42,6 +42,7 @@
    - `capacity_controller.py` 徹底移除 `_supervisor_module()` 與任何對 `supervisor.py` 的反向匯入。
    - `capacity_controller.py` 徹底移除 `TaskResolver` 與任何對 `supervisor.py` 的反向匯入。
    - `capacity_snapshot`、`evaluate_chair`、`sidecar_candidates` 只接收 Supervisor 傳入的 `runnable_tasks`，不再維護獨立的可派發規則。
+   - `sidecar_candidates` 嚴格在生成候選前檢查當前當次 `snapshot["runnable_tasks"] > 0`；即使先前已核准的 `chair_decision` 仍在 `valid_until` 有效期內，只要當前存在 canonical runnable work，即立即 fail-closed 回傳空清單，杜絕舊決策在有效期間內誤生 sidecar。
    - `supervisor.reconcile_capacity_controller` 先計算 canonical task ID set，再餵 Capacity Chair，確保 snapshot、sidecar decision 與 Dispatcher 判定一致。
    - `sidecar_candidates` 在自訂 schema 下嚴格使用 `task_id_field` 作為 parent ID，禁止 fallback 到 legacy `id`。
 
@@ -71,20 +72,22 @@ git diff --check origin/dev
 9. `test_capacity_and_supervisor_dispatch_share_identical_runnable_truth`：驗證 Capacity snapshot 與 Supervisor `canonical_dispatchable_task_ids` 判定完全一致。
 10. `test_custom_schema_dependency_requires_canonical_dependency_id`：驗證 custom `taskId` schema 下不接受缺少 `taskId` 的 legacy dependency，具有 canonical dependency 時則正常派發。
 11. `test_custom_schema_sidecar_parent_requires_canonical_task_id`：驗證 custom `taskId` schema 下 sidecar parent 必須具備 canonical `taskId`，禁止 fallback 到 legacy `id`。
-12. `CapacityControllerReconciliationTests`：
+12. `test_sidecar_candidates_fail_closed_when_runnable_work_appears_during_valid_approval`：**Regression Test**，驗證舊核准決策在有效區間內若出現新 canonical runnable work，`sidecar_candidates` 立即 fail-closed 拒絕產生 sidecar。
+13. `CapacityControllerReconciliationTests`：
     - `test_capacity_reconcile_with_blocked_and_human_gate_tasks_does_not_flag_stalled_runnable_work`：驗證 supervisor 層級 reconcile 在 blocked / human gate 下不誤報 stall。
     - `test_capacity_reconcile_with_runnable_task_updates_snapshot_truth`：驗證 supervisor 層級 reconcile 在有 runnable 任務時正確更新 snapshot 並核准 helper wave。
+    - `test_capacity_reconcile_does_not_create_sidecars_when_runnable_task_appears_during_active_approval`：驗證 supervisor reconcile 邊界在新 runnable 任務出現於舊核准有效期內時，不寫入 sidecar。
     - `test_canonical_dispatchable_task_ids_respects_custom_schema_and_excludes_invalid_id_or_owner`：驗證 `canonical_dispatchable_task_ids` 在自訂 schema 與邊界輸入下的精確過濾。
     - `test_canonical_dispatchable_task_ids_excludes_non_execution_states_and_unsatisfied_dependencies`：驗證非執行狀態與未滿足依賴在 `canonical_dispatchable_task_ids` 下的精確排除。
 
 ### 3.3 測試輸出實錄
 ```text
-.orchestrator/test_capacity_controller.py ...........                     [100%]
-.orchestrator/test_supervisor.py ............                             [100%]
+.orchestrator/test_capacity_controller.py ............                    [100%]
+.orchestrator/test_supervisor.py .............                            [100%]
 
-============================== 23 passed ==============================
+============================== 25 passed ==============================
 Code boundary checks passed for 982 files.
 All checks passed! (ruff)
 git diff --check origin/dev (clean)
 ```
-全部 23 項相關測試 100% 通過；code boundary checks（982 個檔案）、ruff linter 與 `git diff --check` 皆全數通過，無任何違規或多餘相容層。
+全部 25 項相關測試 100% 通過；code boundary checks（982 個檔案）、ruff linter 與 `git diff --check` 皆全數通過，無任何違規或多餘相容層。

@@ -14900,6 +14900,28 @@ class CapacityControllerReconciliationTests(unittest.TestCase):
         task_with_pending_dep = {"id": "T-2", "status": "todo", "owner": "claude", "depends_on": ["DEP-TODO"]}
         self.assertEqual(supervisor.canonical_dispatchable_task_ids(config, [task_with_pending_dep, dep_todo]), {"DEP-TODO"})
 
+    def test_capacity_reconcile_does_not_create_sidecars_when_runnable_task_appears_during_active_approval(self) -> None:
+        tasks = [
+            {"id": "BLOCKED-001", "status": "blocked", "owner": "claude", "blocked_reason": "upstream defect"},
+            {"id": "RUN-001", "status": "todo", "owner": "claude"},
+        ]
+        config = self._config()
+        state: dict[str, Any] = {
+            "workers": {},
+            "capacity_controller": {
+                "chair_decision": {
+                    "issued_at": "2026-08-20T11:50:00Z",
+                    "valid_until": "2026-08-20T12:30:00Z",
+                    "sidecar_wave": {"approved": True},
+                }
+            },
+        }
+
+        with mock.patch.object(supervisor, "load_status", return_value={"tasks": tasks}):
+            supervisor.reconcile_capacity_controller(config, state)
+            sidecar_tasks = [t for t in tasks if t.get("task_class") == "sidecar"]
+            self.assertEqual(len(sidecar_tasks), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

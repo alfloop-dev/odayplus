@@ -272,6 +272,8 @@ def sidecar_candidates(
         tasks,
         runnable_tasks=runnable_tasks,
     )
+    if snapshot["runnable_tasks"] > 0:
+        return []
     max_by_ratio = max(0, int(snapshot["slot_total"] * float(cfg["max_capacity_ratio"])))
     existing = [task for task in tasks if str(task.get("task_class") or "").lower() == "sidecar"]
     budget = min(
