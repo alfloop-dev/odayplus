@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
-from unittest import mock
 
-import supervisor
 import worker_failure_policy
 
 
@@ -145,7 +142,6 @@ class WorkerFailurePolicyAuthorityTests(unittest.TestCase):
 
     def test_cloud_run_quota_exceeded_never_fences_account_pool(self) -> None:
         """Cloud Run API quota exceeded must never fence account pool or pause dispatch."""
-        state: dict[str, Any] = {}
         worker = {"provider": "codex", "task_id": "TASK-1", "run_id": "run-1"}
         res = worker_failure_policy.classify_worker_failure(self.config, worker, "Cloud Run API quota exceeded")
         kind = res.get("kind")
