@@ -9,6 +9,7 @@ module "runtime_foundation" {
   network_cidr                             = var.network_cidr
   private_service_prefix_length            = var.private_service_prefix_length
   cloud_sql_tier                           = var.cloud_sql_tier
+  cloud_sql_instance_name                  = var.cloud_sql_instance_name
   cloud_sql_disk_gb                        = var.cloud_sql_disk_gb
   cloud_sql_backup_start_time              = var.cloud_sql_backup_start_time
   cloud_sql_retained_backups               = var.cloud_sql_retained_backups
@@ -16,10 +17,10 @@ module "runtime_foundation" {
   cloud_sql_maintenance_day                = var.cloud_sql_maintenance_day
   cloud_sql_maintenance_hour               = var.cloud_sql_maintenance_hour
   enable_deletion_protection               = local.is_prod
-  network_user_members = [
-    "serviceAccount:${local.name_prefix}-runtime@${var.project_id}.iam.gserviceaccount.com",
-    "serviceAccount:${local.name_prefix}-web@${var.project_id}.iam.gserviceaccount.com",
-  ]
+  network_user_members = {
+    runtime = "serviceAccount:${local.name_prefix}-runtime@${var.project_id}.iam.gserviceaccount.com"
+    web     = "serviceAccount:${local.name_prefix}-web@${var.project_id}.iam.gserviceaccount.com"
+  }
 
   depends_on = [
     google_project_service.required,
@@ -36,6 +37,16 @@ moved {
 moved {
   from = google_compute_subnetwork.runtime
   to   = module.runtime_foundation.google_compute_subnetwork.runtime
+}
+
+moved {
+  from = google_compute_subnetwork_iam_member.runtime_network_user
+  to   = module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["runtime"]
+}
+
+moved {
+  from = google_compute_subnetwork_iam_member.web_network_user
+  to   = module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["web"]
 }
 
 moved {

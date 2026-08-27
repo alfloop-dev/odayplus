@@ -202,6 +202,17 @@ variable "cloud_sql_tier" {
   }
 }
 
+variable "cloud_sql_instance_name" {
+  type        = string
+  description = "Optional explicit Cloud SQL instance name for a staging foundation migration. Empty preserves the existing environment-derived name."
+  default     = ""
+
+  validation {
+    condition     = var.cloud_sql_instance_name == "" || can(regex("^[a-z][a-z0-9-]{0,95}[a-z0-9]$", var.cloud_sql_instance_name))
+    error_message = "cloud_sql_instance_name must be empty or a valid Cloud SQL instance name."
+  }
+}
+
 variable "cloud_sql_disk_gb" {
   type        = number
   description = "Initial Cloud SQL SSD size in GB."

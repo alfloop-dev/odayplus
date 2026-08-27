@@ -18,7 +18,7 @@
 
 ## 兩階段 Bootstrap 執行指引 (解決 Chicken-and-Egg 問題)
 
-當遠端 GCS State Bucket 尚未存在時，直接執行 `terraform init` 會因無法連線 backend 而失敗。因此採用嚴格、可重複執行的**兩階段 Bootstrap 程序**：
+當遠端 GCS State Bucket 尚未存在時，直接執行 `terraform init` 會因無法連線 backend 而失敗。因此採用嚴格、可重複執行的**兩階段 Bootstrap 程序**。`main.tf` 保留唯一的 `backend "gcs" {}` 宣告；腳本在 Phase 1 只建立同一份設定的暫存 backend-less copy，避免 Terraform 在 bucket 尚未存在時初始化遠端 backend。Phase 2 再以 canonical 設定執行真正的 `-migrate-state`。
 
 ### 方法 A：自動化腳本執行
 
@@ -27,20 +27,33 @@ chmod +x infra/terraform/bootstrap/bootstrap.sh
 ./infra/terraform/bootstrap/bootstrap.sh infra/terraform/bootstrap/staging.tfvars
 ```
 
+腳本會在受控暫存目錄複製 `.tf` 與 provider lockfile，僅從 copy 移除
+backend 宣告；Phase 1 apply 完成後，才將該 local state 交給 canonical
+`main.tf` 遷移到 `oday-plus/bootstrap`。遷移成功後只刪除暫存與 local state
+檔案，GCS object 才是 durable source of truth。
+
 ### 方法 B：標準 CLI 分步執行
 
 ```bash
-# 階段 1：使用本機狀態初始化 (-backend=false) 並建立基礎設施
-terraform -chdir=infra/terraform/bootstrap init -backend=false -reconfigure
-terraform -chdir=infra/terraform/bootstrap plan -var-file=staging.tfvars -out=bootstrap.tfplan
-terraform -chdir=infra/terraform/bootstrap apply bootstrap.tfplan
-rm -f infra/terraform/bootstrap/bootstrap.tfplan
+# 若需人工拆步，請先建立只存在於受控暫存目錄的 backend-less copy，並將
+# 原始 terraform.tfstate 複製到該目錄；不可直接從含 backend 宣告的目錄 plan。
+PHASE1_DIR=$(mktemp -d)
+cp infra/terraform/bootstrap/*.tf infra/terraform/bootstrap/.terraform.lock.hcl "$PHASE1_DIR/"
+sed -i '/^[[:space:]]*backend "gcs" {}/d' "$PHASE1_DIR/main.tf"
+terraform -chdir="$PHASE1_DIR" init -backend=false -reconfigure -input=false
+terraform -chdir="$PHASE1_DIR" plan -input=false -var-file=/secure/path/staging.tfvars -out="$PHASE1_DIR/bootstrap.tfplan"
+terraform -chdir="$PHASE1_DIR" apply -input=false "$PHASE1_DIR/bootstrap.tfplan"
 
-# 讀取剛建立的 bucket 名稱
-BUCKET_NAME=$(terraform -chdir=infra/terraform/bootstrap output -raw state_bucket_name)
+# 讀取剛建立的 bucket 名稱，並把 Phase 1 state 交給 canonical config。
+BUCKET_NAME=$(terraform -chdir="$PHASE1_DIR" output -raw state_bucket_name)
+cp "$PHASE1_DIR/terraform.tfstate" infra/terraform/bootstrap/terraform.tfstate
 
 # 階段 2：將本機狀態無縫遷移 (-migrate-state) 至新建立的受治理 GCS Bucket
-terraform -chdir=infra/terraform/bootstrap init   -migrate-state   -backend-config="bucket=${BUCKET_NAME}"   -backend-config="prefix=oday-plus/bootstrap"   -force-copy
+terraform -chdir=infra/terraform/bootstrap init -input=false -migrate-state \
+  -backend-config="bucket=${BUCKET_NAME}" \
+  -backend-config="prefix=oday-plus/bootstrap" -force-copy
+rm -rf "$PHASE1_DIR" infra/terraform/bootstrap/terraform.tfstate \
+  infra/terraform/bootstrap/terraform.tfstate.backup
 ```
 
 完成後，該 Bucket 即可供 Root Terraform 與 Ephemeral Staging 安全使用。

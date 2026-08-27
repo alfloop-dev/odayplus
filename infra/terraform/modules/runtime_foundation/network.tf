@@ -33,7 +33,7 @@ resource "google_service_networking_connection" "private_services" {
 }
 
 resource "google_compute_subnetwork_iam_member" "network_users" {
-  for_each = toset(var.network_user_members)
+  for_each = var.network_user_members
 
   project    = var.project_id
   region     = var.region

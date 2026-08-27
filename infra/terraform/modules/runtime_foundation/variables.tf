@@ -77,6 +77,17 @@ variable "cloud_sql_tier" {
   }
 }
 
+variable "cloud_sql_instance_name" {
+  type        = string
+  description = "Optional explicit Cloud SQL instance name. Defaults to <name_prefix>-sql; use a new name when an existing legacy instance cannot be changed in place."
+  default     = ""
+
+  validation {
+    condition     = var.cloud_sql_instance_name == "" || can(regex("^[a-z][a-z0-9-]{0,95}[a-z0-9]$", var.cloud_sql_instance_name))
+    error_message = "cloud_sql_instance_name must be empty or a valid Cloud SQL instance name."
+  }
+}
+
 variable "cloud_sql_disk_gb" {
   type        = number
   description = "Initial Cloud SQL SSD size in GB."
@@ -150,9 +161,9 @@ variable "enable_deletion_protection" {
 }
 
 variable "network_user_members" {
-  type        = list(string)
-  description = "List of IAM member principals granted roles/compute.networkUser on the foundation subnet."
-  default     = []
+  type        = map(string)
+  description = "Stable logical network-user keys mapped to IAM principals granted roles/compute.networkUser on the foundation subnet."
+  default     = {}
 }
 
 variable "kms_encrypter_decrypter_members" {

@@ -1,5 +1,5 @@
 resource "google_sql_database_instance" "primary" {
-  name                = "${local.name_prefix}-sql"
+  name                = var.cloud_sql_instance_name != "" ? var.cloud_sql_instance_name : "${local.name_prefix}-sql"
   database_version    = "POSTGRES_16"
   region              = var.region
   encryption_key_name = google_kms_crypto_key.runtime.id

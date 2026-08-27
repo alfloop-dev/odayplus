@@ -23,43 +23,47 @@
 ## 2. 兩階段 State Backend 初始化步驟
 
 ```bash
-# 準備 staging tfvars
-cat <<EOF > infra/terraform/bootstrap/staging.tfvars
-project_id             = "odayplus-runtime-20260825"
-region                 = "asia-east1"
-environment            = "staging"
-retention_period_days  = 30
-deployer_member_emails = [
-  "serviceAccount:github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com"
-]
-EOF
-
-# 執行自動化兩階段 bootstrap
-./infra/terraform/bootstrap/bootstrap.sh infra/terraform/bootstrap/staging.tfvars
+# 準備 staging tfvars（檔案只放在受控暫存路徑，不提交 repository）
+./infra/terraform/bootstrap/bootstrap.sh /secure/path/staging.tfvars
 ```
+
+`bootstrap/main.tf` 保留唯一 `backend "gcs" {}` 宣告。腳本 Phase 1 會在
+暫存目錄以 `-backend=false` 執行同一份 resource graph；bucket 建立後，Phase
+2 才由 canonical config 以 `-migrate-state` 遷移到 `oday-plus/bootstrap`。
+成功後 local state 與暫存目錄會清除，不以 runner 暫存檔冒充 durable state。
 
 ---
 
 ## 3. Staging Foundation 部署與參數對接
 
 ```bash
-# 初始化 runtime_foundation (指向剛剛建立的 GCS Bucket)
-cat <<EOF > staging_foundation.backend.hcl
-bucket = "oday-tfstate-staging-odayplus-runtime-20260825"
+# backend 設定必須由 live bootstrap readback 取得，不能填 placeholder
+cat >/secure/path/staging_foundation.backend.hcl <<'EOF'
+bucket = "<LIVE_STATE_BUCKET_FROM_BOOTSTRAP_READBACK>"
 prefix = "oday-plus/staging/foundation"
 EOF
 
-terraform -chdir=infra/terraform init -backend-config=staging_foundation.backend.hcl
-terraform -chdir=infra/terraform plan -var-file=infra/terraform/env/staging.tfvars
+terraform -chdir=infra/terraform init \
+  -backend-config=/secure/path/staging_foundation.backend.hcl
+terraform -chdir=infra/terraform plan \
+  -var-file=/secure/path/staging_foundation.tfvars \
+  -out=/secure/path/staging_foundation.tfplan
+terraform -chdir=infra/terraform apply /secure/path/staging_foundation.tfplan
 ```
+
+`staging_foundation.tfvars` 必須包含 release packet 提供的 exact SHA 與 immutable
+image digest；不可使用 `env/staging.tfvars.example` 的 placeholder。若 live
+已有同名但不相容的 legacy Cloud SQL，先保留該 instance，改用新的明確
+`cloud_sql_instance_name`，並在 migration receipt 記錄 state-only import/remove
+與 zero-replacement plan。
 
 ### 對接 Ephemeral Staging Lifecycle
 
 產生的基礎設施 Output 直接作為 Ephemeral Staging 指令參數：
 - `--network-name`: `oday-staging-runtime`
 - `--subnetwork-name`: `oday-staging-runtime`
-- `--cloud-sql-instance-name`: `oday-staging-sql`
-- `--cloud-sql-connection-name`: `odayplus-runtime-20260825:asia-east1:oday-staging-sql`
+- `--cloud-sql-instance-name`: `oday-staging-foundation-sql`
+- `--cloud-sql-connection-name`: `odayplus-runtime-20260825:asia-east1:oday-staging-foundation-sql`
 - `--kms-key-id`: `projects/odayplus-runtime-20260825/locations/asia-east1/keyRings/oday-staging-runtime/cryptoKeys/oday-staging-runtime`
 - `--deployer-service-account`: `github-deployer@odayplus-runtime-20260825.iam.gserviceaccount.com`
 
@@ -71,7 +75,7 @@ terraform -chdir=infra/terraform plan -var-file=infra/terraform/env/staging.tfva
 - [x] GCS State Bucket 啟用 Object Versioning
 - [x] GCS State Bucket 啟用 Uniform Bucket-Level Access 與 Public Access Prevention (enforced)
 - [x] State Bucket 及 KMS Key 具備 `prevent_destroy = true` 銷毀防護
-- [x] Cloud Run 採 Direct VPC `ALL_TRAFFIC` 導流
-- [x] VPC 無 Cloud NAT，出口防火牆為 default-deny
-- [x] 絕不向外部或一般 artifact 上傳 Terraform state
-- [x] 輸出變數絕無任何 plaintext 密碼或敏感金鑰
+- [ ] Cloud Run 採 Direct VPC `ALL_TRAFFIC` 導流（須待 Cloud Run service live readback；本 foundation apply 未部署 API/Web）
+- [x] VPC 無 Cloud NAT，出口防火牆為 default-deny（以 live gcloud readback 驗證）
+- [x] 絕不向外部或一般 artifact 上傳 Terraform state（state prefix 與 release prefix 分離）
+- [x] 輸出變數絕無任何 plaintext 密碼或敏感金鑰（contract test 通過）

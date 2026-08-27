@@ -238,6 +238,8 @@ class TerraformProductionContractTests(unittest.TestCase):
         expected_moved_targets = [
             "google_compute_network.runtime",
             "google_compute_subnetwork.runtime",
+            "google_compute_subnetwork_iam_member.runtime_network_user",
+            "google_compute_subnetwork_iam_member.web_network_user",
             "google_compute_global_address.private_services",
             "google_service_networking_connection.private_services",
             "google_compute_firewall.deny_all_egress",
@@ -254,6 +256,15 @@ class TerraformProductionContractTests(unittest.TestCase):
         ]
         for target in expected_moved_targets:
             self.assertIn(f"from = {target}", network_tf, f"Missing moved block for {target}")
+        self.assertIn(
+            'to   = module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["runtime"]',
+            network_tf,
+        )
+        self.assertIn(
+            'to   = module.runtime_foundation.google_compute_subnetwork_iam_member.network_users["web"]',
+            network_tf,
+        )
+        for target in expected_moved_targets[4:]:
             self.assertIn(f"to   = module.runtime_foundation.{target}", network_tf)
 
 

@@ -38,6 +38,12 @@ class TerraformBootstrapContractTests(unittest.TestCase):
         self.assertIn("-backend-config=", script)
         self.assertIn("output -raw state_bucket_name", script)
 
+    def test_bootstrap_declares_the_same_gcs_backend_contract_as_root(self) -> None:
+        main_tf = (BOOT_DIR / "main.tf").read_text(encoding="utf-8")
+        root_main_tf = (BOOT_DIR.parent / "main.tf").read_text(encoding="utf-8")
+        self.assertIn('backend "gcs" {}', main_tf)
+        self.assertIn('backend "gcs" {}', root_main_tf)
+
     def test_bootstrap_outputs_and_release_prefix_pattern(self) -> None:
         outputs_tf = (BOOT_DIR / "outputs.tf").read_text(encoding="utf-8")
         self.assertIn('output "state_bucket_name"', outputs_tf)
