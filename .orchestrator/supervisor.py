@@ -4400,6 +4400,92 @@ def higher_priority_ready_task_exists(
     return dispatch_ops.higher_priority_ready_task_exists(config, worker, task_map, state=state)
 
 
+def is_operator_emergency(config: dict[str, Any], state: dict[str, Any] | None, worker: dict[str, Any]) -> bool:
+    if bool(worker.get("operator_emergency")) or bool(worker.get("force_preempt")):
+        return True
+    if state and (bool(state.get("operator_emergency")) or bool(state.get("emergency_preempt"))):
+        return True
+    if bool(config.get("supervisor", {}).get("operator_emergency")):
+        return True
+    return False
+
+
+def worker_worktree_is_clean(config: dict[str, Any], worker: dict[str, Any]) -> bool:
+    workspace_path_str = str(worker.get("workspace_path") or "").strip()
+    if not workspace_path_str:
+        return True
+    workspace_path = Path(workspace_path_str)
+    if not workspace_path.exists() or not (workspace_path / ".git").exists():
+        return True
+    try:
+        from worktree_cleanliness import inspect_worktree
+        inspection = inspect_worktree(workspace_path)
+        return bool(inspection.handoff_clean)
+    except Exception:
+        return False
+
+
+def worker_can_be_preempted(
+    config: dict[str, Any],
+    worker: dict[str, Any],
+    task_map: dict[str, dict[str, Any]],
+    state: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Determine whether a worker is at a safe boundary for priority preemption.
+
+    General preemption is ONLY allowed at a clean terminal checkpoint (e.g. finalize
+    tasks with immutable repo state or quiescent clean worktrees), or when the worker
+    is stalled or during an explicit operator emergency. Healthy active owners with
+    uncommitted progress or active implementation must not be SIGTERM'd to free a
+    lane for review; review is deferred to the next tick.
+    """
+    if is_operator_emergency(config, state, worker):
+        return True
+
+    if now is None:
+        now = datetime.now(UTC)
+
+    alive = pid_is_alive(worker.get("pid"))
+    worker_status = str(worker.get("status") or "").lower()
+
+    if worker_status == "stalled" or not alive:
+        return True
+
+    request_snapshot = worker.get("request_snapshot") or {}
+    dispatch_reason = str(request_snapshot.get("reason") or worker.get("reason") or "").strip()
+    task_id = str(worker.get("task_id") or "").strip()
+    task = task_map.get(task_id) or {}
+    task_status = str(task.get("status") or "").lower()
+
+    # Finalize workers are read-only on repo (immutable approved head)
+    if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
+        return worker_worktree_is_clean(config, worker)
+
+    # Active owner tasks (in_progress, todo with active execution)
+    is_owner = (
+        dispatch_reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS, "helper_claim_dispatch"}
+        or task_status in {"in_progress", "todo"}
+    )
+    if is_owner:
+        heartbeat_stale = worker_heartbeat_is_stale(config, worker, now)
+        has_fresh_activity = not heartbeat_stale
+        if heartbeat_stale:
+            activity_at = parse_iso_timestamp(str(worker.get("last_process_activity_at") or ""))
+            if activity_at is not None and (now - activity_at.astimezone(UTC)).total_seconds() <= 300:
+                has_fresh_activity = True
+
+        if has_fresh_activity:
+            # Active healthy owner: if worktree is dirty, never preempt
+            if not worker_worktree_is_clean(config, worker):
+                return False
+            # If in_progress implementation is actively running, do not SIGTERM healthy owner
+            if task_status == "in_progress" or dispatch_reason == REASON_OWNED_IN_PROGRESS:
+                return False
+
+    return worker_worktree_is_clean(config, worker)
+
+
 def worker_matches_current_assignment(
     config: dict[str, Any],
     worker: dict[str, Any],

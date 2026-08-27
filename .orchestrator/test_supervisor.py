@@ -9326,6 +9326,305 @@ class WorkerPreemptionSyncTests(unittest.TestCase):
         self.assertIsNone(kwargs["new_status"])
 
 
+class WorkerPreemptionSafeBoundaryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = {
+            "paths": {"status_file": "ai-status.json"},
+            "schema": {
+                "tasks_path": "tasks",
+                "task_id_field": "id",
+                "assignee_field": "owner",
+                "reviewer_field": "reviewer",
+            },
+            "supervisor": {"stall_after_seconds": 300},
+            "ready_dispatcher": {
+                "review_statuses": ["review"],
+                "owned_statuses": ["in_progress", "todo"],
+                "finalize_statuses": ["review_approved"],
+                "active_worker_statuses": ["running", "waiting_approval", "suspended_approval", "manual_pending", "retry_backoff", "stalled"],
+            },
+            "agents": {
+                "antigravity": {
+                    "id": "antigravity",
+                    "display_name": "Antigravity",
+                    "worker_slots": ["antigravity_slot_1", "antigravity_slot_2"],
+                },
+                "antigravity_slot_1": {
+                    "id": "antigravity_slot_1",
+                    "display_name": "Antigravity",
+                    "dispatch_slot_for": "antigravity",
+                    "provider": "antigravity-1",
+                },
+                "antigravity_slot_2": {
+                    "id": "antigravity_slot_2",
+                    "display_name": "Antigravity",
+                    "dispatch_slot_for": "antigravity",
+                    "provider": "antigravity-2",
+                },
+                "codex": {
+                    "id": "codex",
+                    "display_name": "Codex",
+                },
+            },
+        }
+
+    def test_healthy_foundation_owner_not_preempted_when_alternate_free_lane_exists(self) -> None:
+        """Regression test: healthy foundation owner is not preempted when alternate free lane exists for review."""
+        config = json.loads(json.dumps(self.config))
+        now_iso = supervisor.utc_now()
+        worker = {
+            "run_id": "run-owner-1",
+            "task_id": "FOUNDATION-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-owner-1",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {
+            "queue": {"events": {"evt-owner-1": {"status": "started", "run_id": "run-owner-1"}}},
+            "workers": {"run-owner-1": worker},
+        }
+        task_map = {
+            "FOUNDATION-001": {
+                "id": "FOUNDATION-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+            "REVIEW-001": {
+                "id": "REVIEW-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            # 1. higher_priority_ready_task_exists returns False because antigravity_slot_2 is free
+            self.assertFalse(
+                supervisor.higher_priority_ready_task_exists(config, worker, task_map, state)
+            )
+
+            # 2. worker_can_be_preempted returns False for healthy in_progress owner
+            self.assertFalse(
+                supervisor.worker_can_be_preempted(config, worker, task_map, state)
+            )
+
+        # 3. poll_workers does not terminate or supersede the healthy owner
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertFalse(changed)
+        self.assertEqual(worker["status"], "running")
+        terminate_worker_pid.assert_not_called()
+
+    def test_healthy_foundation_owner_not_preempted_when_no_free_lane_and_review_deferred(self) -> None:
+        """When review has no free lane, healthy in_progress owner is not preempted and review defers without Human blocker."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+
+        now_iso = supervisor.utc_now()
+        worker = {
+            "run_id": "run-owner-1",
+            "task_id": "FOUNDATION-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-owner-1",
+            "pid": 5555,
+            "last_event_at": now_iso,
+            "last_heartbeat_at": now_iso,
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {
+            "queue": {"events": {"evt-owner-1": {"status": "started", "run_id": "run-owner-1"}}},
+            "workers": {"run-owner-1": worker},
+        }
+        task_map = {
+            "FOUNDATION-001": {
+                "id": "FOUNDATION-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+            "REVIEW-001": {
+                "id": "REVIEW-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            # worker_can_be_preempted protects the healthy active owner
+            self.assertFalse(
+                supervisor.worker_can_be_preempted(config, worker, task_map, state)
+            )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid") as terminate_worker_pid,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertFalse(changed)
+        self.assertEqual(worker["status"], "running")
+        terminate_worker_pid.assert_not_called()
+        self.assertEqual(task_map["REVIEW-001"]["status"], "review")
+        self.assertNotIn("waiting_for", task_map["REVIEW-001"])
+
+    def test_dirty_worktree_fails_closed_and_preserves_receipt_on_forced_preemption(self) -> None:
+        """When preemption is forced (e.g. operator emergency), uncommitted dirt is preserved with a receipt."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+        worker = {
+            "run_id": "run-emergency-1",
+            "task_id": "FOUNDATION-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-1",
+            "pid": 5555,
+            "operator_emergency": True,
+            "workspace_path": "/tmp/test-workspace-foundation",
+            "request_snapshot": {"reason": "owned_in_progress_dispatch"},
+        }
+        state = {
+            "queue": {"events": {"evt-1": {"status": "started", "run_id": "run-emergency-1"}}},
+            "workers": {"run-emergency-1": worker},
+        }
+        task_map = {
+            "FOUNDATION-001": {
+                "id": "FOUNDATION-001",
+                "status": "in_progress",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+            "REV-001": {
+                "id": "REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree") as preserve_worktree,
+            mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True),
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(5555)
+        preserve_worktree.assert_called_once_with(
+            config,
+            state,
+            worker,
+            task=task_map["FOUNDATION-001"],
+            trigger="preempted_priority_escalation",
+        )
+
+    def test_clean_finalize_worker_can_be_preempted_and_preserves_review_approved(self) -> None:
+        """Finalize workers on immutable approved heads are safe to preempt and remain review_approved."""
+        config = json.loads(json.dumps(self.config))
+        config["agents"]["antigravity"]["worker_slots"] = ["antigravity_slot_1"]
+        config["agents"].pop("antigravity_slot_2", None)
+        worker = {
+            "run_id": "run-finalize-1",
+            "task_id": "FINAL-001",
+            "provider": "antigravity-1",
+            "agent_id": "antigravity_slot_1",
+            "logical_agent_id": "antigravity",
+            "status": "running",
+            "queue_event_id": "evt-final-1",
+            "pid": 5555,
+            "request_snapshot": {"reason": supervisor.REASON_OWNED_FINALIZE},
+        }
+        state = {
+            "queue": {"events": {"evt-final-1": {"status": "started", "run_id": "run-finalize-1"}}},
+            "workers": {"run-finalize-1": worker},
+        }
+        task_map = {
+            "FINAL-001": {
+                "id": "FINAL-001",
+                "status": "review_approved",
+                "owner": "Antigravity",
+                "reviewer": "Codex",
+                "depends_on": [],
+            },
+            "REV-001": {
+                "id": "REV-001",
+                "status": "review",
+                "owner": "Codex",
+                "reviewer": "Antigravity",
+                "depends_on": [],
+            },
+        }
+        status = {"tasks": list(task_map.values())}
+
+        with mock.patch.object(supervisor, "pid_is_alive", return_value=True):
+            self.assertTrue(
+                supervisor.worker_can_be_preempted(config, worker, task_map, state)
+            )
+
+        with (
+            mock.patch.object(supervisor, "load_approval_state", return_value={"pending": [], "history": []}),
+            mock.patch.object(supervisor, "load_status", return_value=status),
+            mock.patch.object(supervisor, "load_provider_report", return_value={}),
+            mock.patch.object(supervisor, "retry_due_workers", return_value=False),
+            mock.patch.object(supervisor, "pid_is_alive", return_value=True),
+            mock.patch.object(supervisor, "terminate_worker_pid", return_value=True) as terminate_worker_pid,
+            mock.patch.object(supervisor, "preserve_dead_worker_worktree"),
+            mock.patch.object(supervisor, "sync_preempted_task_status", return_value=True) as sync_preempted,
+            mock.patch.object(supervisor, "write_activity_log"),
+        ):
+            changed = supervisor.poll_workers(config, state)
+
+        self.assertTrue(changed)
+        self.assertEqual(worker["status"], "superseded")
+        terminate_worker_pid.assert_called_once_with(5555)
+        sync_preempted.assert_called_once_with(config, worker)
+
+
 class WorkerOsDuplicateGuardTests(unittest.TestCase):
     def _make_fake_proc(self, entries: dict[int, str | None]) -> Path:
         root = Path(tempfile.mkdtemp())

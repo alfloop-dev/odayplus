@@ -822,6 +822,13 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 # Grace exhausted: the worker is not exiting on its own, so fall
                 # through and reclaim it as before.
             worker.pop("supersede_deferred_since", None)
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                worker,
+                task=task_map.get(str(worker.get("task_id") or "")),
+                trigger="worker_superseded:assignment_moved",
+            )
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
@@ -855,6 +862,15 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             and worker.get("status") in active_statuses
             and higher_priority_ready_task_exists(config, worker, task_map, state)
         ):
+            if not worker_can_be_preempted(config, worker, task_map, state, now=now):
+                continue
+            preserve_dead_worker_worktree(
+                config,
+                state,
+                worker,
+                task=task_map.get(str(worker.get("task_id") or "")),
+                trigger="preempted_priority_escalation",
+            )
             if alive:
                 terminate_worker_pid(worker.get("pid"))
             worker["status"] = "superseded"
