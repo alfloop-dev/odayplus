@@ -19,6 +19,12 @@
 terraform {
   required_version = ">= 1.6.0"
 
+  # The workflow supplies a protected bucket and a release-scoped prefix at
+  # init time. The backend is intentionally remote: local runner state may
+  # contain generated database credentials and must not be the recovery or
+  # cleanup authority after the runner exits.
+  backend "gcs" {}
+
   required_providers {
     google = {
       source  = "hashicorp/google"
@@ -62,7 +68,7 @@ locals {
   tenant_label   = length(local.tenant_clean) <= 63 ? local.tenant_clean : "${substr(local.tenant_clean, 0, 54)}-${substr(sha256(local.tenant_id), 0, 8)}"
 
   # Service Account ID max 30 chars: "stg-" (4) + slug (13) + "-" (1) + hash (8) + suffix (3-4) = 29-30 chars.
-  sa_slug       = substr(local.release_clean, 0, 13)
+  sa_slug       = trim(substr(local.release_clean, 0, 13), "-")
   sa_prefix     = "stg-${local.sa_slug}-${local.release_hash}"
   sa_runtime_id = "${local.sa_prefix}-rt"
   sa_web_id     = "${local.sa_prefix}-web"
@@ -751,11 +757,11 @@ resource "google_cloud_run_v2_service" "staging_web" {
       }
       env {
         name  = "ODP_PRODUCT_MODE"
-        value = "poc"
+        value = "production"
       }
       env {
         name  = "ODP_REQUIRE_LIVE_DATA"
-        value = "false"
+        value = "true"
       }
       env {
         name  = "ODP_STAGING_RELEASE_ID"
@@ -844,11 +850,10 @@ resource "google_cloud_scheduler_job" "staging_worker_trigger" {
 # the build-once handoff exact without introducing a rebuild.
 
 resource "google_cloud_run_v2_job" "staging_migration" {
-  project             = var.project_id
-  name                = local.migration_job_name
-  location            = var.region
-  deletion_protection = false
-  labels              = merge(local.resource_labels, { "oday-runtime" = "migration" })
+  project  = var.project_id
+  name     = local.migration_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "migration" })
 
   template {
     template {
@@ -945,11 +950,10 @@ resource "google_cloud_run_v2_job" "staging_migration" {
 }
 
 resource "google_cloud_run_v2_job" "staging_worker" {
-  project             = var.project_id
-  name                = local.worker_job_name
-  location            = var.region
-  deletion_protection = false
-  labels              = merge(local.resource_labels, { "oday-runtime" = "worker" })
+  project  = var.project_id
+  name     = local.worker_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "worker" })
 
   template {
     template {
@@ -1046,11 +1050,10 @@ resource "google_cloud_run_v2_job" "staging_worker" {
 }
 
 resource "google_cloud_run_v2_job" "staging_scheduler" {
-  project             = var.project_id
-  name                = local.scheduler_job_name
-  location            = var.region
-  deletion_protection = false
-  labels              = merge(local.resource_labels, { "oday-runtime" = "scheduler" })
+  project  = var.project_id
+  name     = local.scheduler_job_name
+  location = var.region
+  labels   = merge(local.resource_labels, { "oday-runtime" = "scheduler" })
 
   template {
     template {

@@ -69,6 +69,7 @@ LIFECYCLE_STATE_VERSION = 1
 # Terraform handoff.
 REQUIRED_STAGING_OUTPUTS: tuple[str, ...] = (
     "release_id",
+    "staging_project_id",
     "created_at",
     "expires_at",
     "staging_api_uri",
@@ -361,7 +362,10 @@ def get_ephemeral_resource_names(
     clean = sanitize_release_suffix(release_id)
     rel_hash = compute_release_hash(release_id)
 
-    sa_slug = clean[:13]
+    # Keep this in lockstep with Terraform's trim(substr(..., 0, 13), "-")
+    # so release ids ending at the boundary do not create a double hyphen in
+    # Python-only inventory names.
+    sa_slug = clean[:13].strip("-")
     sa_prefix = f"stg-{sa_slug}-{rel_hash}"
 
     db_slug_clean = clean.replace("-", "_")
@@ -922,7 +926,7 @@ def _terraform_output_values(
     *,
     module_dir: Path,
     terraform_bin: str,
-    state_path: Path,
+    state_path: Path | None = None,
 ) -> dict[str, Any]:
     """Read Terraform's current release outputs, refusing missing/secret values."""
 
@@ -931,8 +935,9 @@ def _terraform_output_values(
         f"-chdir={module_dir}",
         "output",
         "-json",
-        f"-state={state_path}",
     ]
+    if state_path is not None:
+        command.append(f"-state={state_path}")
     process = subprocess.run(
         command,
         check=False,
@@ -963,6 +968,84 @@ def _terraform_output_values(
     return values
 
 
+def _terraform_backend_arguments(
+    *,
+    backend_bucket: str,
+    backend_prefix: str,
+) -> list[str]:
+    """Return validated GCS backend init arguments for one release key."""
+
+    bucket = backend_bucket.strip()
+    prefix = backend_prefix.strip().strip("/")
+    if not bucket or not prefix:
+        raise ValueError(
+            "Terraform GCS backend requires both a protected bucket and a release-scoped prefix"
+        )
+    if any(value in bucket or value in prefix for value in ("*", "?", "[", "]", "..")):
+        raise ValueError("Terraform GCS backend bucket/prefix must not contain wildcards or traversal")
+    if bucket.startswith("gs://") or "/" in bucket:
+        raise ValueError("Terraform GCS backend bucket must be a bucket name, not a URI or path")
+    return [f"-backend-config=bucket={bucket}", f"-backend-config=prefix={prefix}"]
+
+
+def _validate_backend_prefix_for_release(backend_prefix: str, release_id: str) -> None:
+    """Require the durable state key to terminate in this exact release id."""
+
+    prefix = backend_prefix.strip().strip("/")
+    final_segment = prefix.rsplit("/", 1)[-1] if prefix else ""
+    if final_segment not in {release_id.strip(), release_label_value(release_id)}:
+        raise ValueError(
+            "Terraform GCS backend prefix must terminate in the exact release_id or its canonical label"
+        )
+
+
+def _terraform_state_pull(
+    *,
+    module_dir: Path,
+    terraform_bin: str,
+    allow_missing: bool = False,
+) -> dict[str, Any] | None:
+    """Read the durable backend state without printing its sensitive payload."""
+
+    process = subprocess.run(
+        [terraform_bin, f"-chdir={module_dir}", "state", "pull"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ.copy(),
+    )
+    if process.returncode != 0:
+        stderr_lines = [line for line in process.stderr.splitlines() if line.strip()]
+        detail = " ".join(stderr_lines[-8:]) if stderr_lines else "no diagnostic output"
+        if allow_missing:
+            normalized = detail.lower()
+            empty_state_markers = (
+                "no state file was found",
+                "state file was not found",
+                "state file does not exist",
+                "no state exists",
+                "state does not exist",
+                "state not found",
+                "state was not found",
+                "remote state is empty",
+                "state is empty",
+            )
+            if any(marker in normalized for marker in empty_state_markers):
+                return None
+        raise RuntimeError(f"terraform state pull failed (exit {process.returncode}): {detail}")
+    try:
+        state = json.loads(process.stdout)
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("Terraform durable state pull did not return a JSON object") from exc
+    if not isinstance(state, Mapping):
+        raise RuntimeError("Terraform durable state pull did not return a state mapping")
+    if not state.get("resources"):
+        if allow_missing:
+            return None
+        raise RuntimeError("Terraform durable state pull returned no managed resources")
+    return dict(state)
+
+
 def validate_staging_outputs(
     outputs: Mapping[str, Any] | None,
     *,
@@ -990,11 +1073,28 @@ def validate_staging_outputs(
 
     if str(outputs.get("release_id", "")).strip() != release_id:
         errors.append("Terraform release_id output does not match the immutable release handoff.")
+    for name in ("created_at", "expires_at"):
+        value = str(outputs.get(name, "")).strip()
+        if value:
+            try:
+                parse_timestamp(value)
+            except ValueError:
+                errors.append(f"Terraform {name} output is not a valid RFC3339 timestamp.")
+    created_value = str(outputs.get("created_at", "")).strip()
+    expires_value = str(outputs.get("expires_at", "")).strip()
+    if created_value and expires_value:
+        try:
+            if parse_timestamp(expires_value) < parse_timestamp(created_value):
+                errors.append("Terraform expires_at output precedes created_at.")
+        except ValueError:
+            pass
     if str(outputs.get("staging_tenant_id", "")).strip() == "":
         errors.append("Terraform staging_tenant_id output is empty.")
     for name in (
         "staging_api_uri",
         "staging_web_uri",
+        "staging_api_service_name",
+        "staging_web_service_name",
         "staging_database_name",
         "staging_data_bucket",
         "staging_runtime_service_account",
@@ -1003,9 +1103,24 @@ def validate_staging_outputs(
         "staging_migration_job_name",
         "staging_worker_job_name",
         "staging_scheduler_job_name",
+        "staging_scheduler_trigger_name",
+        "staging_cloud_sql_instance",
     ):
         if not str(outputs.get(name, "")).strip():
             errors.append(f"Terraform {name} output is empty.")
+
+    for name in ("staging_api_uri", "staging_web_uri"):
+        if str(outputs.get(name, "")).strip() and not str(outputs[name]).startswith("https://"):
+            errors.append(f"Terraform {name} must be an HTTPS release-scoped endpoint.")
+
+    for name in (
+        "staging_runtime_service_account",
+        "staging_web_service_account",
+        "staging_worker_service_account",
+    ):
+        value = str(outputs.get(name, "")).strip()
+        if value and not SERVICE_ACCOUNT_EMAIL_PATTERN.fullmatch(value):
+            errors.append(f"Terraform {name} is not a concrete service account email.")
 
     labels = outputs.get("resource_labels")
     if not isinstance(labels, Mapping):
@@ -1054,6 +1169,8 @@ def validate_staging_outputs(
             errors.append("Terraform ownership_manifest has no release-scoped resources.")
 
     output_project = str(outputs.get("staging_project_id", project_id)).strip()
+    if not output_project:
+        errors.append("Terraform staging_project_id output is empty.")
     if output_project and output_project != project_id:
         errors.append("Terraform staging project output does not match the release foundation project.")
     return errors
@@ -1380,6 +1497,8 @@ def make_terraform_creation_executor(
     terraform_bin: str = "terraform",
     initialize: bool = True,
     outputs_path: Path | None = None,
+    backend_bucket: str = "",
+    backend_prefix: str = "",
 ) -> Callable[[StagingConfig, Sequence[StagingResource]], Mapping[str, Any]]:
     """Build the live create executor used by the CLI.
 
@@ -1389,15 +1508,85 @@ def make_terraform_creation_executor(
     """
     module_path = module_dir.expanduser().resolve()
     state_path_root = state_dir.expanduser().resolve()
+    backend_args = _terraform_backend_arguments(
+        backend_bucket=backend_bucket,
+        backend_prefix=backend_prefix,
+    ) if backend_bucket or backend_prefix else []
+    remote_backend = bool(backend_args)
 
     def execute(config: StagingConfig, resources: Sequence[StagingResource]) -> Mapping[str, Any]:
         if not module_path.is_dir():
             raise RuntimeError(f"Terraform module directory does not exist: {module_path}")
         if not resources:
             raise RuntimeError("Terraform create received an empty resource plan")
+        if remote_backend:
+            _validate_backend_prefix_for_release(backend_prefix, config.release_id)
+
+        # A GCS backend is the recovery authority. Initialize and inspect it
+        # before writing local sidecars: a fresh runner must never overwrite an
+        # existing release whose local recovery bundle was lost, and stale local
+        # sidecars must never masquerade as an empty remote state.
+        remote_state: dict[str, Any] | None = None
+        initialized = False
+        if remote_backend and initialize:
+            try:
+                _run_terraform(
+                    module_dir=module_path,
+                    terraform_bin=terraform_bin,
+                    arguments=["init", "-input=false", "-upgrade=false", *backend_args],
+                )
+            except RuntimeError as exc:
+                raise ReleaseStateUnverifiable(
+                    f"Existing release state for {config.release_id!r} is unavailable: "
+                    f"{UNVERIFIABLE_STATE_PREFIX}: durable Terraform backend initialization "
+                    f"failed ({exc}). No apply or failure-path cleanup is permitted."
+                ) from exc
+            initialized = True
 
         state_path_root.mkdir(parents=True, exist_ok=True)
         state_path, tfvars_path, inventory_path = _terraform_state_paths(config.release_id, state_path_root)
+        lifecycle_path = _lifecycle_state_path(config.release_id, state_path_root)
+        if remote_backend:
+            try:
+                remote_state = _terraform_state_pull(
+                    module_dir=module_path,
+                    terraform_bin=terraform_bin,
+                    allow_missing=True,
+                )
+            except RuntimeError as exc:
+                raise ReleaseStateUnverifiable(
+                    f"Existing release state for {config.release_id!r} is unavailable: "
+                    f"{UNVERIFIABLE_STATE_PREFIX}: durable Terraform state could not be read "
+                    f"({exc}). Restore backend access before retrying."
+                ) from exc
+            local_sidecars = (tfvars_path, inventory_path, lifecycle_path)
+            if remote_state is not None and not all(path.is_file() for path in local_sidecars):
+                raise ReleaseStateUnverifiable(
+                    f"Existing release state conflict for {config.release_id!r}: "
+                    f"{UNVERIFIABLE_STATE_PREFIX}: durable Terraform state exists but the "
+                    "tfvars, inventory, and lifecycle recovery sidecars are incomplete. "
+                    "Restore the protected recovery bundle before retrying."
+                )
+            if remote_state is not None:
+                lifecycle_state = _read_json_object(lifecycle_path)
+                if (
+                    lifecycle_state is None
+                    or lifecycle_state.get("release_id") != config.release_id
+                    or not isinstance(lifecycle_state.get("outputs"), Mapping)
+                ):
+                    raise ReleaseStateUnverifiable(
+                        f"Existing release state conflict for {config.release_id!r}: "
+                        f"{UNVERIFIABLE_STATE_PREFIX}: lifecycle recovery marker is malformed "
+                        "or has no immutable Terraform output handoff. Restore the protected "
+                        "recovery bundle before retrying."
+                    )
+            if remote_state is None and any(path.is_file() for path in (state_path, *local_sidecars)):
+                raise ReleaseStateUnverifiable(
+                    f"Existing release state conflict for {config.release_id!r}: "
+                    f"{UNVERIFIABLE_STATE_PREFIX}: local recovery evidence exists but the "
+                    "release-scoped durable Terraform state is absent. The evidence is preserved "
+                    "and must be inspected before a new apply."
+                )
 
         # Validate immutable release identity against existing state BEFORE any write or apply
         identity_errors = validate_immutable_release_identity(config, state_path_root)
@@ -1482,29 +1671,31 @@ def make_terraform_creation_executor(
             identity=generate_tfvars(apply_config),
         )
 
-        if initialize:
+        if initialize and not initialized:
             _run_terraform(
                 module_dir=module_path,
                 terraform_bin=terraform_bin,
-                arguments=["init", "-input=false", "-upgrade=false"],
+                arguments=["init", "-input=false", "-upgrade=false", *backend_args],
             )
+        apply_arguments = [
+            "apply",
+            "-input=false",
+            "-auto-approve",
+            f"-var-file={tfvars_path}",
+        ]
+        if not remote_backend:
+            apply_arguments.insert(3, f"-state={state_path}")
         _run_terraform(
             module_dir=module_path,
             terraform_bin=terraform_bin,
-            arguments=[
-                "apply",
-                "-input=false",
-                "-auto-approve",
-                f"-state={state_path}",
-                f"-var-file={tfvars_path}",
-            ],
+            arguments=apply_arguments,
         )
         outputs: dict[str, Any] = {}
         if outputs_path is not None:
             outputs = _terraform_output_values(
                 module_dir=module_path,
                 terraform_bin=terraform_bin,
-                state_path=state_path,
+                state_path=None if remote_backend else state_path,
             )
             output_errors = validate_staging_outputs(
                 outputs,
@@ -1540,6 +1731,8 @@ def make_terraform_deletion_executor(
     state_dir: Path = DEFAULT_EPHEMERAL_STATE_DIR,
     terraform_bin: str = "terraform",
     initialize: bool = True,
+    backend_bucket: str = "",
+    backend_prefix: str = "",
 ) -> Callable[[Mapping[str, Any]], bool]:
     """Build a release-scoped live destroy executor.
 
@@ -1550,6 +1743,11 @@ def make_terraform_deletion_executor(
     module_path = module_dir.expanduser().resolve()
     state_path_root = state_dir.expanduser().resolve()
     state_path, tfvars_path, inventory_path = _terraform_state_paths(release_id, state_path_root)
+    backend_args = _terraform_backend_arguments(
+        backend_bucket=backend_bucket,
+        backend_prefix=backend_prefix,
+    ) if backend_bucket or backend_prefix else []
+    remote_backend = bool(backend_args)
     attempted = False
     destroy_success = False
 
@@ -1561,26 +1759,37 @@ def make_terraform_deletion_executor(
 
         if not module_path.is_dir():
             raise RuntimeError(f"Terraform module directory does not exist: {module_path}")
+        if remote_backend:
+            _validate_backend_prefix_for_release(backend_prefix, release_id)
         if not state_path.is_file() or not tfvars_path.is_file():
-            raise RuntimeError(
-                f"No release-scoped Terraform state for cleanup of {release_id!r}: {state_path}"
-            )
+            if remote_backend and tfvars_path.is_file():
+                pass
+            else:
+                raise RuntimeError(
+                    f"No release-scoped Terraform state for cleanup of {release_id!r}: {state_path}"
+                )
         if initialize:
             _run_terraform(
                 module_dir=module_path,
                 terraform_bin=terraform_bin,
-                arguments=["init", "-input=false", "-upgrade=false"],
+                arguments=["init", "-input=false", "-upgrade=false", *backend_args],
             )
+        if remote_backend:
+            # Do not let `destroy` turn an unavailable/empty backend into a
+            # successful no-op. The release state must already be present.
+            _terraform_state_pull(module_dir=module_path, terraform_bin=terraform_bin)
+        destroy_arguments = [
+            "destroy",
+            "-input=false",
+            "-auto-approve",
+            f"-var-file={tfvars_path}",
+        ]
+        if not remote_backend:
+            destroy_arguments.insert(3, f"-state={state_path}")
         _run_terraform(
             module_dir=module_path,
             terraform_bin=terraform_bin,
-            arguments=[
-                "destroy",
-                "-input=false",
-                "-auto-approve",
-                f"-state={state_path}",
-                f"-var-file={tfvars_path}",
-            ],
+            arguments=destroy_arguments,
         )
         destroy_success = True
         # The live resources are gone; remove the local release receipt inputs
@@ -2184,6 +2393,65 @@ def _live_gcloud(
     return process.stdout.strip() if capture_output else ""
 
 
+def _live_cloud_run_field(
+    payload: Mapping[str, Any],
+    paths: Sequence[Sequence[str | int]],
+    *,
+    field_name: str,
+) -> str:
+    """Read one Cloud Run field across the supported gcloud JSON dialects."""
+
+    for path in paths:
+        value: Any = payload
+        for component in path:
+            if isinstance(component, int):
+                if not isinstance(value, list) or component >= len(value):
+                    value = None
+                    break
+                value = value[component]
+            else:
+                if not isinstance(value, Mapping) or component not in value:
+                    value = None
+                    break
+                value = value[component]
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    raise RuntimeError(f"Cloud Run {field_name} readback is missing from the live resource")
+
+
+def _live_cloud_run_description(
+    resource_kind: str,
+    resource_name: str,
+    *,
+    project_id: str,
+    region: str,
+    gcloud_bin: str,
+) -> Mapping[str, Any]:
+    """Fetch a Cloud Run service/job description without exposing its env block."""
+
+    collection = "services" if resource_kind == "service" else "jobs"
+    raw = _live_gcloud(
+        [
+            "run",
+            collection,
+            "describe",
+            resource_name,
+            f"--region={region}",
+            f"--project={project_id}",
+            "--format=json",
+        ],
+        gcloud_bin=gcloud_bin,
+        capture_output=True,
+    )
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"Cloud Run {resource_kind} description is not valid JSON") from exc
+    if not isinstance(payload, Mapping):
+        raise RuntimeError(f"Cloud Run {resource_kind} description is not a JSON object")
+    return payload
+
+
 def _live_identity_token(
     *,
     audience: str,
@@ -2248,18 +2516,22 @@ def _load_live_state_for_release(
     state_dir: Path,
     *,
     require_statuses: frozenset[str] = frozenset({"created", "verification_failed", "held"}),
+    remote_state_verified: bool = False,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[str]]:
     """Load and prove the release state before verification or retention."""
 
     state_path, tfvars_path, inventory_path = _terraform_state_paths(release_id, state_dir)
     marker_path = _lifecycle_state_path(release_id, state_dir)
     errors: list[str] = []
-    for label, path in (
+    required_files = (
         ("Terraform state", state_path),
         ("Terraform tfvars", tfvars_path),
         ("release ownership inventory", inventory_path),
         ("lifecycle state", marker_path),
-    ):
+    )
+    for label, path in required_files:
+        if remote_state_verified and label == "Terraform state":
+            continue
         if not path.is_file():
             errors.append(f"{label} for release {release_id!r} is missing: {path.name}")
 
@@ -2345,6 +2617,35 @@ def make_live_rehearsal_executor(
             "staging rehearsal operator must exactly equal Terraform staging_runtime_service_account"
         )
     token_cache: dict[str, str] = {}
+    identities_checked = False
+
+    def ensure_release_identities_exist() -> None:
+        nonlocal identities_checked
+        if identities_checked:
+            return
+        for output_name in (
+            "staging_runtime_service_account",
+            "staging_web_service_account",
+            "staging_worker_service_account",
+        ):
+            expected_identity = str(outputs[output_name]).strip()
+            actual_identity = _live_gcloud(
+                [
+                    "iam",
+                    "service-accounts",
+                    "describe",
+                    expected_identity,
+                    f"--project={project_id}",
+                    "--format=value(email)",
+                ],
+                gcloud_bin=gcloud_bin,
+                capture_output=True,
+            )
+            if actual_identity != expected_identity:
+                raise RuntimeError(
+                    f"{output_name} existence readback does not match its immutable Terraform output"
+                )
+        identities_checked = True
 
     def token_for(audience: str) -> str:
         if audience not in token_cache:
@@ -2355,25 +2656,84 @@ def make_live_rehearsal_executor(
             )
         return token_cache[audience]
 
+    def execute_service(output_name: str, image_output_name: str, kind: str) -> Mapping[str, Any]:
+        service_name = str(outputs[output_name]).strip()
+        expected_image = str(outputs[image_output_name]).strip()
+        payload = _live_cloud_run_description(
+            "service",
+            service_name,
+            project_id=project_id,
+            region=region,
+            gcloud_bin=gcloud_bin,
+        )
+        actual_image = _live_cloud_run_field(
+            payload,
+            (
+                ("spec", "template", "containers", 0, "image"),
+                ("spec", "template", "spec", "containers", 0, "image"),
+                ("template", "containers", 0, "image"),
+                ("template", "template", "containers", 0, "image"),
+            ),
+            field_name=f"{kind} service image",
+        )
+        if actual_image != expected_image:
+            raise RuntimeError(
+                f"{kind} service image readback does not match its immutable Terraform output"
+            )
+        actual_egress = _live_cloud_run_field(
+            payload,
+            (
+                ("spec", "template", "vpcAccess", "egress"),
+                ("spec", "template", "spec", "vpcAccess", "egress"),
+                ("template", "vpcAccess", "egress"),
+                ("template", "template", "vpcAccess", "egress"),
+            ),
+            field_name=f"{kind} service VPC egress",
+        )
+        if actual_egress != "PRIVATE_RANGES_ONLY":
+            raise RuntimeError(
+                f"{kind} service live VPC egress is {actual_egress!r}; expected PRIVATE_RANGES_ONLY"
+            )
+        return {
+            "service": service_name,
+            "image_digest": expected_image,
+            "egress": actual_egress,
+            "status": "verified",
+        }
+
     def execute_job(output_name: str, image_output_name: str, kind: str) -> Mapping[str, Any]:
         job_name = str(outputs[output_name]).strip()
         expected_image = str(outputs[image_output_name]).strip()
-        actual_image = _live_gcloud(
-            [
-                "run",
-                "jobs",
-                "describe",
-                job_name,
-                f"--region={region}",
-                f"--project={project_id}",
-                "--format=value(template.template.containers[0].image)",
-            ],
+        payload = _live_cloud_run_description(
+            "job",
+            job_name,
+            project_id=project_id,
+            region=region,
             gcloud_bin=gcloud_bin,
-            capture_output=True,
+        )
+        actual_image = _live_cloud_run_field(
+            payload,
+            (
+                ("template", "template", "containers", 0, "image"),
+                ("spec", "template", "spec", "template", "spec", "containers", 0, "image"),
+            ),
+            field_name=f"{kind} job image",
         )
         if actual_image != expected_image:
             raise RuntimeError(
                 f"{kind} job image readback does not match its immutable Terraform output"
+            )
+        actual_egress = _live_cloud_run_field(
+            payload,
+            (
+                ("template", "template", "vpcAccess", "egress"),
+                ("spec", "template", "spec", "template", "spec", "vpcAccess", "egress"),
+            ),
+            field_name=f"{kind} job VPC egress",
+        )
+        if actual_egress != "PRIVATE_RANGES_ONLY":
+            raise RuntimeError(
+                f"{kind} job live VPC egress is {actual_egress!r}; expected PRIVATE_RANGES_ONLY"
             )
         _live_gcloud(
             [
@@ -2388,7 +2748,12 @@ def make_live_rehearsal_executor(
             ],
             gcloud_bin=gcloud_bin,
         )
-        return {"job": job_name, "image_digest": expected_image, "execution": "succeeded"}
+        return {
+            "job": job_name,
+            "image_digest": expected_image,
+            "egress": actual_egress,
+            "execution": "succeeded",
+        }
 
     def endpoint(path: str, *, web: bool = False, providers_disabled: bool = False) -> Mapping[str, Any]:
         audience = web_uri if web else api_uri
@@ -2400,17 +2765,37 @@ def make_live_rehearsal_executor(
         return {"endpoint": f"{audience}{path}", "status": "verified"}
 
     def execute(stage_name: str, _context: Mapping[str, Any]) -> Mapping[str, Any]:
+        ensure_release_identities_exist()
         if stage_name == "db_expand_migration":
             return execute_job("staging_migration_job_name", "staging_worker_image", "migration")
         if stage_name == "data_platform_snapshot":
             return endpoint("/platform/health")
         if stage_name == "api_web_authenticated_smoke":
+            execute_service("staging_api_service_name", "staging_api_image", "API")
+            execute_service("staging_web_service_name", "staging_web_image", "Web")
             endpoint("/platform/health")
             endpoint("/platform/version")
             return endpoint("/operator", web=True)
         if stage_name == "worker_idempotency":
             return execute_job("staging_worker_job_name", "staging_worker_image", "worker")
         if stage_name == "scheduler_oneshot":
+            trigger_state = _live_gcloud(
+                [
+                    "scheduler",
+                    "jobs",
+                    "describe",
+                    str(outputs["staging_scheduler_trigger_name"]).strip(),
+                    f"--location={region}",
+                    f"--project={project_id}",
+                    "--format=value(state)",
+                ],
+                gcloud_bin=gcloud_bin,
+                capture_output=True,
+            ).upper()
+            if trigger_state != "PAUSED":
+                raise RuntimeError(
+                    "release-scoped scheduler trigger is not paused during rehearsal"
+                )
             return execute_job("staging_scheduler_job_name", "staging_scheduler_image", "scheduler")
         if stage_name == "backup_restore_drill":
             if not cloud_sql_instance:
@@ -2447,13 +2832,13 @@ def make_live_rehearsal_executor(
             _live_gcloud(["storage", "rm", backup_uri, "--quiet"], gcloud_bin=gcloud_bin)
             return {"backup_uri": backup_uri, "restore": "succeeded", "secret_values_redacted": True}
         if stage_name == "rollback_rehearsal":
-            # The release-scoped services have no public traffic dependency;
-            # read and restore their current allocation through the existing
-            # Cloud Run primitive. A missing service or failed restore is a
-            # real failure, never a synthetic pass.
+            # Read and restore the exact allocation through Cloud Run's traffic
+            # primitive. This is deliberately a real no-op round trip, so a
+            # missing service, malformed allocation, or failed readback is a
+            # failure instead of a synthetic "rehearsed" result.
             for service_key in ("staging_api_service_name", "staging_web_service_name"):
                 service_name = str(outputs[service_key]).strip()
-                _live_gcloud(
+                before_raw = _live_gcloud(
                     [
                         "run",
                         "services",
@@ -2461,12 +2846,83 @@ def make_live_rehearsal_executor(
                         service_name,
                         f"--region={region}",
                         f"--project={project_id}",
-                        "--format=value(status.traffic)",
+                        "--format=json",
                     ],
                     gcloud_bin=gcloud_bin,
                     capture_output=True,
                 )
-            return {"traffic_pointer": "readback_verified", "restore": "rehearsed"}
+                try:
+                    before_payload = json.loads(before_raw)
+                    traffic = before_payload["status"]["traffic"]
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        f"{service_name} traffic allocation readback is malformed"
+                    ) from exc
+                if not isinstance(traffic, list) or not traffic:
+                    raise RuntimeError(f"{service_name} has no traffic allocation to restore")
+                revisions: dict[str, int] = {}
+                for entry in traffic:
+                    if not isinstance(entry, Mapping):
+                        raise RuntimeError(
+                            f"{service_name} traffic allocation contains an unreadable entry"
+                        )
+                    revision = str(entry.get("revisionName") or entry.get("revision") or "").strip()
+                    if not revision:
+                        raise RuntimeError(
+                            f"{service_name} traffic allocation is not pinned to a revision"
+                        )
+                    try:
+                        percent = int(entry.get("percent"))
+                    except (TypeError, ValueError) as exc:
+                        raise RuntimeError(f"{service_name} traffic percentage is invalid") from exc
+                    if not 0 <= percent <= 100:
+                        raise RuntimeError(f"{service_name} traffic percentage is out of range")
+                    revisions[revision] = percent
+                if sum(revisions.values()) != 100:
+                    raise RuntimeError(f"{service_name} traffic allocation does not total 100 percent")
+                to_revisions = ",".join(
+                    f"{revision}={percent}" for revision, percent in revisions.items()
+                )
+                _live_gcloud(
+                    [
+                        "run",
+                        "services",
+                        "update-traffic",
+                        service_name,
+                        f"--to-revisions={to_revisions}",
+                        f"--region={region}",
+                        f"--project={project_id}",
+                        "--quiet",
+                    ],
+                    gcloud_bin=gcloud_bin,
+                )
+                after_raw = _live_gcloud(
+                    [
+                        "run",
+                        "services",
+                        "describe",
+                        service_name,
+                        f"--region={region}",
+                        f"--project={project_id}",
+                        "--format=json",
+                    ],
+                    gcloud_bin=gcloud_bin,
+                    capture_output=True,
+                )
+                try:
+                    after_traffic = json.loads(after_raw)["status"]["traffic"]
+                    after_revisions = {
+                        str(entry.get("revisionName") or entry.get("revision")): int(entry.get("percent"))
+                        for entry in after_traffic
+                        if isinstance(entry, Mapping)
+                    }
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise RuntimeError(f"{service_name} traffic restore readback is malformed") from exc
+                if after_revisions != revisions:
+                    raise RuntimeError(
+                        f"{service_name} traffic restore readback does not match the saved allocation"
+                    )
+            return {"traffic_pointer": "restored_and_read_back", "restore": "succeeded"}
         if stage_name == "external_providers_disabled_readback":
             return endpoint("/platform/health", providers_disabled=True)
         raise RuntimeError(f"Unknown staging rehearsal stage: {stage_name}")
@@ -2492,8 +2948,9 @@ def verify_ephemeral_staging(
     receipt_path: Path | str | None = None,
     operator_identity: str = "",
     lifecycle_outputs: Mapping[str, Any] | None = None,
+    remote_state_verified: bool = False,
 ) -> StagingLifecycleReceipt:
-    """Execute the 7-stage rehearsal verification on ephemeral staging resources.
+    """Execute the 8-stage rehearsal verification on ephemeral staging resources.
 
     Guarantees:
     1. Rehearses DB expand migration, data platform snapshot materialization,
@@ -2536,8 +2993,22 @@ def verify_ephemeral_staging(
         if lifecycle_outputs:
             sa_runtime = str(lifecycle_outputs.get("staging_runtime_service_account", "")).strip()
             sa_web = str(lifecycle_outputs.get("staging_web_service_account", "")).strip()
-        _, _, state_errors = _load_live_state_for_release(release_id, Path(state_dir))
+        state_marker, _, state_errors = _load_live_state_for_release(
+            release_id,
+            Path(state_dir),
+            remote_state_verified=remote_state_verified,
+        )
         errors.extend(state_errors)
+        if state_marker is not None and lifecycle_outputs is not None:
+            marker_outputs = state_marker.get("outputs")
+            if not isinstance(marker_outputs, Mapping):
+                errors.append(
+                    "Live lifecycle state has no authoritative Terraform output handoff."
+                )
+            elif dict(marker_outputs) != dict(lifecycle_outputs):
+                errors.append(
+                    "Terraform output handoff does not match the output handoff persisted at create time."
+                )
         if not operator_identity.strip():
             errors.append(
                 "Live staging verification requires the release-scoped operator identity from Terraform outputs."
@@ -2588,14 +3059,23 @@ def verify_ephemeral_staging(
                 try:
                     stage_result = stage_executor(stage_name, stage_context)
                     if isinstance(stage_result, Mapping):
-                        stage_success = bool(stage_result.get("success", True))
+                        if "success" not in stage_result:
+                            stage_success = False
+                            stage_detail = (
+                                f"Stage {stage_name} returned no explicit authoritative success result."
+                            )
+                            errors.append(f"Stage {stage_name} returned an incomplete result.")
+                        else:
+                            stage_success = bool(stage_result["success"])
                         stage_detail = str(stage_result.get("detail") or stage_detail)
                         # Only the live executor's secret-free proof fields may
                         # cross the receipt boundary. Never serialize an
                         # arbitrary callback mapping into a publishable receipt.
                         for key in (
+                            "service",
                             "job",
                             "image_digest",
+                            "egress",
                             "execution",
                             "endpoint",
                             "status",
@@ -2615,12 +3095,31 @@ def verify_ephemeral_staging(
                     stage_detail = f"Stage {stage_name} raised exception: {type(exc).__name__}"
                     errors.append(f"Stage {stage_name} error: {type(exc).__name__}: {exc}")
 
+            target_key = (
+                "staging_database_name"
+                if "db" in stage_name
+                else "staging_data_bucket"
+                if "snapshot" in stage_name
+                else "staging_runtime_service_account"
+            )
+            output_target = (
+                str(lifecycle_outputs.get(target_key, "")).strip()
+                if isinstance(lifecycle_outputs, Mapping)
+                else ""
+            )
             stage_receipt = {
                 "stage": stage_name,
                 "success": stage_success,
                 "status": "passed" if stage_success else "failed",
                 "details": stage_detail,
-                "target_resource": names.get("database_name" if "db" in stage_name else "bucket_name" if "snapshot" in stage_name else "sa_runtime"),
+                "target_resource": output_target
+                or names.get(
+                    "database_name"
+                    if "db" in stage_name
+                    else "bucket_name"
+                    if "snapshot" in stage_name
+                    else "sa_runtime"
+                ),
             }
             if stage_proof:
                 stage_receipt["proof"] = stage_proof
@@ -2651,6 +3150,7 @@ def verify_ephemeral_staging(
             "staging_runtime_sa": sa_runtime,
             "staging_web_sa": sa_web,
             "stages_count": len(stages_results),
+            "remote_state_verified": remote_state_verified,
         },
     )
 
@@ -2696,6 +3196,7 @@ def hold_ephemeral_staging(
     now: datetime | None = None,
     receipt_path: Path | str | None = None,
     require_live_state: bool = True,
+    remote_state_verified: bool = False,
 ) -> StagingLifecycleReceipt:
     """Record hold / retention of ephemeral staging resources for debugging upon failure.
 
@@ -2725,6 +3226,7 @@ def hold_ephemeral_staging(
             release_id,
             Path(state_dir),
             require_statuses=frozenset({"created", "verification_failed", "held"}),
+            remote_state_verified=remote_state_verified,
         )
         errors.extend(state_errors)
 
@@ -2774,6 +3276,7 @@ def hold_ephemeral_staging(
                     "status": "retained_for_debugging",
                     "created_at": str(row.get("created_at") or format_timestamp(created_dt)),
                     "expires_at": str(row.get("expires_at") or format_timestamp(expires_dt)),
+                    "ttl_hours": ttl_hours,
                     "labels": dict(row.get("labels", {})),
                 }
                 for row in inventory
@@ -2802,6 +3305,7 @@ def hold_ephemeral_staging(
             "ttl_hours": ttl_hours,
             "owner_task_id": owner_task_id,
             "live_state_required": require_live_state,
+            "remote_state_verified": remote_state_verified,
             "state_status": state_marker.get("status") if state_marker else None,
         },
     )
@@ -3573,6 +4077,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             action="store_true",
             help="Skip Terraform init when the module is already initialized",
         )
+        subparser.add_argument(
+            "--terraform-backend-bucket",
+            default="",
+            help="Protected GCS bucket for the durable Terraform backend",
+        )
+        subparser.add_argument(
+            "--terraform-backend-prefix",
+            default="",
+            help="Release-scoped prefix for the durable Terraform backend",
+        )
 
     # create
     create_p = subparsers.add_parser("create", help="Plan or create ephemeral staging")
@@ -3605,7 +4119,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     add_terraform_options(create_p)
 
     # verify
-    verify_p = subparsers.add_parser("verify", help="Run 7-stage rehearsal verification on ephemeral staging")
+    verify_p = subparsers.add_parser("verify", help="Run 8-stage rehearsal verification on ephemeral staging")
     verify_p.add_argument("--release-id", required=True, help="Release identifier")
     verify_p.add_argument("--candidate-sha", required=True, help="Exact 40-character commit SHA")
     verify_p.add_argument("--manifest-digest", required=True, help="SHA256 manifest digest")
@@ -3673,6 +4187,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "create":
         state_dir_path = Path(args.state_dir).expanduser().resolve()
+        if not args.dry_run and not args.outputs_out:
+            print(
+                "ERROR: live staging create requires --outputs-out for the Terraform authority handoff",
+                file=sys.stderr,
+            )
+            return 1
+        if not args.dry_run and not (args.terraform_backend_bucket and args.terraform_backend_prefix):
+            print(
+                "ERROR: live staging create requires the protected GCS Terraform backend bucket and release prefix",
+                file=sys.stderr,
+            )
+            return 1
         existing_created_at = ""
         if not args.created_at:
             _, existing_tfvars_path, existing_inventory_path = _terraform_state_paths(args.release_id, state_dir_path)
@@ -3752,6 +4278,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 terraform_bin=args.terraform_bin,
                 initialize=not args.skip_terraform_init,
                 outputs_path=Path(args.outputs_out) if args.outputs_out else None,
+                backend_bucket=args.terraform_backend_bucket,
+                backend_prefix=args.terraform_backend_prefix,
             )
             cleanup_executor = make_terraform_deletion_executor(
                 args.release_id,
@@ -3759,6 +4287,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state_dir=Path(args.state_dir),
                 terraform_bin=args.terraform_bin,
                 initialize=not args.skip_terraform_init,
+                backend_bucket=args.terraform_backend_bucket,
+                backend_prefix=args.terraform_backend_prefix,
             )
         receipt = create_ephemeral_staging(
             config,
@@ -3790,6 +4320,38 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 return 1
         stage_executor = None
+        remote_state_verified = False
+        if not args.dry_run and (args.terraform_backend_bucket or args.terraform_backend_prefix):
+            try:
+                backend_args = _terraform_backend_arguments(
+                    backend_bucket=args.terraform_backend_bucket,
+                    backend_prefix=args.terraform_backend_prefix,
+                )
+                _run_terraform(
+                    module_dir=Path(args.terraform_module_dir).expanduser().resolve(),
+                    terraform_bin=args.terraform_bin,
+                    arguments=["init", "-input=false", "-upgrade=false", *backend_args],
+                )
+                _terraform_state_pull(
+                    module_dir=Path(args.terraform_module_dir).expanduser().resolve(),
+                    terraform_bin=args.terraform_bin,
+                )
+                if lifecycle_outputs is None:
+                    raise RuntimeError(
+                        "release-scoped Terraform output handoff is required when reading durable state"
+                    )
+                remote_outputs = _terraform_output_values(
+                    module_dir=Path(args.terraform_module_dir).expanduser().resolve(),
+                    terraform_bin=args.terraform_bin,
+                )
+                if remote_outputs != dict(lifecycle_outputs):
+                    raise RuntimeError(
+                        "durable Terraform outputs do not match the release output handoff"
+                    )
+                remote_state_verified = True
+            except (RuntimeError, ValueError) as exc:
+                print(f"ERROR: cannot read durable staging Terraform state: {exc}", file=sys.stderr)
+                return 1
         if not args.dry_run and lifecycle_outputs is not None:
             try:
                 stage_executor = make_live_rehearsal_executor(
@@ -3815,6 +4377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             stage_executor=stage_executor,
             operator_identity=args.operator_identity,
             lifecycle_outputs=lifecycle_outputs,
+            remote_state_verified=remote_state_verified,
             receipt_path=getattr(args, "receipt", None),
         )
         print(json.dumps(receipt.to_dict(), indent=2))
@@ -3824,6 +4387,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         created_dt = None
         if args.created_at:
             created_dt = parse_timestamp(args.created_at)
+        remote_state_verified = False
+        if args.terraform_backend_bucket or args.terraform_backend_prefix:
+            try:
+                backend_args = _terraform_backend_arguments(
+                    backend_bucket=args.terraform_backend_bucket,
+                    backend_prefix=args.terraform_backend_prefix,
+                )
+                module_path = Path(args.terraform_module_dir).expanduser().resolve()
+                _run_terraform(
+                    module_dir=module_path,
+                    terraform_bin=args.terraform_bin,
+                    arguments=["init", "-input=false", "-upgrade=false", *backend_args],
+                )
+                _terraform_state_pull(module_dir=module_path, terraform_bin=args.terraform_bin)
+                remote_state_verified = True
+            except (RuntimeError, ValueError) as exc:
+                print(f"ERROR: cannot read durable staging Terraform state: {exc}", file=sys.stderr)
+                return 1
         receipt = hold_ephemeral_staging(
             release_id=args.release_id,
             project_id=args.project_id,
@@ -3834,6 +4415,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             created_at=created_dt,
             receipt_path=getattr(args, "receipt", None),
             require_live_state=True,
+            remote_state_verified=remote_state_verified,
         )
         print(json.dumps(receipt.to_dict(), indent=2))
         return 0 if receipt.success else 1
@@ -3858,6 +4440,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 state_dir=Path(args.state_dir),
                 terraform_bin=args.terraform_bin,
                 initialize=not args.skip_terraform_init,
+                backend_bucket=args.terraform_backend_bucket,
+                backend_prefix=args.terraform_backend_prefix,
             )
 
         receipt = cleanup_ephemeral_staging(
@@ -3894,12 +4478,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             executor = deletion_executors.get(target_id)
             if executor is None:
+                backend_prefix = ""
+                if args.terraform_backend_bucket or args.terraform_backend_prefix:
+                    configured_prefix = args.terraform_backend_prefix.rstrip("/")
+                    if configured_prefix.rsplit("/", 1)[-1] not in {
+                        target_id,
+                        release_label_value(target_id),
+                    }:
+                        configured_prefix = f"{configured_prefix}/{target_id}"
+                    backend_prefix = configured_prefix
                 executor = make_terraform_deletion_executor(
                     target_id,
                     module_dir=Path(args.terraform_module_dir),
                     state_dir=Path(args.state_dir),
                     terraform_bin=args.terraform_bin,
                     initialize=not args.skip_terraform_init,
+                    backend_bucket=args.terraform_backend_bucket,
+                    backend_prefix=backend_prefix,
                 )
                 deletion_executors[target_id] = executor
             return executor(resource)

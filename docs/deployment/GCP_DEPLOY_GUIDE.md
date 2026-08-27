@@ -106,13 +106,15 @@ In accordance with Rollout Plan §16, Auto-Workers must **fail-closed** and not 
    - The first environment dispatch leaves `api_image`, `web_image`, `worker_image`, and `scheduler_image` empty so the build job runs. Staging and production dispatches must pass all four exact references from the handoff artifact; supplying only some, a mutable tag, or a different reference is rejected before admission.
    - When the handoff is supplied, the build job is skipped and the deploy job passes those exact digest references to Cloud Run. The deploy script rejects tags in this mode and never rebuilds.
    - For `dev`: Deploys API/Web services, Migration/Worker/Scheduler jobs, updates scheduler triggers, and runs live E2E acceptance gate.
-   - For `staging`: 透過 `product_ops/deployment/staging_lifecycle.py create` 建立短生命週期 release-scoped 隔離資源（DB、Bucket、Tenant、Service Accounts、Cloud Run 服務、Paused 排程），並由 `staging_lifecycle.py verify` 執行 7 階段完整演練（Migration compatibility, snapshot materialization, authenticated smoke, worker idempotency, scheduler one-shot, backup/restore drill, rollback rehearsal, external providers disabled），產生 secret-free 收據上傳；失敗時執行 `staging_lifecycle.py hold` 依 TTL（24h）保留供除錯。
+   - For `staging`: 透過 `product_ops/deployment/staging_lifecycle.py create` 建立短生命週期 release-scoped 隔離資源（DB、Bucket、Tenant、Service Accounts、Cloud Run Services/Jobs、Paused 排程），並將 Terraform output handoff 作為唯一 runtime authority；`staging_lifecycle.py verify` 執行 8 階段完整演練（Migration compatibility, snapshot materialization, authenticated smoke, worker idempotency, scheduler one-shot, backup/restore drill, rollback rehearsal, external providers disabled），產生 secret-free 收據上傳。成功 closeout 後精確 cleanup；失敗時僅在 create state、ownership inventory 與 lifecycle marker 可讀時執行 `staging_lifecycle.py hold`，依 TTL（24h）保留供除錯。
    - For `production`: Deploys green candidate revisions (0% public traffic), executes green smoke checks, executes blue→green 100% traffic switch via `product_ops/deployment/bluegreen_release.py`, and updates scheduler trigger digests.
 
 3. **Automated Smoke Checks & Receipts**:
    - Verify API authenticated health checks with release-scoped least-privilege identity.
    - Verify Web operator console loads and authentication flows succeed.
    - Redacted JSON validation receipts are published as workflow artifacts (`runtime-release-${environment}-validation`).
+
+Staging 的 Terraform state 必須使用受保護的 GCS backend，prefix 固定包含完整 release id（`oday-plus/ephemeral-staging/<release_id>`）；state 內含 generated credentials，不能放在 runner `/tmp`、git 或一般 artifact。`create` 產生的 tfvars/inventory/lifecycle sidecar 與 output handoff 會寫入同一 release recovery bundle，供 failure hold、orphan recovery 及 production closeout 使用。Staging 驗證成功後不立即 cleanup；必須先驗證 production watch-window durable closeout receipt，再由同一 lifecycle cleanup 以 exact release labels 執行銷毀。
 
 ---
 
@@ -123,4 +125,3 @@ Live configuration readbacks and proof artifacts for environment bootstrap are p
 - `github-variables-audit.json`: Redacted audit of environment variables across `dev`, `staging`, and `production`.
 - `gcp-wif-iam-audit.json`: GCP WIF provider, IAM policy, and Secret Manager references.
 - `production-authority-prerequisites.json`: Human authority blocking condition checklist.
-

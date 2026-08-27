@@ -132,6 +132,7 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, outputs_tf)
 
         self.assertIn('output "staging_api_uri"', outputs_tf)
+        self.assertIn('output "staging_project_id"', outputs_tf)
         self.assertIn('output "staging_web_uri"', outputs_tf)
         self.assertIn('output "staging_database_name"', outputs_tf)
         self.assertIn('output "staging_data_bucket"', outputs_tf)
@@ -194,15 +195,27 @@ class EphemeralStagingModuleContractTests(unittest.TestCase):
             "cloud_sql_connection_name": "test:asia-east1:test-db",
             "network_name": "test-vpc",
             "subnetwork_name": "test-subnet",
-            "kms_key_id": "projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
-            "deployer_service_account_email": "deployer@test.iam.gserviceaccount.com",
+            "kms_key_id": "projects/test-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            "deployer_service_account_email": "deployer@test-staging-proj.iam.gserviceaccount.com",
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmppath = Path(tmpdir)
             # Copy module files
             for f in ("main.tf", "variables.tf", "outputs.tf"):
-                shutil.copy(MODULE_DIR / f, tmppath / f)
+                if f == "main.tf":
+                    # The live module uses a release-scoped GCS backend. This
+                    # unit test deliberately plans offline, so remove only
+                    # that backend stanza from the temporary copy.
+                    main_text = (MODULE_DIR / f).read_text(encoding="utf-8")
+                    backend_start = main_text.index("  # The workflow supplies a protected bucket")
+                    backend_end = main_text.index("  required_providers", backend_start)
+                    (tmppath / f).write_text(
+                        main_text[:backend_start] + main_text[backend_end:],
+                        encoding="utf-8",
+                    )
+                else:
+                    shutil.copy(MODULE_DIR / f, tmppath / f)
 
             # Init terraform
             init_res = subprocess.run(
@@ -270,7 +283,16 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
         cls._tmpdir = tempfile.TemporaryDirectory()
         cls.workdir = Path(cls._tmpdir.name)
         for filename in ("main.tf", "variables.tf", "outputs.tf"):
-            shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
+            if filename == "main.tf":
+                main_text = (MODULE_DIR / filename).read_text(encoding="utf-8")
+                backend_start = main_text.index("  # The workflow supplies a protected bucket")
+                backend_end = main_text.index("  required_providers", backend_start)
+                (cls.workdir / filename).write_text(
+                    main_text[:backend_start] + main_text[backend_end:],
+                    encoding="utf-8",
+                )
+            else:
+                shutil.copy(MODULE_DIR / filename, cls.workdir / filename)
 
         init_res = subprocess.run(
             ["terraform", f"-chdir={cls.workdir}", "init", "-backend=false"],
@@ -305,8 +327,8 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
             cloud_sql_connection_name="test:asia-east1:test-db",
             network_name="test-vpc",
             subnetwork_name="test-subnet",
-            kms_key_id="projects/p/locations/asia-east1/keyRings/r/cryptoKeys/k",
-            deployer_service_account_email="deployer@test.iam.gserviceaccount.com",
+            kms_key_id="projects/test-staging-proj/locations/asia-east1/keyRings/staging/cryptoKeys/release",
+            deployer_service_account_email="deployer@test-staging-proj.iam.gserviceaccount.com",
             created_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
 
@@ -391,4 +413,3 @@ class EphemeralStagingDefaultTenantPlanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
