@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -547,6 +548,30 @@ def _prune_worktree_lease_blocks(bucket: dict[str, Any]) -> None:
             bucket.pop(key, None)
 
 @_entrypoint
+def compute_worktree_state_identity(
+    worktree_path: Path | str,
+    *,
+    materialized_paths: Iterable[object] | None = None,
+) -> str:
+    """Compute an auditable, secret-free identity of the worktree state."""
+    try:
+        path = Path(worktree_path).resolve()
+    except (OSError, RuntimeError, ValueError):
+        return "unresolvable_path"
+    if not path.exists() or not path.is_dir():
+        return "missing_worktree"
+    head_sha = _git_commit_oid(path, "HEAD") or "none"
+    if _git_operation_in_progress(path):
+        return f"unresolved_git_operation:{head_sha}"
+    inspection = inspect_worktree(path, materialized_paths=materialized_paths)
+    if inspection.kind == "clean":
+        return f"clean:{head_sha}"
+    if inspection.kind == "orchestrator_seed_only":
+        return f"orchestrator_seed_only:{inspection.fingerprint}:{head_sha}"
+    return f"{inspection.kind}:{inspection.fingerprint}:{head_sha}"
+
+
+@_entrypoint
 def _record_worktree_lease_block(
     config: dict[str, Any],
     state: dict[str, Any],
@@ -554,6 +579,9 @@ def _record_worktree_lease_block(
     task_id: str,
     refresh_status: str,
     message: str,
+    worktree_path: Path | str | None = None,
+    materialized_paths: Any = None,
+    worktree_state_identity: str | None = None,
 ) -> int:
     """Count consecutive lease blocks and escalate once they stop being noise.
 
@@ -576,6 +604,24 @@ def _record_worktree_lease_block(
     entry["count"] = int(entry.get("count") or 0) + 1
     entry["last_at"] = utc_now()
     entry["message"] = message
+
+    if worktree_path is not None:
+        try:
+            wp = Path(worktree_path).resolve()
+            entry["worktree_path"] = str(wp)
+            if worktree_state_identity is None:
+                worktree_state_identity = compute_worktree_state_identity(wp, materialized_paths=materialized_paths)
+            entry["worktree_state_identity"] = worktree_state_identity
+        except (OSError, RuntimeError, ValueError):
+            entry["worktree_path"] = str(worktree_path)
+            if worktree_state_identity is not None:
+                entry["worktree_state_identity"] = worktree_state_identity
+    elif worktree_state_identity is not None:
+        entry["worktree_state_identity"] = worktree_state_identity
+
+    if materialized_paths is not None:
+        entry["materialized_paths"] = list(materialized_paths)
+
     bucket[key] = entry
 
     threshold = max(2, int(worker_runtime_settings(config).get("lease_block_escalate_after", 5)))
@@ -1659,6 +1705,8 @@ def prepare_worker_workspace(
                 task_id=str(request.task_id or workspace_task_id),
                 refresh_status=refresh_status,
                 message=message,
+                worktree_path=worktree_path,
+                materialized_paths=materialized_paths,
             )
             return False, message
         _clear_worktree_lease_block(state, str(request.task_id or workspace_task_id))
@@ -1758,6 +1806,8 @@ def prepare_worker_workspace(
                     task_id=str(request.task_id or workspace_task_id),
                     refresh_status=refresh_status,
                     message=message,
+                    worktree_path=worktree_path,
+                    materialized_paths=materialized_paths,
                 )
                 return False, message
             if refresh_status.startswith("ff_to_"):

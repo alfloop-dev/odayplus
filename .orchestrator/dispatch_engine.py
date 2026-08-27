@@ -3,9 +3,11 @@ from __future__ import annotations
 """Dispatch-focused logic extracted from legacy supervisor."""
 # ruff: noqa: F821
 
+from pathlib import Path
 from typing import Any
 
 from dispatch_policy import REASON_HELPER_CLAIM, worker_logical_dispatch_agent_id
+from worktree_cleanliness import inspect_worktree
 
 
 def _supervisor_module():
@@ -1239,6 +1241,7 @@ def worktree_block_still_matches_dispatch(
     task_map: dict[str, dict[str, Any]],
     *,
     retry_after_seconds: float = LEASE_BLOCK_RETRY_AFTER_SECONDS,
+    config: dict[str, Any] | None = None,
 ) -> bool:
     """Do not recreate an identical wake after a fail-closed worktree block.
 
@@ -1254,13 +1257,56 @@ def worktree_block_still_matches_dispatch(
     retry once the window elapses, so a repaired or repairable worktree comes
     back on its own while a genuinely stuck one still costs one attempt per
     window rather than one per tick.
+
+    In addition, if the underlying worktree has actually been cleaned (e.g. transient
+    untracked files like 0-byte ai-status lock removed, or task-owned changes committed
+    and clean) and has no git operation in progress, the task recovers eligibility on
+    the very next tick without waiting for the 1800s retry window to elapse.
     """
     task_id = str(task.get("id") or "")
-    entry = (state.get("worker_worktree_lease_blocks") or {}).get(normalize_agent_id(task_id) or task_id)
+    key = normalize_agent_id(task_id) or task_id
+    entry = (state.get("worker_worktree_lease_blocks") or {}).get(key)
     if not isinstance(entry, dict):
         return False
     if str(entry.get("dispatch_signature") or "") != ready_dispatch_signature(task, reason, task_map):
         return False
+
+    worktree_path_raw = entry.get("worktree_path") or entry.get("workspace_path")
+    if not worktree_path_raw:
+        leases = (state.get("worker_worktrees") or {}).get("leases") or {}
+        lease = leases.get(key) or leases.get(task_id)
+        if isinstance(lease, dict):
+            worktree_path_raw = lease.get("workspace_path")
+    if not worktree_path_raw:
+        handoffs = (state.get("worker_worktrees") or {}).get("handoff_blocks") or {}
+        handoff = handoffs.get(key) or handoffs.get(task_id)
+        if isinstance(handoff, dict):
+            worktree_path_raw = handoff.get("workspace_path")
+    if not worktree_path_raw and config is not None:
+        try:
+            candidate = worker_task_worktree_path(config, task_id)
+            if candidate and candidate.exists() and (candidate / ".git").exists():
+                worktree_path_raw = str(candidate)
+        except Exception:
+            pass
+
+    if worktree_path_raw:
+        try:
+            wp = Path(worktree_path_raw).resolve()
+            if wp.exists() and wp.is_dir() and (wp / ".git").exists():
+                if not _git_operation_in_progress(wp):
+                    mat_paths = entry.get("materialized_paths")
+                    if mat_paths is None:
+                        try:
+                            mat_paths = _orchestrator_materialized_paths(state, None, task_id)
+                        except Exception:
+                            mat_paths = []
+                    inspection = inspect_worktree(wp, materialized_paths=mat_paths)
+                    if inspection.handoff_clean:
+                        return False
+        except Exception:
+            pass
+
     if entry.get("escalated"):
         # An escalated block retries on a much longer window -- it does not stop.
         #
@@ -1817,6 +1863,7 @@ def dispatch_ready_tasks(
                 reason,
                 task_map,
                 retry_after_seconds=lease_block_retry_after_seconds(config),
+                config=config,
             ):
                 # An escalated block is terminal until something changes, so it
                 # has to appear where an owner looks. Between 2026-08-19 and
