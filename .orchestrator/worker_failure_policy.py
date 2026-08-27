@@ -57,7 +57,152 @@ def _entrypoint(func):
 
 
 @_entrypoint
+def is_cloud_run_quota_error(reason: str | None) -> bool:
+    if not reason:
+        return False
+    normalized = str(reason).lower()
+    return (
+        "cloud run" in normalized
+        and ("quota" in normalized or "resourceexhausted" in normalized or "429" in normalized)
+    ) or "run.googleapis.com" in normalized
+
+
+@_entrypoint
+def _has_runner_signal(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str) and value.strip().lower() in {"", "0", "none", "null"}:
+        return False
+    return value != 0
+
+
+@_entrypoint
+def worker_was_terminated(worker: dict[str, Any] | None) -> bool:
+    """Return whether the runner recorded an operator/signal termination.
+
+    A signal is an authoritative reason to ignore unstructured log text, but
+    it is not a successful worker outcome.  In particular, a SIGTERM can leave
+    an old provider-quota line at the end of a log while the runner is being
+    reaped by the supervisor.
+    """
+    if not isinstance(worker, dict):
+        return False
+    status = str(worker.get("status") or "").strip().lower()
+    if status in {"terminated", "cancelled", "canceled", "superseded"}:
+        return True
+    if _has_runner_signal(worker.get("runner_signal")) or _has_runner_signal(worker.get("signal")):
+        return True
+    try:
+        if int(worker.get("exit_code")) < 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    status_payload = _load_runtime_marker(status_path)
+    if not isinstance(status_payload, dict):
+        return False
+    if _has_runner_signal(status_payload.get("signal")):
+        return True
+    try:
+        return int(status_payload.get("exit_code")) < 0
+    except (TypeError, ValueError):
+        return False
+
+
+@_entrypoint
+def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
+    """Return true only for an explicit zero-exit runner completion.
+
+    ``worker["status"] == "completed"`` is a lifecycle disposition, not
+    proof that the runner succeeded.  Keep that distinction because a
+    supervisor/operator SIGTERM must be prevented from becoming a successful
+    postcondition transition.
+    """
+    if not isinstance(worker, dict) or worker_was_terminated(worker):
+        return False
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in {"completed", "success", "succeeded"}:
+        try:
+            exit_code = int(worker["exit_code"])
+            if exit_code == 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    if not runner_status:
+        try:
+            if "exit_code" in worker and worker.get("exit_code") is not None and int(worker["exit_code"]) == 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if status_path:
+        status_payload = _load_runtime_marker(status_path)
+        if isinstance(status_payload, dict):
+            status_val = str(status_payload.get("status") or "").strip().lower()
+            try:
+                code_val = int(status_payload["exit_code"])
+                if status_val in {"completed", "success", "succeeded"} and code_val == 0:
+                    return True
+            except (TypeError, ValueError):
+                pass
+    return False
+
+
+@_entrypoint
+def _has_explicit_failure_evidence(worker: dict[str, Any] | None) -> bool:
+    if not isinstance(worker, dict):
+        return False
+    try:
+        if "exit_code" in worker and worker.get("exit_code") is not None and int(worker["exit_code"]) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in {"failed", "error", "failure"}:
+        return True
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    if status_path:
+        status_payload = _load_runtime_marker(status_path)
+        if isinstance(status_payload, dict):
+            try:
+                if (
+                    "exit_code" in status_payload
+                    and status_payload.get("exit_code") is not None
+                    and int(status_payload["exit_code"]) > 0
+                ):
+                    return True
+            except (TypeError, ValueError):
+                pass
+            status_val = str(status_payload.get("status") or "").strip().lower()
+            if status_val in {"failed", "error", "failure"}:
+                return True
+    return False
+
+
+@_entrypoint
+def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
+    """Whether failure detection must ignore unstructured worker log text."""
+    if not isinstance(worker, dict):
+        return False
+    if worker_was_terminated(worker):
+        return True
+    if _has_explicit_failure_evidence(worker):
+        return False
+    if is_structured_successful_worker(worker):
+        return True
+    lifecycle_status = str(worker.get("status") or "").strip().lower()
+    if lifecycle_status in {"completed", "success", "succeeded"}:
+        return True
+    return False
+
+
+@_entrypoint
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
+    if worker_log_scan_should_be_skipped(worker):
+        return None
     log_path_value = worker.get("log_path")
     if not log_path_value:
         return None
@@ -221,9 +366,13 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
     }
     retryable_capacity_markers = {
         "status: 429",
+        ": 429",
+        " 429 ",
         "retryablequotaerror",
         "quota_exhausted",
         "resource_exhausted",
+        "resourceexhausted",
+        "resource has been exhausted",
         "rate limit",
         "rate limited",
         "no capacity available",
@@ -265,6 +414,8 @@ def classify_worker_failure(config: dict[str, Any], worker: dict[str, Any], reas
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if is_claude_session_limit_banner(config, provider, reason):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
+    if is_cloud_run_quota_error(reason):
+        return {"kind": "terminal", "transient": False, "label": "terminal"}
     if any(marker in normalized for marker in terminal_quota_markers):
         return {"kind": "quota_terminal", "transient": False, "label": "quota terminal"}
     if any(marker in normalized for marker in retryable_capacity_markers):
@@ -447,10 +598,10 @@ def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
     if runner_status not in {"completed", "success", "succeeded"}:
         return False
     try:
-        exit_code = int(worker.get("exit_code", 0))
+        exit_code = int(worker["exit_code"])
     except (TypeError, ValueError):
         return False
-    return exit_code == 0 and not worker.get("runner_signal")
+    return exit_code == 0 and not _has_runner_signal(worker.get("runner_signal"))
 
 @_entrypoint
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
@@ -782,6 +933,9 @@ def mark_provider_dispatch_paused(
     raw_ref: str | None = None,
     worker: dict[str, Any] | None = None,
 ) -> bool:
+    worker_obj = worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
+    if worker_log_scan_should_be_skipped(worker_obj):
+        return False
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")
     if not provider_id:
@@ -789,6 +943,8 @@ def mark_provider_dispatch_paused(
     pause_provider_id = provider_dispatch_group_id(config, provider) or provider_id
     now = datetime.now(UTC)
     effective_pause_kind = str(pause_kind or failure_kind or "").strip().lower()
+    if not should_pause_dispatch_for_failure_kind(effective_pause_kind):
+        return False
     if effective_pause_kind in {"auth", "provider_config", "provider_unavailable"}:
         if not settings.get("pause_on_auth_failure", True):
             return False
