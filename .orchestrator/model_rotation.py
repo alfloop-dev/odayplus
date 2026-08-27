@@ -14,6 +14,7 @@ Both the adapter (model selection at dispatch) and the supervisor (recording an
 exhausted pool on capacity/quota failure) call into this one module so their view
 of "which pool is active" can never diverge.
 """
+
 from __future__ import annotations
 
 import fcntl
@@ -22,14 +23,16 @@ import json
 import os
 import re
 import tempfile
-from contextlib import contextmanager
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 # Antigravity/agy reset hint, e.g. "Resets in 2h21m32s." or "refresh in 40 minutes".
-_RESET_HMS = re.compile(r"resets?\s+in\s+(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?", re.IGNORECASE)
+_RESET_HMS = re.compile(
+    r"resets?\s+in\s+(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?", re.IGNORECASE
+)
 _RESET_MINUTES = re.compile(r"(?:refresh|resets?)\s+in\s+(\d+)\s*minutes?", re.IGNORECASE)
 
 
@@ -47,6 +50,7 @@ def parse_reset_seconds(text: str | None) -> int | None:
         return total or None
     return None
 
+
 UTC = UTC
 _STATE_FILENAME = "antigravity_model_cooldown.json"
 _LEGACY_STATE_PATH = Path(__file__).resolve().parent / "runtime" / _STATE_FILENAME
@@ -63,17 +67,12 @@ def _canonical_state_path() -> Path:
     the existing worker contract.
     """
     raw_root = str(
-        os.environ.get("ORCH_STATUS_ROOT")
-        or os.environ.get("PANTHEON_STATUS_ROOT")
-        or ""
+        os.environ.get("ORCH_STATUS_ROOT") or os.environ.get("PANTHEON_STATUS_ROOT") or ""
     ).strip()
     if not raw_root:
         return _LEGACY_STATE_PATH
     return (
-        Path(os.path.expanduser(raw_root)).resolve()
-        / ".orchestrator"
-        / "runtime"
-        / _STATE_FILENAME
+        Path(os.path.expanduser(raw_root)).resolve() / ".orchestrator" / "runtime" / _STATE_FILENAME
     )
 
 
@@ -180,7 +179,9 @@ def _parse(ts: Any) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
-def _provider_antigravity_settings(config: dict[str, Any] | None, provider_id: str | None) -> dict[str, Any]:
+def _provider_antigravity_settings(
+    config: dict[str, Any] | None, provider_id: str | None
+) -> dict[str, Any]:
     providers = (config or {}).get("providers", {}) or {}
     key = str(provider_id or "").strip() or "antigravity"
     provider = providers.get(key) or providers.get("antigravity") or {}
@@ -194,7 +195,11 @@ def cooldown_scope(config: dict[str, Any] | None, provider_id: str | None) -> st
     pid = str(provider_id or "").strip()
     provider = providers.get(pid) if isinstance(providers.get(pid), dict) else {}
     settings = _provider_antigravity_settings(config, pid)
-    explicit = provider.get("quota_group") or provider.get("account_group") or settings.get("account_group")
+    explicit = (
+        provider.get("quota_group")
+        or provider.get("account_group")
+        or settings.get("account_group")
+    )
     if explicit:
         return f"account:{str(explicit).strip().lower()}"
     profile = str(settings.get("config_home") or settings.get("home") or "").strip()
@@ -289,7 +294,9 @@ def task_model_decision(
             "reason": f"business_priority_{priority}",
         }
 
-    high_keywords = [str(item).casefold() for item in policy.get("high_risk_keywords", []) if str(item)]
+    high_keywords = [
+        str(item).casefold() for item in policy.get("high_risk_keywords", []) if str(item)
+    ]
     matched_keyword = next((keyword for keyword in high_keywords if keyword in corpus), None)
     if matched_keyword:
         return {
@@ -298,7 +305,9 @@ def task_model_decision(
             "reason": f"sensitive_scope:{matched_keyword}",
         }
 
-    standard_keywords = [str(item).casefold() for item in policy.get("standard_task_keywords", []) if str(item)]
+    standard_keywords = [
+        str(item).casefold() for item in policy.get("standard_task_keywords", []) if str(item)
+    ]
     if any(keyword in corpus for keyword in standard_keywords):
         return {
             "model": str(policy.get("standard_model") or DEFAULT_STANDARD_MODEL).strip(),
@@ -319,7 +328,9 @@ def _primary_model(config: dict[str, Any] | None, provider_id: str | None) -> st
 
 
 def _fallback_model(config: dict[str, Any] | None, provider_id: str | None) -> str:
-    return str(rotation_config(config, provider_id).get("fallback_model") or DEFAULT_FALLBACK_MODEL).strip()
+    return str(
+        rotation_config(config, provider_id).get("fallback_model") or DEFAULT_FALLBACK_MODEL
+    ).strip()
 
 
 def _state_path() -> Path:
@@ -358,7 +369,7 @@ def _read_state_file(path: Path) -> tuple[bool, bool, dict[str, Any]]:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         return False, True, {}
-    except OSError:
+    except (OSError, UnicodeError):
         return True, False, {}
     if not raw.strip():
         return True, False, {}
@@ -417,9 +428,7 @@ def _write_migration_marker_unlocked(state_path: Path) -> None:
                 pass
 
 
-def _merge_legacy_state(
-    canonical: dict[str, Any], legacy: dict[str, Any]
-) -> dict[str, Any]:
+def _merge_legacy_state(canonical: dict[str, Any], legacy: dict[str, Any]) -> dict[str, Any]:
     """Merge legacy entries while retaining the later expiry per pool."""
     merged = dict(canonical)
     for scope, legacy_entry in legacy.items():
@@ -435,9 +444,7 @@ def _merge_legacy_state(
             field = f"{pool}_until"
             legacy_until = _parse(legacy_entry.get(field))
             current_until = _parse(current_entry.get(field))
-            if legacy_until is not None and (
-                current_until is None or legacy_until > current_until
-            ):
+            if legacy_until is not None and (current_until is None or legacy_until > current_until):
                 combined[field] = legacy_entry[field]
         for field in ("scope", "trigger_provider", "last_reason", "updated_at"):
             if field not in combined and field in legacy_entry:
@@ -455,7 +462,10 @@ def _load_unlocked(state_path: Path) -> dict[str, Any]:
         return {}
 
     marker_path = _migration_marker_path(state_path)
-    if canonical_exists and marker_path.exists():
+    if marker_path.exists():
+        # A marker is durable proof that the old checkout is no longer an
+        # authority. If the canonical payload was removed, fail safe to an
+        # empty state rather than resurrecting the old runtime copy.
         return canonical
 
     legacy_path = Path(_LEGACY_STATE_PATH)
@@ -505,13 +515,17 @@ def _entry(state: dict[str, Any], provider_id: str) -> dict[str, Any]:
     return entry if isinstance(entry, dict) else {}
 
 
-def pool_cooling(config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None) -> bool:
+def pool_cooling(
+    config: dict[str, Any] | None, provider_id: str, pool: str, now: datetime | None = None
+) -> bool:
     """Whether one pool is still inside its quota cooldown window."""
     until = _parse(_entry(_load(), cooldown_scope(config, provider_id)).get(f"{pool}_until"))
     return until is not None and _now(now) < until
 
 
-def active_pool(config: dict[str, Any] | None, provider_id: str, now: datetime | None = None) -> str | None:
+def active_pool(
+    config: dict[str, Any] | None, provider_id: str, now: datetime | None = None
+) -> str | None:
     """Return 'gemini', 'claude', or None (both pools currently cooling down)."""
     now = _now(now)
     entry = _entry(_load(), cooldown_scope(config, provider_id))
@@ -543,7 +557,11 @@ def resolve_active_selection(
     `pool` is None when rotation is disabled for the provider (legacy static
     model). Callers must persist `pool` on the worker record so a later quota
     failure is attributed to the pool the worker actually ran on."""
-    settings = settings if isinstance(settings, dict) else _provider_antigravity_settings(config, provider_id)
+    settings = (
+        settings
+        if isinstance(settings, dict)
+        else _provider_antigravity_settings(config, provider_id)
+    )
     decision = task_model_decision(config, provider_id, task=task, reason=reason)
     policy_model = str(decision.get("model") or "").strip()
     if not rotation_enabled(config, provider_id):
@@ -572,7 +590,9 @@ def resolve_active_selection(
     # NOT grant claude -- either it is cooling, or both pools are -- so billing
     # that id now would launch straight into the exhausted pool. Drop to the
     # standard gemini id instead of the tier the policy asked for.
-    if pool_for_model(selected_model) == "claude" and pool_cooling(config, str(provider_id or ""), "claude", now):
+    if pool_for_model(selected_model) == "claude" and pool_cooling(
+        config, str(provider_id or ""), "claude", now
+    ):
         selected_model = str(
             model_policy_config(config, provider_id).get("standard_model") or DEFAULT_STANDARD_MODEL
         ).strip()
@@ -585,7 +605,12 @@ def resolve_active_selection(
     }
 
 
-def resolve_active_model(config: dict[str, Any] | None, provider_id: str | None, settings: dict[str, Any] | None = None, now: datetime | None = None) -> str:
+def resolve_active_model(
+    config: dict[str, Any] | None,
+    provider_id: str | None,
+    settings: dict[str, Any] | None = None,
+    now: datetime | None = None,
+) -> str:
     """Model string for `agy --model`. '' means agy default (Gemini).
 
     When rotation is disabled, preserve legacy behaviour: return the static
@@ -593,7 +618,9 @@ def resolve_active_model(config: dict[str, Any] | None, provider_id: str | None,
     return str(resolve_active_selection(config, provider_id, settings, now=now).get("model") or "")
 
 
-def fallback_pool_available(config: dict[str, Any] | None, provider_id: str | None, now: datetime | None = None) -> bool:
+def fallback_pool_available(
+    config: dict[str, Any] | None, provider_id: str | None, now: datetime | None = None
+) -> bool:
     """Whether a rotating provider still has a pool available for redispatch."""
     return bool(
         rotation_enabled(config, provider_id)
@@ -616,7 +643,15 @@ def worker_dispatched_pool(worker: dict[str, Any] | None) -> str | None:
     return normalize_pool(worker.get(WORKER_POOL_KEY))
 
 
-def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, cooldown_seconds: int, *, reason: str | None = None, pool: str | None = None, now: datetime | None = None) -> dict[str, Any]:
+def record_exhaustion(
+    config: dict[str, Any] | None,
+    provider_id: str | None,
+    cooldown_seconds: int,
+    *,
+    reason: str | None = None,
+    pool: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
     """Mark the pool a failed worker was DISPATCHED ON as exhausted for `cooldown_seconds`.
 
     `pool` must be the immutable dispatch-time pool from the worker record.
@@ -636,8 +671,12 @@ def record_exhaustion(config: dict[str, Any] | None, provider_id: str | None, co
     if inferred:
         pool = active_pool(config, pid, now=now)
     if pool is None:
-        return {"exhausted_pool": None, "next_pool": None, "both_exhausted": True,
-                "message": f"{pid}: both Gemini and Claude/GPT pools already cooling."}
+        return {
+            "exhausted_pool": None,
+            "next_pool": None,
+            "both_exhausted": True,
+            "message": f"{pid}: both Gemini and Claude/GPT pools already cooling.",
+        }
     until = (now.replace(microsecond=0)).timestamp() + max(60, int(cooldown_seconds or 900))
     until_iso = datetime.fromtimestamp(until, tz=UTC).isoformat().replace("+00:00", "Z")
     state_path = _state_path()
@@ -680,7 +719,8 @@ def status(provider_id: str | None = None) -> dict[str, Any]:
         if direct:
             return {pid: direct}
         matches = [
-            entry for entry in state.values()
+            entry
+            for entry in state.values()
             if isinstance(entry, dict) and str(entry.get("trigger_provider") or "") == pid
         ]
         return {pid: matches[-1] if matches else {}}
