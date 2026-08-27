@@ -1178,18 +1178,11 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             if runner_succeeded
             else None
         )
-        is_success = (
-            runner_succeeded
-            or (
-                not worker_was_terminated(worker)
-                and (
-                    success_outcome in {"lifecycle_complete", "review_decided", "incremental_progress"}
-                    or worker_is_discussion_planning(worker)
-                    or worker_is_coordination_dispatch(worker)
-                )
-            )
-        )
-        failure_reason = None if is_success else detect_worker_failure(worker)
+        # A structured zero-exit runner may legitimately skip log-based failure
+        # detection even when it has not satisfied the task postcondition yet.
+        # Keep failure-scan eligibility separate from the completion outcome so
+        # the no-progress path below can still record and reassign the task.
+        failure_reason = None if runner_succeeded else detect_worker_failure(worker)
         if failure_reason and worker.get("status") != "failed":
             failure = classify_worker_failure(config, worker, failure_reason)
             failure_summary = summarize_failure_reason(failure_reason, str(worker.get("provider") or worker.get("agent_id") or ""))
@@ -1312,7 +1305,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
             continue
 
         if worker.get("status") not in {"completed", "failed", "manual_pending"}:
-            if not worker_was_terminated(worker) and worker_is_discussion_planning(worker):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_discussion_planning(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)
@@ -1332,7 +1330,12 @@ def poll_workers(config: dict[str, Any], state: dict[str, Any], provider_report:
                 finalize_queue_event_record(config, state, worker, "completed")
                 changed = True
                 continue
-            if not worker_was_terminated(worker) and worker_is_coordination_dispatch(worker):
+            if (
+                not worker_was_terminated(worker)
+                and not _has_explicit_failure_evidence(worker)
+                and not failure_reason
+                and worker_is_coordination_dispatch(worker)
+            ):
                 worker["status"] = "completed"
                 worker["last_event_at"] = utc_now()
                 clear_task_failure_streak(state, worker=worker)
