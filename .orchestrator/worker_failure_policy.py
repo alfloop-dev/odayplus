@@ -1572,6 +1572,11 @@ def agent_dispatch_disabled(config: dict[str, Any], agent_name: str | None) -> b
         return True
     agents_cfg = config.get("agents", {}) or {}
     agent = agents_cfg.get(agent_id) or agents_cfg.get(name)
+    if not isinstance(agent, dict):
+        for candidate in agents_cfg.values():
+            if isinstance(candidate, dict) and str(candidate.get("display_name") or candidate.get("name") or "").casefold() == name.casefold():
+                agent = candidate
+                break
     if isinstance(agent, dict):
         if agent.get("enabled") is False or agent.get("disabled") is True or str(agent.get("status") or "").lower() in {"disabled", "unavailable"}:
             return True
@@ -1691,6 +1696,33 @@ def first_viable_agent(
     # load is equal.
     counts = agent_open_task_counts(config, status, role=role)
     return min(viable, key=lambda name: (counts.get(normalize_agent_id(name), 0), viable.index(name)))
+
+@_entrypoint
+def has_configured_reassignment_candidates(
+    config: dict[str, Any],
+    preferred: list[str],
+    exclude: set[str],
+    *,
+    task: dict[str, Any] | None = None,
+    exclude_pools: set[str] | None = None,
+) -> bool:
+    known = known_agent_display_names(config)
+    seen: set[str] = set()
+    excluded_pool_ids = {normalize_agent_id(pool) for pool in (exclude_pools or set()) if normalize_agent_id(pool)}
+    for candidate in preferred:
+        name = str(candidate or "").strip()
+        if not name or name in seen or name in exclude:
+            continue
+        seen.add(name)
+        if is_human_gate_agent(name):
+            continue
+        if name in known:
+            if agent_account_pool_id(config, name) in excluded_pool_ids:
+                continue
+            if not agent_can_take_task(config, name, task):
+                continue
+            return True
+    return False
 
 @_entrypoint
 def agent_auto_dispatch_block_reason(
@@ -2027,6 +2059,14 @@ def reassign_tasks_after_review_churn(
             exclude_pools=excluded_pools,
         )
         if not new_owner or is_human_gate_agent(new_owner):
+            if has_configured_reassignment_candidates(
+                config,
+                owner_candidates,
+                exclude=set(epoch_failed_owners) | {owner, reviewer},
+                task=snapshot,
+                exclude_pools=excluded_pools,
+            ):
+                continue
             # Fail closed: no viable alternative owner available in this review churn epoch
             blocked_message = (
                 f"Review churn fail-closed: no viable alternative owner available after {reopen_count} reviewer reopens "
@@ -2064,6 +2104,7 @@ def reassign_tasks_after_review_churn(
                 changed = True
             continue
 
+        reviewer_candidates: list[str] = []
         if is_human_gate_agent(reviewer):
             new_reviewer = reviewer
         else:
@@ -2099,6 +2140,16 @@ def reassign_tasks_after_review_churn(
                     exclude_pools={agent_account_pool_id(config, new_owner)},
                 )
         if not new_reviewer:
+            reviewer_pool_exclusions = {agent_account_pool_id(config, new_owner)}
+            all_reviewer_candidates = ([reviewer] if reviewer else []) + reviewer_candidates
+            if has_configured_reassignment_candidates(
+                config,
+                all_reviewer_candidates,
+                exclude={new_owner},
+                task=snapshot,
+                exclude_pools=reviewer_pool_exclusions,
+            ):
+                continue
             # Fail closed: no viable reviewer available for new owner
             blocked_message = (
                 f"Review churn fail-closed: no viable reviewer available for new owner {new_owner} after "

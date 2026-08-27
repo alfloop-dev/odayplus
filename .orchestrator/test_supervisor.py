@@ -8246,6 +8246,310 @@ class WorkerReassignmentTests(unittest.TestCase):
         self.assertEqual(event["type"], "review_churn_reassigned")
         self.assertEqual(event["epoch_failed_owners"], ["Codex2"])
 
+    def test_review_churn_antigravity5_deferred_when_codex_pool_saturated_and_recovers(self) -> None:
+        config = {
+            "account_pools": {
+                "agy_shared": {"max_concurrent": 2, "state": "healthy"},
+                "codex_main": {"max_concurrent": 1, "state": "healthy"},
+                "claude_main": {"max_concurrent": 1, "state": "healthy"},
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": True,
+                },
+                "owner_fallbacks": {
+                    "Antigravity5": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity5": {
+                    "display_name": "Antigravity5",
+                    "provider": "antigravity",
+                    "account_pool": "agy_shared",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "account_pool": "codex_main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "account_pool": "claude_main",
+                },
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-ANTIGRAVITY5-CHURN",
+                    "status": "in_progress",
+                    "owner": "Antigravity5",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 2,
+                }
+            ]
+        }
+        # Tick 1: Codex pool is temporarily saturated (1 active worker in codex_main).
+        state_saturated = {
+            "workers": {
+                "w1": {
+                    "run_id": "r1",
+                    "task_id": "OTHER-TASK-001",
+                    "agent_id": "codex",
+                    "quota_group": "codex_main",
+                    "status": "running",
+                }
+            }
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, state_saturated, status)
+
+        # Must not fail closed to Human/Ops blocked; should defer to subsequent tick.
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+        self.assertEqual(status["tasks"][0]["status"], "in_progress")
+        self.assertEqual(status["tasks"][0]["owner"], "Antigravity5")
+
+        # Tick 2: Codex pool capacity recovers (no active workers).
+        state_healthy = {"workers": {}}
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, state_healthy, status)
+
+        self.assertTrue(changed)
+        persist.assert_called_once()
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Claude")
+        self.assertEqual(kwargs["new_status"], "todo")
+        self.assertEqual(kwargs["task_updates"]["review_churn_reassigned_at_count"], 2)
+        self.assertEqual(kwargs["task_updates"]["review_churn_previous_owner"], "Antigravity5")
+        self.assertEqual(kwargs["task_updates"]["review_churn_epoch_failed_owners"], ["Antigravity5"])
+        event = write_activity_log.call_args.args[1]
+        self.assertEqual(event["type"], "review_churn_reassigned")
+        self.assertEqual(event["from_owner"], "Antigravity5")
+        self.assertEqual(event["to_owner"], "Codex")
+        self.assertEqual(event["epoch_failed_owners"], ["Antigravity5"])
+
+    def test_review_churn_defers_when_candidate_in_cooldown_and_recovers(self) -> None:
+        config = {
+            "account_pools": {
+                "agy_shared": {"max_concurrent": 1, "state": "healthy"},
+                "codex_main": {"max_concurrent": 1, "state": "healthy"},
+                "claude_main": {"max_concurrent": 1, "state": "healthy"},
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": True,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "agy_shared",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "account_pool": "codex_main",
+                },
+                "claude": {
+                    "display_name": "Claude",
+                    "provider": "claude",
+                    "account_pool": "claude_main",
+                },
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-COOLDOWN-CHURN",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "Claude",
+                    "review_reopen_count": 2,
+                }
+            ]
+        }
+        # Tick 1: codex_main is in cooldown.
+        state_cooldown = {
+            "account_pool_runtime": {
+                "codex_main": {
+                    "state": "cooldown",
+                    "effective_concurrency": 0,
+                    "next_probe_at": "2099-01-01T00:00:00Z",
+                }
+            }
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, state_cooldown, status)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+        # Tick 2: codex_main pool is healthy again.
+        state_healthy = {
+            "account_pool_runtime": {
+                "codex_main": {
+                    "state": "healthy",
+                    "effective_concurrency": 1,
+                }
+            }
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, state_healthy, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_status"], "todo")
+
+    def test_has_configured_reassignment_candidates(self) -> None:
+        config = {
+            "agents": {
+                "antigravity": {"display_name": "Antigravity", "provider": "antigravity", "account_pool": "agy_shared"},
+                "antigravity2": {"display_name": "Antigravity2", "provider": "antigravity", "account_pool": "agy_shared"},
+                "codex": {"display_name": "Codex", "provider": "codex", "account_pool": "codex_main"},
+                "disabled_agent": {"display_name": "DisabledAgent", "provider": "other", "enabled": False},
+            },
+        }
+        # Codex is viable across account pools
+        self.assertTrue(
+            worker_failure_policy.has_configured_reassignment_candidates(
+                config,
+                ["Antigravity2", "Codex"],
+                exclude={"Antigravity"},
+                exclude_pools={"agy_shared"},
+            )
+        )
+        # Only candidates in excluded pool or exclude set -> returns False
+        self.assertFalse(
+            worker_failure_policy.has_configured_reassignment_candidates(
+                config,
+                ["Antigravity2", "Codex"],
+                exclude={"Antigravity", "Codex"},
+                exclude_pools={"agy_shared"},
+            )
+        )
+        # Only disabled or human gate agents -> returns False
+        self.assertFalse(
+            worker_failure_policy.has_configured_reassignment_candidates(
+                config,
+                ["Human/Ops", "DisabledAgent"],
+                exclude=set(),
+            )
+        )
+
+    def test_review_churn_defers_when_reviewer_candidate_temporarily_unavailable_and_recovers(self) -> None:
+        config = {
+            "account_pools": {
+                "agy_shared": {"max_concurrent": 1, "state": "healthy"},
+                "codex_main": {"max_concurrent": 1, "state": "healthy"},
+                "gemini_main": {"max_concurrent": 1, "state": "healthy"},
+            },
+            "worker_reassignment": {
+                "enabled": True,
+                "review_churn": {
+                    "enabled": True,
+                    "reassign_after_reopens": 2,
+                    "require_different_account_pool": True,
+                },
+                "owner_fallbacks": {
+                    "Antigravity": ["Codex"],
+                },
+                "reviewer_fallbacks": {
+                    "Antigravity": ["Gemini"],
+                },
+            },
+            "agents": {
+                "antigravity": {
+                    "display_name": "Antigravity",
+                    "provider": "antigravity",
+                    "account_pool": "agy_shared",
+                },
+                "codex": {
+                    "display_name": "Codex",
+                    "provider": "codex",
+                    "account_pool": "codex_main",
+                },
+                "gemini": {
+                    "display_name": "Gemini",
+                    "provider": "gemini",
+                    "account_pool": "gemini_main",
+                },
+            },
+        }
+        status = {
+            "tasks": [
+                {
+                    "id": "ODP-REVIEWER-CHURN",
+                    "status": "in_progress",
+                    "owner": "Antigravity",
+                    "reviewer": "",
+                    "review_reopen_count": 2,
+                }
+            ]
+        }
+        # Tick 1: Gemini pool is temporarily saturated
+        state_saturated = {
+            "workers": {
+                "w1": {
+                    "run_id": "r1",
+                    "task_id": "OTHER-TASK-002",
+                    "agent_id": "gemini",
+                    "quota_group": "gemini_main",
+                    "status": "running",
+                }
+            }
+        }
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment") as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, state_saturated, status)
+
+        self.assertFalse(changed)
+        persist.assert_not_called()
+        write_activity_log.assert_not_called()
+
+        # Tick 2: Gemini pool recovers
+        state_healthy = {"workers": {}}
+        with (
+            mock.patch.object(supervisor, "persist_task_reassignment", return_value=True) as persist,
+            mock.patch.object(supervisor, "write_activity_log") as write_activity_log,
+        ):
+            changed = supervisor.reassign_tasks_after_review_churn(config, state_healthy, status)
+
+        self.assertTrue(changed)
+        kwargs = persist.call_args.kwargs
+        self.assertEqual(kwargs["new_owner"], "Codex")
+        self.assertEqual(kwargs["new_reviewer"], "Gemini")
+        self.assertEqual(kwargs["new_status"], "todo")
+
     def test_reassign_review_skips_paused_reviewer_candidates(self) -> None:
         config = {
             "worker_reassignment": {
