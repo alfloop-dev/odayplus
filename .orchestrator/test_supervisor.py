@@ -2723,11 +2723,227 @@ class ProcessQueueDispatchGuardTests(unittest.TestCase):
         )
 
         self.assertEqual(request.agent_id, "codex1_2")
-        self.assertEqual(request.provider, "codex1-2")
+        # The slot identifies process capacity; the logical target owns the
+        # provider identity used by the adapter.
+        self.assertEqual(request.provider, "codex")
         self.assertEqual(request.metadata["logical_agent_id"], "codex")
         self.assertEqual(request.metadata["dispatch_slot_id"], "codex1_2")
         self.assertEqual(request.metadata["dispatch_slot"], "codex1-2")
         self.assertEqual(request.metadata["target_display_name"], "Codex")
+
+    def test_antigravity_logical_provider_survives_shared_slot_adapter_launch(self) -> None:
+        from adapters.antigravity import AntigravityAdapter
+
+        with tempfile.TemporaryDirectory(prefix="pantheon-agy-provider-authority-") as tmpdir:
+            root = Path(tmpdir)
+            logical_home = root / "ag2-home"
+            slot_home = root / "ag-home"
+            workspace = root / "workspace"
+            config = {
+                "agents": {
+                    "antigravity2": {
+                        "id": "antigravity2",
+                        "display_name": "Antigravity2",
+                        "provider": "antigravity2",
+                        "adapter": "antigravity",
+                        "account_pool": "antigravity_main",
+                        "worker_slots": ["antigravity_slot_1"],
+                    },
+                    "antigravity_slot_1": {
+                        "id": "antigravity_slot_1",
+                        "display_name": "antigravity_slot_1",
+                        "provider": "antigravity",
+                        "adapter": "antigravity",
+                        "account_pool": "antigravity_main",
+                        "dispatch_slot_for_pool": "antigravity_main",
+                        "slot_id": "antigravity_slot_1",
+                    },
+                },
+                "providers": {
+                    "antigravity": {
+                        "delivery_mode": "antigravity",
+                        "antigravity": {
+                            "cli": "agy",
+                            "config_home": str(slot_home),
+                            "model_rotation": {
+                                "enabled": True,
+                                "primary_model": "gemini-slot-model",
+                                "fallback_model": "claude-slot-model",
+                            },
+                        },
+                    },
+                    "antigravity2": {
+                        "delivery_mode": "antigravity",
+                        "antigravity": {
+                            "cli": "agy",
+                            "config_home": str(logical_home),
+                            "model_rotation": {
+                                "enabled": True,
+                                "primary_model": "gemini-logical-model",
+                                "fallback_model": "claude-logical-model",
+                            },
+                        },
+                    },
+                },
+            }
+            event = {
+                "target_agent": "antigravity2",
+                "target_display_name": "Antigravity2",
+                "message": "wake",
+                "task_id": "ORCH-AGY-LOGICAL-PROVIDER-AUTHORITY-TEST",
+                "reason": "owned_ready_dispatch",
+                "context_files": [],
+            }
+            request = supervisor.build_request(
+                config,
+                event,
+                agent_id_override="antigravity_slot_1",
+            )
+
+            self.assertEqual(request.agent_id, "antigravity_slot_1")
+            self.assertEqual(request.provider, "antigravity2")
+            self.assertEqual(request.delivery_mode, "antigravity")
+            self.assertEqual(request.metadata["logical_agent_id"], "antigravity2")
+
+            process = mock.Mock(pid=4321)
+            previous_state_path = supervisor.model_rotation._STATE_PATH
+            supervisor.model_rotation._STATE_PATH = root / "model-cooldown.json"
+            try:
+                with (
+                    mock.patch(
+                        "adapters.antigravity.configured_provider_binary",
+                        return_value="/usr/bin/agy",
+                    ),
+                    mock.patch("adapters.antigravity._auth_ready", return_value=True) as auth_ready,
+                    mock.patch(
+                        "adapters.antigravity.delivery_workspace_root",
+                        return_value=workspace,
+                    ),
+                    mock.patch(
+                        "adapters.base.runtime_log_path",
+                        return_value=root / "agy.log",
+                    ),
+                    mock.patch(
+                        "adapters.base.new_runtime_id",
+                        return_value="antigravity2-test",
+                    ),
+                    mock.patch(
+                        "adapters.base.worker_runtime_paths",
+                        return_value={
+                            "heartbeat_path": root / "heartbeat.json",
+                            "status_path": root / "runner.json",
+                        },
+                    ),
+                    mock.patch(
+                        "adapters.base.spawn_background_process",
+                        return_value=(process, root / "agy.log"),
+                    ) as spawn,
+                ):
+                    adapter = AntigravityAdapter(config=config, provider_capabilities={})
+                    first = adapter.deliver(request)
+
+                    self.assertTrue(first.ok)
+                    self.assertEqual(first.metadata[supervisor.model_rotation.WORKER_POOL_KEY], "gemini")
+                    self.assertEqual(first.metadata[supervisor.model_rotation.WORKER_MODEL_KEY], "gemini-logical-model")
+                    self.assertEqual(auth_ready.call_args.args, (config, "antigravity2"))
+                    first_env = spawn.call_args.kwargs["env"]
+                    self.assertEqual(first_env["HOME"], str(logical_home))
+                    self.assertEqual(first_env["ORCH_PROVIDER"], "antigravity2")
+                    self.assertEqual(first_env["ORCH_AGENT_ID"], "antigravity_slot_1")
+
+                    supervisor.model_rotation.record_exhaustion(
+                        config,
+                        request.provider,
+                        900,
+                        pool="gemini",
+                    )
+                    scope = supervisor.model_rotation.cooldown_scope(config, request.provider)
+                    slot_scope = supervisor.model_rotation.cooldown_scope(config, "antigravity")
+                    self.assertNotEqual(scope, slot_scope)
+                    cooldown = json.loads((root / "model-cooldown.json").read_text(encoding="utf-8"))
+                    self.assertIn(scope, cooldown)
+                    self.assertNotIn(slot_scope, cooldown)
+
+                    second = adapter.deliver(request)
+                    self.assertTrue(second.ok)
+                    self.assertEqual(second.metadata[supervisor.model_rotation.WORKER_POOL_KEY], "claude")
+                    self.assertEqual(second.metadata[supervisor.model_rotation.WORKER_MODEL_KEY], "claude-logical-model")
+            finally:
+                supervisor.model_rotation._STATE_PATH = previous_state_path
+
+    def test_start_worker_record_keeps_logical_provider_and_model_metadata(self) -> None:
+        from adapters.base import DeliveryResult
+
+        config = {
+            "agents": {
+                "antigravity2": {
+                    "id": "antigravity2",
+                    "provider": "antigravity2",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+                "antigravity_slot_1": {
+                    "id": "antigravity_slot_1",
+                    "provider": "antigravity",
+                    "adapter": "antigravity",
+                    "account_pool": "antigravity_main",
+                },
+            },
+            "providers": {
+                "antigravity2": {"delivery_mode": "antigravity"},
+                "antigravity": {"delivery_mode": "antigravity"},
+            },
+        }
+        request = supervisor.build_request(
+            config,
+            {
+                "target_agent": "antigravity2",
+                "message": "wake",
+                "task_id": "ORCH-AGY-LOGICAL-PROVIDER-AUTHORITY-RECORD-TEST",
+                "context_files": [],
+            },
+            agent_id_override="antigravity_slot_1",
+        )
+        result = DeliveryResult(
+            ok=True,
+            adapter="antigravity",
+            mode="antigravity",
+            target="Antigravity2",
+            auto_delivered=True,
+            manual_confirmation_required=False,
+            run_id="agy-logical-record-test",
+            metadata={
+                supervisor.model_rotation.WORKER_POOL_KEY: "gemini",
+                supervisor.model_rotation.WORKER_MODEL_KEY: "gemini-logical-model",
+            },
+        )
+        state: dict[str, Any] = {"workers": {}}
+        adapter = mock.Mock()
+        adapter.deliver.return_value = result
+        with (
+            mock.patch.object(supervisor, "build_adapter", return_value=adapter),
+            mock.patch.object(supervisor, "save_runtime_state"),
+            mock.patch.object(supervisor, "write_activity_log"),
+            mock.patch.object(supervisor, "record_worker_runtime_measurement"),
+        ):
+            ok, run_id, _ = supervisor.start_worker_for_request(
+                config,
+                state,
+                {},
+                request,
+                queue_event_id="evt-logical-record",
+                attempt_count=1,
+                event_id_for_log="evt-logical-record",
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(run_id, "agy-logical-record-test")
+        worker = state["workers"][run_id]
+        self.assertEqual(worker["agent_id"], "antigravity_slot_1")
+        self.assertEqual(worker["logical_agent_id"], "antigravity2")
+        self.assertEqual(worker["provider"], "antigravity2")
+        self.assertEqual(worker["quota_group"], "antigravity_main")
+        self.assertEqual(worker["metadata"][supervisor.model_rotation.WORKER_MODEL_KEY], "gemini-logical-model")
 
     def test_select_dispatch_agent_id_chooses_free_codex_slot(self) -> None:
         config = {
