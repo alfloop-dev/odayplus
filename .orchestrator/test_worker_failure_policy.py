@@ -136,6 +136,82 @@ class WorkerFailurePolicyAuthorityTests(unittest.TestCase):
         self.assertFalse(paused)
         self.assertNotIn("codex", state.get("provider_guardrails", {}).get("dispatch_pauses", {}))
 
+    def test_signal_termination_skips_log_scan_but_is_not_success(self) -> None:
+        """A signal is structured termination: skip stale logs, but do not call it success."""
+        for runner_status, exit_code, signal_value in (
+            ("completed", 0, 15),
+            ("failed", -15, 15),
+        ):
+            with self.subTest(runner_status=runner_status, exit_code=exit_code):
+                tmpdir, worker = self._make_worker_log("ERROR: You've hit your usage limit.\n")
+                try:
+                    worker.update(
+                        {
+                            "status": "running",
+                            "runner_status": runner_status,
+                            "exit_code": exit_code,
+                            "runner_signal": signal_value,
+                        }
+                    )
+                    self.assertTrue(worker_failure_policy.worker_was_terminated(worker))
+                    self.assertTrue(worker_failure_policy.worker_log_scan_should_be_skipped(worker))
+                    self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+                    self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+
+                    state: dict[str, Any] = {}
+                    paused = worker_failure_policy.mark_provider_dispatch_paused(
+                        self.config,
+                        state,
+                        "codex",
+                        "402 You have no quota",
+                        failure_kind="quota_terminal",
+                        pause_kind="quota_terminal",
+                        worker=worker,
+                    )
+                    self.assertFalse(paused)
+                    self.assertNotIn("codex", state.get("provider_guardrails", {}).get("dispatch_pauses", {}))
+                finally:
+                    tmpdir.cleanup()
+
+    def test_completed_lifecycle_status_skips_scan_without_proving_success(self) -> None:
+        """Lifecycle completion suppresses stale log parsing, even without runner proof."""
+        tmpdir, worker = self._make_worker_log("ERROR: You've hit your usage limit.\n")
+        try:
+            worker["status"] = "completed"
+            self.assertTrue(worker_failure_policy.worker_log_scan_should_be_skipped(worker))
+            self.assertFalse(worker_failure_policy.is_structured_successful_worker(worker))
+            self.assertIsNone(worker_failure_policy.detect_worker_failure(worker))
+        finally:
+            tmpdir.cleanup()
+
+    def test_nonzero_exit_real_cli_quota_still_detects_and_pauses(self) -> None:
+        """A failed nonzero runner must still surface a real CLI quota signal."""
+        tmpdir, worker = self._make_worker_log(
+            "ERROR: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage.\n"
+        )
+        try:
+            worker.update({"status": "running", "runner_status": "failed", "exit_code": 1})
+            reason = worker_failure_policy.detect_worker_failure(worker)
+            self.assertIsNotNone(reason)
+            failure = worker_failure_policy.classify_worker_failure(self.config, worker, reason)
+            self.assertEqual(failure.get("kind"), "quota_terminal")
+            state: dict[str, Any] = {}
+            self.assertTrue(
+                worker_failure_policy.mark_provider_dispatch_paused(
+                    self.config,
+                    state,
+                    "codex",
+                    reason,
+                    failure_kind=str(failure["kind"]),
+                    pause_kind=str(failure["kind"]),
+                    worker=worker,
+                )
+            )
+            self.assertIn("codex", state["provider_guardrails"]["dispatch_pauses"])
+            self.assertEqual(state["account_pool_runtime"]["codex"]["state"], "cooldown")
+        finally:
+            tmpdir.cleanup()
+
     def test_cloud_run_quota_exceeded_not_detected_as_worker_failure(self) -> None:
         """Task log containing Cloud Run API quota exceeded string must not be detected as worker failure."""
         for text in (

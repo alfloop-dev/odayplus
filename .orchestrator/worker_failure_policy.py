@@ -68,23 +68,73 @@ def is_cloud_run_quota_error(reason: str | None) -> bool:
 
 
 @_entrypoint
-def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
+def _has_runner_signal(value: Any) -> bool:
+    if value is None or value is False:
+        return False
+    if isinstance(value, str) and value.strip().lower() in {"", "0", "none", "null"}:
+        return False
+    return value != 0
+
+
+@_entrypoint
+def worker_was_terminated(worker: dict[str, Any] | None) -> bool:
+    """Return whether the runner recorded an operator/signal termination.
+
+    A signal is an authoritative reason to ignore unstructured log text, but
+    it is not a successful worker outcome.  In particular, a SIGTERM can leave
+    an old provider-quota line at the end of a log while the runner is being
+    reaped by the supervisor.
+    """
     if not isinstance(worker, dict):
         return False
-    if str(worker.get("status") or "").strip().lower() in {"completed", "success", "succeeded"}:
+    status = str(worker.get("status") or "").strip().lower()
+    if status in {"terminated", "cancelled", "canceled", "superseded"}:
         return True
-    if str(worker.get("runner_status") or "").strip().lower() in {"completed", "success", "succeeded"}:
-        try:
-            exit_code = int(worker.get("exit_code", 0))
-            if exit_code == 0 and not worker.get("runner_signal"):
-                return True
-        except (TypeError, ValueError):
-            pass
+    if _has_runner_signal(worker.get("runner_signal")) or _has_runner_signal(worker.get("signal")):
+        return True
     try:
-        if "exit_code" in worker and int(worker.get("exit_code")) == 0 and not worker.get("runner_signal"):
+        if int(worker.get("exit_code")) < 0:
             return True
     except (TypeError, ValueError):
         pass
+    metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
+    status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
+    status_payload = _load_runtime_marker(status_path)
+    if not isinstance(status_payload, dict):
+        return False
+    if _has_runner_signal(status_payload.get("signal")):
+        return True
+    try:
+        return int(status_payload.get("exit_code")) < 0
+    except (TypeError, ValueError):
+        return False
+
+
+@_entrypoint
+def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
+    """Return true only for an explicit zero-exit runner completion.
+
+    ``worker["status"] == "completed"`` is a lifecycle disposition, not
+    proof that the runner succeeded.  Keep that distinction because a
+    supervisor/operator SIGTERM must be prevented from becoming a successful
+    postcondition transition.
+    """
+    if not isinstance(worker, dict) or worker_was_terminated(worker):
+        return False
+    runner_status = str(worker.get("runner_status") or "").strip().lower()
+    if runner_status in {"completed", "success", "succeeded"}:
+        try:
+            exit_code = int(worker["exit_code"])
+            if exit_code == 0:
+                return True
+        except (TypeError, ValueError):
+            pass
+    if not runner_status:
+        try:
+            if "exit_code" in worker and worker.get("exit_code") is not None and int(worker["exit_code"]) == 0:
+                return True
+        except (TypeError, ValueError):
+            pass
     metadata = worker.get("metadata") if isinstance(worker.get("metadata"), dict) else {}
     status_path = worker.get("runner_status_path") or metadata.get("runner_status_path")
     if status_path:
@@ -92,11 +142,8 @@ def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
         if isinstance(status_payload, dict):
             status_val = str(status_payload.get("status") or "").strip().lower()
             try:
-                code_val = int(status_payload.get("exit_code", 0)) if "exit_code" in status_payload else 0
-                signal_val = status_payload.get("signal")
-                if status_val in {"completed", "success", "succeeded"} and code_val == 0 and not signal_val:
-                    return True
-                if "exit_code" in status_payload and code_val == 0 and not signal_val and not status_payload.get("error"):
+                code_val = int(status_payload["exit_code"])
+                if status_val in {"completed", "success", "succeeded"} and code_val == 0:
                     return True
             except (TypeError, ValueError):
                 pass
@@ -104,8 +151,19 @@ def is_structured_successful_worker(worker: dict[str, Any] | None) -> bool:
 
 
 @_entrypoint
+def worker_log_scan_should_be_skipped(worker: dict[str, Any] | None) -> bool:
+    """Whether failure detection must ignore unstructured worker log text."""
+    if not isinstance(worker, dict):
+        return False
+    lifecycle_status = str(worker.get("status") or "").strip().lower()
+    if lifecycle_status in {"completed", "success", "succeeded"}:
+        return True
+    return worker_was_terminated(worker) or is_structured_successful_worker(worker)
+
+
+@_entrypoint
 def detect_worker_failure(worker: dict[str, Any]) -> str | None:
-    if is_structured_successful_worker(worker):
+    if worker_log_scan_should_be_skipped(worker):
         return None
     log_path_value = worker.get("log_path")
     if not log_path_value:
@@ -502,10 +560,10 @@ def worker_runner_succeeded(worker: dict[str, Any]) -> bool:
     if runner_status not in {"completed", "success", "succeeded"}:
         return False
     try:
-        exit_code = int(worker.get("exit_code", 0))
+        exit_code = int(worker["exit_code"])
     except (TypeError, ValueError):
         return False
-    return exit_code == 0 and not worker.get("runner_signal")
+    return exit_code == 0 and not _has_runner_signal(worker.get("runner_signal"))
 
 @_entrypoint
 def worker_heartbeat_is_stale(config: dict[str, Any], worker: dict[str, Any], now: datetime | None = None) -> bool:
@@ -838,7 +896,7 @@ def mark_provider_dispatch_paused(
     worker: dict[str, Any] | None = None,
 ) -> bool:
     worker_obj = worker if isinstance(worker, dict) else _lookup_worker_record(state, worker_run_id)
-    if is_structured_successful_worker(worker_obj):
+    if worker_log_scan_should_be_skipped(worker_obj):
         return False
     settings = provider_guardrail_settings(config)
     provider_id = normalize_agent_id(provider or "")

@@ -279,6 +279,8 @@ _FAILURE_HELPER_FUNCTIONS = [
 "review_churn_settings",
 "worker_retry_settings",
 "worker_runner_succeeded",
+"worker_log_scan_should_be_skipped",
+"worker_was_terminated",
 "worker_runtime_metrics_bucket",
 "worker_runtime_settings",
 "worker_supports_approval_resume",
@@ -3154,12 +3156,16 @@ def reconcile_runtime_on_boot(config: dict[str, Any], state: dict[str, Any]) -> 
             for value in ready_dispatch_settings(config).get("worker_terminal_statuses", ["done", "review_approved"])
         }
         current_task = task_map.get(str(worker.get("task_id") or ""), {})
-        success_outcome = successful_worker_exit_outcome(
-            worker,
-            current_task,
-            terminal_statuses=terminal_statuses,
+        success_outcome = (
+            successful_worker_exit_outcome(
+                worker,
+                current_task,
+                terminal_statuses=terminal_statuses,
+            )
+            if runner_succeeded
+            else None
         )
-        if success_outcome in {
+        if runner_succeeded and success_outcome in {
             "lifecycle_complete",
             "review_decided",
             "incremental_progress",
