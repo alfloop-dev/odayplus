@@ -67,7 +67,9 @@ def test_is_execution_dispatch_reason_cases(reason: str | None, expected: bool) 
         ([None, ""], ["todo"], {"none", ""}),
     ],
 )
-def test_normalized_status_set_cases(values: object, default: list[str], expected: set[str]) -> None:
+def test_normalized_status_set_cases(
+    values: object, default: list[str], expected: set[str]
+) -> None:
     assert normalized_status_set(values, default) == expected
 
 
@@ -82,7 +84,9 @@ def test_ready_dispatch_settings_current_defaults() -> None:
     assert settings["worker_terminal_statuses"] == ["review", "done", "review_approved"]
     assert settings["active_worker_statuses"] == DEFAULT_ACTIVE_WORKER_STATUSES
     assert "max_dispatches_per_tick" not in settings
-    assert settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
+    assert (
+        settings["orphaned_queue_event_grace_seconds"] == DEFAULT_ORPHANED_QUEUE_EVENT_GRACE_SECONDS
+    )
     assert settings["helper_execution_lease"]["enabled"] is True
     assert settings["helper_execution_lease"]["require_owner_saturated"] is True
 
@@ -146,22 +150,37 @@ def test_ready_dispatch_settings_preserves_current_sidecar_and_queue_knobs() -> 
 
 def _init_test_git_repo(path: Path) -> str:
     path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init", "-b", "task/TEST-RETRY-001"], cwd=path, capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.name", "Test Runner"], cwd=path, capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "init", "-b", "task/TEST-RETRY-001"], cwd=path, capture_output=True, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test Runner"], cwd=path, capture_output=True, check=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=path,
+        capture_output=True,
+        check=True,
+    )
     tracked_file = path / "README.md"
     tracked_file.write_text("# Test Repo\n", encoding="utf-8")
     subprocess.run(["git", "add", "README.md"], cwd=path, capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=path, capture_output=True, check=True)
-    head_proc = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"], cwd=path, capture_output=True, check=True
+    )
+    head_proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True, check=True
+    )
     return head_proc.stdout.strip()
 
 
-def test_worktree_lease_block_with_zero_byte_ai_status_lock_suppresses_and_clearing_recovers_immediately(tmp_path: Path) -> None:
+def test_worktree_lease_block_with_zero_byte_ai_status_lock_suppresses_and_clearing_recovers_immediately(
+    tmp_path: Path,
+) -> None:
     repo_path = tmp_path / "worktree"
     _init_test_git_repo(repo_path)
 
-    lock_file = repo_path / "ai-status.lock"
+    lock_file = repo_path / "ai-status.json.lock"
     lock_file.write_bytes(b"")
 
     task = {
@@ -181,7 +200,7 @@ def test_worktree_lease_block_with_zero_byte_ai_status_lock_suppresses_and_clear
         config,
         state,
         task_id=task["id"],
-        refresh_status="skipped_dirty_worktree: 1 dirty change (1 untracked): ai-status.lock",
+        refresh_status="skipped_dirty_worktree: 1 dirty change (1 untracked): ai-status.json.lock",
         message="Cannot lease isolated worker worktree: dirty changes",
         worktree_path=repo_path,
     )
@@ -191,26 +210,30 @@ def test_worktree_lease_block_with_zero_byte_ai_status_lock_suppresses_and_clear
     entry["dispatch_signature"] = dispatch_engine.ready_dispatch_signature(task, reason, task_map)
     entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 1. While ai-status.lock is present, worktree_block_still_matches_dispatch returns True (suppressed)
-    assert dispatch_engine.worktree_block_still_matches_dispatch(
-        state,
-        task,
-        reason,
-        task_map,
-        retry_after_seconds=1800.0,
-        config=config,
-    ) is True
+    # 1. While ai-status.json.lock is present, worktree_block_still_matches_dispatch returns True (suppressed)
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(
+            state,
+            task,
+            reason,
+            task_map,
+            retry_after_seconds=1800.0,
+        )
+        is True
+    )
 
-    # 2. When operator clears the 0-byte ai-status.lock, it recovers eligibility on next tick without waiting 1800s
+    # 2. When operator clears the 0-byte ai-status.json.lock, it recovers eligibility on next tick without waiting 1800s
     lock_file.unlink()
-    assert dispatch_engine.worktree_block_still_matches_dispatch(
-        state,
-        task,
-        reason,
-        task_map,
-        retry_after_seconds=1800.0,
-        config=config,
-    ) is False
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(
+            state,
+            task,
+            reason,
+            task_map,
+            retry_after_seconds=1800.0,
+        )
+        is False
+    )
 
 
 def test_worktree_lease_block_records_auditable_secret_free_state_identity(tmp_path: Path) -> None:
@@ -222,7 +245,7 @@ def test_worktree_lease_block_records_auditable_secret_free_state_identity(tmp_p
     assert clean_identity == f"clean:{head_sha}"
 
     # Dirty state (0-byte lock)
-    lock_file = repo_path / "ai-status.lock"
+    lock_file = repo_path / "ai-status.json.lock"
     lock_file.write_bytes(b"")
     dirty_identity = worker_workspace.compute_worktree_state_identity(repo_path)
     assert dirty_identity.startswith("owner_dirty:")
@@ -245,15 +268,17 @@ def test_worktree_lease_block_records_auditable_secret_free_state_identity(tmp_p
     assert entry["worktree_state_identity"] == dirty_identity
 
 
-def test_first_dirty_block_fails_closed_and_records_state_without_provider_slot(tmp_path: Path) -> None:
+def test_first_dirty_block_fails_closed_and_records_state_without_provider_slot(
+    tmp_path: Path,
+) -> None:
     root_path = tmp_path / "worktrees_root"
     root_path.mkdir(parents=True, exist_ok=True)
     task_id = "TASK-PREFLIGHT-001"
     repo_worktree = root_path / "odayplus" / "task-preflight-001"
     head_sha = _init_test_git_repo(repo_worktree)
 
-    # Put a 0-byte ai-status.lock in the worktree
-    (repo_worktree / "ai-status.lock").write_bytes(b"")
+    # Put a 0-byte ai-status.json.lock in the worktree
+    (repo_worktree / "ai-status.json.lock").write_bytes(b"")
 
     config = {
         "paths": {
@@ -292,7 +317,10 @@ def test_first_dirty_block_fails_closed_and_records_state_without_provider_slot(
         mock.patch.object(
             supervisor,
             "resolve_worker_base",
-            return_value=(worker_workspace.WorkerBaseResolution("odayplus", "dev", head_sha, "origin/dev"), None),
+            return_value=(
+                worker_workspace.WorkerBaseResolution("odayplus", "dev", head_sha, "origin/dev"),
+                None,
+            ),
         ),
         mock.patch.object(supervisor, "_existing_worktree_for_branch", return_value=repo_worktree),
     ):
@@ -304,19 +332,21 @@ def test_first_dirty_block_fails_closed_and_records_state_without_provider_slot(
             target_agent="Antigravity6",
         )
     assert ok is False
-    assert "ai-status.lock" in (message or "")
+    assert "ai-status.json.lock" in (message or "")
 
     # Block entry is recorded with state identity and path
     key = supervisor.normalize_agent_id(task_id)
     entry = state["worker_worktree_lease_blocks"][key]
     assert entry["count"] == 1
     assert "skipped_dirty_worktree" in entry["refresh_status"]
-    assert "ai-status.lock" in entry["refresh_status"]
+    assert "ai-status.json.lock" in entry["refresh_status"]
     assert entry["worktree_path"] == str(repo_worktree.resolve())
     assert entry["worktree_state_identity"].startswith("owner_dirty:")
 
 
-def test_dirty_worktree_committed_locally_recovers_immediately_without_remote_push(tmp_path: Path) -> None:
+def test_dirty_worktree_committed_locally_recovers_immediately_without_remote_push(
+    tmp_path: Path,
+) -> None:
     repo_path = tmp_path / "worktree_commit"
     _init_test_git_repo(repo_path)
 
@@ -349,17 +379,29 @@ def test_dirty_worktree_committed_locally_recovers_immediately_without_remote_pu
     entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # Still dirty
-    assert dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map, config=config) is True
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map) is True
+    )
 
     # Operator commits task-owned dirt locally
     subprocess.run(["git", "add", "task_work.py"], cwd=repo_path, capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "TASK-LOCAL-COMMIT-001: save work"], cwd=repo_path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "TASK-LOCAL-COMMIT-001: save work"],
+        cwd=repo_path,
+        capture_output=True,
+        check=True,
+    )
 
     # Now clean -> immediately eligible
-    assert dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map, config=config) is False
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map)
+        is False
+    )
 
 
-def test_unresolved_git_operation_suppresses_and_finishing_recovers_immediately(tmp_path: Path) -> None:
+def test_unresolved_git_operation_suppresses_and_finishing_recovers_immediately(
+    tmp_path: Path,
+) -> None:
     repo_path = tmp_path / "worktree_git_op"
     head_sha = _init_test_git_repo(repo_path)
 
@@ -392,13 +434,18 @@ def test_unresolved_git_operation_suppresses_and_finishing_recovers_immediately(
     entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=15)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # In-progress git operation -> suppressed
-    assert dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map, config=config) is True
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map) is True
+    )
 
     # Git operation finishes (e.g. merge completed / MERGE_HEAD cleared)
     merge_head.unlink()
 
     # Now clean and no git op -> immediately eligible
-    assert dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map, config=config) is False
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map)
+        is False
+    )
 
 
 def test_unrepaired_dirty_worktree_maintains_backoff_until_expiry(tmp_path: Path) -> None:
@@ -434,9 +481,136 @@ def test_unrepaired_dirty_worktree_maintains_backoff_until_expiry(tmp_path: Path
 
     # Within retry window (100 seconds ago < 1800.0) -> suppressed
     entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    assert dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map, retry_after_seconds=1800.0, config=config) is True
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(
+            state, task, reason, task_map, retry_after_seconds=1800.0
+        )
+        is True
+    )
 
     # After retry window expired (2000 seconds ago > 1800.0) -> eligible for periodic retry
     entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=2000)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    assert dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map, retry_after_seconds=1800.0, config=config) is False
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(
+            state, task, reason, task_map, retry_after_seconds=1800.0
+        )
+        is False
+    )
 
+
+def test_legacy_lease_block_without_worktree_path_maintains_suppression() -> None:
+    task = {
+        "id": "TASK-LEGACY-ENTRY-001",
+        "status": "in_progress",
+        "owner": "Antigravity6",
+        "reviewer": "Codex2",
+        "depends_on": [],
+    }
+    task_map = {task["id"]: task}
+    reason = "owned_in_progress_dispatch"
+    config: dict = {}
+    state: dict = {}
+
+    worker_workspace._record_worktree_lease_block(
+        config,
+        state,
+        task_id=task["id"],
+        refresh_status="skipped_dirty_worktree: legacy block",
+        message="Legacy block without recorded path",
+    )
+    key = supervisor.normalize_agent_id(task["id"])
+    entry = state["worker_worktree_lease_blocks"][key]
+    entry["dispatch_signature"] = dispatch_engine.ready_dispatch_signature(task, reason, task_map)
+    entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Without worktree_path, entry cannot verify cleanliness -> maintains suppression
+    assert "worktree_path" not in entry
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(
+            state, task, reason, task_map, retry_after_seconds=1800.0
+        )
+        is True
+    )
+
+
+def test_missing_or_deleted_worktree_path_maintains_suppression(tmp_path: Path) -> None:
+    deleted_path = tmp_path / "non_existent_worktree"
+    task = {
+        "id": "TASK-MISSING-WT-001",
+        "status": "in_progress",
+        "owner": "Antigravity6",
+        "reviewer": "Codex2",
+        "depends_on": [],
+    }
+    task_map = {task["id"]: task}
+    reason = "owned_in_progress_dispatch"
+    config: dict = {}
+    state: dict = {}
+
+    worker_workspace._record_worktree_lease_block(
+        config,
+        state,
+        task_id=task["id"],
+        refresh_status="skipped_dirty_worktree: missing worktree",
+        message="Worktree deleted",
+        worktree_path=deleted_path,
+    )
+    key = supervisor.normalize_agent_id(task["id"])
+    entry = state["worker_worktree_lease_blocks"][key]
+    entry["dispatch_signature"] = dispatch_engine.ready_dispatch_signature(task, reason, task_map)
+    entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=100)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Missing worktree path -> maintains suppression
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(
+            state, task, reason, task_map, retry_after_seconds=1800.0
+        )
+        is True
+    )
+
+
+def test_worktree_with_materialized_context_seed_recovers_immediately(tmp_path: Path) -> None:
+    repo_path = tmp_path / "worktree_mat_context"
+    head_sha = _init_test_git_repo(repo_path)
+
+    # Materialized seed file allowed by orchestrator
+    guide_file = repo_path / "AI_COLLABORATION_GUIDE.md"
+    guide_file.write_text("# Guide\n", encoding="utf-8")
+    mat_paths = ["AI_COLLABORATION_GUIDE.md"]
+
+    task = {
+        "id": "TASK-MAT-SEED-001",
+        "status": "in_progress",
+        "owner": "Antigravity6",
+        "reviewer": "Codex2",
+        "depends_on": [],
+    }
+    task_map = {task["id"]: task}
+    reason = "owned_in_progress_dispatch"
+    config: dict = {}
+    state: dict = {}
+
+    worker_workspace._record_worktree_lease_block(
+        config,
+        state,
+        task_id=task["id"],
+        refresh_status="skipped_dirty_worktree: materialized seed",
+        message="Materialized seed",
+        worktree_path=repo_path,
+        materialized_paths=mat_paths,
+    )
+    key = supervisor.normalize_agent_id(task["id"])
+    entry = state["worker_worktree_lease_blocks"][key]
+    entry["dispatch_signature"] = dispatch_engine.ready_dispatch_signature(task, reason, task_map)
+    entry["last_at"] = (datetime.now(UTC) - timedelta(seconds=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Orchestrator seed only -> recognized as handoff clean -> recovers immediately
+    identity = worker_workspace.compute_worktree_state_identity(
+        repo_path, materialized_paths=mat_paths
+    )
+    assert identity.startswith("orchestrator_seed_only:")
+    assert identity.endswith(f":{head_sha}")
+    assert (
+        dispatch_engine.worktree_block_still_matches_dispatch(state, task, reason, task_map)
+        is False
+    )

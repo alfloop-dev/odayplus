@@ -558,7 +558,7 @@ def compute_worktree_state_identity(
         path = Path(worktree_path).resolve()
     except (OSError, RuntimeError, ValueError):
         return "unresolvable_path"
-    if not path.exists() or not path.is_dir():
+    if not path.exists() or not path.is_dir() or not (path / ".git").exists():
         return "missing_worktree"
     head_sha = _git_commit_oid(path, "HEAD") or "none"
     if _git_operation_in_progress(path):
@@ -569,6 +569,21 @@ def compute_worktree_state_identity(
     if inspection.kind == "orchestrator_seed_only":
         return f"orchestrator_seed_only:{inspection.fingerprint}:{head_sha}"
     return f"{inspection.kind}:{inspection.fingerprint}:{head_sha}"
+
+
+@_entrypoint
+def is_worktree_lease_block_repaired(entry: dict[str, Any]) -> bool:
+    """Return True when a recorded lease block's worktree is verified clean and idle."""
+    if not isinstance(entry, dict):
+        return False
+    raw_path = entry.get("worktree_path")
+    if not raw_path:
+        return False
+    identity = compute_worktree_state_identity(
+        raw_path,
+        materialized_paths=entry.get("materialized_paths"),
+    )
+    return identity.startswith("clean:") or identity.startswith("orchestrator_seed_only:")
 
 
 @_entrypoint

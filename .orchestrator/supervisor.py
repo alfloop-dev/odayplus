@@ -175,7 +175,6 @@ _WORKSPACE_HELPER_FUNCTIONS = [
     "record_unsealed_worker_handoff",
     "clear_unsealed_worker_handoff",
     "sealed_owner_continuation_allowed",
-"compute_worktree_state_identity",
 "branch_name_is_usable",
 "canonical_task_record",
 "resolve_worker_base",
@@ -4277,19 +4276,15 @@ def worktree_block_still_matches_dispatch(
     task_map: dict[str, dict[str, Any]],
     *,
     retry_after_seconds: float | None = None,
-    config: dict[str, Any] | None = None,
 ) -> bool:
-    kwargs: dict[str, Any] = {}
-    if retry_after_seconds is not None:
-        kwargs["retry_after_seconds"] = retry_after_seconds
-    if config is not None:
-        kwargs["config"] = config
+    if retry_after_seconds is None:
+        return dispatch_ops.worktree_block_still_matches_dispatch(state, task, reason, task_map)
     return dispatch_ops.worktree_block_still_matches_dispatch(
         state,
         task,
         reason,
         task_map,
-        **kwargs,
+        retry_after_seconds=retry_after_seconds,
     )
 
 
