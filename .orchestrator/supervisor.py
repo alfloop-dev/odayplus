@@ -4452,6 +4452,17 @@ def worker_can_be_preempted(
     if worker_status == "stalled" or not alive:
         return True
 
+    heartbeat_stale = worker_heartbeat_is_stale(config, worker, now)
+    has_fresh_activity = not heartbeat_stale
+    if heartbeat_stale:
+        activity_at = parse_iso_timestamp(str(worker.get("last_process_activity_at") or ""))
+        if activity_at is not None and (now - activity_at.astimezone(UTC)).total_seconds() <= 300:
+            has_fresh_activity = True
+
+    if not has_fresh_activity:
+        # Worker is stalled or unresponsive
+        return True
+
     request_snapshot = worker.get("request_snapshot") or {}
     dispatch_reason = str(request_snapshot.get("reason") or worker.get("reason") or "").strip()
     task_id = str(worker.get("task_id") or "").strip()
@@ -4462,28 +4473,10 @@ def worker_can_be_preempted(
     if dispatch_reason == REASON_OWNED_FINALIZE or task_status == "review_approved":
         return worker_worktree_is_clean(config, worker)
 
-    # Active owner tasks (in_progress, todo with active execution)
-    is_owner = (
-        dispatch_reason in {REASON_OWNED_READY, REASON_OWNED_IN_PROGRESS, "helper_claim_dispatch"}
-        or task_status in {"in_progress", "todo"}
-    )
-    if is_owner:
-        heartbeat_stale = worker_heartbeat_is_stale(config, worker, now)
-        has_fresh_activity = not heartbeat_stale
-        if heartbeat_stale:
-            activity_at = parse_iso_timestamp(str(worker.get("last_process_activity_at") or ""))
-            if activity_at is not None and (now - activity_at.astimezone(UTC)).total_seconds() <= 300:
-                has_fresh_activity = True
-
-        if has_fresh_activity:
-            # Active healthy owner: if worktree is dirty, never preempt
-            if not worker_worktree_is_clean(config, worker):
-                return False
-            # If in_progress implementation is actively running, do not SIGTERM healthy owner
-            if task_status == "in_progress" or dispatch_reason == REASON_OWNED_IN_PROGRESS:
-                return False
-
-    return worker_worktree_is_clean(config, worker)
+    # Fail closed: healthy active execution workers (owned_ready, owned_in_progress,
+    # helper_claim, todo, in_progress) or any other active workers are actively running
+    # and cannot be preempted even if their worktrees are currently clean.
+    return False
 
 
 def worker_matches_current_assignment(
