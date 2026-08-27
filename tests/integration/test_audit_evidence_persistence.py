@@ -764,9 +764,7 @@ def test_durable_audit_log_rejects_event_tamper(db_path) -> None:
 
         assert bundle_persistence.audit_log.verify_chain().ok is False
         with pytest.raises(AuditIntegrityError):
-            bundle_persistence.audit_log.list_events(
-                correlation_id="corr-audit-tamper-1"
-            )
+            bundle_persistence.audit_log.list_events(correlation_id="corr-audit-tamper-1")
     finally:
         bundle_persistence.engine.close()
 
@@ -921,7 +919,7 @@ def test_api_persists_and_serves_retained_evidence(db_path) -> None:
                 "data_classification": "restricted",
                 "sensitive": True,
                 "purpose_scope": "model-release-subsidy-review",
-                "expires_at": (NOW + timedelta(days=60)).isoformat(),
+                "expires_at": (datetime.now(UTC) + timedelta(days=60)).isoformat(),
                 "authorized_by": "legal-approver",
                 "authorization_id": "authz-model-release-q2",
                 "masking_profile": "masked",
